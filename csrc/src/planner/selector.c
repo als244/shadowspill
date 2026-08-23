@@ -41,47 +41,47 @@ static void free_buffers(SimulationBuffers *buffers) {
     free(buffers->peaks);
 }
 
-ShadowSpillPlannerStatus shadowspill_select_plan(
+ShadowSpillStatus shadowspill_select_plan(
     const ShadowSpillPlanCandidate *candidates,
     uint32_t candidate_count,
     ShadowSpillPlanSelectionResult *result
 ) {
     if (result == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     shadowspill_planner_reset_result(result);
     if (candidates == NULL || candidate_count == 0U ||
         (result->candidate_results != NULL &&
          result->candidate_result_capacity < candidate_count)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     for (uint32_t index = 0; index < candidate_count; ++index) {
         const ShadowSpillSimulationProgram *program = candidates[index].program;
         if (program == NULL) {
-            result->status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         ShadowSpillSimulationResult simulation = {0};
         SimulationBuffers buffers = {0};
         if (allocate_buffers(program, &simulation, &buffers) != 0) {
             free_buffers(&buffers);
-            result->status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
-            return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+            result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
-        ShadowSpillSimulationStatus simulation_status =
+        ShadowSpillStatus simulation_status =
             shadowspill_simulate(program, &simulation);
         free_buffers(&buffers);
 
         if (result->candidate_results != NULL) {
             result->candidate_results[index] = (ShadowSpillCandidateResult){
                 .simulation_status = (uint32_t)simulation_status,
-                .valid = (uint8_t)(simulation_status == SHADOWSPILL_SIMULATION_OK),
+                .valid = (uint8_t)(simulation_status == SHADOWSPILL_STATUS_OK),
                 .makespan_ns = simulation.makespan_ns,
             };
         }
         result->candidate_result_count = index + 1U;
-        if (simulation_status != SHADOWSPILL_SIMULATION_OK) {
+        if (simulation_status != SHADOWSPILL_STATUS_OK) {
             if (result->first_failure_index == SHADOWSPILL_PLANNER_NO_INDEX) {
                 result->first_failure_index = index;
                 result->first_failure_status = (uint32_t)simulation_status;
@@ -99,9 +99,9 @@ ShadowSpillPlannerStatus shadowspill_select_plan(
     }
 
     if (result->selected_index == SHADOWSPILL_PLANNER_NO_INDEX) {
-        result->status = SHADOWSPILL_PLANNER_NO_FEASIBLE_CANDIDATE;
-        return SHADOWSPILL_PLANNER_NO_FEASIBLE_CANDIDATE;
+        result->status = SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
+        return SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
     }
-    result->status = SHADOWSPILL_PLANNER_OK;
-    return SHADOWSPILL_PLANNER_OK;
+    result->status = SHADOWSPILL_STATUS_OK;
+    return SHADOWSPILL_STATUS_OK;
 }

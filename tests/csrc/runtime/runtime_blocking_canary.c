@@ -10,7 +10,7 @@
 typedef struct AllocationRequest {
     ShadowSpillRuntime *runtime;
     ShadowSpillBackendStream stream;
-    ShadowSpillRuntimeStatus status;
+    ShadowSpillStatus status;
     ShadowSpillAllocation allocation;
 } AllocationRequest;
 
@@ -40,7 +40,7 @@ int main(void) {
         mock, 128U, 1U, 1U, 10000U, &topology
     );
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
-        SHADOWSPILL_RUNTIME_OK) {
+        SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     ShadowSpillBackendStream first_stream = {{0U, 0U}};
@@ -49,17 +49,17 @@ int main(void) {
     if (shadowspill_mock_create_compute_stream(mock, &first_stream) != 0 ||
         shadowspill_mock_create_compute_stream(mock, &second_stream) != 0 ||
         shadowspill_memory_pool_allocate(runtime, 0U, 128U, 1U, first_stream, &first) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_record_stream(runtime, 0U, first.allocation_id, second_stream
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_free(runtime, 0U, first.allocation_id, first_stream) !=
-            SHADOWSPILL_RUNTIME_OK) {
+            SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     AllocationRequest request = {
         .runtime = runtime,
         .stream = first_stream,
-        .status = SHADOWSPILL_RUNTIME_INVALID_STATE,
+        .status = SHADOWSPILL_STATUS_INVALID_STATE,
     };
     pthread_t thread;
     const int create_status = pthread_create(
@@ -67,8 +67,8 @@ int main(void) {
     );
     const int join_status = create_status == 0
         ? pthread_join(thread, NULL) : -1;
-    const ShadowSpillRuntimeStatus free_status =
-        request.status == SHADOWSPILL_RUNTIME_OK
+    const ShadowSpillStatus free_status =
+        request.status == SHADOWSPILL_STATUS_OK
         ? shadowspill_memory_pool_free(
               runtime,
               0U,
@@ -76,14 +76,14 @@ int main(void) {
               first_stream
           )
         : request.status;
-    const ShadowSpillRuntimeStatus wait_status =
-        free_status == SHADOWSPILL_RUNTIME_OK
+    const ShadowSpillStatus wait_status =
+        free_status == SHADOWSPILL_STATUS_OK
         ? shadowspill_runtime_wait_idle(runtime) : free_status;
     if (create_status != 0 || join_status != 0 ||
-        request.status != SHADOWSPILL_RUNTIME_OK ||
+        request.status != SHADOWSPILL_STATUS_OK ||
         request.allocation.pointer == NULL ||
-        free_status != SHADOWSPILL_RUNTIME_OK ||
-        wait_status != SHADOWSPILL_RUNTIME_OK) {
+        free_status != SHADOWSPILL_STATUS_OK ||
+        wait_status != SHADOWSPILL_STATUS_OK) {
         fprintf(
             stderr,
             "blocking statuses: create=%d join=%d allocate=%u pointer=%p "
@@ -99,12 +99,12 @@ int main(void) {
     }
     ShadowSpillRuntimeStatistics statistics = {0};
     if (shadowspill_runtime_statistics(runtime, &statistics) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         statistics.free_bytes != 128U ||
         statistics.largest_free_range_bytes != 128U) {
         return EXIT_FAILURE;
     }
-    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_RUNTIME_OK ||
+    if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_mock_destroy_compute_stream(mock, first_stream) != 0 ||
         shadowspill_mock_destroy_compute_stream(mock, second_stream) != 0) {
         return EXIT_FAILURE;

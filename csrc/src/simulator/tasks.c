@@ -154,7 +154,7 @@ int shadowspill_try_launch_tasks(
                 )) {
                 shadowspill_set_error(
                     result,
-                    SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                    SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                     work,
                     task,
                     SHADOWSPILL_SIMULATOR_NO_INDEX,
@@ -215,7 +215,7 @@ int shadowspill_complete_task(
         if (program->task_workspace_bytes[task] > (uint64_t)INT64_MAX) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 task,
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
@@ -235,7 +235,7 @@ int shadowspill_complete_task(
             )) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 task,
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
@@ -273,7 +273,7 @@ int shadowspill_complete_task(
     if (!append_task_interval(program, work, result, task)) {
         shadowspill_set_error(
             result,
-            SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+            SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
             work,
             task,
             SHADOWSPILL_SIMULATOR_NO_INDEX,

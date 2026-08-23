@@ -179,15 +179,15 @@ void shadowspill_object_retain(ShadowSpillObject *object);
 
 void shadowspill_object_release(ShadowSpillObject *object);
 
-ShadowSpillRuntimeStatus shadowspill_object_owner_retain(
+ShadowSpillStatus shadowspill_object_owner_retain(
     ShadowSpillObject *object
 );
 
-ShadowSpillRuntimeStatus shadowspill_object_owner_release(
+ShadowSpillStatus shadowspill_object_owner_release(
     ShadowSpillObject *object
 );
 
-ShadowSpillRuntimeStatus shadowspill_object_schedule_action_locked(
+ShadowSpillStatus shadowspill_object_schedule_action_locked(
     ShadowSpillObject *object,
     ShadowSpillQueuedAction *action
 );
@@ -219,7 +219,7 @@ int shadowspill_object_remove_action_locked(
 
 void shadowspill_object_acquisitions_clear(ShadowSpillPlan *plan);
 
-ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
+ShadowSpillStatus shadowspill_acquire_object_bindings(
     ShadowSpillRuntime *runtime,
     const ShadowSpillPlan *plan,
     uint64_t trace_task_id,
@@ -233,7 +233,7 @@ ShadowSpillRuntimeStatus shadowspill_acquire_object_bindings(
     uint32_t binding_capacity
 );
 
-ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
+ShadowSpillStatus shadowspill_object_transfer_to_caller(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *execution_pool,
     ShadowSpillMemoryPool *spill_pool,
@@ -246,7 +246,7 @@ ShadowSpillRuntimeStatus shadowspill_object_transfer_to_caller(
     ShadowSpillAllocation *allocation
 );
 
-ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
+ShadowSpillStatus shadowspill_object_bind_allocation(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,
@@ -255,7 +255,7 @@ ShadowSpillRuntimeStatus shadowspill_object_bind_allocation(
     ShadowSpillObjectBinding *binding
 );
 
-ShadowSpillRuntimeStatus shadowspill_object_replace_allocation(
+ShadowSpillStatus shadowspill_object_replace_allocation(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillObject *object,

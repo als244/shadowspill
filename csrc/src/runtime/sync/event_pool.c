@@ -42,18 +42,18 @@ void shadowspill_event_pool_destroy(
     *pool = (ShadowSpillEventPool){0};
 }
 
-ShadowSpillRuntimeStatus shadowspill_event_pool_reserve(
+ShadowSpillStatus shadowspill_event_pool_reserve(
     ShadowSpillEventPool *pool,
     uint64_t minimum_free_leases
 ) {
     if (pool == NULL || !pool->initialized || minimum_free_leases == 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&pool->lock);
     if (pool->available >= minimum_free_leases) {
         pool->sealed = 1U;
         pthread_mutex_unlock(&pool->lock);
-        return SHADOWSPILL_RUNTIME_OK;
+        return SHADOWSPILL_STATUS_OK;
     }
     const uint64_t additional = minimum_free_leases - pool->available;
     pthread_mutex_unlock(&pool->lock);
@@ -64,7 +64,7 @@ ShadowSpillRuntimeStatus shadowspill_event_pool_reserve(
     if (block == NULL || leases == NULL) {
         free(leases);
         free(block);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     block->leases = leases;
     block->count = additional;
@@ -81,7 +81,7 @@ ShadowSpillRuntimeStatus shadowspill_event_pool_reserve(
     pool->available += additional;
     pool->sealed = 1U;
     pthread_mutex_unlock(&pool->lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 static ShadowSpillEventLease *acquire_event_record(
@@ -128,23 +128,23 @@ static void release_event_record(
     pthread_mutex_unlock(&pool->lock);
 }
 
-ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
+ShadowSpillStatus shadowspill_event_lease_create_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventLease **output
 ) {
     if (runtime == NULL || output == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     *output = NULL;
     ShadowSpillEventLease *lease = acquire_event_record(runtime);
     if (lease == NULL) {
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     if (runtime->synchronization.create_event(
             runtime->synchronization.context, &lease->event
         ) != 0) {
         release_event_record(runtime, lease);
-        return SHADOWSPILL_RUNTIME_BACKEND_FAILURE;
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     lease->generation = atomic_fetch_add_explicit(
         &runtime->next_event_generation, 1U, memory_order_relaxed
@@ -161,7 +161,7 @@ ShadowSpillRuntimeStatus shadowspill_event_lease_create_locked(
     atomic_init(&lease->references, 1U);
     atomic_init(&lease->backend_complete, 0U);
     *output = lease;
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 void shadowspill_event_lease_retain(ShadowSpillEventLease *lease) {

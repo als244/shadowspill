@@ -58,7 +58,7 @@ void shadowspill_completion_tracker_destroy(
     pthread_mutex_destroy(&tracker->lock);
 }
 
-ShadowSpillRuntimeStatus shadowspill_completion_submit(
+ShadowSpillStatus shadowspill_completion_submit(
     ShadowSpillRuntime *runtime,
     ShadowSpillBackendStream stream,
     ShadowSpillEventLease *event,
@@ -66,13 +66,13 @@ ShadowSpillRuntimeStatus shadowspill_completion_submit(
     uint64_t allocation_id
 ) {
     if (runtime == NULL || event == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     ShadowSpillCompletionTracker *tracker = &runtime->completions;
     pthread_mutex_lock(&tracker->lock);
     if (event->completion_linked) {
         pthread_mutex_unlock(&tracker->lock);
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     ShadowSpillCompletionStream *owner = tracker->streams;
     while (owner != NULL && !stream_equal(owner->stream, stream)) {
@@ -82,7 +82,7 @@ ShadowSpillRuntimeStatus shadowspill_completion_submit(
         owner = calloc(1U, sizeof(*owner));
         if (owner == NULL) {
             pthread_mutex_unlock(&tracker->lock);
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         owner->stream = stream;
         owner->next = tracker->streams;
@@ -101,7 +101,7 @@ ShadowSpillRuntimeStatus shadowspill_completion_submit(
     owner->tail = event;
     ++tracker->pending;
     pthread_mutex_unlock(&tracker->lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 int shadowspill_completion_poll(

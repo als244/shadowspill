@@ -36,10 +36,10 @@ static int causal_successor_replay(void) {
         .operations = operations,
         .operation_count = 6U,
     };
-    const ShadowSpillAdmissionReplayStatus status =
+    const ShadowSpillStatus status =
         shadowspill_admission_replay_run(&program, &result);
-    return status != SHADOWSPILL_ADMISSION_REPLAY_OK ||
-        result.status != SHADOWSPILL_ADMISSION_REPLAY_OK ||
+    return status != SHADOWSPILL_STATUS_OK ||
+        result.status != SHADOWSPILL_STATUS_OK ||
         result.decision_count != 6U || result.dependency_result_count != 1U ||
         result.peak_allocated_bytes != 96U ||
         result.peak_reserved_bytes != 96U ||
@@ -94,7 +94,7 @@ static int promised_dependency_replay(void) {
         .operation_count = 7U,
     };
     return shadowspill_admission_replay_run(&program, &result) !=
-            SHADOWSPILL_ADMISSION_REPLAY_OK ||
+            SHADOWSPILL_STATUS_OK ||
         result.dependency_result_count != 1U ||
         dependency.dependency_id != 0U ||
         result.final_allocated_bytes != 0U;
@@ -121,7 +121,7 @@ static int infeasible_replay_reports_geometry(void) {
         .operation_count = 2U,
     };
     return shadowspill_admission_replay_run(&program, &result) !=
-            SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE ||
+            SHADOWSPILL_STATUS_REPLAY_INFEASIBLE ||
         result.error_operation_index != 1U || result.error_lease_id != 1U ||
         result.error_requested_bytes != 64U || result.error_free_bytes != 32U ||
         result.error_largest_free_range_bytes != 32U;
@@ -154,7 +154,7 @@ static int reusable_workspace_preserves_decisions(void) {
     ShadowSpillAdmissionReplayWorkspace *workspace = NULL;
     if (shadowspill_admission_replay_workspace_create(
             2U, 1U, &workspace
-        ) != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+        ) != SHADOWSPILL_STATUS_OK) {
         return 1;
     }
     uint64_t expected_digest = 0U;
@@ -170,7 +170,7 @@ static int reusable_workspace_preserves_decisions(void) {
         };
         if (shadowspill_admission_replay_run_reusing(
                 &program, &result, workspace
-            ) != SHADOWSPILL_ADMISSION_REPLAY_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             result.final_allocated_bytes != 0U ||
             result.dependency_result_count != 1U ||
             (repetition != 0U && result.decision_digest != expected_digest)) {

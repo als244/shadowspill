@@ -67,37 +67,37 @@ void shadowspill_append_allocation_event_locked(
         };
 }
 
-ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_start(
+ShadowSpillStatus shadowspill_allocation_telemetry_start(
     ShadowSpillRuntime *runtime,
     uint64_t capacity
 ) {
     if (runtime == NULL || capacity == 0U ||
         capacity > SIZE_MAX / sizeof(ShadowSpillAllocationEvent)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK &&
+    ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
+    if (status == SHADOWSPILL_STATUS_OK &&
         runtime->allocation_telemetry_active) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    const int needs_growth = status == SHADOWSPILL_RUNTIME_OK &&
+    const int needs_growth = status == SHADOWSPILL_STATUS_OK &&
         runtime->allocation_event_capacity < capacity;
     pthread_mutex_unlock(&runtime->mutex);
     ShadowSpillAllocationEvent *events = NULL;
     if (needs_growth) {
         events = calloc((size_t)capacity, sizeof(*events));
         if (events == NULL) {
-            return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
     }
     pthread_mutex_lock(&runtime->mutex);
     status = shadowspill_current_status_locked(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK &&
+    if (status == SHADOWSPILL_STATUS_OK &&
         runtime->allocation_telemetry_active) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    if (status == SHADOWSPILL_RUNTIME_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         if (events != NULL && runtime->allocation_event_capacity < capacity) {
             free(runtime->allocation_events);
             runtime->allocation_events = events;
@@ -115,24 +115,24 @@ ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_start(
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_stop(
+ShadowSpillStatus shadowspill_allocation_telemetry_stop(
     ShadowSpillRuntime *runtime
 ) {
     if (runtime == NULL) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
-    ShadowSpillRuntimeStatus status = shadowspill_current_status_locked(runtime);
-    if (status == SHADOWSPILL_RUNTIME_OK &&
+    ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
+    if (status == SHADOWSPILL_STATUS_OK &&
         !runtime->allocation_telemetry_active) {
-        status = SHADOWSPILL_RUNTIME_INVALID_STATE;
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
     runtime->allocation_telemetry_active = 0;
     pthread_mutex_unlock(&runtime->mutex);
     return status;
 }
 
-ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_read(
+ShadowSpillStatus shadowspill_allocation_telemetry_read(
     ShadowSpillRuntime *runtime,
     ShadowSpillAllocationEvent *events,
     uint64_t capacity,
@@ -140,13 +140,13 @@ ShadowSpillRuntimeStatus shadowspill_allocation_telemetry_read(
 ) {
     if (runtime == NULL || count == NULL ||
         (events == NULL && capacity != 0U)) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&runtime->mutex);
     *count = runtime->allocation_event_count;
-    ShadowSpillRuntimeStatus status = SHADOWSPILL_RUNTIME_OK;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (events != NULL && capacity < runtime->allocation_event_count) {
-        status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     } else if (events != NULL && runtime->allocation_event_count != 0U) {
         memcpy(
             events,

@@ -20,7 +20,7 @@ int main(void) {
     );
     ShadowSpillRuntime *runtime = NULL;
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
-        SHADOWSPILL_RUNTIME_OK) {
+        SHADOWSPILL_STATUS_OK) {
         shadowspill_mock_backend_destroy(mock);
         return 2;
     }
@@ -34,7 +34,7 @@ int main(void) {
     };
     if (shadowspill_runtime_calibrate_transfer_capabilities(
             runtime, &calibration, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_OK) {
+        ) != SHADOWSPILL_STATUS_OK) {
         fprintf(stderr, "all-route calibration failed\n");
         return 3;
     }
@@ -43,7 +43,7 @@ int main(void) {
     uint64_t generation = 0U;
     if (shadowspill_runtime_transfer_profiles(
             runtime, profiles, 4U, &count, &generation
-        ) != SHADOWSPILL_RUNTIME_OK || count != 4U || generation != 1U) {
+        ) != SHADOWSPILL_STATUS_OK || count != 4U || generation != 1U) {
         fprintf(stderr, "invalid first matrix snapshot\n");
         return 4;
     }
@@ -68,10 +68,10 @@ int main(void) {
     };
     if (shadowspill_runtime_calibrate_transfer_capabilities(
             runtime, &calibration, &selected, 1U
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_transfer_profiles(
             runtime, profiles, 4U, &count, &generation
-        ) != SHADOWSPILL_RUNTIME_OK || generation != 2U) {
+        ) != SHADOWSPILL_STATUS_OK || generation != 2U) {
         fprintf(stderr, "selected-route recalibration failed\n");
         return 6;
     }

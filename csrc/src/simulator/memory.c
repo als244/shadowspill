@@ -169,7 +169,7 @@ int shadowspill_initialize_memory(
                 )) {
                 shadowspill_set_error(
                     result,
-                    SHADOWSPILL_SIMULATION_INVALID_ARGUMENT,
+                    SHADOWSPILL_STATUS_INVALID_ARGUMENT,
                     work,
                     SHADOWSPILL_SIMULATOR_NO_INDEX,
                     alias,
@@ -193,7 +193,7 @@ int shadowspill_initialize_memory(
                 )) {
                 shadowspill_set_error(
                     result,
-                    SHADOWSPILL_SIMULATION_INVALID_ARGUMENT,
+                    SHADOWSPILL_STATUS_INVALID_ARGUMENT,
                     work,
                     SHADOWSPILL_SIMULATOR_NO_INDEX,
                     alias,
@@ -211,7 +211,7 @@ int shadowspill_initialize_memory(
                     )) {
                     shadowspill_set_error(
                         result,
-                        SHADOWSPILL_SIMULATION_INVALID_ARGUMENT,
+                        SHADOWSPILL_STATUS_INVALID_ARGUMENT,
                         work,
                         SHADOWSPILL_SIMULATOR_NO_INDEX,
                         alias,
@@ -241,7 +241,7 @@ int shadowspill_initialize_memory(
             program->devices[device].capacity_bytes) {
             shadowspill_set_capacity_error(
                 result,
-                SHADOWSPILL_SIMULATION_INITIAL_DEVICE_CAPACITY,
+                SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY,
                 work,
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
@@ -257,7 +257,7 @@ int shadowspill_initialize_memory(
     if (work->spill_bytes > program->spill_capacity_bytes) {
         shadowspill_set_capacity_error(
             result,
-            SHADOWSPILL_SIMULATION_INITIAL_SPILL_CAPACITY,
+            SHADOWSPILL_STATUS_INITIAL_SPILL_CAPACITY,
             work,
             SHADOWSPILL_SIMULATOR_NO_INDEX,
             SHADOWSPILL_SIMULATOR_NO_INDEX,

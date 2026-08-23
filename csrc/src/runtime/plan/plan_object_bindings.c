@@ -66,7 +66,7 @@ void shadowspill_plan_object_table_destroy(ShadowSpillPlanObjectTable *table) {
     table->lock_initialized = 0U;
 }
 
-ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
+ShadowSpillStatus shadowspill_plan_bind_object(
     ShadowSpillPlan *plan,
     uint64_t plan_object_id,
     const ShadowSpillObjectHandle *object_handle,
@@ -77,20 +77,20 @@ ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
         object_handle->object == NULL ||
         consistency > SHADOWSPILL_OBJECT_UNORDERED ||
         atomic_load_explicit(&plan->closing, memory_order_acquire) != 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     ShadowSpillObject *object = object_handle->object;
     if (atomic_load_explicit(&object->detached, memory_order_acquire) != 0U) {
-        return SHADOWSPILL_RUNTIME_INVALID_STATE;
+        return SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    ShadowSpillRuntimeStatus status = shadowspill_object_owner_retain(object);
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    ShadowSpillStatus status = shadowspill_object_owner_retain(object);
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     ShadowSpillPlanObjectBinding *created = calloc(1U, sizeof(*created));
     if (created == NULL) {
         (void)shadowspill_object_owner_release(object);
-        return SHADOWSPILL_RUNTIME_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     created->plan_object_id = plan_object_id;
     created->object = object;
@@ -109,14 +109,14 @@ ShadowSpillRuntimeStatus shadowspill_plan_bind_object(
         (void)shadowspill_object_owner_release(object);
         free(created);
         return matches
-            ? SHADOWSPILL_RUNTIME_OK : SHADOWSPILL_RUNTIME_INVALID_STATE;
+            ? SHADOWSPILL_STATUS_OK : SHADOWSPILL_STATUS_INVALID_STATE;
     }
     created->hash_next = table->by_id[bucket];
     table->by_id[bucket] = created;
     created->ownership_next = table->owned_head;
     table->owned_head = created;
     pthread_rwlock_unlock(&table->lock);
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 ShadowSpillObject *shadowspill_plan_object_acquire(

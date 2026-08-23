@@ -38,7 +38,7 @@ typedef struct ResidencyCacheEntry {
     uint64_t *extra_pressure;
     uint8_t *resident_bits;
     uint8_t *break_bits;
-    ShadowSpillPlannerStatus status;
+    ShadowSpillStatus status;
     uint32_t error_device;
     int32_t error_boundary;
     uint64_t required_bytes;
@@ -532,7 +532,7 @@ static int simulate_schedule(
     SimulationWorkspace *workspace,
     ShadowSpillCandidateAdmissionWorkspace *admission_workspace,
     ShadowSpillSimulationResult *result,
-    ShadowSpillAdmissionReplayStatus *admission_status,
+    ShadowSpillStatus *admission_status,
     ShadowSpillAdmissionReplayResult *admission_result
 ) {
     if (simulation_workspace_reserve_transfers(
@@ -542,7 +542,7 @@ static int simulate_schedule(
         return -1;
     }
     ShadowSpillSimulationProgram program;
-    *admission_status = SHADOWSPILL_ADMISSION_REPLAY_OK;
+    *admission_status = SHADOWSPILL_STATUS_OK;
     memset(admission_result, 0, sizeof(*admission_result));
     if (context->admission == NULL) {
         shadowspill_bind_indexed_schedule(context->simulation, schedule, &program);
@@ -554,11 +554,11 @@ static int simulate_schedule(
             &program,
             admission_result
         );
-        if (*admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
+        if (*admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
             memset(result, 0, sizeof(*result));
             return 0;
         }
-        if (*admission_status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+        if (*admission_status != SHADOWSPILL_STATUS_OK) {
             return -1;
         }
     }
@@ -763,7 +763,7 @@ static void residency_options(
     };
 }
 
-static ShadowSpillPlannerStatus reduce(
+static ShadowSpillStatus reduce(
     const ShadowSpillPressureFitContext *context,
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
@@ -815,7 +815,7 @@ static ResidencyCacheEntry *append_residency_cache(
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     uint64_t hash,
-    ShadowSpillPlannerStatus status,
+    ShadowSpillStatus status,
     const ShadowSpillResidencyResult *result,
     const uint8_t *resident,
     const uint8_t *breaks
@@ -895,7 +895,7 @@ static ResidencyCacheEntry *append_residency_cache(
     return entry;
 }
 
-static ShadowSpillPlannerStatus reduce_cached(
+static ShadowSpillStatus reduce_cached(
     const ShadowSpillPressureFitContext *context,
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
@@ -912,7 +912,7 @@ static ShadowSpillPlannerStatus reduce_cached(
     if (entry == NULL) {
         ++workspace->residency_cache_misses;
         ShadowSpillResidencyResult computed;
-        ShadowSpillPlannerStatus status = reduce(
+        ShadowSpillStatus status = reduce(
             context,
             workspace,
             options,
@@ -930,7 +930,7 @@ static ShadowSpillPlannerStatus reduce_cached(
             breaks
         );
         if (entry == NULL) {
-            return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
     } else {
         ++workspace->residency_cache_hits;
@@ -1122,7 +1122,7 @@ static int indexed_schedule_equal(
 static SimulationCacheEntry *append_simulation_cache(
     CandidateWorkspace *workspace,
     const ShadowSpillSimulationResult *result,
-    ShadowSpillAdmissionReplayStatus admission_status,
+    ShadowSpillStatus admission_status,
     const ShadowSpillAdmissionReplayResult *admission,
     uint64_t hash
 ) {
@@ -1187,7 +1187,7 @@ static int simulate_cached(
     const ShadowSpillPressureFitContext *context,
     CandidateWorkspace *workspace,
     ShadowSpillSimulationResult *result,
-    ShadowSpillAdmissionReplayStatus *admission_status,
+    ShadowSpillStatus *admission_status,
     ShadowSpillAdmissionReplayResult *admission_result,
     ShadowSpillAdmissionAnnotation *admission_error_annotation,
     SimulationCacheEntry **selected_entry
@@ -1206,7 +1206,7 @@ static int simulate_cached(
             )) {
             *result = entry->result;
             *admission_status =
-                (ShadowSpillAdmissionReplayStatus)entry->admission_status;
+                (ShadowSpillStatus)entry->admission_status;
             *admission_result = entry->admission;
             *admission_error_annotation = (ShadowSpillAdmissionAnnotation){0};
             *selected_entry = entry;
@@ -1227,7 +1227,7 @@ static int simulate_cached(
         return -1;
     }
     *admission_error_annotation = (ShadowSpillAdmissionAnnotation){0};
-    if (*admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
+    if (*admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
         const uint64_t operation = admission_result->error_operation_index;
         if (operation >= workspace->admission.operation_capacity) {
             return -1;
@@ -1237,7 +1237,7 @@ static int simulate_cached(
         *selected_entry = NULL;
         return 0;
     }
-    if (*admission_status != SHADOWSPILL_ADMISSION_REPLAY_OK) {
+    if (*admission_status != SHADOWSPILL_STATUS_OK) {
         return -1;
     }
     ++workspace->simulation_calls;
@@ -1395,9 +1395,9 @@ static int add_repair_pressure(
     CandidateWorkspace *workspace,
     const ShadowSpillSimulationResult *failure
 ) {
-    if (failure->status != SHADOWSPILL_SIMULATION_INITIAL_DEVICE_CAPACITY &&
-        failure->status != SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY &&
-        failure->status != SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY) {
+    if (failure->status != SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY &&
+        failure->status != SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY &&
+        failure->status != SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY) {
         return 0;
     }
     if (failure->error_device == SHADOWSPILL_SIMULATOR_NO_INDEX ||
@@ -1405,13 +1405,13 @@ static int add_repair_pressure(
         return 0;
     }
     int32_t boundary = -1;
-    if (failure->status == SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY) {
+    if (failure->status == SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY) {
         if (failure->error_task == SHADOWSPILL_SIMULATOR_NO_INDEX) {
             return 0;
         }
         boundary = (int32_t)failure->error_task - 1;
     } else if (failure->status ==
-               SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY) {
+               SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY) {
         if (failure->error_task == SHADOWSPILL_SIMULATOR_NO_INDEX) {
             return 0;
         }
@@ -1444,11 +1444,11 @@ static int add_repair_pressure(
 }
 
 static int simulation_failure_may_be_repairable(
-    ShadowSpillSimulationStatus status
+    ShadowSpillStatus status
 ) {
-    return status == SHADOWSPILL_SIMULATION_INITIAL_DEVICE_CAPACITY ||
-        status == SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY ||
-        status == SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY;
+    return status == SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY ||
+        status == SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY ||
+        status == SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY;
 }
 
 static int admission_failure_boundary(
@@ -1518,7 +1518,7 @@ static int delay_admission_prefetch(
         if (annotation.index >= facts->task_count) {
             return -1;
         }
-        projected.status = SHADOWSPILL_SIMULATION_TASK_DEVICE_CAPACITY;
+        projected.status = SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY;
         projected.error_task = annotation.index;
     } else if (
         annotation.boundary == SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER &&
@@ -1526,7 +1526,7 @@ static int delay_admission_prefetch(
         schedule->value.action_kinds[annotation.index] ==
             SHADOWSPILL_MEMORY_PREFETCH
     ) {
-        projected.status = SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY;
+        projected.status = SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY;
         projected.error_task =
             schedule->value.action_trigger_tasks[annotation.index];
         projected.error_alias =
@@ -1678,7 +1678,7 @@ static int reduce_repaired_candidate(
 ) {
     ShadowSpillResidencyResult residency;
     const uint64_t started = monotonic_time_ns();
-    const ShadowSpillPlannerStatus status = reduce_cached(
+    const ShadowSpillStatus status = reduce_cached(
         context,
         workspace,
         options,
@@ -1688,11 +1688,11 @@ static int reduce_repaired_candidate(
         &residency
     );
     workspace->residency_time_ns += monotonic_time_ns() - started;
-    if (status == SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE) {
+    if (status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
         copy_analytic_error(diagnostic, &residency);
         return 0;
     }
-    return status == SHADOWSPILL_PLANNER_OK ? 1 : -1;
+    return status == SHADOWSPILL_STATUS_OK ? 1 : -1;
 }
 
 static void initialize_diagnostic(
@@ -1706,7 +1706,7 @@ static void initialize_diagnostic(
     diagnostic->residency_strategy = strategy;
     diagnostic->prefetch_rule = rule;
     diagnostic->coalesced = coalesced;
-    diagnostic->simulation_status = SHADOWSPILL_SIMULATION_OK;
+    diagnostic->simulation_status = SHADOWSPILL_STATUS_OK;
     diagnostic->error_task = SHADOWSPILL_SIMULATOR_NO_INDEX;
     diagnostic->error_alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
     diagnostic->error_device = SHADOWSPILL_SIMULATOR_NO_INDEX;
@@ -1785,8 +1785,8 @@ static int evaluate_candidate(
         }
 
         ShadowSpillSimulationResult simulation;
-        ShadowSpillAdmissionReplayStatus admission_status =
-            SHADOWSPILL_ADMISSION_REPLAY_OK;
+        ShadowSpillStatus admission_status =
+            SHADOWSPILL_STATUS_OK;
         ShadowSpillAdmissionReplayResult admission_result = {0};
         ShadowSpillAdmissionAnnotation admission_error_annotation = {0};
         SimulationCacheEntry *simulation_entry = NULL;
@@ -1811,9 +1811,9 @@ static int evaluate_candidate(
             combined_elapsed >= admission_elapsed
                 ? combined_elapsed - admission_elapsed
                 : 0U;
-        ShadowSpillSimulationStatus simulation_status =
-            (ShadowSpillSimulationStatus)simulation.status;
-        if (admission_status == SHADOWSPILL_ADMISSION_REPLAY_INFEASIBLE) {
+        ShadowSpillStatus simulation_status =
+            (ShadowSpillStatus)simulation.status;
+        if (admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
             if (repair_total(&diagnostic->repairs) <
                 portfolio_options->max_repair_attempts) {
                 ShadowSpillPrefetchTriggerConstraint constraint = {0};
@@ -1919,7 +1919,7 @@ static int evaluate_candidate(
             }
             return 0;
         }
-        if (simulation_status == SHADOWSPILL_SIMULATION_OK) {
+        if (simulation_status == SHADOWSPILL_STATUS_OK) {
             diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
             diagnostic->makespan_ns = simulation.makespan_ns;
             if (simulation_entry->digest_valid == 0U) {
@@ -2058,19 +2058,19 @@ void shadowspill_pressurefit_context_result_destroy(
     memset(result, 0, sizeof(*result));
 }
 
-ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
+ShadowSpillStatus shadowspill_evaluate_pressurefit_context(
     const ShadowSpillPressureFitContext *context,
     const ShadowSpillPressureFitContextOptions *options,
     ShadowSpillPressureFitContextResult *result
 ) {
     if (result == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     memset(result, 0, sizeof(*result));
     result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
-    result->status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     if (!context_valid(context, options)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const uint64_t evaluation_started = monotonic_time_ns();
 
@@ -2082,12 +2082,12 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
             &candidate_count
         ) != 0 ||
         multiply_u32(candidate_count, coalesced_count, &candidate_count) != 0) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     result->candidates = calloc(candidate_count, sizeof(*result->candidates));
     if (result->candidates == NULL) {
-        result->status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     result->candidate_count = candidate_count;
 
@@ -2098,8 +2098,8 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
         shadowspill_schedule_facts_destroy(&facts);
         candidate_workspace_destroy(&workspace);
         shadowspill_pressurefit_context_result_destroy(result);
-        result->status = SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
 
     uint64_t pressure_cells = (uint64_t)context->residency->device_count *
@@ -2118,7 +2118,7 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
         residency_options(context, &workspace, strategy, &reduce_options);
         ShadowSpillResidencyResult base_result;
         uint64_t residency_started = monotonic_time_ns();
-        ShadowSpillPlannerStatus base_status = reduce_cached(
+        ShadowSpillStatus base_status = reduce_cached(
             context,
             &workspace,
             &reduce_options,
@@ -2142,13 +2142,13 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
                     rule,
                     (uint8_t)coalesced
                 );
-                if (base_status == SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE) {
+                if (base_status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
                     copy_analytic_error(diagnostic, &base_result);
-                } else if (base_status != SHADOWSPILL_PLANNER_OK) {
-                    result->status = SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+                } else if (base_status != SHADOWSPILL_STATUS_OK) {
+                    result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                     shadowspill_schedule_facts_destroy(&facts);
                     candidate_workspace_destroy(&workspace);
-                    return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+                    return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                 } else {
                     const ShadowSpillPressureFitWorkDiagnostics before =
                         workspace_work(&workspace);
@@ -2169,10 +2169,10 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
                     diagnostic->work.evaluation_time_ns =
                         monotonic_time_ns() - candidate_started;
                     if (valid < 0) {
-                        result->status = SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+                        result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                         shadowspill_schedule_facts_destroy(&facts);
                         candidate_workspace_destroy(&workspace);
-                        return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+                        return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                     }
                     if (valid > 0 &&
                         (result->selected_candidate_index ==
@@ -2184,10 +2184,10 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
                                 &workspace.selected,
                                 &workspace.schedule
                             ) != 0) {
-                            result->status = SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+                            result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                             shadowspill_schedule_facts_destroy(&facts);
                             candidate_workspace_destroy(&workspace);
-                            return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+                            return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                         }
                     }
                 }
@@ -2196,9 +2196,9 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_context(
         }
     }
 
-    ShadowSpillPlannerStatus status = SHADOWSPILL_PLANNER_OK;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (result->selected_candidate_index == SHADOWSPILL_PLANNER_NO_INDEX) {
-        status = SHADOWSPILL_PLANNER_NO_FEASIBLE_CANDIDATE;
+        status = SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
     } else {
         adopt_selected_schedule(result, &workspace);
     }

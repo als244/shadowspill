@@ -556,7 +556,7 @@ static ShadowSpillPressureFitContext operations_context(
     };
 }
 
-ShadowSpillPlannerStatus shadowspill_admission_operation_bounds(
+ShadowSpillStatus shadowspill_admission_operation_bounds(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
     const ShadowSpillIndexedSchedule *schedule,
@@ -565,21 +565,21 @@ ShadowSpillPlannerStatus shadowspill_admission_operation_bounds(
 ) {
     if (schedule == NULL || operation_capacity == NULL ||
         lease_capacity == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const ShadowSpillPressureFitContext context =
         operations_context(simulation, admission);
     if (!shadowspill_admission_topology_valid(&context)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (shadowspill_admission_counts(
             &context, schedule, lease_capacity, operation_capacity) != 0) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillPlannerStatus shadowspill_build_admission_operations(
+ShadowSpillStatus shadowspill_build_admission_operations(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionTopology *admission,
     const ShadowSpillIndexedSchedule *schedule,
@@ -591,12 +591,12 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
         result->boundaries == NULL || result->indices == NULL ||
         result->allocation_offsets == NULL || result->lease_aliases == NULL ||
         result->lease_starts == NULL || result->lease_retires == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const ShadowSpillPressureFitContext context =
         operations_context(simulation, admission);
     if (!shadowspill_admission_topology_valid(&context)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     ShadowSpillCandidateAdmissionWorkspace workspace = {0};
@@ -605,19 +605,19 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
         shadowspill_admission_reserve_buffers(&context, schedule, &workspace)
             != 0) {
         shadowspill_candidate_admission_workspace_destroy(&workspace);
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     if (workspace.operation_capacity > result->operation_capacity ||
         workspace.lease_capacity > result->lease_capacity) {
         shadowspill_candidate_admission_workspace_destroy(&workspace);
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     OperationTally tally;
     if (shadowspill_admission_build_operations(
             &context, schedule, &workspace, &tally) != 0) {
         shadowspill_candidate_admission_workspace_destroy(&workspace);
-        return SHADOWSPILL_PLANNER_INTERNAL_ERROR;
+        return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
     }
 
     for (uint64_t index = 0U; index < tally.operation_count; ++index) {
@@ -644,5 +644,5 @@ ShadowSpillPlannerStatus shadowspill_build_admission_operations(
     result->fetch_bytes = tally.fetch_bytes;
     result->evict_bytes = tally.evict_bytes;
     shadowspill_candidate_admission_workspace_destroy(&workspace);
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }

@@ -155,7 +155,7 @@ void shadowspill_release_task_invocation(
     const ShadowSpillTaskRecord *record
 );
 
-ShadowSpillRuntimeStatus shadowspill_validate_task_allocation(
+ShadowSpillStatus shadowspill_validate_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t requested_bytes,
     uint64_t charged_bytes,
@@ -168,7 +168,7 @@ uint64_t shadowspill_commit_task_allocation(
     uint64_t charged_bytes
 );
 
-ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
+ShadowSpillStatus shadowspill_release_task_allocation(
     ShadowSpillRuntime *runtime,
     uint64_t origin_task_id,
     uint64_t origin_task_invocation,
@@ -179,7 +179,7 @@ ShadowSpillRuntimeStatus shadowspill_release_task_allocation(
     uint64_t alignment_bytes
 );
 
-ShadowSpillRuntimeStatus shadowspill_validate_task_allocation_complete(
+ShadowSpillStatus shadowspill_validate_task_allocation_complete(
     ShadowSpillRuntime *runtime
 );
 
@@ -214,7 +214,7 @@ char *shadowspill_copy_action_trace_label(
     uint64_t size_bytes
 );
 
-ShadowSpillRuntimeStatus shadowspill_after_task_record(
+ShadowSpillStatus shadowspill_after_task_record(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskRecord *record,
     ShadowSpillBackendStream compute_stream

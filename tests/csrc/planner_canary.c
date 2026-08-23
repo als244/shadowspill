@@ -77,7 +77,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
     if (shadowspill_select_plan(candidates, 2U, &result) !=
-        SHADOWSPILL_PLANNER_OK) {
+        SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     if (result.selected_index != 1U || result.selected_candidate_id != 11U ||
@@ -163,7 +163,7 @@ int main(void) {
             &residency_problem,
             &residency_options,
             &residency_result
-        ) != SHADOWSPILL_PLANNER_OK) {
+        ) != SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     const uint8_t expected_resident[] = {
@@ -288,7 +288,7 @@ int main(void) {
             &context,
             &context_options,
             &context_result
-        ) != SHADOWSPILL_PLANNER_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         context_result.candidate_count != 1U ||
         context_result.selected_candidate_index != 0U ||
         context_result.work.simulation_calls != 1U ||
@@ -314,8 +314,8 @@ int main(void) {
     if (shadowspill_validate_pressurefit_program_context(
             &program_context,
             &preflight
-        ) != SHADOWSPILL_PLANNER_OK ||
-        preflight.status != SHADOWSPILL_PLANNER_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
+        preflight.status != SHADOWSPILL_STATUS_OK ||
         preflight.failure_kind != SHADOWSPILL_PREFLIGHT_NONE) {
         return EXIT_FAILURE;
     }
@@ -327,8 +327,8 @@ int main(void) {
     if (shadowspill_validate_pressurefit_program_context(
             &oversized_context,
             &preflight
-        ) != SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE ||
-        preflight.status != SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE ||
+        ) != SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE ||
+        preflight.status != SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE ||
         preflight.failure_kind != SHADOWSPILL_PREFLIGHT_WORKSPACE_CAPACITY ||
         preflight.error_boundary != 0 || preflight.required_bytes != 65U ||
         preflight.capacity_bytes != 64U) {
@@ -339,7 +339,7 @@ int main(void) {
             &program_context,
             &context_options,
             &program_context_result
-        ) != SHADOWSPILL_PLANNER_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         program_context_result.candidate_count != 1U ||
         program_context_result.selected_candidate_index != 0U ||
         program_context_result.work.simulation_calls != 1U ||

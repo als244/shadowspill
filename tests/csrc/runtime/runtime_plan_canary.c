@@ -8,7 +8,7 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
-static ShadowSpillRuntimeStatus canary_before_task(
+static ShadowSpillStatus canary_before_task(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
     ShadowSpillBackendStream stream,
@@ -17,26 +17,26 @@ static ShadowSpillRuntimeStatus canary_before_task(
 ) {
     const ShadowSpillObjectBinding *borrowed = NULL;
     uint32_t count = 0U;
-    ShadowSpillRuntimeStatus status = shadowspill_before_task_handle(
+    ShadowSpillStatus status = shadowspill_before_task_handle(
         runtime, handle, stream, &borrowed, &count
     );
-    if (status != SHADOWSPILL_RUNTIME_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     if (count > binding_capacity) {
         (void)shadowspill_abort_task_handle(runtime, handle);
-        return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (count != 0U) {
         if (bindings == NULL || borrowed == NULL) {
             (void)shadowspill_abort_task_handle(runtime, handle);
-            return SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         for (uint32_t index = 0U; index < count; ++index) {
             bindings[index] = borrowed[index];
         }
     }
-    return SHADOWSPILL_RUNTIME_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 typedef struct ConcurrentTaskInvocation {
@@ -45,8 +45,8 @@ typedef struct ConcurrentTaskInvocation {
     ShadowSpillBackendStream stream;
     _Atomic uint32_t *ready;
     _Atomic uint8_t *release;
-    ShadowSpillRuntimeStatus before_status;
-    ShadowSpillRuntimeStatus after_status;
+    ShadowSpillStatus before_status;
+    ShadowSpillStatus after_status;
 } ConcurrentTaskInvocation;
 
 static void *run_concurrent_task(void *context) {
@@ -67,7 +67,7 @@ static void *run_concurrent_task(void *context) {
         atomic_signal_fence(memory_order_seq_cst);
     }
     invocation->after_status = invocation->before_status ==
-            SHADOWSPILL_RUNTIME_OK
+            SHADOWSPILL_STATUS_OK
         ? shadowspill_after_task_handle(
               invocation->runtime, invocation->handle, invocation->stream
           )
@@ -116,16 +116,16 @@ static int distinct_task_handles_overlap(
     int failed = !first_started || !second_started;
     if (!failed) {
         await_ready(&ready, 2U);
-        failed = invocations[0].before_status != SHADOWSPILL_RUNTIME_OK ||
-            invocations[1].before_status != SHADOWSPILL_RUNTIME_OK;
+        failed = invocations[0].before_status != SHADOWSPILL_STATUS_OK ||
+            invocations[1].before_status != SHADOWSPILL_STATUS_OK;
     }
     atomic_store_explicit(&release, 1U, memory_order_release);
     failed = (first_started && pthread_join(threads[0], NULL) != 0) ||
         (second_started && pthread_join(threads[1], NULL) != 0) || failed ||
         (first_started && invocations[0].after_status !=
-            SHADOWSPILL_RUNTIME_OK) ||
+            SHADOWSPILL_STATUS_OK) ||
         (second_started && invocations[1].after_status !=
-            SHADOWSPILL_RUNTIME_OK);
+            SHADOWSPILL_STATUS_OK);
     return failed ? -1 : 0;
 }
 
@@ -149,13 +149,13 @@ static int same_task_handle_rejects_overlap(
         return -1;
     }
     await_ready(&ready, 1U);
-    int failed = invocation.before_status != SHADOWSPILL_RUNTIME_OK ||
+    int failed = invocation.before_status != SHADOWSPILL_STATUS_OK ||
         canary_before_task(
             runtime, handle, competing_stream, NULL, 0U
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
+        ) != SHADOWSPILL_STATUS_INVALID_STATE;
     atomic_store_explicit(&release, 1U, memory_order_release);
     failed = pthread_join(thread, NULL) != 0 || failed ||
-        invocation.after_status != SHADOWSPILL_RUNTIME_OK;
+        invocation.after_status != SHADOWSPILL_STATUS_OK;
     return failed ? -1 : 0;
 }
 
@@ -177,7 +177,7 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
     single_pool.runtime.route_count = 0U;
     ShadowSpillRuntime *runtime = NULL;
     int failed = shadowspill_runtime_create(&single_pool.runtime, &runtime) !=
-        SHADOWSPILL_RUNTIME_OK;
+        SHADOWSPILL_STATUS_OK;
     shadowspill_runtime_destroy(runtime);
     runtime = NULL;
 
@@ -225,18 +225,18 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
     ShadowSpillBackendStream compute = {{0U, 0U}};
     ShadowSpillAllocation allocation = {0};
     failed = failed || shadowspill_runtime_create(&sparse, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
         shadowspill_memory_pool_allocate(
             runtime, 2U, 64U, 16U, compute, &allocation
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         allocation.pool_id != 2U ||
         shadowspill_memory_pool_free(
             runtime, 2U, allocation.allocation_id, compute
-        ) != SHADOWSPILL_RUNTIME_OK ||
-        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &invalid_plan, &plan) !=
-            SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
         plan != NULL;
     if (compute.words[0] != 0U) {
         (void)shadowspill_mock_destroy_compute_stream(mock, compute);
@@ -280,15 +280,15 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     const ShadowSpillTaskHandle *second_handle = NULL;
     ShadowSpillBackendStream second_compute = {{0U, 0U}};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &first) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(first, &first_task, &first_handle) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(second, &second_task, &second_handle) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         first_handle == NULL || second_handle == NULL ||
         first_handle == second_handle ||
         shadowspill_task_id(first_handle) != 7U ||
@@ -321,14 +321,14 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     }
     if (!failed) {
         failed = shadowspill_runtime_wait_idle(runtime) !=
-            SHADOWSPILL_RUNTIME_OK;
+            SHADOWSPILL_STATUS_OK;
     }
     if (first != NULL) {
-        failed = shadowspill_plan_close(first) != SHADOWSPILL_RUNTIME_OK || failed;
+        failed = shadowspill_plan_close(first) != SHADOWSPILL_STATUS_OK || failed;
         shadowspill_plan_destroy(first);
     }
     if (second != NULL) {
-        failed = shadowspill_plan_close(second) != SHADOWSPILL_RUNTIME_OK || failed;
+        failed = shadowspill_plan_close(second) != SHADOWSPILL_STATUS_OK || failed;
         shadowspill_plan_destroy(second);
     }
     if (compute.words[0] != 0U) {
@@ -377,34 +377,34 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
     const ShadowSpillActionBatchHandle *batch = NULL;
     ShadowSpillRuntimeStatistics statistics = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &idle_plan) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &busy_plan) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, object.object_id, &object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             busy_plan, 1U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_action_batch(
             busy_plan, 0U, &fetch, 1U, &batch
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     if (!failed) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, batch, compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_plan_wait_idle(idle_plan) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_plan_wait_idle(idle_plan) != SHADOWSPILL_STATUS_OK ||
             shadowspill_runtime_statistics(runtime, &statistics) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             statistics.queued_actions != 1U ||
-            shadowspill_plan_wait_idle(busy_plan) != SHADOWSPILL_RUNTIME_OK ||
+            shadowspill_plan_wait_idle(busy_plan) != SHADOWSPILL_STATUS_OK ||
             shadowspill_runtime_statistics(runtime, &statistics) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             statistics.queued_actions != 0U;
     }
     if (object_handle != NULL) {
@@ -531,45 +531,45 @@ static int plan_selects_nondefault_pool_pair(void) {
     ShadowSpillObjectBinding binding = {0};
     ShadowSpillAllocation reclaimed = {0};
     int failed = shadowspill_runtime_create(&config, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &alternate, &plan) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &mismatched, &invalid) !=
-            SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
         invalid != NULL ||
         shadowspill_register_object(runtime, &object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_write_object(
             runtime, object.object_id, 2U, payload, sizeof(payload)
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, object.object_id, &object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_action_batch(
             plan, 0U, &fetch, 1U, &initial_actions
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(plan, &task, &task_handle) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     if (!failed) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, initial_actions, compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             canary_before_task(
                 runtime, task_handle, compute, &binding, 1U
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             binding.pointer == NULL ||
             memcmp(binding.pointer, payload, sizeof(payload)) != 0 ||
             shadowspill_after_task_handle(runtime, task_handle, compute) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             shadowspill_runtime_wait_idle(runtime) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             shadowspill_read_object(
                 runtime, object.object_id, 2U, restored, sizeof(restored)
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             memcmp(restored, payload, sizeof(payload)) != 0;
     }
     if (object_handle != NULL) {
@@ -578,15 +578,15 @@ static int plan_selects_nondefault_pool_pair(void) {
     shadowspill_plan_destroy(plan);
     if (runtime != NULL && !failed) {
         failed = shadowspill_unregister_object(runtime, object.object_id) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             shadowspill_memory_pool_allocate(
                 runtime, 2U, 4096U, 16U, compute, &reclaimed
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_memory_pool_free(
                 runtime, 2U, reclaimed.allocation_id, compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_runtime_wait_idle(runtime) !=
-                SHADOWSPILL_RUNTIME_OK;
+                SHADOWSPILL_STATUS_OK;
     } else if (runtime != NULL) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
@@ -640,35 +640,35 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
     const ShadowSpillTaskHandle *first_task = NULL;
     const ShadowSpillTaskHandle *second_task = NULL;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &first_object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &second_object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &first) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, 1001U, &first_object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, 2002U, &second_object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             first, 7U, first_object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             second, 7U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(first, &task, &first_task) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(second, &task, &second_task) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         first_task == NULL || second_task == NULL ||
         shadowspill_plan_bind_object(
             first, 7U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_INVALID_STATE;
+        ) != SHADOWSPILL_STATUS_INVALID_STATE;
     shadowspill_object_handle_release(first_object_handle);
     shadowspill_object_handle_release(second_object_handle);
     shadowspill_plan_destroy(first);
@@ -726,47 +726,47 @@ static int task_publications_resolve_plan_local_objects_once(void) {
     ShadowSpillObjectBinding first_binding = {0};
     ShadowSpillObjectBinding second_binding = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &first_object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &second_object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, first_object.object_id, &first_object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, second_object.object_id, &second_object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &first) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             first, 5U, first_object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             second, 5U, second_object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(first, &task, &first_task) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(second, &task, &second_task) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         first_task == NULL || second_task == NULL || first_task == second_task ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     if (!failed) {
         failed = canary_before_task(
                 runtime, first_task, compute, NULL, 0U
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_memory_pool_allocate(
                 runtime, 0U, 64U, 16U, compute, &first_allocation
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_task_publish_allocation(
                 runtime,
                 first_task,
                 0U,
                 first_allocation.pointer,
                 &first_binding
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             first_binding.object_id != first_object.object_id ||
             shadowspill_task_publish_allocation(
                 runtime,
@@ -774,27 +774,27 @@ static int task_publications_resolve_plan_local_objects_once(void) {
                 1U,
                 first_allocation.pointer,
                 &first_binding
-            ) != SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
+            ) != SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
             shadowspill_after_task_handle(runtime, first_task, compute) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             canary_before_task(
                 runtime, second_task, compute, NULL, 0U
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_memory_pool_allocate(
                 runtime, 0U, 64U, 16U, compute, &second_allocation
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_task_publish_allocation(
                 runtime,
                 second_task,
                 0U,
                 second_allocation.pointer,
                 &second_binding
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             second_binding.object_id != second_object.object_id ||
             second_binding.object_id == first_binding.object_id ||
             shadowspill_after_task_handle(runtime, second_task, compute) !=
-                SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+                SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
     }
     if (first_object_handle != NULL) {
         (void)shadowspill_object_handle_release(first_object_handle);
@@ -845,40 +845,40 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillRuntimeStatistics statistics = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, object.object_id, &public_reference
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &first) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &second) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             first, 1U, public_reference, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             second, 2U, public_reference, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_unregister_object(runtime, object.object_id) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_object_snapshot(
             runtime, object.object_id, &snapshot
-        ) != SHADOWSPILL_RUNTIME_OK;
+        ) != SHADOWSPILL_STATUS_OK;
     if (!failed) {
         failed = shadowspill_object_release_generation(
                 public_reference, snapshot.generation + 1U
-            ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+            ) != SHADOWSPILL_STATUS_INVALID_STATE ||
             shadowspill_object_release_generation(
                 public_reference, snapshot.generation
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_object_snapshot(
                 runtime, object.object_id, &snapshot
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
             shadowspill_runtime_statistics(runtime, &statistics) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             statistics.spill_allocated_bytes != 0U;
     }
     if (!failed) {
@@ -886,24 +886,24 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
         first = NULL;
         failed = shadowspill_object_snapshot(
                 runtime, object.object_id, &snapshot
-            ) != SHADOWSPILL_RUNTIME_OK;
+            ) != SHADOWSPILL_STATUS_OK;
     }
     if (!failed) {
         shadowspill_plan_destroy(second);
         second = NULL;
         failed = shadowspill_object_snapshot(
                 runtime, object.object_id, &snapshot
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_object_handle_release(public_reference) !=
-                SHADOWSPILL_RUNTIME_OK;
+                SHADOWSPILL_STATUS_OK;
         public_reference = NULL;
     }
     if (!failed) {
         failed = shadowspill_object_snapshot(
                 runtime, object.object_id, &snapshot
-            ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+            ) != SHADOWSPILL_STATUS_INVALID_STATE ||
             shadowspill_runtime_statistics(runtime, &statistics) !=
-                SHADOWSPILL_RUNTIME_OK ||
+                SHADOWSPILL_STATUS_OK ||
             statistics.registered_objects != 0U ||
             statistics.spill_allocated_bytes != 0U;
     }
@@ -953,33 +953,33 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     ShadowSpillObjectBinding bindings[2] = {{0}};
     ShadowSpillAllocation caller_allocation = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &object) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, object.object_id, &object_handle
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_create(runtime, &roles, &plan) !=
-            SHADOWSPILL_RUNTIME_OK ||
+            SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_action_batch(
             plan, 77U, &fetch, 1U, &batch
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         batch == NULL ||
         shadowspill_plan_admit_object_acquisition(
             plan, requested_objects, 2U, &acquisition
-        ) != SHADOWSPILL_RUNTIME_OK ||
+        ) != SHADOWSPILL_STATUS_OK ||
         acquisition == NULL ||
         shadowspill_mock_create_compute_stream(mock, &compute) != 0;
     if (!failed) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, batch, compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_acquire_objects_handle(
                 runtime, acquisition, compute, bindings, 2U
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             bindings[0].object_id != object.object_id ||
             bindings[0].pointer == NULL ||
             bindings[0].pointer != bindings[1].pointer ||
@@ -990,8 +990,8 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
                 compute,
                 NULL,
                 0U
-            ) != SHADOWSPILL_RUNTIME_INVALID_ARGUMENT ||
-            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
             shadowspill_transfer_acquired_object_to_caller(
                 runtime,
                 acquisition,
@@ -1001,7 +1001,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
                 bindings[0].generation + 1U,
                 bindings[0].allocation_id,
                 &caller_allocation
-            ) != SHADOWSPILL_RUNTIME_INVALID_STATE ||
+            ) != SHADOWSPILL_STATUS_INVALID_STATE ||
             shadowspill_transfer_acquired_object_to_caller(
                 runtime,
                 acquisition,
@@ -1011,15 +1011,15 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
                 bindings[0].generation,
                 bindings[0].allocation_id,
                 &caller_allocation
-            ) != SHADOWSPILL_RUNTIME_OK ||
+            ) != SHADOWSPILL_STATUS_OK ||
             caller_allocation.pointer != bindings[0].pointer ||
             shadowspill_memory_pool_free(
                 runtime,
                 caller_allocation.pool_id,
                 caller_allocation.allocation_id,
                 compute
-            ) != SHADOWSPILL_RUNTIME_OK ||
-            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_RUNTIME_OK;
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
     }
     if (object_handle != NULL) {
         (void)shadowspill_object_handle_release(object_handle);

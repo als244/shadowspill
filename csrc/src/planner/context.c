@@ -408,7 +408,7 @@ static void record_access(
     }
 }
 
-static ShadowSpillPlannerStatus derive_task_facts(
+static ShadowSpillStatus derive_task_facts(
     const ShadowSpillSimulationProgram *program,
     PreparedContext *prepared
 ) {
@@ -419,7 +419,7 @@ static ShadowSpillPlannerStatus derive_task_facts(
                          program->output_count) != 0 ||
         validate_offsets(program->mutation_offsets, program->task_count,
                          program->mutation_count) != 0) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     for (uint32_t device = 0U; device < program->device_count; ++device) {
@@ -427,12 +427,12 @@ static ShadowSpillPlannerStatus derive_task_facts(
             program->devices[device].capacity_bytes;
     }
     uint64_t ideal_end = 0U;
-    ShadowSpillPlannerStatus status = SHADOWSPILL_PLANNER_OK;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     for (uint32_t task = 0U; task < program->task_count; ++task) {
         uint32_t device = program->task_device[task];
         if (device >= program->device_count ||
             add_u64(ideal_end, program->task_runtime_ns[task], &ideal_end) != 0) {
-            status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             break;
         }
         prepared->task_ideal_end_ns[task] = ideal_end;
@@ -449,7 +449,7 @@ static ShadowSpillPlannerStatus derive_task_facts(
         for (uint32_t index = input_start; index < input_end; ++index) {
             uint32_t alias = program->input_aliases[index];
             if (alias >= program->alias_count) {
-                status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+                status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
                 break;
             }
             if (program->alias_size_bytes[alias] != 0U) {
@@ -460,13 +460,13 @@ static ShadowSpillPlannerStatus derive_task_facts(
                 record_access(prepared, alias, task, task, boundary_count);
             }
         }
-        if (status != SHADOWSPILL_PLANNER_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             break;
         }
         for (uint32_t index = mutation_start; index < mutation_end; ++index) {
             uint32_t alias = program->mutation_aliases[index];
             if (alias >= program->alias_count) {
-                status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+                status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
                 break;
             }
             if (program->alias_size_bytes[alias] != 0U) {
@@ -479,13 +479,13 @@ static ShadowSpillPlannerStatus derive_task_facts(
                 ] = 1U;
             }
         }
-        if (status != SHADOWSPILL_PLANNER_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             break;
         }
         for (uint32_t index = output_start; index < output_end; ++index) {
             uint32_t alias = program->output_aliases[index];
             if (alias >= program->alias_count) {
-                status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+                status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
                 break;
             }
             if (program->alias_size_bytes[alias] == 0U) {
@@ -506,7 +506,7 @@ static ShadowSpillPlannerStatus derive_task_facts(
                 ] = 1U;
             }
         }
-        if (status != SHADOWSPILL_PLANNER_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             break;
         }
     }
@@ -514,7 +514,7 @@ static ShadowSpillPlannerStatus derive_task_facts(
     return status;
 }
 
-static ShadowSpillPlannerStatus finalize_boundary_capacities(
+static ShadowSpillStatus finalize_boundary_capacities(
     const ShadowSpillSimulationProgram *program,
     PreparedContext *prepared
 ) {
@@ -533,15 +533,15 @@ static ShadowSpillPlannerStatus finalize_boundary_capacities(
                 prepared->error_boundary = (int32_t)boundary;
                 prepared->failure_required_bytes = workspace;
                 prepared->failure_capacity_bytes = capacity;
-                return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
+                return SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
             }
             prepared->boundary_capacity_bytes[position] = capacity - workspace;
         }
     }
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-static ShadowSpillPlannerStatus finalize_alias_facts(
+static ShadowSpillStatus finalize_alias_facts(
     const ShadowSpillSimulationProgram *program,
     PreparedContext *prepared
 ) {
@@ -561,7 +561,7 @@ static ShadowSpillPlannerStatus finalize_alias_facts(
                 program->devices[device].evict_latency_ns,
                 &prepared->evict_runtime_ns[alias]
             ) != 0) {
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         if (program->alias_size_bytes[alias] != 0U &&
             prepared->initial_location[alias] == SHADOWSPILL_MEMORY_DEVICE) {
@@ -581,7 +581,7 @@ static ShadowSpillPlannerStatus finalize_alias_facts(
                 SHADOWSPILL_PREFLIGHT_MISSING_INITIAL_RESIDENCY;
             prepared->error_alias = alias;
             prepared->error_boundary = 0;
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         uint8_t seen_write = 0U;
         for (uint32_t position = 0U; position < boundary_count; ++position) {
@@ -592,10 +592,10 @@ static ShadowSpillPlannerStatus finalize_alias_facts(
             prepared->write_prefix[cell] = seen_write;
         }
     }
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-static ShadowSpillPlannerStatus validate_required_floor(
+static ShadowSpillStatus validate_required_floor(
     const ShadowSpillSimulationProgram *program,
     PreparedContext *prepared
 ) {
@@ -619,7 +619,7 @@ static ShadowSpillPlannerStatus validate_required_floor(
             size_t pressure = (size_t)device * boundary_count + position;
             if (add_u64(prepared->required_bytes[pressure], size,
                         &prepared->required_bytes[pressure]) != 0) {
-                return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+                return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             }
         }
     }
@@ -637,7 +637,7 @@ static ShadowSpillPlannerStatus validate_required_floor(
                     program->alias_size_bytes[alias],
                     &prepared->required_bytes[pressure]
                 ) != 0) {
-                return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+                return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             }
         }
     }
@@ -658,11 +658,11 @@ static ShadowSpillPlannerStatus validate_required_floor(
                     prepared->boundary_capacity_bytes[
                         (uint64_t)device * boundary_count + position
                     ];
-                return SHADOWSPILL_PLANNER_ANALYTIC_INFEASIBLE;
+                return SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
             }
         }
     }
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
 static void build_anchor_seed(
@@ -693,7 +693,7 @@ static void build_anchor_seed(
     }
 }
 
-static ShadowSpillPlannerStatus greedily_place_initial_aliases(
+static ShadowSpillStatus greedily_place_initial_aliases(
     const ShadowSpillSimulationProgram *program,
     PreparedContext *prepared
 ) {
@@ -715,7 +715,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
         free(cold);
         free(cursor);
         free(initial_bytes);
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     uint32_t boundary_count = program->task_count + 1U;
     uint32_t next = 0U;
@@ -746,7 +746,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
             free(cold);
             free(cursor);
             free(initial_bytes);
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         value->miss_ns = finish > value->deadline
             ? finish - value->deadline
@@ -757,7 +757,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
             free(cold);
             free(cursor);
             free(initial_bytes);
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         value->slack_ns = value->deadline > unavailable
             ? value->deadline - unavailable
@@ -775,7 +775,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
             free(cold);
             free(cursor);
             free(initial_bytes);
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
     }
     qsort(cold, cold_count, sizeof(*cold), compare_cold_placement);
@@ -786,7 +786,7 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
             free(cold);
             free(cursor);
             free(initial_bytes);
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         if (proposed > prepared->boundary_capacity_bytes[
                 (uint64_t)value->device * (program->task_count + 1U)
@@ -808,10 +808,10 @@ static ShadowSpillPlannerStatus greedily_place_initial_aliases(
     free(cold);
     free(cursor);
     free(initial_bytes);
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-static ShadowSpillPlannerStatus prepare_context(
+static ShadowSpillStatus prepare_context(
     const ShadowSpillPressureFitProgramContext *source,
     const ShadowSpillPressureFitContextOptions *options,
     PreparedContext *prepared
@@ -822,7 +822,7 @@ static ShadowSpillPlannerStatus prepare_context(
     prepared->error_boundary = INT32_MIN;
     const ShadowSpillSimulationProgram *program = source->simulation;
     if (allocate_prepared_buffers(program, prepared) != 0) {
-        return SHADOWSPILL_PLANNER_ALLOCATION_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     if (bind_residency(program->alias_count, program->initial_count,
                        program->initial_aliases, program->initial_locations,
@@ -830,10 +830,10 @@ static ShadowSpillPlannerStatus prepare_context(
         bind_residency(program->alias_count, program->final_count,
                        program->final_aliases, program->final_locations,
                        prepared->final_location) != 0) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    ShadowSpillPlannerStatus status = derive_task_facts(program, prepared);
-    if (status != SHADOWSPILL_PLANNER_OK) {
+    ShadowSpillStatus status = derive_task_facts(program, prepared);
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     if (source->admission != NULL) {
@@ -841,27 +841,27 @@ static ShadowSpillPlannerStatus prepare_context(
             source->admission->object_capacity_bytes == 0U ||
             source->admission->object_capacity_bytes >
                 source->admission->pool_capacity_bytes) {
-            return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         prepared->device_capacity_bytes[0] =
             source->admission->object_capacity_bytes;
     }
     status = finalize_boundary_capacities(program, prepared);
-    if (status != SHADOWSPILL_PLANNER_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     status = finalize_alias_facts(program, prepared);
-    if (status != SHADOWSPILL_PLANNER_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     status = validate_required_floor(program, prepared);
-    if (status != SHADOWSPILL_PLANNER_OK) {
+    if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
     build_anchor_seed(program, prepared);
     if (options->initial_placement == SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
         status = greedily_place_initial_aliases(program, prepared);
-        if (status != SHADOWSPILL_PLANNER_OK) {
+        if (status != SHADOWSPILL_STATUS_OK) {
             return status;
         }
     }
@@ -899,26 +899,26 @@ static ShadowSpillPlannerStatus prepare_context(
         .alias_json_names = source->alias_json_names,
         .task_json_names = source->task_json_names,
     };
-    return SHADOWSPILL_PLANNER_OK;
+    return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_program_context(
+ShadowSpillStatus shadowspill_evaluate_pressurefit_program_context(
     const ShadowSpillPressureFitProgramContext *context,
     const ShadowSpillPressureFitContextOptions *options,
     ShadowSpillPressureFitContextResult *result
 ) {
     if (result == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     memset(result, 0, sizeof(*result));
     result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
-    result->status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     if (!program_context_valid(context, options)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     PreparedContext prepared = {0};
-    ShadowSpillPlannerStatus status = prepare_context(context, options, &prepared);
-    if (status == SHADOWSPILL_PLANNER_OK) {
+    ShadowSpillStatus status = prepare_context(context, options, &prepared);
+    if (status == SHADOWSPILL_STATUS_OK) {
         status = shadowspill_evaluate_pressurefit_context(
             &prepared.context,
             options,
@@ -931,15 +931,15 @@ ShadowSpillPlannerStatus shadowspill_evaluate_pressurefit_program_context(
     return status;
 }
 
-ShadowSpillPlannerStatus shadowspill_validate_pressurefit_program_context(
+ShadowSpillStatus shadowspill_validate_pressurefit_program_context(
     const ShadowSpillPressureFitProgramContext *context,
     ShadowSpillPressureFitPreflightResult *result
 ) {
     if (result == NULL) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     memset(result, 0, sizeof(*result));
-    result->status = SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+    result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     result->error_device = UINT32_MAX;
     result->error_alias = UINT32_MAX;
     result->error_boundary = INT32_MIN;
@@ -947,11 +947,11 @@ ShadowSpillPlannerStatus shadowspill_validate_pressurefit_program_context(
         .initial_placement = SHADOWSPILL_INITIAL_PLACEMENT_REQUIRED,
     };
     if (!program_context_valid(context, &options)) {
-        return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     PreparedContext prepared = {0};
-    ShadowSpillPlannerStatus status = prepare_context(context, &options, &prepared);
+    ShadowSpillStatus status = prepare_context(context, &options, &prepared);
     result->status = status;
     result->failure_kind = prepared.failure_kind;
     result->error_device = prepared.error_device;

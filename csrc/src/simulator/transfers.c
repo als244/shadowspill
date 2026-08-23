@@ -160,7 +160,7 @@ static int submit_action(
         if (size > (uint64_t)INT64_MAX) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 task,
                 alias,
@@ -184,7 +184,7 @@ static int submit_action(
             )) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 task,
                 alias,
@@ -197,7 +197,7 @@ static int submit_action(
             )) {
             shadowspill_set_capacity_error(
                 result,
-                SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
+                SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
                 work,
                 task,
                 alias,
@@ -214,7 +214,7 @@ static int submit_action(
         if (state->device_allocated == 0U || state->device_ready == 0U) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INVALID_RELEASE,
+                SHADOWSPILL_STATUS_INVALID_RELEASE,
                 work,
                 task,
                 alias,
@@ -225,7 +225,7 @@ static int submit_action(
         if (state->fetch_pending != 0U || state->evict_pending != 0U) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_RELEASE_TRANSFER_CONFLICT,
+                SHADOWSPILL_STATUS_RELEASE_TRANSFER_CONFLICT,
                 work,
                 task,
                 alias,
@@ -248,7 +248,7 @@ static int submit_action(
             )) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 task,
                 alias,
@@ -268,7 +268,7 @@ static int submit_action(
         if (state->device_allocated == 0U || state->device_ready == 0U) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INVALID_OFFLOAD,
+                SHADOWSPILL_STATUS_INVALID_OFFLOAD,
                 work,
                 task,
                 alias,
@@ -287,7 +287,7 @@ static int submit_action(
                 ) || total > program->spill_capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_SIMULATION_OFFLOAD_SPILL_CAPACITY,
+                    SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
                     work,
                     task,
                     alias,
@@ -309,7 +309,7 @@ static int submit_action(
             (state->spill_ready == 0U && state->evict_pending == 0U)) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INVALID_PREFETCH,
+                SHADOWSPILL_STATUS_INVALID_PREFETCH,
                 work,
                 task,
                 alias,
@@ -328,7 +328,7 @@ static int submit_action(
                     used > program->devices[device].capacity_bytes - size) {
                     shadowspill_set_capacity_error(
                         result,
-                        SHADOWSPILL_SIMULATION_PREFETCH_DEVICE_CAPACITY,
+                        SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
                         work,
                         task,
                         alias,
@@ -354,7 +354,7 @@ static int submit_action(
         )) {
         shadowspill_set_error(
             result,
-            SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+            SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
             work,
             task,
             alias,
@@ -432,7 +432,7 @@ int shadowspill_complete_transfer(
         if (size > (uint64_t)INT64_MAX) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 transfer->trigger_task,
                 transfer->alias,
@@ -454,7 +454,7 @@ int shadowspill_complete_transfer(
             )) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
                 transfer->trigger_task,
                 transfer->alias,
@@ -489,7 +489,7 @@ int shadowspill_complete_transfer(
         )) {
         shadowspill_set_error(
             result,
-            SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+            SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
             work,
             transfer->trigger_task,
             transfer->alias,
@@ -503,7 +503,7 @@ int shadowspill_complete_transfer(
     if (!append_transfer_interval(program, work, result, index)) {
         shadowspill_set_error(
             result,
-            SHADOWSPILL_SIMULATION_INTERNAL_ERROR,
+            SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
             work,
             transfer->trigger_task,
             transfer->alias,
