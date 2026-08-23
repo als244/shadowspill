@@ -50,6 +50,11 @@ trees.
    inputs/outputs, bounded policy search, repair, and pseudocode.
 7. [Physical admission and offset handling](architecture/physical-admission.md)
    — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
+   Two pages go under it: [from a resolved program to
+   leases](architecture/admission-leases.md), which derives what a schedule
+   allocates and when each lease is live, and [fixed-offset
+   placement](architecture/fixed-placement.md), which assigns the addresses and
+   explains what the cost of doing so depends on.
 8. [Planning orchestration](architecture/planning.md) — reusable artifacts,
    transfer inputs, callable publication, and PlanReport.
 
