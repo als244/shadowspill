@@ -40,13 +40,26 @@ retry. The controller advances to the next point/Program and preserves the
 failure evidence. Use `--resume` only when intentionally continuing an existing
 baseline.
 
-Resume uses the same launch command plus `--resume`. It locates the exact
-incomplete baseline from the config and corpus identities, validates every
-terminal point, and starts at the first pending point. If the repository
-revision changed, automatic resume is allowed only for a narrow, recorded set
-of controller/journaling/summary changes; any planner, runtime, simulator, or
-planner-input change is rejected. Resume commands and source compatibility are
-appended to `resume-commands.log` and `resume-history.jsonl`.
+Resume uses the same launch command plus `--resume`. It locates the incomplete
+baseline from the config and corpus identities, validates every terminal point,
+and starts at the first pending point.
+
+The repository revision does not gate it. A run that was stopped days and many
+commits ago resumes and finishes, because finishing it is the point; requiring
+a matching revision only means replaying hours of planning to learn the same
+thing. What does gate resume is what is being measured: the frontier config and
+the corpus manifest must match, and a baseline whose either differs is not the
+same baseline.
+
+Instead of refusing, the baseline records what changed. Every point carries the
+revision that produced it, so a mixed-revision run says so per point rather
+than looking uniform. The resume record classifies the relationship as
+`exact_source`, `harness_only`, `planner_changed`, `unrelated_revision`, or
+`dirty_worktree`, and lists the files that differ. Resume commands and those
+relationships are appended to `resume-commands.log` and `resume-history.jsonl`.
+
+Read that before comparing a resumed baseline's wall times against another:
+points from different revisions were produced by different code.
 
 If the controller was interrupted while a point was running, that attempt stays
 in the journal with status `interrupted` but does not consume the point's attempt

@@ -14,7 +14,7 @@ from .controller import ControllerOptions, run_frontier_collection
 from .provenance import (
     RepositoryProvenance,
     capture_repository_provenance,
-    compatible_resume_provenance,
+    resume_provenance_relationship,
 )
 from .source import (
     CorpusProgramCase,
@@ -116,6 +116,7 @@ def main() -> int:
                 planning_cache=arguments.planning_cache.expanduser().resolve(),
                 resume=arguments.resume,
                 verbose_pressurefit=arguments.verbose_pressurefit,
+                revision=provenance.head,
             ),
             repository_root=repository_root,
         )
@@ -206,9 +207,10 @@ def _find_resume_baseline(
             "resume_head": provenance.head,
             "changed_files": [],
             "classification": "exact_source",
+            "spans_revisions": False,
         }
     matches: list[tuple[Path, dict[str, object]]] = []
-    rejected: list[str] = []
+    unreadable: list[str] = []
     for directory in sorted(output.glob("*")):
         manifest_path = directory / "manifest.json"
         if not manifest_path.is_file():
@@ -228,25 +230,26 @@ def _find_resume_baseline(
             if pending == 0:
                 continue
         try:
-            compatibility = compatible_resume_provenance(
+            relationship = resume_provenance_relationship(
                 provenance,
                 manifest.get("repository"),
             )
         except ValueError as error:
-            rejected.append(f"{directory.name}: {error}")
+            unreadable.append(f"{directory.name}: {error}")
         else:
-            matches.append((directory, compatibility))
+            matches.append((directory, relationship))
     if len(matches) > 1:
         raise ValueError(
-            "--resume matched multiple compatible baselines: "
+            "--resume matched more than one baseline for this config and "
+            "corpus; keep one and move the rest aside: "
             + ", ".join(path.name for path, _ in matches)
         )
     if matches:
         return matches[0]
-    if rejected:
+    if unreadable:
         raise ValueError(
-            "--resume found matching but source-incompatible baselines: "
-            + "; ".join(rejected)
+            "--resume found matching baselines whose provenance is unreadable: "
+            + "; ".join(unreadable)
         )
     return None, None
 

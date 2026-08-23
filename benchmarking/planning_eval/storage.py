@@ -237,6 +237,8 @@ def recover_interrupted_attempt(
 def begin_point_attempt(
     directory: Path,
     request: FrontierPointRequest,
+    *,
+    revision: str,
 ) -> int:
     status_path = directory / "status.json"
     status = read_object(status_path)
@@ -259,6 +261,7 @@ def begin_point_attempt(
         {
             "attempt": attempt,
             "status": "running",
+            "revision": revision,
             "started_at": utc_now(),
             "completed_at": None,
             "elapsed_seconds": None,
@@ -314,6 +317,7 @@ def finish_point_attempt(
             "request_digest": request.digest,
             "point_id": request.point_id,
             "status": status_name,
+            "revision": current.get("revision"),
             **final_evidence,
         }
         atomic_json(directory / "point.json", point)

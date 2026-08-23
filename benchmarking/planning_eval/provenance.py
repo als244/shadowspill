@@ -81,47 +81,66 @@ def environment_provenance() -> dict[str, object]:
     }
 
 
-def compatible_resume_provenance(
+def resume_provenance_relationship(
     current: RepositoryProvenance,
     recorded: object,
 ) -> dict[str, object]:
-    """Prove that an older baseline differs only in orchestration evidence."""
+    """Describe how a baseline's source relates to the current worktree.
+
+    Resume never refuses over a revision. A run that spans revisions is a fact
+    about the artifact, not a reason to make someone replay fifteen hours of
+    planning, so this classifies the relationship and lets the baseline record
+    it. Every point carries the revision that produced it, so a reader can see
+    exactly where a baseline changed underneath itself.
+
+    What still has to match is what is being measured: the frontier config and
+    the corpus. Those are checked separately, and they do refuse.
+    """
 
     if not isinstance(recorded, dict):
         raise ValueError("baseline repository provenance is invalid")
     previous_head = recorded.get("head")
-    previous_dirty = recorded.get("dirty")
     if not isinstance(previous_head, str) or len(previous_head) != 40:
         raise ValueError("baseline repository head is invalid")
-    if previous_dirty is not False:
-        raise ValueError("automatic cross-revision resume requires a clean baseline")
-    if current.dirty:
-        raise ValueError("automatic cross-revision resume requires a clean worktree")
-    if not _is_ancestor(current.repository_root, previous_head, current.head):
-        raise ValueError("baseline revision is not an ancestor of the current revision")
-    changed = tuple(
-        sorted(
-            item
-            for item in _git(
-                current.repository_root,
-                "diff",
-                "--name-only",
-                f"{previous_head}..{current.head}",
-            ).splitlines()
-            if item
+    previous_dirty = bool(recorded.get("dirty"))
+
+    if previous_head == current.head and not previous_dirty and not current.dirty:
+        return {
+            "recorded_head": previous_head,
+            "resume_head": current.head,
+            "changed_files": [],
+            "classification": "exact_source",
+            "spans_revisions": False,
+        }
+    changed: tuple[str, ...] = ()
+    related = _is_ancestor(current.repository_root, previous_head, current.head)
+    if related:
+        changed = tuple(
+            sorted(
+                item
+                for item in _git(
+                    current.repository_root,
+                    "diff",
+                    "--name-only",
+                    f"{previous_head}..{current.head}",
+                ).splitlines()
+                if item
+            )
         )
-    )
-    unsafe = tuple(item for item in changed if item not in _HARNESS_ONLY_RESUME_PATHS)
-    if unsafe:
-        raise ValueError(
-            "planner-affecting files changed since the baseline: "
-            + ", ".join(unsafe)
-        )
+    if previous_dirty or current.dirty:
+        classification = "dirty_worktree"
+    elif not related:
+        classification = "unrelated_revision"
+    elif all(item in _HARNESS_ONLY_RESUME_PATHS for item in changed):
+        classification = "harness_only"
+    else:
+        classification = "planner_changed"
     return {
         "recorded_head": previous_head,
         "resume_head": current.head,
         "changed_files": list(changed),
-        "classification": "harness_only",
+        "classification": classification,
+        "spans_revisions": True,
     }
 
 
@@ -164,6 +183,6 @@ def _reject_untracked_runtime_sources(status: str) -> None:
 __all__ = [
     "RepositoryProvenance",
     "capture_repository_provenance",
-    "compatible_resume_provenance",
     "environment_provenance",
+    "resume_provenance_relationship",
 ]

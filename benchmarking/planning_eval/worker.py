@@ -151,8 +151,9 @@ def _evaluate_point(
     point_count: int,
     global_ordinal: int,
     global_point_count: int,
+    revision: str,
 ) -> None:
-    attempt = begin_point_attempt(directory, request)
+    attempt = begin_point_attempt(directory, request, revision=revision)
     write_active_point(paths.case_directory(case), request)
     started_at = utc_now()
     started = time.perf_counter()
@@ -333,6 +334,7 @@ def _print_point_start(
     point_count: int,
     global_ordinal: int,
     global_point_count: int,
+    revision: str,
 ) -> None:
     identity = case.identity
     execution_budget = request.axes.execution_budget_bytes
@@ -447,6 +449,7 @@ def main() -> int:
     parser.add_argument("--planning-cache", type=Path, required=True)
     parser.add_argument("--global-point-base", type=int, required=True)
     parser.add_argument("--global-point-count", type=int, required=True)
+    parser.add_argument("--revision", required=True)
     parser.add_argument("--verbose-pressurefit", action="store_true")
     arguments = parser.parse_args()
     config = load_frontier_config(arguments.config)
@@ -458,6 +461,7 @@ def main() -> int:
         verbose_pressurefit=arguments.verbose_pressurefit,
         global_point_base=arguments.global_point_base,
         global_point_count=arguments.global_point_count,
+        revision=arguments.revision,
     )
     return 0 if result["passed"] else 2
 
