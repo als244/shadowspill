@@ -538,7 +538,7 @@ supported contract.
 | `shadowspill.planner.admission` | Immutable framework-neutral task and pool topology. |
 | `shadowspill.pytorch.planning.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
 | `shadowspill.pytorch.planning.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
-| `shadowspill.pytorch.planning.admission.layout.placement` | Deterministic aligned interval placement. |
+| `shadowspill.planner.admission.placement` | Deterministic aligned interval placement. |
 | `shadowspill.pytorch.planning.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
 | `shadowspill.pytorch.planning.admission.refinement` | Rerun PressureFit at monotonically lower logical capacity until a layout fits. |
 | `shadowspill.pytorch.planning.admission.layout.runtime` | Translate semantic placements to indexed runtime identities. |
