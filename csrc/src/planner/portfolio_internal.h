@@ -14,7 +14,7 @@ typedef struct ShadowSpillScheduleStorage {
 } ShadowSpillScheduleStorage;
 
 typedef struct ShadowSpillScheduleFacts {
-    const ShadowSpillPressureFitContext *context;
+    const ShadowSpillPressureFitProblem *problem;
     uint32_t alias_count;
     uint32_t task_count;
     uint32_t boundary_count;
@@ -37,7 +37,7 @@ typedef struct ShadowSpillPrefetchTriggerConstraint {
 
 /* Keep one logical object absent at one residency boundary. */
 int shadowspill_schedule_facts_create(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     ShadowSpillScheduleFacts *facts
 );
 
@@ -101,7 +101,7 @@ void shadowspill_bind_indexed_schedule(
 );
 
 void shadowspill_schedule_digest(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES]
 );

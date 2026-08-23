@@ -38,8 +38,8 @@ _CSV_FIELDS = (
     "evict_bytes",
     "device_peak_bytes",
     "spill_peak_bytes",
-    "recomputation_context_count",
-    "valid_recomputation_context_count",
+    "recomputation_problem_count",
+    "valid_recomputation_problem_count",
     "candidate_policy_count",
     "candidate_evaluation_count",
     "valid_candidate_evaluation_count",
@@ -57,7 +57,7 @@ _CSV_FIELDS = (
     "admission_search_calls",
     "admission_result_materialization_calls",
     "admission_total_calls",
-    "pressurefit_context_work_time_ns",
+    "pressurefit_problem_work_time_ns",
     "residency_work_time_ns",
     "schedule_work_time_ns",
     "simulation_work_time_ns",
@@ -214,11 +214,11 @@ def _csv_row(
             "total_bytes"
         ),
         "spill_peak_bytes": simulation.get("spill_peak_bytes"),
-        "recomputation_context_count": pressurefit_summary.get(
-            "recomputation_context_count"
+        "recomputation_problem_count": pressurefit_summary.get(
+            "recomputation_problem_count"
         ),
-        "valid_recomputation_context_count": pressurefit_summary.get(
-            "valid_recomputation_context_count"
+        "valid_recomputation_problem_count": pressurefit_summary.get(
+            "valid_recomputation_problem_count"
         ),
         "candidate_policy_count": pressurefit_summary.get(
             "candidate_policy_count"
@@ -249,7 +249,7 @@ def _csv_row(
             "result_materialization_calls"
         ),
         "admission_total_calls": admission_work.get("total_calls"),
-        "pressurefit_context_work_time_ns": evaluation_work.get(
+        "pressurefit_problem_work_time_ns": evaluation_work.get(
             "summed_wall_time_ns"
         ),
         "residency_work_time_ns": residency_work.get("summed_work_time_ns"),

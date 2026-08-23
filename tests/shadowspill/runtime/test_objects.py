@@ -27,7 +27,7 @@ def test_object_reference_is_pool_neutral_and_closes_once() -> None:
     assert owner.released == [reference]
 
 
-def test_object_reference_context_manager_releases_ownership() -> None:
+def test_object_reference_problem_manager_releases_ownership() -> None:
     owner = _Owner()
     with ObjectRef(owner, object_id=1, size_bytes=0, handle=3) as reference:
         assert not reference.closed

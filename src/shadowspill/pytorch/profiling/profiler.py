@@ -312,7 +312,7 @@ class CudaTaskProfiler:
             self._close_allocation_scope(scope_id, stream)
             scope_open = False
             stream.synchronize()
-            self._diagnose_allocator_idle(context="saved-control producer")
+            self._diagnose_allocator_idle(problem="saved-control producer")
             return values
         except BaseException:
             if scope_open:
@@ -365,7 +365,7 @@ class CudaTaskProfiler:
                 executable = self._executables.release_occurrence_values(executable)
                 stream.synchronize()
                 self._diagnose_allocator_idle(
-                    context="pre-probe representative input release"
+                    problem="pre-probe representative input release"
                 )
                 executable, path_probes = self._probe_allocation_paths(
                     executable,
@@ -845,7 +845,7 @@ class CudaTaskProfiler:
     def _diagnose_allocator_idle(
         self,
         *,
-        context: str,
+        problem: str,
     ) -> None:
         """Block on the runtime's progress-safe quiescence boundary."""
 
@@ -864,7 +864,7 @@ class CudaTaskProfiler:
                 f"actions={statistics.queued_actions}"
             )
         raise AllocationTelemetryError(
-            f"allocator failed to become idle during {context}: {detail}"
+            f"allocator failed to become idle during {problem}: {detail}"
         )
 
     def _measure_opaque_optimizer(
@@ -1065,7 +1065,7 @@ class CudaTaskProfiler:
         finally:
             del update
             stream.synchronize()
-            self._diagnose_allocator_idle(context="opaque optimizer first step")
+            self._diagnose_allocator_idle(problem="opaque optimizer first step")
 
     def take_compiled_tasks(
         self,
@@ -1091,7 +1091,7 @@ class CudaTaskProfiler:
         try:
             for _ in range(self._warmups):
                 self._invoke_profile_task(executable, stream)
-            self._diagnose_allocator_idle(context=f"compiled entrypoint {digest}")
+            self._diagnose_allocator_idle(problem=f"compiled entrypoint {digest}")
         except ProfilingError:
             raise
         except BaseException as error:

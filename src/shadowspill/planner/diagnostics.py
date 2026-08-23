@@ -127,7 +127,7 @@ class PressureFitWorkDiagnostics:
     Invocation-level values include shared work performed before or across
     candidates. Consequently they need not equal the sum of candidate values.
     Times are summed component work, not necessarily elapsed wall time when
-    independent recomputation contexts are evaluated concurrently.
+    independent recomputation problems are evaluated concurrently.
     """
 
     evaluation_time_ns: int = 0
@@ -306,10 +306,10 @@ class PressureFitWorkDiagnostics:
 
 @dataclass(frozen=True, slots=True)
 class CandidateDiagnostic:
-    """One candidate policy evaluated in one recomputation context.
+    """One candidate policy evaluated in one recomputation problem.
 
     ``candidate_id`` identifies only the reusable policy: residency strategy,
-    prefetch rule, and coalescing mode.  ``selection_id`` is the parent-context
+    prefetch rule, and coalescing mode.  ``selection_id`` is the parent-problem
     reference and is deliberately not part of candidate-policy identity.
     """
 
@@ -410,7 +410,7 @@ class CandidateDiagnostic:
         return result
 
     def with_selection_id(self, selection_id: str) -> CandidateDiagnostic:
-        """Attach the containing recomputation context after deserialization."""
+        """Attach the containing recomputation problem after deserialization."""
 
         return CandidateDiagnostic(
             candidate_id=self.candidate_id,
@@ -447,8 +447,8 @@ class RecomputationChoiceDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class RecomputationContextDiagnostics:
-    """Shared context work and policy evaluations for one concrete selection."""
+class RecomputationProblemDiagnostics:
+    """Shared problem work and policy evaluations for one concrete selection."""
 
     selection_id: str
     choices: tuple[RecomputationChoiceDiagnostic, ...]
@@ -463,14 +463,14 @@ class RecomputationContextDiagnostics:
             for candidate in self.candidate_evaluations
         ):
             raise ValueError(
-                "candidate evaluation does not reference its recomputation context"
+                "candidate evaluation does not reference its recomputation problem"
             )
         candidate_ids = tuple(
             candidate.candidate_id for candidate in self.candidate_evaluations
         )
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError(
-                "candidate policy appears more than once in a recomputation context"
+                "candidate policy appears more than once in a recomputation problem"
             )
         valid = tuple(
             candidate
@@ -494,7 +494,7 @@ class RecomputationContextDiagnostics:
                 )
             if self.selected_makespan_ns != selected[0].makespan_ns:
                 raise ValueError(
-                    "context selected makespan does not match candidate evaluation"
+                    "problem selected makespan does not match candidate evaluation"
                 )
 
     @property
@@ -545,7 +545,7 @@ class RecomputationContextDiagnostics:
     @classmethod
     def from_value(
         cls, value: object, path: str
-    ) -> RecomputationContextDiagnostics:
+    ) -> RecomputationProblemDiagnostics:
         data = _mapping(value, path)
         selection = _mapping(
             data.get("recomputation_selection"),
@@ -626,45 +626,45 @@ class AdmissionRefinement:
 
 @dataclass(frozen=True, slots=True)
 class PressureFitDiagnostics:
-    """Complete context, policy-evaluation, and aggregate PressureFit evidence."""
+    """Complete problem, policy-evaluation, and aggregate PressureFit evidence."""
 
     SCHEMA: ClassVar[str] = "shadowspill.pressurefit_diagnostics/v2"
 
     selected_candidate_id: str
     selected_selection_id: str
     selected_makespan_ns: int
-    recomputation_contexts: tuple[RecomputationContextDiagnostics, ...]
+    recomputation_problems: tuple[RecomputationProblemDiagnostics, ...]
     work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
     admission_refinements: tuple[AdmissionRefinement, ...] = ()
     effective_object_capacity_bytes: int | None = None
 
     def __post_init__(self) -> None:
-        context_ids = tuple(item.selection_id for item in self.recomputation_contexts)
-        if len(context_ids) != len(set(context_ids)):
+        problem_ids = tuple(item.selection_id for item in self.recomputation_problems)
+        if len(problem_ids) != len(set(problem_ids)):
             raise ValueError("recomputation selection appears more than once")
-        selected_context = tuple(
-            context
-            for context in self.recomputation_contexts
-            if context.selection_id == self.selected_selection_id
+        selected_problem = tuple(
+            problem
+            for problem in self.recomputation_problems
+            if problem.selection_id == self.selected_selection_id
         )
-        if len(selected_context) != 1:
-            raise ValueError("selected recomputation context is not unique")
-        context = selected_context[0]
-        if context.selected_candidate_id != self.selected_candidate_id:
-            raise ValueError("global and context candidate selections disagree")
-        if context.selected_makespan_ns != self.selected_makespan_ns:
-            raise ValueError("global and context selected makespans disagree")
+        if len(selected_problem) != 1:
+            raise ValueError("selected recomputation problem is not unique")
+        problem = selected_problem[0]
+        if problem.selected_candidate_id != self.selected_candidate_id:
+            raise ValueError("global and problem candidate selections disagree")
+        if problem.selected_makespan_ns != self.selected_makespan_ns:
+            raise ValueError("global and problem selected makespans disagree")
 
     def _candidate_evaluations(self) -> tuple[CandidateDiagnostic, ...]:
         return tuple(
             candidate
-            for context in self.recomputation_contexts
-            for candidate in context.candidate_evaluations
+            for problem in self.recomputation_problems
+            for candidate in problem.candidate_evaluations
         )
 
     @property
-    def recomputation_context_count(self) -> int:
-        return len(self.recomputation_contexts)
+    def recomputation_problem_count(self) -> int:
+        return len(self.recomputation_problems)
 
     @property
     def candidate_policy_count(self) -> int:
@@ -681,10 +681,10 @@ class PressureFitDiagnostics:
         )
 
     @property
-    def valid_recomputation_context_count(self) -> int:
+    def valid_recomputation_problem_count(self) -> int:
         return sum(
-            context.selected_candidate_id is not None
-            for context in self.recomputation_contexts
+            problem.selected_candidate_id is not None
+            for problem in self.recomputation_problems
         )
 
     @property
@@ -708,25 +708,25 @@ class PressureFitDiagnostics:
         """Replace the selected policy's admission-aware timing consistently."""
 
         _nonnegative("makespan_ns", makespan_ns)
-        contexts = tuple(
+        problems = tuple(
             replace(
-                context,
+                problem,
                 selected_makespan_ns=makespan_ns,
                 candidate_evaluations=tuple(
                     replace(candidate, makespan_ns=makespan_ns)
                     if candidate.candidate_id == self.selected_candidate_id
                     else candidate
-                    for candidate in context.candidate_evaluations
+                    for candidate in problem.candidate_evaluations
                 ),
             )
-            if context.selection_id == self.selected_selection_id
-            else context
-            for context in self.recomputation_contexts
+            if problem.selection_id == self.selected_selection_id
+            else problem
+            for problem in self.recomputation_problems
         )
         return replace(
             self,
             selected_makespan_ns=makespan_ns,
-            recomputation_contexts=contexts,
+            recomputation_problems=problems,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -738,9 +738,9 @@ class PressureFitDiagnostics:
                 "makespan_ns": self.selected_makespan_ns,
             },
             "summary": {
-                "recomputation_context_count": self.recomputation_context_count,
-                "valid_recomputation_context_count": (
-                    self.valid_recomputation_context_count
+                "recomputation_problem_count": self.recomputation_problem_count,
+                "valid_recomputation_problem_count": (
+                    self.valid_recomputation_problem_count
                 ),
                 "candidate_policy_count": self.candidate_policy_count,
                 "candidate_evaluation_count": self.candidate_evaluation_count,
@@ -770,8 +770,8 @@ class PressureFitDiagnostics:
                     for item in self.admission_refinements
                 ],
             },
-            "recomputation_contexts": [
-                item.to_dict() for item in self.recomputation_contexts
+            "recomputation_problems": [
+                item.to_dict() for item in self.recomputation_problems
             ],
         }
 
@@ -792,14 +792,14 @@ class PressureFitDiagnostics:
         refinement = _mapping(
             data.get("capacity_refinement"), f"{path}.capacity_refinement"
         )
-        contexts = tuple(
-            RecomputationContextDiagnostics.from_value(
-                item, f"{path}.recomputation_contexts[{index}]"
+        problems = tuple(
+            RecomputationProblemDiagnostics.from_value(
+                item, f"{path}.recomputation_problems[{index}]"
             )
             for index, item in enumerate(
                 _list(
-                    data.get("recomputation_contexts"),
-                    f"{path}.recomputation_contexts",
+                    data.get("recomputation_problems"),
+                    f"{path}.recomputation_problems",
                 )
             )
         )
@@ -813,7 +813,7 @@ class PressureFitDiagnostics:
             selected_makespan_ns=_integer(
                 selection.get("makespan_ns"), f"{path}.selection.makespan_ns"
             ),
-            recomputation_contexts=contexts,
+            recomputation_problems=problems,
             work=PressureFitWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
@@ -861,9 +861,9 @@ class PressureFitDiagnostics:
         if declared_repairs != result.repairs:
             raise ValueError(f"{path}.repairs does not match candidate repairs")
         expected_summary = {
-            "recomputation_context_count": result.recomputation_context_count,
-            "valid_recomputation_context_count": (
-                result.valid_recomputation_context_count
+            "recomputation_problem_count": result.recomputation_problem_count,
+            "valid_recomputation_problem_count": (
+                result.valid_recomputation_problem_count
             ),
             "candidate_policy_count": result.candidate_policy_count,
             "candidate_evaluation_count": result.candidate_evaluation_count,
@@ -943,5 +943,5 @@ __all__ = [
     "PressureFitRepairDiagnostics",
     "PressureFitWorkDiagnostics",
     "RecomputationChoiceDiagnostic",
-    "RecomputationContextDiagnostics",
+    "RecomputationProblemDiagnostics",
 ]

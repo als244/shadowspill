@@ -194,7 +194,7 @@ The capacity contract keys are:
 | `source_execution_budget_bytes` | Budget used when constructing this artifact. |
 | `maximum_execution_budget_bytes` | Largest execution budget allowed without recompilation/reprofiling. |
 | `maximum_spill_budget_bytes` | Largest spill budget allowed by the source runtime. |
-| `fixed_execution_bytes` | Context/provider/fixed-service bytes outside the callable pool. |
+| `fixed_execution_bytes` | Problem/provider/fixed-service bytes outside the callable pool. |
 | `object_reserve_bytes` | Capacity leeway: pool bytes withheld from PressureFit's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
 | `dynamic_scratch_reserve_bytes` | Measured or user-raised optional dynamic scratch requirement. |
 
@@ -253,7 +253,7 @@ shadowspill.annotated_program_plan/v2
 | `source_program` | Complete `PressureFitProgram` from which the point was selected. |
 | `memory_budgets` | Requested physical execution and spill capacities. |
 | `transfer_bandwidths` | Exact fetch/evict rates and calibration identity used for the point. |
-| `selection` | PressureFit context/policy winner, schedule, residency, and search diagnostics. |
+| `selection` | PressureFit problem/policy winner, schedule, residency, and search diagnostics. |
 | `simulation` | Final admitted simulation result and physical deltas/dependencies consumed by it. |
 | `physical_admission` | Effective topology, fixed layout, layout digest, and all refinement attempts. |
 | `timing` | Separate PressureFit, admission, orchestration, and total planning wall time. |
@@ -271,7 +271,7 @@ shadowspill.annotated_program_plan/v2
 | Key | Meaning |
 |---|---|
 | `cache_hit` | Whether the selected PressureFit result came from the artifact cache. |
-| `diagnostics` | Full recomputation-context and candidate-policy search evidence. |
+| `diagnostics` | Full recomputation-problem and candidate-policy search evidence. |
 | `initial_residency`, `final_residency` | Selected boundary state. |
 | `options` | Effective `PressureFitOptions`. |
 | `schedule` | `shadowspill.memory_schedule/v1` with ordered actions. |
@@ -286,10 +286,10 @@ device through the Program.
 The diagnostics hierarchy is:
 
 ```text
-selected recomputation context
+selected recomputation problem
 └── selected candidate policy
 
-all recomputation contexts
+all recomputation problems
 └── candidate-policy evaluations
     ├── outcome
     ├── repair counts
@@ -297,7 +297,7 @@ all recomputation contexts
 ```
 
 See [Interpreting a PlanReport](plan-report.md#pressurefit-diagnostics) for the
-meaning of a context versus a policy.
+meaning of a problem versus a policy.
 
 ### Simulation
 
@@ -345,7 +345,7 @@ pool capacity, accepted status, and the PressureFit evidence for that trial.
 
 The three component totals reconcile with total wall time. Search work time
 inside PressureFit diagnostics may be larger than wall time when independent
-contexts are evaluated concurrently.
+problems are evaluated concurrently.
 
 ## Loading and validation
 

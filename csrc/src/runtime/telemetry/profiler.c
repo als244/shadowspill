@@ -20,7 +20,7 @@ void shadowspill_profiler_set_enabled(
 ) {
     if (profiler != NULL && profiler->abi_version != 0U &&
         profiler->set_enabled != NULL) {
-        profiler->set_enabled(profiler->context, enabled != 0U);
+        profiler->set_enabled(profiler->state, enabled != 0U);
     }
 }
 
@@ -34,7 +34,7 @@ void shadowspill_profiler_name_current_thread(
 #endif
     if (profiler != NULL && profiler->abi_version != 0U &&
         profiler->name_current_thread != NULL) {
-        profiler->name_current_thread(profiler->context, name);
+        profiler->name_current_thread(profiler->state, name);
     }
 }
 
@@ -45,7 +45,7 @@ void shadowspill_profiler_name_stream(
 ) {
     if (profiler != NULL && profiler->abi_version != 0U &&
         profiler->name_stream != NULL) {
-        profiler->name_stream(profiler->context, stream, name);
+        profiler->name_stream(profiler->state, stream, name);
     }
 }
 
@@ -54,7 +54,7 @@ ShadowSpillProfilerRange shadowspill_profiler_range_begin(
 ) {
     return profiler != NULL && profiler->abi_version != 0U &&
         profiler->range_begin != NULL
-        ? profiler->range_begin(profiler->context, name)
+        ? profiler->range_begin(profiler->state, name)
         : 0U;
 }
 
@@ -63,6 +63,6 @@ void shadowspill_profiler_range_end(
 ) {
     if (profiler != NULL && profiler->abi_version != 0U &&
         profiler->range_end != NULL) {
-        profiler->range_end(profiler->context, range);
+        profiler->range_end(profiler->state, range);
     }
 }

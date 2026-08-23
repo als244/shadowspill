@@ -18,7 +18,7 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
@@ -52,8 +52,8 @@ def _selected(
             selected_candidate_id="fixture",
             selected_selection_id="fixture",
             selected_makespan_ns=simulation.makespan_ns,
-            recomputation_contexts=(
-                RecomputationContextDiagnostics(
+            recomputation_problems=(
+                RecomputationProblemDiagnostics(
                     selection_id="fixture",
                     choices=(),
                     selected_candidate_id="fixture",
@@ -110,7 +110,7 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
         fetch_bandwidth_bytes_per_second=64_000_000_000,
         evict_bandwidth_bytes_per_second=64_000_000_000,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         64,
         64,
@@ -119,7 +119,7 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
     )
     selected = _selected(program, schedule, config)
 
-    admitted = build_fixed_layout_admission(selected, topology)
+    admitted = build_fixed_layout_admission(selected, facts)
 
     assert admitted.layout.required_bytes == 64
     assert admitted.layout.slack_bytes == 0
@@ -146,7 +146,7 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         32,
         32,
@@ -176,7 +176,7 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
 
     admitted = build_fixed_layout_admission(
         _selected(program, schedule, config),
-        topology,
+        facts,
     )
 
     assert admitted.layout.required_bytes == 32
@@ -215,7 +215,7 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         8,
         8,
@@ -238,7 +238,7 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
 
     admitted = build_fixed_layout_admission(
         _selected(program, schedule, config),
-        topology,
+        facts,
         dynamic_alias_group_ids=frozenset({"alias_000000"}),
     )
 
@@ -321,7 +321,7 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
         fetch_bandwidth_bytes_per_second=1_000_000_000,
         evict_bandwidth_bytes_per_second=1_000_000_000,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         16,
         16,
@@ -345,7 +345,7 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
 
     admitted = build_fixed_layout_admission(
         _selected(program, schedule, config),
-        topology,
+        facts,
         dynamic_alias_group_ids=frozenset({"alias_000000"}),
     )
 
@@ -441,7 +441,7 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
         fetch_bandwidth_bytes_per_second=64_000_000_000,
         evict_bandwidth_bytes_per_second=64_000_000_000,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         64,
         64,
@@ -449,7 +449,7 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
         tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
     admitted = build_fixed_layout_admission(
-        _selected(program, schedule, config), topology
+        _selected(program, schedule, config), facts
     )
 
     runtime = project_runtime_fixed_layout(

@@ -198,7 +198,7 @@ class AnnotatedProgramPlan:
                 )
             )
         )
-        topology = AdmissionFacts.from_dict(physical.get("effective_facts"))
+        facts = AdmissionFacts.from_dict(physical.get("effective_facts"))
         layout = _fixed_layout_from_value(
             physical.get("fixed_layout"),
             "annotated_program_plan.physical_admission.fixed_layout",
@@ -272,8 +272,8 @@ class AnnotatedProgramPlan:
             raise ValueError("annotated layout names a different Program")
         if layout.schedule_digest != schedule.digest:
             raise ValueError("annotated layout names a different schedule")
-        if layout.facts_digest != topology.digest:
-            raise ValueError("annotated layout names a different topology")
+        if layout.facts_digest != facts.digest:
+            raise ValueError("annotated layout names a different facts")
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
             raise ValueError("annotated diagnostics and simulation makespans differ")
         result = PressureFitResult(
@@ -287,8 +287,8 @@ class AnnotatedProgramPlan:
             simulation_config=replace(
                 config,
                 devices=tuple(
-                    replace(item, capacity_bytes=topology.object_capacity_bytes)
-                    if item.device_id == topology.device_id
+                    replace(item, capacity_bytes=facts.object_capacity_bytes)
+                    if item.device_id == facts.device_id
                     else item
                     for item in config.devices
                 ),
@@ -297,7 +297,7 @@ class AnnotatedProgramPlan:
             selections=selections,
             simulation=simulation,
             diagnostics=diagnostics,
-            admission_facts=topology,
+            admission_facts=facts,
         )
         attempts_value = _list(
             physical.get("attempts"),
@@ -408,7 +408,7 @@ class AnnotatedProgramPlan:
             memory_budgets=budgets,
             transfer_bandwidths=transfer,
             result=result,
-            effective_facts=topology,
+            effective_facts=facts,
             fixed_layout=layout,
             simulation_admission=simulation_admission,
             simulation=simulation,

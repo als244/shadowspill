@@ -35,13 +35,13 @@ static int add_delta(int64_t *target, int64_t delta) {
 }
 
 static int project_result(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     const OperationTally *tally,
     const ShadowSpillAdmissionReplayResult *result
 ) {
-    const uint32_t tasks = context->simulation->task_count;
+    const uint32_t tasks = problem->simulation->task_count;
     memset(workspace->task_start_deltas, 0, tasks * sizeof(int64_t));
     memset(workspace->task_completion_deltas, 0, tasks * sizeof(int64_t));
     memset(
@@ -162,26 +162,26 @@ static int project_result(
 }
 
 ShadowSpillStatus shadowspill_admit_indexed_schedule(
-    const ShadowSpillPressureFitContext *context,
+    const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     ShadowSpillSimulationProgram *program,
     ShadowSpillAdmissionReplayResult *replay_result
 ) {
-    if (!shadowspill_admission_facts_valid(context) || schedule == NULL || workspace == NULL ||
+    if (!shadowspill_admission_facts_valid(problem) || schedule == NULL || workspace == NULL ||
         program == NULL || replay_result == NULL ||
-        shadowspill_admission_reserve_buffers(context, schedule, workspace) != 0) {
+        shadowspill_admission_reserve_buffers(problem, schedule, workspace) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     const uint64_t started = monotonic_time_ns();
     OperationTally tally = {0};
-    if (shadowspill_admission_build_operations(context, schedule, workspace, &tally) != 0) {
+    if (shadowspill_admission_build_operations(problem, schedule, workspace, &tally) != 0) {
         return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
     }
     const ShadowSpillAdmissionReplayProgram replay_program = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
-        .capacity_bytes = context->admission->pool_capacity_bytes,
-        .minimum_alignment = context->admission->minimum_alignment,
+        .capacity_bytes = problem->admission->pool_capacity_bytes,
+        .minimum_alignment = problem->admission->minimum_alignment,
         .large_request_threshold_bytes = 0U,
         .lease_count = tally.lease_count,
         .dependency_count = tally.dependency_count,
@@ -206,14 +206,14 @@ ShadowSpillStatus shadowspill_admit_indexed_schedule(
         return status;
     }
     if (project_result(
-            context, schedule, workspace, &tally, replay_result
+            problem, schedule, workspace, &tally, replay_result
         ) != 0) {
         return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
     }
-    shadowspill_bind_indexed_schedule(context->simulation, schedule, program);
-    workspace->physical_device = context->simulation->devices[0];
+    shadowspill_bind_indexed_schedule(problem->simulation, schedule, program);
+    workspace->physical_device = problem->simulation->devices[0];
     workspace->physical_device.capacity_bytes =
-        context->admission->pool_capacity_bytes;
+        problem->admission->pool_capacity_bytes;
     program->devices = &workspace->physical_device;
     program->use_admission_accounting = 1U;
     program->initial_physical_bytes = &workspace->initial_physical_bytes;
@@ -265,12 +265,12 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
         .reuse_successor_actions = reuse_actions,
         .reuse_capacity = reuse_capacity,
     };
-    const ShadowSpillPressureFitContext context = {
+    const ShadowSpillPressureFitProblem problem = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .simulation = simulation,
         .admission = admission,
     };
-    if (!shadowspill_admission_facts_valid(&context) || schedule == NULL ||
+    if (!shadowspill_admission_facts_valid(&problem) || schedule == NULL ||
         task_capacity < simulation->task_count ||
         action_capacity < schedule->action_count ||
         (simulation->task_count != 0U &&
@@ -281,7 +281,7 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
     }
     ShadowSpillCandidateAdmissionWorkspace workspace = {0};
     if (shadowspill_candidate_admission_workspace_create(
-            &context, &workspace
+            &problem, &workspace
         ) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
@@ -289,7 +289,7 @@ ShadowSpillStatus shadowspill_evaluate_schedule_admission(
     ShadowSpillAdmissionReplayResult replay = {0};
     const ShadowSpillStatus status =
         shadowspill_admit_indexed_schedule(
-            &context,
+            &problem,
             schedule,
             &workspace,
             &admitted_program,

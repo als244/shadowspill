@@ -655,7 +655,7 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
     }
     violations = {path: values for path, values in violations.items() if values}
     assert not violations, (
-        f"provider or topology language in current-contract docs: {violations}"
+        f"provider or facts language in current-contract docs: {violations}"
     )
 
 

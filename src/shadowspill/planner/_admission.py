@@ -1,4 +1,4 @@
-"""Indexed one-time projection of admission topology for the C planner."""
+"""Indexed one-time projection of admission facts for the C planner."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def _flatten_rows(
 
 @dataclass(frozen=True, slots=True)
 class IndexedAdmissionFacts:
-    """Borrowed C topology plus Python owners for all indexed arrays."""
+    """Borrowed C facts plus Python owners for all indexed arrays."""
 
     value: CAdmissionFacts
     buffers: tuple[object, ...]
@@ -132,7 +132,7 @@ def encode_schedule(
     schedule: MemorySchedule,
     simulation: IndexedSimulationTemplate,
 ) -> EncodedIndexedSchedule:
-    """Encode one public schedule against an immutable topology."""
+    """Encode one public schedule against an immutable facts."""
 
     return EncodedIndexedSchedule(
         action_trigger_tasks=tuple(
@@ -160,21 +160,21 @@ def encode_schedule(
 
 
 def index_admission_facts(
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
     simulation: IndexedSimulationTemplate,
 ) -> IndexedAdmissionFacts:
-    """Project only tasks selected by one recomputation context."""
+    """Project only tasks selected by one recomputation problem."""
 
-    if topology.device_id not in simulation.device_ids:
+    if facts.device_id not in simulation.device_ids:
         raise ValueError(
-            f"admission device {topology.device_id!r} is absent from simulation"
+            f"admission device {facts.device_id!r} is absent from simulation"
         )
-    by_task = {item.task_id: item for item in topology.tasks}
+    by_task = {item.task_id: item for item in facts.tasks}
     try:
         tasks = tuple(by_task[item] for item in simulation.task_ids)
     except KeyError as exc:
         raise ValueError(
-            f"admission topology lacks selected task {exc.args[0]!r}"
+            f"admission facts lacks selected task {exc.args[0]!r}"
         ) from exc
     alias_index = simulation.alias_index
     fresh_rows = tuple(
@@ -237,9 +237,9 @@ def index_admission_facts(
         abi_version=ABI_VERSION,
         task_count=len(tasks),
         alias_count=len(simulation.alias_ids),
-        pool_capacity_bytes=topology.pool_capacity_bytes,
-        object_capacity_bytes=topology.object_capacity_bytes,
-        minimum_alignment=topology.minimum_alignment,
+        pool_capacity_bytes=facts.pool_capacity_bytes,
+        object_capacity_bytes=facts.object_capacity_bytes,
+        minimum_alignment=facts.minimum_alignment,
         task_workspace_offsets=buffers[0],
         task_workspace_extent_bytes=buffers[1],
         fresh_output_offsets=buffers[2],
@@ -256,7 +256,7 @@ def index_admission_facts(
         task_allocation_aliases=buffers[12],
         task_allocation_kinds=buffers[13],
     )
-    return IndexedAdmissionFacts(value, buffers, topology.digest)
+    return IndexedAdmissionFacts(value, buffers, facts.digest)
 
 
 def _compile_allocation_rows(
@@ -393,13 +393,13 @@ def evaluate_schedule_admission(
                     successor_action_index=successor_action,
                 )
             )
-    topology = admission.value
+    facts = admission.value
     simulation_admission = SimulationAdmission(
         initial_physical_bytes=(
             (simulation.device_ids[0], int(result.initial_physical_bytes)),
         ),
         device_capacity_bytes=(
-            (simulation.device_ids[0], int(topology.pool_capacity_bytes)),
+            (simulation.device_ids[0], int(facts.pool_capacity_bytes)),
         ),
         task_deltas=tuple(
             TaskPhysicalDelta(

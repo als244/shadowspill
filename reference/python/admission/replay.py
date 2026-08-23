@@ -67,13 +67,13 @@ class _AdmissionScriptBuilder:
         program: Program,
         schedule: MemorySchedule,
         selections: tuple[RecomputationSelection, ...],
-        topology: AdmissionFacts,
+        facts: AdmissionFacts,
     ) -> None:
         self.program = program
         self.schedule = schedule
         self.tasks = program.selected_tasks(selections)
-        self.admission_by_task = {item.task_id: item for item in topology.tasks}
-        self.alignment = topology.minimum_alignment
+        self.admission_by_task = {item.task_id: item for item in facts.tasks}
+        self.alignment = facts.minimum_alignment
         self.alias_size = {
             alias.alias_group_id: alias.size_bytes for alias in program.alias_groups
         }
@@ -538,18 +538,18 @@ def replay_admission(
     program: Program,
     schedule: MemorySchedule,
     *,
-    topology: AdmissionFacts,
+    facts: AdmissionFacts,
     selections: tuple[RecomputationSelection, ...] = (),
 ) -> AdmissionReplay:
     """Certify one schedule's exact causal allocation geometry."""
 
     schedule.validate(program, selections)
-    topology.validate(program)
+    facts.validate(program)
     builder = _AdmissionScriptBuilder(
         program,
         schedule,
         selections,
-        topology,
+        facts,
     )
     (
         annotated_operations,
@@ -562,11 +562,11 @@ def replay_admission(
     ) = builder.build()
     operations = tuple(item.operation for item in annotated_operations)
     pool = run_admission_replay(
-        topology.pool_capacity_bytes,
+        facts.pool_capacity_bytes,
         operations,
         lease_count=lease_count,
         dependency_count=dependency_count,
-        minimum_alignment=topology.minimum_alignment,
+        minimum_alignment=facts.minimum_alignment,
     )
     pending_by_lease = {item.lease_id: item for item in pending_retirements}
     provenance_by_lease = builder.lease_provenance
@@ -584,7 +584,7 @@ def replay_admission(
         selections,
         annotated_operations,
         ownership_transitions,
-        topology.digest,
+        facts.digest,
         pool.decision_digest,
     )
     return AdmissionReplay(
@@ -663,7 +663,7 @@ def _compatibility_digest(
             }
             for item in transitions
         ],
-        "topology": facts_digest,
+        "facts": facts_digest,
         "decision_digest": decision_digest,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))

@@ -114,18 +114,18 @@ static ShadowSpillProfilerRange profile_begin(
     ShadowSpillCudaBackend *backend, const char *name
 ) {
     ShadowSpillProfiler profiler = shadowspill_cuda_backend_profiler(backend);
-    return profiler.range_begin(profiler.context, name);
+    return profiler.range_begin(profiler.state, name);
 }
 
 static void profile_end(
     ShadowSpillCudaBackend *backend, ShadowSpillProfilerRange range
 ) {
     ShadowSpillProfiler profiler = shadowspill_cuda_backend_profiler(backend);
-    profiler.range_end(profiler.context, range);
+    profiler.range_end(profiler.state, range);
 }
 
-static int allocate_execution(void *context, uint64_t bytes, void **pointer) {
-    ShadowSpillCudaBackend *backend = context;
+static int allocate_execution(void *state, uint64_t bytes, void **pointer) {
+    ShadowSpillCudaBackend *backend = state;
     if (pointer == NULL || activate_context(backend) != 0) {
         return -1;
     }
@@ -141,8 +141,8 @@ static int allocate_execution(void *context, uint64_t bytes, void **pointer) {
     return 0;
 }
 
-static int free_execution(void *context, void *pointer) {
-    ShadowSpillCudaBackend *backend = context;
+static int free_execution(void *state, void *pointer) {
+    ShadowSpillCudaBackend *backend = state;
     if (activate_context(backend) != 0) {
         return -1;
     }
@@ -156,8 +156,8 @@ static int free_execution(void *context, void *pointer) {
     return 0;
 }
 
-static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
-    ShadowSpillCudaBackend *backend = context;
+static int allocate_spill(void *state, uint64_t bytes, void **pointer) {
+    ShadowSpillCudaBackend *backend = state;
     if (pointer == NULL || bytes == 0U || bytes > SIZE_MAX ||
         activate_context(backend) != 0) {
         return -1;
@@ -180,8 +180,8 @@ static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
     return 0;
 }
 
-static int free_spill(void *context, void *pointer) {
-    ShadowSpillCudaBackend *backend = context;
+static int free_spill(void *state, void *pointer) {
+    ShadowSpillCudaBackend *backend = state;
     if (pointer == NULL || activate_context(backend) != 0) {
         return -1;
     }
@@ -197,10 +197,10 @@ static int free_spill(void *context, void *pointer) {
 }
 
 static int create_stream(
-    void *context,
+    void *state,
     ShadowSpillBackendStream *stream
 ) {
-    ShadowSpillCudaBackend *backend = context;
+    ShadowSpillCudaBackend *backend = state;
     if (stream == NULL || activate_context(backend) != 0) {
         return -1;
     }
@@ -218,8 +218,8 @@ static int create_stream(
     return 0;
 }
 
-static int destroy_stream(void *context, ShadowSpillBackendStream stream) {
-    ShadowSpillCudaBackend *backend = context;
+static int destroy_stream(void *state, ShadowSpillBackendStream stream) {
+    ShadowSpillCudaBackend *backend = state;
     if (activate_context(backend) != 0) {
         return -1;
     }
@@ -233,8 +233,8 @@ static int destroy_stream(void *context, ShadowSpillBackendStream stream) {
     return 0;
 }
 
-static int create_event(void *context, ShadowSpillBackendEvent *event) {
-    ShadowSpillCudaBackend *backend = context;
+static int create_event(void *state, ShadowSpillBackendEvent *event) {
+    ShadowSpillCudaBackend *backend = state;
     if (event == NULL || activate_context(backend) != 0) {
         return -1;
     }
@@ -281,8 +281,8 @@ static int create_event(void *context, ShadowSpillBackendEvent *event) {
     return 0;
 }
 
-static int destroy_event(void *context, ShadowSpillBackendEvent event) {
-    ShadowSpillCudaBackend *backend = context;
+static int destroy_event(void *state, ShadowSpillBackendEvent event) {
+    ShadowSpillCudaBackend *backend = state;
     if (activate_context(backend) != 0 || event.words[1] == 0U) {
         return -1;
     }
@@ -300,11 +300,11 @@ static int destroy_event(void *context, ShadowSpillBackendEvent event) {
 }
 
 static int record_event(
-    void *context,
+    void *state,
     ShadowSpillBackendEvent event,
     ShadowSpillBackendStream stream
 ) {
-    ShadowSpillCudaBackend *backend = context;
+    ShadowSpillCudaBackend *backend = state;
     if (activate_context(backend) != 0) {
         return -1;
     }
@@ -314,11 +314,11 @@ static int record_event(
 }
 
 static int query_event(
-    void *context,
+    void *state,
     ShadowSpillBackendEvent event,
     int *complete
 ) {
-    ShadowSpillCudaBackend *backend = context;
+    ShadowSpillCudaBackend *backend = state;
     if (complete == NULL || activate_context(backend) != 0) {
         return -1;
     }
@@ -338,11 +338,11 @@ static int query_event(
 }
 
 static int wait_event(
-    void *context,
+    void *state,
     ShadowSpillBackendStream stream,
     ShadowSpillBackendEvent event
 ) {
-    ShadowSpillCudaBackend *backend = context;
+    ShadowSpillCudaBackend *backend = state;
     const ShadowSpillProfilerRange range = profile_begin(
         backend, "shadowspill.runtime.wait_event"
     );
@@ -361,14 +361,14 @@ static int wait_event(
 }
 
 static int copy_async(
-    void *context,
+    void *state,
     void *destination,
     const void *source,
     uint64_t bytes,
     uint8_t fetch,
     ShadowSpillBackendStream stream
 ) {
-    ShadowSpillCudaBackend *backend = context;
+    ShadowSpillCudaBackend *backend = state;
     if ((bytes != 0U && (destination == NULL || source == NULL)) ||
         bytes > SIZE_MAX || activate_context(backend) != 0) {
         return -1;
@@ -405,30 +405,30 @@ static int copy_async(
 }
 
 static int fetch_async(
-    void *context,
+    void *state,
     void *destination,
     const void *source,
     uint64_t bytes,
     ShadowSpillBackendStream stream
 ) {
-    return copy_async(context, destination, source, bytes, 1U, stream);
+    return copy_async(state, destination, source, bytes, 1U, stream);
 }
 
 static int evict_async(
-    void *context,
+    void *state,
     void *destination,
     const void *source,
     uint64_t bytes,
     ShadowSpillBackendStream stream
 ) {
-    return copy_async(context, destination, source, bytes, 0U, stream);
+    return copy_async(state, destination, source, bytes, 0U, stream);
 }
 
 static int synchronize_stream(
-    void *context,
+    void *state,
     ShadowSpillBackendStream stream
 ) {
-    ShadowSpillCudaBackend *backend = context;
+    ShadowSpillCudaBackend *backend = state;
     if (activate_context(backend) != 0 || record_result(
             backend, cuStreamSynchronize(stream_value(stream))
         ) != 0) {
@@ -604,7 +604,7 @@ ShadowSpillMemoryPoolBackend shadowspill_cuda_device_pool_backend(
 ) {
     return (ShadowSpillMemoryPoolBackend){
         .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .allocate_arena = allocate_execution,
         .close = free_execution,
     };
@@ -615,7 +615,7 @@ ShadowSpillMemoryPoolBackend shadowspill_cuda_pinned_pool_backend(
 ) {
     return (ShadowSpillMemoryPoolBackend){
         .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .allocate_arena = allocate_spill,
         .close = free_spill,
     };
@@ -633,7 +633,7 @@ static ShadowSpillTransferRoute cuda_route(
         .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
         .source_pool_id = source_pool_id,
         .destination_pool_id = destination_pool_id,
-        .context = backend,
+        .state = backend,
         .create_lane = create_stream,
         .destroy_lane = destroy_stream,
         .copy_async = copy,
@@ -666,7 +666,7 @@ ShadowSpillSynchronizationBackend shadowspill_cuda_synchronization_backend(
 ) {
     return (ShadowSpillSynchronizationBackend){
         .abi_version = SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .create_event = create_event,
         .destroy_event = destroy_event,
         .record_event = record_event,

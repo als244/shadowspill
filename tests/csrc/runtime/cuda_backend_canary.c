@@ -78,7 +78,7 @@ int main(void) {
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (shadowspill_runtime_create(&runtime_config, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        routes[0].route.create_lane(routes[0].route.context, &compute) != 0 ||
+        routes[0].route.create_lane(routes[0].route.state, &compute) != 0 ||
         shadowspill_runtime_reserve_event_leases(runtime, 8U) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_cuda_backend_seal_event_pool(cuda, 8U) != 0 ||
@@ -233,7 +233,7 @@ int main(void) {
     }
     if (shadowspill_plan_close(plan) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
-        routes[0].route.destroy_lane(routes[0].route.context, compute) != 0) {
+        routes[0].route.destroy_lane(routes[0].route.state, compute) != 0) {
         FAIL("runtime close");
     }
     shadowspill_cuda_backend_statistics(cuda, &cuda_statistics);

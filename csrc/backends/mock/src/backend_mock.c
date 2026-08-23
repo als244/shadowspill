@@ -48,8 +48,8 @@ static MockEvent *event_pointer(ShadowSpillBackendEvent event) {
     return (MockEvent *)event.words[0];
 }
 
-static int allocate_execution(void *context, uint64_t bytes, void **pointer) {
-    ShadowSpillMockBackend *backend = context;
+static int allocate_execution(void *state, uint64_t bytes, void **pointer) {
+    ShadowSpillMockBackend *backend = state;
     if (pointer == NULL || operation_fails(backend)) {
         return -1;
     }
@@ -63,8 +63,8 @@ static int allocate_execution(void *context, uint64_t bytes, void **pointer) {
     return 0;
 }
 
-static int free_execution(void *context, void *pointer) {
-    ShadowSpillMockBackend *backend = context;
+static int free_execution(void *state, void *pointer) {
+    ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
         return -1;
     }
@@ -72,8 +72,8 @@ static int free_execution(void *context, void *pointer) {
     return 0;
 }
 
-static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
-    ShadowSpillMockBackend *backend = context;
+static int allocate_spill(void *state, uint64_t bytes, void **pointer) {
+    ShadowSpillMockBackend *backend = state;
     if (pointer == NULL || operation_fails(backend)) {
         return -1;
     }
@@ -87,15 +87,15 @@ static int allocate_spill(void *context, uint64_t bytes, void **pointer) {
     return 0;
 }
 
-static int free_spill(void *context, void *pointer) {
-    return free_execution(context, pointer);
+static int free_spill(void *state, void *pointer) {
+    return free_execution(state, pointer);
 }
 
 static int create_stream(
-    void *context,
+    void *state,
     ShadowSpillBackendStream *stream
 ) {
-    ShadowSpillMockBackend *backend = context;
+    ShadowSpillMockBackend *backend = state;
     if (stream == NULL || operation_fails(backend)) {
         return -1;
     }
@@ -108,8 +108,8 @@ static int create_stream(
     return 0;
 }
 
-static int destroy_stream(void *context, ShadowSpillBackendStream stream) {
-    ShadowSpillMockBackend *backend = context;
+static int destroy_stream(void *state, ShadowSpillBackendStream stream) {
+    ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
         return -1;
     }
@@ -117,8 +117,8 @@ static int destroy_stream(void *context, ShadowSpillBackendStream stream) {
     return 0;
 }
 
-static int create_event(void *context, ShadowSpillBackendEvent *event) {
-    ShadowSpillMockBackend *backend = context;
+static int create_event(void *state, ShadowSpillBackendEvent *event) {
+    ShadowSpillMockBackend *backend = state;
     if (event == NULL || operation_fails(backend)) {
         return -1;
     }
@@ -134,8 +134,8 @@ static int create_event(void *context, ShadowSpillBackendEvent *event) {
     return 0;
 }
 
-static int destroy_event(void *context, ShadowSpillBackendEvent event) {
-    ShadowSpillMockBackend *backend = context;
+static int destroy_event(void *state, ShadowSpillBackendEvent event) {
+    ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
         return -1;
     }
@@ -147,11 +147,11 @@ static int destroy_event(void *context, ShadowSpillBackendEvent event) {
 }
 
 static int record_event(
-    void *context,
+    void *state,
     ShadowSpillBackendEvent event,
     ShadowSpillBackendStream stream
 ) {
-    ShadowSpillMockBackend *backend = context;
+    ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
         return -1;
     }
@@ -172,11 +172,11 @@ static int record_event(
 }
 
 static int query_event(
-    void *context,
+    void *state,
     ShadowSpillBackendEvent event,
     int *complete
 ) {
-    ShadowSpillMockBackend *backend = context;
+    ShadowSpillMockBackend *backend = state;
     if (complete == NULL || operation_fails(backend)) {
         return -1;
     }
@@ -196,11 +196,11 @@ static int query_event(
 }
 
 static int wait_event(
-    void *context,
+    void *state,
     ShadowSpillBackendStream stream,
     ShadowSpillBackendEvent event
 ) {
-    ShadowSpillMockBackend *backend = context;
+    ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
         return -1;
     }
@@ -223,14 +223,14 @@ static int wait_event(
 }
 
 static int copy_async(
-    void *context,
+    void *state,
     void *destination,
     const void *source,
     uint64_t bytes,
     uint8_t fetch,
     ShadowSpillBackendStream stream
 ) {
-    ShadowSpillMockBackend *backend = context;
+    ShadowSpillMockBackend *backend = state;
     if ((bytes != 0U && (destination == NULL || source == NULL)) ||
         operation_fails(backend)) {
         return -1;
@@ -260,30 +260,30 @@ static int copy_async(
 }
 
 static int fetch_async(
-    void *context,
+    void *state,
     void *destination,
     const void *source,
     uint64_t bytes,
     ShadowSpillBackendStream stream
 ) {
-    return copy_async(context, destination, source, bytes, 1U, stream);
+    return copy_async(state, destination, source, bytes, 1U, stream);
 }
 
 static int evict_async(
-    void *context,
+    void *state,
     void *destination,
     const void *source,
     uint64_t bytes,
     ShadowSpillBackendStream stream
 ) {
-    return copy_async(context, destination, source, bytes, 0U, stream);
+    return copy_async(state, destination, source, bytes, 0U, stream);
 }
 
 static int synchronize_stream(
-    void *context,
+    void *state,
     ShadowSpillBackendStream stream
 ) {
-    ShadowSpillMockBackend *backend = context;
+    ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
         return -1;
     }
@@ -341,7 +341,7 @@ ShadowSpillMemoryPoolBackend shadowspill_mock_execution_pool_backend(
 ) {
     return (ShadowSpillMemoryPoolBackend){
         .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .allocate_arena = allocate_execution,
         .close = free_execution,
     };
@@ -352,7 +352,7 @@ ShadowSpillMemoryPoolBackend shadowspill_mock_spill_pool_backend(
 ) {
     return (ShadowSpillMemoryPoolBackend){
         .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .allocate_arena = allocate_spill,
         .close = free_spill,
     };
@@ -370,7 +370,7 @@ static ShadowSpillTransferRoute mock_route(
         .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
         .source_pool_id = source_pool_id,
         .destination_pool_id = destination_pool_id,
-        .context = backend,
+        .state = backend,
         .create_lane = create_stream,
         .destroy_lane = destroy_stream,
         .copy_async = copy,
@@ -403,7 +403,7 @@ ShadowSpillSynchronizationBackend shadowspill_mock_synchronization_backend(
 ) {
     return (ShadowSpillSynchronizationBackend){
         .abi_version = SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION,
-        .context = backend,
+        .state = backend,
         .create_event = create_event,
         .destroy_event = destroy_event,
         .record_event = record_event,

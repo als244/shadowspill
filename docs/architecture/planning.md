@@ -26,9 +26,9 @@ not repeat capture, compilation, or profiling.
 ## Policy selection
 
 [Recomputation selection](recomputation-selection.md) constructs the finite set
-of legal task-alternative contexts. [PressureFit](pressurefit.md) evaluates
+of legal task-alternative problems. [PressureFit](pressurefit.md) evaluates
 residency, eviction, fetch-trigger, and coalescing candidates within each
-context. The two levels remain separate in diagnostics.
+problem. The two levels remain separate in diagnostics.
 
 PressureFit works on logical object capacity after provider/fixed-service and
 allocator allowances. It uses the required C planner and simulator; missing or

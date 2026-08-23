@@ -255,7 +255,7 @@ ShadowSpillStatus shadowspill_publish_task_retirement_event(
         shadowspill_event_lease_create_locked(runtime, &task_completion_event);
     if (event_status != SHADOWSPILL_STATUS_OK ||
         runtime->synchronization.record_event(
-            runtime->synchronization.context,
+            runtime->synchronization.state,
             task_completion_event->event,
             stream
         ) != 0 || shadowspill_completion_submit(
@@ -1290,7 +1290,7 @@ static ShadowSpillStatus record_retirement_requirements(
             );
         if (status == SHADOWSPILL_STATUS_OK &&
             runtime->synchronization.record_event(
-                runtime->synchronization.context,
+                runtime->synchronization.state,
                 requirement->event->event,
                 requirement->stream
             ) != 0) {

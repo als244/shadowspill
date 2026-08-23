@@ -487,7 +487,7 @@ def fixed_layout_diagnostic(
         facts_digest=layout.facts_digest,
         pool_capacity_bytes=layout.pool_capacity_bytes,
         original_object_capacity_bytes=selection.original_object_capacity_bytes,
-        effective_object_capacity_bytes=selection.topology.object_capacity_bytes,
+        effective_object_capacity_bytes=selection.facts.object_capacity_bytes,
         object_capacity_reduction_bytes=selection.capacity_reduction_bytes,
         fixed_slice_bytes=layout.fixed_slice_bytes,
         dynamic_reserve_bytes=layout.dynamic_reserve_bytes,

@@ -19,7 +19,7 @@ from .model import (
     PressureFitSearchExhaustedError,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
 )
 from .pressurefit import pressurefit, validate_schedule_feasibility
 
@@ -36,7 +36,7 @@ __all__ = [
     "PressureFitSearchExhaustedError",
     "PressureFitWorkDiagnostics",
     "RecomputationChoiceDiagnostic",
-    "RecomputationContextDiagnostics",
+    "RecomputationProblemDiagnostics",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

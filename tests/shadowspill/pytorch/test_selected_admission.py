@@ -112,7 +112,7 @@ def test_selected_schedule_replays_only_task_boundary_state() -> None:
         selected.program,
         selected.schedule,
         selections=selected.selections,
-        topology=_selected_facts(),
+        facts=_selected_facts(),
     )
 
     assert replay.pool.peak_allocated_bytes == 122
@@ -132,7 +132,7 @@ def test_admission_facts_preserve_workspace_extent_multiset() -> None:
         tasks=tuple(replace(task, outputs=()) for task in program.tasks),
     )
 
-    topology = build_admission_facts(
+    facts = build_admission_facts(
         program,
         execution_pool_bytes=256,
         object_capacity_bytes=160,
@@ -140,7 +140,7 @@ def test_admission_facts_preserve_workspace_extent_multiset() -> None:
         alignment=1,
     )
 
-    assert tuple(task.workspace_extents for task in topology.tasks) == (
+    assert tuple(task.workspace_extents for task in facts.tasks) == (
         (32, 64),
         (32, 64),
         (32, 64),
@@ -174,7 +174,7 @@ def test_admission_facts_derive_gradient_contribution_extents_from_trace() -> No
         ),
     )
 
-    topology = build_admission_facts(
+    facts = build_admission_facts(
         program,
         execution_pool_bytes=256,
         object_capacity_bytes=128,
@@ -184,7 +184,7 @@ def test_admission_facts_derive_gradient_contribution_extents_from_trace() -> No
         alignment=1,
     )
 
-    assert topology.tasks[0].workspace_extents == (16, 32, 64)
+    assert facts.tasks[0].workspace_extents == (16, 32, 64)
 
 
 def test_admission_uses_charged_bytes_for_replacement_transition() -> None:
@@ -212,7 +212,7 @@ def test_admission_uses_charged_bytes_for_replacement_transition() -> None:
         output_view_offsets=(0,),
     )
 
-    topology = build_admission_facts(
+    facts = build_admission_facts(
         program,
         execution_pool_bytes=16_384,
         object_capacity_bytes=12_288,
@@ -223,8 +223,8 @@ def test_admission_uses_charged_bytes_for_replacement_transition() -> None:
         alignment=1,
     )
 
-    assert topology.tasks[0].workspace_extents == ()
-    assert topology.tasks[0].replacement_aliases == ("state",)
+    assert facts.tasks[0].workspace_extents == ()
+    assert facts.tasks[0].replacement_aliases == ("state",)
 
 
 def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:

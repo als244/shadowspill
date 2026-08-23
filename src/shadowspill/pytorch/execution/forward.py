@@ -163,7 +163,7 @@ class _ExecutingStage(nn.Module):
 
     def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
         # Forward-only execution has no captured backward. Avoid creating
-        # hidden dispatcher-autograd contexts across planned task bounds.
+        # hidden dispatcher-autograd problems across planned task bounds.
         with (
             self._annotations.range(f"shadowspill.compiled_call.{self._trace_label}"),
             torch.no_grad(),

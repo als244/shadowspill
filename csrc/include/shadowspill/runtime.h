@@ -577,7 +577,7 @@ typedef struct ShadowSpillObjectLocationSnapshot {
 /*
  * Creates one runtime from explicit pool and directed-route registries, a
  * synchronization backend, profiler, and worker. Registry entries are copied;
- * backend contexts are borrowed and must outlive the runtime. Pool and route
+ * backend problems are borrowed and must outlive the runtime. Pool and route
  * IDs must equal their contiguous registry indices. On failure, output is set to
  * NULL and successfully created resources are reclaimed in reverse order.
  */

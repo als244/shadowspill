@@ -141,8 +141,8 @@ void export_cpu_storages(
   }
 }
 
-void release_caller_lease(void* context) {
-  auto* lease = static_cast<CallerLease*>(context);
+void release_caller_lease(void* problem) {
+  auto* lease = static_cast<CallerLease*>(problem);
   if (lease != nullptr) {
     const c10::cuda::CUDAStream stream =
         c10::cuda::getCurrentCUDAStream(lease->device_ordinal);

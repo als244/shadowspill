@@ -95,7 +95,7 @@ typedef enum ShadowSpillInitialPlacement {
  * Indexed schedule storage used by the complete compiled candidate evaluator.
  * Every identifier is the corresponding contiguous task or alias index in the
  * supplied simulation program. Arrays are owned by the result and remain
- * valid until shadowspill_pressurefit_context_result_destroy().
+ * valid until shadowspill_pressurefit_problem_result_destroy().
  */
 typedef struct ShadowSpillIndexedSchedule {
     uint32_t action_count;
@@ -142,7 +142,7 @@ typedef struct ShadowSpillAdmissionFacts {
     const uint8_t *task_allocation_kinds;
 } ShadowSpillAdmissionFacts;
 
-typedef struct ShadowSpillPressureFitContext {
+typedef struct ShadowSpillPressureFitProblem {
     uint32_t abi_version;
     const ShadowSpillResidencyProblem *residency;
     const ShadowSpillSimulationProgram *simulation;
@@ -153,9 +153,9 @@ typedef struct ShadowSpillPressureFitContext {
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
     const char *const *task_json_names;
-} ShadowSpillPressureFitContext;
+} ShadowSpillPressureFitProblem;
 
-typedef struct ShadowSpillPressureFitContextOptions {
+typedef struct ShadowSpillPressureFitProblemOptions {
     const uint8_t *residency_strategies;
     uint32_t residency_strategy_count;
     const uint8_t *prefetch_rules;
@@ -163,7 +163,7 @@ typedef struct ShadowSpillPressureFitContextOptions {
     uint8_t evaluate_coalesced;
     uint32_t max_repair_attempts;
     uint8_t initial_placement;
-} ShadowSpillPressureFitContextOptions;
+} ShadowSpillPressureFitProblemOptions;
 
 /*
  * Schedule-invariant input for the high-level PressureFit path.
@@ -172,7 +172,7 @@ typedef struct ShadowSpillPressureFitContextOptions {
  * problem and initial seed internally before evaluating the unchanged
  * candidate portfolio.
  */
-typedef struct ShadowSpillPressureFitProgramContext {
+typedef struct ShadowSpillPressureFitProgramProblem {
     uint32_t abi_version;
     const ShadowSpillSimulationProgram *simulation;
     const uint32_t *device_priority;
@@ -181,7 +181,7 @@ typedef struct ShadowSpillPressureFitProgramContext {
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
     const char *const *task_json_names;
-} ShadowSpillPressureFitProgramContext;
+} ShadowSpillPressureFitProgramProblem;
 
 typedef enum ShadowSpillPressureFitPreflightFailureKind {
     SHADOWSPILL_PREFLIGHT_NONE = 0,
@@ -219,7 +219,7 @@ typedef struct ShadowSpillPressureFitRepairDiagnostics {
     uint64_t simulation_pressure_boundary_attempts;
 } ShadowSpillPressureFitRepairDiagnostics;
 
-/* Exact operations and summed component work for a candidate or context. */
+/* Exact operations and summed component work for a candidate or problem. */
 typedef struct ShadowSpillPressureFitWorkDiagnostics {
     uint64_t evaluation_time_ns;
     uint64_t residency_cache_hits;
@@ -259,7 +259,7 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint64_t error_required_bytes;
 } ShadowSpillPressureFitCandidateDiagnostic;
 
-typedef struct ShadowSpillPressureFitContextResult {
+typedef struct ShadowSpillPressureFitProblemResult {
     uint32_t status;
     uint32_t selected_candidate_index;
     uint64_t selected_makespan_ns;
@@ -268,7 +268,7 @@ typedef struct ShadowSpillPressureFitContextResult {
     uint32_t candidate_count;
     ShadowSpillPressureFitRepairDiagnostics repairs;
     ShadowSpillPressureFitWorkDiagnostics work;
-} ShadowSpillPressureFitContextResult;
+} ShadowSpillPressureFitProblemResult;
 
 /* Caller-owned output buffers for one selected schedule's exact admission. */
 typedef struct ShadowSpillScheduleAdmissionResult {
@@ -366,28 +366,28 @@ shadowspill_reduce_residency(
  * must be released with the matching destroy function.
  */
 SHADOWSPILL_PLANNER_API ShadowSpillStatus
-shadowspill_evaluate_pressurefit_context(
-    const ShadowSpillPressureFitContext *context,
-    const ShadowSpillPressureFitContextOptions *options,
-    ShadowSpillPressureFitContextResult *result
+shadowspill_evaluate_pressurefit_problem(
+    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillPressureFitProblemOptions *options,
+    ShadowSpillPressureFitProblemResult *result
 );
 
 /*
- * Derive one indexed residency context from a selected simulation program and
+ * Derive one indexed residency problem from a selected simulation program and
  * evaluate the complete deterministic PressureFit candidate portfolio.
  * This is equivalent to constructing ShadowSpillResidencyProblem and its seed
  * explicitly, but avoids materializing alias-by-boundary matrices in Python.
  */
 SHADOWSPILL_PLANNER_API ShadowSpillStatus
-shadowspill_evaluate_pressurefit_program_context(
-    const ShadowSpillPressureFitProgramContext *context,
-    const ShadowSpillPressureFitContextOptions *options,
-    ShadowSpillPressureFitContextResult *result
+shadowspill_evaluate_pressurefit_program_problem(
+    const ShadowSpillPressureFitProgramProblem *problem,
+    const ShadowSpillPressureFitProblemOptions *options,
+    ShadowSpillPressureFitProblemResult *result
 );
 
 SHADOWSPILL_PLANNER_API ShadowSpillStatus
-shadowspill_validate_pressurefit_program_context(
-    const ShadowSpillPressureFitProgramContext *context,
+shadowspill_validate_pressurefit_program_problem(
+    const ShadowSpillPressureFitProgramProblem *problem,
     ShadowSpillPressureFitPreflightResult *result
 );
 
@@ -400,8 +400,8 @@ shadowspill_evaluate_schedule_admission(
 );
 
 SHADOWSPILL_PLANNER_API void
-shadowspill_pressurefit_context_result_destroy(
-    ShadowSpillPressureFitContextResult *result
+shadowspill_pressurefit_problem_result_destroy(
+    ShadowSpillPressureFitProblemResult *result
 );
 
 /* The pool operations a schedule implies, with the provenance a fixed layout

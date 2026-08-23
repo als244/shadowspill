@@ -173,7 +173,7 @@ Compilation/profiling records, for both halves of every pair:
 - representative-input and profiling-metadata provenance.
 
 Equivalent artifact/profile keys are measured once. Different graph-pair
-variants remain distinct whenever their graph, input context, executable
+variants remain distinct whenever their graph, input problem, executable
 storage, or profiling metadata differs.
 
 ## Lowering into Program alternatives

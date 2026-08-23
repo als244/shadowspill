@@ -182,7 +182,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
         ShadowSpillRouteState *route = &runtime->routes[--route_id];
         if (route->lane_created) {
             (void)route->route.destroy_lane(
-                route->route.context, route->lane
+                route->route.state, route->lane
             );
             route->lane_created = 0U;
         }
@@ -401,7 +401,7 @@ ShadowSpillStatus shadowspill_runtime_create(
             goto fail;
         }
         if (route->route.create_lane(
-                route->route.context, &route->lane
+                route->route.state, &route->lane
             ) != 0) {
             goto fail;
         }
@@ -550,7 +550,7 @@ ShadowSpillStatus shadowspill_memory_pool_grow(
 
     void *replacement = NULL;
     if (pool->backend.allocate_arena(
-            pool->backend.context, capacity_bytes, &replacement
+            pool->backend.state, capacity_bytes, &replacement
         ) != 0) {
         status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
         goto done;
@@ -565,17 +565,17 @@ ShadowSpillStatus shadowspill_memory_pool_grow(
             &ranges
         ) != 0) {
         (void)pool->backend.close(
-            pool->backend.context, replacement
+            pool->backend.state, replacement
         );
         status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         goto done;
     }
     if (pool->base != NULL && pool->backend.close(
-            pool->backend.context, pool->base
+            pool->backend.state, pool->base
         ) != 0) {
         shadowspill_range_destroy(&ranges);
         (void)pool->backend.close(
-            pool->backend.context, replacement
+            pool->backend.state, replacement
         );
         status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
         goto done;
@@ -620,7 +620,7 @@ ShadowSpillStatus shadowspill_runtime_close(
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
         if (route->lane_created && route->route.synchronize_lane(
-                route->route.context, route->lane
+                route->route.state, route->lane
             ) != 0) {
             synchronization_failed = 1;
         }

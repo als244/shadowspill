@@ -653,7 +653,7 @@ def admit_physical_budget(
     fixed_device_bytes = context_bytes + provider_headroom
     if fixed_device_bytes >= device_budget_bytes:
         raise AdmissionError(
-            "context and provider headroom leave no device slab",
+            "problem and provider headroom leave no device slab",
             kind="fixed_device_budget",
             required_bytes=fixed_device_bytes + 1,
             capacity_bytes=device_budget_bytes,

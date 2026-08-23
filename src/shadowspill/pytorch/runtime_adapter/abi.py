@@ -270,7 +270,7 @@ class CudaStatistics(ctypes.Structure):
         ("event_queries", ctypes.c_uint64),
         ("stream_waits", ctypes.c_uint64),
         ("stream_synchronizations", ctypes.c_uint64),
-        ("context_activations", ctypes.c_uint64),
+        ("problem_activations", ctypes.c_uint64),
         ("event_pool_capacity", ctypes.c_uint64),
         ("event_pool_in_use", ctypes.c_uint64),
         ("event_pool_peak_in_use", ctypes.c_uint64),

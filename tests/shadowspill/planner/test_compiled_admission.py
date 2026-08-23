@@ -114,18 +114,18 @@ def _causal_facts() -> AdmissionFacts:
 def test_compiled_selected_admission_matches_python_oracle() -> None:
     program = causal_program()
     schedule = causal_schedule()
-    topology = _causal_facts()
+    facts = _causal_facts()
     template = index_simulation_template(program, (), causal_config())
 
     compiled = evaluate_schedule_admission(
         template,
-        index_admission_facts(topology, template),
+        index_admission_facts(facts, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
         program,
         schedule,
-        topology=topology,
+        facts=facts,
     )
     reference = simulation_admission_from_replay(
         replay,
@@ -182,7 +182,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         evict_bandwidth_bytes_per_second=1,
     )
     template = index_simulation_template(program, (), config)
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         64,
         64,
@@ -192,13 +192,13 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
 
     compiled = evaluate_schedule_admission(
         template,
-        index_admission_facts(topology, template),
+        index_admission_facts(facts, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
         program,
         schedule,
-        topology=topology,
+        facts=facts,
     )
     reference = simulation_admission_from_replay(
         replay,
@@ -217,7 +217,7 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
     program = training_chain_program(2)
     object_alias = {item.object_id: item.alias_group_id for item in program.objects}
     profiles = {item.profile_id: item for item in program.profiles}
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         512,
         224,
@@ -252,7 +252,7 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
         program,
         initial_residency=training_chain_initial(2),
         config=training_chain_config(224),
-        admission=topology,
+        admission=facts,
         options=PressureFitOptions(workers=1),
     )
 
@@ -300,7 +300,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
     template = index_simulation_template(program, (), config)
 
     def evaluate(extents: tuple[int, ...]):
-        topology = AdmissionFacts(
+        facts = AdmissionFacts(
             "cuda_0",
             128,
             128,
@@ -312,7 +312,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
         )
         return evaluate_schedule_admission(
             template,
-            index_admission_facts(topology, template),
+            index_admission_facts(facts, template),
             encode_schedule(schedule, template),
         )
 
@@ -367,7 +367,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         24,
         24,
@@ -381,13 +381,13 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
 
     compiled = evaluate_schedule_admission(
         template,
-        index_admission_facts(topology, template),
+        index_admission_facts(facts, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
         program,
         schedule,
-        topology=topology,
+        facts=facts,
     )
 
     assert len(replay.pool.dependencies) == 3
@@ -466,7 +466,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     )
 
     def evaluate(task: TaskAdmissionSpec):
-        topology = AdmissionFacts(
+        facts = AdmissionFacts(
             "cuda_0",
             20,
             20,
@@ -475,7 +475,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         )
         return evaluate_schedule_admission(
             template,
-            index_admission_facts(topology, template),
+            index_admission_facts(facts, template),
             encode_schedule(schedule, template),
         )
 
@@ -490,7 +490,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
     replay = replay_admission(
         program,
         schedule,
-        topology=ordered_facts,
+        facts=ordered_facts,
     )
     reference = simulation_admission_from_replay(
         replay,
@@ -522,11 +522,11 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
 
 
 def test_admission_facts_use_only_the_current_physical_schema() -> None:
-    topology = _causal_facts()
-    payload = topology.to_dict()
+    facts = _causal_facts()
+    payload = facts.to_dict()
 
     assert payload["schema"] == "shadowspill.admission_facts/v3"
-    assert AdmissionFacts.from_json(topology.to_json()) == topology
+    assert AdmissionFacts.from_json(facts.to_json()) == facts
 
     payload["schema"] = "shadowspill.admission_facts/v2"
     with pytest.raises(ValueError, match="unsupported schema"):
@@ -597,7 +597,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         fetch_bandwidth_bytes_per_second=1_000_000,
         evict_bandwidth_bytes_per_second=1_000_000,
     )
-    topology = AdmissionFacts(
+    facts = AdmissionFacts(
         "cuda_0",
         160,
         160,
@@ -610,7 +610,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
             program,
             initial_residency=initial,
             config=config,
-            admission=topology,
+            admission=facts,
             options=PressureFitOptions(
                 residency_strategies=("tight-stall",),
                 prefetch_rules=("latest-safe",),
@@ -630,7 +630,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         program,
         initial_residency=initial,
         config=config,
-        admission=topology,
+        admission=facts,
         options=PressureFitOptions(
             residency_strategies=("tight-stall",),
             prefetch_rules=("latest-safe",),
@@ -640,7 +640,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     )
 
     assert result.diagnostics.admission_refinements == ()
-    diagnostic = result.diagnostics.recomputation_contexts[0].candidate_evaluations[0]
+    diagnostic = result.diagnostics.recomputation_problems[0].candidate_evaluations[0]
     assert diagnostic.repairs.total_attempts == 2
     assert diagnostic.repairs.admission_prefetch_delay_attempts == 1
     assert diagnostic.repairs.admission_pressure_boundary_attempts == 1

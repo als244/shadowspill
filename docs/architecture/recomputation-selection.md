@@ -47,7 +47,7 @@ The planner consumes only immutable Program facts:
 
 It returns a tuple of complete `RecomputationSelection` tuples. Each complete
 selection chooses exactly one option for every group and becomes one parent
-context in PressureFit diagnostics.
+problem in PressureFit diagnostics.
 
 The recomputation selector does not consider execution capacity, spill
 capacity, transfer bandwidth, residency, or simulated makespan. PressureFit

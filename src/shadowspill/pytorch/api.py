@@ -32,7 +32,7 @@ def _cleanup_failed_plan(
     planning_started: bool,
     error: BaseException,
 ) -> None:
-    """Best-effort rollback while retaining every cleanup failure as context."""
+    """Best-effort rollback while retaining every cleanup failure as problem."""
 
     operations: list[tuple[str, Any]] = []
     if planning_started:

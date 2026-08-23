@@ -28,7 +28,7 @@ add_library(
   src/planner/admission/operations.c
   src/planner/admission/placement.c
   src/planner/admission/facts.c
-  src/planner/context.c
+  src/planner/problem.c
   src/planner/digest.c
   src/planner/portfolio.c
   src/planner/residency.c

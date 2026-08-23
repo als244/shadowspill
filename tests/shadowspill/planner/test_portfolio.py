@@ -83,10 +83,10 @@ def test_portfolio_is_deterministic(
     )
     assert tuple(
         candidate.candidate_id
-        for context in compiled.diagnostics.recomputation_contexts
-        for candidate in context.candidate_evaluations
+        for problem in compiled.diagnostics.recomputation_problems
+        for candidate in problem.candidate_evaluations
     ) == tuple(
         candidate.candidate_id
-        for context in repeated.diagnostics.recomputation_contexts
-        for candidate in context.candidate_evaluations
+        for problem in repeated.diagnostics.recomputation_problems
+        for candidate in problem.candidate_evaluations
     )

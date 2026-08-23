@@ -57,7 +57,7 @@ Configuration and results:
 
 Search diagnostics:
 
-- `RecomputationChoiceDiagnostic`, `RecomputationContextDiagnostics`
+- `RecomputationChoiceDiagnostic`, `RecomputationProblemDiagnostics`
 - `CandidateDiagnostic`
 - `PressureFitRepairDiagnostics`, `PressureFitWorkDiagnostics`
 

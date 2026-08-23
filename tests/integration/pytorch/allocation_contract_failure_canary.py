@@ -134,7 +134,7 @@ def main() -> int:
             "allocation contract mismatch returned invalid storage to its caller"
         )
 
-    # No kernel consumed a null pointer, so the CUDA context remains healthy
+    # No kernel consumed a null pointer, so the CUDA problem remains healthy
     # and ordinary teardown cannot turn the structured error into SIGABRT.
     torch.cuda.synchronize()
     return 0

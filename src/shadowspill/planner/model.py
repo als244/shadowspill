@@ -25,7 +25,7 @@ from .diagnostics import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
 )
 
 if TYPE_CHECKING:
@@ -242,5 +242,5 @@ __all__ = [
     "PressureFitSearchExhaustedError",
     "PressureFitWorkDiagnostics",
     "RecomputationChoiceDiagnostic",
-    "RecomputationContextDiagnostics",
+    "RecomputationProblemDiagnostics",
 ]

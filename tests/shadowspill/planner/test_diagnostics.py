@@ -8,7 +8,7 @@ from shadowspill.planner import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
-    RecomputationContextDiagnostics,
+    RecomputationProblemDiagnostics,
 )
 
 
@@ -39,7 +39,7 @@ def _diagnostics() -> PressureFitDiagnostics:
         repairs=repairs,
         work=candidate_work,
     )
-    context = RecomputationContextDiagnostics(
+    problem = RecomputationProblemDiagnostics(
         selection_id=selection_id,
         choices=(RecomputationChoiceDiagnostic("stage_0", "recompute"),),
         selected_candidate_id=candidate.candidate_id,
@@ -62,7 +62,7 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_candidate_id=candidate.candidate_id,
         selected_selection_id=selection_id,
         selected_makespan_ns=1_000,
-        recomputation_contexts=(context,),
+        recomputation_problems=(problem,),
         work=PressureFitWorkDiagnostics(
             evaluation_time_ns=90,
             residency_cache_misses=1,
@@ -87,12 +87,12 @@ def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
     restored = PressureFitDiagnostics.from_value(source.to_dict(), "diagnostics")
 
     assert restored == source
-    assert restored.recomputation_context_count == 1
+    assert restored.recomputation_problem_count == 1
     assert restored.candidate_policy_count == 1
     assert restored.candidate_evaluation_count == 1
     assert restored.repairs.total_attempts == 3
     assert restored.repairs.pressure_boundary_attempts == 2
-    candidate = restored.recomputation_contexts[0].candidate_evaluations[0]
+    candidate = restored.recomputation_problems[0].candidate_evaluations[0]
     assert candidate.residency_strategy == "tight-transfer"
     assert candidate.prefetch_rule == "latest-safe"
     assert candidate.coalesced
@@ -131,9 +131,9 @@ def test_physical_prediction_updates_nested_selected_candidate() -> None:
 
     assert source.selected_makespan_ns == 1_000
     assert updated.selected_makespan_ns == 1_250
-    context = updated.recomputation_contexts[0]
-    assert context.selected_makespan_ns == 1_250
-    assert context.candidate_evaluations[0].makespan_ns == 1_250
-    assert context.candidate_evaluations[0].work == (
-        source.recomputation_contexts[0].candidate_evaluations[0].work
+    problem = updated.recomputation_problems[0]
+    assert problem.selected_makespan_ns == 1_250
+    assert problem.candidate_evaluations[0].makespan_ns == 1_250
+    assert problem.candidate_evaluations[0].work == (
+        source.recomputation_problems[0].candidate_evaluations[0].work
     )

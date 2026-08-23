@@ -181,63 +181,63 @@ int main(void) {
         }
     }
 
-    const uint64_t context_alias_size[] = {32U};
-    const ShadowSpillSimulationDevice context_device = {
+    const uint64_t problem_alias_size[] = {32U};
+    const ShadowSpillSimulationDevice problem_device = {
         .capacity_bytes = 64U,
         .fetch_bandwidth_bytes_per_second = 1U,
         .evict_bandwidth_bytes_per_second = 1U,
     };
-    const uint32_t context_alias_device[] = {0U};
-    const uint8_t context_retain_spill[] = {1U};
-    const int8_t context_initial_location[] = {0};
-    const int8_t context_final_location[] = {-1};
-    const uint8_t context_anchors[] = {1U, 0U};
-    const uint8_t context_zero_cells[] = {0U, 0U};
-    const uint32_t context_latest_access[] = {
+    const uint32_t problem_alias_device[] = {0U};
+    const uint8_t problem_retain_spill[] = {1U};
+    const int8_t problem_initial_location[] = {0};
+    const int8_t problem_final_location[] = {-1};
+    const uint8_t problem_anchors[] = {1U, 0U};
+    const uint8_t problem_zero_cells[] = {0U, 0U};
+    const uint32_t problem_latest_access[] = {
         0U,
         SHADOWSPILL_PLANNER_NO_INDEX,
     };
-    const uint32_t context_first_input[] = {0U};
-    const uint64_t context_transfer_runtime[] = {1U};
-    const uint64_t context_task_end[] = {10U};
-    const uint64_t context_capacity[] = {64U};
-    const uint64_t context_boundary_capacity[] = {64U, 64U};
-    const uint32_t context_priority[] = {0U};
-    const uint8_t context_seed_resident[] = {1U, 0U};
-    const uint8_t context_seed_breaks[] = {0U, 0U};
-    const ShadowSpillResidencyProblem context_residency = {
+    const uint32_t problem_first_input[] = {0U};
+    const uint64_t problem_transfer_runtime[] = {1U};
+    const uint64_t problem_task_end[] = {10U};
+    const uint64_t problem_capacity[] = {64U};
+    const uint64_t problem_boundary_capacity[] = {64U, 64U};
+    const uint32_t problem_priority[] = {0U};
+    const uint8_t problem_seed_resident[] = {1U, 0U};
+    const uint8_t problem_seed_breaks[] = {0U, 0U};
+    const ShadowSpillResidencyProblem problem_residency = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .alias_count = 1U,
         .boundary_count = 2U,
         .device_count = 1U,
-        .alias_size_bytes = context_alias_size,
-        .alias_device = context_alias_device,
-        .alias_retain_spill_copy = context_retain_spill,
-        .initial_location = context_initial_location,
-        .final_location = context_final_location,
-        .anchors = context_anchors,
-        .productions = context_zero_cells,
-        .latest_access_task = context_latest_access,
-        .output_reservations = context_zero_cells,
-        .write_prefix = context_zero_cells,
-        .first_input_task = context_first_input,
-        .fetch_runtime_ns = context_transfer_runtime,
-        .evict_runtime_ns = context_transfer_runtime,
-        .task_ideal_end_ns = context_task_end,
-        .device_capacity_bytes = context_capacity,
-        .boundary_capacity_bytes = context_boundary_capacity,
-        .device_priority = context_priority,
+        .alias_size_bytes = problem_alias_size,
+        .alias_device = problem_alias_device,
+        .alias_retain_spill_copy = problem_retain_spill,
+        .initial_location = problem_initial_location,
+        .final_location = problem_final_location,
+        .anchors = problem_anchors,
+        .productions = problem_zero_cells,
+        .latest_access_task = problem_latest_access,
+        .output_reservations = problem_zero_cells,
+        .write_prefix = problem_zero_cells,
+        .first_input_task = problem_first_input,
+        .fetch_runtime_ns = problem_transfer_runtime,
+        .evict_runtime_ns = problem_transfer_runtime,
+        .task_ideal_end_ns = problem_task_end,
+        .device_capacity_bytes = problem_capacity,
+        .boundary_capacity_bytes = problem_boundary_capacity,
+        .device_priority = problem_priority,
     };
-    const uint64_t context_alias_version[] = {0U};
-    const uint64_t context_task_runtime[] = {10U};
-    const uint64_t context_task_workspace[] = {0U};
-    const uint32_t context_input_offsets[] = {0U, 1U};
-    const uint32_t context_input_aliases[] = {0U};
-    const uint32_t context_initial_aliases[] = {0U};
-    const uint8_t context_initial_locations[] = {
+    const uint64_t problem_alias_version[] = {0U};
+    const uint64_t problem_task_runtime[] = {10U};
+    const uint64_t problem_task_workspace[] = {0U};
+    const uint32_t problem_input_offsets[] = {0U, 1U};
+    const uint32_t problem_input_aliases[] = {0U};
+    const uint32_t problem_initial_aliases[] = {0U};
+    const uint8_t problem_initial_locations[] = {
         SHADOWSPILL_MEMORY_DEVICE,
     };
-    const ShadowSpillSimulationProgram context_simulation = {
+    const ShadowSpillSimulationProgram problem_simulation = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .device_count = 1U,
         .alias_count = 1U,
@@ -245,74 +245,74 @@ int main(void) {
         .initial_count = 1U,
         .input_count = 1U,
         .spill_capacity_bytes = 64U,
-        .devices = &context_device,
-        .alias_device = context_alias_device,
-        .alias_size_bytes = context_alias_size,
-        .alias_initial_version = context_alias_version,
-        .alias_retain_spill_copy = context_retain_spill,
+        .devices = &problem_device,
+        .alias_device = problem_alias_device,
+        .alias_size_bytes = problem_alias_size,
+        .alias_initial_version = problem_alias_version,
+        .alias_retain_spill_copy = problem_retain_spill,
         .task_device = task_device,
         .task_resource_kind = task_kind,
         .task_resource_lane = task_lane,
-        .task_runtime_ns = context_task_runtime,
-        .task_workspace_bytes = context_task_workspace,
+        .task_runtime_ns = problem_task_runtime,
+        .task_workspace_bytes = problem_task_workspace,
         .dependency_offsets = empty_offsets,
-        .input_offsets = context_input_offsets,
-        .input_aliases = context_input_aliases,
+        .input_offsets = problem_input_offsets,
+        .input_aliases = problem_input_aliases,
         .output_offsets = empty_offsets,
         .mutation_offsets = empty_offsets,
-        .initial_aliases = context_initial_aliases,
-        .initial_locations = context_initial_locations,
+        .initial_aliases = problem_initial_aliases,
+        .initial_locations = problem_initial_locations,
     };
-    const char *context_alias_names[] = {"alias"};
-    const char *context_task_names[] = {"task"};
-    const ShadowSpillPressureFitContext context = {
+    const char *problem_alias_names[] = {"alias"};
+    const char *problem_task_names[] = {"task"};
+    const ShadowSpillPressureFitProblem problem = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
-        .residency = &context_residency,
-        .simulation = &context_simulation,
-        .seed_resident = context_seed_resident,
-        .seed_breaks = context_seed_breaks,
-        .alias_json_names = context_alias_names,
-        .task_json_names = context_task_names,
+        .residency = &problem_residency,
+        .simulation = &problem_simulation,
+        .seed_resident = problem_seed_resident,
+        .seed_breaks = problem_seed_breaks,
+        .alias_json_names = problem_alias_names,
+        .task_json_names = problem_task_names,
     };
-    const uint8_t context_strategies[] = {SHADOWSPILL_RESIDENCY_TIGHT_STALL};
-    const uint8_t context_rules[] = {SHADOWSPILL_PREFETCH_LATEST_SAFE};
-    const ShadowSpillPressureFitContextOptions context_options = {
-        .residency_strategies = context_strategies,
+    const uint8_t problem_strategies[] = {SHADOWSPILL_RESIDENCY_TIGHT_STALL};
+    const uint8_t problem_rules[] = {SHADOWSPILL_PREFETCH_LATEST_SAFE};
+    const ShadowSpillPressureFitProblemOptions problem_options = {
+        .residency_strategies = problem_strategies,
         .residency_strategy_count = 1U,
-        .prefetch_rules = context_rules,
+        .prefetch_rules = problem_rules,
         .prefetch_rule_count = 1U,
         .max_repair_attempts = 1U,
     };
-    ShadowSpillPressureFitContextResult context_result = {0};
-    if (shadowspill_evaluate_pressurefit_context(
-            &context,
-            &context_options,
-            &context_result
+    ShadowSpillPressureFitProblemResult problem_result = {0};
+    if (shadowspill_evaluate_pressurefit_problem(
+            &problem,
+            &problem_options,
+            &problem_result
         ) != SHADOWSPILL_STATUS_OK ||
-        context_result.candidate_count != 1U ||
-        context_result.selected_candidate_index != 0U ||
-        context_result.work.simulation_calls != 1U ||
-        context_result.work.schedule_emissions != 1U ||
-        context_result.candidates[0].work.simulation_calls != 1U ||
-        context_result.candidates[0].work.schedule_emissions != 1U ||
-        context_result.selected_schedule.action_count != 1U ||
-        context_result.selected_schedule.action_kinds[0] !=
+        problem_result.candidate_count != 1U ||
+        problem_result.selected_candidate_index != 0U ||
+        problem_result.work.simulation_calls != 1U ||
+        problem_result.work.schedule_emissions != 1U ||
+        problem_result.candidates[0].work.simulation_calls != 1U ||
+        problem_result.candidates[0].work.schedule_emissions != 1U ||
+        problem_result.selected_schedule.action_count != 1U ||
+        problem_result.selected_schedule.action_kinds[0] !=
             SHADOWSPILL_MEMORY_RELEASE) {
-        shadowspill_pressurefit_context_result_destroy(&context_result);
+        shadowspill_pressurefit_problem_result_destroy(&problem_result);
         return EXIT_FAILURE;
     }
-    shadowspill_pressurefit_context_result_destroy(&context_result);
+    shadowspill_pressurefit_problem_result_destroy(&problem_result);
 
-    const ShadowSpillPressureFitProgramContext program_context = {
+    const ShadowSpillPressureFitProgramProblem program_problem = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
-        .simulation = &context_simulation,
-        .device_priority = context_priority,
-        .alias_json_names = context_alias_names,
-        .task_json_names = context_task_names,
+        .simulation = &problem_simulation,
+        .device_priority = problem_priority,
+        .alias_json_names = problem_alias_names,
+        .task_json_names = problem_task_names,
     };
     ShadowSpillPressureFitPreflightResult preflight = {0};
-    if (shadowspill_validate_pressurefit_program_context(
-            &program_context,
+    if (shadowspill_validate_pressurefit_program_problem(
+            &program_problem,
             &preflight
         ) != SHADOWSPILL_STATUS_OK ||
         preflight.status != SHADOWSPILL_STATUS_OK ||
@@ -320,12 +320,12 @@ int main(void) {
         return EXIT_FAILURE;
     }
     const uint64_t excessive_workspace[] = {65U};
-    ShadowSpillSimulationProgram oversized_simulation = context_simulation;
+    ShadowSpillSimulationProgram oversized_simulation = problem_simulation;
     oversized_simulation.task_workspace_bytes = excessive_workspace;
-    ShadowSpillPressureFitProgramContext oversized_context = program_context;
-    oversized_context.simulation = &oversized_simulation;
-    if (shadowspill_validate_pressurefit_program_context(
-            &oversized_context,
+    ShadowSpillPressureFitProgramProblem oversized_problem = program_problem;
+    oversized_problem.simulation = &oversized_simulation;
+    if (shadowspill_validate_pressurefit_program_problem(
+            &oversized_problem,
             &preflight
         ) != SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE ||
         preflight.status != SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE ||
@@ -334,24 +334,24 @@ int main(void) {
         preflight.capacity_bytes != 64U) {
         return EXIT_FAILURE;
     }
-    ShadowSpillPressureFitContextResult program_context_result = {0};
-    if (shadowspill_evaluate_pressurefit_program_context(
-            &program_context,
-            &context_options,
-            &program_context_result
+    ShadowSpillPressureFitProblemResult program_problem_result = {0};
+    if (shadowspill_evaluate_pressurefit_program_problem(
+            &program_problem,
+            &problem_options,
+            &program_problem_result
         ) != SHADOWSPILL_STATUS_OK ||
-        program_context_result.candidate_count != 1U ||
-        program_context_result.selected_candidate_index != 0U ||
-        program_context_result.work.simulation_calls != 1U ||
-        program_context_result.work.schedule_emissions != 1U ||
-        program_context_result.candidates[0].work.simulation_calls != 1U ||
-        program_context_result.candidates[0].work.schedule_emissions != 1U ||
-        program_context_result.selected_schedule.action_count != 1U ||
-        program_context_result.selected_schedule.action_kinds[0] !=
+        program_problem_result.candidate_count != 1U ||
+        program_problem_result.selected_candidate_index != 0U ||
+        program_problem_result.work.simulation_calls != 1U ||
+        program_problem_result.work.schedule_emissions != 1U ||
+        program_problem_result.candidates[0].work.simulation_calls != 1U ||
+        program_problem_result.candidates[0].work.schedule_emissions != 1U ||
+        program_problem_result.selected_schedule.action_count != 1U ||
+        program_problem_result.selected_schedule.action_kinds[0] !=
             SHADOWSPILL_MEMORY_RELEASE) {
-        shadowspill_pressurefit_context_result_destroy(&program_context_result);
+        shadowspill_pressurefit_problem_result_destroy(&program_problem_result);
         return EXIT_FAILURE;
     }
-    shadowspill_pressurefit_context_result_destroy(&program_context_result);
+    shadowspill_pressurefit_problem_result_destroy(&program_problem_result);
     return EXIT_SUCCESS;
 }

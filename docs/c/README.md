@@ -53,7 +53,7 @@ diagnostics.
   them and names a matching destroy function.
 - Runtime handles own their internal records, events, streams, worker, and
   pool arenas until close/destroy.
-- Backend context pointers are borrowed and must outlive the runtime.
+- Backend problem pointers are borrowed and must outlive the runtime.
 - Distinct simulator results and admission-replay workspaces may be used by
   different threads; one workspace is not shared concurrently.
 
