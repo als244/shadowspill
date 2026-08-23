@@ -16,7 +16,7 @@ pinned-host slabs. Host memory is obtained with ordinary allocation followed
 by provider registration, and is unregistered before it is freed.
 
 The execution pool's `physical_capacity` is the complete process-attributable
-device cap. Provider/problem headroom lies inside that cap. Planning budgets
+device cap. Provider headroom and the driver's own baseline lie inside that cap. Planning budgets
 may reduce configured capacities but cannot exceed them.
 
 Runtime construction precedes workload-state construction. The runtime first
@@ -182,39 +182,35 @@ can satisfy it; otherwise it fails with no progress.
 
 ## Task boundaries
 
-The Python `_before_task()` boundary uses the immutable task record,
-calls the neutral runtime, acquires input generations, inserts stream waits,
-rebinds storages, assembles arguments, and records timing. `_after_task()`
-classifies outputs, publishes mutations, dematerializes releases, records the
-completion fence, submits actions, and performs terminal cleanup.
+Task boundaries have a page of their own: [task
+boundaries](task-boundaries.md) covers what `before_task` and `after_task` are
+each responsible for, how allocations find their task, which of a plan's
+actions run where, and exactly what is still in flight when the dispatching
+thread returns.
 
-Forward and training use this same orchestration skeleton and the same
-default-off profiler-annotation policy. Their enclosing annotations and host
-entry/exit timestamps cover the complete frontend boundaries; nested ranges
-only explain individual components.
+What matters here is the concurrency they permit. Multiple plan and task
+handles may coexist in the runtime. Distinct callables own distinct admitted
+task records and may remain active together; one callable permits one
+outstanding submitted invocation, because its physical layout and preallocated
+validation and action records are reused. A second concurrent invocation of the
+same mutable handle fails closed rather than sharing that state.
 
-The neutral `shadowspill_before_task_handle()` and
-`shadowspill_after_task_handle()` remain small object/lease/action
-orchestrators. They contain no PyTorch storage logic. Allocation-contract
-state is sized once with the admitted task record. Distinct task handles may
-be active concurrently, while a second concurrent invocation of the same
-mutable handle fails closed rather than sharing validation/action state.
-The same record owns its expanded input-binding array, so input snapshots are
-published as a borrowed view without a repeated allocation or copy.
-
-Multiple plan and task handles may coexist in the neutral runtime. The public
-PyTorch frontend exposes `submit()` for explicit invocation ownership. Host
-dispatch runs immediately and returns an `InvocationResult`; `result()` is the
-single synchronization point for that invocation's public result. Distinct
-callables own distinct admitted task records and may remain active together on
-one runtime. One callable permits one outstanding submitted invocation because
-its physical layout and preallocated validation/action records are reused.
+The public PyTorch frontend exposes `submit()` for explicit invocation
+ownership. Dispatch runs immediately and returns an `InvocationResult`;
+`result()` is the single synchronization point for that invocation's public
+result.
 
 Reusing or closing a callable waits only for that plan's claimed task scopes,
-actions, and task-owned retirements. It never waits for unrelated plans.
-Within a plan, one admitted task handle remains deliberately non-reentrant.
-The wait is an active atomic poll; neither dispatcher nor worker enters a
-condition wait, sleep, or scheduler yield.
+actions, and task-owned retirements. It never waits for unrelated plans. The
+wait is an active atomic poll; neither dispatcher nor worker enters a condition
+wait, sleep, or scheduler yield.
+
+The Python `_before_task()` and `_after_task()` add the framework half:
+rebinding storages, assembling arguments, classifying outputs, dematerializing
+releases, and recording timing. Forward and training share that skeleton and
+the same default-off profiler-annotation policy. The neutral
+`shadowspill_before_task_handle()` and `shadowspill_after_task_handle()`
+contain no PyTorch storage logic.
 
 ## Failure and teardown
 
