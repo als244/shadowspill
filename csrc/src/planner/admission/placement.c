@@ -423,7 +423,7 @@ ShadowSpillPlannerStatus shadowspill_place_lifetimes(
 )
 {
     if (problem == NULL || result == NULL ||
-        problem->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION) {
+        problem->abi_version != SHADOWSPILL_ABI_VERSION) {
         return SHADOWSPILL_PLANNER_INVALID_ARGUMENT;
     }
     result->required_bytes = 0U;

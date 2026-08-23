@@ -66,7 +66,7 @@ int main(void) {
         },
     };
     const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .pools = pools,
         .pool_count = 2U,
         .routes = routes,

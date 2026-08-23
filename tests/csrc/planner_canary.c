@@ -17,7 +17,7 @@ static ShadowSpillSimulationProgram make_program(
     uint32_t slot = next_runtime++;
     runtimes[slot] = runtime_ns;
     return (ShadowSpillSimulationProgram){
-        .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .device_count = 1U,
         .task_count = 1U,
         .spill_capacity_bytes = 1U,
@@ -73,7 +73,7 @@ int main(void) {
         .candidate_result_capacity = 2U,
     };
 
-    if (shadowspill_planner_abi_version() != SHADOWSPILL_PLANNER_ABI_VERSION) {
+    if (shadowspill_abi_version() != SHADOWSPILL_ABI_VERSION) {
         return EXIT_FAILURE;
     }
     if (shadowspill_select_plan(candidates, 2U, &result) !=
@@ -126,7 +126,7 @@ int main(void) {
     uint8_t reduced_resident[6] = {0};
     uint8_t reduced_breaks[6] = {0};
     const ShadowSpillResidencyProblem residency_problem = {
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .alias_count = 2U,
         .boundary_count = 3U,
         .device_count = 1U,
@@ -206,7 +206,7 @@ int main(void) {
     const uint8_t context_seed_resident[] = {1U, 0U};
     const uint8_t context_seed_breaks[] = {0U, 0U};
     const ShadowSpillResidencyProblem context_residency = {
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .alias_count = 1U,
         .boundary_count = 2U,
         .device_count = 1U,
@@ -238,7 +238,7 @@ int main(void) {
         SHADOWSPILL_MEMORY_DEVICE,
     };
     const ShadowSpillSimulationProgram context_simulation = {
-        .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .device_count = 1U,
         .alias_count = 1U,
         .task_count = 1U,
@@ -266,7 +266,7 @@ int main(void) {
     const char *context_alias_names[] = {"alias"};
     const char *context_task_names[] = {"task"};
     const ShadowSpillPressureFitContext context = {
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .residency = &context_residency,
         .simulation = &context_simulation,
         .seed_resident = context_seed_resident,
@@ -304,7 +304,7 @@ int main(void) {
     shadowspill_pressurefit_context_result_destroy(&context_result);
 
     const ShadowSpillPressureFitProgramContext program_context = {
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .simulation = &context_simulation,
         .device_priority = context_priority,
         .alias_json_names = context_alias_names,

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import ctypes
 from functools import cache
-from pathlib import Path
 
-from shadowspill._libraries import resolve_library
-from shadowspill._status import ABI_VERSION as _ABI_VERSION
+from shadowspill._libraries import (
+    load_shadowspill_library,
+    shadowspill_library_path,
+)
 
-ABI_VERSION = _ABI_VERSION
 NO_INDEX = (1 << 32) - 1
 
 
@@ -134,38 +134,23 @@ class CResult(ctypes.Structure):
     ]
 
 
-def simulator_library_path() -> Path | None:
-    return resolve_library("libshadowspill.so")
+simulator_library_path = shadowspill_library_path
 
 
 @cache
 def load_simulator_library() -> ctypes.CDLL:
-    path = simulator_library_path()
-    if path is None:
-        raise RuntimeError(
-            "libshadowspill.so was not found; install ShadowSpill or "
-            "build the editable checkout at its configured build location"
-        )
-    library = ctypes.CDLL(str(path))
-    library.shadowspill_simulator_abi_version.argtypes = []
-    library.shadowspill_simulator_abi_version.restype = ctypes.c_uint32
-    found = int(library.shadowspill_simulator_abi_version())
-    if found != ABI_VERSION:
-        raise RuntimeError(
-            f"simulator ABI mismatch: Python expects {ABI_VERSION}, library has {found}"
-        )
+    library = load_shadowspill_library()
     library.shadowspill_simulate.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CResult),
     ]
     library.shadowspill_simulate.restype = ctypes.c_uint32
-    library.shadowspill_simulation_status_string.argtypes = [ctypes.c_uint32]
-    library.shadowspill_simulation_status_string.restype = ctypes.c_char_p
+    library.shadowspill_status_string.argtypes = [ctypes.c_uint32]
+    library.shadowspill_status_string.restype = ctypes.c_char_p
     return library
 
 
 __all__ = [
-    "ABI_VERSION",
     "NO_INDEX",
     "CDevice",
     "CDevicePeak",

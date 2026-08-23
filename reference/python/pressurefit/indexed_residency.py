@@ -7,10 +7,9 @@ from array import array
 from dataclasses import dataclass
 from typing import Any
 
-from shadowspill._status import Status
+from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import MemoryLocation
 from shadowspill.planner._capi import (
-    ABI_VERSION,
     NO_INDEX,
     CResidencyOptions,
     CResidencyProblem,

@@ -203,7 +203,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
 
 static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
     if (config == NULL ||
-        config->abi_version != SHADOWSPILL_RUNTIME_ABI_VERSION ||
+        config->abi_version != SHADOWSPILL_ABI_VERSION ||
         config->pools == NULL || config->pool_count == 0U ||
         (config->routes == NULL && config->route_count != 0U) ||
         !shadowspill_synchronization_backend_is_valid(

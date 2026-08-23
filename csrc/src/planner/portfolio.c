@@ -427,9 +427,9 @@ static int context_valid(
         context->simulation == NULL || context->seed_resident == NULL ||
         context->seed_breaks == NULL || context->alias_json_names == NULL ||
         context->task_json_names == NULL ||
-        context->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
-        context->residency->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
-        context->simulation->abi_version != SHADOWSPILL_SIMULATOR_ABI_VERSION ||
+        context->abi_version != SHADOWSPILL_ABI_VERSION ||
+        context->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
+        context->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
         context->simulation->task_count == 0U ||
         options->residency_strategies == NULL ||
         options->residency_strategy_count == 0U ||

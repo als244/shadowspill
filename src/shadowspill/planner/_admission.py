@@ -7,7 +7,7 @@ from array import array
 from dataclasses import dataclass
 from typing import Protocol
 
-from shadowspill._status import Status
+from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule
 from shadowspill.simulator import (
     ActionPhysicalDelta,
@@ -19,7 +19,6 @@ from shadowspill.simulator._capi import NO_INDEX
 from shadowspill.simulator._compiled import CompiledSimulationTemplate
 
 from ._capi import (
-    ABI_VERSION,
     CAdmissionTopology,
     CIndexedSchedule,
     CScheduleAdmissionResult,
@@ -372,7 +371,7 @@ def evaluate_schedule_admission(
                 "largest_free_range="
                 f"{int(result.error_largest_free_range_bytes)}"
             )
-        encoded = library.shadowspill_planner_status_string(status)
+        encoded = library.shadowspill_status_string(status)
         detail = encoded.decode("utf-8") if encoded else f"planner status {status}"
         raise RuntimeError(f"compiled schedule admission failed: {detail}")
     dependencies: list[MemoryReuseDependency] = []

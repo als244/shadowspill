@@ -447,7 +447,7 @@ void shadowspill_mock_runtime_topology(
         .route = shadowspill_mock_evict_route(backend, 0U, 1U),
     };
     topology->runtime = (ShadowSpillRuntimeConfig){
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .pools = topology->pools,
         .pool_count = 2U,
         .routes = topology->routes,

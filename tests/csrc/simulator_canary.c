@@ -30,7 +30,7 @@ int main(void) {
     const uint32_t final_aliases[] = {1U};
     const uint8_t final_locations[] = {SHADOWSPILL_MEMORY_DEVICE};
     const ShadowSpillSimulationProgram program = {
-        .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .device_count = 1U,
         .alias_count = 2U,
         .task_count = 1U,
@@ -72,8 +72,8 @@ int main(void) {
         .device_peak_capacity = 1U,
     };
 
-    if (shadowspill_simulator_abi_version() !=
-        SHADOWSPILL_SIMULATOR_ABI_VERSION) {
+    if (shadowspill_abi_version() !=
+        SHADOWSPILL_ABI_VERSION) {
         return EXIT_FAILURE;
     }
     if (shadowspill_simulate(&program, &result) != SHADOWSPILL_SIMULATION_OK) {
@@ -102,7 +102,7 @@ int main(void) {
     const uint32_t one_final_alias[] = {0U};
     const uint8_t one_final_spill[] = {SHADOWSPILL_MEMORY_SPILL};
     const ShadowSpillSimulationProgram stale_spill_program = {
-        .abi_version = SHADOWSPILL_SIMULATOR_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .device_count = 1U,
         .alias_count = 1U,
         .task_count = 1U,

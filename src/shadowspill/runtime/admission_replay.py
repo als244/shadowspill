@@ -6,10 +6,9 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill._status import Status
+from shadowspill._status import ABI_VERSION, Status
 
 from ._admission_capi import (
-    ABI_VERSION,
     NO_ID,
     CAdmissionReplayDecision,
     CAdmissionReplayLiveLease,
@@ -190,7 +189,7 @@ def run_admission_replay(
             ),
         )
     if status != 0:
-        description = library.shadowspill_admission_replay_status_string(
+        description = library.shadowspill_status_string(
             status
         ).decode()
         raise ValueError(

@@ -25,7 +25,7 @@ int main(void) {
         return 2;
     }
     const ShadowSpillTransferCalibrationConfig calibration = {
-        .abi_version = SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .small_copy_bytes = 32U,
         .large_copy_bytes = 512U,
         .warmup_copies = 1U,

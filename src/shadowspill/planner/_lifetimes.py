@@ -15,12 +15,12 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
+from shadowspill._status import ABI_VERSION
 from shadowspill.simulator import SimulationResult
 from shadowspill.simulator._compiled import IntervalArrays
 
 from ._admission import CompiledAdmissionTopology
 from ._capi import (
-    ABI_VERSION,
     CLeaseIdentity,
     CLeaseLifetime,
     CLeaseLifetimeProblem,

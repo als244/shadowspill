@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import ctypes
 from functools import cache
-from pathlib import Path
 
-from shadowspill._libraries import resolve_library
-from shadowspill._status import ABI_VERSION as _ABI_VERSION
+from shadowspill._libraries import (
+    load_shadowspill_library,
+    shadowspill_library_path,
+)
 from shadowspill.simulator._capi import (
     CProgram,
     CTaskInterval,
     CTransferInterval,
 )
 
-ABI_VERSION = _ABI_VERSION
 NO_INDEX = (1 << 32) - 1
 
 
@@ -373,30 +373,12 @@ class CScheduleAdmissionResult(ctypes.Structure):
     ]
 
 
-def planner_library_path() -> Path | None:
-    """Return the selected planner library without loading it."""
-
-    return resolve_library("libshadowspill.so")
+planner_library_path = shadowspill_library_path
 
 
 @cache
 def load_planner_library() -> ctypes.CDLL:
-    """Load and validate ``libshadowspill.so`` exactly once."""
-
-    path = planner_library_path()
-    if path is None:
-        raise RuntimeError(
-            "libshadowspill.so was not found; install ShadowSpill or "
-            "build the editable checkout at its configured build location"
-        )
-    library = ctypes.CDLL(str(path))
-    library.shadowspill_planner_abi_version.argtypes = []
-    library.shadowspill_planner_abi_version.restype = ctypes.c_uint32
-    found = int(library.shadowspill_planner_abi_version())
-    if found != ABI_VERSION:
-        raise RuntimeError(
-            f"planner ABI mismatch: Python expects {ABI_VERSION}, library has {found}"
-        )
+    library = load_shadowspill_library()
     library.shadowspill_select_plan.argtypes = [
         ctypes.POINTER(CPlanCandidate),
         ctypes.c_uint32,
@@ -462,13 +444,12 @@ def load_planner_library() -> ctypes.CDLL:
         ctypes.POINTER(CLeaseLifetimeResult),
     ]
     library.shadowspill_build_lease_lifetimes.restype = ctypes.c_uint32
-    library.shadowspill_planner_status_string.argtypes = [ctypes.c_uint32]
-    library.shadowspill_planner_status_string.restype = ctypes.c_char_p
+    library.shadowspill_status_string.argtypes = [ctypes.c_uint32]
+    library.shadowspill_status_string.restype = ctypes.c_char_p
     return library
 
 
 __all__ = [
-    "ABI_VERSION",
     "NO_INDEX",
     "CAdmissionOperations",
     "CAdmissionTopology",

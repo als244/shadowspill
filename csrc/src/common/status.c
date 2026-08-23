@@ -1,4 +1,4 @@
-#include <shadowspill/status.h>
+#include <shadowspill/shadowspill.h>
 
 const char *shadowspill_status_string(ShadowSpillStatus status) {
     switch (status) {
@@ -68,4 +68,8 @@ const char *shadowspill_status_string(ShadowSpillStatus status) {
             return "invalid operation sequence";
     }
     return "unknown status";
+}
+
+uint32_t shadowspill_abi_version(void) {
+    return SHADOWSPILL_ABI_VERSION;
 }

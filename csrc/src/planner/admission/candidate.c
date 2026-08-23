@@ -179,7 +179,7 @@ ShadowSpillAdmissionReplayStatus shadowspill_admit_indexed_schedule(
         return SHADOWSPILL_ADMISSION_REPLAY_INVALID_OPERATIONS;
     }
     const ShadowSpillAdmissionReplayProgram replay_program = {
-        .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .capacity_bytes = context->admission->pool_capacity_bytes,
         .minimum_alignment = context->admission->minimum_alignment,
         .large_request_threshold_bytes = 0U,
@@ -266,7 +266,7 @@ ShadowSpillPlannerStatus shadowspill_evaluate_schedule_admission(
         .reuse_capacity = reuse_capacity,
     };
     const ShadowSpillPressureFitContext context = {
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .simulation = simulation,
         .admission = admission,
     };

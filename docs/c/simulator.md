@@ -35,9 +35,7 @@ spill capacity, and physical memory reuse.
 - `shadowspill_simulate()` validates and evaluates one indexed program.
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
-[C API guide](README.md#abi-use). `shadowspill_simulator_abi_version()` and
-`shadowspill_simulation_status_string()` remain as
-thin aliases of them.
+[C API guide](README.md#abi-use).
 
 The call performs no I/O, owns no external storage after return, and uses no
 global mutable state. Distinct result buffers can be evaluated concurrently.

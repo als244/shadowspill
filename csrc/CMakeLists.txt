@@ -19,7 +19,6 @@ add_library(
   src/simulator/events.c
   src/simulator/memory.c
   src/simulator/simulator.c
-  src/simulator/status.c
   src/simulator/tasks.c
   src/simulator/transfers.c
   src/simulator/validation.c
@@ -35,11 +34,11 @@ add_library(
   src/planner/residency.c
   src/planner/schedule.c
   src/planner/selector.c
-  src/planner/status.c
+  src/planner/result.c
 
   src/runtime/failure_state.c
   src/runtime/runtime.c
-  src/runtime/status.c
+  src/runtime/failure_reason.c
   src/runtime/worker.c
   src/runtime/memory/allocation_scope.c
   src/runtime/memory/allocations.c

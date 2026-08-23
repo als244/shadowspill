@@ -13,8 +13,9 @@ import ctypes
 from collections.abc import Sequence
 from typing import Protocol
 
+from shadowspill._status import ABI_VERSION
+
 from ._capi import (
-    ABI_VERSION,
     CLeaseLifetime,
     CPlacementProblem,
     CPlacementResult,

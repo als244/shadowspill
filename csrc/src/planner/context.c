@@ -191,8 +191,8 @@ static int program_context_valid(
     if (context == NULL || options == NULL || context->simulation == NULL ||
         context->device_priority == NULL || context->alias_json_names == NULL ||
         context->task_json_names == NULL ||
-        context->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
-        context->simulation->abi_version != SHADOWSPILL_SIMULATOR_ABI_VERSION ||
+        context->abi_version != SHADOWSPILL_ABI_VERSION ||
+        context->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
         context->simulation->device_count == 0U ||
         context->simulation->task_count == 0U ||
         options->initial_placement > SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
@@ -867,7 +867,7 @@ static ShadowSpillPlannerStatus prepare_context(
     }
 
     prepared->residency = (ShadowSpillResidencyProblem){
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .alias_count = program->alias_count,
         .boundary_count = program->task_count + 1U,
         .device_count = program->device_count,
@@ -890,7 +890,7 @@ static ShadowSpillPlannerStatus prepare_context(
         .device_priority = source->device_priority,
     };
     prepared->context = (ShadowSpillPressureFitContext){
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .residency = &prepared->residency,
         .simulation = program,
         .seed_resident = prepared->seed_resident,

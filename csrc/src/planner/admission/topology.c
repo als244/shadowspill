@@ -33,7 +33,7 @@ int shadowspill_admission_topology_valid(
     }
     const ShadowSpillAdmissionTopology *topology = context->admission;
     const ShadowSpillSimulationProgram *program = context->simulation;
-    if (topology->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
+    if (topology->abi_version != SHADOWSPILL_ABI_VERSION ||
         program->device_count != 1U || topology->task_count != program->task_count ||
         topology->alias_count != program->alias_count ||
         topology->pool_capacity_bytes == 0U ||

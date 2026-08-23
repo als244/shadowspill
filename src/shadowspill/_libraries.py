@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 import sysconfig
+from functools import cache
 from pathlib import Path
 from typing import Final
+
+from shadowspill._status import ABI_VERSION
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 
@@ -15,6 +19,8 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent
 #: left in a directory the loader happened to know about is silently wrong,
 #: and slow or subtly incompatible in ways that look like the code's fault.
 LIBRARY_DIRECTORY_ENVIRONMENT: Final = "SHADOWSPILL_LIBRARY_DIRECTORY"
+
+_LIBRARY: Final = "libshadowspill.so"
 
 
 def library_candidates(
@@ -62,4 +68,38 @@ def _editable_project_root(package_root: Path) -> Path | None:
     return project
 
 
-__all__ = ["LIBRARY_DIRECTORY_ENVIRONMENT", "library_candidates", "resolve_library"]
+@cache
+def load_shadowspill_library() -> ctypes.CDLL:
+    """Load ``libshadowspill.so`` once and check the version it was built with."""
+
+    path = resolve_library(_LIBRARY)
+    if path is None:
+        raise RuntimeError(
+            f"{_LIBRARY} was not found; install ShadowSpill, build the editable "
+            f"checkout, or set {LIBRARY_DIRECTORY_ENVIRONMENT}"
+        )
+    library = ctypes.CDLL(str(path))
+    library.shadowspill_abi_version.argtypes = []
+    library.shadowspill_abi_version.restype = ctypes.c_uint32
+    found = int(library.shadowspill_abi_version())
+    if found != ABI_VERSION:
+        raise RuntimeError(
+            f"ShadowSpill ABI mismatch: Python expects {ABI_VERSION}, "
+            f"{path} has {found}"
+        )
+    return library
+
+
+def shadowspill_library_path() -> Path | None:
+    """Return the selected library without loading it."""
+
+    return resolve_library(_LIBRARY)
+
+
+__all__ = [
+    "LIBRARY_DIRECTORY_ENVIRONMENT",
+    "library_candidates",
+    "load_shadowspill_library",
+    "resolve_library",
+    "shadowspill_library_path",
+]

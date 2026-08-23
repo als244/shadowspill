@@ -969,7 +969,7 @@ static int valid_problem(
     const ShadowSpillResidencyResult *result
 ) {
     if (problem == NULL || options == NULL || result == NULL ||
-        problem->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
+        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
         problem->boundary_count == 0U || problem->device_count == 0U) {
         return 0;
     }

@@ -550,7 +550,7 @@ static ShadowSpillPressureFitContext operations_context(
     const ShadowSpillAdmissionTopology *admission
 ) {
     return (ShadowSpillPressureFitContext){
-        .abi_version = SHADOWSPILL_PLANNER_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .simulation = simulation,
         .admission = admission,
     };

@@ -74,7 +74,7 @@ ShadowSpillRuntimeStatus shadowspill_trace_prepare(
     const ShadowSpillTraceConfig *config
 ) {
     if (runtime == NULL || config == NULL ||
-        config->abi_version != SHADOWSPILL_TRACE_ABI_VERSION ||
+        config->abi_version != SHADOWSPILL_ABI_VERSION ||
         config->event_capacity == 0U ||
         config->allocation_event_capacity == 0U ||
         config->event_capacity > SIZE_MAX / sizeof(ShadowSpillTraceEvent) ||
@@ -234,7 +234,7 @@ ShadowSpillRuntimeStatus shadowspill_trace_read(
         status = SHADOWSPILL_RUNTIME_INVALID_ARGUMENT;
     }
     *summary = (ShadowSpillTraceSummary){
-        .abi_version = SHADOWSPILL_TRACE_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .step_id = runtime->trace_step_id,
         .event_count = runtime->trace_event_count,
         .allocation_event_count = runtime->allocation_event_count,
