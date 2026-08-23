@@ -85,7 +85,9 @@ one that covers what it touches.
 
 ## Tests
 
-The test tree mirrors the boundary under test:
+The test tree mirrors the boundary under test, all the way down: a test for
+`src/shadowspill/pytorch/profiling/` lives in
+`tests/shadowspill/pytorch/profiling/`.
 
 ```text
 tests/

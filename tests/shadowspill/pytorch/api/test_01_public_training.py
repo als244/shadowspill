@@ -18,7 +18,7 @@ from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 from shadowspill.pytorch.state.storage import persistent_state
 
-from .runtime_test_support import public_test_runtime
+from ..runtime_test_support import public_test_runtime
 
 
 class _TrainingNetwork(nn.Module):
@@ -191,9 +191,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     )
     assert len(set(second_objective_pointers)) == len(second.objectives)
     assert set(first_objective_pointers).isdisjoint(second_objective_pointers)
-    for actual, retained in zip(
-        first.objectives, first_objective_values, strict=True
-    ):
+    for actual, retained in zip(first.objectives, first_objective_values, strict=True):
         torch.testing.assert_close(actual.cpu(), retained, rtol=0, atol=0)
     for actual, expected in zip(second.objectives, expected_losses[1], strict=True):
         torch.testing.assert_close(actual.cpu(), expected, rtol=2e-5, atol=2e-6)
@@ -264,10 +262,15 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
     optimizer_owner = persistent_state(runtime, training._optimizer)
     assert optimizer_owner is not None
     assert optimizer_owner.storages
+    # Adopting a persistent storage into a plan rekeys it, and the plan being
+    # idle restores it. Planning alone leaves nothing adopted, so a storage
+    # still carrying a rekeyed identity here is one that leaked out of a plan.
     assert all(
-        item.current_object_id != item.persistent_object_id
+        item.current_object_id == item.persistent_object_id
         for item in optimizer_owner.storages
     )
+    # The point of importing the optimizer's state is that it lives in spill.
+    assert {item.pool_id for item in optimizer_owner.storages} == {1}
     initial_state = training.state_dict()
     assert initial_state["optimizer"]["state"]
     training.load_state_dict(initial_state)
