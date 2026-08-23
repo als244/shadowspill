@@ -7,7 +7,6 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
@@ -15,14 +14,17 @@ from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
 )
-from shadowspill.simulator._diagnostics import (
+from shadowspill.simulator.diagnostics import (
     simulation_failure_detail,
     simulation_status_kind,
 )
-from shadowspill.simulator._indexed import IndexedSimulationTemplate
+from shadowspill.simulator.indexed import IndexedSimulationTemplate
+from shadowspill.status import ABI_VERSION, Status
 
-from ._admission import IndexedAdmissionFacts
-from ._capi import (
+from ..diagnostics import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
+from ..model import CandidateDiagnostic, PressureFitOptions
+from .admission import IndexedAdmissionFacts
+from .capi import (
     NO_INDEX,
     CPressureFitPreflightResult,
     CPressureFitProblemOptions,
@@ -32,8 +34,6 @@ from ._capi import (
     CPressureFitWorkDiagnostics,
     planner_api,
 )
-from .diagnostics import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
-from .model import CandidateDiagnostic, PressureFitOptions
 
 _STRATEGY_CODE = {
     "headroom-stall": 0,
@@ -127,9 +127,7 @@ class CProblemResult:
             repairs += candidate.repairs
             candidate_work += candidate.work
         if repairs != self.repairs:
-            raise RuntimeError(
-                "PressureFit problem repair counters do not reconcile"
-            )
+            raise RuntimeError("PressureFit problem repair counters do not reconcile")
         for name in candidate_work.__dataclass_fields__:
             if getattr(candidate_work, name) > getattr(self.work, name):
                 raise RuntimeError(
@@ -396,9 +394,7 @@ def validate_program_problem(
         )
     )
     if status != int(result.status):
-        raise RuntimeError(
-            "PressureFit preflight returned inconsistent status"
-        )
+        raise RuntimeError("PressureFit preflight returned inconsistent status")
     if status == 0:
         return CPreflightResult(None, None, None, None, None, None)
     failure_kind = int(result.failure_kind)
@@ -514,8 +510,8 @@ def _evaluate_problem(
 ) -> CProblemResult | None:
     """Invoke and decode one compiled program-problem evaluation."""
 
-    problem_options, strategy_names, rule_names, _option_buffers = (
-        _problem_options(options)
+    problem_options, strategy_names, rule_names, _option_buffers = _problem_options(
+        options
     )
     problem_result = CPressureFitProblemResult()
     library = planner_api()

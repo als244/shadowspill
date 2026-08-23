@@ -4,7 +4,6 @@ import io
 
 import torch
 
-from shadowspill.pytorch.diagnostics._mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.execution import (
     AllocatorTrace,
     ExecutionTiming,
@@ -13,6 +12,7 @@ from shadowspill.pytorch.diagnostics.execution import (
     StepTimingSummary,
     TransferTrace,
 )
+from shadowspill.pytorch.diagnostics.mapping import FrozenMapping
 
 
 def _diagnostics() -> StepDiagnostics:

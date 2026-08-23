@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import AdmissionFacts, PressureFitOptions
-from shadowspill.planner._cache import CachedPressureFitResult, PressureFitCache
+from shadowspill.planner.cache import CachedPressureFitResult, PressureFitCache
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileRepository
 from shadowspill.simulator import SimulationConfig

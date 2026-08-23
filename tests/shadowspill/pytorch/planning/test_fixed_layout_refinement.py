@@ -12,7 +12,7 @@ from shadowspill.planner import (
     RecomputationProblemDiagnostics,
     TaskAdmissionSpec,
 )
-from shadowspill.planner._cache import CachedPressureFitResult
+from shadowspill.planner.cache import CachedPressureFitResult
 from shadowspill.pytorch.planning.admission import (
     FixedLayoutInfeasibleError,
     refinement,

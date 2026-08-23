@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from shadowspill.planner import PressureFitOptions
-from shadowspill.planner._cache import PressureFitCache
+from shadowspill.planner.cache import PressureFitCache
 
 from ._examples import config, exact_capacity_program, exact_capacity_residency
 

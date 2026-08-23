@@ -8,7 +8,7 @@ from reference.python.pressurefit.indexed_residency import (
     reduce_residency,
 )
 from reference.python.pressurefit.residency import reduce_pressure, seed_residency
-from shadowspill._libraries import shadowspill_library_path
+from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner.model import (
     InitialPlacement,
     PressureFitInfeasibleError,

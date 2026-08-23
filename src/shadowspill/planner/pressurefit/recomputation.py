@@ -106,9 +106,7 @@ def build_recomputation_portfolio(
                 for order in memory_order
             )
         )
-    constrained = [
-        _apply_required_indices(item, terminal_save_indices) for item in raw
-    ]
+    constrained = [_apply_required_indices(item, terminal_save_indices) for item in raw]
     return tuple(_selections(groups, item) for item in _unique(constrained))
 
 
@@ -218,8 +216,7 @@ def _evenly_spaced_indices(total: int, count: int) -> frozenset[int]:
     if count == 0:
         return frozenset()
     return frozenset(
-        ((2 * ordinal + 1) * total) // (2 * count)
-        for ordinal in range(count)
+        ((2 * ordinal + 1) * total) // (2 * count) for ordinal in range(count)
     )
 
 

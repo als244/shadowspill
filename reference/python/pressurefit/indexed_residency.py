@@ -7,9 +7,8 @@ from array import array
 from dataclasses import dataclass
 from typing import Any
 
-from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner._capi import (
+from shadowspill.planner.library.capi import (
     NO_INDEX,
     CResidencyOptions,
     CResidencyProblem,
@@ -18,6 +17,7 @@ from shadowspill.planner._capi import (
 )
 from shadowspill.planner.model import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
+from shadowspill.status import ABI_VERSION, Status
 
 from .facts import PlanningFacts
 from .residency import ResidencyPlan, Span

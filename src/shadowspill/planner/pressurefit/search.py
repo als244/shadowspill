@@ -1,4 +1,15 @@
-"""Compiled, simulator-verified PressureFit orchestration."""
+"""Evaluating every recomputation selection and choosing one winner.
+
+PressureFit is given a family of legal recomputation selections and has to
+return the best schedule across all of them. This module owns that loop:
+projecting each selection into what the library needs, dropping the ones that
+cannot fit before paying to evaluate them, running the rest, and merging their
+results into one answer.
+
+It deliberately knows nothing about which selections are worth trying - that is
+``recomputation`` - and nothing about what to do when admission refuses the
+winner, which is ``refinement``.
+"""
 
 from __future__ import annotations
 
@@ -9,27 +20,27 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from functools import cache
 
-from shadowspill.ir import (
-    Program,
-    RecomputationSelection,
-    ResidencySpec,
-    shared_residency_footprint,
-)
+from shadowspill.ir import Program, RecomputationSelection, ResidencySpec
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._capi import simulator_api
-from shadowspill.simulator._indexed import (
+from shadowspill.simulator.indexed import (
     IndexedSimulationTemplate,
     index_simulation_template,
     simulate_template,
 )
 
-from ._admission import (
+from ..admission import AdmissionFacts
+from ..diagnostics import (
+    PressureFitRepairDiagnostics,
+    PressureFitWorkDiagnostics,
+    RecomputationChoiceDiagnostic,
+    RecomputationProblemDiagnostics,
+)
+from ..library.admission import (
     IndexedAdmissionFacts,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from ._capi import planner_api
-from ._portfolio import (
+from ..library.portfolio import (
     CCandidateDiagnostic,
     CPreflightResult,
     CProblemResult,
@@ -38,16 +49,7 @@ from ._portfolio import (
     evaluate_program_problem,
     validate_program_problem,
 )
-from ._recomputation import build_recomputation_portfolio
-from .admission import AdmissionFacts
-from .diagnostics import (
-    PressureFitRepairDiagnostics,
-    PressureFitWorkDiagnostics,
-    RecomputationChoiceDiagnostic,
-    RecomputationProblemDiagnostics,
-)
-from .model import (
-    AdmissionRefinement,
+from ..model import (
     PressureFitDiagnostics,
     PressureFitInfeasibleError,
     PressureFitOptions,
@@ -55,27 +57,9 @@ from .model import (
     PressureFitSearchExhaustedError,
 )
 
-_ADMISSION_RESERVE_GRANULARITY_BYTES = 2 << 20
-_ADMISSION_INITIAL_REFINEMENT_BYTES = 128 << 20
-_ADMISSION_DOUBLING_LIMIT_BYTES = 1 << 30
-_ADMISSION_LINEAR_REFINEMENT_BYTES = 512 << 20
-
-
-def _scheduled_admission_refinement(attempt: int) -> int:
-    """Return the deterministic reserve increment for one failed admission."""
-
-    doubled = _ADMISSION_INITIAL_REFINEMENT_BYTES << attempt
-    if doubled <= _ADMISSION_DOUBLING_LIMIT_BYTES:
-        return doubled
-    attempts_after_limit = attempt - 3
-    return (
-        _ADMISSION_DOUBLING_LIMIT_BYTES
-        + attempts_after_limit * _ADMISSION_LINEAR_REFINEMENT_BYTES
-    )
-
 
 @dataclass(frozen=True, slots=True)
-class _SelectionProblem:
+class SelectionProblem:
     """One recomputation selection projected into the planner ABI."""
 
     selections: tuple[RecomputationSelection, ...]
@@ -90,78 +74,7 @@ def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
     return ",".join(f"{item.group_id}={item.option_id}" for item in selections)
 
 
-def _validate_pressurefit_inputs(
-    program: Program,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...],
-    config: SimulationConfig,
-    admission: AdmissionFacts | None,
-) -> None:
-    """Validate public types and the logical/physical capacity relationship."""
-
-    if not isinstance(program, Program):
-        raise TypeError("program must be a Program")
-    if not isinstance(initial_residency, tuple):
-        raise TypeError("initial_residency must be a tuple")
-    if not isinstance(final_residency, tuple):
-        raise TypeError("final_residency must be a tuple")
-    if not isinstance(config, SimulationConfig):
-        raise TypeError("config must be a SimulationConfig")
-    if admission is None:
-        return
-    if not isinstance(admission, AdmissionFacts):
-        raise TypeError("admission must be an AdmissionFacts")
-    admission.validate(program)
-    configured = {item.device_id: item for item in config.devices}
-    shared = shared_residency_footprint(program)
-    movable_capacity = (
-        configured[admission.device_id].capacity_bytes
-        - shared.for_device(admission.device_id)
-        if admission.device_id in configured
-        else None
-    )
-    if (
-        admission.device_id not in configured
-        or movable_capacity != admission.object_capacity_bytes
-    ):
-        raise ValueError(
-            "feasibility capacity after shared residency must equal "
-            "AdmissionFacts object capacity"
-        )
-
-
-def validate_schedule_feasibility(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    admission: AdmissionFacts | None = None,
-) -> None:
-    """Reject irreducible capacity failures using the planner."""
-
-    _validate_pressurefit_inputs(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-    )
-    simulator_api()
-    planner_api()
-    problems = _build_problems(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-        portfolio=build_recomputation_portfolio(program),
-        progress=None,
-    )
-    _preflight_problems(problems)
-
-
-def _build_problems(
+def build_problems(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
@@ -170,10 +83,10 @@ def _build_problems(
     *,
     portfolio: tuple[tuple[RecomputationSelection, ...], ...],
     progress: Callable[[str], None] | None,
-) -> tuple[_SelectionProblem, ...]:
+) -> tuple[SelectionProblem, ...]:
     """Project each recomputation selection without Python residency matrices."""
 
-    problems: list[_SelectionProblem] = []
+    problems: list[SelectionProblem] = []
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
         tasks = program.selected_tasks(selections)
@@ -186,7 +99,7 @@ def _build_problems(
             final_residency=final_residency,
         )
         problems.append(
-            _SelectionProblem(
+            SelectionProblem(
                 selections=selections,
                 selection_id=_selection_id(selections),
                 indexed_template=indexed_template,
@@ -208,7 +121,7 @@ def _build_problems(
 
 
 def _preflight_error(
-    problem: _SelectionProblem,
+    problem: SelectionProblem,
     result: CPreflightResult,
 ) -> ValueError:
     """Decode one compiled preflight failure into the public exception model."""
@@ -258,12 +171,12 @@ def _preflight_error(
     )
 
 
-def _preflight_problems(
-    problems: tuple[_SelectionProblem, ...],
-) -> tuple[_SelectionProblem, ...]:
+def preflight_problems(
+    problems: tuple[SelectionProblem, ...],
+) -> tuple[SelectionProblem, ...]:
     """Keep selections that satisfy the semantic-capacity preflight."""
 
-    valid: list[_SelectionProblem] = []
+    valid: list[SelectionProblem] = []
     failures: list[ValueError] = []
     for problem in problems:
         result = validate_program_problem(
@@ -284,7 +197,7 @@ def _preflight_problems(
     )
 
 
-def _worker_count(options: PressureFitOptions, count: int) -> int:
+def worker_count(options: PressureFitOptions, count: int) -> int:
     if count <= 1 or options.workers == 1:
         return 1
     if options.workers > 1:
@@ -306,8 +219,8 @@ def _shared_worker_pool() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(max_workers=max(os.cpu_count() or 1, 1))
 
 
-def _run_problems(
-    problems: tuple[_SelectionProblem, ...],
+def run_problems(
+    problems: tuple[SelectionProblem, ...],
     options: PressureFitOptions,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate every recomputation selection in the planner.
@@ -339,7 +252,7 @@ def _run_problems(
             admission=problem.indexed_admission,
         )
 
-    workers = _worker_count(options, len(units))
+    workers = worker_count(options, len(units))
     if workers == 1:
         chunk_results = [evaluate(unit) for unit in units]
     elif options.workers > 1:
@@ -349,14 +262,14 @@ def _run_problems(
         chunk_results = list(_shared_worker_pool().map(evaluate, units))
     per_problem = len(strategies)
     return tuple(
-        _merge_strategy_results(
+        merge_strategy_results(
             chunk_results[index * per_problem : (index + 1) * per_problem]
         )
         for index in range(len(problems))
     )
 
 
-def _merge_strategy_results(
+def merge_strategy_results(
     chunks: list[CProblemResult | None],
 ) -> CProblemResult | None:
     """Concatenate per-strategy evaluations back into one problem result."""
@@ -394,13 +307,13 @@ def _merge_strategy_results(
     )
 
 
-def _finish_pressurefit(
+def finish_pressurefit(
     program: Program,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
     options: PressureFitOptions,
-    problems: tuple[_SelectionProblem, ...],
+    problems: tuple[SelectionProblem, ...],
     results: tuple[CProblemResult, ...],
     admission: AdmissionFacts | None,
 ) -> PressureFitResult:
@@ -546,193 +459,12 @@ def _finish_pressurefit(
     )
 
 
-def _pressurefit_once(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    options: PressureFitOptions | None = None,
-    admission: AdmissionFacts | None = None,
-    progress: Callable[[str], None] | None = None,
-) -> PressureFitResult:
-    """Evaluate every selection through the planner."""
-
-    _validate_pressurefit_inputs(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-    )
-    simulator_api()
-    planner_api()
-
-    selected_options = options or PressureFitOptions()
-    portfolio = build_recomputation_portfolio(program)
-    if progress is not None:
-        progress(
-            "PressureFit portfolio: "
-            f"groups={len(program.recomputation_groups)}, "
-            f"selections={len(portfolio)}"
-        )
-    started = time.perf_counter_ns()
-    problems = _preflight_problems(
-        _build_problems(
-            program,
-            initial_residency,
-            final_residency,
-            config,
-            admission,
-            portfolio=portfolio,
-            progress=progress,
-        )
-    )
-    results = _run_problems(problems, selected_options)
-    valid_pairs = tuple(
-        (problem, result)
-        for problem, result in zip(problems, results, strict=True)
-        if result is not None
-    )
-    if progress is not None:
-        progress(
-            "PressureFit compiled problems and candidates finished: "
-            f"valid={len(valid_pairs)}/{len(problems)}, "
-            "candidates="
-            f"{sum(len(result.candidates) for _problem, result in valid_pairs)}, "
-            f"workers={_worker_count(selected_options, len(problems))}, "
-            f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
-        )
-    if not valid_pairs:
-        raise RuntimeError(
-            "PressureFit rejected every selection after semantic "
-            "feasibility validation succeeded"
-        )
-    return _finish_pressurefit(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        selected_options,
-        tuple(problem for problem, _result in valid_pairs),
-        tuple(result for _problem, result in valid_pairs),
-        admission,
-    )
-
-
-def _round_up_admission_reserve(value: int) -> int:
-    granularity = _ADMISSION_RESERVE_GRANULARITY_BYTES
-    return ((value + granularity - 1) // granularity) * granularity
-
-
-def _with_object_capacity(
-    config: SimulationConfig,
-    admission: AdmissionFacts,
-    capacity_bytes: int,
-    *,
-    shared_execution_bytes: int,
-) -> tuple[SimulationConfig, AdmissionFacts]:
-    devices = tuple(
-        replace(
-            device,
-            capacity_bytes=capacity_bytes + shared_execution_bytes,
-        )
-        if device.device_id == admission.device_id
-        else device
-        for device in config.devices
-    )
-    if devices == config.devices:
-        raise ValueError(
-            f"admission device {admission.device_id!r} is absent from simulation"
-        )
-    return (
-        replace(config, devices=devices),
-        replace(admission, object_capacity_bytes=capacity_bytes),
-    )
-
-
-def pressurefit(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    options: PressureFitOptions | None = None,
-    admission: AdmissionFacts | None = None,
-    progress: Callable[[str], None] | None = None,
-) -> PressureFitResult:
-    """Select a schedule and refine dynamic-slab headroom."""
-
-    original_config = config
-    current_config = config
-    current_admission = admission
-    refinements: list[AdmissionRefinement] = []
-    while True:
-        try:
-            result = _pressurefit_once(
-                program,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=current_config,
-                options=options,
-                admission=current_admission,
-                progress=progress,
-            )
-            effective_capacity = (
-                None
-                if current_admission is None
-                else current_admission.object_capacity_bytes
-            )
-            return replace(
-                result,
-                simulation_config=original_config,
-                diagnostics=replace(
-                    result.diagnostics,
-                    admission_refinements=tuple(refinements),
-                    effective_object_capacity_bytes=effective_capacity,
-                ),
-                admission_facts=admission,
-            )
-        except PressureFitInfeasibleError as error:
-            if (
-                current_admission is None
-                or error.kind != "physical_admission"
-                or error.required_bytes is None
-                or error.required_bytes <= 0
-            ):
-                raise
-            previous = current_admission.object_capacity_bytes
-            scheduled_increment = _scheduled_admission_refinement(len(refinements))
-            increment = max(
-                _round_up_admission_reserve(error.required_bytes),
-                scheduled_increment,
-            )
-            capacity = previous - increment
-            if capacity <= 0:
-                raise
-            refinements.append(
-                AdmissionRefinement(
-                    attempt=len(refinements) + 1,
-                    previous_object_capacity_bytes=previous,
-                    required_additional_slack_bytes=error.required_bytes,
-                    reserve_increment_bytes=increment,
-                    object_capacity_bytes=capacity,
-                )
-            )
-            if progress is not None:
-                progress(
-                    "PressureFit physical admission refinement "
-                    f"{len(refinements)}: required_slack={error.required_bytes}, "
-                    f"reserve_increment={increment}, object_capacity={capacity}"
-                )
-            current_config, current_admission = _with_object_capacity(
-                current_config,
-                current_admission,
-                capacity,
-                shared_execution_bytes=shared_residency_footprint(program).for_device(
-                    current_admission.device_id
-                ),
-            )
-
-
-__all__ = ["pressurefit", "validate_schedule_feasibility"]
+__all__ = [
+    "SelectionProblem",
+    "build_problems",
+    "finish_pressurefit",
+    "merge_strategy_results",
+    "preflight_problems",
+    "run_problems",
+    "worker_count",
+]

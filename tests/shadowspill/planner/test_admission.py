@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from reference.python.admission import replay_admission
-from shadowspill._libraries import shadowspill_library_path
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -19,6 +18,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
+from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner import (
     AdmissionFacts,
     PressureFitOptions,
@@ -28,7 +28,7 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
     pressurefit,
 )
-from shadowspill.planner._admission import (
+from shadowspill.planner.library.admission import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
@@ -37,7 +37,7 @@ from shadowspill.pytorch.planning.admission import (
     simulation_admission_from_replay,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._indexed import index_simulation_template
+from shadowspill.simulator.indexed import index_simulation_template
 from tests.shadowspill.planner._examples import (
     training_chain_config,
     training_chain_initial,

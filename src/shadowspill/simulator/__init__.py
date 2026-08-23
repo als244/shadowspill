@@ -2,8 +2,8 @@
 
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
 
-from ._capi import simulator_api
-from ._indexed import simulate_program
+from .capi import simulator_api
+from .indexed import simulate_program
 from .model import (
     ActionPhysicalDelta,
     DeviceMemoryPeak,

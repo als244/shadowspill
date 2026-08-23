@@ -6,14 +6,14 @@ import ctypes
 from dataclasses import dataclass
 
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
-from shadowspill.planner._capi import (
+from shadowspill.planner.library.capi import (
     CCandidateResult,
     CPlanCandidate,
     CSelectionResult,
     planner_api,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._indexed import _project, _Projection
+from shadowspill.simulator.indexed import _project, _Projection
 
 
 @dataclass(frozen=True, slots=True)

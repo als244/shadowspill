@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.planner._operations import AdmissionOperations
+from shadowspill.planner.library.operations import AdmissionOperations
 from shadowspill.simulator import MemoryReuseDependency
 
 from ..admission_replay import AdmissionReplayPurpose

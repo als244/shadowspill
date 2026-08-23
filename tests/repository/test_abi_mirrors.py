@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill._status import ABI_VERSION, Status
 from shadowspill.pytorch.runtime_adapter import abi
+from shadowspill.status import ABI_VERSION, Status
 
 ROOT = Path(__file__).resolve().parents[2]
 _HEADERS = ROOT / "csrc" / "include" / "shadowspill"

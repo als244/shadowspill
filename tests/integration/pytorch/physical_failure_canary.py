@@ -6,9 +6,9 @@ import ctypes
 import sys
 from pathlib import Path
 
-from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from shadowspill.status import Status
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 MIB = 1 << 20

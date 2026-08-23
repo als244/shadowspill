@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass
 
 from reference.python.admission import place_lifetimes as place_reference
-from shadowspill.planner._placement import place_lifetimes as place
+from shadowspill.planner.library.placement import place_lifetimes as place
 
 
 @dataclass(frozen=True, slots=True)

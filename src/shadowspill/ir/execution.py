@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ._serialization import JsonValue, canonical_json, digest_json, parse_json
-from ._validation import (
+from .program import Program, RecomputationSelection
+from .schedule import MemorySchedule
+from .serialization import JsonValue, canonical_json, digest_json, parse_json
+from .validation import (
     expect_integer,
     expect_list,
     expect_mapping,
@@ -17,8 +19,6 @@ from ._validation import (
     require_non_negative,
     require_tuple,
 )
-from .program import Program, RecomputationSelection
-from .schedule import MemorySchedule
 
 EXECUTION_PLAN_SCHEMA = "shadowspill.execution_plan/v2"
 

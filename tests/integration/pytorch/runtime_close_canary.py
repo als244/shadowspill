@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import torch
 
-from shadowspill._status import Status
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import Runtime
+from shadowspill.status import Status
 
 
 def main() -> int:

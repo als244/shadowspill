@@ -384,9 +384,7 @@ class AdmissionFacts:
 
         devices = {item.device_id for item in program.devices}
         if self.device_id not in devices:
-            raise ValueError(
-                f"admission facts names unknown device {self.device_id!r}"
-            )
+            raise ValueError(f"admission facts names unknown device {self.device_id!r}")
         if len(program.devices) != 1:
             raise ValueError(
                 "one AdmissionFacts currently describes exactly one execution "

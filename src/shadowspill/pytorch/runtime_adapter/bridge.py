@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
-from shadowspill._status import ABI_VERSION
 from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
@@ -43,6 +42,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.runtime import ObjectConsistency, ObjectRef
+from shadowspill.status import ABI_VERSION
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.materialization.replacement import (

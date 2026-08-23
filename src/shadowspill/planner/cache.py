@@ -19,17 +19,17 @@ from shadowspill.ir import (
     ResidencySpec,
 )
 from shadowspill.simulator import SimulationConfig, simulate
-from shadowspill.simulator._indexed import (
+from shadowspill.simulator.indexed import (
     index_simulation_template,
     simulate_template,
 )
 
-from ._admission import (
+from .admission import AdmissionFacts
+from .library.admission import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from .admission import AdmissionFacts
 from .model import (
     PressureFitDiagnostics,
     PressureFitOptions,

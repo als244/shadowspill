@@ -8,7 +8,6 @@ from pathlib import Path
 
 import torch
 
-from shadowspill._status import Status
 from shadowspill.pytorch.runtime_adapter.abi import (
     TaskAllocationContractStep,
     TaskDescription,
@@ -18,6 +17,7 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
     read_allocator_failure,
 )
+from shadowspill.status import Status
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 TASK_ID = 17
