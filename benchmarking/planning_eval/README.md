@@ -61,6 +61,12 @@ relationships are appended to `resume-commands.log` and `resume-history.jsonl`.
 Read that before comparing a resumed baseline's wall times against another:
 points from different revisions were produced by different code.
 
+`--revision <sha>` names the revision a run records, and on `--resume` selects
+the baseline recorded under it - which is how you pick one when several
+baselines share a config and corpus. It labels the run; it does not check
+anything out, so the code that runs is whatever is in the worktree. The corpus
+collector takes the same option, and records the revision on every case.
+
 If the controller was interrupted while a point was running, that attempt stays
 in the journal with status `interrupted` but does not consume the point's attempt
 budget. Timeouts, worker failures, and completed planner errors remain charged

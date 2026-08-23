@@ -99,7 +99,9 @@ def test_completed_artifact_is_validated_before_resume(tmp_path: Path) -> None:
         program=program,
         metadata={"request_digest": request.digest},
     )
-    attempt, _log, _result = begin_attempt(paths, request, command=("fixture",))
+    attempt, _log, _result = begin_attempt(
+        paths, request, command=("fixture",), revision="0" * 40
+    )
     artifact = {
         "directory": str(saved.directory),
         "program_path": str(saved.program_path),
@@ -134,7 +136,9 @@ def test_completed_artifact_survives_dataset_relocation(tmp_path: Path) -> None:
         program=_fixture(),
         metadata={"request_digest": request.digest},
     )
-    attempt, _log, result_path = begin_attempt(paths, request, command=("fixture",))
+    attempt, _log, result_path = begin_attempt(
+        paths, request, command=("fixture",), revision="0" * 40
+    )
     result_path.write_text(
         json.dumps(
             {
@@ -164,7 +168,10 @@ def test_completed_artifact_survives_dataset_relocation(tmp_path: Path) -> None:
         },
     )
     validation_attempt, _log, _result = begin_attempt(
-        paths, request, command=("controller-validation",)
+        paths,
+        request,
+        command=("controller-validation",),
+        revision="0" * 40,
     )
     finish_attempt(
         paths,
@@ -217,6 +224,7 @@ def test_controller_records_each_failure_and_continues(
         requests,
         output_root=output,
         options=ControllerOptions(
+            revision="0" * 40,
             planning_cache=tmp_path / "cache",
             resume=False,
             timeout_seconds=10,
@@ -265,6 +273,7 @@ def test_controller_records_controller_exception_and_continues(
         requests,
         output_root=output,
         options=ControllerOptions(
+            revision="0" * 40,
             planning_cache=tmp_path / "cache",
             resume=False,
             timeout_seconds=10,

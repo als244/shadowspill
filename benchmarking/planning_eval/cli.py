@@ -55,6 +55,7 @@ def main() -> int:
         corpus_digest=corpus_digest,
         provenance=provenance,
         enabled=arguments.resume,
+        select_revision=arguments.revision,
     )
     if resume_directory is not None:
         baseline_id = resume_directory.name
@@ -116,7 +117,7 @@ def main() -> int:
                 planning_cache=arguments.planning_cache.expanduser().resolve(),
                 resume=arguments.resume,
                 verbose_pressurefit=arguments.verbose_pressurefit,
-                revision=provenance.head,
+                revision=arguments.revision or provenance.head,
             ),
             repository_root=repository_root,
         )
@@ -144,6 +145,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--planning-cache", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--revision",
+        help=(
+            "record this revision on every point this run produces, and on "
+            "--resume select the baseline recorded under it; defaults to the "
+            "current HEAD. It labels the run - it does not check anything "
+            "out, so the code that runs is whatever is in the worktree"
+        ),
+    )
     parser.add_argument("--case", action="append", default=[], metavar="GLOB")
     parser.add_argument("--start-at")
     parser.add_argument("--limit", type=int)
@@ -196,12 +206,13 @@ def _find_resume_baseline(
     corpus_digest: str,
     provenance: RepositoryProvenance,
     enabled: bool,
+    select_revision: str | None = None,
 ) -> tuple[Path | None, dict[str, object] | None]:
     if not enabled:
         return None, None
     output = output_root.expanduser().resolve()
     exact = output / baseline_id
-    if exact.is_dir():
+    if select_revision is None and exact.is_dir():
         return exact, {
             "recorded_head": provenance.head,
             "resume_head": provenance.head,
@@ -224,6 +235,12 @@ def _find_resume_baseline(
             or corpus.get("manifest_digest") != corpus_digest
         ):
             continue
+        repository = manifest.get("repository")
+        if select_revision is not None and (
+            not isinstance(repository, dict)
+            or not str(repository.get("head", "")).startswith(select_revision)
+        ):
+            continue
         summary_path = directory / "summary.json"
         if summary_path.is_file():
             pending = read_object(summary_path).get("pending_points")
@@ -241,7 +258,7 @@ def _find_resume_baseline(
     if len(matches) > 1:
         raise ValueError(
             "--resume matched more than one baseline for this config and "
-            "corpus; keep one and move the rest aside: "
+            "corpus; name one with --revision, or move the rest aside: "
             + ", ".join(path.name for path, _ in matches)
         )
     if matches:
