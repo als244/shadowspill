@@ -58,7 +58,10 @@ trees.
 9. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
    causal-dependency replay.
 10. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
-    task boundaries, failure, and tracing.
+    failure, and tracing.
+11. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+    `after_task` each do, how allocations find their task, and what is still in
+    flight when the dispatching thread returns.
 
 ## Examples
 
