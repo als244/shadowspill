@@ -7,7 +7,8 @@ genuinely pluggable: the device backends and the PyTorch adapter.
 csrc/
 ├── include/shadowspill/   every public header the library exports
 ├── src/
-│   ├── common/            what all three components share: the status decoder
+│   ├── common/            what all three share: the status decoder and the
+│   │                      three calls POSIX and Windows spell differently
 │   ├── simulator/         deterministic schedule evaluator
 │   ├── planner/           PressureFit candidate selection over the simulator;
 │   │   └── admission/     derives the pool operations a schedule implies,

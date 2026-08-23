@@ -63,7 +63,7 @@ csrc/
 │                          planner.h, runtime.h, admission_replay.h, backend.h,
 │                          profiler.h
 ├── src/
-│   ├── common/            shared by all three components
+│   ├── common/            status decoding and the platform layer
 │   ├── simulator/
 │   ├── planner/           and planner/admission/
 │   └── runtime/           and memory/ objects/ tasks/ transfers/ sync/ plan/
