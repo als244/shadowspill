@@ -15,7 +15,6 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION SHADOWSPILL_ABI_VERSION
 #define SHADOWSPILL_ADMISSION_REPLAY_NO_ID UINT64_MAX
 
 /* Replay names for the shared statuses; see <shadowspill/status.h>. */
@@ -151,10 +150,6 @@ typedef struct ShadowSpillAdmissionReplayWorkspace
  * contiguous zero-based indices bounded by their respective counts. The function
  * performs no backend operations and owns no storage after it returns.
  */
-SHADOWSPILL_ADMISSION_REPLAY_API uint32_t shadowspill_admission_replay_abi_version(
-    void
-);
-
 SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillAdmissionReplayStatus
 shadowspill_admission_replay_run(
     const ShadowSpillAdmissionReplayProgram *program,
@@ -183,10 +178,6 @@ shadowspill_admission_replay_run_reusing(
 SHADOWSPILL_ADMISSION_REPLAY_API void
 shadowspill_admission_replay_workspace_destroy(
     ShadowSpillAdmissionReplayWorkspace *workspace
-);
-
-SHADOWSPILL_ADMISSION_REPLAY_API const char *shadowspill_admission_replay_status_string(
-    ShadowSpillAdmissionReplayStatus status
 );
 
 #ifdef __cplusplus

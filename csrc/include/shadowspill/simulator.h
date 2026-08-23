@@ -15,7 +15,6 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_SIMULATOR_ABI_VERSION SHADOWSPILL_ABI_VERSION
 #define SHADOWSPILL_SIMULATOR_NO_INDEX UINT32_MAX
 
 /* Simulation names for the shared statuses; see <shadowspill/status.h>. */
@@ -184,12 +183,6 @@ typedef struct ShadowSpillSimulationResult {
 SHADOWSPILL_SIMULATOR_API ShadowSpillSimulationStatus shadowspill_simulate(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationResult *result
-);
-
-SHADOWSPILL_SIMULATOR_API uint32_t shadowspill_simulator_abi_version(void);
-
-SHADOWSPILL_SIMULATOR_API const char *shadowspill_simulation_status_string(
-    ShadowSpillSimulationStatus status
 );
 
 #ifdef __cplusplus

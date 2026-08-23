@@ -38,7 +38,7 @@ int shadowspill_validate_program(
     const ShadowSpillSimulationProgram *program
 ) {
     if (program == NULL ||
-        program->abi_version != SHADOWSPILL_SIMULATOR_ABI_VERSION ||
+        program->abi_version != SHADOWSPILL_ABI_VERSION ||
         program->device_count == 0U ||
         program->use_admission_accounting > 1U) {
         return 0;

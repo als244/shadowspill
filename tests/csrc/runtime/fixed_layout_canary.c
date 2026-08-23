@@ -75,7 +75,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         .successor_kind = SHADOWSPILL_FIXED_ACTION_DESTINATION,
     };
     const ShadowSpillFixedLayoutDescription layout = {
-        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .slice_bytes = 128U,
         .placements = placements,
         .placement_count = 4U,
@@ -243,7 +243,7 @@ static int duplicate_placement_is_rejected(void) {
         },
     };
     const ShadowSpillFixedLayoutDescription layout = {
-        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .slice_bytes = 64U,
         .placements = placements,
         .placement_count = 2U,
@@ -280,7 +280,7 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
         .kind = SHADOWSPILL_DYNAMIC_TASK_ALLOCATION,
     };
     const ShadowSpillFixedLayoutDescription layout = {
-        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .placements = &placement,
         .placement_count = 1U,
     };
@@ -371,7 +371,7 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
         .kind = SHADOWSPILL_DYNAMIC_ACTION_DESTINATION,
     };
     const ShadowSpillFixedLayoutDescription layout = {
-        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .placements = &placement,
         .placement_count = 1U,
     };
@@ -487,7 +487,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
         .successor_kind = SHADOWSPILL_FIXED_TASK_ALLOCATION,
     };
     const ShadowSpillFixedLayoutDescription layout = {
-        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .slice_bytes = 64U,
         .placements = placements,
         .placement_count = 2U,
@@ -659,7 +659,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         .successor_kind = SHADOWSPILL_FIXED_ACTION_DESTINATION,
     };
     const ShadowSpillFixedLayoutDescription layout = {
-        .abi_version = SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .slice_bytes = 64U,
         .placements = placements,
         .placement_count = 2U,

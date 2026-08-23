@@ -16,7 +16,6 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PLANNER_ABI_VERSION SHADOWSPILL_ABI_VERSION
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
 #define SHADOWSPILL_ADMISSION_NO_DEPENDENCY UINT64_MAX
@@ -578,12 +577,6 @@ typedef struct ShadowSpillPlacementResult {
 SHADOWSPILL_PLANNER_API ShadowSpillPlannerStatus shadowspill_place_lifetimes(
     const ShadowSpillPlacementProblem *problem,
     ShadowSpillPlacementResult *result
-);
-
-SHADOWSPILL_PLANNER_API uint32_t shadowspill_planner_abi_version(void);
-
-SHADOWSPILL_PLANNER_API const char *shadowspill_planner_status_string(
-    ShadowSpillPlannerStatus status
 );
 
 #ifdef __cplusplus

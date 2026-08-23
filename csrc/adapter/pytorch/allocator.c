@@ -481,7 +481,7 @@ static ShadowSpillRuntimeStatus build_runtime_topology(
         };
     }
     const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .pools = pools,
         .pool_count = config->pool_count,
         .routes = routes,
@@ -782,7 +782,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_adapter_capabilities(
     }
     *capabilities = (ShadowSpillPytorchAdapterCapabilities){
         .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
-        .runtime_abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .runtime_abi_version = SHADOWSPILL_ABI_VERSION,
         .backend_abi_version = SHADOWSPILL_CUDA_BACKEND_ABI_VERSION,
         .slab_memory_strategy = 1U,
         .record_stream_callback = 1U,
@@ -1080,10 +1080,10 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
         append_failure_message(
             destination, destination_bytes, &offset,
             "ShadowSpill %s (device %d)\nstatus: %u (%s)\n",
-            shadowspill_runtime_status_string(status),
+            shadowspill_status_string(status),
             failure.device_ordinal,
             (unsigned int)status,
-            shadowspill_runtime_status_string(status)
+            shadowspill_status_string(status)
         );
     }
     if (runtime->reason != SHADOWSPILL_FAILURE_REASON_UNSPECIFIED) {
@@ -1099,7 +1099,7 @@ ShadowSpillRuntimeStatus shadowspill_pytorch_cuda_malloc_failure_message(
             destination, destination_bytes, &offset,
             "note: an earlier failure (%s) had already stopped this runtime; "
             "later calls fail because of it, not on their own\n",
-            shadowspill_runtime_status_string(
+            shadowspill_status_string(
                 (ShadowSpillRuntimeStatus)failure.status
             )
         );

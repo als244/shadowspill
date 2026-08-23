@@ -1,7 +1,19 @@
 #ifndef SHADOWSPILL_H
 #define SHADOWSPILL_H
 
+#include <stdint.h>
+
 #include <shadowspill/status.h>
+
+#if defined(_WIN32)
+#define SHADOWSPILL_API __declspec(dllexport)
+#else
+#define SHADOWSPILL_API __attribute__((visibility("default")))
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * One ABI version for everything shipped in libshadowspill.
@@ -17,5 +29,12 @@
  * library they load into.
  */
 #define SHADOWSPILL_ABI_VERSION 48U
+
+/* The version the loaded library was built with. */
+SHADOWSPILL_API uint32_t shadowspill_abi_version(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -5,10 +5,10 @@ from __future__ import annotations
 import ctypes
 from functools import cache
 
-from shadowspill._libraries import resolve_library
-from shadowspill._status import ABI_VERSION as _ABI_VERSION
+from shadowspill._libraries import (
+    load_shadowspill_library,
+)
 
-ABI_VERSION = _ABI_VERSION
 NO_ID = (1 << 64) - 1
 
 
@@ -100,33 +100,18 @@ class CAdmissionReplayResult(ctypes.Structure):
 
 @cache
 def load_admission_replay_library() -> ctypes.CDLL:
-    path = resolve_library("libshadowspill.so")
-    if path is None:
-        raise RuntimeError(
-            "libshadowspill.so was not found; install ShadowSpill or "
-            "build the editable checkout at its configured build location"
-        )
-    library = ctypes.CDLL(str(path))
-    library.shadowspill_admission_replay_abi_version.argtypes = []
-    library.shadowspill_admission_replay_abi_version.restype = ctypes.c_uint32
-    actual_abi = int(library.shadowspill_admission_replay_abi_version())
-    if actual_abi != ABI_VERSION:
-        raise RuntimeError(
-            "ShadowSpill AdmissionReplay ABI mismatch: "
-            f"expected {ABI_VERSION}, found {actual_abi}"
-        )
+    library = load_shadowspill_library()
     library.shadowspill_admission_replay_run.argtypes = [
         ctypes.POINTER(CAdmissionReplayProgram),
         ctypes.POINTER(CAdmissionReplayResult),
     ]
     library.shadowspill_admission_replay_run.restype = ctypes.c_uint32
-    library.shadowspill_admission_replay_status_string.argtypes = [ctypes.c_uint32]
-    library.shadowspill_admission_replay_status_string.restype = ctypes.c_char_p
+    library.shadowspill_status_string.argtypes = [ctypes.c_uint32]
+    library.shadowspill_status_string.restype = ctypes.c_char_p
     return library
 
 
 __all__ = [
-    "ABI_VERSION",
     "NO_ID",
     "CAdmissionReplayDecision",
     "CAdmissionReplayLiveLease",

@@ -6,7 +6,7 @@ import ctypes
 from array import array
 from dataclasses import dataclass
 
-from shadowspill._status import Status
+from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
@@ -20,7 +20,6 @@ from shadowspill.ir import (
 )
 
 from ._capi import (
-    ABI_VERSION,
     NO_INDEX,
     CDevice,
     CDevicePeak,

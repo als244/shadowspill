@@ -207,7 +207,7 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
         .route = shadowspill_mock_fetch_route(mock, 2U, 0U),
     };
     const ShadowSpillRuntimeConfig sparse = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .pools = pools,
         .pool_count = 3U,
         .routes = &route,
@@ -474,7 +474,7 @@ static int plan_selects_nondefault_pool_pair(void) {
         },
     };
     const ShadowSpillRuntimeConfig config = {
-        .abi_version = SHADOWSPILL_RUNTIME_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .pools = pools,
         .pool_count = 3U,
         .routes = routes,

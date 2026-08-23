@@ -61,7 +61,7 @@ void import_cpu_storages(
     TORCH_CHECK(
         status == SHADOWSPILL_RUNTIME_OK,
         "CPU storage import does not name a current runtime lease: ",
-        shadowspill_runtime_status_string(status));
+        shadowspill_status_string(status));
     current_addresses.push_back(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
         tensor.storage().data_ptr().get())));
   }
@@ -101,7 +101,7 @@ at::Tensor make_runtime_cpu_storage(
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
       "CPU runtime storage does not name a current pool lease: ",
-      shadowspill_runtime_status_string(status));
+      shadowspill_status_string(status));
   return at::from_blob(
       reinterpret_cast<void*>(static_cast<uintptr_t>(target_address)),
       {size_bytes},
@@ -220,7 +220,7 @@ void before_task_storages(
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
       "task acquisition failed: ",
-      shadowspill_runtime_status_string(status));
+      shadowspill_status_string(status));
   TORCH_CHECK(
       binding_count == count && (count == 0U || bindings != nullptr),
       "task acquisition returned the wrong binding count");
@@ -330,7 +330,7 @@ void adopt_storages(
         ", address ",
         address,
         ": ",
-        shadowspill_runtime_status_string(status));
+        shadowspill_status_string(status));
     TORCH_CHECK(
         binding.pointer == reinterpret_cast<void*>(
             static_cast<uintptr_t>(address)),
@@ -401,7 +401,7 @@ void rebind_replacement_views(
       TORCH_CHECK(
           status == SHADOWSPILL_RUNTIME_OK,
           "existing storage does not match the retired object generation: ",
-          shadowspill_runtime_status_string(status));
+          shadowspill_status_string(status));
     }
   }
   for (const auto index : c10::irange(count)) {
@@ -450,7 +450,7 @@ void after_task_storages(
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
       "task publication failed: ",
-      shadowspill_runtime_status_string(status));
+      shadowspill_status_string(status));
 }
 
 at::Tensor transfer_acquired_storage_to_caller(
@@ -486,7 +486,7 @@ at::Tensor transfer_acquired_storage_to_caller(
   TORCH_CHECK(
       status == SHADOWSPILL_RUNTIME_OK,
       "caller output transfer failed: ",
-      shadowspill_runtime_status_string(status));
+      shadowspill_status_string(status));
   TORCH_CHECK(
       allocation.allocation_id == static_cast<uint64_t>(allocation_id) &&
           allocation.generation == static_cast<uint64_t>(generation) &&

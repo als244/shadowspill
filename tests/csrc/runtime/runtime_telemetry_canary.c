@@ -420,7 +420,7 @@ static int bounded_runtime_trace_is_opt_in(void) {
         return -1;
     }
     const ShadowSpillTraceConfig trace_config = {
-        .abi_version = SHADOWSPILL_TRACE_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .event_capacity = 64U,
         .allocation_event_capacity = 64U,
     };
@@ -472,7 +472,7 @@ static int bounded_runtime_trace_is_opt_in(void) {
         shadowspill_trace_read(
             runtime, &summary, NULL, 0U, NULL, 0U
         ) != SHADOWSPILL_RUNTIME_OK ||
-        summary.abi_version != SHADOWSPILL_TRACE_ABI_VERSION ||
+        summary.abi_version != SHADOWSPILL_ABI_VERSION ||
         summary.step_id != 7U || summary.active != 0U ||
         summary.event_count < 9U || summary.allocation_event_count == 0U ||
         summary.event_overflow != 0U ||

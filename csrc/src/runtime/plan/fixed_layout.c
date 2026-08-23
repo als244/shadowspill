@@ -518,7 +518,7 @@ static int descriptions_are_valid(
     const ShadowSpillFixedLayoutDescription *description
 ) {
     if (description == NULL ||
-        description->abi_version != SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION ||
+        description->abi_version != SHADOWSPILL_ABI_VERSION ||
         (description->placement_count != 0U &&
          description->placements == NULL) ||
         (description->dependency_count != 0U &&

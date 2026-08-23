@@ -28,7 +28,7 @@ static int causal_successor_replay(void) {
         .dependency_capacity = 2U,
     };
     const ShadowSpillAdmissionReplayProgram program = {
-        .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .capacity_bytes = 128U,
         .minimum_alignment = 1U,
         .lease_count = 2U,
@@ -85,7 +85,7 @@ static int promised_dependency_replay(void) {
         .dependency_capacity = 1U,
     };
     const ShadowSpillAdmissionReplayProgram program = {
-        .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .capacity_bytes = 128U,
         .minimum_alignment = 1U,
         .lease_count = 2U,
@@ -113,7 +113,7 @@ static int infeasible_replay_reports_geometry(void) {
         .decision_capacity = 2U,
     };
     const ShadowSpillAdmissionReplayProgram program = {
-        .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .capacity_bytes = 128U,
         .minimum_alignment = 1U,
         .lease_count = 2U,
@@ -143,7 +143,7 @@ static int reusable_workspace_preserves_decisions(void) {
          SHADOWSPILL_ADMISSION_REPLAY_RELEASE, 0U},
     };
     const ShadowSpillAdmissionReplayProgram program = {
-        .abi_version = SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION,
+        .abi_version = SHADOWSPILL_ABI_VERSION,
         .capacity_bytes = 128U,
         .minimum_alignment = 1U,
         .lease_count = 2U,
@@ -184,8 +184,8 @@ static int reusable_workspace_preserves_decisions(void) {
 }
 
 int main(void) {
-    if (shadowspill_admission_replay_abi_version() !=
-        SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION) {
+    if (shadowspill_abi_version() !=
+        SHADOWSPILL_ABI_VERSION) {
         fprintf(stderr, "AdmissionReplay canary: ABI mismatch\n");
         return 1;
     }

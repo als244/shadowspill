@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 
-from shadowspill._status import Status
+from shadowspill._status import ABI_VERSION, Status
 from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
@@ -23,7 +23,6 @@ from shadowspill.simulator._diagnostics import (
 
 from ._admission import CompiledAdmissionTopology
 from ._capi import (
-    ABI_VERSION,
     NO_INDEX,
     CPressureFitContextOptions,
     CPressureFitContextResult,
@@ -408,7 +407,7 @@ def validate_program_context_compiled(
         _PREFLIGHT_REQUIRED_CAPACITY,
         _PREFLIGHT_MISSING_INITIAL_RESIDENCY,
     }:
-        encoded = library.shadowspill_planner_status_string(status)
+        encoded = library.shadowspill_status_string(status)
         message = encoded.decode("utf-8") if encoded else f"planner status {status}"
         raise CompiledContextPreparationError(message)
     failure_names = {
@@ -536,7 +535,7 @@ def _evaluate_context(
                 "compiled PressureFit context rejected the selected topology"
             )
         if status not in (Status.OK, Status.NO_FEASIBLE_CANDIDATE):
-            encoded = library.shadowspill_planner_status_string(status)
+            encoded = library.shadowspill_status_string(status)
             message = encoded.decode("utf-8") if encoded else f"planner status {status}"
             raise RuntimeError(message)
         candidates: list[CCandidateDiagnostic] = []

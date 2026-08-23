@@ -465,7 +465,7 @@ ShadowSpillPlannerStatus shadowspill_build_lease_lifetimes(
 )
 {
     if (problem == NULL || result == NULL ||
-        problem->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
+        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
         problem->operations == NULL || problem->admission == NULL ||
         problem->schedule == NULL || result->lifetimes == NULL ||
         result->identities == NULL || result->allocation_step_leases == NULL ||

@@ -70,9 +70,9 @@ int shadowspill_schedule_facts_create(
 ) {
     if (context == NULL || facts == NULL || context->residency == NULL ||
         context->simulation == NULL ||
-        context->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
-        context->residency->abi_version != SHADOWSPILL_PLANNER_ABI_VERSION ||
-        context->simulation->abi_version != SHADOWSPILL_SIMULATOR_ABI_VERSION ||
+        context->abi_version != SHADOWSPILL_ABI_VERSION ||
+        context->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
+        context->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
         context->residency->alias_count != context->simulation->alias_count ||
         context->residency->device_count != context->simulation->device_count ||
         context->residency->boundary_count !=

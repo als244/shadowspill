@@ -1,9 +1,5 @@
 #include "internal.h"
 
-uint32_t shadowspill_runtime_abi_version(void) {
-    return SHADOWSPILL_RUNTIME_ABI_VERSION;
-}
-
 const char *shadowspill_failure_reason_string(
     ShadowSpillFailureReason reason
 ) {
@@ -30,8 +26,3 @@ const char *shadowspill_failure_reason_string(
     }
     return "unknown reason";
 }
-
-const char *shadowspill_runtime_status_string(ShadowSpillRuntimeStatus status) {
-    return shadowspill_status_string(status);
-}
-

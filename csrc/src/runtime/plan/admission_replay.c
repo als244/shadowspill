@@ -151,7 +151,7 @@ static int valid_program(
     const ShadowSpillAdmissionReplayResult *result
 ) {
     return program != NULL && result != NULL &&
-        program->abi_version == SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION &&
+        program->abi_version == SHADOWSPILL_ABI_VERSION &&
         program->minimum_alignment != 0U &&
         (program->operation_count == 0U || program->operations != NULL) &&
         result->decision_capacity >= program->operation_count &&
@@ -597,10 +597,6 @@ static ShadowSpillAdmissionReplayStatus apply_operation(
     return SHADOWSPILL_ADMISSION_REPLAY_OK;
 }
 
-uint32_t shadowspill_admission_replay_abi_version(void) {
-    return SHADOWSPILL_ADMISSION_REPLAY_ABI_VERSION;
-}
-
 ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_workspace_create(
     uint64_t lease_capacity,
     uint64_t dependency_capacity,
@@ -770,10 +766,3 @@ ShadowSpillAdmissionReplayStatus shadowspill_admission_replay_run(
     shadowspill_admission_replay_workspace_destroy(workspace);
     return status;
 }
-
-const char *shadowspill_admission_replay_status_string(
-    ShadowSpillAdmissionReplayStatus status
-) {
-    return shadowspill_status_string(status);
-}
-

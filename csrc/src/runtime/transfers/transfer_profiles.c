@@ -108,7 +108,7 @@ int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime) {
                 profile_index(runtime, source, destination)
             ];
             *profile = (ShadowSpillTransferProfile){
-                .abi_version = SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION,
+                .abi_version = SHADOWSPILL_ABI_VERSION,
                 .source_pool_id = source,
                 .destination_pool_id = destination,
                 .bandwidth_bytes_per_second = source == destination
@@ -643,7 +643,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
     }
     ShadowSpillTransferCalibrationConfig config = provided_config == NULL
         ? (ShadowSpillTransferCalibrationConfig){
-            .abi_version = SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION,
+            .abi_version = SHADOWSPILL_ABI_VERSION,
             .small_copy_bytes = 4096U,
             .large_copy_bytes = 256U << 20U,
             .warmup_copies = 4U,
@@ -651,7 +651,7 @@ ShadowSpillRuntimeStatus shadowspill_runtime_calibrate_transfer_capabilities(
             .provenance = SHADOWSPILL_TRANSFER_PROFILE_RECALIBRATION,
         }
         : *provided_config;
-    if (config.abi_version != SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION ||
+    if (config.abi_version != SHADOWSPILL_ABI_VERSION ||
         config.small_copy_bytes == 0U ||
         config.large_copy_bytes < config.small_copy_bytes ||
         config.measured_copies == 0U ||

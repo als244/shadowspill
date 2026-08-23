@@ -18,10 +18,6 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_RUNTIME_ABI_VERSION SHADOWSPILL_ABI_VERSION
-#define SHADOWSPILL_FIXED_LAYOUT_ABI_VERSION SHADOWSPILL_ABI_VERSION
-#define SHADOWSPILL_TRACE_ABI_VERSION SHADOWSPILL_ABI_VERSION
-#define SHADOWSPILL_TRANSFER_PROFILE_ABI_VERSION SHADOWSPILL_ABI_VERSION
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
@@ -1112,15 +1108,9 @@ shadowspill_object_location_snapshot(
     ShadowSpillObjectLocationSnapshot *snapshot
 );
 
-SHADOWSPILL_RUNTIME_API uint32_t shadowspill_runtime_abi_version(void);
-
 /* One sentence naming the condition behind a status. */
 SHADOWSPILL_RUNTIME_API const char *shadowspill_failure_reason_string(
     ShadowSpillFailureReason reason
-);
-
-SHADOWSPILL_RUNTIME_API const char *shadowspill_runtime_status_string(
-    ShadowSpillRuntimeStatus status
 );
 
 #ifdef __cplusplus
