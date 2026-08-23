@@ -12,7 +12,7 @@ from shadowspill.pytorch import (
 )
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 
-from .runtime_test_support import public_test_runtime
+from ..runtime_test_support import public_test_runtime
 
 
 class _Network(nn.Module):
@@ -82,9 +82,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     assert layout.required_bytes <= layout.pool_capacity_bytes
     assert layout.attempts[-1].accepted
     assert all(item.pressurefit_wall_time_ns > 0 for item in layout.attempts)
-    assert all(
-        item.physical_admission_wall_time_ns > 0 for item in layout.attempts
-    )
+    assert all(item.physical_admission_wall_time_ns > 0 for item in layout.attempts)
     assert layout.task_memory_envelopes
     encoded_layout = planned.plan_report.diagnostics.as_dict()["physical_layouts"][0]
     assert encoded_layout["attempts"][-1]["pressurefit_wall_time_ns"] > 0
