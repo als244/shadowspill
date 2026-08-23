@@ -29,18 +29,25 @@ from shadowspill.simulator.indexed import (
 )
 
 from ..admission import AdmissionFacts
+from ..admission.indexed import (
+    IndexedAdmissionFacts,
+    evaluate_schedule_admission,
+    index_admission_facts,
+)
 from ..diagnostics import (
+    PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
 )
-from ..library.admission import (
-    IndexedAdmissionFacts,
-    evaluate_schedule_admission,
-    index_admission_facts,
+from ..request import PressureFitOptions
+from ..result import (
+    PressureFitInfeasibleError,
+    PressureFitResult,
+    PressureFitSearchExhaustedError,
 )
-from ..library.portfolio import (
+from .portfolio import (
     CCandidateDiagnostic,
     CPreflightResult,
     CProblemResult,
@@ -48,13 +55,6 @@ from ..library.portfolio import (
     decode_schedule,
     evaluate_program_problem,
     validate_program_problem,
-)
-from ..model import (
-    PressureFitDiagnostics,
-    PressureFitInfeasibleError,
-    PressureFitOptions,
-    PressureFitResult,
-    PressureFitSearchExhaustedError,
 )
 
 

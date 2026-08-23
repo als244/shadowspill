@@ -25,17 +25,15 @@ from shadowspill.simulator.indexed import (
 )
 
 from .admission import AdmissionFacts
-from .library.admission import (
+from .admission.indexed import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from .model import (
-    PressureFitDiagnostics,
-    PressureFitOptions,
-    PressureFitResult,
-)
+from .diagnostics import PressureFitDiagnostics
 from .pressurefit import pressurefit
+from .request import PressureFitOptions
+from .result import PressureFitResult
 
 _SCHEMA = "shadowspill.pressurefit_selection/v7"
 

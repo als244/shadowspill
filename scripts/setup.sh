@@ -122,7 +122,7 @@ import torch
 
 from shadowspill.libraries import resolve_library
 from shadowspill.libraries import shadowspill_library_path
-from shadowspill.planner.library.capi import planner_api
+from shadowspill.planner.capi import planner_api
 from shadowspill.pytorch.runtime_adapter.allocator import (
     _REQUIRED_STORAGE_OPERATIONS,
 )

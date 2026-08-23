@@ -18,21 +18,21 @@ from shadowspill.ir import (
 from shadowspill.ir.validation import ValidationError
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.diagnostics import (
+    AdmissionRefinement,
+    CandidateDiagnostic,
+    PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
 )
-from shadowspill.planner.model import (
-    AdmissionRefinement,
-    CandidateDiagnostic,
-    PressureFitDiagnostics,
+from shadowspill.planner.recomputation import build_recomputation_portfolio
+from shadowspill.planner.request import PressureFitOptions
+from shadowspill.planner.result import (
     PressureFitInfeasibleError,
-    PressureFitOptions,
     PressureFitResult,
     PressureFitSearchExhaustedError,
 )
-from shadowspill.planner.pressurefit.recomputation import build_recomputation_portfolio
 from shadowspill.simulator import (
     SimulationConfig,
     SimulationInfeasibleError,

@@ -7,21 +7,22 @@ from .admission import (
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from .model import (
+from .diagnostics import (
     AdmissionRefinement,
     CandidateDiagnostic,
-    InitialPlacement,
     PressureFitDiagnostics,
-    PressureFitInfeasibleError,
-    PressureFitOptions,
     PressureFitRepairDiagnostics,
-    PressureFitResult,
-    PressureFitSearchExhaustedError,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
 )
 from .pressurefit import pressurefit, validate_schedule_feasibility
+from .request import InitialPlacement, PressureFitOptions
+from .result import (
+    PressureFitInfeasibleError,
+    PressureFitResult,
+    PressureFitSearchExhaustedError,
+)
 
 __all__ = [
     "AdmissionFacts",

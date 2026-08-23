@@ -18,16 +18,16 @@ from shadowspill.simulator.capi import NO_INDEX
 from shadowspill.simulator.indexed import IndexedSimulationTemplate
 from shadowspill.status import ABI_VERSION, Status
 
-from ..admission import (
-    AdmissionFacts,
-    TaskAdmissionSpec,
-    TaskAllocationStepKind,
-)
-from .capi import (
+from ..capi import (
     CAdmissionFacts,
     CIndexedSchedule,
     CScheduleAdmissionResult,
     planner_api,
+)
+from . import (
+    AdmissionFacts,
+    TaskAdmissionSpec,
+    TaskAllocationStepKind,
 )
 
 

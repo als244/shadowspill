@@ -11,7 +11,7 @@ from shadowspill.ir import (
     ResidencySpec,
     TaskSpec,
 )
-from shadowspill.planner.model import PressureFitInfeasibleError
+from shadowspill.planner.result import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 

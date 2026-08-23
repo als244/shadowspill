@@ -12,7 +12,7 @@ from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
 )
-from shadowspill.planner.model import PressureFitInfeasibleError
+from shadowspill.planner.result import PressureFitInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 from .facts import PlanningFacts

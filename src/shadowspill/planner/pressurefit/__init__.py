@@ -23,14 +23,11 @@ from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.capi import simulator_api
 
 from ..admission import AdmissionFacts
-from ..library.capi import planner_api
-from ..model import (
-    AdmissionRefinement,
-    PressureFitInfeasibleError,
-    PressureFitOptions,
-    PressureFitResult,
-)
-from .recomputation import build_recomputation_portfolio
+from ..capi import planner_api
+from ..diagnostics import AdmissionRefinement
+from ..recomputation import build_recomputation_portfolio
+from ..request import PressureFitOptions
+from ..result import PressureFitInfeasibleError, PressureFitResult
 from .refinement import (
     round_up_admission_reserve,
     scheduled_admission_refinement,

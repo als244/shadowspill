@@ -21,10 +21,8 @@ from shadowspill.simulator.diagnostics import (
 from shadowspill.simulator.indexed import IndexedSimulationTemplate
 from shadowspill.status import ABI_VERSION, Status
 
-from ..diagnostics import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
-from ..model import CandidateDiagnostic, PressureFitOptions
-from .admission import IndexedAdmissionFacts
-from .capi import (
+from ..admission.indexed import IndexedAdmissionFacts
+from ..capi import (
     NO_INDEX,
     CPressureFitPreflightResult,
     CPressureFitProblemOptions,
@@ -34,6 +32,12 @@ from .capi import (
     CPressureFitWorkDiagnostics,
     planner_api,
 )
+from ..diagnostics import (
+    CandidateDiagnostic,
+    PressureFitRepairDiagnostics,
+    PressureFitWorkDiagnostics,
+)
+from ..request import PressureFitOptions
 
 _STRATEGY_CODE = {
     "headroom-stall": 0,

@@ -6,7 +6,7 @@ import pytest
 
 from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner.model import InitialPlacement
+from shadowspill.planner.request import InitialPlacement
 
 from ._examples import (
     training_chain_config,
