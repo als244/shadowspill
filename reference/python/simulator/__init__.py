@@ -1,4 +1,4 @@
-"""Readable simulator oracle; production uses the compiled simulator."""
+"""Readable simulator oracle; production uses the simulator."""
 
 from .implementation import simulate_python
 

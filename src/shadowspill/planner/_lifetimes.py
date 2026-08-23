@@ -1,4 +1,4 @@
-"""Lease lifetimes for one schedule, from the compiled planner library.
+"""Lease lifetimes for one schedule, from the library.
 
 The library joins the operations a schedule implies against the timings the
 simulator measured, and reports one record per lease: the four numbers
@@ -17,9 +17,9 @@ from dataclasses import dataclass
 
 from shadowspill._status import ABI_VERSION
 from shadowspill.simulator import SimulationResult
-from shadowspill.simulator._compiled import IntervalArrays
+from shadowspill.simulator._indexed import IntervalArrays
 
-from ._admission import CompiledAdmissionTopology
+from ._admission import IndexedAdmissionTopology
 from ._capi import (
     CLeaseIdentity,
     CLeaseLifetime,
@@ -49,7 +49,7 @@ class LeaseLifetimes:
 
 def build_lease_lifetimes(
     operations: AdmissionOperations,
-    admission: CompiledAdmissionTopology,
+    admission: IndexedAdmissionTopology,
     simulation: SimulationResult,
     *,
     dynamic_aliases: tuple[int, ...] = (),
@@ -65,7 +65,7 @@ def build_lease_lifetimes(
     intervals = simulation.interval_arrays
     if not isinstance(intervals, IntervalArrays):
         raise ValueError(
-            "lease lifetimes need the compiled simulator's own intervals; "
+            "lease lifetimes need the simulator's own intervals; "
             "this result did not come from it"
         )
 

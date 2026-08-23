@@ -3,7 +3,7 @@
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
 
 from ._capi import load_simulator_library
-from ._compiled import simulate_compiled
+from ._indexed import simulate_program
 from .model import (
     ActionPhysicalDelta,
     DeviceMemoryPeak,
@@ -29,10 +29,10 @@ def simulate(
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
-    """Replay an explicit schedule through the required compiled simulator."""
+    """Replay an explicit schedule through the simulator."""
 
     load_simulator_library()
-    return simulate_compiled(
+    return simulate_program(
         program,
         schedule,
         selections=selections,

@@ -1,4 +1,4 @@
-"""Compiled simulator-backed PressureFit candidate selection."""
+"""Simulator-backed PressureFit candidate selection."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from shadowspill.planner._capi import (
     load_planner_library,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._compiled import _project, _Projection
+from shadowspill.simulator._indexed import _project, _Projection
 
 
 @dataclass(frozen=True, slots=True)

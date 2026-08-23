@@ -17,16 +17,16 @@ from shadowspill.ir import (
 )
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator._capi import load_simulator_library
-from shadowspill.simulator._compiled import (
-    CompiledSimulationTemplate,
-    compile_simulation_template,
-    simulate_compiled_template,
+from shadowspill.simulator._indexed import (
+    IndexedSimulationTemplate,
+    index_simulation_template,
+    simulate_template,
 )
 
 from ._admission import (
-    CompiledAdmissionTopology,
-    compile_admission_topology,
+    IndexedAdmissionTopology,
     evaluate_schedule_admission,
+    index_admission_topology,
 )
 from ._capi import load_planner_library
 from ._portfolio import (
@@ -35,8 +35,8 @@ from ._portfolio import (
     CPreflightResult,
     decode_candidate_diagnostic,
     decode_schedule,
-    evaluate_program_context_compiled,
-    validate_program_context_compiled,
+    evaluate_program_context,
+    validate_program_context,
 )
 from ._recomputation import build_recomputation_portfolio
 from .admission import AdmissionTopology
@@ -76,12 +76,12 @@ def _scheduled_admission_refinement(attempt: int) -> int:
 
 @dataclass(frozen=True, slots=True)
 class _SelectionContext:
-    """One recomputation selection projected into the compiled planner ABI."""
+    """One recomputation selection projected into the planner ABI."""
 
     selections: tuple[RecomputationSelection, ...]
     selection_id: str
-    compiled_template: CompiledSimulationTemplate
-    compiled_admission: CompiledAdmissionTopology | None
+    indexed_template: IndexedSimulationTemplate
+    indexed_admission: IndexedAdmissionTopology | None
 
 
 def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
@@ -138,7 +138,7 @@ def validate_schedule_feasibility(
     config: SimulationConfig,
     admission: AdmissionTopology | None = None,
 ) -> None:
-    """Reject irreducible capacity failures using the compiled planner."""
+    """Reject irreducible capacity failures using the planner."""
 
     _validate_pressurefit_inputs(
         program,
@@ -177,7 +177,7 @@ def _build_contexts(
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(portfolio, start=1):
         tasks = program.selected_tasks(selections)
-        compiled_template = compile_simulation_template(
+        indexed_template = index_simulation_template(
             program,
             selections,
             config,
@@ -189,9 +189,9 @@ def _build_contexts(
             _SelectionContext(
                 selections=selections,
                 selection_id=_selection_id(selections),
-                compiled_template=compiled_template,
-                compiled_admission=(
-                    compile_admission_topology(admission, compiled_template)
+                indexed_template=indexed_template,
+                indexed_admission=(
+                    index_admission_topology(admission, indexed_template)
                     if admission is not None
                     else None
                 ),
@@ -216,20 +216,20 @@ def _preflight_error(
     if result.failure_kind == "missing_initial_residency":
         if result.error_alias is None:
             raise RuntimeError("compiled preflight omitted its failing alias")
-        alias_id = context.compiled_template.alias_ids[result.error_alias]
+        alias_id = context.indexed_template.alias_ids[result.error_alias]
         return ValueError(f"input alias {alias_id!r} has no initial residency")
 
     device_id = (
         None
         if result.error_device is None
-        else context.compiled_template.device_ids[result.error_device]
+        else context.indexed_template.device_ids[result.error_device]
     )
     boundary_task_id = (
         None
         if result.error_boundary is None
         or result.error_boundary < 0
-        or result.error_boundary >= len(context.compiled_template.task_ids)
-        else context.compiled_template.task_ids[result.error_boundary]
+        or result.error_boundary >= len(context.indexed_template.task_ids)
+        else context.indexed_template.task_ids[result.error_boundary]
     )
     required = result.required_bytes
     capacity = result.capacity_bytes
@@ -261,14 +261,14 @@ def _preflight_error(
 def _preflight_contexts(
     contexts: tuple[_SelectionContext, ...],
 ) -> tuple[_SelectionContext, ...]:
-    """Keep selections that satisfy the compiled semantic-capacity preflight."""
+    """Keep selections that satisfy the semantic-capacity preflight."""
 
     valid: list[_SelectionContext] = []
     failures: list[ValueError] = []
     for context in contexts:
-        result = validate_program_context_compiled(
-            context.compiled_template,
-            admission=context.compiled_admission,
+        result = validate_program_context(
+            context.indexed_template,
+            admission=context.indexed_admission,
         )
         if result.valid:
             valid.append(context)
@@ -310,7 +310,7 @@ def _run_contexts(
     contexts: tuple[_SelectionContext, ...],
     options: PressureFitOptions,
 ) -> tuple[CContextResult | None, ...]:
-    """Evaluate every recomputation selection in the compiled planner.
+    """Evaluate every recomputation selection in the planner.
 
     Each context's portfolio is split by residency strategy into one
     compiled evaluation per (context, strategy), so parallelism scales
@@ -333,10 +333,10 @@ def _run_contexts(
     ) -> CContextResult | None:
         context_index, unit_options = unit
         context = contexts[context_index]
-        return evaluate_program_context_compiled(
-            context.compiled_template,
+        return evaluate_program_context(
+            context.indexed_template,
             unit_options,
-            admission=context.compiled_admission,
+            admission=context.indexed_admission,
         )
 
     workers = _worker_count(options, len(units))
@@ -415,7 +415,7 @@ def _finish_pressurefit(
             decode_candidate_diagnostic(
                 candidate,
                 selection_id=context.selection_id,
-                simulation=context.compiled_template,
+                simulation=context.indexed_template,
             )
             for candidate in result.candidates
         )
@@ -495,22 +495,22 @@ def _finish_pressurefit(
     context = contexts[context_index]
     indexed_schedule = result.selected_schedule
     assert indexed_schedule is not None
-    schedule = decode_schedule(indexed_schedule, context.compiled_template)
+    schedule = decode_schedule(indexed_schedule, context.indexed_template)
     result_admission_calls = 0
     result_admission_time_ns = 0
     simulation_admission = None
-    if context.compiled_admission is not None:
+    if context.indexed_admission is not None:
         admission_started = time.perf_counter_ns()
         simulation_admission = evaluate_schedule_admission(
-            context.compiled_template,
-            context.compiled_admission,
+            context.indexed_template,
+            context.indexed_admission,
             indexed_schedule,
         ).simulation_admission
         result_admission_time_ns = time.perf_counter_ns() - admission_started
         result_admission_calls = 1
     simulation_started = time.perf_counter_ns()
-    simulation = simulate_compiled_template(
-        context.compiled_template,
+    simulation = simulate_template(
+        context.indexed_template,
         schedule,
         admission=simulation_admission,
     )
@@ -556,7 +556,7 @@ def _pressurefit_once(
     admission: AdmissionTopology | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
-    """Evaluate every selection through the required compiled planner."""
+    """Evaluate every selection through the planner."""
 
     _validate_pressurefit_inputs(
         program,
@@ -605,7 +605,7 @@ def _pressurefit_once(
         )
     if not valid_pairs:
         raise RuntimeError(
-            "compiled PressureFit rejected every selection after semantic "
+            "PressureFit rejected every selection after semantic "
             "feasibility validation succeeded"
         )
     return _finish_pressurefit(
@@ -661,7 +661,7 @@ def pressurefit(
     admission: AdmissionTopology | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
-    """Select a compiled schedule and refine dynamic-slab headroom."""
+    """Select a schedule and refine dynamic-slab headroom."""
 
     original_config = config
     current_config = config

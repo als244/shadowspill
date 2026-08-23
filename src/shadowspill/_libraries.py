@@ -1,4 +1,4 @@
-"""Deterministic discovery of ShadowSpill's installed compiled libraries."""
+"""Deterministic discovery of ShadowSpill's installed libraries."""
 
 from __future__ import annotations
 

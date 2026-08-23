@@ -19,15 +19,15 @@ from shadowspill.ir import (
     ResidencySpec,
 )
 from shadowspill.simulator import SimulationConfig, simulate
-from shadowspill.simulator._compiled import (
-    compile_simulation_template,
-    simulate_compiled_template,
+from shadowspill.simulator._indexed import (
+    index_simulation_template,
+    simulate_template,
 )
 
 from ._admission import (
-    compile_admission_topology,
     encode_schedule,
     evaluate_schedule_admission,
+    index_admission_topology,
 )
 from .admission import AdmissionTopology
 from .model import (
@@ -194,14 +194,14 @@ class PressureFitCache:
                 config=config,
             )
         else:
-            template = compile_simulation_template(program, selections, config)
-            compiled_admission = compile_admission_topology(admission, template)
+            template = index_simulation_template(program, selections, config)
+            indexed_admission = index_admission_topology(admission, template)
             physical = evaluate_schedule_admission(
                 template,
-                compiled_admission,
+                indexed_admission,
                 encode_schedule(schedule, template),
             )
-            simulation = simulate_compiled_template(
+            simulation = simulate_template(
                 template,
                 schedule,
                 admission=physical.simulation_admission,

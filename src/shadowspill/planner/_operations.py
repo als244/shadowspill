@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from ._admission import CompiledAdmissionTopology, EncodedIndexedSchedule
+from ._admission import EncodedIndexedSchedule, IndexedAdmissionTopology
 from ._capi import (
     CAdmissionOperations,
     CIndexedSchedule,
@@ -65,7 +65,7 @@ _NO_OPERATION = (1 << 64) - 1
 
 def build_admission_operations(
     simulation: object,
-    admission: CompiledAdmissionTopology,
+    admission: IndexedAdmissionTopology,
     schedule: EncodedIndexedSchedule,
 ) -> AdmissionOperations:
     """Derive the operations `schedule` implies for this resolved program."""

@@ -298,7 +298,7 @@ class SimulationInfeasibleError(ValueError):
         self.requested_bytes = requested_bytes
 
 
-# Not slotted, so the compiled simulator can attach its own interval arrays
+# Not slotted, so the simulator can attach its own interval arrays
 # without declaring a field. They are not data - `asdict` and every other
 # field walk must not see them, or writing a result out would fail and its
 # digest would change.
@@ -313,11 +313,11 @@ class SimulationResult:
 
     @property
     def interval_arrays(self) -> object | None:
-        """The compiled simulator's own interval arrays, when it produced this.
+        """The simulator's own interval arrays, when it produced this.
 
         A consumer working in index space reads these instead of re-encoding
         the decoded intervals above; they carry nothing the decoded intervals
-        do not. `None` for any result the compiled simulator did not build,
+        do not. `None` for any result the simulator did not build,
         and for copies made by `dataclasses.replace`.
         """
 

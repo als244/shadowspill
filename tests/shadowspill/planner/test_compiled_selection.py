@@ -14,7 +14,7 @@ from ._examples import (
 
 pytestmark = pytest.mark.skipif(
     planner_library_path() is None,
-    reason="compiled planner library is not installed",
+    reason="the library is not installed",
 )
 
 

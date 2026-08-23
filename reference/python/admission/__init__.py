@@ -1,4 +1,4 @@
-"""Readable admission oracles; production uses the compiled planner."""
+"""Readable admission oracles; production uses the planner."""
 
 from .lifetimes import build_lease_layout_inputs
 from .placement import place_lifetimes

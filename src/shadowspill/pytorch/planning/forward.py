@@ -372,7 +372,7 @@ def build_forward_program(
     memory: PlanMemory,
     timer: PlanningTimer,
 ) -> ForwardProgramArtifacts:
-    """Lower compiled physical evidence into one canonical forward Program."""
+    """Lower physical evidence into one canonical forward Program."""
 
     with timer.measure("program_lowering"):
         measurements = {

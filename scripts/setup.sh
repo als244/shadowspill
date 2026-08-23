@@ -114,7 +114,7 @@ print(f"CUDA backend: {torch.version.cuda}")
 print(f"GPU: {torch.cuda.get_device_name(torch.cuda.current_device())}")
 PY
 
-echo "[4/4] Verifying ShadowSpill's installed compiled components"
+echo "[4/4] Verifying ShadowSpill's installed libraries"
 "${python_executable}" - <<'PY'
 import ctypes
 
@@ -141,11 +141,11 @@ for filename in libraries:
     print(f"{filename}: {resolve_library(filename)}")
 
 # Planning requires these libraries. Load and ABI-check them here so setup
-# cannot complete with a missing or incompatible compiled backend.
+# cannot complete with a missing or incompatible backend.
 load_planner_library()
 load_simulator_library()
-print(f"PressureFit backend: compiled C ({planner_library_path()})")
-print(f"Simulator backend: compiled C ({simulator_library_path()})")
+print(f"PressureFit: {planner_library_path()}")
+print(f"Simulator: {simulator_library_path()}")
 
 adapter = resolve_library("libshadowspill_pytorch.so")
 assert adapter is not None

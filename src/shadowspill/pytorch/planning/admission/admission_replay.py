@@ -2,7 +2,7 @@
 
 This module combines exact task-allocation evidence with persistent object
 generations and ordered memory actions. It translates that causal script into
-the same production ``MemoryPool`` decisions used by compiled admission.
+the same production ``MemoryPool`` decisions used by admission.
 """
 
 from __future__ import annotations

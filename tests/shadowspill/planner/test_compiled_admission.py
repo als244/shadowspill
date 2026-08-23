@@ -28,16 +28,16 @@ from shadowspill.planner import (
     pressurefit,
 )
 from shadowspill.planner._admission import (
-    compile_admission_topology,
     encode_schedule,
     evaluate_schedule_admission,
+    index_admission_topology,
 )
 from shadowspill.planner._capi import planner_library_path
 from shadowspill.pytorch.planning.admission import (
     simulation_admission_from_replay,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._compiled import compile_simulation_template
+from shadowspill.simulator._indexed import index_simulation_template
 from tests.shadowspill.planner._examples import (
     training_chain_config,
     training_chain_initial,
@@ -55,7 +55,7 @@ from tests.shadowspill.simulator.test_admission_accounting import (
 
 pytestmark = pytest.mark.skipif(
     planner_library_path() is None,
-    reason="compiled planner library is not installed",
+    reason="the library is not installed",
 )
 
 
@@ -115,11 +115,11 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
     program = causal_program()
     schedule = causal_schedule()
     topology = _causal_topology()
-    template = compile_simulation_template(program, (), causal_config())
+    template = index_simulation_template(program, (), causal_config())
 
     compiled = evaluate_schedule_admission(
         template,
-        compile_admission_topology(topology, template),
+        index_admission_topology(topology, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
@@ -181,7 +181,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    template = compile_simulation_template(program, (), config)
+    template = index_simulation_template(program, (), config)
     topology = AdmissionTopology(
         "cuda_0",
         64,
@@ -192,7 +192,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
 
     compiled = evaluate_schedule_admission(
         template,
-        compile_admission_topology(topology, template),
+        index_admission_topology(topology, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
@@ -297,7 +297,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    template = compile_simulation_template(program, (), config)
+    template = index_simulation_template(program, (), config)
 
     def evaluate(extents: tuple[int, ...]):
         topology = AdmissionTopology(
@@ -312,7 +312,7 @@ def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
         )
         return evaluate_schedule_admission(
             template,
-            compile_admission_topology(topology, template),
+            index_admission_topology(topology, template),
             encode_schedule(schedule, template),
         )
 
@@ -377,11 +377,11 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
             _task_admission("use_workspace", workspace_extents=(24,)),
         ),
     )
-    template = compile_simulation_template(program, (), config)
+    template = index_simulation_template(program, (), config)
 
     compiled = evaluate_schedule_admission(
         template,
-        compile_admission_topology(topology, template),
+        index_admission_topology(topology, template),
         encode_schedule(schedule, template),
     )
     replay = replay_admission(
@@ -446,7 +446,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         fetch_bandwidth_bytes_per_second=1,
         evict_bandwidth_bytes_per_second=1,
     )
-    template = compile_simulation_template(program, (), config)
+    template = index_simulation_template(program, (), config)
     ordered = TaskAdmissionSpec(
         "ordered_task",
         workspace_extents=(4, 6),
@@ -475,7 +475,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
         )
         return evaluate_schedule_admission(
             template,
-            compile_admission_topology(topology, template),
+            index_admission_topology(topology, template),
             encode_schedule(schedule, template),
         )
 

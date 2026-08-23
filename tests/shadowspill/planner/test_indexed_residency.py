@@ -4,8 +4,8 @@ import pytest
 
 from reference.python.pressurefit.facts import build_facts
 from reference.python.pressurefit.indexed_residency import (
-    compile_residency_template,
-    reduce_residency_compiled,
+    index_residency_template,
+    reduce_residency,
 )
 from reference.python.pressurefit.residency import reduce_pressure, seed_residency
 from shadowspill.planner._capi import planner_library_path
@@ -22,7 +22,7 @@ from ._examples import (
 
 pytestmark = pytest.mark.skipif(
     planner_library_path() is None,
-    reason="compiled planner library is not installed",
+    reason="the library is not installed",
 )
 
 
@@ -70,8 +70,8 @@ def test_compiled_reducer_matches_python_reference(
         )
 
     def reduce_compiled() -> object:
-        return reduce_residency_compiled(
-            compile_residency_template(facts, selected_config, seed),
+        return reduce_residency(
+            index_residency_template(facts, selected_config, seed),
             seed,
             strategy,
             extra_pressure=extra,

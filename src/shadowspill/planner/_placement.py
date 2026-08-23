@@ -1,8 +1,8 @@
-"""Fixed-offset lease placement through the compiled planner library.
+"""Fixed-offset lease placement through the library.
 
 Placement needs four numbers per lease and nothing else, so that is the whole
 contract: `Lifetime` names them, and anything carrying them can be placed. The
-compiled entry point never sees lease identity — offsets come back in input
+entry point never sees lease identity — offsets come back in input
 order, and the input index breaks every tie.
 """
 

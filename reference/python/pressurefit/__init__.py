@@ -1,4 +1,4 @@
-"""Readable PressureFit oracle; production uses the compiled planner."""
+"""Readable PressureFit oracle; production uses the planner."""
 
 from .implementation import pressurefit
 

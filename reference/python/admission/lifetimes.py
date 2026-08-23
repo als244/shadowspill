@@ -1,4 +1,4 @@
-"""Readable lease-lifetime construction; production uses the compiled planner.
+"""Readable lease-lifetime construction; production uses the planner.
 
 This is the algorithm `shadowspill_build_lease_lifetimes` implements, written
 for reading rather than speed: it is the oracle the compiled pass is

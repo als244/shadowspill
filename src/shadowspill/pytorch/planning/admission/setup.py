@@ -17,13 +17,13 @@ from dataclasses import dataclass
 from shadowspill.ir import Program, RecomputationSelection
 from shadowspill.planner import AdmissionTopology
 from shadowspill.planner._admission import (
-    CompiledAdmissionTopology,
-    compile_admission_topology,
+    IndexedAdmissionTopology,
+    index_admission_topology,
 )
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator._compiled import (
-    CompiledSimulationTemplate,
-    compile_simulation_template,
+from shadowspill.simulator._indexed import (
+    IndexedSimulationTemplate,
+    index_simulation_template,
 )
 
 from .admission_replay import AdmissionReplayPurpose
@@ -49,8 +49,8 @@ class AllocationStep:
 class AdmissionSetup:
     """The schedule-invariant half of measuring one resolved program."""
 
-    template: CompiledSimulationTemplate
-    compiled_topology: CompiledAdmissionTopology
+    template: IndexedSimulationTemplate
+    compiled_topology: IndexedAdmissionTopology
     allocation_steps: tuple[AllocationStep, ...]
     storage_handoffs: tuple[tuple[str, str], ...]
     action_trigger_tasks: tuple[int, ...] = ()
@@ -73,7 +73,7 @@ def build_admission_setup(
     """Compile the parts of admission a schedule cannot change."""
 
     topology.validate(program)
-    template = compile_simulation_template(program, selections, config)
+    template = index_simulation_template(program, selections, config)
     contracts = {item.task_id: item for item in topology.tasks}
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
 
@@ -118,7 +118,7 @@ def build_admission_setup(
 
     return AdmissionSetup(
         template=template,
-        compiled_topology=compile_admission_topology(topology, template),
+        compiled_topology=index_admission_topology(topology, template),
         allocation_steps=tuple(steps),
         storage_handoffs=tuple(handoffs),
     )
