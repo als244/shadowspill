@@ -625,7 +625,7 @@ def admit_physical_budget(
     *,
     device_budget_bytes: int,
     spill_budget_bytes: int,
-    context_bytes: int,
+    baseline_bytes: int,
     observed_external_bytes: int,
     maximum_task_workspace_bytes: int,
     predicted_spill_peak_bytes: int,
@@ -638,7 +638,7 @@ def admit_physical_budget(
     inputs = (
         device_budget_bytes,
         spill_budget_bytes,
-        context_bytes,
+        baseline_bytes,
         observed_external_bytes,
         maximum_task_workspace_bytes,
         predicted_spill_peak_bytes,
@@ -650,7 +650,7 @@ def admit_physical_budget(
         policy.minimum_provider_headroom_bytes,
         _round_up(provider_needed, policy.provider_granularity_bytes),
     )
-    fixed_device_bytes = context_bytes + provider_headroom
+    fixed_device_bytes = baseline_bytes + provider_headroom
     if fixed_device_bytes >= device_budget_bytes:
         raise AdmissionError(
             "problem and provider headroom leave no device slab",
@@ -688,7 +688,7 @@ def admit_physical_budget(
     admission = PhysicalAdmission(
         device_budget_bytes=device_budget_bytes,
         spill_budget_bytes=spill_budget_bytes,
-        context_bytes=context_bytes,
+        baseline_bytes=baseline_bytes,
         provider_headroom_bytes=provider_headroom,
         slab_bytes=slab_bytes,
         workspace_reserve_bytes=workspace_reserve,

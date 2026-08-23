@@ -209,7 +209,7 @@ def test_physical_admission_exposes_every_subtraction() -> None:
     admission, replay = admit_physical_budget(
         device_budget_bytes=4 * GIB,
         spill_budget_bytes=3 * GIB,
-        context_bytes=500 * MIB,
+        baseline_bytes=500 * MIB,
         observed_external_bytes=600 * MIB,
         maximum_task_workspace_bytes=600 * MIB,
         predicted_spill_peak_bytes=1 * GIB,
@@ -244,7 +244,7 @@ def test_admission_failures_identify_the_physical_category(
     arguments = {
         "device_budget_bytes": 4 * GIB,
         "spill_budget_bytes": 3 * GIB,
-        "context_bytes": 500 * MIB,
+        "baseline_bytes": 500 * MIB,
         "observed_external_bytes": 0,
         "maximum_task_workspace_bytes": 128 * MIB,
         "predicted_spill_peak_bytes": 1 * GIB,

@@ -76,7 +76,7 @@ def physical_admission(
             memory.execution.physical_capacity or memory.execution_budget
         ),
         spill_budget_bytes=memory.spill_budget,
-        context_bytes=int(installed.admission.context_bytes),
+        baseline_bytes=int(installed.admission.baseline_bytes),
         provider_headroom_bytes=int(installed.admission.provider_headroom_bytes),
         slab_bytes=memory.execution_budget,
         workspace_reserve_bytes=workspace_reserve,

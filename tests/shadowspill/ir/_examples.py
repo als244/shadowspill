@@ -175,7 +175,7 @@ def representative_plan() -> ExecutionPlan:
         admission=PhysicalAdmission(
             device_budget_bytes=1024,
             spill_budget_bytes=1024,
-            context_bytes=64,
+            baseline_bytes=64,
             provider_headroom_bytes=64,
             slab_bytes=896,
             workspace_reserve_bytes=128,

@@ -193,7 +193,7 @@ class PressureFitResult:
             admission = PhysicalAdmission(
                 device_budget_bytes=device.capacity_bytes,
                 spill_budget_bytes=self.simulation_config.spill_capacity_bytes,
-                context_bytes=0,
+                baseline_bytes=0,
                 provider_headroom_bytes=0,
                 slab_bytes=device.capacity_bytes,
                 workspace_reserve_bytes=min(workspace, device.capacity_bytes),
@@ -212,7 +212,7 @@ class PressureFitResult:
                 f"{admission.spill_reservation_bytes}"
             )
         physical_peak = (
-            admission.context_bytes
+            admission.baseline_bytes
             + admission.provider_headroom_bytes
             + admission.slab_bytes
         )

@@ -30,12 +30,12 @@ int main(void) {
         !capabilities.process_memory_accounting) {
         FAIL("capability validation");
     }
-    ShadowSpillCudaPhysicalMemory context_memory = {0};
-    if (shadowspill_cuda_physical_memory(cuda, &context_memory) != 0 ||
-        context_memory.abi_version != SHADOWSPILL_CUDA_BACKEND_ABI_VERSION ||
-        context_memory.process_bytes == 0U ||
-        context_memory.device_used_bytes < context_memory.process_bytes ||
-        context_memory.device_total_bytes < capabilities.total_device_bytes) {
+    ShadowSpillCudaPhysicalMemory physical = {0};
+    if (shadowspill_cuda_physical_memory(cuda, &physical) != 0 ||
+        physical.abi_version != SHADOWSPILL_CUDA_BACKEND_ABI_VERSION ||
+        physical.process_bytes == 0U ||
+        physical.device_used_bytes < physical.process_bytes ||
+        physical.device_total_bytes < capabilities.total_device_bytes) {
         FAIL("initial physical-memory accounting");
     }
     const uint64_t execution_pool_bytes = 8U << 20U;
@@ -90,7 +90,7 @@ int main(void) {
     ShadowSpillCudaPhysicalMemory admitted_memory = {0};
     if (shadowspill_cuda_physical_memory(cuda, &admitted_memory) != 0 ||
         admitted_memory.process_bytes <
-            context_memory.process_bytes + execution_pool_bytes) {
+            physical.process_bytes + execution_pool_bytes) {
         FAIL("admitted physical-memory accounting");
     }
     unsigned char *original = malloc(PAYLOAD_BYTES);

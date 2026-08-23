@@ -58,7 +58,7 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     uint32_t abi_version;
     int32_t device_ordinal;
     uint64_t device_budget_bytes;
-    uint64_t context_bytes;
+    uint64_t baseline_bytes;
     uint64_t provider_headroom_bytes;
     uint32_t allocator_pool_id;
     uint32_t pool_count;

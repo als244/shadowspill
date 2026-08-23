@@ -76,7 +76,7 @@ class PhysicalAdmission:
 
     device_budget_bytes: int
     spill_budget_bytes: int
-    context_bytes: int
+    baseline_bytes: int
     provider_headroom_bytes: int
     slab_bytes: int
     workspace_reserve_bytes: int
@@ -87,7 +87,7 @@ class PhysicalAdmission:
         byte_fields = (
             ("device_budget_bytes", self.device_budget_bytes),
             ("spill_budget_bytes", self.spill_budget_bytes),
-            ("context_bytes", self.context_bytes),
+            ("baseline_bytes", self.baseline_bytes),
             ("provider_headroom_bytes", self.provider_headroom_bytes),
             ("slab_bytes", self.slab_bytes),
             ("workspace_reserve_bytes", self.workspace_reserve_bytes),
@@ -97,10 +97,10 @@ class PhysicalAdmission:
         for name, value in byte_fields:
             require_non_negative(value, f"admission.{name}")
         require(
-            self.context_bytes + self.provider_headroom_bytes + self.slab_bytes
+            self.baseline_bytes + self.provider_headroom_bytes + self.slab_bytes
             <= self.device_budget_bytes,
             "admission.device_budget_bytes",
-            "context, provider headroom, and slab exceed the physical cap",
+            "baseline, provider headroom, and slab exceed the physical cap",
         )
         require(
             self.workspace_reserve_bytes <= self.slab_bytes,
@@ -120,7 +120,7 @@ class PhysicalAdmission:
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {
-            "context_bytes": self.context_bytes,
+            "baseline_bytes": self.baseline_bytes,
             "device_budget_bytes": self.device_budget_bytes,
             "spill_budget_bytes": self.spill_budget_bytes,
             "spill_reservation_bytes": self.spill_reservation_bytes,
@@ -140,7 +140,7 @@ class PhysicalAdmission:
         return cls(
             device_budget_bytes=integer("device_budget_bytes"),
             spill_budget_bytes=integer("spill_budget_bytes"),
-            context_bytes=integer("context_bytes"),
+            baseline_bytes=integer("baseline_bytes"),
             provider_headroom_bytes=integer("provider_headroom_bytes"),
             slab_bytes=integer("slab_bytes"),
             workspace_reserve_bytes=integer("workspace_reserve_bytes"),

@@ -524,20 +524,20 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    ShadowSpillCudaPhysicalMemory context_memory = {0};
-    if (shadowspill_cuda_physical_memory(cuda, &context_memory) != 0) {
+    ShadowSpillCudaPhysicalMemory physical = {0};
+    if (shadowspill_cuda_physical_memory(cuda, &physical) != 0) {
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     const uint64_t physical_granularity = 2U << 20U;
-    if (config->device_budget_bytes > context_memory.device_total_bytes ||
-        context_memory.process_bytes >
+    if (config->device_budget_bytes > physical.device_total_bytes ||
+        physical.process_bytes >
             config->device_budget_bytes - config->provider_headroom_bytes) {
         shadowspill_cuda_backend_destroy(cuda);
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     uint64_t available = config->device_budget_bytes -
-        context_memory.process_bytes - config->provider_headroom_bytes;
+        physical.process_bytes - config->provider_headroom_bytes;
     const uint64_t allocator_pool_bytes =
         available - available % physical_granularity;
     if (allocator_pool_bytes == 0U) {
@@ -590,7 +590,7 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
         .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
         .device_ordinal = config->device_ordinal,
         .device_budget_bytes = config->device_budget_bytes,
-        .context_bytes = context_memory.process_bytes,
+        .baseline_bytes = physical.process_bytes,
         .provider_headroom_bytes = config->provider_headroom_bytes,
         .allocator_pool_id = config->allocator_pool_id,
         .pool_count = config->pool_count,
@@ -603,8 +603,8 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
     adapter.peak_process_physical_bytes = bootstrap_memory.process_bytes;
     adapter.observed_external_high_water_bytes =
         bootstrap_memory.process_bytes >
-                context_memory.process_bytes + allocator_pool_bytes
-        ? bootstrap_memory.process_bytes - context_memory.process_bytes -
+                physical.process_bytes + allocator_pool_bytes
+        ? bootstrap_memory.process_bytes - physical.process_bytes -
             allocator_pool_bytes
         : 0U;
     adapter.physical_budget_sealed = 0U;
@@ -681,7 +681,7 @@ ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
     if (shadowspill_cuda_physical_memory(cuda, &memory) != 0) {
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    uint64_t base = admission.context_bytes + admission.allocator_pool_bytes;
+    uint64_t base = admission.baseline_bytes + admission.allocator_pool_bytes;
     uint64_t external = memory.process_bytes > base
         ? memory.process_bytes - base
         : 0U;
