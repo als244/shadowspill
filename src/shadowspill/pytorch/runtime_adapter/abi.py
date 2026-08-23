@@ -45,7 +45,7 @@ class PhysicalAdmission(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("device_ordinal", ctypes.c_int32),
         ("device_budget_bytes", ctypes.c_uint64),
-        ("context_bytes", ctypes.c_uint64),
+        ("baseline_bytes", ctypes.c_uint64),
         ("provider_headroom_bytes", ctypes.c_uint64),
         ("allocator_pool_id", ctypes.c_uint32),
         ("pool_count", ctypes.c_uint32),

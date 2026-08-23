@@ -118,7 +118,7 @@ def test_canonical_ir_matches_frozen_identity_artifact() -> None:
     plan = representative_plan()
     indexed = index_execution_plan(plan)
     root = Path(__file__).resolve().parents[3]
-    artifact = json.loads((root / "tests/fixtures/ir/canonical_ir_v4.json").read_text())
+    artifact = json.loads((root / "tests/fixtures/ir/canonical_ir_v5.json").read_text())
 
     assert artifact["program_digest"] == plan.program.digest
     assert artifact["schedule_digest"] == plan.schedule.digest
