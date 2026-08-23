@@ -40,6 +40,13 @@ typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
  * treats them
  * alike, but a reader must be able to tell them apart.
  */
+/* ------------------------------------------------------------------------
+ * Vocabulary
+ *
+ * Statuses, reasons, and the enumerations every description below
+ * uses. Nothing here allocates or holds state.
+ */
+
 typedef enum ShadowSpillFailureReason {
     SHADOWSPILL_FAILURE_REASON_UNSPECIFIED = 0,
     /* The process allocator refused memory for an internal record. This is
@@ -120,6 +127,14 @@ typedef enum ShadowSpillTraceEventKind {
     SHADOWSPILL_TRACE_FAILURE_LATCHED = 12,
 } ShadowSpillTraceEventKind;
 
+/* ------------------------------------------------------------------------
+ * Descriptions
+ *
+ * What a caller fills in to admit something: pools, routes, a
+ * runtime, a plan, an object, a task, a fixed layout. Every one is
+ * borrowed for the call that reads it.
+ */
+
 typedef struct ShadowSpillMemoryPoolDescription {
     uint32_t pool_id;
     uint64_t capacity_bytes;
@@ -159,47 +174,6 @@ typedef enum ShadowSpillObjectConsistency {
     SHADOWSPILL_OBJECT_CAUSAL = 0,
     SHADOWSPILL_OBJECT_UNORDERED = 1,
 } ShadowSpillObjectConsistency;
-
-/*
- * Acquire and release one retained runtime-global object handle. The handle
- * contains no pool role or framework metadata and remains valid across object
- * generation and residency changes.
- */
-SHADOWSPILL_API ShadowSpillStatus
-shadowspill_object_handle_acquire(
-    ShadowSpillRuntime *runtime,
-    uint64_t runtime_object_id,
-    ShadowSpillObjectHandle **output
-);
-
-SHADOWSPILL_API ShadowSpillStatus
-shadowspill_object_handle_release(
-    ShadowSpillObjectHandle *handle
-);
-
-/*
- * Release one completed residency generation without destroying its logical
- * object.  This is used by bounded producer slots after every external owner
- * of the prior value has released its handle.  Plan bindings remain valid and
- * a later task may publish a new generation into the same logical object.
- */
-SHADOWSPILL_API ShadowSpillStatus
-shadowspill_object_release_generation(
-    const ShadowSpillObjectHandle *handle,
-    uint64_t expected_generation
-);
-
-/*
- * Bind one Program-local identity to a retained runtime object handle. Equal
- * plan-local IDs in different plans have no relationship unless both bindings
- * use handles for the same runtime object.
- */
-SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_bind_object(
-    ShadowSpillPlan *plan,
-    uint64_t plan_object_id,
-    const ShadowSpillObjectHandle *object,
-    uint8_t consistency
-);
 
 typedef struct ShadowSpillAllocation {
     uint32_t pool_id;
@@ -367,6 +341,14 @@ typedef struct ShadowSpillTaskDescription {
     uint64_t dynamic_scratch_maximum_allocation_bytes;
     uint64_t dynamic_scratch_live_limit_bytes;
 } ShadowSpillTaskDescription;
+
+/* ------------------------------------------------------------------------
+ * Diagnostic records
+ *
+ * What the runtime hands back when asked: allocation and trace
+ * events, transfer profiles, statistics, failures, snapshots.
+ * Caller-owned buffers, filled in place.
+ */
 
 typedef struct ShadowSpillAllocationEvent {
     uint64_t sequence;
@@ -593,6 +575,13 @@ typedef struct ShadowSpillObjectLocationSnapshot {
  * IDs must equal their contiguous registry indices. On failure, output is set to
  * NULL and successfully created resources are reclaimed in reverse order.
  */
+/* ------------------------------------------------------------------------
+ * Runtime and plan lifecycle
+ *
+ * Create a runtime, reserve the records it must never allocate on a
+ * hot path, open and close plans, and tear it all down.
+ */
+
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,
     ShadowSpillRuntime **runtime
@@ -688,6 +677,13 @@ SHADOWSPILL_API void shadowspill_runtime_destroy(
     ShadowSpillRuntime *runtime
 );
 
+/* ------------------------------------------------------------------------
+ * Pools and allocation
+ *
+ * Serving one allocation, freeing it, and naming the stream that
+ * used it. Called from whichever thread is dispatching.
+ */
+
 /*
  * Synchronously leases an aligned range from the existing slab; it never grows
  * physical storage. The returned pointer remains valid until logical free and
@@ -745,6 +741,54 @@ shadowspill_memory_pool_record_stream(
  * Registers one logical alias group. The description is borrowed for this
  * call. Requested initial spill storage is leased from the configured spill pool.
  */
+/* ------------------------------------------------------------------------
+ * Objects
+ *
+ * Registering the logical values a plan names, reading and writing
+ * them, and holding handles onto them across generations.
+ */
+
+/*
+ * Acquire and release one retained runtime-global object handle. The handle
+ * contains no pool role or framework metadata and remains valid across object
+ * generation and residency changes.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_object_handle_acquire(
+    ShadowSpillRuntime *runtime,
+    uint64_t runtime_object_id,
+    ShadowSpillObjectHandle **output
+);
+
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_object_handle_release(
+    ShadowSpillObjectHandle *handle
+);
+
+/*
+ * Release one completed residency generation without destroying its logical
+ * object.  This is used by bounded producer slots after every external owner
+ * of the prior value has released its handle.  Plan bindings remain valid and
+ * a later task may publish a new generation into the same logical object.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_object_release_generation(
+    const ShadowSpillObjectHandle *handle,
+    uint64_t expected_generation
+);
+
+/*
+ * Bind one Program-local identity to a retained runtime object handle. Equal
+ * plan-local IDs in different plans have no relationship unless both bindings
+ * use handles for the same runtime object.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_bind_object(
+    ShadowSpillPlan *plan,
+    uint64_t plan_object_id,
+    const ShadowSpillObjectHandle *object,
+    uint8_t consistency
+);
+
 SHADOWSPILL_API ShadowSpillStatus shadowspill_register_object(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectDescription *description
@@ -799,6 +843,13 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_read_object(
     void *destination,
     uint64_t bytes
 );
+
+/* ------------------------------------------------------------------------
+ * Admitting a plan
+ *
+ * Tasks, initial allocations, the fixed layout, object acquisitions
+ * and action batches. All of it before the first step runs.
+ */
 
 /* Admit one immutable task and return its direct repeated-path handle. */
 SHADOWSPILL_API ShadowSpillStatus
@@ -911,6 +962,14 @@ shadowspill_plan_admit_action_batch(
     const ShadowSpillActionBatchHandle **handle
 );
 
+/* ------------------------------------------------------------------------
+ * Task boundaries
+ *
+ * The two calls every planned task runs between, plus the abort that
+ * closes a scope the caller cannot close normally. See
+ * docs/architecture/task-boundaries.md.
+ */
+
 /* Publish an admitted batch and wait only for worker submission acknowledgement. */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_submit_action_batch_handle(
@@ -959,6 +1018,13 @@ shadowspill_abort_task_handle(
     const ShadowSpillTaskHandle *handle
 );
 
+/* ------------------------------------------------------------------------
+ * Allocation scopes
+ *
+ * Attributing allocations made outside any task - profiling probes,
+ * warmup - to a scope that can be closed and audited.
+ */
+
 /*
  * Attribute allocator activity to one non-execution scope. This is used by
  * structural profiling and other isolated measurements that need causal
@@ -982,6 +1048,14 @@ shadowspill_allocation_scope_end(
 SHADOWSPILL_API void shadowspill_allocation_scope_abort(
     ShadowSpillRuntime *runtime
 );
+
+/* ------------------------------------------------------------------------
+ * Telemetry and tracing
+ *
+ * Two bounded rings, both off by default and both diagnostic: a step
+ * never depends on either, and a full ring stops recording rather
+ * than stopping the runtime.
+ */
 
 /*
  * Starts one bounded allocation-lifetime capture. Storage is allocated before
@@ -1049,6 +1123,13 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_read(
 );
 
 /* Explicitly synchronizing test/checkpoint helper; returns first failure. */
+/* ------------------------------------------------------------------------
+ * Waiting, recovery and inspection
+ *
+ * Draining outstanding work, recovering from a no-progress stall,
+ * growing a pool, and asking what happened.
+ */
+
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 );

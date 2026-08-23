@@ -46,6 +46,18 @@ component produced it. `shadowspill_status_string()` maps any of them to a
 stable human-readable category; retain structured result fields for
 diagnostics.
 
+## Reading a header
+
+`runtime.h` is the large one, and it is ordered rather than alphabetical.
+Section banners divide it into vocabulary, the descriptions a caller fills in,
+the diagnostic records the runtime fills in, and then the calls themselves in
+the order a program uses them: lifecycle, pools, objects, admitting a plan,
+task boundaries, allocation scopes, telemetry, and finally waiting and
+inspection. Grep for a banner rather than a name if you do not know what you
+are looking for yet.
+
+The other headers are small enough to read start to finish.
+
 ## Ownership rules
 
 - Input arrays are borrowed for the documented call or admitted-plan lifetime.
