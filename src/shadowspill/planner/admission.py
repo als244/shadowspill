@@ -15,6 +15,10 @@ from enum import StrEnum
 
 from shadowspill.ir import Program
 
+#: Schema v3 named these facts a "topology". The stored corpus carries that
+#: string and its digests are taken over it, so the wire keeps the name.
+_SCHEMA = "shadowspill.admission_topology/v3"
+
 
 class TaskAllocationStepKind(StrEnum):
     """One allocator transition observed inside a compiled task."""
@@ -338,7 +342,9 @@ class AdmissionFacts:
             "minimum_alignment": self.minimum_alignment,
             "object_capacity_bytes": self.object_capacity_bytes,
             "pool_capacity_bytes": self.pool_capacity_bytes,
-            "schema": "shadowspill.admission_facts/v3",
+            # Schema v3 named these facts a "topology"; the stored corpus
+            # carries that string and its digests are taken over it.
+            "schema": _SCHEMA,
             "tasks": [item.to_dict() for item in self.tasks],
         }
 
@@ -349,7 +355,7 @@ class AdmissionFacts:
     def from_dict(cls, value: object) -> AdmissionFacts:
         data = _mapping(value, "admission")
         schema = _string(data.get("schema"), "admission.schema")
-        if schema != "shadowspill.admission_facts/v3":
+        if schema != _SCHEMA:
             raise ValueError(f"admission.schema: unsupported schema {schema!r}")
         return cls(
             device_id=_string(data.get("device_id"), "admission.device_id"),
