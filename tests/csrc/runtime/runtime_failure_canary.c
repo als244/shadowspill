@@ -431,6 +431,121 @@ done:
     return result;
 }
 
+/*
+ * A failure latched by anything - including the worker thread - stops the
+ * runtime. The next task must not start on it, and must hear the reason.
+ */
+static int a_latched_failure_refuses_the_next_task(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillAllocation allocation = {0};
+    const ShadowSpillTaskDescription task = {.task_id = 71U};
+    int result = 0;
+    if (shadowspill_test_create_runtime(
+            mock, 256U, 128U, 1U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
+        shadowspill_test_admit_task(runtime, &task) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_allocate(
+            runtime, 0U, 64U, 1U, stream, &allocation
+        ) != SHADOWSPILL_STATUS_OK) {
+        result = -1;
+        goto done;
+    }
+
+    /* Freeing records a completion event; refusing that latches the runtime. */
+    shadowspill_mock_fail_next_operation(mock);
+    if (shadowspill_memory_pool_free(
+            runtime, 0U, allocation.allocation_id, stream
+        ) != SHADOWSPILL_STATUS_BACKEND_FAILURE) {
+        result = -1;
+        goto done;
+    }
+
+    ShadowSpillRuntimeFailure failure = {0};
+    if (shadowspill_runtime_failure(runtime, &failure) !=
+            SHADOWSPILL_STATUS_OK ||
+        failure.status != SHADOWSPILL_STATUS_BACKEND_FAILURE ||
+        failure.reason == SHADOWSPILL_FAILURE_REASON_UNSPECIFIED) {
+        result = -1;
+        goto done;
+    }
+
+    /* The task itself is healthy; the runtime is not, so it never starts. */
+    if (shadowspill_test_before_task(
+            runtime, task.task_id, stream, NULL, 0U
+        ) != SHADOWSPILL_STATUS_BACKEND_FAILURE) {
+        result = -1;
+    }
+
+done:
+    shadowspill_test_destroy_runtime(runtime);
+    if (stream.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, stream);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return result;
+}
+
+/*
+ * A task boundary whose own work succeeds still reports a failure latched
+ * while it ran, because cleanup has to happen either way and the caller has to
+ * hear about it.
+ */
+static int after_task_reports_a_failure_latched_while_it_ran(void) {
+    ShadowSpillMockBackend *mock = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {
+        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
+    };
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillAllocation allocation = {0};
+    const ShadowSpillTaskDescription task = {.task_id = 72U};
+    int result = 0;
+    if (shadowspill_test_create_runtime(
+            mock, 256U, 128U, 1U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_mock_create_compute_stream(mock, &stream) != 0 ||
+        shadowspill_test_admit_task(runtime, &task) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_before_task(
+            runtime, task.task_id, stream, NULL, 0U
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_allocate(
+            runtime, 0U, 64U, 1U, stream, &allocation
+        ) != SHADOWSPILL_STATUS_OK) {
+        result = -1;
+        goto done;
+    }
+
+    /* A dispatcher that ignores this status still learns at the boundary. */
+    shadowspill_mock_fail_next_operation(mock);
+    (void)shadowspill_memory_pool_free(
+        runtime, 0U, allocation.allocation_id, stream
+    );
+    if (shadowspill_test_after_task(runtime, task.task_id, stream) ==
+        SHADOWSPILL_STATUS_OK) {
+        result = -1;
+    }
+
+done:
+    shadowspill_test_destroy_runtime(runtime);
+    if (stream.words[0] != 0U) {
+        (void)shadowspill_mock_destroy_compute_stream(mock, stream);
+    }
+    shadowspill_mock_backend_destroy(mock);
+    return result;
+}
+
 int main(void) {
 #define REQUIRE_FAILURE_CANARY(call)                                        \
     do {                                                                    \
@@ -445,5 +560,7 @@ int main(void) {
     REQUIRE_FAILURE_CANARY(worker_submission_failure_reaches_dispatcher());
     REQUIRE_FAILURE_CANARY(failed_task_retirement_recovery());
     REQUIRE_FAILURE_CANARY(failed_prefetch_reports_trigger_reservation_oom());
+    REQUIRE_FAILURE_CANARY(a_latched_failure_refuses_the_next_task());
+    REQUIRE_FAILURE_CANARY(after_task_reports_a_failure_latched_while_it_ran());
     return EXIT_SUCCESS;
 }
