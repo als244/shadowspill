@@ -1,5 +1,6 @@
 
 #include "admission/internal.h"
+#include "../common/platform.h"
 #include "internal.h"
 #include "portfolio_internal.h"
 #include "residency_internal.h"
@@ -8,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 typedef struct SimulationWorkspace {
     ShadowSpillTaskInterval *tasks;
@@ -121,15 +121,6 @@ typedef struct CandidateWorkspace {
     uint64_t simulation_time_ns;
     uint64_t digest_time_ns;
 } CandidateWorkspace;
-
-static uint64_t monotonic_time_ns(void) {
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
-        return 0U;
-    }
-    return (uint64_t)value.tv_sec * UINT64_C(1000000000) +
-        (uint64_t)value.tv_nsec;
-}
 
 static uint64_t repair_total(
     const ShadowSpillPressureFitRepairDiagnostics *repairs
@@ -1677,7 +1668,7 @@ static int reduce_repaired_candidate(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
     ShadowSpillResidencyResult residency;
-    const uint64_t started = monotonic_time_ns();
+    const uint64_t started = shadowspill_monotonic_ns();
     const ShadowSpillStatus status = reduce_cached(
         problem,
         workspace,
@@ -1687,7 +1678,7 @@ static int reduce_repaired_candidate(
         workspace->breaks,
         &residency
     );
-    workspace->residency_time_ns += monotonic_time_ns() - started;
+    workspace->residency_time_ns += shadowspill_monotonic_ns() - started;
     if (status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
         copy_analytic_error(diagnostic, &residency);
         return 0;
@@ -1743,7 +1734,7 @@ static int evaluate_candidate(
     int need_emit = 1;
     while (1) {
         if (need_emit != 0) {
-            uint64_t schedule_started = monotonic_time_ns();
+            uint64_t schedule_started = shadowspill_monotonic_ns();
             if (rule == SHADOWSPILL_PREFETCH_INTERVAL_ENTRY &&
                 shadowspill_extend_interval_entries(
                     facts,
@@ -1765,7 +1756,7 @@ static int evaluate_candidate(
                 return -1;
             }
             workspace->schedule_time_ns +=
-                monotonic_time_ns() - schedule_started;
+                shadowspill_monotonic_ns() - schedule_started;
             const int constrained =
                 shadowspill_apply_prefetch_trigger_constraints(
                     facts,
@@ -1791,7 +1782,7 @@ static int evaluate_candidate(
         ShadowSpillAdmissionAnnotation admission_error_annotation = {0};
         SimulationCacheEntry *simulation_entry = NULL;
         const uint64_t admission_before = workspace->admission.time_ns;
-        uint64_t simulation_started = monotonic_time_ns();
+        uint64_t simulation_started = shadowspill_monotonic_ns();
         if (simulate_cached(
                 problem,
                 workspace,
@@ -1804,7 +1795,7 @@ static int evaluate_candidate(
             return -1;
         }
         const uint64_t combined_elapsed =
-            monotonic_time_ns() - simulation_started;
+            shadowspill_monotonic_ns() - simulation_started;
         const uint64_t admission_elapsed =
             workspace->admission.time_ns - admission_before;
         workspace->simulation_time_ns +=
@@ -1923,14 +1914,14 @@ static int evaluate_candidate(
             diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
             diagnostic->makespan_ns = simulation.makespan_ns;
             if (simulation_entry->digest_valid == 0U) {
-                uint64_t digest_started = monotonic_time_ns();
+                uint64_t digest_started = shadowspill_monotonic_ns();
                 shadowspill_schedule_digest(
                     problem,
                     &workspace->schedule.value,
                     simulation_entry->digest
                 );
                 workspace->digest_time_ns +=
-                    monotonic_time_ns() - digest_started;
+                    shadowspill_monotonic_ns() - digest_started;
                 simulation_entry->digest_valid = 1U;
             }
             memcpy(
@@ -2072,7 +2063,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
     if (!problem_valid(problem, options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    const uint64_t evaluation_started = monotonic_time_ns();
+    const uint64_t evaluation_started = shadowspill_monotonic_ns();
 
     uint32_t coalesced_count = options->evaluate_coalesced != 0U ? 2U : 1U;
     uint32_t candidate_count = 0U;
@@ -2117,7 +2108,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
         ShadowSpillResidencyOptions reduce_options;
         residency_options(problem, &workspace, strategy, &reduce_options);
         ShadowSpillResidencyResult base_result;
-        uint64_t residency_started = monotonic_time_ns();
+        uint64_t residency_started = shadowspill_monotonic_ns();
         ShadowSpillStatus base_status = reduce_cached(
             problem,
             &workspace,
@@ -2128,7 +2119,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
             &base_result
         );
         workspace.base_residency_key = workspace.current_residency_key;
-        workspace.residency_time_ns += monotonic_time_ns() - residency_started;
+        workspace.residency_time_ns += shadowspill_monotonic_ns() - residency_started;
         for (uint32_t rule_index = 0U; rule_index < options->prefetch_rule_count;
              ++rule_index) {
             uint8_t rule = options->prefetch_rules[rule_index];
@@ -2152,7 +2143,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
                 } else {
                     const ShadowSpillPressureFitWorkDiagnostics before =
                         workspace_work(&workspace);
-                    const uint64_t candidate_started = monotonic_time_ns();
+                    const uint64_t candidate_started = shadowspill_monotonic_ns();
                     int valid = evaluate_candidate(
                         problem,
                         &facts,
@@ -2167,7 +2158,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
                         workspace_work(&workspace), before
                     );
                     diagnostic->work.evaluation_time_ns =
-                        monotonic_time_ns() - candidate_started;
+                        shadowspill_monotonic_ns() - candidate_started;
                     if (valid < 0) {
                         result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
                         shadowspill_schedule_facts_destroy(&facts);
@@ -2205,7 +2196,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
     result->status = status;
     result->work = workspace_work(&workspace);
     result->work.evaluation_time_ns =
-        monotonic_time_ns() - evaluation_started;
+        shadowspill_monotonic_ns() - evaluation_started;
     for (uint32_t index = 0U; index < result->candidate_count; ++index) {
         add_repairs(&result->repairs, &result->candidates[index].repairs);
     }

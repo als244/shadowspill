@@ -1,23 +1,14 @@
 #include "../internal.h"
+#include "../../common/platform.h"
 
 #include <pthread.h>
-#include <sched.h>
 #include <stddef.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #define SHADOWSPILL_CALIBRATION_BATCH_SAMPLES 3U
-
-static uint64_t monotonic_nanoseconds(void) {
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) {
-        return 0U;
-    }
-    return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
-}
 
 static uint64_t median_batch_nanoseconds(const uint64_t values[3]) {
     if (values[0] < values[1]) {
@@ -232,13 +223,13 @@ static int measure_copy(
 ) {
     uint64_t total = 0U;
     for (uint32_t copy = 0U; copy < copies; ++copy) {
-        const uint64_t begin = monotonic_nanoseconds();
+        const uint64_t begin = shadowspill_monotonic_ns();
         if (begin == 0U || route->copy_async(
                 route->state, destination, source, bytes, lane
             ) != 0 || route->synchronize_lane(route->state, lane) != 0) {
             return -1;
         }
-        const uint64_t end = monotonic_nanoseconds();
+        const uint64_t end = shadowspill_monotonic_ns();
         if (end < begin || UINT64_MAX - total < end - begin) {
             return -1;
         }
@@ -257,7 +248,7 @@ static int measure_copy_batch(
     uint32_t copies,
     uint64_t *elapsed_nanoseconds
 ) {
-    const uint64_t begin = monotonic_nanoseconds();
+    const uint64_t begin = shadowspill_monotonic_ns();
     if (begin == 0U) {
         return -1;
     }
@@ -271,7 +262,7 @@ static int measure_copy_batch(
     if (route->synchronize_lane(route->state, lane) != 0) {
         return -1;
     }
-    const uint64_t end = monotonic_nanoseconds();
+    const uint64_t end = shadowspill_monotonic_ns();
     if (end <= begin) {
         return -1;
     }
@@ -405,7 +396,7 @@ static int calibrate_route(
     profile->small_copy_bytes = config->small_copy_bytes;
     profile->large_copy_bytes = config->large_copy_bytes;
     profile->measured_copies = config->measured_copies;
-    profile->calibrated_timestamp_nanoseconds = monotonic_nanoseconds();
+    profile->calibrated_timestamp_nanoseconds = shadowspill_monotonic_ns();
     profile->available = 1U;
     profile->calibrated = 1U;
     profile->provenance = config->provenance;
@@ -500,7 +491,7 @@ static void *run_calibration_job(void *state) {
     ShadowSpillCalibrationJob *job = state;
     atomic_fetch_add_explicit(&job->gate->ready, 1U, memory_order_release);
     while (!atomic_load_explicit(&job->gate->start, memory_order_acquire)) {
-        sched_yield();
+        shadowspill_thread_yield();
     }
     job->status = measure_copy_batch(
         job->probe->route,
@@ -536,7 +527,7 @@ static int measure_concurrent_pair(
         return -1;
     }
     while (atomic_load_explicit(&gate.ready, memory_order_acquire) != 2U) {
-        sched_yield();
+        shadowspill_thread_yield();
     }
     atomic_store_explicit(&gate.start, 1U, memory_order_release);
     const int first_join = pthread_join(threads[0], NULL);
@@ -627,7 +618,7 @@ static int calibrate_reverse_pair(
             SHADOWSPILL_TRANSFER_CALIBRATION_BIDIRECTIONAL;
         profiles[index]->concurrent_route_count = 2U;
         profiles[index]->calibrated_timestamp_nanoseconds =
-            monotonic_nanoseconds();
+            shadowspill_monotonic_ns();
     }
     return 0;
 }

@@ -12,6 +12,7 @@
 add_library(
   shadowspill
   SHARED
+  src/common/platform.c
   src/common/status.c
 
   src/simulator/admission.c
@@ -71,6 +72,7 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:shadowspill/include>
 )
+target_compile_definitions(shadowspill PRIVATE SHADOWSPILL_BUILDING)
 target_link_libraries(
   shadowspill
   PRIVATE Threads::Threads shadowspill_build_options

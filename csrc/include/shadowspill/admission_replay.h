@@ -5,12 +5,6 @@
 
 #include <shadowspill/shadowspill.h>
 
-#if defined(_WIN32)
-#define SHADOWSPILL_ADMISSION_REPLAY_API __declspec(dllexport)
-#else
-#define SHADOWSPILL_ADMISSION_REPLAY_API __attribute__((visibility("default")))
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -141,7 +135,7 @@ typedef struct ShadowSpillAdmissionReplayWorkspace
  * contiguous zero-based indices bounded by their respective counts. The function
  * performs no backend operations and owns no storage after it returns.
  */
-SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_admission_replay_run(
     const ShadowSpillAdmissionReplayProgram *program,
     ShadowSpillAdmissionReplayResult *result
@@ -152,21 +146,21 @@ shadowspill_admission_replay_run(
  * used by repeated replay. Subsequent run_reusing calls perform no heap
  * allocation when the supplied program fits these capacities.
  */
-SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_admission_replay_workspace_create(
     uint64_t lease_capacity,
     uint64_t dependency_capacity,
     ShadowSpillAdmissionReplayWorkspace **workspace
 );
 
-SHADOWSPILL_ADMISSION_REPLAY_API ShadowSpillStatus
+SHADOWSPILL_API ShadowSpillStatus
 shadowspill_admission_replay_run_reusing(
     const ShadowSpillAdmissionReplayProgram *program,
     ShadowSpillAdmissionReplayResult *result,
     ShadowSpillAdmissionReplayWorkspace *workspace
 );
 
-SHADOWSPILL_ADMISSION_REPLAY_API void
+SHADOWSPILL_API void
 shadowspill_admission_replay_workspace_destroy(
     ShadowSpillAdmissionReplayWorkspace *workspace
 );

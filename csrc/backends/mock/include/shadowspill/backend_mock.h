@@ -6,7 +6,11 @@
 #include <shadowspill/runtime.h>
 
 #if defined(_WIN32)
+#if defined(SHADOWSPILL_BACKEND_MOCK_BUILDING)
 #define SHADOWSPILL_BACKEND_MOCK_API __declspec(dllexport)
+#else
+#define SHADOWSPILL_BACKEND_MOCK_API __declspec(dllimport)
+#endif
 #else
 #define SHADOWSPILL_BACKEND_MOCK_API __attribute__((visibility("default")))
 #endif

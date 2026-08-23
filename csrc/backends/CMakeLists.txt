@@ -13,6 +13,9 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mock/include>
     $<INSTALL_INTERFACE:shadowspill/include>
 )
+target_compile_definitions(
+  shadowspill_backend_mock PRIVATE SHADOWSPILL_BACKEND_MOCK_BUILDING
+)
 target_link_libraries(
   shadowspill_backend_mock
   PRIVATE Threads::Threads shadowspill_build_options
@@ -56,6 +59,9 @@ if(SHADOWSPILL_BUILD_CUDA)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cuda/include>
         $<INSTALL_INTERFACE:shadowspill/include>
+    )
+    target_compile_definitions(
+      shadowspill_backend_cuda PRIVATE SHADOWSPILL_BACKEND_CUDA_BUILDING
     )
     target_link_libraries(
       shadowspill_backend_cuda

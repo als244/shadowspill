@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
 #include "internal.h"
+#include "../../common/platform.h"
 
 #include <pthread.h>
 #include <stdint.h>
@@ -27,11 +28,7 @@ void shadowspill_profiler_set_enabled(
 void shadowspill_profiler_name_current_thread(
     const ShadowSpillProfiler *profiler, const char *name
 ) {
-#if defined(__linux__)
-    if (name != NULL) {
-        (void)pthread_setname_np(pthread_self(), "shadowspill.wkr");
-    }
-#endif
+    shadowspill_name_current_thread(name);
     if (profiler != NULL && profiler->abi_version != 0U &&
         profiler->name_current_thread != NULL) {
         profiler->name_current_thread(profiler->state, name);

@@ -49,6 +49,7 @@ target_include_directories(
     ${PROJECT_SOURCE_DIR}/csrc/include
     ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
+target_compile_definitions(shadowspill_memory_pool_canary PRIVATE SHADOWSPILL_BUILDING)
 target_link_libraries(
   shadowspill_memory_pool_canary
   PRIVATE shadowspill_build_options Threads::Threads
@@ -118,6 +119,7 @@ target_include_directories(
     ${PROJECT_SOURCE_DIR}/csrc/include
     ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
+target_compile_definitions(shadowspill_transfer_lane_canary PRIVATE SHADOWSPILL_BUILDING)
 target_link_libraries(
   shadowspill_transfer_lane_canary
   PRIVATE shadowspill_build_options Threads::Threads

@@ -20,6 +20,7 @@ target_include_directories(
     ${PROJECT_SOURCE_DIR}/csrc/include
     ${PROJECT_SOURCE_DIR}/csrc/backends/cuda/include
 )
+target_compile_definitions(shadowspill_pytorch PRIVATE SHADOWSPILL_PYTORCH_BUILDING)
 target_link_libraries(
   shadowspill_pytorch
   PRIVATE
