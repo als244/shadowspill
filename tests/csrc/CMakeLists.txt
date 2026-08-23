@@ -2,6 +2,20 @@ add_executable(shadowspill_build_canary build_canary.c)
 target_link_libraries(shadowspill_build_canary PRIVATE shadowspill_build_options)
 add_test(NAME shadowspill_build_canary COMMAND shadowspill_build_canary)
 
+if(TARGET shadowspill_pytorch)
+  add_executable(shadowspill_abi_sizes_canary abi_sizes_canary.c)
+  target_include_directories(
+    shadowspill_abi_sizes_canary
+    PRIVATE
+      ${PROJECT_SOURCE_DIR}/csrc/include
+      ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include
+      ${PROJECT_SOURCE_DIR}/csrc/backends/cuda/include
+  )
+  target_link_libraries(
+    shadowspill_abi_sizes_canary PRIVATE shadowspill_build_options
+  )
+endif()
+
 add_executable(shadowspill_simulator_canary simulator_canary.c)
 target_link_libraries(
   shadowspill_simulator_canary
