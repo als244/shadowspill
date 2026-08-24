@@ -1777,23 +1777,6 @@ static uint32_t stopped_status(
     return (uint32_t)SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
 }
 
-/* Whether the caller ruled this policy out before the search started. */
-static int policy_excluded(
-    const ShadowSpillPressureFitProblemOptions *options,
-    uint8_t strategy,
-    uint8_t rule,
-    uint8_t coalesced
-) {
-    for (uint32_t index = 0U; index < options->excluded_count; ++index) {
-        if (options->excluded_strategies[index] == strategy &&
-            options->excluded_rules[index] == rule &&
-            options->excluded_coalesced[index] == coalesced) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
 static int evaluate_candidate(
     const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillScheduleFacts *facts,
@@ -2361,15 +2344,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
                     rule,
                     (uint8_t)coalesced
                 );
-                if (policy_excluded(
-                        options, strategy, rule, (uint8_t)coalesced
-                    )) {
-                    /* Skipped before any work: a plan this policy produced
-                     * could not be placed, and asking it again at the same
-                     * capacity would produce the same plan. */
-                    diagnostic->status = SHADOWSPILL_CANDIDATE_EXCLUDED;
-                } else if (base_status ==
-                           SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
+                if (base_status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
                     copy_analytic_error(diagnostic, &base_result);
                 } else if (base_status != SHADOWSPILL_STATUS_OK) {
                     result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
