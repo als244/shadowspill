@@ -59,3 +59,21 @@ def test_full_model_launcher_recovers_killed_planning_phase() -> None:
     )
     assert _active_planning_phases(log) == ("optimizer_capture",)
     assert _termination_signal(-9) == "SIGKILL"
+
+
+def test_performance_gate_defaults_to_the_cells_it_can_judge() -> None:
+    """A cell with no throughput authority cannot pass or fail the gate.
+
+    Running one anyway only spends wall time, so the default is the set that
+    carries a floor to compare against. `--cells` still reaches the others.
+    """
+
+    from tools.qualification.performance_matrix import default_cells
+
+    assert [item.identity for item in default_cells()] == [
+        "mlops_llama3",
+        "mlops_qwen35",
+        "mlops_olmoe",
+    ]
+    for item in default_cells():
+        assert item.regression_tokens_per_second is not None
