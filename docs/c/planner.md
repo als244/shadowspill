@@ -115,17 +115,24 @@ order they arrive in.
   they were listed in. The assignment and the structure behind it are
   specified in [fixed-offset placement](../architecture/fixed-placement.md).
 - `shadowspill_best_placed_create()`, `shadowspill_best_placed_destroy()`,
-  `shadowspill_best_placed_get()`, `shadowspill_best_placed_offer()` and
-  `shadowspill_best_placed_admits()` share the best makespan any caller has
-  actually placed. Placing a plan is expensive and a plan no better than one
+  `shadowspill_best_placed_admits()`, `shadowspill_best_placed_offer()` and
+  `shadowspill_best_placed_read()` share the best plan any caller has actually
+  placed, as a `ShadowSpillBestPlacedRecord` carrying the makespan, the object
+  capacity that plan was built against, the caller's selection index, the
+  candidate policy and the schedule digest. Whatever holds the record at the
+  end is the plan the search selected, so "is this worth measuring" and "what
+  won" are answered by one object. Placing a plan is expensive and a plan no better than one
   already placed cannot win even if it places, so a search calls `admits()`
   before paying and `offer()` once a placement succeeds. The object knows
   nothing about candidates, resolved programs or calls: passing one object to
   several concurrent searches shares the gate between them, and passing
   separate objects keeps them independent. It is lock-free and safe to use
-  from several threads at once, because the operation is a minimum -- a writer
-  that loses a race retries against the value that beat it, and a stale read
-  costs at most a measurement that would have been skipped.
+  from several threads at once. `admits()` reads a single atomic word so it
+  never waits; `offer()` and `read()` take a spin lock over the record, which
+  is affordable because a placement that succeeds is rare next to the checks
+  preceding it. A stale `admits()` read costs at most a measurement that would
+  have been skipped, never a wrong answer: the best plan that will ever be
+  placed is better than everything already placed, so it is never refused.
 
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
