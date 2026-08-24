@@ -208,7 +208,8 @@ int shadowspill_complete_task(
 int shadowspill_submit_ready_actions(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
-    ShadowSpillSimulationResult *result
+    ShadowSpillSimulationResult *result,
+    int *submitted
 );
 
 int shadowspill_try_start_transfers(
