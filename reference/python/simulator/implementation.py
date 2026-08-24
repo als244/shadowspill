@@ -17,6 +17,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.simulator.model import (
+    CapacityViolation,
     DeviceMemoryPeak,
     MemorySnapshot,
     SimulationAdmission,
@@ -164,6 +165,10 @@ class _Simulator:
             for item in program.alias_groups
         }
         self.next_action_index = 0
+        # An action that could not be admitted yet, and the moment it
+        # first tried: it becomes ready then, not when room appears.
+        self.deferred_ready_ns: dict[int, int] = {}
+        self.capacity_violations: list[CapacityViolation] = []
         self.now_ns = 0
         self.unlaunched = {task.task_id for task in self.tasks}
         self.completed: dict[str, int] = {}
@@ -506,9 +511,11 @@ class _Simulator:
             alias_group_id=action.alias_group_id,
             trigger_task_id=action.trigger_task_id,
             direction=direction,
-            ready_ns=self.now_ns,
+            ready_ns=self.deferred_ready_ns.get(action_index, self.now_ns),
             sequence=sequence,
         )
+        if action_index in self.deferred_ready_ns:
+            pending.stall_reasons.add("device-capacity")
         if direction is TransferDirection.FETCH:
             state.fetch_pending = True
             self.pending_fetch[state.device_id].append(pending)
@@ -564,15 +571,24 @@ class _Simulator:
             requested = max(physical_delta, 0)
             capacity = self.device_config[device_id].capacity_bytes
             if self.device_physical_bytes[device_id] + requested > capacity:
-                self._raise_capacity(
-                    kind="prefetch-device-capacity",
-                    location=f"device:{device_id}",
-                    capacity=capacity,
-                    used=self.device_physical_bytes[device_id],
-                    requested=requested,
-                    task_id=action.trigger_task_id,
-                    aliases=(action.alias_group_id,),
-                )
+                # The runtime waits for room rather than failing, so nothing
+                # is mutated here and the retry sees the state this call saw.
+                if action_index not in self.deferred_ready_ns:
+                    self.deferred_ready_ns[action_index] = self.now_ns
+                    self.capacity_violations.append(
+                        CapacityViolation(
+                            reason="prefetch-device-capacity",
+                            location="device",
+                            time_ns=self.now_ns,
+                            capacity_bytes=capacity,
+                            used_bytes=self.device_physical_bytes[device_id],
+                            requested_bytes=requested,
+                            device_id=device_id,
+                            task_id=action.trigger_task_id,
+                            alias_group_id=action.alias_group_id,
+                        )
+                    )
+                return
             if action.kind is MemoryActionKind.RELEASE:
                 self._release(action)
             elif action.kind is MemoryActionKind.OFFLOAD:
@@ -800,6 +816,25 @@ class _Simulator:
             self._complete_task(key)
 
     def _deadlock(self) -> Never:
+        # An action still waiting for room was never enqueued, so it has no
+        # pending record; it has to be recognised from the cursor first.
+        if self.next_action_index < len(self.schedule.actions):
+            action = self.schedule.actions[self.next_action_index]
+            if (
+                action.trigger_task_id in self.completed
+                and action.kind is MemoryActionKind.PREFETCH
+            ):
+                state = self.alias_state[action.alias_group_id]
+                device_id = state.device_id
+                self._raise_capacity(
+                    kind="prefetch-device-capacity",
+                    location=f"device:{device_id}",
+                    capacity=self.device_config[device_id].capacity_bytes,
+                    used=self.device_physical_bytes[device_id],
+                    requested=state.size_bytes,
+                    task_id=action.trigger_task_id,
+                    aliases=(action.alias_group_id,),
+                )
         for direction, queues in (
             (TransferDirection.FETCH, self.pending_fetch),
             (TransferDirection.EVICT, self.pending_evict),
@@ -915,6 +950,7 @@ class _Simulator:
         while (
             self.unlaunched
             or self.active_tasks
+            or self.next_action_index < len(self.schedule.actions)
             or any(self.pending_fetch.values())
             or any(self.pending_evict.values())
             or self.active_fetch
@@ -924,6 +960,11 @@ class _Simulator:
             while changed:
                 changed = self._try_start_transfers()
                 changed |= self._try_launch_tasks()
+                # Whatever frees memory has to give a waiting action another
+                # chance, not just the next task completion.
+                before = self.next_action_index
+                self._submit_ready_actions()
+                changed |= self.next_action_index != before
             next_time = self._next_event_time()
             if next_time is None:
                 self._deadlock()
@@ -961,6 +1002,8 @@ class _Simulator:
             device_peaks=peaks,
             spill_peak_bytes=self.spill_peak_bytes,
             memory_timeline=tuple(self.memory_timeline),
+            capacity_violations=tuple(self.capacity_violations),
+            capacity_violation_count=len(self.capacity_violations),
         )
 
 
