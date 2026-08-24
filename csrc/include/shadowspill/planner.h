@@ -586,20 +586,44 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_build_lease_lifetimes(
  */
 typedef struct ShadowSpillBestPlaced ShadowSpillBestPlaced;
 
+/* Which plan the best makespan belongs to.
+ *
+ * A bare makespan answers "is this worth measuring" but not "what won", and
+ * the two are the same question asked at different times: whatever holds this
+ * record at the end is the plan the search selected. `makespan_ns` of zero
+ * means nothing has been placed. */
+typedef struct ShadowSpillBestPlacedRecord {
+    uint64_t makespan_ns;
+    /* The capacity the plan was built against, which is a property of the
+       plan rather than of the search that produced it. */
+    uint64_t object_capacity_bytes;
+    /* Caller-assigned; the planner never interprets it. */
+    uint32_t selection_index;
+    uint8_t residency_strategy;
+    uint8_t prefetch_rule;
+    uint8_t coalesced;
+    uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
+} ShadowSpillBestPlacedRecord;
+
 SHADOWSPILL_API ShadowSpillBestPlaced *shadowspill_best_placed_create(void);
 SHADOWSPILL_API void shadowspill_best_placed_destroy(
     ShadowSpillBestPlaced *best
 );
-SHADOWSPILL_API uint64_t shadowspill_best_placed_get(
-    const ShadowSpillBestPlaced *best
-);
-SHADOWSPILL_API int shadowspill_best_placed_offer(
-    ShadowSpillBestPlaced *best,
-    uint64_t makespan_ns
-);
+/* The hot path: whether a plan of this makespan is worth placing at all.
+ * Reads only the makespan, so it never waits on a writer. */
 SHADOWSPILL_API int shadowspill_best_placed_admits(
     const ShadowSpillBestPlaced *best,
     uint64_t makespan_ns
+);
+/* Records `record` if it beats what is held, returning non-zero if it did. */
+SHADOWSPILL_API int shadowspill_best_placed_offer(
+    ShadowSpillBestPlaced *best,
+    const ShadowSpillBestPlacedRecord *record
+);
+/* Copies out what is held. `makespan_ns` is zero when nothing was placed. */
+SHADOWSPILL_API void shadowspill_best_placed_read(
+    const ShadowSpillBestPlaced *best,
+    ShadowSpillBestPlacedRecord *record
 );
 
 /* Fixed-offset placement of lease lifetimes within one execution-pool slice. */
