@@ -302,10 +302,11 @@ class SimulationInfeasibleError(ValueError):
 class CapacityViolation:
     """One instant where a plan wanted more memory than its budget allowed.
 
-    Produced only by a relaxed simulation. `reason` says what would have to
-    change: an initial violation means the plan is over budget before it
-    starts, while the rest name the fetch, evict or task launch that asked
-    for too much.
+    A prefetch or task launch that does not fit waits rather than failing, so
+    this does not mean the plan was rejected -- it means the plan paid for
+    the shortfall in stall. `reason` says which of the two came up short, and
+    `excess_bytes` says by how much, which is what a repair needs to know how
+    far to move.
     """
 
     reason: str
@@ -337,7 +338,7 @@ class SimulationResult:
     device_peaks: tuple[DeviceMemoryPeak, ...]
     spill_peak_bytes: int
     memory_timeline: tuple[MemorySnapshot, ...] = ()
-    #: Empty unless the run relaxed capacity. Truncation is visible as
+    #: Where the plan came up short and waited. Truncation is visible as
     #: `capacity_violation_count` exceeding the length of this tuple.
     capacity_violations: tuple[CapacityViolation, ...] = ()
     capacity_violation_count: int = 0

@@ -154,11 +154,32 @@ int shadowspill_try_start_transfers(
  */
 static void defer_action(
     ShadowSpillSimulationWork *work,
-    uint32_t action
+    ShadowSpillSimulationResult *result,
+    uint32_t action,
+    uint32_t task,
+    uint32_t alias,
+    uint32_t device,
+    uint64_t capacity,
+    uint64_t used,
+    uint64_t requested
 ) {
     ShadowSpillTransferState *pending = &work->transfers[action];
     if ((pending->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
         pending->ready_ns = work->now_ns;
+        /* Recorded once, at the first refusal, so the list counts places the
+         * plan came up short rather than ticks it spent waiting. */
+        shadowspill_record_capacity_violation(
+            result,
+            work,
+            SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+            task,
+            alias,
+            device,
+            SHADOWSPILL_MEMORY_DEVICE,
+            capacity,
+            used,
+            requested
+        );
     }
     pending->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
 }
@@ -226,24 +247,20 @@ static int submit_action(
         if (!shadowspill_physical_delta_fits(
                 program, work, device, physical_delta
             )) {
-            if (program->relax_capacity == 0U) {
-                /* Nothing has been mutated yet, so waiting is free. */
-                defer_action(work, action);
-                *deferred = 1;
-                return 1;
-            }
-            shadowspill_record_capacity_violation(
-                result,
+            /* Nothing has been mutated yet, so waiting is free. */
+            defer_action(
                 work,
-                SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                result,
+                action,
                 task,
                 alias,
                 device,
-                SHADOWSPILL_MEMORY_DEVICE,
                 program->devices[device].capacity_bytes,
                 shadowspill_device_used_bytes(program, work, device),
                 physical_delta > 0 ? (uint64_t)physical_delta : 0U
             );
+            *deferred = 1;
+            return 1;
         }
     }
     if (kind == SHADOWSPILL_MEMORY_RELEASE) {
@@ -338,25 +355,10 @@ static int submit_action(
                 return 0;
             }
             if (total > program->spill_capacity_bytes) {
-                if (program->relax_capacity == 0U) {
-                    shadowspill_set_capacity_error(
-                        result,
-                        SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
-                        work,
-                        task,
-                        alias,
-                        device,
-                        SHADOWSPILL_MEMORY_SPILL,
-                        program->spill_capacity_bytes,
-                        work->spill_bytes,
-                        program->alias_size_bytes[alias]
-                    );
-                    return 0;
-                }
-                shadowspill_record_capacity_violation(
+                shadowspill_set_capacity_error(
                     result,
+                    SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
                     work,
-                    SHADOWSPILL_CAPACITY_OFFLOAD_SPILL,
                     task,
                     alias,
                     device,
@@ -365,6 +367,7 @@ static int submit_action(
                     work->spill_bytes,
                     program->alias_size_bytes[alias]
                 );
+                return 0;
             }
             state->spill_allocated = 1U;
             state->spill_ready = 0U;
@@ -393,23 +396,19 @@ static int submit_action(
             );
             if (size > program->devices[device].capacity_bytes ||
                 used > program->devices[device].capacity_bytes - size) {
-                if (program->relax_capacity == 0U) {
-                    defer_action(work, action);
-                    *deferred = 1;
-                    return 1;
-                }
-                shadowspill_record_capacity_violation(
-                    result,
+                defer_action(
                     work,
-                    SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                    result,
+                    action,
                     task,
                     alias,
                     device,
-                    SHADOWSPILL_MEMORY_DEVICE,
                     program->devices[device].capacity_bytes,
                     used,
                     size
                 );
+                *deferred = 1;
+                return 1;
             }
         }
         transfer->direction = SHADOWSPILL_TRANSFER_FETCH;

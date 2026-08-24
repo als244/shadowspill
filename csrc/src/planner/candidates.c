@@ -100,9 +100,6 @@ typedef struct CandidateWorkspace {
     ShadowSpillScheduleStorage schedule;
     ShadowSpillScheduleStorage selected;
     SimulationWorkspace simulation;
-    /* Buffers for the diagnostic relaxed-capacity re-simulation, which
-     * must not overwrite the live result the repair step still reads. */
-    SimulationWorkspace probe;
     ShadowSpillCandidateAdmissionWorkspace admission;
     ResidencyCache residency_cache;
     ScheduleCache schedule_cache;
@@ -568,73 +565,6 @@ static int simulate_schedule(
     return 0;
 }
 
-/*
- * Time the schedule as written, with device and spill capacity relaxed.
- *
- * The enforced simulation abandons at its first capacity violation, so an
- * unconverged candidate has no makespan at all -- nothing a search can prune
- * on. Relaxing capacity answers the timing question separately from the
- * fitting question: the plan still has a definite duration, and because
- * repairing an overflow only adds transfers or stall, that duration is a
- * lower bound on every plan this candidate can repair into. It is exact once
- * the candidate admits, since an admitted plan never trips a capacity check.
- *
- * Returns zero on success and writes the makespan; returns -1 if the relaxed
- * run fails for some reason other than capacity.
- */
-static int relaxed_makespan_ns(
-    const ShadowSpillPressureFitProblem *problem,
-    const ShadowSpillIndexedSchedule *schedule,
-    SimulationWorkspace *workspace,
-    uint64_t *makespan_ns,
-    uint32_t *violations,
-    uint32_t *by_reason
-) {
-    if (simulation_workspace_reserve_transfers(
-            workspace,
-            schedule->action_count
-        ) != 0) {
-        return -1;
-    }
-    ShadowSpillSimulationProgram program;
-    shadowspill_bind_indexed_schedule(problem->simulation, schedule, &program);
-    program.relax_capacity = 1U;
-    /* A sample, not the whole list: enough to see which question the plan
-     * keeps getting wrong without paying to store every instance. */
-    ShadowSpillCapacityViolation sample[4096];
-    ShadowSpillSimulationResult probe = {
-        .capacity_violations = sample,
-        .capacity_violation_capacity =
-            (uint32_t)(sizeof(sample) / sizeof(sample[0])),
-        .task_intervals = workspace->tasks,
-        .task_interval_capacity = workspace->task_capacity,
-        .transfer_intervals = workspace->transfers,
-        .transfer_interval_capacity = workspace->transfer_capacity,
-        .device_peaks = workspace->peaks,
-        .device_peak_capacity = workspace->device_capacity,
-    };
-    if (shadowspill_simulate(&program, &probe) != SHADOWSPILL_STATUS_OK) {
-        return -1;
-    }
-    *makespan_ns = probe.makespan_ns;
-    /* The buffer is null, so this counts without storing: how many
-     * places the plan overflows, not where. */
-    *violations = probe.capacity_violation_count;
-    uint32_t stored = probe.capacity_violation_count;
-    if (stored > (uint32_t)(sizeof(sample) / sizeof(sample[0]))) {
-        stored = (uint32_t)(sizeof(sample) / sizeof(sample[0]));
-    }
-    for (uint32_t index = 0U; index < 5U; ++index) {
-        by_reason[index] = 0U;
-    }
-    for (uint32_t index = 0U; index < stored; ++index) {
-        if (sample[index].reason < 5U) {
-            ++by_reason[sample[index].reason];
-        }
-    }
-    return 0;
-}
-
 static int candidate_workspace_create(
     const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace
@@ -686,10 +616,6 @@ static int candidate_workspace_create(
             problem,
             &workspace->simulation
         ) != 0 ||
-        simulation_workspace_create(
-            problem,
-            &workspace->probe
-        ) != 0 ||
         (problem->admission != NULL &&
          shadowspill_candidate_admission_workspace_create(
              problem, &workspace->admission
@@ -719,7 +645,6 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
     simulation_workspace_destroy(&workspace->simulation);
-    simulation_workspace_destroy(&workspace->probe);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
     for (uint32_t index = 0U; index < workspace->residency_cache.count; ++index) {
@@ -2086,27 +2011,10 @@ static int evaluate_candidate(
                     traced_evict += bytes;
                 }
             }
-            /* What the enforced run cannot supply: the plan's duration
-             * with capacity relaxed, which is the bound dominance would
-             * actually test against an incumbent. */
-            uint64_t traced_relaxed = 0U;
-            uint32_t traced_violations = 0U;
-            uint32_t traced_reasons[5] = {0U, 0U, 0U, 0U, 0U};
-            if (relaxed_makespan_ns(
-                    problem,
-                    &workspace->schedule.value,
-                    &workspace->probe,
-                    &traced_relaxed,
-                    &traced_violations,
-                    traced_reasons
-                ) != 0) {
-                traced_relaxed = 0U;
-            }
             fprintf(
                 stderr,
                 "repair-trace strategy=%u rule=%u coalesced=%u "
-                "attempt=%llu status=%d makespan=%llu relaxed=%llu violations=%u "
-                "reasons=%u/%u/%u/%u/%u "
+                "attempt=%llu status=%d makespan=%llu "
                 "fetch_bytes=%llu evict_bytes=%llu actions=%u "
                 "time=%llu used=%llu requested=%llu capacity=%llu\n",
                 strategy,
@@ -2115,13 +2023,6 @@ static int evaluate_candidate(
                 (unsigned long long)repair_total(&diagnostic->repairs),
                 (int)simulation_status,
                 (unsigned long long)simulation.makespan_ns,
-                (unsigned long long)traced_relaxed,
-                traced_violations,
-                traced_reasons[0],
-                traced_reasons[1],
-                traced_reasons[2],
-                traced_reasons[3],
-                traced_reasons[4],
                 (unsigned long long)traced_fetch,
                 (unsigned long long)traced_evict,
                 workspace->schedule.value.action_count,

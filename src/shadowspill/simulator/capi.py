@@ -37,7 +37,6 @@ class CProgram(ctypes.Structure):
         ("mutation_count", ctypes.c_uint32),
         ("reuse_dependency_count", ctypes.c_uint32),
         ("use_admission_accounting", ctypes.c_uint32),
-        ("relax_capacity", ctypes.c_uint32),
         ("spill_capacity_bytes", ctypes.c_uint64),
         ("devices", ctypes.POINTER(CDevice)),
         ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
