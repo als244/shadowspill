@@ -109,15 +109,21 @@ int shadowspill_try_launch_tasks(
             }
             int64_t physical_delta = 0;
             int capacity_fits = 0;
+            /* Resolving the delta is separate from whether it fits, so a
+             * relaxed run can tell a malformed program from one that merely
+             * wants more memory than it has. */
+            int resolved = 1;
             if (program->use_admission_accounting != 0U) {
-                capacity_fits = logical_requested <= (uint64_t)INT64_MAX &&
+                resolved = logical_requested <= (uint64_t)INT64_MAX &&
                     shadowspill_resolve_physical_delta(
                         program,
                         program->task_start_physical_deltas,
                         task,
                         (int64_t)logical_requested,
                         &physical_delta
-                    ) && shadowspill_physical_delta_fits(
+                    );
+                capacity_fits = resolved &&
+                    shadowspill_physical_delta_fits(
                         program, work, device, physical_delta
                     );
             } else {
@@ -128,6 +134,22 @@ int shadowspill_try_launch_tasks(
                     program->devices[device].capacity_bytes &&
                     used <= program->devices[device].capacity_bytes -
                         logical_requested;
+            }
+            if (resolved && capacity_fits == 0 &&
+                program->relax_capacity != 0U) {
+                shadowspill_record_capacity_violation(
+                    result,
+                    work,
+                    SHADOWSPILL_CAPACITY_TASK_DEVICE,
+                    task,
+                    SHADOWSPILL_SIMULATOR_NO_INDEX,
+                    device,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    program->devices[device].capacity_bytes,
+                    shadowspill_device_used_bytes(program, work, device),
+                    logical_requested
+                );
+                capacity_fits = 1;
             }
             if (!capacity_fits) {
                 state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;

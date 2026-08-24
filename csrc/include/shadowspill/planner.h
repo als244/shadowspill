@@ -157,6 +157,14 @@ typedef struct ShadowSpillPressureFitProblemOptions {
     uint8_t evaluate_coalesced;
     uint32_t max_repair_attempts;
     uint8_t initial_placement;
+    /* Makespan of the best plan the caller already holds, or zero for none.
+     *
+     * A candidate whose own makespan has reached this cannot win however far
+     * it is repaired, so it is abandoned rather than truncated at a depth.
+     * The caller owns the value and decides its scope: one resolved program,
+     * or every resolved program searched so far. Zero disables the bound and
+     * every candidate is evaluated. */
+    uint64_t incumbent_makespan_ns;
 } ShadowSpillPressureFitProblemOptions;
 
 /*
@@ -202,6 +210,10 @@ typedef enum ShadowSpillCandidateStatus {
     SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE = 3,
     SHADOWSPILL_CANDIDATE_INTERNAL_ERROR = 4,
     SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED = 5,
+    /* Abandoned because its own makespan had already reached the plan the
+     * caller holds, so no amount of further repair could let it win. This is
+     * healthy: the answer is no worse for having stopped. */
+    SHADOWSPILL_CANDIDATE_DOMINATED = 6,
 } ShadowSpillCandidateStatus;
 
 /* Categorized monotonic repair operations for one candidate evaluation. */

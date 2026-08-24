@@ -355,6 +355,8 @@ def _program_problem(
 
 def _problem_options(
     options: PressureFitOptions,
+    *,
+    incumbent_makespan_ns: int = 0,
 ) -> tuple[
     CPressureFitProblemOptions,
     tuple[str, ...],
@@ -377,6 +379,7 @@ def _problem_options(
         evaluate_coalesced=int(options.evaluate_coalesced),
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
+        incumbent_makespan_ns=incumbent_makespan_ns,
     )
     return compiled, strategy_names, rule_names, (strategies, rules)
 
@@ -511,11 +514,12 @@ def _evaluate_problem(
     options: PressureFitOptions,
     *,
     admission: IndexedAdmissionFacts | None,
+    incumbent_makespan_ns: int = 0,
 ) -> CProblemResult | None:
     """Invoke and decode one compiled program-problem evaluation."""
 
     problem_options, strategy_names, rule_names, _option_buffers = _problem_options(
-        options
+        options, incumbent_makespan_ns=incumbent_makespan_ns
     )
     problem_result = CPressureFitProblemResult()
     library = planner_api()
@@ -600,10 +604,22 @@ def evaluate_program_problem(
     options: PressureFitOptions,
     *,
     admission: IndexedAdmissionFacts | None = None,
+    incumbent_makespan_ns: int = 0,
 ) -> CProblemResult | None:
-    """Derive indexed planning facts and evaluate every candidate entirely in C."""
+    """Derive indexed planning facts and evaluate every candidate entirely in C.
 
-    return _evaluate_problem(simulation, options, admission=admission)
+    `incumbent_makespan_ns` is the best plan the caller already holds. A
+    candidate that cannot beat it is abandoned rather than repaired to a
+    depth. Zero means the caller holds nothing and every candidate is
+    evaluated.
+    """
+
+    return _evaluate_problem(
+        simulation,
+        options,
+        admission=admission,
+        incumbent_makespan_ns=incumbent_makespan_ns,
+    )
 
 
 __all__ = [

@@ -253,6 +253,7 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("evaluate_coalesced", ctypes.c_uint8),
         ("max_repair_attempts", ctypes.c_uint32),
         ("initial_placement", ctypes.c_uint8),
+        ("incumbent_makespan_ns", ctypes.c_uint64),
     ]
 
 

@@ -100,6 +100,9 @@ typedef struct CandidateWorkspace {
     ShadowSpillScheduleStorage schedule;
     ShadowSpillScheduleStorage selected;
     SimulationWorkspace simulation;
+    /* Buffers for the diagnostic relaxed-capacity re-simulation, which
+     * must not overwrite the live result the repair step still reads. */
+    SimulationWorkspace probe;
     ShadowSpillCandidateAdmissionWorkspace admission;
     ResidencyCache residency_cache;
     ScheduleCache schedule_cache;
@@ -565,6 +568,73 @@ static int simulate_schedule(
     return 0;
 }
 
+/*
+ * Time the schedule as written, with device and spill capacity relaxed.
+ *
+ * The enforced simulation abandons at its first capacity violation, so an
+ * unconverged candidate has no makespan at all -- nothing a search can prune
+ * on. Relaxing capacity answers the timing question separately from the
+ * fitting question: the plan still has a definite duration, and because
+ * repairing an overflow only adds transfers or stall, that duration is a
+ * lower bound on every plan this candidate can repair into. It is exact once
+ * the candidate admits, since an admitted plan never trips a capacity check.
+ *
+ * Returns zero on success and writes the makespan; returns -1 if the relaxed
+ * run fails for some reason other than capacity.
+ */
+static int relaxed_makespan_ns(
+    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillIndexedSchedule *schedule,
+    SimulationWorkspace *workspace,
+    uint64_t *makespan_ns,
+    uint32_t *violations,
+    uint32_t *by_reason
+) {
+    if (simulation_workspace_reserve_transfers(
+            workspace,
+            schedule->action_count
+        ) != 0) {
+        return -1;
+    }
+    ShadowSpillSimulationProgram program;
+    shadowspill_bind_indexed_schedule(problem->simulation, schedule, &program);
+    program.relax_capacity = 1U;
+    /* A sample, not the whole list: enough to see which question the plan
+     * keeps getting wrong without paying to store every instance. */
+    ShadowSpillCapacityViolation sample[4096];
+    ShadowSpillSimulationResult probe = {
+        .capacity_violations = sample,
+        .capacity_violation_capacity =
+            (uint32_t)(sizeof(sample) / sizeof(sample[0])),
+        .task_intervals = workspace->tasks,
+        .task_interval_capacity = workspace->task_capacity,
+        .transfer_intervals = workspace->transfers,
+        .transfer_interval_capacity = workspace->transfer_capacity,
+        .device_peaks = workspace->peaks,
+        .device_peak_capacity = workspace->device_capacity,
+    };
+    if (shadowspill_simulate(&program, &probe) != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    *makespan_ns = probe.makespan_ns;
+    /* The buffer is null, so this counts without storing: how many
+     * places the plan overflows, not where. */
+    *violations = probe.capacity_violation_count;
+    uint32_t stored = probe.capacity_violation_count;
+    if (stored > (uint32_t)(sizeof(sample) / sizeof(sample[0]))) {
+        stored = (uint32_t)(sizeof(sample) / sizeof(sample[0]));
+    }
+    for (uint32_t index = 0U; index < 5U; ++index) {
+        by_reason[index] = 0U;
+    }
+    for (uint32_t index = 0U; index < stored; ++index) {
+        if (sample[index].reason < 5U) {
+            ++by_reason[sample[index].reason];
+        }
+    }
+    return 0;
+}
+
 static int candidate_workspace_create(
     const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace
@@ -616,6 +686,10 @@ static int candidate_workspace_create(
             problem,
             &workspace->simulation
         ) != 0 ||
+        simulation_workspace_create(
+            problem,
+            &workspace->probe
+        ) != 0 ||
         (problem->admission != NULL &&
          shadowspill_candidate_admission_workspace_create(
              problem, &workspace->admission
@@ -645,6 +719,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
     simulation_workspace_destroy(&workspace->simulation);
+    simulation_workspace_destroy(&workspace->probe);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
     for (uint32_t index = 0U; index < workspace->residency_cache.count; ++index) {
@@ -1704,6 +1779,50 @@ static void initialize_diagnostic(
     diagnostic->error_boundary = INT32_MIN;
 }
 
+/* May this candidate take another repair?
+ *
+ * Two bounds, and which applies depends on whether the caller handed us a
+ * plan to beat. With one, the answer is a bound rather than a guess: repairs
+ * only add transfers or stall, so `current` rises monotonically and must
+ * cross the incumbent, at which point no further repair can win. Without
+ * one there is nothing to compare against and `max_repair_attempts` is the
+ * only thing standing between a genuinely infeasible point and an unbounded
+ * loop -- the guaranteed progress per repair is a single byte.
+ *
+ * Both bounds apply when both are available, so a candidate can never repair
+ * without limit. */
+static int may_repair_again(
+    const ShadowSpillPressureFitProblemOptions *candidate_options,
+    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    uint64_t current_makespan_ns
+) {
+    if (repair_total(&diagnostic->repairs) >=
+        candidate_options->max_repair_attempts) {
+        return 0;
+    }
+    if (candidate_options->incumbent_makespan_ns == 0U) {
+        return 1;
+    }
+    return current_makespan_ns < candidate_options->incumbent_makespan_ns;
+}
+
+/* Why a candidate stopped, when it stopped without converging. `dominated`
+ * is healthy: the answer is no worse for having abandoned it. `exhausted`
+ * means the effort ran out, which is "we stopped looking" and must never be
+ * read as "there is no plan". */
+static uint32_t stopped_status(
+    const ShadowSpillPressureFitProblemOptions *candidate_options,
+    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    uint64_t current_makespan_ns
+) {
+    if (candidate_options->incumbent_makespan_ns != 0U &&
+        current_makespan_ns >= candidate_options->incumbent_makespan_ns) {
+        return (uint32_t)SHADOWSPILL_CANDIDATE_DOMINATED;
+    }
+    (void)diagnostic;
+    return (uint32_t)SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
+}
+
 static int evaluate_candidate(
     const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillScheduleFacts *facts,
@@ -1805,8 +1924,9 @@ static int evaluate_candidate(
         ShadowSpillStatus simulation_status =
             (ShadowSpillStatus)simulation.status;
         if (admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
-            if (repair_total(&diagnostic->repairs) <
-                candidate_options->max_repair_attempts) {
+            if (may_repair_again(
+                    candidate_options, diagnostic, simulation.makespan_ns
+                )) {
                 ShadowSpillPrefetchTriggerConstraint constraint = {0};
                 int advanced = advance_admission_prefetch(
                     facts,
@@ -1904,9 +2024,12 @@ static int evaluate_candidate(
                 admission_error_annotation,
                 diagnostic
             );
-            if (repair_total(&diagnostic->repairs) >=
-                candidate_options->max_repair_attempts) {
-                diagnostic->status = SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
+            if (!may_repair_again(
+                    candidate_options, diagnostic, simulation.makespan_ns
+                )) {
+                diagnostic->status = stopped_status(
+                    candidate_options, diagnostic, simulation.makespan_ns
+                );
             }
             return 0;
         }
@@ -1943,16 +2066,65 @@ static int evaluate_candidate(
             repair_trace = getenv("SHADOWSPILL_REPAIR_TRACE") != NULL;
         }
         if (repair_trace) {
+            /* `makespan` and the transfer totals are what a dominance bound
+             * would be built from, logged per repair so the investigation
+             * can see whether any of them rises fast enough to cross an
+             * incumbent before the candidate converges anyway. `makespan`
+             * is only meaningful when status is OK: the simulator assigns
+             * it on the success path alone. */
+            uint64_t traced_fetch = 0U;
+            uint64_t traced_evict = 0U;
+            for (uint32_t index = 0U;
+                 index < workspace->schedule.value.action_count;
+                 ++index) {
+                const uint32_t alias = workspace->schedule.value.action_aliases[index];
+                const uint64_t bytes = problem->residency->alias_size_bytes[alias];
+                const uint8_t kind = workspace->schedule.value.action_kinds[index];
+                if (kind == SHADOWSPILL_MEMORY_PREFETCH) {
+                    traced_fetch += bytes;
+                } else if (kind == SHADOWSPILL_MEMORY_OFFLOAD) {
+                    traced_evict += bytes;
+                }
+            }
+            /* What the enforced run cannot supply: the plan's duration
+             * with capacity relaxed, which is the bound dominance would
+             * actually test against an incumbent. */
+            uint64_t traced_relaxed = 0U;
+            uint32_t traced_violations = 0U;
+            uint32_t traced_reasons[5] = {0U, 0U, 0U, 0U, 0U};
+            if (relaxed_makespan_ns(
+                    problem,
+                    &workspace->schedule.value,
+                    &workspace->probe,
+                    &traced_relaxed,
+                    &traced_violations,
+                    traced_reasons
+                ) != 0) {
+                traced_relaxed = 0U;
+            }
             fprintf(
                 stderr,
                 "repair-trace strategy=%u rule=%u coalesced=%u "
-                "attempt=%llu status=%d time=%llu used=%llu "
-                "requested=%llu capacity=%llu\n",
+                "attempt=%llu status=%d makespan=%llu relaxed=%llu violations=%u "
+                "reasons=%u/%u/%u/%u/%u "
+                "fetch_bytes=%llu evict_bytes=%llu actions=%u "
+                "time=%llu used=%llu requested=%llu capacity=%llu\n",
                 strategy,
                 rule,
                 coalesced,
                 (unsigned long long)repair_total(&diagnostic->repairs),
                 (int)simulation_status,
+                (unsigned long long)simulation.makespan_ns,
+                (unsigned long long)traced_relaxed,
+                traced_violations,
+                traced_reasons[0],
+                traced_reasons[1],
+                traced_reasons[2],
+                traced_reasons[3],
+                traced_reasons[4],
+                (unsigned long long)traced_fetch,
+                (unsigned long long)traced_evict,
+                workspace->schedule.value.action_count,
                 (unsigned long long)simulation.error_time_ns,
                 (unsigned long long)simulation.error_used_bytes,
                 (unsigned long long)simulation.error_requested_bytes,
@@ -1960,8 +2132,9 @@ static int evaluate_candidate(
             );
         }
 
-        if (repair_total(&diagnostic->repairs) <
-            candidate_options->max_repair_attempts) {
+        if (may_repair_again(
+                candidate_options, diagnostic, simulation.makespan_ns
+            )) {
             ShadowSpillPrefetchTriggerConstraint constraint = {0};
             int delayed = shadowspill_delay_indexed_prefetch(
                 facts,
@@ -2008,11 +2181,14 @@ static int evaluate_candidate(
             }
         }
         diagnostic->status =
-            repair_total(&diagnostic->repairs) >=
-                candidate_options->max_repair_attempts &&
+            !may_repair_again(
+                candidate_options, diagnostic, simulation.makespan_ns
+            ) &&
             simulation_failure_may_be_repairable(simulation_status)
-            ? SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED
-            : SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
+            ? stopped_status(
+                  candidate_options, diagnostic, simulation.makespan_ns
+              )
+            : (uint32_t)SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
         copy_simulation_error(diagnostic, &simulation);
         return 0;
     }

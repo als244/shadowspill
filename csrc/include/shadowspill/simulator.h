@@ -59,6 +59,13 @@ typedef struct ShadowSpillSimulationProgram {
     uint32_t mutation_count;
     uint32_t reuse_dependency_count;
     uint32_t use_admission_accounting;
+    /* Simulate the plan as written, without enforcing device or spill
+       capacity. Timing is a separate question from fitting: a plan that
+       overflows still takes a definite amount of time, and because repairing
+       an overflow only ever adds transfers or stall, that time is a lower
+       bound on every plan the repair can reach. Peaks are still recorded, so
+       the overshoot remains readable. Zero enforces capacity as usual. */
+    uint32_t relax_capacity;
     uint64_t spill_capacity_bytes;
 
     const ShadowSpillSimulationDevice *devices;
@@ -127,6 +134,48 @@ typedef struct ShadowSpillDevicePeak {
     uint64_t total_bytes;
 } ShadowSpillDevicePeak;
 
+/*
+ * Why a plan wanted more memory than it was allowed at some instant.
+ *
+ * Each names a distinct question the plan got wrong, so the reason says what
+ * a repair would have to change: the initial reasons mean the plan is over
+ * budget before it starts and no amount of scheduling helps, while the rest
+ * name a specific fetch, evict or task launch that asked for too much.
+ */
+typedef enum ShadowSpillCapacityViolationReason {
+    /* Initial residency alone exceeds the device budget. */
+    SHADOWSPILL_CAPACITY_INITIAL_DEVICE = 0,
+    /* Retained spill copies alone exceed the spill pool. */
+    SHADOWSPILL_CAPACITY_INITIAL_SPILL = 1,
+    /* A fetch would not fit on the device. */
+    SHADOWSPILL_CAPACITY_PREFETCH_DEVICE = 2,
+    /* An evict would not fit in the spill pool. */
+    SHADOWSPILL_CAPACITY_OFFLOAD_SPILL = 3,
+    /* A task's outputs and workspace would not fit on the device. */
+    SHADOWSPILL_CAPACITY_TASK_DEVICE = 4,
+} ShadowSpillCapacityViolationReason;
+
+/*
+ * One point where the plan needed more memory than the budget allowed.
+ *
+ * Only recorded when `relax_capacity` is set. Enforced simulation stops at
+ * the first violation and reports it through the `error_*` fields, so it can
+ * name one; a relaxed run continues and names them all, which is what shows
+ * whether a plan overflows once or everywhere.
+ */
+typedef struct ShadowSpillCapacityViolation {
+    uint64_t time_ns;
+    uint64_t capacity_bytes;
+    uint64_t used_bytes;
+    uint64_t requested_bytes;
+    uint32_t task;
+    uint32_t alias;
+    uint32_t device;
+    uint8_t location;
+    /* A ShadowSpillCapacityViolationReason. */
+    uint8_t reason;
+} ShadowSpillCapacityViolation;
+
 typedef struct ShadowSpillSimulationResult {
     uint32_t status;
     uint32_t error_task;
@@ -148,6 +197,12 @@ typedef struct ShadowSpillSimulationResult {
     uint32_t transfer_interval_count;
     ShadowSpillDevicePeak *device_peaks;
     uint32_t device_peak_capacity;
+    /* Relaxed runs only. `capacity_violation_count` is the true total
+     * even when it exceeds the buffer, so a caller can tell a complete
+     * list from a truncated one. A null buffer counts without storing. */
+    ShadowSpillCapacityViolation *capacity_violations;
+    uint32_t capacity_violation_capacity;
+    uint32_t capacity_violation_count;
 } ShadowSpillSimulationResult;
 
 /*
