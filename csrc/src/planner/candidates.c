@@ -1739,35 +1739,41 @@ static void initialize_diagnostic(
  *
  * Both bounds apply when both are available, so a candidate can never repair
  * without limit. */
+/*
+ * Whether this candidate gets another reduction.
+ *
+ * Effort is the only thing that stops it. Abandoning a candidate whose plan
+ * is already slower than one in hand used to be free, because reductions
+ * only ever added transfers and stall: a candidate behind the incumbent
+ * could not overtake it. That stopped being true when a plan that does not
+ * fit began waiting rather than failing -- a reduction now relieves the
+ * waiting as often as it adds to it, so a candidate behind the incumbent is
+ * exactly the one with something to gain, and cutting it off there abandons
+ * the plans most worth finding.
+ */
 static int may_repair_again(
     const ShadowSpillPressureFitProblemOptions *candidate_options,
     const ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
     uint64_t current_makespan_ns
 ) {
-    if (repair_total(&diagnostic->repairs) >=
-        candidate_options->max_repair_attempts) {
-        return 0;
-    }
-    if (candidate_options->incumbent_makespan_ns == 0U) {
-        return 1;
-    }
-    return current_makespan_ns < candidate_options->incumbent_makespan_ns;
+    (void)current_makespan_ns;
+    return repair_total(&diagnostic->repairs) <
+        candidate_options->max_repair_attempts;
 }
 
-/* Why a candidate stopped, when it stopped without converging. `dominated`
- * is healthy: the answer is no worse for having abandoned it. `exhausted`
+/* Why a candidate stopped, when it stopped without converging. `exhausted`
  * means the effort ran out, which is "we stopped looking" and must never be
- * read as "there is no plan". */
+ * read as "there is no plan". Nothing reports `dominated` any more: a
+ * candidate behind the incumbent can now overtake it, so being behind is not
+ * a reason to stop. */
 static uint32_t stopped_status(
     const ShadowSpillPressureFitProblemOptions *candidate_options,
     const ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
     uint64_t current_makespan_ns
 ) {
-    if (candidate_options->incumbent_makespan_ns != 0U &&
-        current_makespan_ns >= candidate_options->incumbent_makespan_ns) {
-        return (uint32_t)SHADOWSPILL_CANDIDATE_DOMINATED;
-    }
+    (void)candidate_options;
     (void)diagnostic;
+    (void)current_makespan_ns;
     return (uint32_t)SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
 }
 
