@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
@@ -31,12 +32,14 @@ from .best import BestFound
 from .capi import planner_api
 from .diagnostics import AdmissionRefinement
 from .pressurefit import evaluate_resolution, validate_pressurefit_inputs
+from .pressurefit.candidates import CProblemResult
 from .pressurefit.refinement import (
     round_up_admission_reserve,
     scheduled_admission_refinement,
     with_object_capacity,
 )
 from .pressurefit.search import (
+    SelectionProblem,
     build_problems,
     finish_pressurefit,
     preflight_problems,
@@ -137,8 +140,11 @@ def plan_program(
     # against what the ones before it admitted, which is what makes their
     # order worth choosing.
     shared = best if best is not None else BestFound()
-    evaluated = tuple(
-        evaluate_resolution(
+
+    def evaluate(
+        resolution: Resolution,
+    ) -> tuple[SelectionProblem, CProblemResult | None]:
+        return evaluate_resolution(
             program,
             resolution=resolution,
             initial_residency=initial_residency,
@@ -149,8 +155,25 @@ def plan_program(
             best=shared,
             progress=progress,
         )
-        for resolution in resolved
-    )
+
+    if worker_count(selected_options, len(resolved)) == 1:
+        evaluated = tuple(evaluate(resolution) for resolution in resolved)
+    else:
+        # Dispatched together so that every resolved program's units reach
+        # the shared pool as one batch. Evaluating them one after another
+        # instead costs a barrier per resolution, and the pool spends most of
+        # its width idle waiting for the slowest unit of a five-unit round.
+        #
+        # These threads only wait: `run_problems` submits its units to the
+        # shared pool and blocks, so the compiled work stays bounded by that
+        # pool rather than by the number of resolutions. They must not come
+        # from the shared pool itself, or waiting on it from inside it could
+        # starve the units they are waiting for.
+        with ThreadPoolExecutor(max_workers=len(resolved)) as executor:
+            # `map` yields in argument order, so the result order -- and
+            # every tie-break that depends on it -- does not depend on which
+            # resolution finished first.
+            evaluated = tuple(executor.map(evaluate, resolved))
     valid = tuple(
         (problem, result) for problem, result in evaluated if result is not None
     )
