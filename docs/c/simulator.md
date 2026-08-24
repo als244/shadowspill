@@ -22,13 +22,24 @@ and released or published at the declared completion transition.
 ## Output
 
 `ShadowSpillSimulationResult` reports status, structured infeasibility fields,
-makespan, spill peak, task intervals, transfer intervals, and per-device
-object/workspace/total peaks. Caller-provided interval and peak buffers remain
-caller-owned.
+makespan, spill peak, task intervals, transfer intervals, per-device
+object/workspace/total peaks, and capacity shortfalls. Caller-provided
+interval, peak, and violation buffers remain caller-owned.
 
 Task and transfer intervals include readiness, start, end, and stall masks.
 Stall masks distinguish input residency, device capacity, source readiness,
 spill capacity, and physical memory reuse.
+
+A prefetch or task launch that does not fit waits for room and is retried,
+rather than ending the simulation; only a plan that can never make room
+fails, as a deadlock. Each shortfall is reported once, at its first refusal,
+as a `ShadowSpillCapacityViolation` carrying the time, device, task, alias,
+capacity, used and requested bytes, and a reason. The paired
+`SHADOWSPILL_STALL_DEVICE_CAPACITY` mask says the plan waited;
+the violation says by how much it was short.
+`capacity_violation_count` is the true total even when it exceeds the buffer,
+so a truncated list is distinguishable from a complete one, and a null buffer
+counts without storing.
 
 ## Functions
 

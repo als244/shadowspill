@@ -337,6 +337,18 @@ fetch and then adds simulator-observed boundary pressure. Every change is
 monotonic and contributes to `max_repair_attempts`. A non-capacity
 contradiction is rejected directly.
 
+Simulator capacity failures are now rare, because a prefetch or task launch
+with nowhere to go waits for room rather than ending the simulation. A plan
+that comes up short is slower, not rejected, and it reaches selection with a
+real makespan and a `device-capacity` stall recording what it waited for.
+What still fails is a plan over budget before it starts, an offload with no
+room in the spill pool, and a plan that can never make room, which deadlocks.
+
+One consequence is worth stating plainly: because repair runs only while the
+simulation fails, a plan that succeeds with capacity stall is accepted
+without being repaired. Reducing that stall is an optimization the search
+does not currently attempt.
+
 ### 7. Select and materialize
 
 Each valid candidate has an exact simulated makespan and schedule digest. The
