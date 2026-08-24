@@ -10,9 +10,7 @@ this module        the entry point, and validating what it was given
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
-from dataclasses import replace
 
 from shadowspill.ir import (
     Program,
@@ -23,22 +21,16 @@ from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.capi import simulator_api
 
 from ..admission import AdmissionFacts
+from ..best import BestFound
 from ..capi import planner_api
-from ..diagnostics import AdmissionRefinement
-from ..recomputation import resolutions
+from ..recomputation import Resolution
 from ..request import PressureFitOptions
-from ..result import PressureFitInfeasibleError, PressureFitResult
-from .refinement import (
-    round_up_admission_reserve,
-    scheduled_admission_refinement,
-    with_object_capacity,
-)
+from .candidates import CProblemResult
 from .search import (
+    SelectionProblem,
     build_problems,
-    finish_pressurefit,
     preflight_problems,
     run_problems,
-    worker_count,
 )
 
 
@@ -82,68 +74,32 @@ def validate_pressurefit_inputs(
         )
 
 
-def validate_schedule_feasibility(
+def evaluate_resolution(
     program: Program,
     *,
+    resolution: Resolution,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
+    options: PressureFitOptions,
     admission: AdmissionFacts | None = None,
-) -> None:
-    """Reject irreducible capacity failures using the planner."""
-
-    validate_pressurefit_inputs(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-    )
-    simulator_api()
-    planner_api()
-    problems = build_problems(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-        resolutions=resolutions(program),
-        progress=None,
-    )
-    preflight_problems(problems)
-
-
-def pressurefit_once(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    options: PressureFitOptions | None = None,
-    admission: AdmissionFacts | None = None,
+    best: BestFound | None = None,
     progress: Callable[[str], None] | None = None,
-) -> PressureFitResult:
-    """Evaluate every selection through the planner."""
+) -> tuple[SelectionProblem, CProblemResult | None]:
+    """Plan one resolved program: every candidate policy, one task set.
 
-    validate_pressurefit_inputs(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-    )
+    This is PressureFit proper. It receives a task set with every
+    alternative already fixed and knows nothing about what was chosen
+    between, or that anything was. The caller decides which resolved
+    programs exist and in what order they are tried.
+
+    Returns the compiled problem beside its result so the caller can decode
+    a winner across several resolved programs at once; `None` means this
+    resolution was rejected before any candidate ran.
+    """
+
     simulator_api()
     planner_api()
-
-    selected_options = options or PressureFitOptions()
-    resolved = resolutions(program)
-    if progress is not None:
-        progress(
-            "PressureFit resolutions: "
-            f"groups={len(program.recomputation_groups)}, "
-            f"selections={len(resolved)}"
-        )
-    started = time.perf_counter_ns()
     problems = preflight_problems(
         build_problems(
             program,
@@ -151,124 +107,17 @@ def pressurefit_once(
             final_residency,
             config,
             admission,
-            resolutions=resolved,
+            resolutions=(resolution,),
             progress=progress,
         )
     )
-    results = run_problems(problems, selected_options)
-    valid_pairs = tuple(
-        (problem, result)
-        for problem, result in zip(problems, results, strict=True)
-        if result is not None
-    )
-    if progress is not None:
-        progress(
-            "PressureFit compiled problems and candidates finished: "
-            f"valid={len(valid_pairs)}/{len(problems)}, "
-            "candidates="
-            f"{sum(len(result.candidates) for _problem, result in valid_pairs)}, "
-            f"workers={worker_count(selected_options, len(problems))}, "
-            f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
-        )
-    if not valid_pairs:
-        raise RuntimeError(
-            "PressureFit rejected every selection after semantic "
-            "feasibility validation succeeded"
-        )
-    return finish_pressurefit(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        selected_options,
-        tuple(problem for problem, _result in valid_pairs),
-        tuple(result for _problem, result in valid_pairs),
-        admission,
-    )
+    results = run_problems(problems, options, best=best)
+    result = results[0]
+    # Publish immediately, so a caller sharing this object across resolved
+    # programs -- or across threads -- prunes against it from here on.
+    if best is not None and result is not None and result.selected_makespan_ns:
+        best.offer(int(result.selected_makespan_ns))
+    return problems[0], result
 
 
-def pressurefit(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    options: PressureFitOptions | None = None,
-    admission: AdmissionFacts | None = None,
-    progress: Callable[[str], None] | None = None,
-) -> PressureFitResult:
-    """Select a schedule and refine dynamic-slab headroom."""
-
-    original_config = config
-    current_config = config
-    current_admission = admission
-    refinements: list[AdmissionRefinement] = []
-    while True:
-        try:
-            result = pressurefit_once(
-                program,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=current_config,
-                options=options,
-                admission=current_admission,
-                progress=progress,
-            )
-            effective_capacity = (
-                None
-                if current_admission is None
-                else current_admission.object_capacity_bytes
-            )
-            return replace(
-                result,
-                simulation_config=original_config,
-                diagnostics=replace(
-                    result.diagnostics,
-                    admission_refinements=tuple(refinements),
-                    effective_object_capacity_bytes=effective_capacity,
-                ),
-                admission_facts=admission,
-            )
-        except PressureFitInfeasibleError as error:
-            if (
-                current_admission is None
-                or error.kind != "physical_admission"
-                or error.required_bytes is None
-                or error.required_bytes <= 0
-            ):
-                raise
-            previous = current_admission.object_capacity_bytes
-            scheduled_increment = scheduled_admission_refinement(len(refinements))
-            increment = max(
-                round_up_admission_reserve(error.required_bytes),
-                scheduled_increment,
-            )
-            capacity = previous - increment
-            if capacity <= 0:
-                raise
-            refinements.append(
-                AdmissionRefinement(
-                    attempt=len(refinements) + 1,
-                    previous_object_capacity_bytes=previous,
-                    required_additional_slack_bytes=error.required_bytes,
-                    reserve_increment_bytes=increment,
-                    object_capacity_bytes=capacity,
-                )
-            )
-            if progress is not None:
-                progress(
-                    "PressureFit physical admission refinement "
-                    f"{len(refinements)}: required_slack={error.required_bytes}, "
-                    f"reserve_increment={increment}, object_capacity={capacity}"
-                )
-            current_config, current_admission = with_object_capacity(
-                current_config,
-                current_admission,
-                capacity,
-                shared_execution_bytes=shared_residency_footprint(program).for_device(
-                    current_admission.device_id
-                ),
-            )
-
-
-__all__ = ["pressurefit", "validate_schedule_feasibility"]
+__all__ = ["evaluate_resolution", "validate_pressurefit_inputs"]

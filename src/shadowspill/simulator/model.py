@@ -298,6 +298,33 @@ class SimulationInfeasibleError(ValueError):
         self.requested_bytes = requested_bytes
 
 
+@dataclass(frozen=True, slots=True)
+class CapacityViolation:
+    """One instant where a plan wanted more memory than its budget allowed.
+
+    Produced only by a relaxed simulation. `reason` says what would have to
+    change: an initial violation means the plan is over budget before it
+    starts, while the rest name the fetch, evict or task launch that asked
+    for too much.
+    """
+
+    reason: str
+    location: str
+    time_ns: int
+    capacity_bytes: int
+    used_bytes: int
+    requested_bytes: int
+    device_id: str
+    task_id: str | None = None
+    alias_group_id: str | None = None
+
+    @property
+    def excess_bytes(self) -> int:
+        """How far past the budget this instant went."""
+
+        return max(0, self.used_bytes + self.requested_bytes - self.capacity_bytes)
+
+
 # Not slotted, so the simulator can attach its own interval arrays
 # without declaring a field. They are not data - `asdict` and every other
 # field walk must not see them, or writing a result out would fail and its
@@ -310,6 +337,10 @@ class SimulationResult:
     device_peaks: tuple[DeviceMemoryPeak, ...]
     spill_peak_bytes: int
     memory_timeline: tuple[MemorySnapshot, ...] = ()
+    #: Empty unless the run relaxed capacity. Truncation is visible as
+    #: `capacity_violation_count` exceeding the length of this tuple.
+    capacity_violations: tuple[CapacityViolation, ...] = ()
+    capacity_violation_count: int = 0
 
     @property
     def interval_arrays(self) -> object | None:

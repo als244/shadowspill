@@ -34,6 +34,7 @@ from ..admission.indexed import (
     evaluate_schedule_admission,
     index_admission_facts,
 )
+from ..best import BestFound
 from ..diagnostics import (
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
@@ -223,6 +224,8 @@ def _shared_worker_pool() -> ThreadPoolExecutor:
 def run_problems(
     problems: tuple[SelectionProblem, ...],
     options: PressureFitOptions,
+    *,
+    best: BestFound | None = None,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate every recomputation selection in the planner.
 
@@ -247,10 +250,14 @@ def run_problems(
     ) -> CProblemResult | None:
         problem_index, unit_options = unit
         problem = problems[problem_index]
+        # Read the bound once per unit. Under a shared object this is the
+        # round barrier: every unit dispatched together sees the same value,
+        # so the result does not depend on which finished first.
         return evaluate_program_problem(
             problem.indexed_template,
             unit_options,
             admission=problem.indexed_admission,
+            incumbent_makespan_ns=0 if best is None else best.bound_ns,
         )
 
     workers = worker_count(options, len(units))

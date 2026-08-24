@@ -21,6 +21,7 @@ from shadowspill.status import ABI_VERSION, Status
 
 from .capi import (
     NO_INDEX,
+    CCapacityViolation,
     CDevice,
     CDevicePeak,
     CProgram,
@@ -31,6 +32,7 @@ from .capi import (
 )
 from .diagnostics import simulation_failure_detail, simulation_status_kind
 from .model import (
+    CapacityViolation,
     DeviceMemoryPeak,
     SimulationAdmission,
     SimulationConfig,
@@ -62,6 +64,14 @@ _STALL_REASONS = (
     (1 << 3, "host-capacity"),
     (1 << 4, "memory-reuse"),
 )
+_VIOLATION_REASONS = (
+    "initial-device-capacity",
+    "initial-spill-capacity",
+    "prefetch-device-capacity",
+    "offload-spill-capacity",
+    "task-device-capacity",
+)
+_VIOLATION_LOCATIONS = ("device", "spill")
 _DEFAULT_PHYSICAL_DELTA = -(1 << 63)
 
 
@@ -375,6 +385,8 @@ def _bind_schedule(
     template: IndexedSimulationTemplate,
     schedule: MemorySchedule,
     admission: SimulationAdmission | None = None,
+    *,
+    relax_capacity: bool = False,
 ) -> _Projection:
     """Bind candidate-only arrays to one immutable topology."""
 
@@ -545,6 +557,7 @@ def _bind_schedule(
         0 if admission is None else len(admission.reuse_dependencies)
     )
     c_program.use_admission_accounting = int(admission is not None)
+    c_program.relax_capacity = int(relax_capacity)
     c_program.action_trigger_tasks = action_tasks
     c_program.action_aliases = action_aliases
     c_program.action_kinds = action_kinds
@@ -596,12 +609,15 @@ def _project(
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
     admission: SimulationAdmission | None,
+    *,
+    relax_capacity: bool = False,
 ) -> _Projection:
     schedule.validate(program, selections)
     return _bind_schedule(
         index_simulation_template(program, selections, config),
         schedule,
         admission,
+        relax_capacity=relax_capacity,
     )
 
 
@@ -662,10 +678,24 @@ def simulate_program(
     selections: tuple[RecomputationSelection, ...] = (),
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
+    relax_capacity: bool = False,
 ) -> SimulationResult:
-    """Replay through `libshadowspill.so`."""
+    """Replay through `libshadowspill.so`.
 
-    projection = _project(program, schedule, selections, config, admission)
+    `relax_capacity` simulates the schedule as written without enforcing
+    device or spill capacity, so an overflowing plan still yields a makespan.
+    A plan that does fit is unaffected: its capacity checks never fired, so
+    relaxing them changes nothing.
+    """
+
+    projection = _project(
+        program,
+        schedule,
+        selections,
+        config,
+        admission,
+        relax_capacity=relax_capacity,
+    )
     return _simulate_projection(projection, schedule)
 
 
@@ -687,7 +717,7 @@ def simulate_template_summary(
     """Replay a candidate without decoding its detailed interval report."""
 
     projection = _bind_schedule(template, schedule)
-    _task_buffer, _transfer_buffer, _peak_buffer, result = _run_projection(
+    _tasks, _transfers, _peaks, _violations, result = _run_projection(
         projection,
         schedule,
     )
@@ -715,11 +745,23 @@ def _run_projection(
     ctypes.Array[CTaskInterval],
     ctypes.Array[CTransferInterval],
     ctypes.Array[CDevicePeak],
+    ctypes.Array[CCapacityViolation],
     CResult,
 ]:
     task_buffer = (CTaskInterval * max(1, len(projection.task_ids)))()
     transfer_buffer = (CTransferInterval * max(1, len(schedule.actions)))()
     peak_buffer = (CDevicePeak * len(projection.device_ids))()
+    # A relaxed run can violate capacity at most once per task launch and
+    # once per action, plus once per device and once for spill at the start.
+    violations = 0
+    if projection.program.relax_capacity != 0:
+        violations = (
+            len(projection.task_ids)
+            + len(schedule.actions)
+            + len(projection.device_ids)
+            + 1
+        )
+    violation_buffer = (CCapacityViolation * max(1, violations))()
     result = CResult(
         task_intervals=task_buffer,
         task_interval_capacity=len(task_buffer),
@@ -727,6 +769,8 @@ def _run_projection(
         transfer_interval_capacity=len(transfer_buffer),
         device_peaks=peak_buffer,
         device_peak_capacity=len(peak_buffer),
+        capacity_violations=violation_buffer,
+        capacity_violation_capacity=violations,
     )
     library = simulator_api()
     status = int(
@@ -737,16 +781,15 @@ def _run_projection(
     )
     if status != 0:
         _raise_error(status, result, projection)
-    return task_buffer, transfer_buffer, peak_buffer, result
+    return task_buffer, transfer_buffer, peak_buffer, violation_buffer, result
 
 
 def _simulate_projection(
     projection: _Projection,
     schedule: MemorySchedule,
 ) -> SimulationResult:
-    task_buffer, transfer_buffer, peak_buffer, result = _run_projection(
-        projection,
-        schedule,
+    task_buffer, transfer_buffer, peak_buffer, violation_buffer, result = (
+        _run_projection(projection, schedule)
     )
     task_intervals = tuple(
         TaskInterval(
@@ -807,12 +850,30 @@ def _simulate_projection(
         )
         for index, device_id in enumerate(projection.device_ids)
     )
+    reported = int(result.capacity_violation_count)
+    violations = tuple(
+        CapacityViolation(
+            reason=_VIOLATION_REASONS[int(item.reason)],
+            location=_VIOLATION_LOCATIONS[int(item.location)],
+            time_ns=int(item.time_ns),
+            capacity_bytes=int(item.capacity_bytes),
+            used_bytes=int(item.used_bytes),
+            requested_bytes=int(item.requested_bytes),
+            device_id=_optional_name(projection.device_ids, int(item.device))
+            or "unknown",
+            task_id=_optional_name(projection.task_ids, int(item.task)),
+            alias_group_id=_optional_name(projection.alias_ids, int(item.alias)),
+        )
+        for item in violation_buffer[: min(reported, len(violation_buffer))]
+    )
     simulated = SimulationResult(
         makespan_ns=int(result.makespan_ns),
         task_intervals=task_intervals,
         transfer_intervals=transfer_intervals,
         device_peaks=device_peaks,
         spill_peak_bytes=int(result.spill_peak_bytes) + projection.shared_spill_bytes,
+        capacity_violations=violations,
+        capacity_violation_count=reported,
     )
     simulated.attach_interval_arrays(
         IntervalArrays(

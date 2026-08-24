@@ -37,6 +37,7 @@ class CProgram(ctypes.Structure):
         ("mutation_count", ctypes.c_uint32),
         ("reuse_dependency_count", ctypes.c_uint32),
         ("use_admission_accounting", ctypes.c_uint32),
+        ("relax_capacity", ctypes.c_uint32),
         ("spill_capacity_bytes", ctypes.c_uint64),
         ("devices", ctypes.POINTER(CDevice)),
         ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
@@ -109,6 +110,20 @@ class CDevicePeak(ctypes.Structure):
     ]
 
 
+class CCapacityViolation(ctypes.Structure):
+    _fields_ = [
+        ("time_ns", ctypes.c_uint64),
+        ("capacity_bytes", ctypes.c_uint64),
+        ("used_bytes", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("task", ctypes.c_uint32),
+        ("alias", ctypes.c_uint32),
+        ("device", ctypes.c_uint32),
+        ("location", ctypes.c_uint8),
+        ("reason", ctypes.c_uint8),
+    ]
+
+
 class CResult(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
@@ -130,6 +145,9 @@ class CResult(ctypes.Structure):
         ("transfer_interval_count", ctypes.c_uint32),
         ("device_peaks", ctypes.POINTER(CDevicePeak)),
         ("device_peak_capacity", ctypes.c_uint32),
+        ("capacity_violations", ctypes.POINTER(CCapacityViolation)),
+        ("capacity_violation_capacity", ctypes.c_uint32),
+        ("capacity_violation_count", ctypes.c_uint32),
     ]
 
 
@@ -148,6 +166,7 @@ def simulator_api() -> ctypes.CDLL:
 
 __all__ = [
     "NO_INDEX",
+    "CCapacityViolation",
     "CDevice",
     "CDevicePeak",
     "CProgram",

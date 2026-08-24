@@ -95,6 +95,19 @@ void shadowspill_set_error(
     uint32_t device
 );
 
+void shadowspill_record_capacity_violation(
+    ShadowSpillSimulationResult *result,
+    const ShadowSpillSimulationWork *work,
+    uint8_t reason,
+    uint32_t task,
+    uint32_t alias,
+    uint32_t device,
+    uint8_t location,
+    uint64_t capacity,
+    uint64_t used,
+    uint64_t requested
+);
+
 void shadowspill_set_capacity_error(
     ShadowSpillSimulationResult *result,
     ShadowSpillStatus status,

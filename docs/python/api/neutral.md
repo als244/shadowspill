@@ -30,9 +30,16 @@ Invalid construction or cross-reference raises `ValidationError`.
 
 ## `shadowspill.planner`
 
-Call `pressurefit()` to select recomputation and a memory schedule. Call
-`validate_schedule_feasibility()` to check whether at least one legal Program
-selection satisfies the required task-by-task residency floor. Use
+Call `plan_program()` to plan a Program: it expands the Program into its
+resolved programs — one concrete task set per way of fixing the save/recompute
+alternatives — and plans each. `pressurefit()` wraps it with dynamic-slab
+refinement and is what most callers want. PressureFit itself is scoped to a
+*single* resolved program and knows only tasks, runtimes, object accesses,
+budgets and bandwidths; deciding which resolved programs exist, and in what
+order to try them, belongs to `plan_program()` above it.
+
+Call `validate_schedule_feasibility()` to check whether at least one legal
+Program selection satisfies the required task-by-task residency floor. Use
 `simulate()` to validate an explicit schedule. See the [PressureFit
 formulation and algorithm](../../architecture/pressurefit.md) and the separate
 [recomputation selector](../../architecture/recomputation-selection.md). The
@@ -74,8 +81,13 @@ Configuration and results:
 - `SimulationConfig`, `DeviceSimulationConfig`, `SimulationAdmission`
 - `SimulationResult`, `SimulationInfeasibleError`
 - `TaskInterval`, `TransferInterval`, `TransferDirection`
-- `MemorySnapshot`, `DeviceMemoryPeak`
+- `MemorySnapshot`, `DeviceMemoryPeak`, `CapacityViolation`
 - `ActionPhysicalDelta`, `TaskPhysicalDelta`, `MemoryReuseDependency`
+
+`simulate(..., relax_capacity=True)` drops device and spill capacity
+enforcement, so a plan that overflows still reports a makespan and lists
+every `CapacityViolation` it hit rather than stopping at the first. A plan
+that fits is unaffected, because its capacity checks never fired.
 
 ## `shadowspill.runtime`
 

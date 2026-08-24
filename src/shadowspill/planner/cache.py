@@ -31,7 +31,7 @@ from .admission.indexed import (
     index_admission_facts,
 )
 from .diagnostics import PressureFitDiagnostics
-from .pressurefit import pressurefit
+from .plan import pressurefit
 from .request import PressureFitOptions
 from .result import PressureFitResult
 

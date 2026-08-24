@@ -237,24 +237,53 @@ int shadowspill_initialize_memory(
     shadowspill_update_peaks(program, work);
     for (uint32_t device = 0; device < program->device_count; ++device) {
         uint64_t used = shadowspill_device_used_bytes(program, work, device);
-        if (used >
-            program->devices[device].capacity_bytes) {
-            shadowspill_set_capacity_error(
-                result,
-                SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY,
-                work,
-                SHADOWSPILL_SIMULATOR_NO_INDEX,
-                SHADOWSPILL_SIMULATOR_NO_INDEX,
-                device,
-                SHADOWSPILL_MEMORY_DEVICE,
-                program->devices[device].capacity_bytes,
-                used,
-                0U
-            );
-            return 0;
+        if (used > program->devices[device].capacity_bytes) {
+            if (program->relax_capacity != 0U) {
+                shadowspill_record_capacity_violation(
+                    result,
+                    work,
+                    SHADOWSPILL_CAPACITY_INITIAL_DEVICE,
+                    SHADOWSPILL_SIMULATOR_NO_INDEX,
+                    SHADOWSPILL_SIMULATOR_NO_INDEX,
+                    device,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    program->devices[device].capacity_bytes,
+                    used,
+                    0U
+                );
+            } else {
+                shadowspill_set_capacity_error(
+                    result,
+                    SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY,
+                    work,
+                    SHADOWSPILL_SIMULATOR_NO_INDEX,
+                    SHADOWSPILL_SIMULATOR_NO_INDEX,
+                    device,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    program->devices[device].capacity_bytes,
+                    used,
+                    0U
+                );
+                return 0;
+            }
         }
     }
     if (work->spill_bytes > program->spill_capacity_bytes) {
+        if (program->relax_capacity != 0U) {
+            shadowspill_record_capacity_violation(
+                result,
+                work,
+                SHADOWSPILL_CAPACITY_INITIAL_SPILL,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                SHADOWSPILL_SIMULATOR_NO_INDEX,
+                SHADOWSPILL_MEMORY_SPILL,
+                program->spill_capacity_bytes,
+                work->spill_bytes,
+                0U
+            );
+            return 1;
+        }
         shadowspill_set_capacity_error(
             result,
             SHADOWSPILL_STATUS_INITIAL_SPILL_CAPACITY,

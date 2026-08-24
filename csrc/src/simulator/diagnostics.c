@@ -10,6 +10,8 @@ void shadowspill_initialize_result(ShadowSpillSimulationResult *result) {
     uint32_t transfer_capacity = result->transfer_interval_capacity;
     ShadowSpillDevicePeak *device_peaks = result->device_peaks;
     uint32_t device_capacity = result->device_peak_capacity;
+    ShadowSpillCapacityViolation *violations = result->capacity_violations;
+    uint32_t violation_capacity = result->capacity_violation_capacity;
     memset(result, 0, sizeof(*result));
     result->task_intervals = task_intervals;
     result->task_interval_capacity = task_capacity;
@@ -17,9 +19,46 @@ void shadowspill_initialize_result(ShadowSpillSimulationResult *result) {
     result->transfer_interval_capacity = transfer_capacity;
     result->device_peaks = device_peaks;
     result->device_peak_capacity = device_capacity;
+    result->capacity_violations = violations;
+    result->capacity_violation_capacity = violation_capacity;
     result->error_task = SHADOWSPILL_SIMULATOR_NO_INDEX;
     result->error_alias = SHADOWSPILL_SIMULATOR_NO_INDEX;
     result->error_device = SHADOWSPILL_SIMULATOR_NO_INDEX;
+}
+
+void shadowspill_record_capacity_violation(
+    ShadowSpillSimulationResult *result,
+    const ShadowSpillSimulationWork *work,
+    uint8_t reason,
+    uint32_t task,
+    uint32_t alias,
+    uint32_t device,
+    uint8_t location,
+    uint64_t capacity,
+    uint64_t used,
+    uint64_t requested
+) {
+    /* Counted even when it cannot be stored, so a caller can distinguish a
+     * complete list from a truncated one. */
+    uint32_t index = result->capacity_violation_count;
+    if (result->capacity_violation_count != UINT32_MAX) {
+        ++result->capacity_violation_count;
+    }
+    if (result->capacity_violations == NULL ||
+        index >= result->capacity_violation_capacity) {
+        return;
+    }
+    result->capacity_violations[index] = (ShadowSpillCapacityViolation){
+        .time_ns = work == NULL ? 0U : work->now_ns,
+        .capacity_bytes = capacity,
+        .used_bytes = used,
+        .requested_bytes = requested,
+        .task = task,
+        .alias = alias,
+        .device = device,
+        .location = location,
+        .reason = reason,
+    };
 }
 
 void shadowspill_set_error(

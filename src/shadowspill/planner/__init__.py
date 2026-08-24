@@ -16,7 +16,7 @@ from .diagnostics import (
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
 )
-from .pressurefit import pressurefit, validate_schedule_feasibility
+from .plan import plan_program, pressurefit, validate_schedule_feasibility
 from .request import InitialPlacement, PressureFitOptions
 from .result import (
     PressureFitInfeasibleError,
@@ -42,6 +42,7 @@ __all__ = [
     "TaskAdmissionSpec",
     "TaskAllocationStep",
     "TaskAllocationStepKind",
+    "plan_program",
     "pressurefit",
     "validate_schedule_feasibility",
 ]

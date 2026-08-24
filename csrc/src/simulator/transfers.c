@@ -195,10 +195,25 @@ static int submit_action(
         if (!shadowspill_physical_delta_fits(
                 program, work, device, physical_delta
             )) {
-            shadowspill_set_capacity_error(
+            if (program->relax_capacity == 0U) {
+                shadowspill_set_capacity_error(
+                    result,
+                    SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
+                    work,
+                    task,
+                    alias,
+                    device,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    program->devices[device].capacity_bytes,
+                    shadowspill_device_used_bytes(program, work, device),
+                    physical_delta > 0 ? (uint64_t)physical_delta : 0U
+                );
+                return 0;
+            }
+            shadowspill_record_capacity_violation(
                 result,
-                SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
                 work,
+                SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
                 task,
                 alias,
                 device,
@@ -207,7 +222,6 @@ static int submit_action(
                 shadowspill_device_used_bytes(program, work, device),
                 physical_delta > 0 ? (uint64_t)physical_delta : 0U
             );
-            return 0;
         }
     }
     if (kind == SHADOWSPILL_MEMORY_RELEASE) {
@@ -284,7 +298,7 @@ static int submit_action(
                     work->spill_bytes,
                     program->alias_size_bytes[alias],
                     &total
-                ) || total > program->spill_capacity_bytes) {
+                )) {
                 shadowspill_set_capacity_error(
                     result,
                     SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
@@ -298,6 +312,35 @@ static int submit_action(
                     program->alias_size_bytes[alias]
                 );
                 return 0;
+            }
+            if (total > program->spill_capacity_bytes) {
+                if (program->relax_capacity == 0U) {
+                    shadowspill_set_capacity_error(
+                        result,
+                        SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
+                        work,
+                        task,
+                        alias,
+                        device,
+                        SHADOWSPILL_MEMORY_SPILL,
+                        program->spill_capacity_bytes,
+                        work->spill_bytes,
+                        program->alias_size_bytes[alias]
+                    );
+                    return 0;
+                }
+                shadowspill_record_capacity_violation(
+                    result,
+                    work,
+                    SHADOWSPILL_CAPACITY_OFFLOAD_SPILL,
+                    task,
+                    alias,
+                    device,
+                    SHADOWSPILL_MEMORY_SPILL,
+                    program->spill_capacity_bytes,
+                    work->spill_bytes,
+                    program->alias_size_bytes[alias]
+                );
             }
             state->spill_allocated = 1U;
             state->spill_ready = 0U;
@@ -326,10 +369,25 @@ static int submit_action(
                 );
                 if (size > program->devices[device].capacity_bytes ||
                     used > program->devices[device].capacity_bytes - size) {
-                    shadowspill_set_capacity_error(
+                    if (program->relax_capacity == 0U) {
+                        shadowspill_set_capacity_error(
+                            result,
+                            SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
+                            work,
+                            task,
+                            alias,
+                            device,
+                            SHADOWSPILL_MEMORY_DEVICE,
+                            program->devices[device].capacity_bytes,
+                            used,
+                            size
+                        );
+                        return 0;
+                    }
+                    shadowspill_record_capacity_violation(
                         result,
-                        SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
                         work,
+                        SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
                         task,
                         alias,
                         device,
@@ -338,7 +396,6 @@ static int submit_action(
                         used,
                         size
                     );
-                    return 0;
                 }
             }
             state->device_allocated = 1U;
