@@ -114,6 +114,19 @@ order they arrive in.
   records tie, the layout depends on the records alone and not on the order
   they were listed in. The assignment and the structure behind it are
   specified in [fixed-offset placement](../architecture/fixed-placement.md).
+- `shadowspill_best_placed_create()`, `shadowspill_best_placed_destroy()`,
+  `shadowspill_best_placed_get()`, `shadowspill_best_placed_offer()` and
+  `shadowspill_best_placed_admits()` share the best makespan any caller has
+  actually placed. Placing a plan is expensive and a plan no better than one
+  already placed cannot win even if it places, so a search calls `admits()`
+  before paying and `offer()` once a placement succeeds. The object knows
+  nothing about candidates, resolved programs or calls: passing one object to
+  several concurrent searches shares the gate between them, and passing
+  separate objects keeps them independent. It is lock-free and safe to use
+  from several threads at once, because the operation is a minimum -- a writer
+  that loses a race retries against the value that beat it, and a stale read
+  costs at most a measurement that would have been skipped.
+
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
 [C API guide](README.md#abi-use).
