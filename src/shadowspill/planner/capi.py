@@ -254,6 +254,10 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("max_repair_attempts", ctypes.c_uint32),
         ("initial_placement", ctypes.c_uint8),
         ("repair_while_stalling", ctypes.c_uint8),
+        ("excluded_strategies", ctypes.POINTER(ctypes.c_uint8)),
+        ("excluded_rules", ctypes.POINTER(ctypes.c_uint8)),
+        ("excluded_coalesced", ctypes.POINTER(ctypes.c_uint8)),
+        ("excluded_count", ctypes.c_uint32),
         ("incumbent_makespan_ns", ctypes.c_uint64),
     ]
 

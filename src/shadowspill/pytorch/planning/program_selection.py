@@ -43,12 +43,16 @@ def select_program(
     selection = resolve_fixed_layout_selection(
         config,
         facts,
-        lambda candidate_config: repositories.resolve_pressurefit(
+        lambda candidate_config, excluded: repositories.resolve_pressurefit(
             program.program,
             initial_residency=program.initial_residency,
             final_residency=program.final_residency,
             config=candidate_config,
-            options=selected_options,
+            options=(
+                selected_options
+                if not excluded
+                else replace(selected_options, excluded_candidates=excluded)
+            ),
             progress=progress,
         ),
         scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,

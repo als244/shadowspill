@@ -100,7 +100,7 @@ def test_refinement_uses_pressurefit_effective_capacity() -> None:
     selected = resolve_fixed_layout_selection(
         _config(capacity),
         _topology(capacity),
-        lambda config: _selection(
+        lambda config, _excluded: _selection(
             config,
             effective_capacity=effective,
         ),
@@ -127,31 +127,38 @@ def test_refinement_retries_in_256_mib_steps(monkeypatch) -> None:  # type: igno
     calls: list[int] = []
     original = refinement.build_fixed_layout_admission  # type: ignore[attr-defined]
 
-    def reject_first(selected, facts, **kwargs):  # type: ignore[no-untyped-def]
+    def reject_full_capacity(selected, facts, **kwargs):  # type: ignore[no-untyped-def]
+        # Rejecting every plan at the full capacity, so ruling candidates out
+        # cannot rescue it and the ladder has to reduce capacity instead.
         calls.append(facts.object_capacity_bytes)
-        if len(calls) == 1:
+        if facts.object_capacity_bytes == capacity:
             raise FixedLayoutInfeasibleError(capacity + 1, capacity)
         return original(selected, facts, **kwargs)
 
-    monkeypatch.setattr(refinement, "build_fixed_layout_admission", reject_first)
+    monkeypatch.setattr(
+        refinement, "build_fixed_layout_admission", reject_full_capacity
+    )
 
     selected = resolve_fixed_layout_selection(
         _config(capacity),
         _topology(capacity),
-        lambda config: _selection(config),
+        lambda config, _excluded: _selection(config),
     )
 
-    # The coarse rung accepts at capacity - 256 MiB; the fine final
-    # approach then bisects the rejected interval and recovers down to
-    # a 64-MiB reduction.
+    # The full capacity is tried twice: once as planned, once more with the
+    # candidate that could not be placed ruled out. Only when that fails too
+    # does the ladder reduce capacity -- the coarse rung accepts at
+    # capacity - 256 MiB, and the fine approach bisects the rejected interval
+    # back down to a 64-MiB reduction.
     assert calls == [
+        capacity,
         capacity,
         capacity - (256 << 20),
         capacity - (128 << 20),
         capacity - (64 << 20),
     ]
     assert tuple(item.accepted for item in selected.attempts) == (
-        False, True, True, True,
+        False, False, True, True, True,
     )
     assert selected.capacity_reduction_bytes == 64 << 20
 
@@ -169,7 +176,7 @@ def test_refinement_first_rung_runs_without_speculation() -> None:
     capacity = 2 << 30
     resolved: list[int] = []
 
-    def resolve(config):  # type: ignore[no-untyped-def]
+    def resolve(config, _excluded=()):  # type: ignore[no-untyped-def]
         resolved.append(config.devices[0].capacity_bytes)
         return _selection(config)
 
@@ -193,18 +200,23 @@ def test_refinement_consumes_speculative_rungs_in_ladder_order(
     resolved: list[int] = []
     original = refinement.build_fixed_layout_admission  # type: ignore[attr-defined]
 
-    def resolve(config):  # type: ignore[no-untyped-def]
+    def resolve(config, _excluded=()):  # type: ignore[no-untyped-def]
         resolved.append(config.devices[0].capacity_bytes)
         return _selection(config)
 
-    def reject_first_three(selected, facts, **kwargs):  # type: ignore[no-untyped-def]
+    step = 256 << 20
+
+    def reject_top_three_rungs(selected, facts, **kwargs):  # type: ignore[no-untyped-def]
+        # Rejecting by capacity rather than by call count, so that ruling a
+        # candidate out at one capacity does not shift which rungs are
+        # refused and the ladder order stays the thing under test.
         admitted.append(facts.object_capacity_bytes)
-        if len(admitted) <= 3:
+        if facts.object_capacity_bytes > capacity - 3 * step:
             raise FixedLayoutInfeasibleError(capacity + 1, capacity)
         return original(selected, facts, **kwargs)
 
     monkeypatch.setattr(
-        refinement, "build_fixed_layout_admission", reject_first_three
+        refinement, "build_fixed_layout_admission", reject_top_three_rungs
     )
 
     selected = resolve_fixed_layout_selection(
@@ -216,18 +228,22 @@ def test_refinement_consumes_speculative_rungs_in_ladder_order(
     # Admission consumes rungs in strict ladder order regardless of the
     # speculative planning that runs them concurrently; the fine final
     # approach then bisects back from the accepted rung.
-    step = 256 << 20
+    # Each refused rung is tried twice -- once as planned, once more with the
+    # candidate that could not be placed ruled out -- and only then does the
+    # ladder step down. The fourth rung admits, and the fine approach probes
+    # back toward it; those probes sit above the rejection threshold here, so
+    # the coarse acceptance stands.
     fine = 64 << 20
-    assert admitted == [
-        capacity - index * step for index in range(4)
-    ] + [
-        capacity - 3 * step + 2 * fine,
-        capacity - 3 * step + 3 * fine,
+    assert [(capacity - value) >> 20 for value in admitted] == [
+        0, 0, 256, 256, 512, 512, 768, 640, 704
     ]
+    assert step >> 20 == 256 and fine >> 20 == 64
     assert tuple(item.accepted for item in selected.attempts) == (
-        False, False, False, True, True, True,
+        False, False, False, False, False, False, True, False, False,
     )
-    assert selected.capacity_reduction_bytes == 2 * step + fine
+    # Both fine probes sit above the rejection threshold, so the coarse
+    # acceptance stands rather than being recovered toward.
+    assert selected.capacity_reduction_bytes == 3 * step
     # Speculation planned ahead of the accepted rung.
     assert len(set(resolved)) > 4
 
@@ -239,7 +255,7 @@ def test_refinement_rejects_invalid_effective_capacity() -> None:
         effective_object_capacity_bytes=capacity + 1,
     )
 
-    def resolve(config):  # type: ignore[no-untyped-def]
+    def resolve(config, _excluded=()):  # type: ignore[no-untyped-def]
         base = _selection(config)
         return replace(base, result=replace(base.result, diagnostics=invalid))
 

@@ -250,6 +250,19 @@ def decode_candidate_diagnostic(
             repairs=value.repairs,
             work=value.work,
         )
+    if value.status == 7:
+        return CandidateDiagnostic(
+            candidate_id=value.candidate_id,
+            selection_id=selection_id,
+            status="excluded",
+            failure_kind="excluded",
+            failure_detail=(
+                "ruled out before evaluation: a plan this policy produced "
+                "could not be placed physically"
+            ),
+            repairs=value.repairs,
+            work=value.work,
+        )
     if value.status != 2:
         raise RuntimeError(
             f"PressureFit candidate {value.candidate_id!r} "
@@ -356,6 +369,17 @@ def _program_problem(
     return problem, (alias_names, task_names, priorities)
 
 
+def _decode_candidate_id(value: str) -> tuple[str, str, bool]:
+    """Split a `strategy/rule[-coalesced]` policy name into its parts."""
+
+    coalesced = value.endswith("-coalesced")
+    body = value[: -len("-coalesced")] if coalesced else value
+    strategy, separator, rule = body.partition("/")
+    if not separator or strategy not in _STRATEGY_CODE or rule not in _RULE_CODE:
+        raise ValueError(f"unknown candidate policy {value!r}")
+    return strategy, rule, coalesced
+
+
 def _problem_options(
     options: PressureFitOptions,
     *,
@@ -374,6 +398,16 @@ def _problem_options(
     rules = (ctypes.c_uint8 * len(rule_names))(
         *(_RULE_CODE[value] for value in rule_names)
     )
+    excluded = tuple(_decode_candidate_id(item) for item in options.excluded_candidates)
+    excluded_strategies = (ctypes.c_uint8 * max(1, len(excluded)))(
+        *(_STRATEGY_CODE[item[0]] for item in excluded)
+    )
+    excluded_rules = (ctypes.c_uint8 * max(1, len(excluded)))(
+        *(_RULE_CODE[item[1]] for item in excluded)
+    )
+    excluded_coalesced = (ctypes.c_uint8 * max(1, len(excluded)))(
+        *(int(item[2]) for item in excluded)
+    )
     compiled = CPressureFitProblemOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
@@ -383,9 +417,24 @@ def _problem_options(
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
         repair_while_stalling=int(options.repair_while_stalling),
+        excluded_strategies=excluded_strategies,
+        excluded_rules=excluded_rules,
+        excluded_coalesced=excluded_coalesced,
+        excluded_count=len(excluded),
         incumbent_makespan_ns=incumbent_makespan_ns,
     )
-    return compiled, strategy_names, rule_names, (strategies, rules)
+    return (
+        compiled,
+        strategy_names,
+        rule_names,
+        (
+            strategies,
+            rules,
+            excluded_strategies,
+            excluded_rules,
+            excluded_coalesced,
+        ),
+    )
 
 
 def validate_program_problem(
