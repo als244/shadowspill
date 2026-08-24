@@ -157,6 +157,16 @@ typedef struct ShadowSpillPressureFitProblemOptions {
     uint8_t evaluate_coalesced;
     uint32_t max_repair_attempts;
     uint8_t initial_placement;
+    /* Keep repairing a candidate whose plan already simulates, while that
+       plan still comes up short of capacity somewhere.
+    
+       A plan that waits for memory is valid but not finished: the waiting is
+       time the plan pays, and the pressure that caused it is what repair
+       exists to relieve. Stopping at the first success accepts that cost
+       untouched. When set, the candidate keeps its best plan by makespan and
+       returns that rather than the first one it found. Zero stops at the
+       first success, which is what the search did before. */
+    uint8_t repair_while_stalling;
     /* Makespan of the best plan the caller already holds, or zero for none.
      *
      * A candidate whose own makespan has reached this cannot win however far
@@ -251,6 +261,9 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     ShadowSpillPressureFitWorkDiagnostics work;
     uint32_t simulation_status;
     uint64_t makespan_ns;
+    /* How many places the accepted plan came up short of capacity and
+       waited. Zero means it never waited for memory. */
+    uint32_t capacity_violation_count;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 
     uint32_t error_task;

@@ -45,6 +45,11 @@ class PressureFitOptions:
     )
     evaluate_coalesced: bool = True
     max_repair_attempts: int = 64
+    #: Keep repairing a candidate whose plan already simulates while it still
+    #: comes up short of capacity somewhere, returning its best plan by
+    #: makespan rather than the first one that worked. A plan that waits for
+    #: memory is valid but not finished, and the wait is time it pays.
+    repair_while_stalling: bool = False
     workers: int = 0
 
     def __post_init__(self) -> None:

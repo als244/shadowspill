@@ -75,6 +75,9 @@ typedef struct SimulationCacheEntry {
     uint64_t hash;
     ShadowSpillIndexedSchedule schedule;
     ShadowSpillSimulationResult result;
+    /* Held by value, because the buffer the simulator wrote it into belongs
+     * to the workspace and the next candidate overwrites it. */
+    ShadowSpillCapacityViolation first_violation;
     ShadowSpillAdmissionReplayResult admission;
     uint32_t admission_status;
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
@@ -99,7 +102,13 @@ typedef struct CandidateWorkspace {
     uint64_t *extra_pressure;
     ShadowSpillScheduleStorage schedule;
     ShadowSpillScheduleStorage selected;
+    /* The best plan this candidate has reached, kept because repairing
+     * past a success can make it worse before it makes it better. */
+    ShadowSpillScheduleStorage best;
     SimulationWorkspace simulation;
+    /* Where a plan first came up short, which is what repair aims at
+     * when the plan simulates but waits for memory. */
+    ShadowSpillCapacityViolation first_violation;
     ShadowSpillCandidateAdmissionWorkspace admission;
     ResidencyCache residency_cache;
     ScheduleCache schedule_cache;
@@ -522,6 +531,7 @@ static int simulate_schedule(
     const ShadowSpillIndexedSchedule *schedule,
     SimulationWorkspace *workspace,
     ShadowSpillCandidateAdmissionWorkspace *admission_workspace,
+    ShadowSpillCapacityViolation *first_violation,
     ShadowSpillSimulationResult *result,
     ShadowSpillStatus *admission_status,
     ShadowSpillAdmissionReplayResult *admission_result
@@ -560,6 +570,10 @@ static int simulate_schedule(
         .transfer_interval_capacity = workspace->transfer_capacity,
         .device_peaks = workspace->peaks,
         .device_peak_capacity = workspace->device_capacity,
+        /* One slot: the count still reports the true total, and repair only
+         * ever aims at the first place the plan came up short. */
+        .capacity_violations = first_violation,
+        .capacity_violation_capacity = 1U,
     };
     (void)shadowspill_simulate(&program, result);
     return 0;
@@ -612,6 +626,10 @@ static int candidate_workspace_create(
             problem->residency->alias_count,
             &workspace->selected
         ) != 0 ||
+        shadowspill_schedule_storage_create(
+            problem->residency->alias_count,
+            &workspace->best
+        ) != 0 ||
         simulation_workspace_create(
             problem,
             &workspace->simulation
@@ -644,6 +662,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     free(workspace->prefetch_constraints);
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
+    shadowspill_schedule_storage_destroy(&workspace->best);
     simulation_workspace_destroy(&workspace->simulation);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
@@ -1143,6 +1162,7 @@ static SimulationCacheEntry *append_simulation_cache(
         return NULL;
     }
     entry->result = *result;
+    entry->first_violation = workspace->first_violation;
     entry->admission_status = (uint32_t)admission_status;
     entry->admission = *admission;
     entry->admission.decisions = NULL;
@@ -1196,6 +1216,8 @@ static int simulate_cached(
                 &workspace->schedule.value
             )) {
             *result = entry->result;
+            workspace->first_violation = entry->first_violation;
+            result->capacity_violations = &workspace->first_violation;
             *admission_status =
                 (ShadowSpillStatus)entry->admission_status;
             *admission_result = entry->admission;
@@ -1211,6 +1233,7 @@ static int simulate_cached(
             &workspace->schedule.value,
             &workspace->simulation,
             &workspace->admission,
+            &workspace->first_violation,
             result,
             admission_status,
             admission_result
@@ -1771,6 +1794,8 @@ static int evaluate_candidate(
     memcpy(workspace->resident, workspace->base_resident, (size_t)cells);
     memcpy(workspace->breaks, workspace->base_breaks, (size_t)cells);
     workspace->prefetch_constraint_count = 0U;
+    uint64_t best_makespan_ns = 0U;
+    uint8_t best_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES] = {0};
     workspace->current_residency_key = workspace->base_residency_key;
 
     ShadowSpillResidencyOptions reduce_options;
@@ -1959,8 +1984,6 @@ static int evaluate_candidate(
             return 0;
         }
         if (simulation_status == SHADOWSPILL_STATUS_OK) {
-            diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
-            diagnostic->makespan_ns = simulation.makespan_ns;
             if (simulation_entry->digest_valid == 0U) {
                 uint64_t digest_started = shadowspill_monotonic_ns();
                 shadowspill_schedule_digest(
@@ -1972,12 +1995,75 @@ static int evaluate_candidate(
                     shadowspill_monotonic_ns() - digest_started;
                 simulation_entry->digest_valid = 1U;
             }
-            memcpy(
-                diagnostic->schedule_digest,
-                simulation_entry->digest,
-                sizeof(diagnostic->schedule_digest)
-            );
-            return 1;
+            const int improves =
+                best_makespan_ns == 0U ||
+                simulation.makespan_ns < best_makespan_ns;
+            /* A plan that waits for memory is valid but unfinished: the wait
+             * is time it pays, and the shortfall that caused it is what
+             * repair relieves. Stopping here accepts that cost untouched. */
+            const int stalling =
+                candidate_options->repair_while_stalling != 0U &&
+                simulation.capacity_violation_count > 0U;
+            if (!stalling ||
+                !may_repair_again(
+                    candidate_options, diagnostic, best_makespan_ns
+                )) {
+                diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
+                diagnostic->capacity_violation_count =
+                    simulation.capacity_violation_count;
+                if (improves) {
+                    /* The live schedule is already the answer, so nothing
+                     * needs moving -- which is the whole path when repairing
+                     * past a success is switched off. */
+                    diagnostic->makespan_ns = simulation.makespan_ns;
+                    memcpy(
+                        diagnostic->schedule_digest,
+                        simulation_entry->digest,
+                        sizeof(diagnostic->schedule_digest)
+                    );
+                    return 1;
+                }
+                /* An earlier repair reached a better plan; the caller reads
+                 * the winner from the live schedule, so put it back. */
+                diagnostic->makespan_ns = best_makespan_ns;
+                memcpy(
+                    diagnostic->schedule_digest,
+                    best_digest,
+                    sizeof(diagnostic->schedule_digest)
+                );
+                if (shadowspill_schedule_storage_copy(
+                        &workspace->schedule, &workspace->best
+                    ) != 0) {
+                    return -1;
+                }
+                return 1;
+            }
+            /* Continuing, so this plan has to be kept: repairing past a
+             * success can make it worse before it makes it better. */
+            if (improves) {
+                best_makespan_ns = simulation.makespan_ns;
+                if (shadowspill_schedule_storage_copy(
+                        &workspace->best, &workspace->schedule
+                    ) != 0) {
+                    return -1;
+                }
+                memcpy(
+                    best_digest, simulation_entry->digest, sizeof(best_digest)
+                );
+            }
+            /* Aim the repair at where the plan came up short. Success left
+             * no error behind, so the recorded shortfall stands in for one
+             * and the existing repair path is reused unchanged. */
+            const ShadowSpillCapacityViolation *shortfall =
+                &workspace->first_violation;
+            simulation.error_task = shortfall->task;
+            simulation.error_alias = shortfall->alias;
+            simulation.error_device = shortfall->device;
+            simulation.error_location = shortfall->location;
+            simulation.error_time_ns = shortfall->time_ns;
+            simulation.error_capacity_bytes = shortfall->capacity_bytes;
+            simulation.error_used_bytes = shortfall->used_bytes;
+            simulation.error_requested_bytes = shortfall->requested_bytes;
         }
 
         /*
@@ -2075,11 +2161,33 @@ static int evaluate_candidate(
                     return -1;
                 }
                 if (reduced == 0) {
+                    if (best_makespan_ns != 0U) {
+                        break;
+                    }
                     return 0;
                 }
                 need_emit = 1;
                 continue;
             }
+        }
+        /* A candidate that reached a plan keeps it. Falling through here
+         * means the last repair found nothing further to try, which says
+         * the search stopped improving -- not that the plan it already has
+         * stopped working. */
+        if (best_makespan_ns != 0U) {
+            diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
+            diagnostic->makespan_ns = best_makespan_ns;
+            memcpy(
+                diagnostic->schedule_digest,
+                best_digest,
+                sizeof(diagnostic->schedule_digest)
+            );
+            if (shadowspill_schedule_storage_copy(
+                    &workspace->schedule, &workspace->best
+                ) != 0) {
+                return -1;
+            }
+            return 1;
         }
         diagnostic->status =
             !may_repair_again(
@@ -2093,6 +2201,19 @@ static int evaluate_candidate(
         copy_simulation_error(diagnostic, &simulation);
         return 0;
     }
+    /* Reached by a candidate that already has a plan and ran out of ways to
+     * improve it. */
+    diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
+    diagnostic->makespan_ns = best_makespan_ns;
+    memcpy(
+        diagnostic->schedule_digest, best_digest, sizeof(diagnostic->schedule_digest)
+    );
+    if (shadowspill_schedule_storage_copy(
+            &workspace->schedule, &workspace->best
+        ) != 0) {
+        return -1;
+    }
+    return 1;
 }
 
 static int adopt_selected_schedule(

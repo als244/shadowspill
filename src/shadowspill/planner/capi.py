@@ -253,6 +253,7 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("evaluate_coalesced", ctypes.c_uint8),
         ("max_repair_attempts", ctypes.c_uint32),
         ("initial_placement", ctypes.c_uint8),
+        ("repair_while_stalling", ctypes.c_uint8),
         ("incumbent_makespan_ns", ctypes.c_uint64),
     ]
 
@@ -318,6 +319,7 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("work", CPressureFitWorkDiagnostics),
         ("simulation_status", ctypes.c_uint32),
         ("makespan_ns", ctypes.c_uint64),
+        ("capacity_violation_count", ctypes.c_uint32),
         ("schedule_digest", ctypes.c_uint8 * 32),
         ("error_task", ctypes.c_uint32),
         ("error_alias", ctypes.c_uint32),

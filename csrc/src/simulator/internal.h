@@ -71,6 +71,10 @@ typedef struct ShadowSpillSimulationWork {
     uint64_t now_ns;
     uint32_t completed_tasks;
     uint32_t submitted_actions;
+    /* An action is waiting for room. Only then does submission need
+       retrying on something other than a task completing, and only then
+       should the retry be allowed to change when a transfer starts. */
+    uint32_t submission_deferred;
     uint32_t pending_transfers;
 } ShadowSpillSimulationWork;
 
