@@ -24,6 +24,7 @@ add_library(
   src/simulator/transfers.c
   src/simulator/validation.c
 
+  src/planner/best_placed.c
   src/planner/admission/candidate.c
   src/planner/admission/lifetimes.c
   src/planner/admission/operations.c
