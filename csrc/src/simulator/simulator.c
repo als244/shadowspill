@@ -55,6 +55,16 @@ ShadowSpillStatus shadowspill_simulate(
                 return finish_failure(&work, result);
             }
             changed |= launched;
+            /* A prefetch that had nowhere to land waits here rather than
+             * failing, so anything that frees memory has to give it another
+             * chance -- not just the next task completion. */
+            int submitted = 0;
+            if (!shadowspill_submit_ready_actions(
+                    program, &work, result, &submitted
+                )) {
+                return finish_failure(&work, result);
+            }
+            changed |= submitted;
         }
         uint64_t next = shadowspill_next_event_time(program, &work);
         if (next == UINT64_MAX) {

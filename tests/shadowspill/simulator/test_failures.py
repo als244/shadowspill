@@ -215,7 +215,9 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
 
     error = caught.value
     assert error.kind == "prefetch-device-capacity"
-    assert error.time_ns == 20
+    # The prefetch waits rather than failing, so this is the instant nothing
+    # further can happen, not the instant the capacity test first failed.
+    assert error.time_ns == 74
     assert error.task_id == "second_trigger"
     assert error.alias_group_ids == ("second_spill_storage",)
     assert error.used_bytes == 128

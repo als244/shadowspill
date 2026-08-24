@@ -100,6 +100,35 @@ int shadowspill_report_deadlock(
     ShadowSpillSimulationWork *work,
     ShadowSpillSimulationResult *result
 ) {
+    /*
+     * A prefetch with nowhere to land waits rather than failing, so when the
+     * simulation can no longer advance, the action that is still waiting is
+     * the root cause. It was never queued -- its transfer record is
+     * untouched -- so it has to be recognised from the submission cursor
+     * before the queued transfers below are examined.
+     */
+    if (work->submitted_actions < program->action_count) {
+        uint32_t action = work->submitted_actions;
+        uint32_t trigger = program->action_trigger_tasks[action];
+        if (work->tasks[trigger].state == SHADOWSPILL_TASK_COMPLETE &&
+            program->action_kinds[action] == SHADOWSPILL_MEMORY_PREFETCH) {
+            uint32_t alias = program->action_aliases[action];
+            uint32_t device = program->alias_device[alias];
+            shadowspill_set_capacity_error(
+                result,
+                SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
+                work,
+                trigger,
+                alias,
+                device,
+                SHADOWSPILL_MEMORY_DEVICE,
+                program->devices[device].capacity_bytes,
+                shadowspill_device_used_bytes(program, work, device),
+                program->alias_size_bytes[alias]
+            );
+            return 0;
+        }
+    }
     for (uint32_t index = 0; index < program->action_count; ++index) {
         ShadowSpillTransferState *transfer = &work->transfers[index];
         if (transfer->state != SHADOWSPILL_TRANSFER_QUEUED) {

@@ -304,5 +304,5 @@ int shadowspill_complete_task(
         return 0;
     }
     shadowspill_update_peaks(program, work);
-    return shadowspill_submit_ready_actions(program, work, result);
+    return shadowspill_submit_ready_actions(program, work, result, NULL);
 }

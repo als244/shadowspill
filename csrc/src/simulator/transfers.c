@@ -143,12 +143,23 @@ int shadowspill_try_start_transfers(
     return changed;
 }
 
+/*
+ * Bring one scheduled action into the simulation.
+ *
+ * `deferred` reports the runtime's own answer to a prefetch that has nowhere
+ * to land: wait and try again, rather than fail. The action stays unsubmitted
+ * and no state is touched, so the next time anything frees memory the caller
+ * retries it. A plan that can never make room deadlocks instead, which the
+ * main loop reports with the stall reasons that caused it.
+ */
 static int submit_action(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
     ShadowSpillSimulationResult *result,
-    uint32_t action
+    uint32_t action,
+    int *deferred
 ) {
+    *deferred = 0;
     uint32_t task = program->action_trigger_tasks[action];
     uint32_t alias = program->action_aliases[action];
     uint32_t device = program->alias_device[alias];
@@ -196,19 +207,9 @@ static int submit_action(
                 program, work, device, physical_delta
             )) {
             if (program->relax_capacity == 0U) {
-                shadowspill_set_capacity_error(
-                    result,
-                    SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
-                    work,
-                    task,
-                    alias,
-                    device,
-                    SHADOWSPILL_MEMORY_DEVICE,
-                    program->devices[device].capacity_bytes,
-                    shadowspill_device_used_bytes(program, work, device),
-                    physical_delta > 0 ? (uint64_t)physical_delta : 0U
-                );
-                return 0;
+                /* Nothing has been mutated yet, so waiting is free. */
+                *deferred = 1;
+                return 1;
             }
             shadowspill_record_capacity_violation(
                 result,
@@ -360,44 +361,36 @@ static int submit_action(
             );
             return 0;
         }
+        /* Tested before anything is mutated, so a deferral leaves no trace
+         * and the retry sees exactly the state this call found. */
+        if (state->device_allocated == 0U &&
+            program->use_admission_accounting == 0U) {
+            uint64_t used = shadowspill_device_used_bytes(
+                program, work, device
+            );
+            if (size > program->devices[device].capacity_bytes ||
+                used > program->devices[device].capacity_bytes - size) {
+                if (program->relax_capacity == 0U) {
+                    *deferred = 1;
+                    return 1;
+                }
+                shadowspill_record_capacity_violation(
+                    result,
+                    work,
+                    SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                    task,
+                    alias,
+                    device,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    program->devices[device].capacity_bytes,
+                    used,
+                    size
+                );
+            }
+        }
         transfer->direction = SHADOWSPILL_TRANSFER_FETCH;
         transfer->sequence = work->fetch_sequence[device]++;
         if (state->device_allocated == 0U) {
-            if (program->use_admission_accounting == 0U) {
-                uint64_t used = shadowspill_device_used_bytes(
-                    program, work, device
-                );
-                if (size > program->devices[device].capacity_bytes ||
-                    used > program->devices[device].capacity_bytes - size) {
-                    if (program->relax_capacity == 0U) {
-                        shadowspill_set_capacity_error(
-                            result,
-                            SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
-                            work,
-                            task,
-                            alias,
-                            device,
-                            SHADOWSPILL_MEMORY_DEVICE,
-                            program->devices[device].capacity_bytes,
-                            used,
-                            size
-                        );
-                        return 0;
-                    }
-                    shadowspill_record_capacity_violation(
-                        result,
-                        work,
-                        SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
-                        task,
-                        alias,
-                        device,
-                        SHADOWSPILL_MEMORY_DEVICE,
-                        program->devices[device].capacity_bytes,
-                        used,
-                        size
-                    );
-                }
-            }
             state->device_allocated = 1U;
             state->device_ready = 0U;
             work->device_object_bytes[device] +=
@@ -428,18 +421,31 @@ static int submit_action(
 int shadowspill_submit_ready_actions(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
-    ShadowSpillSimulationResult *result
+    ShadowSpillSimulationResult *result,
+    int *submitted
 ) {
+    if (submitted != NULL) {
+        *submitted = 0;
+    }
     while (work->submitted_actions < program->action_count) {
         uint32_t action = work->submitted_actions;
         uint32_t trigger = program->action_trigger_tasks[action];
         if (work->tasks[trigger].state != SHADOWSPILL_TASK_COMPLETE) {
             break;
         }
-        if (!submit_action(program, work, result, action)) {
+        int deferred = 0;
+        if (!submit_action(program, work, result, action, &deferred)) {
             return 0;
         }
+        if (deferred != 0) {
+            /* Actions are submitted in order, so a waiting prefetch holds the
+             * ones behind it. Whatever frees memory wakes the whole queue. */
+            break;
+        }
         work->submitted_actions += 1U;
+        if (submitted != NULL) {
+            *submitted = 1;
+        }
     }
     return 1;
 }

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
@@ -30,7 +28,6 @@ from shadowspill.simulator import (
     MemoryReuseDependency,
     SimulationAdmission,
     SimulationConfig,
-    SimulationInfeasibleError,
     TaskPhysicalDelta,
     simulate,
 )
@@ -141,11 +138,26 @@ def _admission() -> SimulationAdmission:
     )
 
 
-def test_logical_double_residency_requires_physical_reuse_certificate() -> None:
-    with pytest.raises(SimulationInfeasibleError) as caught:
-        simulate(_program(), _schedule(), config=_config())
+def test_without_a_reuse_certificate_the_fetch_waits_for_the_eviction() -> None:
+    """The certificate buys accounting, not feasibility.
 
-    assert caught.value.kind == "prefetch-device-capacity"
+    A fetch into space an eviction has not yet released simply waits for it,
+    the way the runtime would. Without the certificate the fetch cannot even
+    be admitted until the bytes are actually free, so it becomes ready at
+    106 rather than at its trigger; with one it is ready at 20 and stalls on
+    `memory-reuse` instead. Both reach the same schedule, and only the
+    certified run can hold both copies logically resident at once.
+    """
+
+    result = simulate(_program(), _schedule(), config=_config())
+
+    eviction, fetch = result.transfer_intervals
+    assert (eviction.start_ns, eviction.end_ns) == (10, 106)
+    assert (fetch.ready_ns, fetch.start_ns, fetch.end_ns) == (106, 106, 202)
+    assert fetch.stall_reasons == ()
+    assert result.makespan_ns == 212
+    # Uncertified, the two copies are never logically resident together.
+    assert result.device_peak("cuda_0").object_bytes == 96
 
 
 def test_causal_reuse_preserves_peak_and_delays_wire_start() -> None:
