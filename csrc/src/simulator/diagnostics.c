@@ -110,10 +110,10 @@ int shadowspill_report_deadlock(
     if (work->submitted_actions < program->action_count) {
         uint32_t action = work->submitted_actions;
         uint32_t trigger = program->action_trigger_tasks[action];
+        uint32_t alias = program->action_aliases[action];
+        uint32_t device = program->alias_device[alias];
         if (work->tasks[trigger].state == SHADOWSPILL_TASK_COMPLETE &&
             program->action_kinds[action] == SHADOWSPILL_MEMORY_PREFETCH) {
-            uint32_t alias = program->action_aliases[action];
-            uint32_t device = program->alias_device[alias];
             shadowspill_set_capacity_error(
                 result,
                 SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
@@ -124,6 +124,22 @@ int shadowspill_report_deadlock(
                 SHADOWSPILL_MEMORY_DEVICE,
                 program->devices[device].capacity_bytes,
                 shadowspill_device_used_bytes(program, work, device),
+                program->alias_size_bytes[alias]
+            );
+            return 0;
+        }
+        if (work->tasks[trigger].state == SHADOWSPILL_TASK_COMPLETE &&
+            program->action_kinds[action] == SHADOWSPILL_MEMORY_OFFLOAD) {
+            shadowspill_set_capacity_error(
+                result,
+                SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
+                work,
+                trigger,
+                alias,
+                device,
+                SHADOWSPILL_MEMORY_SPILL,
+                program->spill_capacity_bytes,
+                work->spill_bytes,
                 program->alias_size_bytes[alias]
             );
             return 0;

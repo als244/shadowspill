@@ -156,6 +156,9 @@ static void defer_action(
     ShadowSpillSimulationWork *work,
     ShadowSpillSimulationResult *result,
     uint32_t action,
+    uint8_t reason,
+    uint8_t location,
+    uint32_t stall,
     uint32_t task,
     uint32_t alias,
     uint32_t device,
@@ -164,24 +167,24 @@ static void defer_action(
     uint64_t requested
 ) {
     ShadowSpillTransferState *pending = &work->transfers[action];
-    if ((pending->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
+    if ((pending->stall_mask & stall) == 0U) {
         pending->ready_ns = work->now_ns;
         /* Recorded once, at the first refusal, so the list counts places the
          * plan came up short rather than ticks it spent waiting. */
         shadowspill_record_capacity_violation(
             result,
             work,
-            SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+            reason,
             task,
             alias,
             device,
-            SHADOWSPILL_MEMORY_DEVICE,
+            location,
             capacity,
             used,
             requested
         );
     }
-    pending->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
+    pending->stall_mask |= stall;
 }
 
 /*
@@ -252,6 +255,9 @@ static int submit_action(
                 work,
                 result,
                 action,
+                SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                SHADOWSPILL_MEMORY_DEVICE,
+                SHADOWSPILL_STALL_DEVICE_CAPACITY,
                 task,
                 alias,
                 device,
@@ -331,10 +337,10 @@ static int submit_action(
             );
             return 0;
         }
-        transfer->direction = SHADOWSPILL_TRANSFER_EVICT;
-        transfer->sequence = work->evict_sequence[device]++;
+        /* Tested before anything is mutated, so a deferral leaves no trace
+         * and the retry sees exactly the state this call found. */
+        uint64_t total = 0U;
         if (state->spill_allocated == 0U) {
-            uint64_t total = 0U;
             if (shadowspill_add_overflow_u64(
                     work->spill_bytes,
                     program->alias_size_bytes[alias],
@@ -355,20 +361,31 @@ static int submit_action(
                 return 0;
             }
             if (total > program->spill_capacity_bytes) {
-                shadowspill_set_capacity_error(
-                    result,
-                    SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
+                /* The spill pool is the same question as the device pool,
+                 * one level down: an eviction with nowhere to land waits for
+                 * room, which a release of a copy the plan no longer retains
+                 * eventually provides. */
+                defer_action(
                     work,
+                    result,
+                    action,
+                    SHADOWSPILL_CAPACITY_OFFLOAD_SPILL,
+                    SHADOWSPILL_MEMORY_SPILL,
+                    SHADOWSPILL_STALL_SPILL_CAPACITY,
                     task,
                     alias,
                     device,
-                    SHADOWSPILL_MEMORY_SPILL,
                     program->spill_capacity_bytes,
                     work->spill_bytes,
                     program->alias_size_bytes[alias]
                 );
-                return 0;
+                *deferred = 1;
+                return 1;
             }
+        }
+        transfer->direction = SHADOWSPILL_TRANSFER_EVICT;
+        transfer->sequence = work->evict_sequence[device]++;
+        if (state->spill_allocated == 0U) {
             state->spill_allocated = 1U;
             state->spill_ready = 0U;
             work->spill_bytes = total;
@@ -400,6 +417,9 @@ static int submit_action(
                     work,
                     result,
                     action,
+                    SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                    SHADOWSPILL_MEMORY_DEVICE,
+                    SHADOWSPILL_STALL_DEVICE_CAPACITY,
                     task,
                     alias,
                     device,

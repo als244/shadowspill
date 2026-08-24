@@ -515,7 +515,11 @@ class _Simulator:
             sequence=sequence,
         )
         if action_index in self.deferred_ready_ns:
-            pending.stall_reasons.add("device-capacity")
+            pending.stall_reasons.add(
+                "host-capacity"
+                if direction is TransferDirection.EVICT
+                else "device-capacity"
+            )
         if direction is TransferDirection.FETCH:
             state.fetch_pending = True
             self.pending_fetch[state.device_id].append(pending)
@@ -605,15 +609,24 @@ class _Simulator:
                         self.spill_bytes + state.size_bytes
                         > self.config.spill_capacity_bytes
                     ):
-                        self._raise_capacity(
-                            kind="offload-spill-capacity",
-                            location="host",
-                            capacity=self.config.spill_capacity_bytes,
-                            used=self.spill_bytes,
-                            requested=state.size_bytes,
-                            task_id=action.trigger_task_id,
-                            aliases=(action.alias_group_id,),
-                        )
+                        # The spill pool is the device pool one level down:
+                        # an eviction with nowhere to land waits for room.
+                        if action_index not in self.deferred_ready_ns:
+                            self.deferred_ready_ns[action_index] = self.now_ns
+                            self.capacity_violations.append(
+                                CapacityViolation(
+                                    reason="offload-spill-capacity",
+                                    location="spill",
+                                    time_ns=self.now_ns,
+                                    capacity_bytes=self.config.spill_capacity_bytes,
+                                    used_bytes=self.spill_bytes,
+                                    requested_bytes=state.size_bytes,
+                                    device_id=device_id,
+                                    task_id=action.trigger_task_id,
+                                    alias_group_id=action.alias_group_id,
+                                )
+                            )
+                        return
                     state.spill_allocated = True
                     state.spill_ready = False
                     self.spill_bytes += state.size_bytes
@@ -820,21 +833,29 @@ class _Simulator:
         # pending record; it has to be recognised from the cursor first.
         if self.next_action_index < len(self.schedule.actions):
             action = self.schedule.actions[self.next_action_index]
-            if (
-                action.trigger_task_id in self.completed
-                and action.kind is MemoryActionKind.PREFETCH
-            ):
+            if action.trigger_task_id in self.completed:
                 state = self.alias_state[action.alias_group_id]
                 device_id = state.device_id
-                self._raise_capacity(
-                    kind="prefetch-device-capacity",
-                    location=f"device:{device_id}",
-                    capacity=self.device_config[device_id].capacity_bytes,
-                    used=self.device_physical_bytes[device_id],
-                    requested=state.size_bytes,
-                    task_id=action.trigger_task_id,
-                    aliases=(action.alias_group_id,),
-                )
+                if action.kind is MemoryActionKind.PREFETCH:
+                    self._raise_capacity(
+                        kind="prefetch-device-capacity",
+                        location=f"device:{device_id}",
+                        capacity=self.device_config[device_id].capacity_bytes,
+                        used=self.device_physical_bytes[device_id],
+                        requested=state.size_bytes,
+                        task_id=action.trigger_task_id,
+                        aliases=(action.alias_group_id,),
+                    )
+                if action.kind is MemoryActionKind.OFFLOAD:
+                    self._raise_capacity(
+                        kind="offload-spill-capacity",
+                        location="host",
+                        capacity=self.config.spill_capacity_bytes,
+                        used=self.spill_bytes,
+                        requested=state.size_bytes,
+                        task_id=action.trigger_task_id,
+                        aliases=(action.alias_group_id,),
+                    )
         for direction, queues in (
             (TransferDirection.FETCH, self.pending_fetch),
             (TransferDirection.EVICT, self.pending_evict),
