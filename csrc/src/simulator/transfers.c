@@ -166,6 +166,7 @@ static void defer_action(
     uint64_t used,
     uint64_t requested
 ) {
+    work->submission_deferred = 1U;
     ShadowSpillTransferState *pending = &work->transfers[action];
     if ((pending->stall_mask & stall) == 0U) {
         pending->ready_ns = work->now_ns;
@@ -486,6 +487,7 @@ int shadowspill_submit_ready_actions(
             break;
         }
         work->submitted_actions += 1U;
+        work->submission_deferred = 0U;
         if (submitted != NULL) {
             *submitted = 1;
         }

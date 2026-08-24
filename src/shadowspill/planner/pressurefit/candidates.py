@@ -75,6 +75,8 @@ class CCandidateDiagnostic:
     work: PressureFitWorkDiagnostics
     simulation_status: int
     makespan_ns: int
+    #: Places the accepted plan came up short of capacity and waited.
+    capacity_violation_count: int
     schedule_digest: str | None
     error_task: int
     error_alias: int
@@ -379,6 +381,7 @@ def _problem_options(
         evaluate_coalesced=int(options.evaluate_coalesced),
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
+        repair_while_stalling=int(options.repair_while_stalling),
         incumbent_makespan_ns=incumbent_makespan_ns,
     )
     return compiled, strategy_names, rule_names, (strategies, rules)
@@ -565,6 +568,7 @@ def _evaluate_problem(
                     work=_decode_work(value.work),
                     simulation_status=int(value.simulation_status),
                     makespan_ns=int(value.makespan_ns),
+                    capacity_violation_count=int(value.capacity_violation_count),
                     schedule_digest=digest,
                     error_task=int(value.error_task),
                     error_alias=int(value.error_alias),
