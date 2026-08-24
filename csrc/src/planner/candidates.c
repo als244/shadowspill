@@ -2056,6 +2056,13 @@ static int evaluate_candidate(
              * and the existing repair path is reused unchanged. */
             const ShadowSpillCapacityViolation *shortfall =
                 &workspace->first_violation;
+            /* The pressure primitive keys off the status, so a success has to
+             * present as the shortfall it recorded or the primitive declines
+             * and the candidate is accepted unchanged. */
+            simulation.status = shortfall->reason ==
+                    SHADOWSPILL_CAPACITY_TASK_DEVICE
+                ? (uint32_t)SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY
+                : (uint32_t)SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY;
             simulation.error_task = shortfall->task;
             simulation.error_alias = shortfall->alias;
             simulation.error_device = shortfall->device;
