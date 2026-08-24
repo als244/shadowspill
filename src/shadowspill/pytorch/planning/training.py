@@ -16,6 +16,7 @@ from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
     AdmissionFacts,
     PressureFitInfeasibleError,
+    PressureFitOptions,
     PressureFitResult,
     PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
@@ -710,11 +711,12 @@ def pressurefit_training_programs(
             recurrent = resolve_fixed_layout_selection(
                 programs.simulation_config,
                 programs.recurrent_admission,
-                lambda config: artifact_cache.resolve_pressurefit(
+                lambda config, excluded: artifact_cache.resolve_pressurefit(
                     programs.recurrent.program,
                     initial_residency=programs.recurrent.initial_residency,
                     final_residency=programs.recurrent.final_residency,
                     config=config,
+                    options=PressureFitOptions(excluded_candidates=excluded),
                     progress=timer.progress,
                 ),
                 scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
@@ -727,11 +729,12 @@ def pressurefit_training_programs(
                 resolve_fixed_layout_selection(
                     programs.simulation_config,
                     programs.initial_admission,
-                    lambda config: artifact_cache.resolve_pressurefit(
+                    lambda config, excluded: artifact_cache.resolve_pressurefit(
                         programs.initial.program,
                         initial_residency=programs.initial.initial_residency,
                         final_residency=programs.initial.final_residency,
                         config=config,
+                        options=PressureFitOptions(excluded_candidates=excluded),
                         progress=timer.progress,
                     ),
                     scratch_reserve_bytes=dynamic_scratch_reserve_bytes(

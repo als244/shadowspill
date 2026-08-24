@@ -101,6 +101,9 @@ class PlanningArtifactRepositories:
                     "prefetch_rules": list(selected_options.prefetch_rules),
                     "evaluate_coalesced": selected_options.evaluate_coalesced,
                     "max_repair_attempts": selected_options.max_repair_attempts,
+                    "excluded_candidates": list(
+                        selected_options.excluded_candidates
+                    ),
                     "workers": selected_options.workers,
                 },
                 "admission": None if admission is None else admission.to_dict(),
