@@ -31,6 +31,9 @@ class CandidateDiagnostic:
     selection_id: str
     status: str
     makespan_ns: int | None = None
+    #: Places the accepted plan came up short of capacity and waited for
+    #: room. Zero means the plan never waited for memory.
+    capacity_violation_count: int = 0
     schedule_digest: str | None = None
     failure_kind: str | None = None
     failure_detail: str | None = None
@@ -59,6 +62,7 @@ class CandidateDiagnostic:
             "outcome": {
                 "status": self.status,
                 "makespan_ns": self.makespan_ns,
+                "capacity_violation_count": self.capacity_violation_count,
                 "schedule_digest": self.schedule_digest,
                 "failure_kind": self.failure_kind,
                 "failure_detail": self.failure_detail,
@@ -82,6 +86,11 @@ class CandidateDiagnostic:
             makespan_ns=_optional_integer(
                 outcome.get("makespan_ns"), f"{path}.outcome.makespan_ns"
             ),
+            capacity_violation_count=_optional_integer(
+                outcome.get("capacity_violation_count"),
+                f"{path}.outcome.capacity_violation_count",
+            )
+            or 0,
             schedule_digest=_optional_string(
                 outcome.get("schedule_digest"),
                 f"{path}.outcome.schedule_digest",
@@ -131,6 +140,7 @@ class CandidateDiagnostic:
             selection_id=selection_id,
             status=self.status,
             makespan_ns=self.makespan_ns,
+            capacity_violation_count=self.capacity_violation_count,
             schedule_digest=self.schedule_digest,
             failure_kind=self.failure_kind,
             failure_detail=self.failure_detail,

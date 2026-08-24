@@ -175,6 +175,7 @@ def decode_candidate_diagnostic(
             selection_id=selection_id,
             status="valid",
             makespan_ns=value.makespan_ns,
+            capacity_violation_count=value.capacity_violation_count,
             schedule_digest=value.schedule_digest,
             repairs=value.repairs,
             work=value.work,
