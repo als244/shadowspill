@@ -22,7 +22,6 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     PressureFitInfeasibleError,
-    PressureFitOptions,
     PressureFitResult,
     PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
@@ -466,12 +465,11 @@ def pressurefit_forward_program(
             return resolve_fixed_layout_selection(
                 program.simulation_config,
                 program.admission,
-                lambda config, excluded: artifact_cache.resolve_pressurefit(
+                lambda config: artifact_cache.resolve_pressurefit(
                     program.lowered.program,
                     initial_residency=program.lowered.initial_residency,
                     final_residency=program.lowered.final_residency,
                     config=config,
-                    options=PressureFitOptions(excluded_candidates=excluded),
                 ),
                 scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
                     program.measurements_by_profile,

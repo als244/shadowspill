@@ -50,13 +50,6 @@ class PressureFitOptions:
     #: makespan rather than the first one that worked. A plan that waits for
     #: memory is valid but not finished, and the wait is time it pays.
     repair_while_stalling: bool = False
-    #: Candidate policies to skip, named as `strategy/rule` with a
-    #: `-coalesced` suffix -- the same form `CandidateDiagnostic.candidate_id`
-    #: reports. A plan that cannot be placed physically is a fact about the
-    #: policy that produced it, so a caller can rule that policy out and ask
-    #: for another plan at the same capacity instead of reducing capacity for
-    #: every policy at once.
-    excluded_candidates: tuple[str, ...] = ()
     workers: int = 0
 
     def __post_init__(self) -> None:

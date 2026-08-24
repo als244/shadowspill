@@ -167,14 +167,6 @@ typedef struct ShadowSpillPressureFitProblemOptions {
        returns that rather than the first one it found. Zero stops at the
        first success, which is what the search did before. */
     uint8_t repair_while_stalling;
-    /* Policies to skip, as parallel arrays of residency strategy, prefetch
-       rule and coalescing flag. A plan that cannot be placed physically is a
-       fact about that policy, not about the capacity, so the caller excludes
-       it and asks again rather than shrinking capacity for every policy. */
-    const uint8_t *excluded_strategies;
-    const uint8_t *excluded_rules;
-    const uint8_t *excluded_coalesced;
-    uint32_t excluded_count;
     /* Makespan of the best plan the caller already holds, or zero for none.
      *
      * A candidate whose own makespan has reached this cannot win however far
@@ -232,10 +224,6 @@ typedef enum ShadowSpillCandidateStatus {
      * caller holds, so no amount of further repair could let it win. This is
      * healthy: the answer is no worse for having stopped. */
     SHADOWSPILL_CANDIDATE_DOMINATED = 6,
-    /* Ruled out by the caller before evaluation: a plan this policy
-       already produced could not be placed, so the search is asked for
-       a different one at the same capacity. */
-    SHADOWSPILL_CANDIDATE_EXCLUDED = 7,
 } ShadowSpillCandidateStatus;
 
 /* Categorized monotonic repair operations for one candidate evaluation. */

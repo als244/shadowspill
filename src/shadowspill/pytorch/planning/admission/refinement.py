@@ -28,11 +28,6 @@ _FINE_LIMIT_BYTES = 1 << 30
 _COARSE_STEP_BYTES = 512 * _MIB
 _BISECT_STEP_BYTES = 64 * _MIB
 _SPECULATIVE_RUNGS = 4
-#: How many unplaceable candidates one capacity will rule out before the
-#: ladder reduces capacity instead. Each exclusion costs a full re-plan,
-#: and a point whose plans genuinely need more room should reach the
-#: ladder rather than exhaust its portfolio here.
-_MAX_PLACEMENT_EXCLUSIONS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,9 +85,7 @@ class FixedLayoutSelection:
 def resolve_fixed_layout_selection(
     config: SimulationConfig,
     facts: AdmissionFacts,
-    resolve: Callable[
-        [SimulationConfig, tuple[str, ...]], CachedPressureFitResult
-    ],
+    resolve: Callable[[SimulationConfig], CachedPressureFitResult],
     *,
     scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
@@ -122,7 +115,6 @@ def resolve_fixed_layout_selection(
 
     def timed_resolve(
         requested_capacity: int,
-        excluded: tuple[str, ...] = (),
     ) -> tuple[CachedPressureFitResult, int]:
         requested_config = _config_with_capacity(
             config,
@@ -135,7 +127,7 @@ def resolve_fixed_layout_selection(
         # strategy; prefiltering through dynamic-pool admission would
         # discard schedules that are feasible under certified fixed
         # placement.
-        resolved = resolve(requested_config, excluded)
+        resolved = resolve(requested_config)
         return resolved, time.perf_counter_ns() - started
 
     def ensure_submitted(index: int) -> None:
@@ -149,7 +141,6 @@ def resolve_fixed_layout_selection(
     def try_capacity(
         requested_capacity: int,
         resolved: tuple[CachedPressureFitResult, int] | None = None,
-        excluded: tuple[str, ...] = (),
     ) -> tuple[
         CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
     ] | None:
@@ -157,9 +148,7 @@ def resolve_fixed_layout_selection(
 
         nonlocal last_error
         selected, pressurefit_wall_time_ns = (
-            timed_resolve(requested_capacity, excluded)
-            if resolved is None
-            else resolved
+            timed_resolve(requested_capacity) if resolved is None else resolved
         )
         admission_started = time.perf_counter_ns()
         effective_facts = replace(
@@ -230,46 +219,6 @@ def resolve_fixed_layout_selection(
             )
         return selected, effective_facts, admitted
 
-    def place_at_capacity(
-        requested_capacity: int,
-        resolved: tuple[CachedPressureFitResult, int] | None = None,
-    ) -> tuple[
-        CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
-    ] | None:
-        """Find a plan this capacity can place, ruling out those it cannot.
-
-        A plan that will not place is a fact about the policy that produced
-        it, not about the capacity. Reducing capacity answers it by making
-        every policy plan against less memory, which costs quality everywhere
-        to accommodate one candidate; ruling that candidate out instead keeps
-        the capacity and asks the search for its next-best plan.
-
-        Bounded, because each exclusion costs a full re-plan and a point whose
-        plans genuinely need more room should reach the capacity ladder rather
-        than exhaust its portfolio here.
-        """
-
-        excluded: tuple[str, ...] = ()
-        for _attempt in range(_MAX_PLACEMENT_EXCLUSIONS + 1):
-            outcome = try_capacity(
-                requested_capacity,
-                resolved if not excluded else None,
-                excluded,
-            )
-            if outcome is not None:
-                return outcome
-            latest = attempts[-1].pressurefit_diagnostics
-            rejected = None if latest is None else latest.selected_candidate_id
-            if rejected is None or rejected in excluded:
-                return None
-            excluded = (*excluded, rejected)
-            if progress is not None:
-                progress(
-                    "fixed layout excluding unplaceable candidate "
-                    f"{rejected!r} at capacity {requested_capacity}"
-                )
-        return None
-
     def selection_of(
         outcome: tuple[
             CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
@@ -288,9 +237,7 @@ def resolve_fixed_layout_selection(
         for index, reduction in enumerate(reductions):
             ensure_submitted(index)
             requested_capacity = original_capacity - reduction
-            outcome = place_at_capacity(
-                requested_capacity, futures[index].result()
-            )
+            outcome = try_capacity(requested_capacity, futures[index].result())
             if outcome is None:
                 continue
             if index == 0:
