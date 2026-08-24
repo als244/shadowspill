@@ -143,21 +143,31 @@ def plan_program(
 
     def evaluate(
         resolution: Resolution,
-    ) -> tuple[SelectionProblem, CProblemResult | None]:
-        return evaluate_resolution(
-            program,
-            resolution=resolution,
-            initial_residency=initial_residency,
-            final_residency=final_residency,
-            config=config,
-            options=selected_options,
-            admission=admission,
-            best=shared,
-            progress=progress,
-        )
+    ) -> tuple[SelectionProblem, CProblemResult | None] | ValueError:
+        # A resolved program that cannot satisfy the semantic-capacity
+        # preflight is not an answer about the Program: it says this one way
+        # of fixing the save/recompute alternatives does not fit, which is
+        # exactly the question this layer exists to ask several times. Under
+        # pressure the least-recomputed resolution routinely fails it while
+        # the recompute-heavy ones admit, so a rejection here is filtered,
+        # and only a Program with no viable resolution at all is infeasible.
+        try:
+            return evaluate_resolution(
+                program,
+                resolution=resolution,
+                initial_residency=initial_residency,
+                final_residency=final_residency,
+                config=config,
+                options=selected_options,
+                admission=admission,
+                best=shared,
+                progress=progress,
+            )
+        except ValueError as error:
+            return error
 
     if worker_count(selected_options, len(resolved)) == 1:
-        evaluated = tuple(evaluate(resolution) for resolution in resolved)
+        outcomes = tuple(evaluate(resolution) for resolution in resolved)
     else:
         # Dispatched together so that every resolved program's units reach
         # the shared pool as one batch. Evaluating them one after another
@@ -173,7 +183,14 @@ def plan_program(
             # `map` yields in argument order, so the result order -- and
             # every tie-break that depends on it -- does not depend on which
             # resolution finished first.
-            evaluated = tuple(executor.map(evaluate, resolved))
+            outcomes = tuple(executor.map(evaluate, resolved))
+    evaluated = tuple(item for item in outcomes if not isinstance(item, ValueError))
+    if not evaluated:
+        # Every resolved program was rejected, so the Program itself has no
+        # viable way to fix its alternatives. Report the first rejection in
+        # resolution order, which does not depend on which finished first.
+        rejected = [item for item in outcomes if isinstance(item, ValueError)]
+        raise rejected[0]
     valid = tuple(
         (problem, result) for problem, result in evaluated if result is not None
     )
