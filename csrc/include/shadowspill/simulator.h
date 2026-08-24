@@ -59,13 +59,6 @@ typedef struct ShadowSpillSimulationProgram {
     uint32_t mutation_count;
     uint32_t reuse_dependency_count;
     uint32_t use_admission_accounting;
-    /* Simulate the plan as written, without enforcing device or spill
-       capacity. Timing is a separate question from fitting: a plan that
-       overflows still takes a definite amount of time, and because repairing
-       an overflow only ever adds transfers or stall, that time is a lower
-       bound on every plan the repair can reach. Peaks are still recorded, so
-       the overshoot remains readable. Zero enforces capacity as usual. */
-    uint32_t relax_capacity;
     uint64_t spill_capacity_bytes;
 
     const ShadowSpillSimulationDevice *devices;
@@ -156,12 +149,12 @@ typedef enum ShadowSpillCapacityViolationReason {
 } ShadowSpillCapacityViolationReason;
 
 /*
- * One point where the plan needed more memory than the budget allowed.
+ * One point where the plan wanted more memory than its budget allowed.
  *
- * Only recorded when `relax_capacity` is set. Enforced simulation stops at
- * the first violation and reports it through the `error_*` fields, so it can
- * name one; a relaxed run continues and names them all, which is what shows
- * whether a plan overflows once or everywhere.
+ * A prefetch that does not fit waits rather than failing, so pressure that
+ * used to end the simulation now only slows it down. The stall says when the
+ * plan waited and for how long; this says by how much it was short, which is
+ * what a repair needs in order to know how much to change.
  */
 typedef struct ShadowSpillCapacityViolation {
     uint64_t time_ns;
@@ -197,9 +190,9 @@ typedef struct ShadowSpillSimulationResult {
     uint32_t transfer_interval_count;
     ShadowSpillDevicePeak *device_peaks;
     uint32_t device_peak_capacity;
-    /* Relaxed runs only. `capacity_violation_count` is the true total
-     * even when it exceeds the buffer, so a caller can tell a complete
-     * list from a truncated one. A null buffer counts without storing. */
+    /* `capacity_violation_count` is the true total even when it exceeds
+     * the buffer, so a caller can tell a complete list from a truncated
+     * one. A null buffer counts without storing. */
     ShadowSpillCapacityViolation *capacity_violations;
     uint32_t capacity_violation_capacity;
     uint32_t capacity_violation_count;

@@ -157,6 +157,14 @@ def test_without_a_reuse_certificate_the_fetch_waits_for_the_eviction() -> None:
     assert (fetch.ready_ns, fetch.start_ns, fetch.end_ns) == (20, 106, 202)
     assert fetch.stall_reasons == ("device-capacity",)
     assert result.makespan_ns == 212
+
+    # The stall says the fetch waited; the shortfall says by how much it was
+    # short, which is what a repair would need in order to act on it.
+    (shortfall,) = result.capacity_violations
+    assert shortfall.reason == "prefetch-device-capacity"
+    assert shortfall.alias_group_id == "fetched_activation"
+    assert shortfall.excess_bytes > 0
+    assert result.capacity_violation_count == 1
     # Uncertified, the two copies are never logically resident together.
     assert result.device_peak("cuda_0").object_bytes == 96
 

@@ -135,23 +135,25 @@ int shadowspill_try_launch_tasks(
                     used <= program->devices[device].capacity_bytes -
                         logical_requested;
             }
-            if (resolved && capacity_fits == 0 &&
-                program->relax_capacity != 0U) {
-                shadowspill_record_capacity_violation(
-                    result,
-                    work,
-                    SHADOWSPILL_CAPACITY_TASK_DEVICE,
-                    task,
-                    SHADOWSPILL_SIMULATOR_NO_INDEX,
-                    device,
-                    SHADOWSPILL_MEMORY_DEVICE,
-                    program->devices[device].capacity_bytes,
-                    shadowspill_device_used_bytes(program, work, device),
-                    logical_requested
-                );
-                capacity_fits = 1;
-            }
             if (!capacity_fits) {
+                if (resolved &&
+                    (state->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY)
+                        == 0U) {
+                    /* Once per task, at the first refusal: how short the
+                     * launch was, alongside the stall saying it waited. */
+                    shadowspill_record_capacity_violation(
+                        result,
+                        work,
+                        SHADOWSPILL_CAPACITY_TASK_DEVICE,
+                        task,
+                        SHADOWSPILL_SIMULATOR_NO_INDEX,
+                        device,
+                        SHADOWSPILL_MEMORY_DEVICE,
+                        program->devices[device].capacity_bytes,
+                        shadowspill_device_used_bytes(program, work, device),
+                        logical_requested
+                    );
+                }
                 state->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
                 continue;
             }

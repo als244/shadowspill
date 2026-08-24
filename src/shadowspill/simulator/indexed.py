@@ -385,8 +385,6 @@ def _bind_schedule(
     template: IndexedSimulationTemplate,
     schedule: MemorySchedule,
     admission: SimulationAdmission | None = None,
-    *,
-    relax_capacity: bool = False,
 ) -> _Projection:
     """Bind candidate-only arrays to one immutable topology."""
 
@@ -557,7 +555,6 @@ def _bind_schedule(
         0 if admission is None else len(admission.reuse_dependencies)
     )
     c_program.use_admission_accounting = int(admission is not None)
-    c_program.relax_capacity = int(relax_capacity)
     c_program.action_trigger_tasks = action_tasks
     c_program.action_aliases = action_aliases
     c_program.action_kinds = action_kinds
@@ -609,15 +606,12 @@ def _project(
     selections: tuple[RecomputationSelection, ...],
     config: SimulationConfig,
     admission: SimulationAdmission | None,
-    *,
-    relax_capacity: bool = False,
 ) -> _Projection:
     schedule.validate(program, selections)
     return _bind_schedule(
         index_simulation_template(program, selections, config),
         schedule,
         admission,
-        relax_capacity=relax_capacity,
     )
 
 
@@ -678,24 +672,10 @@ def simulate_program(
     selections: tuple[RecomputationSelection, ...] = (),
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
-    relax_capacity: bool = False,
 ) -> SimulationResult:
-    """Replay through `libshadowspill.so`.
+    """Replay through `libshadowspill.so`."""
 
-    `relax_capacity` simulates the schedule as written without enforcing
-    device or spill capacity, so an overflowing plan still yields a makespan.
-    A plan that does fit is unaffected: its capacity checks never fired, so
-    relaxing them changes nothing.
-    """
-
-    projection = _project(
-        program,
-        schedule,
-        selections,
-        config,
-        admission,
-        relax_capacity=relax_capacity,
-    )
+    projection = _project(program, schedule, selections, config, admission)
     return _simulate_projection(projection, schedule)
 
 
@@ -751,16 +731,9 @@ def _run_projection(
     task_buffer = (CTaskInterval * max(1, len(projection.task_ids)))()
     transfer_buffer = (CTransferInterval * max(1, len(schedule.actions)))()
     peak_buffer = (CDevicePeak * len(projection.device_ids))()
-    # A relaxed run can violate capacity at most once per task launch and
-    # once per action, plus once per device and once for spill at the start.
-    violations = 0
-    if projection.program.relax_capacity != 0:
-        violations = (
-            len(projection.task_ids)
-            + len(schedule.actions)
-            + len(projection.device_ids)
-            + 1
-        )
+    # Recorded once per task launch and once per action that came up short,
+    # so the plan's own size bounds how many there can be.
+    violations = len(projection.task_ids) + len(schedule.actions)
     violation_buffer = (CCapacityViolation * max(1, violations))()
     result = CResult(
         task_intervals=task_buffer,

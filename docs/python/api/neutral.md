@@ -84,10 +84,11 @@ Configuration and results:
 - `MemorySnapshot`, `DeviceMemoryPeak`, `CapacityViolation`
 - `ActionPhysicalDelta`, `TaskPhysicalDelta`, `MemoryReuseDependency`
 
-`simulate(..., relax_capacity=True)` drops device and spill capacity
-enforcement, so a plan that overflows still reports a makespan and lists
-every `CapacityViolation` it hit rather than stopping at the first. A plan
-that fits is unaffected, because its capacity checks never fired.
+A prefetch or task launch with nowhere to go waits for room rather than
+failing, so a plan that comes up short is slower rather than rejected. Each
+shortfall is reported as a `CapacityViolation` alongside the `device-capacity`
+stall that records the wait: the stall says when and for how long, the
+violation says by how much.
 
 ## `shadowspill.runtime`
 

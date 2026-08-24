@@ -316,99 +316,13 @@ def test_unknown_device_peak_raises_key_error() -> None:
         result.device_peak("missing")
 
 
-def test_relaxed_capacity_matches_enforced_capacity_when_the_plan_fits() -> None:
-    """A plan that fits never trips a capacity check, so relaxing changes nothing.
-
-    This is what makes the relaxed makespan usable as a bound: it agrees
-    exactly with the enforced makespan at the point a plan becomes
-    admissible, so a search pruning on it prunes on the real number.
-    """
-
-    arguments = {
-        "selections": SAVE_SELECTION,
-        "config": calibrated_config(device_capacity_bytes=600),
-    }
-    enforced = simulate(
-        representative_program(),
-        representative_schedule(),
-        **arguments,
-    )
-    relaxed = simulate(
-        representative_program(),
-        representative_schedule(),
-        relax_capacity=True,
-        **arguments,
-    )
-
-    assert relaxed.makespan_ns == enforced.makespan_ns
-    assert relaxed.device_peak("cuda_0") == enforced.device_peak("cuda_0")
-    assert [item.stall_reasons for item in relaxed.task_intervals] == [
-        item.stall_reasons for item in enforced.task_intervals
-    ]
-
-
-def test_relaxed_capacity_times_a_plan_that_does_not_fit() -> None:
-    """An overflowing plan still has a duration, and relaxed mode reports it.
-
-    Enforced simulation abandons at the first violation, so it can say only
-    that the plan does not fit. The same plan simulated without capacity
-    enforcement runs to completion, and its peak records how far over it went.
-    """
-
-    arguments = {
-        "selections": SAVE_SELECTION,
-        "config": calibrated_config(device_capacity_bytes=319),
-    }
-    with pytest.raises(SimulationInfeasibleError):
-        simulate(representative_program(), representative_schedule(), **arguments)
-
-    relaxed = simulate(
-        representative_program(),
-        representative_schedule(),
-        relax_capacity=True,
-        **arguments,
-    )
-
-    assert relaxed.makespan_ns > 0
-    assert relaxed.device_peak("cuda_0").object_bytes > 319
-
-
-def test_relaxed_capacity_names_every_violation_with_a_reason() -> None:
-    """Enforced simulation names one violation; relaxed names them all.
-
-    Each carries where and when it happened and which question the plan
-    got wrong, so a repair can see whether a plan overflows in one place
-    or everywhere without re-simulating once per violation.
-    """
-
-    relaxed = simulate(
-        representative_program(),
-        representative_schedule(),
-        selections=SAVE_SELECTION,
-        config=calibrated_config(device_capacity_bytes=319),
-        relax_capacity=True,
-    )
-
-    assert relaxed.capacity_violations
-    # The count is the true total, so truncation is always visible.
-    assert relaxed.capacity_violation_count == len(relaxed.capacity_violations)
-    first = relaxed.capacity_violations[0]
-    assert first.reason == "initial-device-capacity"
-    assert first.location == "device"
-    assert first.device_id == "cuda_0"
-    assert first.capacity_bytes == 319
-    assert first.used_bytes == 320
-    assert first.excess_bytes == 1
-
-
-def test_a_plan_that_fits_records_no_violations() -> None:
-    relaxed = simulate(
+def test_a_plan_with_room_to_spare_records_no_shortfall() -> None:
+    result = simulate(
         representative_program(),
         representative_schedule(),
         selections=SAVE_SELECTION,
         config=calibrated_config(device_capacity_bytes=600),
-        relax_capacity=True,
     )
 
-    assert relaxed.capacity_violations == ()
-    assert relaxed.capacity_violation_count == 0
+    assert result.capacity_violations == ()
+    assert result.capacity_violation_count == 0
