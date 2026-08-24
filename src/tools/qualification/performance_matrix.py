@@ -1,4 +1,11 @@
-"""Launch the five ShadowSpill-only full-model qualification cells."""
+"""Launch the ShadowSpill-only full-model qualification cells.
+
+The gate runs the three mlops cells by default. Those are the ones that
+carry a throughput authority, so they are the only ones that can pass or
+fail; the pure-PyTorch variants have no regression floor to compare
+against and only cost wall time. `--cells` still reaches any of them,
+including the PyTorch ones, when a run wants them.
+"""
 
 from __future__ import annotations
 
@@ -225,6 +232,20 @@ def _cell_result_details(
     return details
 
 
+def default_cells() -> tuple[FullModelManifest, ...]:
+    """The cells the gate runs when none are named.
+
+    A cell without a throughput authority has no floor to be measured
+    against, so running it can neither pass nor fail -- it only spends wall
+    time. The default is therefore the judgeable set, and `--cells` still
+    reaches the rest.
+    """
+
+    return tuple(
+        item for item in manifests() if item.regression_tokens_per_second is not None
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -247,7 +268,10 @@ def main() -> int:
     parser.add_argument(
         "--cells",
         nargs="*",
-        help="optional identities such as mlops_llama3 or pytorch_qwen35",
+        help=(
+            "identities to run, such as mlops_llama3 or pytorch_qwen35; "
+            "defaults to every cell carrying a throughput authority"
+        ),
     )
     parser.add_argument(
         "--planning-spill-budget-gib",
@@ -272,11 +296,10 @@ def main() -> int:
     output = arguments.output_directory.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     selected = set(arguments.cells or ())
-    chosen = [
-        manifest
-        for manifest in manifests()
-        if not selected or manifest.identity in selected
-    ]
+    if selected:
+        chosen = [item for item in manifests() if item.identity in selected]
+    else:
+        chosen = list(default_cells())
     if arguments.plan_only:
         mode = "plan only"
     elif arguments.checkpoint:
