@@ -142,19 +142,20 @@ def test_without_a_reuse_certificate_the_fetch_waits_for_the_eviction() -> None:
     """The certificate buys accounting, not feasibility.
 
     A fetch into space an eviction has not yet released simply waits for it,
-    the way the runtime would. Without the certificate the fetch cannot even
-    be admitted until the bytes are actually free, so it becomes ready at
-    106 rather than at its trigger; with one it is ready at 20 and stalls on
-    `memory-reuse` instead. Both reach the same schedule, and only the
-    certified run can hold both copies logically resident at once.
+    the way the runtime would. The two runs produce the same intervals and
+    differ only in why the fetch waited: uncertified it is blocked on device
+    capacity, certified it is blocked on the reuse itself. Only the certified
+    run can hold both copies logically resident at once.
     """
 
     result = simulate(_program(), _schedule(), config=_config())
 
     eviction, fetch = result.transfer_intervals
     assert (eviction.start_ns, eviction.end_ns) == (10, 106)
-    assert (fetch.ready_ns, fetch.start_ns, fetch.end_ns) == (106, 106, 202)
-    assert fetch.stall_reasons == ()
+    # Ready at its trigger, not at the moment room appeared: a wait that
+    # showed up as a later ready time would hide the pressure that caused it.
+    assert (fetch.ready_ns, fetch.start_ns, fetch.end_ns) == (20, 106, 202)
+    assert fetch.stall_reasons == ("device-capacity",)
     assert result.makespan_ns == 212
     # Uncertified, the two copies are never logically resident together.
     assert result.device_peak("cuda_0").object_bytes == 96

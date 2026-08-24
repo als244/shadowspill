@@ -144,6 +144,26 @@ int shadowspill_try_start_transfers(
 }
 
 /*
+ * Note that this action wanted to go and could not, so the wait is visible
+ * as memory pressure rather than disappearing into a later ready time.
+ *
+ * `ready_ns` is stamped at the first refusal, because that is the moment the
+ * action became eligible; stamping it at the eventual submission instead
+ * would report the whole wait as "not ready yet" and hide the pressure that
+ * caused it.
+ */
+static void defer_action(
+    ShadowSpillSimulationWork *work,
+    uint32_t action
+) {
+    ShadowSpillTransferState *pending = &work->transfers[action];
+    if ((pending->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
+        pending->ready_ns = work->now_ns;
+    }
+    pending->stall_mask |= SHADOWSPILL_STALL_DEVICE_CAPACITY;
+}
+
+/*
  * Bring one scheduled action into the simulation.
  *
  * `deferred` reports the runtime's own answer to a prefetch that has nowhere
@@ -208,6 +228,7 @@ static int submit_action(
             )) {
             if (program->relax_capacity == 0U) {
                 /* Nothing has been mutated yet, so waiting is free. */
+                defer_action(work, action);
                 *deferred = 1;
                 return 1;
             }
@@ -278,7 +299,9 @@ static int submit_action(
     transfer->alias = alias;
     transfer->trigger_task = task;
     transfer->device = device;
-    transfer->ready_ns = work->now_ns;
+    if ((transfer->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
+        transfer->ready_ns = work->now_ns;
+    }
     if (kind == SHADOWSPILL_MEMORY_OFFLOAD) {
         if (state->device_allocated == 0U || state->device_ready == 0U) {
             shadowspill_set_error(
@@ -371,6 +394,7 @@ static int submit_action(
             if (size > program->devices[device].capacity_bytes ||
                 used > program->devices[device].capacity_bytes - size) {
                 if (program->relax_capacity == 0U) {
+                    defer_action(work, action);
                     *deferred = 1;
                     return 1;
                 }
