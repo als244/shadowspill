@@ -572,6 +572,36 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_build_lease_lifetimes(
     ShadowSpillLeaseLifetimeResult *result
 );
 
+/*
+ * The best makespan any caller has actually placed, shared between searches.
+ *
+ * A plan no better than one already placed cannot win even if it places, so a
+ * search consults this before paying for a placement. The object knows nothing
+ * about candidates, resolved programs or calls: passing one object to several
+ * concurrent searches shares the gate between them, and passing separate
+ * objects keeps them independent. Safe to use from several threads at once.
+ *
+ * `offer` returns non-zero when the value replaced the previous best. `admits`
+ * is the question a search asks: is this plan worth measuring at all.
+ */
+typedef struct ShadowSpillBestPlaced ShadowSpillBestPlaced;
+
+SHADOWSPILL_API ShadowSpillBestPlaced *shadowspill_best_placed_create(void);
+SHADOWSPILL_API void shadowspill_best_placed_destroy(
+    ShadowSpillBestPlaced *best
+);
+SHADOWSPILL_API uint64_t shadowspill_best_placed_get(
+    const ShadowSpillBestPlaced *best
+);
+SHADOWSPILL_API int shadowspill_best_placed_offer(
+    ShadowSpillBestPlaced *best,
+    uint64_t makespan_ns
+);
+SHADOWSPILL_API int shadowspill_best_placed_admits(
+    const ShadowSpillBestPlaced *best,
+    uint64_t makespan_ns
+);
+
 /* Fixed-offset placement of lease lifetimes within one execution-pool slice. */
 typedef struct ShadowSpillPlacementProblem {
     uint32_t abi_version;

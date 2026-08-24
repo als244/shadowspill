@@ -1879,6 +1879,43 @@ static int evaluate_candidate(
                 : 0U;
         ShadowSpillStatus simulation_status =
             (ShadowSpillStatus)simulation.status;
+
+        /*
+         * Diagnostic-only reduction tracing, enabled by
+         * SHADOWSPILL_REDUCTION_TRACE and never active in normal planning.
+         *
+         * Emitted after every simulation rather than only after a failing
+         * one, because a reduction that succeeds is exactly the interesting
+         * case: whether makespan falls monotonically as a candidate reduces,
+         * or rises and later recovers. The resolved program is identified by
+         * the problem it was compiled from, since a policy alone is shared
+         * across all five and grouping by it merges them.
+         */
+        {
+            static _Thread_local int reduction_trace = -1;
+            if (reduction_trace < 0) {
+                reduction_trace =
+                    getenv("SHADOWSPILL_REDUCTION_TRACE") != NULL;
+            }
+            if (reduction_trace) {
+                fprintf(
+                    stderr,
+                    "reduction-trace resolved=%llu strategy=%u rule=%u "
+                    "coalesced=%u step=%llu status=%d makespan=%llu "
+                    "shortfalls=%u actions=%u\n",
+                    (unsigned long long)(uintptr_t)problem,
+                    strategy,
+                    rule,
+                    coalesced,
+                    (unsigned long long)repair_total(&diagnostic->repairs),
+                    (int)simulation_status,
+                    (unsigned long long)simulation.makespan_ns,
+                    simulation.capacity_violation_count,
+                    workspace->schedule.value.action_count
+                );
+            }
+        }
+
         if (admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
             if (may_repair_again(
                     candidate_options, diagnostic, simulation.makespan_ns
