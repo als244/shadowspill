@@ -15,7 +15,7 @@ from ..program import (
     PressureFitProgram,
     TransferBandwidths,
 )
-from .admission import resolve_fixed_layout_selection
+from .admission import placement_facts, resolve_fixed_layout_selection
 from .repositories import open_artifact_repositories
 
 
@@ -49,6 +49,14 @@ def select_program(
             final_residency=program.final_residency,
             config=candidate_config,
             options=selected_options,
+            # The pool topology, so the search can measure whether a plan
+            # has a layout that fits. Not passed as `admission`: that
+            # switches on the dynamic-pool replay, and the fixed-layout
+            # builder below is the placement authority for this strategy.
+            placement=placement_facts(
+                facts,
+                scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,
+            ),
             progress=progress,
         ),
         scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,

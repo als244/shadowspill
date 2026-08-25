@@ -18,7 +18,6 @@ from shadowspill.ir import (
 from shadowspill.ir.validation import ValidationError
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.diagnostics import (
-    AdmissionRefinement,
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
@@ -54,25 +53,6 @@ _ADMISSION_RESERVE_GRANULARITY_BYTES = 2 << 20
 _ADMISSION_INITIAL_REFINEMENT_BYTES = 128 << 20
 _ADMISSION_DOUBLING_LIMIT_BYTES = 1 << 30
 _ADMISSION_LINEAR_REFINEMENT_BYTES = 512 << 20
-
-
-def _scheduled_admission_refinement(attempt: int) -> int:
-    """Return the deterministic reserve increment for one failed admission.
-
-    Early attempts double from 128 MiB through 1 GiB so high-pressure plans
-    converge quickly.  Later attempts grow linearly by 512 MiB, avoiding the
-    multi-GiB jumps that would discard too much otherwise usable capacity.
-    ``attempt`` is zero-based.
-    """
-
-    doubled = _ADMISSION_INITIAL_REFINEMENT_BYTES << attempt
-    if doubled <= _ADMISSION_DOUBLING_LIMIT_BYTES:
-        return doubled
-    attempts_after_limit = attempt - 3
-    return (
-        _ADMISSION_DOUBLING_LIMIT_BYTES
-        + attempts_after_limit * _ADMISSION_LINEAR_REFINEMENT_BYTES
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -889,32 +869,6 @@ def _pressurefit_once(
     )
 
 
-def _round_up_admission_reserve(value: int) -> int:
-    granularity = _ADMISSION_RESERVE_GRANULARITY_BYTES
-    return ((value + granularity - 1) // granularity) * granularity
-
-
-def _with_object_capacity(
-    config: SimulationConfig,
-    admission: AdmissionFacts,
-    capacity_bytes: int,
-) -> tuple[SimulationConfig, AdmissionFacts]:
-    devices = tuple(
-        replace(device, capacity_bytes=capacity_bytes)
-        if device.device_id == admission.device_id
-        else device
-        for device in config.devices
-    )
-    if devices == config.devices:
-        raise ValueError(
-            f"admission device {admission.device_id!r} is absent from simulation"
-        )
-    return (
-        replace(config, devices=devices),
-        replace(admission, object_capacity_bytes=capacity_bytes),
-    )
-
-
 def pressurefit(
     program: Program,
     *,
@@ -946,77 +900,26 @@ def pressurefit(
         config=config,
         admission=admission,
     )
-    original_config = config
-    current_config = config
-    current_admission = admission
-    refinements: list[AdmissionRefinement] = []
-    while True:
-        try:
-            result = _pressurefit_once(
-                program,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=current_config,
-                options=options,
-                admission=current_admission,
-                progress=progress,
-            )
-            effective_capacity = (
-                None
-                if current_admission is None
-                else current_admission.object_capacity_bytes
-            )
-            return replace(
-                result,
-                # Preserve the public call boundary for cache identity.  The
-                # exact effective capacity is recorded below, while physical
-                # simulation uses AdmissionFacts.pool_capacity_bytes.
-                simulation_config=original_config,
-                diagnostics=replace(
-                    result.diagnostics,
-                    admission_refinements=tuple(refinements),
-                    effective_object_capacity_bytes=effective_capacity,
-                ),
-                admission_facts=admission,
-            )
-        except PressureFitInfeasibleError as error:
-            if (
-                current_admission is None
-                or error.kind != "physical_admission"
-                or error.required_bytes is None
-                or error.required_bytes <= 0
-            ):
-                raise
-            previous = current_admission.object_capacity_bytes
-            scheduled_increment = _scheduled_admission_refinement(len(refinements))
-            increment = max(
-                _round_up_admission_reserve(error.required_bytes),
-                scheduled_increment,
-            )
-            capacity = previous - increment
-            if capacity <= 0:
-                raise
-            refinements.append(
-                AdmissionRefinement(
-                    attempt=len(refinements) + 1,
-                    previous_object_capacity_bytes=previous,
-                    required_additional_slack_bytes=error.required_bytes,
-                    reserve_increment_bytes=increment,
-                    object_capacity_bytes=capacity,
-                )
-            )
-            if progress is not None:
-                progress(
-                    "PressureFit physical admission refinement "
-                    f"{len(refinements)}: required_slack={error.required_bytes}, "
-                    f"reserve_increment={increment}, "
-                    f"object_capacity={capacity}"
-                )
-            current_config, current_admission = _with_object_capacity(
-                current_config,
-                current_admission,
-                capacity,
-            )
+    result = _pressurefit_once(
+        program,
+        initial_residency=initial_residency,
+        final_residency=final_residency,
+        config=config,
+        options=options,
+        admission=admission,
+        progress=progress,
+    )
+    return replace(
+        result,
+        diagnostics=replace(
+            result.diagnostics,
+            effective_object_capacity_bytes=(
+                None if admission is None else admission.object_capacity_bytes
+            ),
+        ),
+        admission_facts=admission,
+    )
+
 
 
 __all__ = ["pressurefit", "validate_schedule_feasibility"]

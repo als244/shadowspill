@@ -21,7 +21,7 @@ from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.capi import simulator_api
 
 from ..admission import AdmissionFacts
-from ..best import BestFound
+from ..best import BestPlaced
 from ..capi import planner_api
 from ..recomputation import Resolution
 from ..request import PressureFitOptions
@@ -83,7 +83,8 @@ def evaluate_resolution(
     config: SimulationConfig,
     options: PressureFitOptions,
     admission: AdmissionFacts | None = None,
-    best: BestFound | None = None,
+    placement: AdmissionFacts | None = None,
+    best: BestPlaced | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> tuple[SelectionProblem, CProblemResult | None]:
     """Plan one resolved program: every candidate policy, one task set.
@@ -107,17 +108,16 @@ def evaluate_resolution(
             final_residency,
             config,
             admission,
+            placement=placement,
             resolutions=(resolution,),
             progress=progress,
         )
     )
     results = run_problems(problems, options, best=best)
-    result = results[0]
-    # Publish immediately, so a caller sharing this object across resolved
-    # programs -- or across threads -- prunes against it from here on.
-    if best is not None and result is not None and result.selected_makespan_ns:
-        best.offer(int(result.selected_makespan_ns))
-    return problems[0], result
+    # The candidates publish to the record themselves, as they place, so
+    # there is nothing to offer here: by the time this returns, anything
+    # worth sharing is already shared.
+    return problems[0], results[0]
 
 
 __all__ = ["evaluate_resolution", "validate_pressurefit_inputs"]

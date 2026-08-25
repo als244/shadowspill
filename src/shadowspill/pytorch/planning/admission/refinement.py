@@ -1,10 +1,9 @@
-"""Monotonic PressureFit refinement for fixed physical-layout feasibility."""
+"""Certify the fixed physical layout of the plan the search placed."""
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from shadowspill.ir import MemoryLocation
@@ -21,13 +20,6 @@ from .layout import (
     FixedLayoutInfeasibleError,
     build_fixed_layout_admission,
 )
-
-_MIB = 1 << 20
-_FINE_STEP_BYTES = 256 * _MIB
-_FINE_LIMIT_BYTES = 1 << 30
-_COARSE_STEP_BYTES = 512 * _MIB
-_BISECT_STEP_BYTES = 64 * _MIB
-_SPECULATIVE_RUNGS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +74,27 @@ class FixedLayoutSelection:
         return sum(item.physical_admission_wall_time_ns for item in self.attempts)
 
 
+def placement_facts(
+    facts: AdmissionFacts,
+    *,
+    scratch_reserve_bytes: int,
+) -> AdmissionFacts:
+    """The pool as the search may measure a layout against it.
+
+    The scratch reserve is taken off here because the search cannot know it:
+    it is a frontend quantity, and the certificate adds it to what a layout
+    requires. Handing the search the room actually left for placement is what
+    keeps its measurement and the certificate answering the same question.
+    """
+
+    return replace(
+        facts,
+        pool_capacity_bytes=max(
+            0, facts.pool_capacity_bytes - scratch_reserve_bytes
+        ),
+    )
+
+
 def resolve_fixed_layout_selection(
     config: SimulationConfig,
     facts: AdmissionFacts,
@@ -90,117 +103,52 @@ def resolve_fixed_layout_selection(
     scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
 ) -> FixedLayoutSelection:
-    """Select the highest-capacity PressureFit result with a valid layout.
+    """Certify the layout of the plan PressureFit selected.
 
-    PressureFit's object capacity is reduced monotonically while the physical
-    pool itself remains unchanged.  The returned record owns the exact
-    effective facts and certificate; callers never reconstruct either from
-    the original request.
+    The search measures each candidate's layout against this pool and
+    answers with a plan that fits, so there is one capacity to certify and
+    no ladder to walk: a rejection here is a real disagreement between the
+    search's measurement and the certificate, not a capacity to retry.
+
+    The returned record owns the exact effective facts and certificate;
+    callers never reconstruct either from the original request.
     """
 
     original_capacity = _single_device_capacity(config, facts.device_id)
-    reductions = _capacity_reductions(original_capacity)
     attempts: list[FixedLayoutAttempt] = []
-    last_error: FixedLayoutInfeasibleError | None = None
-    # Ladder rungs are independent, so once the full-capacity rung has
-    # been rejected the following rungs are planned speculatively in
-    # parallel while results are consumed strictly in ladder order —
-    # the accepted rung and its plan are byte-identical to a serial
-    # walk. The first rung runs alone: points whose full-capacity plan
-    # admits (the common case) never pay a speculative plan. On accept
-    # or error, still-running speculative rungs are abandoned without
-    # waiting; their planning threads finish in the background.
-    executor = ThreadPoolExecutor(max_workers=_SPECULATIVE_RUNGS)
-    futures: dict[int, Future[tuple[CachedPressureFitResult, int]]] = {}
 
-    def timed_resolve(
-        requested_capacity: int,
-    ) -> tuple[CachedPressureFitResult, int]:
-        requested_config = _config_with_capacity(
-            config,
-            device_id=facts.device_id,
-            capacity_bytes=requested_capacity,
-        )
-        started = time.perf_counter_ns()
-        # PressureFit selects against logical capacity. The fixed-layout
-        # builder below is the sole physical-placement authority for this
-        # strategy; prefiltering through dynamic-pool admission would
-        # discard schedules that are feasible under certified fixed
-        # placement.
-        resolved = resolve(requested_config)
-        return resolved, time.perf_counter_ns() - started
+    started = time.perf_counter_ns()
+    selected = resolve(config)
+    pressurefit_wall_time_ns = time.perf_counter_ns() - started
 
-    def ensure_submitted(index: int) -> None:
-        window = 1 if index == 0 else _SPECULATIVE_RUNGS
-        for ahead in range(index, min(index + window, len(reductions))):
-            if ahead not in futures:
-                futures[ahead] = executor.submit(
-                    timed_resolve, original_capacity - reductions[ahead]
-                )
-
-    def try_capacity(
-        requested_capacity: int,
-        resolved: tuple[CachedPressureFitResult, int] | None = None,
-    ) -> tuple[
-        CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
-    ] | None:
-        """Plan (unless already resolved) and admit one capacity."""
-
-        nonlocal last_error
-        selected, pressurefit_wall_time_ns = (
-            timed_resolve(requested_capacity) if resolved is None else resolved
+    admission_started = time.perf_counter_ns()
+    effective_facts = replace(
+        facts,
+        object_capacity_bytes=_effective_object_capacity(
+            selected,
+            requested_capacity=original_capacity,
+        ),
+    )
+    dynamic_aliases = frozenset(
+        item.alias_group_id
+        for item in selected.result.schedule.final_residency
+        if item.location is MemoryLocation.DEVICE
+    )
+    try:
+        admitted = build_fixed_layout_admission(
+            selected.result,
+            effective_facts,
+            dynamic_alias_group_ids=dynamic_aliases,
+            scratch_reserve_bytes=scratch_reserve_bytes,
         )
-        admission_started = time.perf_counter_ns()
-        effective_facts = replace(
-            facts,
-            object_capacity_bytes=_effective_object_capacity(
-                selected,
-                requested_capacity=requested_capacity,
-            ),
-        )
-        dynamic_aliases = frozenset(
-            item.alias_group_id
-            for item in selected.result.schedule.final_residency
-            if item.location is MemoryLocation.DEVICE
-        )
-        try:
-            admitted = build_fixed_layout_admission(
-                selected.result,
-                effective_facts,
-                dynamic_alias_group_ids=dynamic_aliases,
-                scratch_reserve_bytes=scratch_reserve_bytes,
-            )
-        except FixedLayoutInfeasibleError as error:
-            last_error = error
-            attempts.append(
-                FixedLayoutAttempt(
-                    requested_capacity,
-                    effective_facts.object_capacity_bytes,
-                    error.required_bytes,
-                    error.capacity_bytes,
-                    False,
-                    pressurefit_wall_time_ns,
-                    time.perf_counter_ns() - admission_started,
-                    selected.result.diagnostics,
-                )
-            )
-            if progress is not None:
-                progress(
-                    "fixed layout rejected PressureFit capacity "
-                    f"{effective_facts.object_capacity_bytes}: "
-                    f"required={error.required_bytes}, "
-                    f"physical_pool={error.capacity_bytes}, "
-                    f"requested_reduction="
-                    f"{original_capacity - requested_capacity}"
-                )
-            return None
+    except FixedLayoutInfeasibleError as error:
         attempts.append(
             FixedLayoutAttempt(
-                requested_capacity,
+                original_capacity,
                 effective_facts.object_capacity_bytes,
-                admitted.layout.required_bytes,
-                admitted.layout.pool_capacity_bytes,
-                True,
+                error.required_bytes,
+                error.capacity_bytes,
+                False,
                 pressurefit_wall_time_ns,
                 time.perf_counter_ns() - admission_started,
                 selected.result.diagnostics,
@@ -208,80 +156,40 @@ def resolve_fixed_layout_selection(
         )
         if progress is not None:
             progress(
-                "fixed layout accepted PressureFit capacity "
+                "fixed layout rejected PressureFit capacity "
                 f"{effective_facts.object_capacity_bytes}: "
-                f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
-                f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
-                f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
-                f"slack={admitted.layout.slack_bytes}, "
-                f"total_reduction="
-                f"{original_capacity - effective_facts.object_capacity_bytes}"
+                f"required={error.required_bytes}, "
+                f"physical_pool={error.capacity_bytes}"
             )
-        return selected, effective_facts, admitted
-
-    def selection_of(
-        outcome: tuple[
-            CachedPressureFitResult, AdmissionFacts, FixedLayoutAdmission
-        ],
-    ) -> FixedLayoutSelection:
-        selected, effective_facts, admitted = outcome
-        return FixedLayoutSelection(
-            selected,
-            effective_facts,
-            admitted,
-            tuple(attempts),
+        raise
+    attempts.append(
+        FixedLayoutAttempt(
             original_capacity,
+            effective_facts.object_capacity_bytes,
+            admitted.layout.required_bytes,
+            admitted.layout.pool_capacity_bytes,
+            True,
+            pressurefit_wall_time_ns,
+            time.perf_counter_ns() - admission_started,
+            selected.result.diagnostics,
         )
-
-    try:
-        for index, reduction in enumerate(reductions):
-            ensure_submitted(index)
-            requested_capacity = original_capacity - reduction
-            outcome = try_capacity(requested_capacity, futures[index].result())
-            if outcome is None:
-                continue
-            if index == 0:
-                return selection_of(outcome)
-            # Fine final approach: the coarse rung that first admitted
-            # can pass over admissible capacities (observed: an 88-MiB
-            # rejection followed one rung later by 2 GiB of slack and a
-            # +30% makespan cliff). Bisect the interval between the last
-            # rejected and first accepted capacities on a 64-MiB grid.
-            # Makespan is not monotone in capacity, so the coarse
-            # acceptance is only ever REPLACED by an admitting probe
-            # whose simulated makespan is no worse (ties prefer the
-            # higher capacity) — the refinement cannot lose quality by
-            # construction. A near-tight acceptance has nothing to
-            # recover: skip the probes when the admitted slack is
-            # already within two grid steps.
-            if outcome[2].layout.slack_bytes <= 2 * _BISECT_STEP_BYTES:
-                return selection_of(outcome)
-            rejected = original_capacity - reductions[index - 1]
-            best = outcome
-            low = requested_capacity
-            while rejected - low > _BISECT_STEP_BYTES:
-                middle = low + (
-                    (rejected - low) // 2 // _BISECT_STEP_BYTES
-                ) * _BISECT_STEP_BYTES
-                if middle <= low:
-                    break
-                probe = try_capacity(middle)
-                if probe is None:
-                    rejected = middle
-                    continue
-                low = middle
-                # Compare the admitted re-simulations — the recorded
-                # quality metric — not the logical planner simulation,
-                # whose ranking can differ by a hair.
-                if (probe[2].simulation.makespan_ns
-                        <= best[2].simulation.makespan_ns):
-                    best = probe
-            return selection_of(best)
-        if last_error is None:
-            raise ValueError("fixed-layout refinement has no positive capacity")
-        raise last_error
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    )
+    if progress is not None:
+        progress(
+            "fixed layout accepted PressureFit capacity "
+            f"{effective_facts.object_capacity_bytes}: "
+            f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
+            f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
+            f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
+            f"slack={admitted.layout.slack_bytes}"
+        )
+    return FixedLayoutSelection(
+        selected,
+        effective_facts,
+        admitted,
+        tuple(attempts),
+        original_capacity,
+    )
 
 
 def _effective_object_capacity(
@@ -300,19 +208,6 @@ def _effective_object_capacity(
     return effective
 
 
-def _capacity_reductions(capacity_bytes: int) -> tuple[int, ...]:
-    """Return 256-MiB reductions through 1 GiB, then 512-MiB reductions."""
-
-    result = [0]
-    reduction = _FINE_STEP_BYTES
-    while reduction < capacity_bytes:
-        result.append(reduction)
-        reduction += (
-            _FINE_STEP_BYTES if reduction < _FINE_LIMIT_BYTES else _COARSE_STEP_BYTES
-        )
-    return tuple(result)
-
-
 def _single_device_capacity(config: SimulationConfig, device_id: str) -> int:
     matches = tuple(
         item.capacity_bytes for item in config.devices if item.device_id == device_id
@@ -322,23 +217,6 @@ def _single_device_capacity(config: SimulationConfig, device_id: str) -> int:
             f"simulation config must contain exactly one {device_id!r} device"
         )
     return matches[0]
-
-
-def _config_with_capacity(
-    config: SimulationConfig,
-    *,
-    device_id: str,
-    capacity_bytes: int,
-) -> SimulationConfig:
-    return replace(
-        config,
-        devices=tuple(
-            replace(item, capacity_bytes=capacity_bytes)
-            if item.device_id == device_id
-            else item
-            for item in config.devices
-        ),
-    )
 
 
 __all__ = [

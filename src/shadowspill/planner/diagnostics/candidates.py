@@ -34,6 +34,11 @@ class CandidateDiagnostic:
     #: Places the accepted plan came up short of capacity and waited for
     #: room. Zero means the plan never waited for memory.
     capacity_violation_count: int = 0
+    #: Layouts measured for this candidate, how many fitted, and how many
+    #: times a plan gave back what it overran and was rebuilt.
+    placements_attempted: int = 0
+    placements_admitted: int = 0
+    capacity_refinements: int = 0
     schedule_digest: str | None = None
     failure_kind: str | None = None
     failure_detail: str | None = None
@@ -63,6 +68,9 @@ class CandidateDiagnostic:
                 "status": self.status,
                 "makespan_ns": self.makespan_ns,
                 "capacity_violation_count": self.capacity_violation_count,
+                "placements_attempted": self.placements_attempted,
+                "placements_admitted": self.placements_admitted,
+                "capacity_refinements": self.capacity_refinements,
                 "schedule_digest": self.schedule_digest,
                 "failure_kind": self.failure_kind,
                 "failure_detail": self.failure_detail,
@@ -89,6 +97,21 @@ class CandidateDiagnostic:
             capacity_violation_count=_optional_integer(
                 outcome.get("capacity_violation_count"),
                 f"{path}.outcome.capacity_violation_count",
+            )
+            or 0,
+            placements_attempted=_optional_integer(
+                outcome.get("placements_attempted"),
+                f"{path}.outcome.placements_attempted",
+            )
+            or 0,
+            placements_admitted=_optional_integer(
+                outcome.get("placements_admitted"),
+                f"{path}.outcome.placements_admitted",
+            )
+            or 0,
+            capacity_refinements=_optional_integer(
+                outcome.get("capacity_refinements"),
+                f"{path}.outcome.capacity_refinements",
             )
             or 0,
             schedule_digest=_optional_string(
@@ -141,6 +164,9 @@ class CandidateDiagnostic:
             status=self.status,
             makespan_ns=self.makespan_ns,
             capacity_violation_count=self.capacity_violation_count,
+            placements_attempted=self.placements_attempted,
+            placements_admitted=self.placements_admitted,
+            capacity_refinements=self.capacity_refinements,
             schedule_digest=self.schedule_digest,
             failure_kind=self.failure_kind,
             failure_detail=self.failure_detail,

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from .candidates import CandidateDiagnostic
 from .counters import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
-from .refinement import AdmissionRefinement
 from .selections import (
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
@@ -18,7 +17,6 @@ from .selections import (
 from .summary import PressureFitDiagnostics
 
 __all__ = [
-    "AdmissionRefinement",
     "CandidateDiagnostic",
     "PressureFitDiagnostics",
     "PressureFitRepairDiagnostics",

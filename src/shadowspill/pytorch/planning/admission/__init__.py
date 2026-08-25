@@ -26,6 +26,7 @@ from .physical import physical_admission, reconcile_spill_pool, seal_physical_bu
 from .refinement import (
     FixedLayoutAttempt,
     FixedLayoutSelection,
+    placement_facts,
     resolve_fixed_layout_selection,
 )
 from .selection import (
@@ -62,6 +63,7 @@ __all__ = [
     "measure_fixed_layout",
     "output_bindings_for_entrypoints",
     "physical_admission",
+    "placement_facts",
     "project_runtime_fixed_layout",
     "reconcile_spill_pool",
     "resolve_fixed_layout_selection",

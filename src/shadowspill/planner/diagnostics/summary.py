@@ -20,7 +20,6 @@ from .json import (
     _string,
     _without_work_times,
 )
-from .refinement import AdmissionRefinement
 from .selections import (
     RecomputationProblemDiagnostics,
 )
@@ -37,7 +36,6 @@ class PressureFitDiagnostics:
     selected_makespan_ns: int
     recomputation_problems: tuple[RecomputationProblemDiagnostics, ...]
     work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
-    admission_refinements: tuple[AdmissionRefinement, ...] = ()
     effective_object_capacity_bytes: int | None = None
 
     def __post_init__(self) -> None:
@@ -153,20 +151,6 @@ class PressureFitDiagnostics:
                 "effective_object_capacity_bytes": (
                     self.effective_object_capacity_bytes
                 ),
-                "attempts": [
-                    {
-                        "attempt": item.attempt,
-                        "previous_object_capacity_bytes": (
-                            item.previous_object_capacity_bytes
-                        ),
-                        "required_additional_slack_bytes": (
-                            item.required_additional_slack_bytes
-                        ),
-                        "reserve_increment_bytes": item.reserve_increment_bytes,
-                        "object_capacity_bytes": item.object_capacity_bytes,
-                    }
-                    for item in self.admission_refinements
-                ],
             },
             "recomputation_problems": [
                 item.to_dict() for item in self.recomputation_problems
@@ -214,39 +198,6 @@ class PressureFitDiagnostics:
             recomputation_problems=problems,
             work=PressureFitWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
-            ),
-            admission_refinements=tuple(
-                AdmissionRefinement(
-                    attempt=_integer(
-                        item.get("attempt"),
-                        f"{path}.capacity_refinement.attempts[{index}].attempt",
-                    ),
-                    previous_object_capacity_bytes=_integer(
-                        item.get("previous_object_capacity_bytes"),
-                        f"{path}.capacity_refinement.attempts[{index}].previous_object_capacity_bytes",
-                    ),
-                    required_additional_slack_bytes=_integer(
-                        item.get("required_additional_slack_bytes"),
-                        f"{path}.capacity_refinement.attempts[{index}].required_additional_slack_bytes",
-                    ),
-                    reserve_increment_bytes=_integer(
-                        item.get("reserve_increment_bytes"),
-                        f"{path}.capacity_refinement.attempts[{index}].reserve_increment_bytes",
-                    ),
-                    object_capacity_bytes=_integer(
-                        item.get("object_capacity_bytes"),
-                        f"{path}.capacity_refinement.attempts[{index}].object_capacity_bytes",
-                    ),
-                )
-                for index, raw in enumerate(
-                    _list(
-                        refinement.get("attempts"),
-                        f"{path}.capacity_refinement.attempts",
-                    )
-                )
-                for item in (
-                    _mapping(raw, f"{path}.capacity_refinement.attempts[{index}]"),
-                )
             ),
             effective_object_capacity_bytes=_optional_integer(
                 refinement.get("effective_object_capacity_bytes"),

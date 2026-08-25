@@ -8,7 +8,6 @@ from .admission import (
     TaskAllocationStepKind,
 )
 from .diagnostics import (
-    AdmissionRefinement,
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
@@ -26,7 +25,6 @@ from .result import (
 
 __all__ = [
     "AdmissionFacts",
-    "AdmissionRefinement",
     "CandidateDiagnostic",
     "InitialPlacement",
     "PressureFitDiagnostics",

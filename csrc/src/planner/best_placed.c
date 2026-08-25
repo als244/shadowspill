@@ -4,6 +4,8 @@
 
 #include <shadowspill/planner.h>
 
+#include "candidates_internal.h"
+
 /*
  * The best plan any caller has actually placed.
  *
@@ -30,6 +32,12 @@ struct ShadowSpillBestPlaced {
     _Atomic uint64_t makespan_ns;
     atomic_flag guard;
     ShadowSpillBestPlacedRecord record;
+    /* The plan itself, owned. The record names a plan by digest, and the
+     * buffer a candidate built it in is reused by the next candidate and
+     * thrown away when that candidate ends, so a record that did not keep a
+     * copy can name a plan nobody still has. Replaced in place when a better
+     * plan arrives, which reuses these buffers rather than freeing them. */
+    ShadowSpillScheduleStorage plan;
 };
 
 static void lock(ShadowSpillBestPlaced *best) {
@@ -53,6 +61,10 @@ ShadowSpillBestPlaced *shadowspill_best_placed_create(void) {
 }
 
 void shadowspill_best_placed_destroy(ShadowSpillBestPlaced *best) {
+    if (best == NULL) {
+        return;
+    }
+    shadowspill_schedule_storage_destroy(&best->plan);
     free(best);
 }
 
@@ -70,15 +82,30 @@ int shadowspill_best_placed_admits(
 
 int shadowspill_best_placed_offer(
     ShadowSpillBestPlaced *best,
-    const ShadowSpillBestPlacedRecord *record
+    const ShadowSpillBestPlacedRecord *record,
+    const ShadowSpillScheduleStorage *plan
 ) {
-    if (best == NULL || record == NULL || record->makespan_ns == 0U) {
+    if (best == NULL || record == NULL || plan == NULL ||
+        record->makespan_ns == 0U) {
         return 0;
     }
     int replaced = 0;
     lock(best);
     if (best->record.makespan_ns == 0U ||
         record->makespan_ns < best->record.makespan_ns) {
+        /* Sized on first use from the plan being kept; afterwards the copy
+         * grows only if a later plan needs more room. */
+        if (best->plan.initial_capacity == 0U &&
+            shadowspill_schedule_storage_create(
+                plan->initial_capacity, &best->plan
+            ) != 0) {
+            unlock(best);
+            return 0;
+        }
+        if (shadowspill_schedule_storage_copy(&best->plan, plan) != 0) {
+            unlock(best);
+            return 0;
+        }
         best->record = *record;
         atomic_store_explicit(
             &best->makespan_ns, record->makespan_ns, memory_order_release

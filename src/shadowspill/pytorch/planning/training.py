@@ -101,6 +101,7 @@ from .admission import (
     dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
     physical_admission,
+    placement_facts,
     project_runtime_fixed_layout,
     reconcile_spill_pool,
     resolve_fixed_layout_selection,
@@ -705,6 +706,10 @@ def pressurefit_training_programs(
             raise public_infeasible_plan_error(error) from error
         except PressureFitSearchExhaustedError as error:
             raise public_search_exhausted_error(error) from error
+    scratch_reserve = dynamic_scratch_reserve_bytes(
+        programs.measurements_by_profile,
+        minimum_bytes=programs.dynamic_scratch_reserve_bytes,
+    )
     with timer.measure("pressurefit_simulation"):
         try:
             recurrent = resolve_fixed_layout_selection(
@@ -715,12 +720,13 @@ def pressurefit_training_programs(
                     initial_residency=programs.recurrent.initial_residency,
                     final_residency=programs.recurrent.final_residency,
                     config=config,
+                    placement=placement_facts(
+                        programs.recurrent_admission,
+                        scratch_reserve_bytes=scratch_reserve,
+                    ),
                     progress=timer.progress,
                 ),
-                scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
-                    programs.measurements_by_profile,
-                    minimum_bytes=programs.dynamic_scratch_reserve_bytes,
-                ),
+                scratch_reserve_bytes=scratch_reserve,
                 progress=timer.progress,
             )
             initial = (
@@ -732,12 +738,13 @@ def pressurefit_training_programs(
                         initial_residency=programs.initial.initial_residency,
                         final_residency=programs.initial.final_residency,
                         config=config,
+                        placement=placement_facts(
+                            programs.initial_admission,
+                            scratch_reserve_bytes=scratch_reserve,
+                        ),
                         progress=timer.progress,
                     ),
-                    scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
-                        programs.measurements_by_profile,
-                        minimum_bytes=programs.dynamic_scratch_reserve_bytes,
-                    ),
+                    scratch_reserve_bytes=scratch_reserve,
                     progress=timer.progress,
                 )
                 if needs_initial

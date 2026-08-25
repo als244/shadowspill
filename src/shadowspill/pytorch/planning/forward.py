@@ -86,6 +86,7 @@ from .admission import (
     dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
     physical_admission,
+    placement_facts,
     project_runtime_fixed_layout,
     reconcile_spill_pool,
     resolve_fixed_layout_selection,
@@ -460,6 +461,10 @@ def pressurefit_forward_program(
             raise public_infeasible_plan_error(error) from error
         except PressureFitSearchExhaustedError as error:
             raise public_search_exhausted_error(error) from error
+    scratch_reserve = dynamic_scratch_reserve_bytes(
+        program.measurements_by_profile,
+        minimum_bytes=program.dynamic_scratch_reserve_bytes,
+    )
     with timer.measure("pressurefit_simulation"):
         try:
             return resolve_fixed_layout_selection(
@@ -470,11 +475,12 @@ def pressurefit_forward_program(
                     initial_residency=program.lowered.initial_residency,
                     final_residency=program.lowered.final_residency,
                     config=config,
+                    placement=placement_facts(
+                        program.admission,
+                        scratch_reserve_bytes=scratch_reserve,
+                    ),
                 ),
-                scratch_reserve_bytes=dynamic_scratch_reserve_bytes(
-                    program.measurements_by_profile,
-                    minimum_bytes=program.dynamic_scratch_reserve_bytes,
-                ),
+                scratch_reserve_bytes=scratch_reserve,
                 progress=timer.progress,
             )
         except PressureFitInfeasibleError as error:

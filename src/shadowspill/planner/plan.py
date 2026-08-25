@@ -23,21 +23,15 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
-from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
+from shadowspill.ir import Program, ResidencySpec
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.capi import simulator_api
 
 from .admission import AdmissionFacts
-from .best import BestFound
+from .best import BestPlaced
 from .capi import planner_api
-from .diagnostics import AdmissionRefinement
 from .pressurefit import evaluate_resolution, validate_pressurefit_inputs
 from .pressurefit.candidates import CProblemResult
-from .pressurefit.refinement import (
-    round_up_admission_reserve,
-    scheduled_admission_refinement,
-    with_object_capacity,
-)
 from .pressurefit.search import (
     SelectionProblem,
     build_problems,
@@ -47,7 +41,7 @@ from .pressurefit.search import (
 )
 from .recomputation import Resolution, resolutions
 from .request import PressureFitOptions
-from .result import PressureFitInfeasibleError, PressureFitResult
+from .result import PressureFitResult
 
 #: What a graph pair's alternatives are called today. Ordering only needs to
 #: recognise the two extremes; anything else falls through to the middle.
@@ -108,7 +102,8 @@ def plan_program(
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
     admission: AdmissionFacts | None = None,
-    best: BestFound | None = None,
+    placement: AdmissionFacts | None = None,
+    best: BestPlaced | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
     """Plan `program` by planning each of its resolved programs in turn.
@@ -136,90 +131,97 @@ def plan_program(
         )
 
     started = time.perf_counter_ns()
-    # One bound for the whole search. Each resolved program is planned
-    # against what the ones before it admitted, which is what makes their
-    # order worth choosing.
-    shared = best if best is not None else BestFound()
+    # One record for the whole search. Every candidate under every resolved
+    # program measures against what has already been placed, which is what
+    # makes measuring affordable and what makes their order worth choosing.
+    owned = BestPlaced() if best is None else None
+    shared = best if best is not None else owned
+    try:
 
-    def evaluate(
-        resolution: Resolution,
-    ) -> tuple[SelectionProblem, CProblemResult | None] | ValueError:
-        # A resolved program that cannot satisfy the semantic-capacity
-        # preflight is not an answer about the Program: it says this one way
-        # of fixing the save/recompute alternatives does not fit, which is
-        # exactly the question this layer exists to ask several times. Under
-        # pressure the least-recomputed resolution routinely fails it while
-        # the recompute-heavy ones admit, so a rejection here is filtered,
-        # and only a Program with no viable resolution at all is infeasible.
-        try:
-            return evaluate_resolution(
-                program,
-                resolution=resolution,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=config,
-                options=selected_options,
-                admission=admission,
-                best=shared,
-                progress=progress,
+        def evaluate(
+            resolution: Resolution,
+        ) -> tuple[SelectionProblem, CProblemResult | None] | ValueError:
+            # A resolved program that cannot satisfy the semantic-capacity
+            # preflight is not an answer about the Program: it says this one way
+            # of fixing the save/recompute alternatives does not fit, which is
+            # exactly the question this layer exists to ask several times. Under
+            # pressure the least-recomputed resolution routinely fails it while
+            # the recompute-heavy ones admit, so a rejection here is filtered,
+            # and only a Program with no viable resolution at all is infeasible.
+            try:
+                return evaluate_resolution(
+                    program,
+                    resolution=resolution,
+                    initial_residency=initial_residency,
+                    final_residency=final_residency,
+                    config=config,
+                    options=selected_options,
+                    admission=admission,
+                    placement=placement,
+                    best=shared,
+                    progress=progress,
+                )
+            except ValueError as error:
+                return error
+
+        if worker_count(selected_options, len(resolved)) == 1:
+            outcomes = tuple(evaluate(resolution) for resolution in resolved)
+        else:
+            # Dispatched together so that every resolved program's units reach
+            # the shared pool as one batch. Evaluating them one after another
+            # instead costs a barrier per resolution, and the pool spends most of
+            # its width idle waiting for the slowest unit of a five-unit round.
+            #
+            # These threads only wait: `run_problems` submits its units to the
+            # shared pool and blocks, so the compiled work stays bounded by that
+            # pool rather than by the number of resolutions. They must not come
+            # from the shared pool itself, or waiting on it from inside it could
+            # starve the units they are waiting for.
+            with ThreadPoolExecutor(max_workers=len(resolved)) as executor:
+                # `map` yields in argument order, so the result order -- and
+                # every tie-break that depends on it -- does not depend on which
+                # resolution finished first.
+                outcomes = tuple(executor.map(evaluate, resolved))
+        evaluated = tuple(item for item in outcomes if not isinstance(item, ValueError))
+        if not evaluated:
+            # Every resolved program was rejected, so the Program itself has no
+            # viable way to fix its alternatives. Report the first rejection in
+            # resolution order, which does not depend on which finished first.
+            rejected = [item for item in outcomes if isinstance(item, ValueError)]
+            raise rejected[0]
+        valid = tuple(
+            (problem, result) for problem, result in evaluated if result is not None
+        )
+        if progress is not None:
+            progress(
+                "PressureFit compiled problems and candidates finished: "
+                f"valid={len(valid)}/{len(evaluated)}, "
+                "candidates="
+                f"{sum(len(result.candidates) for _problem, result in valid)}, "
+                f"workers={worker_count(selected_options, len(evaluated))}, "
+                f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
-        except ValueError as error:
-            return error
-
-    if worker_count(selected_options, len(resolved)) == 1:
-        outcomes = tuple(evaluate(resolution) for resolution in resolved)
-    else:
-        # Dispatched together so that every resolved program's units reach
-        # the shared pool as one batch. Evaluating them one after another
-        # instead costs a barrier per resolution, and the pool spends most of
-        # its width idle waiting for the slowest unit of a five-unit round.
-        #
-        # These threads only wait: `run_problems` submits its units to the
-        # shared pool and blocks, so the compiled work stays bounded by that
-        # pool rather than by the number of resolutions. They must not come
-        # from the shared pool itself, or waiting on it from inside it could
-        # starve the units they are waiting for.
-        with ThreadPoolExecutor(max_workers=len(resolved)) as executor:
-            # `map` yields in argument order, so the result order -- and
-            # every tie-break that depends on it -- does not depend on which
-            # resolution finished first.
-            outcomes = tuple(executor.map(evaluate, resolved))
-    evaluated = tuple(item for item in outcomes if not isinstance(item, ValueError))
-    if not evaluated:
-        # Every resolved program was rejected, so the Program itself has no
-        # viable way to fix its alternatives. Report the first rejection in
-        # resolution order, which does not depend on which finished first.
-        rejected = [item for item in outcomes if isinstance(item, ValueError)]
-        raise rejected[0]
-    valid = tuple(
-        (problem, result) for problem, result in evaluated if result is not None
-    )
-    if progress is not None:
-        progress(
-            "PressureFit compiled problems and candidates finished: "
-            f"valid={len(valid)}/{len(evaluated)}, "
-            "candidates="
-            f"{sum(len(result.candidates) for _problem, result in valid)}, "
-            f"workers={worker_count(selected_options, len(evaluated))}, "
-            f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
+        if not valid:
+            raise RuntimeError(
+                "PressureFit rejected every selection after semantic "
+                "feasibility validation succeeded"
+            )
+        # One decode across every resolved program, so the winner and the
+        # diagnostics are exactly what a single batched evaluation produced.
+        return finish_pressurefit(
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            selected_options,
+            tuple(problem for problem, _result in valid),
+            tuple(result for _problem, result in valid),
+            admission,
+            shared,
         )
-    if not valid:
-        raise RuntimeError(
-            "PressureFit rejected every selection after semantic "
-            "feasibility validation succeeded"
-        )
-    # One decode across every resolved program, so the winner and the
-    # diagnostics are exactly what a single batched evaluation produced.
-    return finish_pressurefit(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        selected_options,
-        tuple(problem for problem, _result in valid),
-        tuple(result for _problem, result in valid),
-        admission,
-    )
+    finally:
+        if owned is not None:
+            owned.close()
 
 
 def validate_schedule_feasibility(
@@ -261,80 +263,37 @@ def pressurefit(
     config: SimulationConfig,
     options: PressureFitOptions | None = None,
     admission: AdmissionFacts | None = None,
+    placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
-    """Select a schedule and refine dynamic-slab headroom."""
+    """Select a schedule for `program`.
 
-    original_config = config
-    current_config = config
-    current_admission = admission
-    refinements: list[AdmissionRefinement] = []
-    while True:
-        try:
-            result = plan_program(
-                program,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=current_config,
-                options=options,
-                admission=current_admission,
-                progress=progress,
-            )
-            effective_capacity = (
-                None
-                if current_admission is None
-                else current_admission.object_capacity_bytes
-            )
-            return replace(
-                result,
-                simulation_config=original_config,
-                diagnostics=replace(
-                    result.diagnostics,
-                    admission_refinements=tuple(refinements),
-                    effective_object_capacity_bytes=effective_capacity,
-                ),
-                admission_facts=admission,
-            )
-        except PressureFitInfeasibleError as error:
-            if (
-                current_admission is None
-                or error.kind != "physical_admission"
-                or error.required_bytes is None
-                or error.required_bytes <= 0
-            ):
-                raise
-            previous = current_admission.object_capacity_bytes
-            scheduled_increment = scheduled_admission_refinement(len(refinements))
-            increment = max(
-                round_up_admission_reserve(error.required_bytes),
-                scheduled_increment,
-            )
-            capacity = previous - increment
-            if capacity <= 0:
-                raise
-            refinements.append(
-                AdmissionRefinement(
-                    attempt=len(refinements) + 1,
-                    previous_object_capacity_bytes=previous,
-                    required_additional_slack_bytes=error.required_bytes,
-                    reserve_increment_bytes=increment,
-                    object_capacity_bytes=capacity,
-                )
-            )
-            if progress is not None:
-                progress(
-                    "PressureFit physical admission refinement "
-                    f"{len(refinements)}: required_slack={error.required_bytes}, "
-                    f"reserve_increment={increment}, object_capacity={capacity}"
-                )
-            current_config, current_admission = with_object_capacity(
-                current_config,
-                current_admission,
-                capacity,
-                shared_execution_bytes=shared_residency_footprint(program).for_device(
-                    current_admission.device_id
-                ),
-            )
+    Capacity is settled inside the search: a candidate measures its own
+    plan against the pool `placement` describes and gives capacity back
+    until the plan fits, so there is nothing to retry at this level.
+    """
+
+    result = plan_program(
+        program,
+        initial_residency=initial_residency,
+        final_residency=final_residency,
+        config=config,
+        options=options,
+        admission=admission,
+        placement=placement,
+        progress=progress,
+    )
+    return replace(
+        result,
+        diagnostics=replace(
+            result.diagnostics,
+            effective_object_capacity_bytes=(
+                None if admission is None else admission.object_capacity_bytes
+            ),
+        ),
+        admission_facts=admission,
+    )
+
 
 
 __all__ = [
