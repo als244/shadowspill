@@ -64,7 +64,6 @@ _CSV_FIELDS = (
     "admission_work_time_ns",
     "digest_work_time_ns",
     "action_count",
-    "admission_refinement_count",
     "layout_required_bytes",
     "layout_slack_bytes",
     "plan_digest",
@@ -264,9 +263,6 @@ def _csv_row(
         ),
         "digest_work_time_ns": digest_work.get("summed_work_time_ns"),
         "action_count": schedule.get("action_count"),
-        "admission_refinement_count": len(
-            _list(admission.get("admission_refinements"))
-        ),
         "layout_required_bytes": admission.get("required_bytes"),
         "layout_slack_bytes": admission.get("slack_bytes"),
         "plan_digest": plan.get("plan_digest"),
