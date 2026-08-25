@@ -116,6 +116,10 @@ class FrontierConfig:
     pressurefit_cache_mode: Literal["cold", "warm"]
     transfer_bandwidths: TransferBandwidthBaseline
     grids: tuple[FrontierGrid, ...]
+    #: How much capacity a plan gives back at a time when its layout does not
+    #: fit. Part of the config so two runs that differ only here are told
+    #: apart by their config digest. Absent means the planner's own default.
+    capacity_refinement_bytes: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name or _SAFE_NAME.fullmatch(self.name) is None:
@@ -153,6 +157,7 @@ class FrontierConfig:
                 self.max_worker_restarts_per_program
             ),
             "pressurefit_cache_mode": self.pressurefit_cache_mode,
+            "capacity_refinement_bytes": self.capacity_refinement_bytes,
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),
             "grids": [grid.to_dict() for grid in self.grids],
         }
@@ -182,6 +187,7 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             "grids",
         },
         "config",
+        optional={"capacity_refinement_bytes"},
     )
     if data.get("schema") != _SCHEMA:
         raise ValueError(f"config.schema must be {_SCHEMA!r}")
@@ -228,6 +234,14 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             data.get("transfer_bandwidths"), "config.transfer_bandwidths"
         ),
         grids=grids,
+        capacity_refinement_bytes=(
+            None
+            if data.get("capacity_refinement_bytes") is None
+            else _integer(
+                data.get("capacity_refinement_bytes"),
+                "config.capacity_refinement_bytes",
+            )
+        ),
     )
     from .matrix import expand_grid_axes
 
@@ -347,8 +361,14 @@ def _literal(value: object, choices: set[str], path: str) -> str:
     return selected
 
 
-def _keys(data: dict[str, object], expected: set[str], path: str) -> None:
-    unknown = set(data) - expected
+def _keys(
+    data: dict[str, object],
+    expected: set[str],
+    path: str,
+    optional: set[str] | None = None,
+) -> None:
+    allowed = expected | (optional or set())
+    unknown = set(data) - allowed
     missing = expected - set(data)
     if unknown:
         raise ValueError(f"{path}: unknown keys: {', '.join(sorted(unknown))}")

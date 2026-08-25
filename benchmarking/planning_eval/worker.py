@@ -12,6 +12,7 @@ from benchmarking.program_collection.corpus import (
 )
 from shadowspill.planner import (
     PressureFitInfeasibleError,
+    PressureFitOptions,
     PressureFitSearchExhaustedError,
 )
 from shadowspill.pytorch import (
@@ -176,6 +177,13 @@ def _evaluate_point(
             execution_budget=request.axes.execution_budget_bytes,
             spill_budget=request.axes.spill_budget_bytes,
             transfer_bandwidths=request.transfer_bandwidths,
+            options=(
+                None
+                if config.capacity_refinement_bytes is None
+                else PressureFitOptions(
+                    capacity_refinement_bytes=config.capacity_refinement_bytes
+                )
+            ),
             planning_cachedir=planning_cache,
             verbose=verbose_pressurefit,
             save_plan=config.pressurefit_cache_mode == "warm",

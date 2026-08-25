@@ -1,0 +1,62 @@
+{
+  "schema": "shadowspill.pressurefit_frontier_config/v1",
+  "name": "full-pressurefit-frontier-v1-grain0",
+  "expected_programs": 168,
+  "expected_points_per_program": 15,
+  "program_role": "recurrent",
+  "point_timeout_seconds": 300,
+  "max_point_attempts": 1,
+  "max_worker_restarts_per_program": 64,
+  "pressurefit_cache_mode": "cold",
+  "transfer_bandwidths": {
+    "fetch_bytes_per_second": 25443740177,
+    "evict_bytes_per_second": 25222719387,
+    "provenance": "median bidirectional-concurrent runtime-init calibration across the 168 full-model Program corpus; frozen globally for cross-Program frontier comparison"
+  },
+  "grids": [
+    {
+      "name": "main",
+      "execution_budgets": [
+        "8GiB",
+        "12GiB",
+        "16GiB",
+        "26GiB"
+      ],
+      "spill_budgets": [
+        "112GiB"
+      ],
+      "bandwidth_scales": [
+        {
+          "numerator": 1,
+          "denominator": 2
+        },
+        {
+          "numerator": 1,
+          "denominator": 1
+        },
+        {
+          "numerator": 2,
+          "denominator": 1
+        }
+      ]
+    },
+    {
+      "name": "spill-pressure",
+      "execution_budgets": [
+        "16GiB"
+      ],
+      "spill_budgets": [
+        "64GiB",
+        "80GiB",
+        "100GiB"
+      ],
+      "bandwidth_scales": [
+        {
+          "numerator": 1,
+          "denominator": 1
+        }
+      ]
+    }
+  ],
+  "capacity_refinement_bytes": 0
+}
