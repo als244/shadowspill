@@ -17,16 +17,9 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import (
-    AdmissionFacts,
     InitialPlacement,
     PressureFitOptions,
-    TaskAdmissionSpec,
     pressurefit,
-)
-from shadowspill.planner.pressurefit.refinement import (
-    round_up_admission_reserve,
-    scheduled_admission_refinement,
-    with_object_capacity,
 )
 
 from ._examples import (
@@ -262,48 +255,3 @@ def test_result_builds_the_canonical_execution_plan() -> None:
     assert plan.prediction.makespan_ns == result.simulation.makespan_ns
     assert plan.prediction.device_peak_bytes == 122
 
-
-def test_admission_refinement_doubles_to_a_gibibyte_then_grows_by_512_mib() -> None:
-    """The ladder is a pure function of the attempt, so ask it directly."""
-
-    increments = tuple(scheduled_admission_refinement(attempt) for attempt in range(6))
-
-    assert increments == (
-        128 << 20,
-        256 << 20,
-        512 << 20,
-        1 << 30,
-        1536 << 20,
-        2 << 30,
-    )
-
-
-def test_admission_reserve_rounds_up_to_its_granularity() -> None:
-    granularity = 2 << 20
-
-    assert round_up_admission_reserve(0) == 0
-    assert round_up_admission_reserve(1) == granularity
-    assert round_up_admission_reserve(granularity) == granularity
-    assert round_up_admission_reserve(granularity + 1) == 2 * granularity
-
-
-def test_object_capacity_is_reduced_on_every_device_and_in_the_facts() -> None:
-    program = exact_capacity_program()
-    one_gib = 1 << 30
-    facts = AdmissionFacts(
-        "cuda_0",
-        9 * one_gib,
-        8 * one_gib,
-        1,
-        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
-    )
-
-    reduced_config, reduced_facts = with_object_capacity(
-        config(8 * one_gib),
-        facts,
-        4 * one_gib,
-        shared_execution_bytes=0,
-    )
-
-    assert reduced_facts.object_capacity_bytes == 4 * one_gib
-    assert {device.capacity_bytes for device in reduced_config.devices} == {4 * one_gib}

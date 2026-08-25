@@ -34,7 +34,7 @@ from ..admission.indexed import (
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from ..best import BestFound
+from ..best import BestPlaced
 from ..diagnostics import (
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
@@ -68,6 +68,11 @@ class SelectionProblem:
     selection_id: str
     indexed_template: IndexedSimulationTemplate
     indexed_admission: IndexedAdmissionFacts | None
+    #: The same topology, for measuring layouts during the search. Kept
+    #: apart from `indexed_admission` because supplying that switches on
+    #: the dynamic-pool replay, which rejects plans certified fixed
+    #: placement accepts.
+    indexed_placement: IndexedAdmissionFacts | None = None
 
 
 def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
@@ -83,6 +88,7 @@ def build_problems(
     config: SimulationConfig,
     admission: AdmissionFacts | None,
     *,
+    placement: AdmissionFacts | None = None,
     resolutions: tuple[Resolution, ...],
     progress: Callable[[str], None] | None,
 ) -> tuple[SelectionProblem, ...]:
@@ -108,6 +114,11 @@ def build_problems(
                 indexed_admission=(
                     index_admission_facts(admission, indexed_template)
                     if admission is not None
+                    else None
+                ),
+                indexed_placement=(
+                    index_admission_facts(placement, indexed_template)
+                    if placement is not None
                     else None
                 ),
             )
@@ -225,7 +236,7 @@ def run_problems(
     problems: tuple[SelectionProblem, ...],
     options: PressureFitOptions,
     *,
-    best: BestFound | None = None,
+    best: BestPlaced | None = None,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate every recomputation selection in the planner.
 
@@ -257,7 +268,9 @@ def run_problems(
             problem.indexed_template,
             unit_options,
             admission=problem.indexed_admission,
-            incumbent_makespan_ns=0 if best is None else best.bound_ns,
+            placement=problem.indexed_placement,
+            best_placed=0 if best is None else best.handle,
+            selection_index=problem_index,
         )
 
     workers = worker_count(options, len(units))
@@ -324,11 +337,22 @@ def finish_pressurefit(
     problems: tuple[SelectionProblem, ...],
     results: tuple[CProblemResult, ...],
     admission: AdmissionFacts | None,
+    best: BestPlaced | None = None,
 ) -> PressureFitResult:
-    """Decode the globally best compiled result and its diagnostics."""
+    """Decode the plan the search placed, and its diagnostics.
+
+    `best` is the authority on what won. Every candidate offers the plans it
+    places to that record as it places them, so by the time this runs the
+    record already holds the best plan anyone reached -- including one a
+    previous call left there, which is the point of sharing it. Ranking the
+    problems again here would be a second answer to a question already
+    answered, and the two can disagree: a problem's own winner is the best
+    plan *it* placed, which is not the best plan placed.
+    """
 
     recomputation_problems: list[RecomputationProblemDiagnostics] = []
     selected: tuple[int, int, CProblemResult] | None = None
+    held = None if best is None else best.read()
     for problem_index, (problem, result) in enumerate(
         zip(problems, results, strict=True)
     ):
@@ -372,6 +396,11 @@ def finish_pressurefit(
         candidate_ordinal = (
             problem_index * len(result.candidates) + result.selected_candidate_index
         )
+        # The record decides; a problem is a candidate for decoding only
+        # if it is holding the plan the record names. Ties fall to the
+        # earlier problem, so the answer does not depend on arrival order.
+        if held is not None and result.selected_makespan_ns != held.makespan_ns:
+            continue
         key = (result.selected_makespan_ns, candidate_ordinal)
         if selected is None or key < (selected[0], selected[1]):
             selected = (key[0], key[1], result)
@@ -430,6 +459,10 @@ def finish_pressurefit(
         result_admission_time_ns = time.perf_counter_ns() - admission_started
         result_admission_calls = 1
     simulation_started = time.perf_counter_ns()
+    # At full capacity, which is what the plan will actually run at. A plan
+    # built at a smaller capacity was *chosen* on how it behaves there, but
+    # the machine it runs on is the one the caller described, so that is what
+    # the reported timeline and the certificate measure.
     simulation = simulate_template(
         problem.indexed_template,
         schedule,

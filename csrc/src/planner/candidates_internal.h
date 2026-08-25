@@ -15,6 +15,12 @@ typedef struct ShadowSpillScheduleStorage {
 
 typedef struct ShadowSpillScheduleFacts {
     const ShadowSpillPressureFitProblem *problem;
+    /* What the plan being emitted has given back, per [device][boundary], or
+     * NULL for none. The emitter places fetches and evictions against the
+     * capacity it believes it has, so a plan built at a smaller capacity has
+     * to be emitted against that one too -- the same array the reducer adds
+     * to its own occupancy. */
+    const uint64_t *extra_pressure;
     uint32_t alias_count;
     uint32_t task_count;
     uint32_t boundary_count;
@@ -55,6 +61,15 @@ void shadowspill_schedule_storage_destroy(ShadowSpillScheduleStorage *storage);
 int shadowspill_schedule_storage_copy(
     ShadowSpillScheduleStorage *destination,
     const ShadowSpillScheduleStorage *source
+);
+
+/* Records `record` and keeps its own copy of `plan` if it beats what is
+ * held, returning non-zero if it did. Internal because the plan it keeps is
+ * an internal storage type; the rest of the gate is public. */
+int shadowspill_best_placed_offer(
+    ShadowSpillBestPlaced *best,
+    const ShadowSpillBestPlacedRecord *record,
+    const ShadowSpillScheduleStorage *plan
 );
 
 int shadowspill_extend_interval_entries(

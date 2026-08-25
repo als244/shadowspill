@@ -239,8 +239,22 @@ class CPressureFitProblem(ctypes.Structure):
         ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
         ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
         ("admission", ctypes.POINTER(CAdmissionFacts)),
+        ("placement", ctypes.POINTER(CAdmissionFacts)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
+    ]
+
+
+class CBestPlacedRecord(ctypes.Structure):
+    _fields_ = [
+        ("makespan_ns", ctypes.c_uint64),
+        ("object_capacity_bytes", ctypes.c_uint64),
+        ("capacity_given_back_bytes", ctypes.c_uint64),
+        ("selection_index", ctypes.c_uint32),
+        ("residency_strategy", ctypes.c_uint8),
+        ("prefetch_rule", ctypes.c_uint8),
+        ("coalesced", ctypes.c_uint8),
+        ("schedule_digest", ctypes.c_uint8 * 32),
     ]
 
 
@@ -253,8 +267,9 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("evaluate_coalesced", ctypes.c_uint8),
         ("max_repair_attempts", ctypes.c_uint32),
         ("initial_placement", ctypes.c_uint8),
-        ("repair_while_stalling", ctypes.c_uint8),
-        ("incumbent_makespan_ns", ctypes.c_uint64),
+        ("capacity_refinement_bytes", ctypes.c_uint64),
+        ("best_placed", ctypes.c_void_p),
+        ("selection_index", ctypes.c_uint32),
     ]
 
 
@@ -264,6 +279,7 @@ class CPressureFitProgramProblem(ctypes.Structure):
         ("simulation", ctypes.POINTER(CProgram)),
         ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
         ("admission", ctypes.POINTER(CAdmissionFacts)),
+        ("placement", ctypes.POINTER(CAdmissionFacts)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
     ]
@@ -320,6 +336,9 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("simulation_status", ctypes.c_uint32),
         ("makespan_ns", ctypes.c_uint64),
         ("capacity_violation_count", ctypes.c_uint32),
+        ("placements_attempted", ctypes.c_uint32),
+        ("placements_admitted", ctypes.c_uint32),
+        ("capacity_refinements", ctypes.c_uint32),
         ("schedule_digest", ctypes.c_uint8 * 32),
         ("error_task", ctypes.c_uint32),
         ("error_alias", ctypes.c_uint32),
@@ -402,6 +421,15 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitProblemResult),
     ]
     library.shadowspill_evaluate_pressurefit_program_problem.restype = ctypes.c_uint32
+    library.shadowspill_best_placed_create.argtypes = []
+    library.shadowspill_best_placed_create.restype = ctypes.c_void_p
+    library.shadowspill_best_placed_destroy.argtypes = [ctypes.c_void_p]
+    library.shadowspill_best_placed_destroy.restype = None
+    library.shadowspill_best_placed_read.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(CBestPlacedRecord),
+    ]
+    library.shadowspill_best_placed_read.restype = None
     library.shadowspill_validate_pressurefit_program_problem.argtypes = [
         ctypes.POINTER(CPressureFitProgramProblem),
         ctypes.POINTER(CPressureFitPreflightResult),

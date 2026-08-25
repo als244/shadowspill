@@ -12,6 +12,9 @@ extern "C" {
 
 #define SHADOWSPILL_PLANNER_NO_INDEX UINT32_MAX
 #define SHADOWSPILL_PLANNER_DIGEST_BYTES 32U
+
+/* Declared here so problem options can name it; defined further down. */
+typedef struct ShadowSpillBestPlaced ShadowSpillBestPlaced;
 #define SHADOWSPILL_ADMISSION_NO_DEPENDENCY UINT64_MAX
 #define SHADOWSPILL_ADMISSION_NO_OPERATION UINT64_MAX
 #define SHADOWSPILL_ADMISSION_NO_LEASE UINT64_MAX
@@ -143,6 +146,16 @@ typedef struct ShadowSpillPressureFitProblem {
     const uint8_t *seed_resident;
     const uint8_t *seed_breaks;
     const ShadowSpillAdmissionFacts *admission;
+    /* The same topology, supplied for placement alone.
+     *
+     * `admission` above switches on the dynamic-pool replay, which is a
+     * stricter and different question: it rejects schedules that certified
+     * fixed placement accepts, so a search that prefilters through it
+     * discards plans that would have run. Placement needs the topology
+     * without that prefilter, so it is passed separately and the two are
+     * deliberately not the same field. NULL leaves plans unplaced, which is
+     * how a caller opts out of measuring layouts during the search. */
+    const ShadowSpillAdmissionFacts *placement;
 
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
@@ -157,24 +170,16 @@ typedef struct ShadowSpillPressureFitProblemOptions {
     uint8_t evaluate_coalesced;
     uint32_t max_repair_attempts;
     uint8_t initial_placement;
-    /* Keep repairing a candidate whose plan already simulates, while that
-       plan still comes up short of capacity somewhere.
-    
-       A plan that waits for memory is valid but not finished: the waiting is
-       time the plan pays, and the pressure that caused it is what repair
-       exists to relieve. Stopping at the first success accepts that cost
-       untouched. When set, the candidate keeps its best plan by makespan and
-       returns that rather than the first one it found. Zero stops at the
-       first success, which is what the search did before. */
-    uint8_t repair_while_stalling;
-    /* Makespan of the best plan the caller already holds, or zero for none.
-     *
-     * A candidate whose own makespan has reached this cannot win however far
-     * it is repaired, so it is abandoned rather than truncated at a depth.
-     * The caller owns the value and decides its scope: one resolved program,
-     * or every resolved program searched so far. Zero disables the bound and
-     * every candidate is evaluated. */
-    uint64_t incumbent_makespan_ns;
+    /* How much capacity a plan gives back at a time when its layout does
+       not fit; zero hands back exactly what it overran. */
+    uint64_t capacity_refinement_bytes;
+    /* The shared best-placed plan, or NULL to place without a gate. The
+       planner never owns it: one object passed to several searches shares the
+       gate between them, separate objects keep them independent. */
+    ShadowSpillBestPlaced *best_placed;
+    /* Recorded on the winning plan so a caller can tell which resolved
+       program produced it. Never interpreted here. */
+    uint32_t selection_index;
 } ShadowSpillPressureFitProblemOptions;
 
 /*
@@ -189,6 +194,11 @@ typedef struct ShadowSpillPressureFitProgramProblem {
     const ShadowSpillSimulationProgram *simulation;
     const uint32_t *device_priority;
     const ShadowSpillAdmissionFacts *admission;
+    /* The topology, for placement alone. See the note on the same field of
+       ShadowSpillPressureFitProblem: supplying `admission` switches on the
+       dynamic-pool replay, which rejects plans certified fixed placement
+       accepts, so the two are separate fields on purpose. */
+    const ShadowSpillAdmissionFacts *placement;
 
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
@@ -220,10 +230,10 @@ typedef enum ShadowSpillCandidateStatus {
     SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE = 3,
     SHADOWSPILL_CANDIDATE_INTERNAL_ERROR = 4,
     SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED = 5,
-    /* Abandoned because its own makespan had already reached the plan the
-     * caller holds, so no amount of further repair could let it win. This is
-     * healthy: the answer is no worse for having stopped. */
-    SHADOWSPILL_CANDIDATE_DOMINATED = 6,
+    /* Every plan this candidate reached needed more contiguous pool than the
+     * pool has. Its makespan was never the question: a plan with no layout
+     * cannot run, so the candidate has no answer to offer. */
+    SHADOWSPILL_CANDIDATE_UNPLACEABLE = 7,
 } ShadowSpillCandidateStatus;
 
 /* Categorized monotonic repair operations for one candidate evaluation. */
@@ -264,6 +274,14 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     /* How many places the accepted plan came up short of capacity and
        waited. Zero means it never waited for memory. */
     uint32_t capacity_violation_count;
+    /* What placing this candidate's plans cost, and what it bought.
+       `placements_attempted` counts measurements actually taken -- the gate
+       and the plateau rule decide how few that is -- and
+       `capacity_refinements` counts the times a plan gave back what it
+       overran and reduced again. */
+    uint32_t placements_attempted;
+    uint32_t placements_admitted;
+    uint32_t capacity_refinements;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 
     uint32_t error_task;
@@ -584,7 +602,6 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_build_lease_lifetimes(
  * `offer` returns non-zero when the value replaced the previous best. `admits`
  * is the question a search asks: is this plan worth measuring at all.
  */
-typedef struct ShadowSpillBestPlaced ShadowSpillBestPlaced;
 
 /* Which plan the best makespan belongs to.
  *
@@ -597,6 +614,12 @@ typedef struct ShadowSpillBestPlacedRecord {
     /* The capacity the plan was built against, which is a property of the
        plan rather than of the search that produced it. */
     uint64_t object_capacity_bytes;
+    /* How much device capacity this plan gave back, applied to every device.
+       Anything that re-times or re-measures the plan has to use the capacity
+       it was built at: at full capacity it stalls less, so its timeline --
+       and the lease lifetimes derived from that timeline -- are not the ones
+       the plan was chosen on. */
+    uint64_t capacity_given_back_bytes;
     /* Caller-assigned; the planner never interprets it. */
     uint32_t selection_index;
     uint8_t residency_strategy;
@@ -614,11 +637,6 @@ SHADOWSPILL_API void shadowspill_best_placed_destroy(
 SHADOWSPILL_API int shadowspill_best_placed_admits(
     const ShadowSpillBestPlaced *best,
     uint64_t makespan_ns
-);
-/* Records `record` if it beats what is held, returning non-zero if it did. */
-SHADOWSPILL_API int shadowspill_best_placed_offer(
-    ShadowSpillBestPlaced *best,
-    const ShadowSpillBestPlacedRecord *record
 );
 /* Copies out what is held. `makespan_ns` is zero when nothing was placed. */
 SHADOWSPILL_API void shadowspill_best_placed_read(

@@ -433,7 +433,17 @@ static int build_pressure(
         0) {
         return -1;
     }
-    memset(pressure, 0, pressure_cells * sizeof(*pressure));
+    if (facts->extra_pressure != NULL) {
+        /* Start from what the plan gave back, so every capacity test below
+         * measures against the capacity this plan kept. */
+        memcpy(
+            pressure,
+            facts->extra_pressure,
+            pressure_cells * sizeof(*pressure)
+        );
+    } else {
+        memset(pressure, 0, pressure_cells * sizeof(*pressure));
+    }
     uint8_t *contribution = calloc(
         facts->boundary_count,
         sizeof(*contribution)

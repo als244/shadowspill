@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The capacity a candidate is planning at, which starts as the device's
+ * and falls as the candidate gives back what its layout overran. */
 typedef struct SimulationWorkspace {
     ShadowSpillTaskInterval *tasks;
     ShadowSpillTransferInterval *transfers;
@@ -91,7 +93,48 @@ typedef struct SimulationCache {
     HashIndex index;
 } SimulationCache;
 
+
+/*
+ * Buffers for deciding whether one plan can be placed in the execution pool.
+ *
+ * Placement runs on the plan a candidate currently holds, so a candidate
+ * places many plans over its life and the sizes barely change between them.
+ * The arrays are grown on demand and reused rather than allocated per plan.
+ */
+typedef struct PlacementWorkspace {
+    ShadowSpillAdmissionOperations operations;
+    uint64_t *lease_ids;
+    uint64_t *dependency_ids;
+    uint64_t *bytes;
+    uint64_t *alignments;
+    uint8_t *kinds;
+    uint8_t *purposes;
+    uint8_t *boundaries;
+    uint32_t *indices;
+    uint32_t *allocation_offsets;
+    uint32_t *lease_aliases;
+    uint64_t *lease_starts;
+    uint64_t *lease_retires;
+    ShadowSpillLeaseLifetime *lifetimes;
+    ShadowSpillLeaseIdentity *identities;
+    uint64_t *allocation_step_leases;
+    uint64_t *alias_leases;
+    uint64_t *offsets;
+    uint32_t *dynamic_aliases;
+    uint64_t operation_capacity;
+    uint64_t lease_capacity;
+    uint32_t alias_capacity;
+    uint32_t allocation_slot_capacity;
+} PlacementWorkspace;
+
 typedef struct CandidateWorkspace {
+    /* What this plan has given back: the bytes its layout overran. It
+     * shapes the plan -- the reducer charges it through `extra_pressure`
+     * and the emitter measures against it -- and is reported on the plan so
+     * a reader can tell what it was built for. The simulator is deliberately
+     * not one of its readers: the plan runs on the machine the caller
+     * described, so that is the capacity it is timed at. */
+    uint64_t plan_capacity_given_back;
     uint8_t *resident;
     uint8_t *breaks;
     uint8_t *base_resident;
@@ -109,6 +152,9 @@ typedef struct CandidateWorkspace {
     /* Where a plan first came up short, which is what repair aims at
      * when the plan simulates but waits for memory. */
     ShadowSpillCapacityViolation first_violation;
+    /* Buffers for placing a plan physically. Grown on demand and reused,
+     * because a candidate places many plans and the sizes barely move. */
+    PlacementWorkspace placement;
     ShadowSpillCandidateAdmissionWorkspace admission;
     ResidencyCache residency_cache;
     ScheduleCache schedule_cache;
@@ -579,6 +625,270 @@ static int simulate_schedule(
     return 0;
 }
 
+
+/* Grow the placement buffers to hold one plan's operations and leases. */
+static int placement_reserve(
+    PlacementWorkspace *workspace,
+    uint64_t operations,
+    uint64_t leases,
+    uint32_t aliases,
+    uint32_t allocation_slots
+) {
+    /* A program can legitimately have none of a kind -- no allocation steps,
+     * no aliases. Reserving one anyway keeps every buffer a valid pointer,
+     * which is what the builders below validate. */
+    operations = operations ? operations : 1U;
+    leases = leases ? leases : 1U;
+    aliases = aliases ? aliases : 1U;
+    allocation_slots = allocation_slots ? allocation_slots : 1U;
+    if (operations > workspace->operation_capacity) {
+        uint64_t want = operations;
+        free(workspace->lease_ids);
+        free(workspace->dependency_ids);
+        free(workspace->bytes);
+        free(workspace->alignments);
+        free(workspace->kinds);
+        free(workspace->purposes);
+        free(workspace->boundaries);
+        free(workspace->indices);
+        free(workspace->allocation_offsets);
+        workspace->lease_ids = malloc(want * sizeof(*workspace->lease_ids));
+        workspace->dependency_ids =
+            malloc(want * sizeof(*workspace->dependency_ids));
+        workspace->bytes = malloc(want * sizeof(*workspace->bytes));
+        workspace->alignments = malloc(want * sizeof(*workspace->alignments));
+        workspace->kinds = malloc(want * sizeof(*workspace->kinds));
+        workspace->purposes = malloc(want * sizeof(*workspace->purposes));
+        workspace->boundaries = malloc(want * sizeof(*workspace->boundaries));
+        workspace->indices = malloc(want * sizeof(*workspace->indices));
+        workspace->allocation_offsets =
+            malloc(want * sizeof(*workspace->allocation_offsets));
+        workspace->operation_capacity = want;
+        if (workspace->lease_ids == NULL || workspace->dependency_ids == NULL ||
+            workspace->bytes == NULL || workspace->alignments == NULL ||
+            workspace->kinds == NULL || workspace->purposes == NULL ||
+            workspace->boundaries == NULL || workspace->indices == NULL ||
+            workspace->allocation_offsets == NULL) {
+            return -1;
+        }
+    }
+    if (leases > workspace->lease_capacity) {
+        free(workspace->lifetimes);
+        free(workspace->identities);
+        free(workspace->offsets);
+        free(workspace->lease_aliases);
+        free(workspace->lease_starts);
+        free(workspace->lease_retires);
+        workspace->lease_aliases =
+            malloc(leases * sizeof(*workspace->lease_aliases));
+        workspace->lease_starts =
+            malloc(leases * sizeof(*workspace->lease_starts));
+        workspace->lease_retires =
+            malloc(leases * sizeof(*workspace->lease_retires));
+        workspace->lifetimes = malloc(leases * sizeof(*workspace->lifetimes));
+        workspace->identities = malloc(leases * sizeof(*workspace->identities));
+        workspace->offsets = malloc(leases * sizeof(*workspace->offsets));
+        workspace->lease_capacity = leases;
+        if (workspace->lifetimes == NULL || workspace->identities == NULL ||
+            workspace->offsets == NULL || workspace->lease_aliases == NULL ||
+            workspace->lease_starts == NULL ||
+            workspace->lease_retires == NULL) {
+            return -1;
+        }
+    }
+    if (allocation_slots > workspace->allocation_slot_capacity) {
+        /* One entry per flattened allocation step, which is neither a lease
+         * nor an alias count. */
+        free(workspace->allocation_step_leases);
+        workspace->allocation_step_leases = malloc(
+            (size_t)allocation_slots * sizeof(*workspace->allocation_step_leases)
+        );
+        workspace->allocation_slot_capacity = allocation_slots;
+        if (workspace->allocation_step_leases == NULL) {
+            return -1;
+        }
+    }
+    if (aliases > workspace->alias_capacity) {
+        free(workspace->alias_leases);
+        free(workspace->dynamic_aliases);
+        workspace->alias_leases =
+            malloc((size_t)aliases * sizeof(*workspace->alias_leases));
+        workspace->dynamic_aliases =
+            malloc((size_t)aliases * sizeof(*workspace->dynamic_aliases));
+        workspace->alias_capacity = aliases;
+        if (workspace->alias_leases == NULL ||
+            workspace->dynamic_aliases == NULL) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void placement_workspace_destroy(PlacementWorkspace *workspace) {
+    free(workspace->lease_ids);
+    free(workspace->dependency_ids);
+    free(workspace->bytes);
+    free(workspace->alignments);
+    free(workspace->kinds);
+    free(workspace->purposes);
+    free(workspace->boundaries);
+    free(workspace->indices);
+    free(workspace->allocation_offsets);
+    free(workspace->lease_aliases);
+    free(workspace->lease_starts);
+    free(workspace->lease_retires);
+    free(workspace->lifetimes);
+    free(workspace->identities);
+    free(workspace->allocation_step_leases);
+    free(workspace->alias_leases);
+    free(workspace->offsets);
+    free(workspace->dynamic_aliases);
+    memset(workspace, 0, sizeof(*workspace));
+}
+
+/*
+ * Can this plan be placed in the execution pool, and if not, by how much did
+ * it overrun?
+ *
+ * The simulator answers whether a plan fits by bytes; this answers whether it
+ * fits by *placement*, which is a stricter question -- leases need contiguous
+ * ranges and a pool with room in total can still have nowhere to put one.
+ * A plan the pool cannot place cannot run, so the overage is what the plan
+ * has to give back before it is worth anything.
+ *
+ * Returns 0 on success, writing `required_bytes`; -1 if the measurement could
+ * not be taken at all, which is a different thing from a plan that does not
+ * fit.
+ */
+static int place_plan(
+    const ShadowSpillPressureFitProblem *problem,
+    CandidateWorkspace *workspace,
+    const ShadowSpillSimulationResult *simulation,
+    uint64_t *required_bytes
+) {
+    const ShadowSpillIndexedSchedule *schedule = &workspace->schedule.value;
+    const ShadowSpillAdmissionFacts *admission = problem->placement;
+    if (admission == NULL) {
+        return -1;
+    }
+    /* A result the admission replay refused is zeroed, and a zeroed status
+     * reads as OK, so a plan can arrive here with no intervals behind it.
+     * Lease lifetimes are derived from those intervals, so there is nothing
+     * to place. */
+    if (simulation->task_intervals == NULL ||
+        simulation->transfer_intervals == NULL ||
+        simulation->makespan_ns == 0U) {
+        return -1;
+    }
+    uint64_t operation_capacity = 0U;
+    uint64_t lease_capacity = 0U;
+    ShadowSpillStatus bounds_status = shadowspill_admission_operation_bounds(
+        problem->simulation, admission, schedule,
+        &operation_capacity, &lease_capacity
+    );
+    if (bounds_status != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    PlacementWorkspace *place = &workspace->placement;
+    if (placement_reserve(
+            place, operation_capacity, lease_capacity,
+            problem->residency->alias_count,
+            /* Flattened allocation steps, which is where the topology ends --
+             * not the slot count, which counts something else. */
+            admission->task_allocation_offsets[admission->task_count]
+        ) != 0) {
+        return -1;
+    }
+    place->operations = (ShadowSpillAdmissionOperations){
+        .lease_ids = place->lease_ids,
+        .dependency_ids = place->dependency_ids,
+        .bytes = place->bytes,
+        .alignments = place->alignments,
+        .kinds = place->kinds,
+        .purposes = place->purposes,
+        .boundaries = place->boundaries,
+        .indices = place->indices,
+        .allocation_offsets = place->allocation_offsets,
+        .operation_capacity = operation_capacity,
+        .lease_aliases = place->lease_aliases,
+        .lease_starts = place->lease_starts,
+        .lease_retires = place->lease_retires,
+        .lease_capacity = lease_capacity,
+    };
+    ShadowSpillStatus operations_status = shadowspill_build_admission_operations(
+        problem->simulation, admission, schedule, &place->operations
+    );
+    if (operations_status != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    /* Aliases the plan leaves resident on the device hold their lease past the
+     * step, so placement has to keep room for them. */
+    uint32_t dynamic_count = 0U;
+    for (uint32_t index = 0U; index < schedule->final_count; ++index) {
+        if (schedule->final_locations[index] == SHADOWSPILL_MEMORY_DEVICE) {
+            place->dynamic_aliases[dynamic_count++] = schedule->final_aliases[index];
+        }
+    }
+    ShadowSpillLeaseLifetimeProblem lifetime_problem = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .operations = &place->operations,
+        .admission = admission,
+        .schedule = schedule,
+        .task_intervals = simulation->task_intervals,
+        .task_interval_count = simulation->task_interval_count,
+        .transfer_intervals = simulation->transfer_intervals,
+        .transfer_interval_count = simulation->transfer_interval_count,
+        .makespan_ns = simulation->makespan_ns,
+        .dynamic_aliases = place->dynamic_aliases,
+        .dynamic_alias_count = dynamic_count,
+    };
+    ShadowSpillLeaseLifetimeResult lifetime_result = {
+        .lifetimes = place->lifetimes,
+        .identities = place->identities,
+        .allocation_step_leases = place->allocation_step_leases,
+        .alias_leases = place->alias_leases,
+    };
+    ShadowSpillStatus lifetime_status =
+        shadowspill_build_lease_lifetimes(&lifetime_problem, &lifetime_result);
+    if (lifetime_status != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    /* Fixed leases occupy the prefix, so placement runs on it without a copy. */
+    ShadowSpillPlacementProblem placement_problem = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .lifetime_count = (uint32_t)lifetime_result.fixed_count,
+        .lifetimes = place->lifetimes,
+    };
+    ShadowSpillPlacementResult placement_result = {
+        .required_bytes = 0U,
+        .offsets = place->offsets,
+    };
+    ShadowSpillStatus place_status =
+        shadowspill_place_lifetimes(&placement_problem, &placement_result);
+    if (place_status != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    /* What the pool has to hold is the reusable slice plus the leases that
+     * outlive the step, which are placed outside it. The certificate adds the
+     * same two, so measuring only the slice reports a plan as fitting that
+     * the certificate then refuses. */
+    uint64_t dynamic_bytes = 0U;
+    for (uint64_t lease = lifetime_result.fixed_count;
+         lease < lifetime_result.lifetime_count;
+         ++lease) {
+        if (place->lifetimes[lease].bytes >
+            UINT64_MAX - dynamic_bytes) {
+            return -1;
+        }
+        dynamic_bytes += place->lifetimes[lease].bytes;
+    }
+    if (placement_result.required_bytes > UINT64_MAX - dynamic_bytes) {
+        return -1;
+    }
+    *required_bytes = placement_result.required_bytes + dynamic_bytes;
+    return 0;
+}
+
 static int candidate_workspace_create(
     const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace
@@ -664,6 +974,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     shadowspill_schedule_storage_destroy(&workspace->selected);
     shadowspill_schedule_storage_destroy(&workspace->best);
     simulation_workspace_destroy(&workspace->simulation);
+    placement_workspace_destroy(&workspace->placement);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
     for (uint32_t index = 0U; index < workspace->residency_cache.count; ++index) {
@@ -1777,6 +2088,32 @@ static uint32_t stopped_status(
     return (uint32_t)SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
 }
 
+/* A candidate that placed a plan has an answer, whatever became of it
+ * afterwards. The shared record already names that plan, so this candidate
+ * has to report it: otherwise the record holds a makespan whose plan nobody
+ * kept, and the search would answer with a plan it cannot produce. */
+static int finish_with_placed_plan(
+    CandidateWorkspace *workspace,
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    uint64_t placed_makespan_ns,
+    const uint8_t *placed_digest
+) {
+    diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
+    diagnostic->makespan_ns = placed_makespan_ns;
+    memcpy(
+        diagnostic->schedule_digest,
+        placed_digest,
+        SHADOWSPILL_PLANNER_DIGEST_BYTES
+    );
+    if (shadowspill_schedule_storage_copy(
+            &workspace->schedule, &workspace->best
+        ) != 0) {
+        return -1;
+    }
+    return 1;
+}
+
+
 static int evaluate_candidate(
     const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillScheduleFacts *facts,
@@ -1797,11 +2134,27 @@ static int evaluate_candidate(
         0,
         (size_t)pressure_cells * sizeof(*workspace->extra_pressure)
     );
+    workspace->plan_capacity_given_back = 0U;
     memcpy(workspace->resident, workspace->base_resident, (size_t)cells);
     memcpy(workspace->breaks, workspace->base_breaks, (size_t)cells);
     workspace->prefetch_constraint_count = 0U;
     uint64_t best_makespan_ns = 0U;
     uint8_t best_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES] = {0};
+    /* The plan this candidate would answer with: the best it has placed,
+     * which is not always the best it has simulated. */
+    uint64_t placed_makespan_ns = 0U;
+    uint8_t placed_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES] = {0};
+    /* Whether there is a pool to place into at all. Without one the
+     * candidate answers with its fastest plan, which is what a caller that
+     * supplied no topology can be told. */
+    const int placing = problem->placement != NULL;
+    /* Capacity is a property of the plan, so it travels with it. */
+    uint64_t plan_capacity_bytes = problem->placement == NULL
+        ? 0U
+        : problem->placement->object_capacity_bytes;
+    const uint64_t pressure_cell_count =
+        (uint64_t)problem->residency->device_count *
+        problem->residency->boundary_count;
     workspace->current_residency_key = workspace->base_residency_key;
 
     ShadowSpillResidencyOptions reduce_options;
@@ -1845,6 +2198,11 @@ static int evaluate_candidate(
             if (constrained > 0) {
                 diagnostic->status =
                     SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+                if (placing && placed_makespan_ns != 0U) {
+                    return finish_with_placed_plan(
+                        workspace, diagnostic, placed_makespan_ns, best_digest
+                    );
+                }
                 return 0;
             }
             need_emit = 0;
@@ -1945,6 +2303,11 @@ static int evaluate_candidate(
                             admission_error_annotation,
                             diagnostic
                         );
+                        if (placing && placed_makespan_ns != 0U) {
+                            return finish_with_placed_plan(
+                                workspace, diagnostic, placed_makespan_ns, best_digest
+                            );
+                        }
                         return 0;
                     }
                     ++diagnostic->repairs.admission_prefetch_advance_attempts;
@@ -1975,6 +2338,11 @@ static int evaluate_candidate(
                             admission_error_annotation,
                             diagnostic
                         );
+                        if (placing && placed_makespan_ns != 0U) {
+                            return finish_with_placed_plan(
+                                workspace, diagnostic, placed_makespan_ns, best_digest
+                            );
+                        }
                         return 0;
                     }
                     ++diagnostic->repairs.admission_prefetch_delay_attempts;
@@ -2004,6 +2372,11 @@ static int evaluate_candidate(
                         return -1;
                     }
                     if (reduced == 0) {
+                        if (placing && placed_makespan_ns != 0U) {
+                            return finish_with_placed_plan(
+                                workspace, diagnostic, placed_makespan_ns, best_digest
+                            );
+                        }
                         return 0;
                     }
                     need_emit = 1;
@@ -2024,6 +2397,11 @@ static int evaluate_candidate(
                     candidate_options, diagnostic, simulation.makespan_ns
                 );
             }
+            if (placing && placed_makespan_ns != 0U) {
+                return finish_with_placed_plan(
+                    workspace, diagnostic, placed_makespan_ns, best_digest
+                );
+            }
             return 0;
         }
         if (simulation_status == SHADOWSPILL_STATUS_OK) {
@@ -2041,16 +2419,200 @@ static int evaluate_candidate(
             const int improves =
                 best_makespan_ns == 0U ||
                 simulation.makespan_ns < best_makespan_ns;
+
+            /*
+             * Every new plan that could still win is worth measuring. The
+             * gate is what keeps this affordable: a plan no better than one
+             * already placed cannot become the answer, so it is never
+             * measured. Skipping plans on any other ground -- waiting for a
+             * local minimum, say -- can leave a candidate that never placed
+             * anything at all, and a candidate with no placed plan has no
+             * answer to give.
+             */
+            if (shadowspill_best_placed_admits(
+                    candidate_options->best_placed, simulation.makespan_ns
+                ) &&
+                memcmp(
+                    placed_digest,
+                    simulation_entry->digest,
+                    sizeof(placed_digest)
+                ) != 0) {
+                memcpy(
+                    placed_digest,
+                    simulation_entry->digest,
+                    sizeof(placed_digest)
+                );
+                uint64_t required_bytes = 0U;
+                const uint64_t pool_bytes =
+                    problem->placement == NULL
+                        ? 0U
+                        : problem->placement->pool_capacity_bytes;
+                ++diagnostic->placements_attempted;
+                /*
+                 * The simulation cache keeps makespans, not timelines: its
+                 * entries drop the interval arrays, which point into the
+                 * shared workspace. Placement is derived from those
+                 * intervals, so a cache hit has to be replayed before it can
+                 * be measured -- otherwise a plan that simply came from the
+                 * cache reads as a plan that cannot be placed.
+                 */
+                if (simulation.task_intervals == NULL) {
+                    ShadowSpillStatus replay_status = SHADOWSPILL_STATUS_OK;
+                    ShadowSpillAdmissionReplayResult replay_result = {0};
+                    if (simulate_schedule(
+                            problem,
+                            &workspace->schedule.value,
+                            &workspace->simulation,
+                            &workspace->admission,
+                            &workspace->first_violation,
+                            &simulation,
+                            &replay_status,
+                            &replay_result
+                        ) != 0) {
+                        return -1;
+                    }
+                }
+                if (place_plan(problem, workspace, &simulation, &required_bytes)
+                        == 0) {
+                    if (required_bytes <= pool_bytes) {
+                        ShadowSpillBestPlacedRecord record = {
+                            .makespan_ns = simulation.makespan_ns,
+                            .object_capacity_bytes = plan_capacity_bytes,
+                            .capacity_given_back_bytes =
+                                workspace->plan_capacity_given_back,
+                            .selection_index = candidate_options->selection_index,
+                            .residency_strategy = strategy,
+                            .prefetch_rule = rule,
+                            .coalesced = (uint8_t)coalesced,
+                        };
+                        memcpy(
+                            record.schedule_digest,
+                            simulation_entry->digest,
+                            sizeof(record.schedule_digest)
+                        );
+                        /* Re-compared under the lock: another candidate may
+                         * have placed something better while this was being
+                         * measured, so being admitted is not being best. */
+                        (void)shadowspill_best_placed_offer(
+                            candidate_options->best_placed,
+                            &record,
+                            &workspace->schedule
+                        );
+                        ++diagnostic->placements_admitted;
+                        if (placed_makespan_ns == 0U ||
+                            simulation.makespan_ns < placed_makespan_ns) {
+                            placed_makespan_ns = simulation.makespan_ns;
+                            if (shadowspill_schedule_storage_copy(
+                                    &workspace->best, &workspace->schedule
+                                ) != 0) {
+                                return -1;
+                            }
+                            memcpy(
+                                best_digest,
+                                simulation_entry->digest,
+                                sizeof(best_digest)
+                            );
+                        }
+                    } else {
+                        /*
+                         * The pool cannot place this plan, which is a fact
+                         * about the plan and not about the search: it gives
+                         * back exactly what it overran and reduces again.
+                         * Uniform pressure is how a plan expresses a smaller
+                         * capacity to the reducer.
+                         */
+                        /* Hand back what the measurement asked for, or a
+                         * bounded step if the caller set one. The extent does
+                         * not fall byte for byte with the capacity -- on one
+                         * measured point a 1 GiB reduction moved it 2.2 GB --
+                         * so the whole overage can overshoot the capacity that
+                         * would have fit, which a step avoids at the cost of
+                         * more rounds. */
+                        const uint64_t shortfall = required_bytes - pool_bytes;
+                        const uint64_t step =
+                            candidate_options->capacity_refinement_bytes;
+                        const uint64_t overage =
+                            (step == 0U || shortfall < step) ? shortfall : step;
+                        ++diagnostic->capacity_refinements;
+                        plan_capacity_bytes = plan_capacity_bytes > overage
+                            ? plan_capacity_bytes - overage
+                            : 0U;
+                        for (uint64_t cell_index = 0U;
+                             cell_index < pressure_cell_count;
+                             ++cell_index) {
+                            workspace->extra_pressure[cell_index] += overage;
+                        }
+                        workspace->plan_capacity_given_back += overage;
+                        /* Plan again at the smaller capacity rather than
+                         * pressing further on what this capacity produced. */
+                        memcpy(
+                            workspace->resident,
+                            workspace->base_resident,
+                            (size_t)cells
+                        );
+                        memcpy(
+                            workspace->breaks,
+                            workspace->base_breaks,
+                            (size_t)cells
+                        );
+                        workspace->prefetch_constraint_count = 0U;
+                        if (reduce_repaired_candidate(
+                                problem,
+                                workspace,
+                                &reduce_options,
+                                strategy,
+                                diagnostic
+                            ) > 0) {
+                            need_emit = 1;
+                            continue;
+                        }
+                    }
+                }
+            }
             /* A plan that waits for memory is valid but unfinished: the wait
              * is time it pays, and the shortfall that caused it is what
              * repair relieves. Stopping here accepts that cost untouched. */
-            const int stalling =
-                candidate_options->repair_while_stalling != 0U &&
-                simulation.capacity_violation_count > 0U;
+            const int stalling = simulation.capacity_violation_count > 0U;
             if (!stalling ||
                 !may_repair_again(
                     candidate_options, diagnostic, best_makespan_ns
                 )) {
+                /*
+                 * With a pool to place into, the candidate's answer is the
+                 * best plan whose layout fit -- not the fastest plan it
+                 * simulated. A plan that cannot be placed cannot run, so
+                 * offering it as an answer only pushes the rejection to a
+                 * later layer that has to walk capacity down to escape it.
+                 */
+                if (placing) {
+                    if (placed_makespan_ns == 0U) {
+                        diagnostic->status =
+                            SHADOWSPILL_CANDIDATE_UNPLACEABLE;
+                        if (placing && placed_makespan_ns != 0U) {
+                            return finish_with_placed_plan(
+                                workspace, diagnostic, placed_makespan_ns, best_digest
+                            );
+                        }
+                        return 0;
+                    }
+                    diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
+                    diagnostic->capacity_violation_count =
+                        simulation.capacity_violation_count;
+                    diagnostic->makespan_ns = placed_makespan_ns;
+                    memcpy(
+                        diagnostic->schedule_digest,
+                        best_digest,
+                        sizeof(diagnostic->schedule_digest)
+                    );
+                    /* The live schedule is whatever the last reduction left
+                     * behind; the placed one is the answer. */
+                    if (shadowspill_schedule_storage_copy(
+                            &workspace->schedule, &workspace->best
+                        ) != 0) {
+                        return -1;
+                    }
+                    return 1;
+                }
                 diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
                 diagnostic->capacity_violation_count =
                     simulation.capacity_violation_count;
@@ -2082,8 +2644,10 @@ static int evaluate_candidate(
                 return 1;
             }
             /* Continuing, so this plan has to be kept: repairing past a
-             * success can make it worse before it makes it better. */
-            if (improves) {
+             * success can make it worse before it makes it better. When
+             * placing, the buffer already holds the best placed plan, which
+             * outranks a faster plan that has no layout. */
+            if (improves && !placing) {
                 best_makespan_ns = simulation.makespan_ns;
                 if (shadowspill_schedule_storage_copy(
                         &workspace->best, &workspace->schedule
@@ -2193,6 +2757,11 @@ static int evaluate_candidate(
                     diagnostic->status =
                         SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
                     copy_simulation_error(diagnostic, &simulation);
+                    if (placing && placed_makespan_ns != 0U) {
+                        return finish_with_placed_plan(
+                            workspace, diagnostic, placed_makespan_ns, best_digest
+                        );
+                    }
                     return 0;
                 }
                 ++diagnostic->repairs.simulation_prefetch_delay_attempts;
@@ -2213,6 +2782,11 @@ static int evaluate_candidate(
                 if (reduced == 0) {
                     if (best_makespan_ns != 0U) {
                         break;
+                    }
+                    if (placing && placed_makespan_ns != 0U) {
+                        return finish_with_placed_plan(
+                            workspace, diagnostic, placed_makespan_ns, best_digest
+                        );
                     }
                     return 0;
                 }
@@ -2249,6 +2823,11 @@ static int evaluate_candidate(
               )
             : (uint32_t)SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
         copy_simulation_error(diagnostic, &simulation);
+        if (placing && placed_makespan_ns != 0U) {
+            return finish_with_placed_plan(
+                workspace, diagnostic, placed_makespan_ns, best_digest
+            );
+        }
         return 0;
     }
     /* Reached by a candidate that already has a plan and ran out of ways to
@@ -2340,6 +2919,9 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
         result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
+    /* The emitter measures against the capacity the plan being built kept,
+     * which is the same array the reducer adds to its occupancy. */
+    facts.extra_pressure = workspace.extra_pressure;
 
     uint64_t pressure_cells = (uint64_t)problem->residency->device_count *
         problem->residency->boundary_count;

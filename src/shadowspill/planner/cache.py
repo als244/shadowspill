@@ -94,6 +94,7 @@ class PressureFitCache:
         config: SimulationConfig,
         options: PressureFitOptions | None = None,
         admission: AdmissionFacts | None = None,
+        placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
         """Return a validated cached selection or run unmodified PressureFit."""
@@ -106,6 +107,7 @@ class PressureFitCache:
             config,
             selected_options,
             admission,
+            placement,
         )
         cached = (
             self._read(
@@ -129,6 +131,7 @@ class PressureFitCache:
             config=config,
             options=selected_options,
             admission=admission,
+            placement=placement,
             progress=progress,
         )
         self._write(key, result, admission)
@@ -315,6 +318,7 @@ def _key(
     config: SimulationConfig,
     options: PressureFitOptions,
     admission: AdmissionFacts | None,
+    placement: AdmissionFacts | None = None,
 ) -> str:
     payload = {
         "schema": _SCHEMA,
@@ -327,6 +331,10 @@ def _key(
         },
         "options": _options_identity(options),
         "admission_digest": admission.digest if admission is not None else None,
+        # Part of the identity: the search measures layouts against this
+        # topology, so the same program under a different pool is a
+        # different question and must not read a cached answer.
+        "placement_digest": placement.digest if placement is not None else None,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

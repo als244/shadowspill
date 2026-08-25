@@ -75,6 +75,7 @@ class PlanningArtifactRepositories:
         config: SimulationConfig,
         options: PressureFitOptions | None = None,
         admission: AdmissionFacts | None = None,
+        placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> CachedPressureFitResult:
         """Return a validated selection, running PressureFit only on a miss."""
@@ -113,6 +114,7 @@ class PlanningArtifactRepositories:
             config=config,
             options=selected_options,
             admission=admission,
+            placement=placement,
             progress=progress,
         )
 

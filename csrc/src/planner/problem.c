@@ -858,14 +858,6 @@ static ShadowSpillStatus prepare_problem(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
-    build_anchor_seed(program, prepared);
-    if (options->initial_placement == SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
-        status = greedily_place_initial_aliases(program, prepared);
-        if (status != SHADOWSPILL_STATUS_OK) {
-            return status;
-        }
-    }
-
     prepared->residency = (ShadowSpillResidencyProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .alias_count = program->alias_count,
@@ -889,6 +881,15 @@ static ShadowSpillStatus prepare_problem(
         .boundary_capacity_bytes = prepared->boundary_capacity_bytes,
         .device_priority = source->device_priority,
     };
+
+    build_anchor_seed(program, prepared);
+    if (options->initial_placement == SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
+        status = greedily_place_initial_aliases(program, prepared);
+        if (status != SHADOWSPILL_STATUS_OK) {
+            return status;
+        }
+    }
+
     prepared->problem = (ShadowSpillPressureFitProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .residency = &prepared->residency,
@@ -896,6 +897,7 @@ static ShadowSpillStatus prepare_problem(
         .seed_resident = prepared->seed_resident,
         .seed_breaks = prepared->seed_breaks,
         .admission = source->admission,
+        .placement = source->placement,
         .alias_json_names = source->alias_json_names,
         .task_json_names = source->task_json_names,
     };

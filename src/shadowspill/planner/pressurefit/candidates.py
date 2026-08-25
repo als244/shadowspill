@@ -77,6 +77,10 @@ class CCandidateDiagnostic:
     makespan_ns: int
     #: Places the accepted plan came up short of capacity and waited.
     capacity_violation_count: int
+    #: What placing this candidate's plans cost, and what it bought.
+    placements_attempted: int
+    placements_admitted: int
+    capacity_refinements: int
     schedule_digest: str | None
     error_task: int
     error_alias: int
@@ -176,7 +180,29 @@ def decode_candidate_diagnostic(
             status="valid",
             makespan_ns=value.makespan_ns,
             capacity_violation_count=value.capacity_violation_count,
+            placements_attempted=value.placements_attempted,
+            placements_admitted=value.placements_admitted,
+            capacity_refinements=value.capacity_refinements,
             schedule_digest=value.schedule_digest,
+            repairs=value.repairs,
+            work=value.work,
+        )
+    if value.status == 7:
+        return CandidateDiagnostic(
+            candidate_id=value.candidate_id,
+            selection_id=selection_id,
+            status="infeasible",
+            failure_kind="unplaceable",
+            failure_detail=(
+                "every plan this candidate reached needed more contiguous "
+                "pool than the pool has; it was reduced "
+                f"{value.capacity_refinements} times and measured "
+                f"{value.placements_attempted}"
+            ),
+            capacity_violation_count=value.capacity_violation_count,
+            placements_attempted=value.placements_attempted,
+            placements_admitted=value.placements_admitted,
+            capacity_refinements=value.capacity_refinements,
             repairs=value.repairs,
             work=value.work,
         )
@@ -337,6 +363,7 @@ def _name_arrays(
 def _program_problem(
     simulation: IndexedSimulationTemplate,
     admission: IndexedAdmissionFacts | None,
+    placement: IndexedAdmissionFacts | None = None,
 ) -> tuple[CPressureFitProgramProblem, tuple[object, ...]]:
     alias_names, task_names = _name_arrays(simulation)
     device_ranks = {
@@ -350,6 +377,12 @@ def _program_problem(
         simulation=ctypes.pointer(simulation.program),
         device_priority=priorities,
         admission=ctypes.pointer(admission.value) if admission is not None else None,
+        # Placement measures layouts during the search; it does not
+        # prefilter through the dynamic-pool replay, which `admission`
+        # above would switch on.
+        placement=(
+            ctypes.pointer(placement.value) if placement is not None else None
+        ),
         alias_json_names=alias_names,
         task_json_names=task_names,
     )
@@ -359,7 +392,8 @@ def _program_problem(
 def _problem_options(
     options: PressureFitOptions,
     *,
-    incumbent_makespan_ns: int = 0,
+    best_placed: int = 0,
+    selection_index: int = 0,
 ) -> tuple[
     CPressureFitProblemOptions,
     tuple[str, ...],
@@ -382,8 +416,9 @@ def _problem_options(
         evaluate_coalesced=int(options.evaluate_coalesced),
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
-        repair_while_stalling=int(options.repair_while_stalling),
-        incumbent_makespan_ns=incumbent_makespan_ns,
+        capacity_refinement_bytes=options.capacity_refinement_bytes,
+        best_placed=best_placed or None,
+        selection_index=selection_index,
     )
     return compiled, strategy_names, rule_names, (strategies, rules)
 
@@ -518,16 +553,18 @@ def _evaluate_problem(
     options: PressureFitOptions,
     *,
     admission: IndexedAdmissionFacts | None,
-    incumbent_makespan_ns: int = 0,
+    placement: IndexedAdmissionFacts | None = None,
+    best_placed: int = 0,
+    selection_index: int = 0,
 ) -> CProblemResult | None:
     """Invoke and decode one compiled program-problem evaluation."""
 
     problem_options, strategy_names, rule_names, _option_buffers = _problem_options(
-        options, incumbent_makespan_ns=incumbent_makespan_ns
+        options, best_placed=best_placed, selection_index=selection_index
     )
     problem_result = CPressureFitProblemResult()
     library = planner_api()
-    problem, _problem_buffers = _program_problem(simulation, admission)
+    problem, _problem_buffers = _program_problem(simulation, admission, placement)
     status = int(
         library.shadowspill_evaluate_pressurefit_program_problem(
             ctypes.byref(problem),
@@ -570,6 +607,9 @@ def _evaluate_problem(
                     simulation_status=int(value.simulation_status),
                     makespan_ns=int(value.makespan_ns),
                     capacity_violation_count=int(value.capacity_violation_count),
+                    placements_attempted=int(value.placements_attempted),
+                    placements_admitted=int(value.placements_admitted),
+                    capacity_refinements=int(value.capacity_refinements),
                     schedule_digest=digest,
                     error_task=int(value.error_task),
                     error_alias=int(value.error_alias),
@@ -609,21 +649,27 @@ def evaluate_program_problem(
     options: PressureFitOptions,
     *,
     admission: IndexedAdmissionFacts | None = None,
-    incumbent_makespan_ns: int = 0,
+    placement: IndexedAdmissionFacts | None = None,
+    best_placed: int = 0,
+    selection_index: int = 0,
 ) -> CProblemResult | None:
     """Derive indexed planning facts and evaluate every candidate entirely in C.
 
-    `incumbent_makespan_ns` is the best plan the caller already holds. A
-    candidate that cannot beat it is abandoned rather than repaired to a
-    depth. Zero means the caller holds nothing and every candidate is
-    evaluated.
+    `placement` supplies the pool topology so a candidate can measure whether
+    its plan has a layout that fits, which is the constraint that decides
+    whether a plan can run at all. It is deliberately separate from
+    `admission`: supplying that switches on the dynamic-pool replay, which
+    rejects plans certified fixed placement accepts, so a search that
+    prefiltered through it would discard plans that would have run.
     """
 
     return _evaluate_problem(
         simulation,
         options,
         admission=admission,
-        incumbent_makespan_ns=incumbent_makespan_ns,
+        placement=placement,
+        best_placed=best_placed,
+        selection_index=selection_index,
     )
 
 
