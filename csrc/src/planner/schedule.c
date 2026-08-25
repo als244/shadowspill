@@ -764,63 +764,89 @@ static void choose_packed_triggers(
     free(has_packed_start);
 }
 
-static int clamp_triggers_to_fit(
+/*
+ * Packed-fit clamping.
+ *
+ * Packing fetches as early as their windows allow can put more bytes at a
+ * boundary than it holds. Clamping walks the boundaries that overflow and
+ * delays fetches -- cheapest to give up first -- until each one fits or
+ * nothing is left to delay. What it needs while it runs lives in `Clamp`.
+ */
+typedef struct Clamp {
+    /* Bytes charged to each device at each boundary. */
+    uint64_t *used;
+    /* How many fetch windows cover each alias/boundary pair, so a boundary is
+     * charged once however many fetches cover it. */
+    uint32_t *counts;
+    /* Bitset per boundary: which fetches still have room to move later. */
+    uint64_t *active;
+    /* The order fetches are given up in. */
+    ReloadRank *ranked;
+    uint32_t *rank_by_reload;
+    uint32_t word_count;
+} Clamp;
+
+static void clamp_destroy(Clamp *clamp) {
+    free(clamp->used);
+    free(clamp->counts);
+    free(clamp->active);
+    free(clamp->ranked);
+    free(clamp->rank_by_reload);
+    memset(clamp, 0, sizeof(*clamp));
+}
+
+static int clamp_create(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
-    Reload *reloads,
     uint32_t reload_count,
-    int prefetch_headroom
+    int prefetch_headroom,
+    Clamp *clamp
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    memset(clamp, 0, sizeof(*clamp));
+    clamp->word_count = reload_count / 64U + (reload_count % 64U != 0U);
     size_t pressure_cells = 0U;
     size_t active_words = 0U;
-    uint32_t word_count = reload_count / 64U + (reload_count % 64U != 0U);
-    if (checked_cells(facts->device_count, facts->boundary_count, &pressure_cells) !=
-            0 ||
-        checked_cells(word_count, facts->task_count, &active_words) != 0) {
+    if (checked_cells(
+            facts->device_count, facts->boundary_count, &pressure_cells
+        ) != 0 ||
+        checked_cells(clamp->word_count, facts->task_count, &active_words) != 0) {
         return -1;
     }
-    uint64_t *used = calloc(
-        pressure_cells == 0U ? 1U : pressure_cells,
-        sizeof(*used)
+    const size_t reload_slots = reload_count == 0U ? 1U : (size_t)reload_count;
+    clamp->used =
+        calloc(pressure_cells == 0U ? 1U : pressure_cells, sizeof(*clamp->used));
+    clamp->counts = calloc(
+        (size_t)facts->alias_count *
+            (facts->task_count == 0U ? 1U : facts->task_count),
+        sizeof(*clamp->counts)
     );
-    uint32_t *counts = calloc(
-        (size_t)facts->alias_count * (facts->task_count == 0U ? 1U : facts->task_count),
-        sizeof(*counts)
-    );
-    uint64_t *active = calloc(
-        active_words == 0U ? 1U : active_words,
-        sizeof(*active)
-    );
-    ReloadRank *ranked = malloc(
-        (reload_count == 0U ? 1U : (size_t)reload_count) * sizeof(*ranked)
-    );
-    uint32_t *rank_by_reload = malloc(
-        (reload_count == 0U ? 1U : (size_t)reload_count) *
-        sizeof(*rank_by_reload)
-    );
-    if (used == NULL || counts == NULL || active == NULL || ranked == NULL ||
-        rank_by_reload == NULL ||
-        build_pressure(
-            facts,
-            resident,
-            breaks,
-            prefetch_headroom,
-            used
-        ) != 0) {
-        free(used);
-        free(counts);
-        free(active);
-        free(ranked);
-        free(rank_by_reload);
+    clamp->active =
+        calloc(active_words == 0U ? 1U : active_words, sizeof(*clamp->active));
+    clamp->ranked = malloc(reload_slots * sizeof(*clamp->ranked));
+    clamp->rank_by_reload = malloc(reload_slots * sizeof(*clamp->rank_by_reload));
+    if (clamp->used == NULL || clamp->counts == NULL || clamp->active == NULL ||
+        clamp->ranked == NULL || clamp->rank_by_reload == NULL ||
+        build_pressure(facts, resident, breaks, prefetch_headroom, clamp->used) != 0) {
         return -1;
     }
+    return 0;
+}
 
-    for (uint32_t reload_index = 0U; reload_index < reload_count; ++reload_index) {
-        Reload *reload = &reloads[reload_index];
-        ranked[reload_index] = (ReloadRank){
-            .index = reload_index,
+/* Charge every boundary each fetch's window covers, skipping boundaries the
+ * object is resident at anyway. */
+static void charge_fetch_windows(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    const Reload *reloads,
+    uint32_t reload_count,
+    Clamp *clamp
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    for (uint32_t index = 0U; index < reload_count; ++index) {
+        const Reload *reload = &reloads[index];
+        clamp->ranked[index] = (ReloadRank){
+            .index = index,
             .entry_boundary = reload->entry_boundary,
             .size_bytes = problem->alias_size_bytes[reload->alias],
             .alias = reload->alias,
@@ -829,116 +855,158 @@ static int clamp_triggers_to_fit(
              boundary < reload->entry_boundary;
              ++boundary) {
             if (resident[cell(
-                    reload->alias,
-                    facts->boundary_count,
-                    boundary + 1U
+                    reload->alias, facts->boundary_count, boundary + 1U
                 )] != 0U) {
                 continue;
             }
-            uint64_t count_position =
+            const uint64_t position =
                 (uint64_t)reload->alias * facts->task_count + boundary;
-            if (counts[count_position]++ == 0U) {
-                uint32_t device = problem->alias_device[reload->alias];
-                used[(uint64_t)device * facts->boundary_count + boundary + 1U] +=
+            if (clamp->counts[position]++ == 0U) {
+                const uint32_t device = problem->alias_device[reload->alias];
+                clamp->used[(uint64_t)device * facts->boundary_count +
+                            boundary + 1U] +=
                     problem->alias_size_bytes[reload->alias];
             }
         }
     }
-    qsort(ranked, reload_count, sizeof(*ranked), reload_rank_compare);
+}
+
+static void rank_reloads(uint32_t reload_count, Clamp *clamp) {
+    qsort(clamp->ranked, reload_count, sizeof(*clamp->ranked), reload_rank_compare);
     for (uint32_t rank = 0U; rank < reload_count; ++rank) {
-        rank_by_reload[ranked[rank].index] = rank;
+        clamp->rank_by_reload[clamp->ranked[rank].index] = rank;
     }
-    for (uint32_t reload_index = 0U; reload_index < reload_count; ++reload_index) {
-        Reload *reload = &reloads[reload_index];
+}
+
+/* Mark the fetches a boundary could still give up. One already at its latest
+ * trigger has nowhere to go and is never marked. */
+static void mark_movable_reloads(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    const Reload *reloads,
+    uint32_t reload_count,
+    Clamp *clamp
+) {
+    for (uint32_t index = 0U; index < reload_count; ++index) {
+        const Reload *reload = &reloads[index];
         if (reload->trigger >= reload->latest_trigger) {
             continue;
         }
-        uint32_t rank = rank_by_reload[reload_index];
-        uint64_t mask = UINT64_C(1) << (rank & 63U);
-        uint32_t word = rank >> 6U;
+        const uint32_t rank = clamp->rank_by_reload[index];
+        const uint64_t mask = UINT64_C(1) << (rank & 63U);
+        const uint32_t word = rank >> 6U;
         for (uint32_t boundary = reload->trigger;
              boundary < reload->entry_boundary;
              ++boundary) {
             if (resident[cell(
-                    reload->alias,
-                    facts->boundary_count,
-                    boundary + 1U
+                    reload->alias, facts->boundary_count, boundary + 1U
                 )] == 0U) {
-                active[(uint64_t)boundary * word_count + word] |= mask;
+                clamp->active[(uint64_t)boundary * clamp->word_count + word] |= mask;
             }
         }
     }
+}
 
+/* Move one fetch later, and give back the pressure the window it vacated
+ * was holding. */
+static void delay_reload(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    Reload *reload,
+    uint32_t rank,
+    uint32_t boundary,
+    Clamp *clamp
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const uint32_t old_trigger = reload->trigger;
+    uint32_t new_trigger = boundary + 1U;
+    if (new_trigger > reload->latest_trigger) {
+        new_trigger = reload->latest_trigger;
+    }
+    reload->trigger = new_trigger;
+    clear_active_reload(
+        clamp->active, clamp->word_count, rank, old_trigger, new_trigger
+    );
+    if (new_trigger == reload->latest_trigger) {
+        /* Out of room to move, so it can never be chosen again. */
+        clear_active_reload(
+            clamp->active, clamp->word_count, rank, new_trigger, facts->task_count
+        );
+    }
+    for (uint32_t retired = old_trigger; retired < new_trigger; ++retired) {
+        if (resident[cell(
+                reload->alias, facts->boundary_count, retired + 1U
+            )] != 0U) {
+            continue;
+        }
+        const uint64_t position =
+            (uint64_t)reload->alias * facts->task_count + retired;
+        --clamp->counts[position];
+        if (clamp->counts[position] == 0U) {
+            const uint32_t device = problem->alias_device[reload->alias];
+            clamp->used[(uint64_t)device * facts->boundary_count + retired + 1U] -=
+                problem->alias_size_bytes[reload->alias];
+        }
+    }
+}
+
+/* Delay fetches at one boundary until it fits. Running out of fetches to
+ * delay is not an error: the boundary is as relieved as moving fetches can
+ * make it, and what remains is the reducer's problem rather than this one. */
+static void relieve_boundary(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    Reload *reloads,
+    uint32_t device,
+    uint32_t boundary,
+    Clamp *clamp
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const uint64_t position =
+        (uint64_t)device * facts->boundary_count + boundary + 1U;
+    while (clamp->used[position] >
+           shadowspill_boundary_capacity(problem, device, boundary + 1U)) {
+        const uint32_t selected = first_active_reload(
+            clamp->active, clamp->word_count, boundary, clamp->ranked
+        );
+        if (selected == UINT32_MAX) {
+            return;
+        }
+        delay_reload(
+            facts,
+            resident,
+            &reloads[selected],
+            clamp->rank_by_reload[selected],
+            boundary,
+            clamp
+        );
+    }
+}
+
+static int clamp_triggers_to_fit(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    Reload *reloads,
+    uint32_t reload_count,
+    int prefetch_headroom
+) {
+    Clamp clamp;
+    if (clamp_create(
+            facts, resident, breaks, reload_count, prefetch_headroom, &clamp
+        ) != 0) {
+        clamp_destroy(&clamp);
+        return -1;
+    }
+    charge_fetch_windows(facts, resident, reloads, reload_count, &clamp);
+    rank_reloads(reload_count, &clamp);
+    mark_movable_reloads(facts, resident, reloads, reload_count, &clamp);
     for (uint32_t device = 0U; device < facts->device_count; ++device) {
         for (uint32_t boundary = 0U; boundary < facts->task_count; ++boundary) {
-            uint64_t used_position =
-                (uint64_t)device * facts->boundary_count + boundary + 1U;
-            while (used[used_position] > shadowspill_boundary_capacity(
-                    problem,
-                    device,
-                    boundary + 1U
-                )) {
-                uint32_t selected_reload = first_active_reload(
-                    active,
-                    word_count,
-                    boundary,
-                    ranked
-                );
-                if (selected_reload == UINT32_MAX) {
-                    break;
-                }
-                Reload *reload = &reloads[selected_reload];
-                uint32_t old_trigger = reload->trigger;
-                uint32_t new_trigger = boundary + 1U;
-                if (new_trigger > reload->latest_trigger) {
-                    new_trigger = reload->latest_trigger;
-                }
-                reload->trigger = new_trigger;
-                uint32_t rank = rank_by_reload[selected_reload];
-                clear_active_reload(
-                    active,
-                    word_count,
-                    rank,
-                    old_trigger,
-                    new_trigger
-                );
-                if (new_trigger == reload->latest_trigger) {
-                    clear_active_reload(
-                        active,
-                        word_count,
-                        rank,
-                        new_trigger,
-                        facts->task_count
-                    );
-                }
-                for (uint32_t retired = old_trigger; retired < new_trigger;
-                     ++retired) {
-                    if (resident[cell(
-                            reload->alias,
-                            facts->boundary_count,
-                            retired + 1U
-                        )] != 0U) {
-                        continue;
-                    }
-                    uint64_t count_position =
-                        (uint64_t)reload->alias * facts->task_count + retired;
-                    --counts[count_position];
-                    if (counts[count_position] == 0U) {
-                        uint32_t reload_device =
-                            problem->alias_device[reload->alias];
-                        used[(uint64_t)reload_device * facts->boundary_count +
-                             retired + 1U] -=
-                            problem->alias_size_bytes[reload->alias];
-                    }
-                }
-            }
+            relieve_boundary(facts, resident, reloads, device, boundary, &clamp);
         }
     }
-    free(used);
-    free(counts);
-    free(active);
-    free(ranked);
-    free(rank_by_reload);
+    clamp_destroy(&clamp);
     return 0;
 }
 
@@ -1398,6 +1466,318 @@ static int reserve_departures(
     return 0;
 }
 
+/*
+ * Emitting one schedule.
+ *
+ * A residency plan says where every object is at every boundary. A schedule
+ * says what to do about it: fetch an object back before the span that needs
+ * it, and release or evict it at the end of a span something later wants.
+ * The stages below are that translation, and `Emission` is the scratch they
+ * share -- collected in one place so that every failure releases the same
+ * set, rather than each exit spelling it out again.
+ */
+typedef struct Emission {
+    /* One alias's residency spans, reused across aliases. */
+    Span *spans;
+    Reload *reloads;
+    uint32_t reload_count;
+    uint32_t reload_capacity;
+    Departure *departures;
+    uint32_t departure_count;
+    uint32_t departure_capacity;
+    Action *actions;
+    uint32_t action_count;
+} Emission;
+
+static void emission_destroy(Emission *emission) {
+    free(emission->spans);
+    free(emission->reloads);
+    free(emission->departures);
+    free(emission->actions);
+    memset(emission, 0, sizeof(*emission));
+}
+
+/*
+ * A span whose object is not produced at its entry has to be fetched before
+ * its first use. The window runs from just after the previous departure to
+ * the boundary before that use; coalescing lets the fetch share the previous
+ * release's boundary rather than starting after it.
+ *
+ * Returns -2 when no boundary in that window can carry the fetch, which is a
+ * fact about the residency rather than a failure to allocate.
+ */
+static int plan_span_reload(
+    const ShadowSpillScheduleFacts *facts,
+    uint32_t alias,
+    Span span,
+    int coalesced,
+    int has_previous_departure,
+    Departure previous_departure,
+    Emission *emission
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const int32_t start_boundary = (int32_t)span.start - 1;
+    const int produced_at_entry =
+        problem->productions[cell(alias, facts->boundary_count, span.start)] != 0U;
+    if (start_boundary <= -1 || produced_at_entry) {
+        return 0;
+    }
+    const uint32_t first_task = event_min_task(facts, alias, &span);
+    const uint32_t latest = first_task == UINT32_MAX
+        ? facts->task_count - 1U
+        : first_task - 1U;
+    uint32_t earliest = 0U;
+    if (has_previous_departure != 0) {
+        earliest = previous_departure.trigger + 1U;
+        if (coalesced != 0 &&
+            previous_departure.kind == SHADOWSPILL_MEMORY_RELEASE) {
+            earliest = previous_departure.trigger;
+        }
+    }
+    if (latest < earliest ||
+        reserve_reloads(
+            &emission->reloads, &emission->reload_capacity, emission->reload_count
+        ) != 0) {
+        return -2;
+    }
+    emission->reloads[emission->reload_count] = (Reload){
+        .alias = alias,
+        .earliest_trigger = earliest,
+        .latest_trigger = latest,
+        .entry_boundary = (uint32_t)start_boundary,
+        .ordinal = emission->reload_count,
+        .trigger = latest,
+    };
+    ++emission->reload_count;
+    return 0;
+}
+
+/*
+ * The end of a span needs a move only when something later wants the object:
+ * another span, or the final residency. A value the spill copy no longer
+ * matches has to be written back; anything else is released.
+ */
+static int plan_span_departure(
+    const ShadowSpillScheduleFacts *facts,
+    uint32_t alias,
+    Span span,
+    int has_later_span,
+    int32_t *spill_refreshed,
+    Departure *previous_departure,
+    int *has_previous_departure,
+    Emission *emission
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const int8_t final_location = problem->final_location[alias];
+    if (!has_later_span && final_location == 0) {
+        return 0;
+    }
+    const int32_t end_boundary = (int32_t)span.end - 1;
+    uint32_t departure_task = event_max_task(facts, alias, &span);
+    if (departure_task == UINT32_MAX) {
+        int32_t clamped = end_boundary;
+        if (clamped < 0) {
+            clamped = 0;
+        }
+        if (clamped >= (int32_t)facts->task_count) {
+            clamped = (int32_t)facts->task_count - 1;
+        }
+        departure_task = (uint32_t)clamped;
+    }
+    uint8_t kind = SHADOWSPILL_MEMORY_RELEASE;
+    if (has_later_span || final_location == 1) {
+        if (problem->alias_retain_spill_copy[alias] != 0U &&
+            !has_write_since(facts, alias, *spill_refreshed, end_boundary)) {
+            kind = SHADOWSPILL_MEMORY_RELEASE;
+        } else {
+            kind = SHADOWSPILL_MEMORY_OFFLOAD;
+            *spill_refreshed = end_boundary;
+        }
+    }
+    if (reserve_departures(
+            &emission->departures,
+            &emission->departure_capacity,
+            emission->departure_count
+        ) != 0) {
+        return -1;
+    }
+    *previous_departure = (Departure){
+        .alias = alias,
+        .trigger = departure_task,
+        .kind = kind,
+    };
+    *has_previous_departure = 1;
+    emission->departures[emission->departure_count++] = *previous_departure;
+    return 0;
+}
+
+/* Every move one alias's residency implies, in span order: the departures
+ * chain, because where a fetch may start depends on where the last release
+ * or eviction landed. */
+static int collect_alias_transitions(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    uint32_t alias,
+    int coalesced,
+    Emission *emission
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const uint32_t span_count = collect_spans(
+        resident, breaks, alias, facts->boundary_count, emission->spans
+    );
+    if (span_count == 0U) {
+        return 0;
+    }
+    /* Where the spill copy was last made to match. -1 means it already does;
+     * -2 means there is no spill copy to keep current. */
+    int32_t spill_refreshed = problem->initial_location[alias] == 1 ||
+            problem->alias_retain_spill_copy[alias] != 0U
+        ? -1
+        : -2;
+    int has_previous_departure = 0;
+    Departure previous_departure = {0};
+    for (uint32_t index = 0U; index < span_count; ++index) {
+        const Span span = emission->spans[index];
+        const int reloaded = plan_span_reload(
+            facts,
+            alias,
+            span,
+            coalesced,
+            has_previous_departure,
+            previous_departure,
+            emission
+        );
+        if (reloaded != 0) {
+            return reloaded;
+        }
+        if (plan_span_departure(
+                facts,
+                alias,
+                span,
+                index + 1U < span_count,
+                &spill_refreshed,
+                &previous_departure,
+                &has_previous_departure,
+                emission
+            ) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Where in its window each fetch actually goes. Every rule starts from the
+ * same windows and differs only here. */
+static int choose_triggers(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    const uint8_t *breaks,
+    uint8_t prefetch_rule,
+    int prefetch_headroom,
+    Emission *emission
+) {
+    if (prefetch_rule == SHADOWSPILL_PREFETCH_DEMAND) {
+        for (uint32_t index = 0U; index < emission->reload_count; ++index) {
+            emission->reloads[index].trigger =
+                emission->reloads[index].latest_trigger;
+        }
+        return 0;
+    }
+    if (prefetch_rule == SHADOWSPILL_PREFETCH_LATEST_SAFE) {
+        choose_latest_safe_triggers(facts, emission->reloads, emission->reload_count);
+        return 0;
+    }
+    choose_packed_triggers(facts, emission->reloads, emission->reload_count);
+    if (prefetch_rule != SHADOWSPILL_PREFETCH_PACKED_FIT) {
+        return 0;
+    }
+    return clamp_triggers_to_fit(
+        facts,
+        resident,
+        breaks,
+        emission->reloads,
+        emission->reload_count,
+        prefetch_headroom
+    );
+}
+
+/* Both move lists become one list, ordered by the boundary each fires on. */
+static int build_actions(Emission *emission) {
+    if (emission->reload_count > UINT32_MAX - emission->departure_count) {
+        return -1;
+    }
+    const uint32_t transition_count =
+        emission->reload_count + emission->departure_count;
+    emission->actions = malloc(
+        (transition_count == 0U ? 1U : (size_t)transition_count) *
+        sizeof(*emission->actions)
+    );
+    if (emission->actions == NULL) {
+        return -1;
+    }
+    for (uint32_t index = 0U; index < emission->departure_count; ++index) {
+        if (append_action(
+                emission->actions,
+                transition_count,
+                &emission->action_count,
+                emission->departures[index].trigger,
+                emission->departures[index].alias,
+                emission->departures[index].kind
+            ) != 0) {
+            return -1;
+        }
+    }
+    for (uint32_t index = 0U; index < emission->reload_count; ++index) {
+        if (append_action(
+                emission->actions,
+                transition_count,
+                &emission->action_count,
+                emission->reloads[index].trigger,
+                emission->reloads[index].alias,
+                SHADOWSPILL_MEMORY_PREFETCH
+            ) != 0) {
+            return -1;
+        }
+    }
+    qsort(
+        emission->actions,
+        emission->action_count,
+        sizeof(*emission->actions),
+        action_compare
+    );
+    return 0;
+}
+
+/* What the schedule starts and ends holding, for the objects that declare a
+ * boundary state at all. */
+static void emit_boundary_residency(
+    const ShadowSpillScheduleFacts *facts,
+    const uint8_t *resident,
+    ShadowSpillScheduleStorage *storage
+) {
+    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
+        if (problem->alias_size_bytes[alias] == 0U) {
+            continue;
+        }
+        if (problem->initial_location[alias] >= 0) {
+            const uint32_t output = storage->value.initial_count++;
+            storage->value.initial_aliases[output] = alias;
+            storage->value.initial_locations[output] =
+                resident[cell(alias, facts->boundary_count, 0U)] != 0U
+                ? SHADOWSPILL_MEMORY_DEVICE
+                : SHADOWSPILL_MEMORY_SPILL;
+        }
+        if (problem->final_location[alias] >= 0) {
+            const uint32_t output = storage->value.final_count++;
+            storage->value.final_aliases[output] = alias;
+            storage->value.final_locations[output] =
+                (uint8_t)problem->final_location[alias];
+        }
+    }
+}
+
 int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
@@ -1413,242 +1793,38 @@ int shadowspill_emit_indexed_schedule(
     }
     shadowspill_schedule_storage_clear(storage);
     const ShadowSpillResidencyProblem *problem = facts->problem->residency;
-    uint32_t reload_capacity = 0U;
-    uint32_t departure_capacity = 0U;
-    Reload *reloads = NULL;
-    Departure *departures = NULL;
-    Span *spans = malloc((size_t)facts->boundary_count * sizeof(*spans));
-    if (spans == NULL) {
-        free(spans);
+    Emission emission = {0};
+    emission.spans = malloc((size_t)facts->boundary_count * sizeof(*emission.spans));
+    if (emission.spans == NULL) {
         return -1;
     }
-    uint32_t reload_count = 0U;
-    uint32_t departure_count = 0U;
 
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         if (problem->alias_size_bytes[alias] == 0U) {
             continue;
         }
-        uint32_t span_count = collect_spans(
-            resident,
-            breaks,
-            alias,
-            facts->boundary_count,
-            spans
+        const int collected = collect_alias_transitions(
+            facts, resident, breaks, alias, coalesced, &emission
         );
-        if (span_count == 0U) {
-            continue;
-        }
-        int32_t spill_refreshed =
-            problem->initial_location[alias] == 1 ||
-                problem->alias_retain_spill_copy[alias] != 0U
-            ? -1
-            : -2;
-        int has_previous_departure = 0;
-        Departure previous_departure = {0};
-        for (uint32_t span_index = 0U; span_index < span_count; ++span_index) {
-            Span span = spans[span_index];
-            int32_t start_boundary = (int32_t)span.start - 1;
-            int32_t end_boundary = (int32_t)span.end - 1;
-            int produced_at_entry = problem->productions[cell(
-                alias,
-                facts->boundary_count,
-                span.start
-            )] != 0U;
-            if (start_boundary > -1 && !produced_at_entry) {
-                uint32_t first_task = event_min_task(facts, alias, &span);
-                uint32_t latest = first_task == UINT32_MAX
-                    ? facts->task_count - 1U
-                    : first_task - 1U;
-                uint32_t earliest = 0U;
-                if (has_previous_departure != 0) {
-                    earliest = previous_departure.trigger + 1U;
-                    if (coalesced != 0 &&
-                        previous_departure.kind == SHADOWSPILL_MEMORY_RELEASE) {
-                        earliest = previous_departure.trigger;
-                    }
-                }
-                if (latest < earliest ||
-                    reserve_reloads(
-                        &reloads,
-                        &reload_capacity,
-                        reload_count
-                    ) != 0) {
-                    free(reloads);
-                    free(departures);
-                    free(spans);
-                    return -2;
-                }
-                reloads[reload_count] = (Reload){
-                    .alias = alias,
-                    .earliest_trigger = earliest,
-                    .latest_trigger = latest,
-                    .entry_boundary = (uint32_t)start_boundary,
-                    .ordinal = reload_count,
-                    .trigger = latest,
-                };
-                ++reload_count;
-            }
-
-            uint32_t departure_task = event_max_task(facts, alias, &span);
-            if (departure_task == UINT32_MAX) {
-                int32_t clamped = end_boundary;
-                if (clamped < 0) {
-                    clamped = 0;
-                }
-                if (clamped >= (int32_t)facts->task_count) {
-                    clamped = (int32_t)facts->task_count - 1;
-                }
-                departure_task = (uint32_t)clamped;
-            }
-            int has_later_span = span_index + 1U < span_count;
-            int8_t final_location = problem->final_location[alias];
-            int needs_departure = has_later_span || final_location != 0;
-            if (!needs_departure) {
-                continue;
-            }
-            uint8_t kind = SHADOWSPILL_MEMORY_RELEASE;
-            if (has_later_span || final_location == 1) {
-                if (problem->alias_retain_spill_copy[alias] != 0U &&
-                    !has_write_since(
-                        facts,
-                        alias,
-                        spill_refreshed,
-                        end_boundary
-                    )) {
-                    kind = SHADOWSPILL_MEMORY_RELEASE;
-                } else {
-                    kind = SHADOWSPILL_MEMORY_OFFLOAD;
-                    spill_refreshed = end_boundary;
-                }
-            }
-            if (reserve_departures(
-                    &departures,
-                    &departure_capacity,
-                    departure_count
-                ) != 0) {
-                free(reloads);
-                free(departures);
-                free(spans);
-                return -1;
-            }
-            previous_departure = (Departure){
-                .alias = alias,
-                .trigger = departure_task,
-                .kind = kind,
-            };
-            has_previous_departure = 1;
-            departures[departure_count++] = previous_departure;
+        if (collected != 0) {
+            emission_destroy(&emission);
+            return collected;
         }
     }
 
-    if (prefetch_rule == SHADOWSPILL_PREFETCH_DEMAND) {
-        for (uint32_t index = 0U; index < reload_count; ++index) {
-            reloads[index].trigger = reloads[index].latest_trigger;
-        }
-    } else if (prefetch_rule == SHADOWSPILL_PREFETCH_LATEST_SAFE) {
-        choose_latest_safe_triggers(facts, reloads, reload_count);
-    } else {
-        choose_packed_triggers(facts, reloads, reload_count);
-        if (prefetch_rule == SHADOWSPILL_PREFETCH_PACKED_FIT &&
-            clamp_triggers_to_fit(
-                facts,
-                resident,
-                breaks,
-                reloads,
-                reload_count,
-                prefetch_headroom
-            ) != 0) {
-            free(reloads);
-            free(departures);
-            free(spans);
-            return -1;
-        }
-    }
-
-    if (reload_count > UINT32_MAX - departure_count) {
-        free(reloads);
-        free(departures);
-        free(spans);
-        return -1;
-    }
-    uint32_t transition_count = reload_count + departure_count;
-    Action *actions = malloc(
-        (transition_count == 0U ? 1U : (size_t)transition_count) *
-        sizeof(*actions)
-    );
-    if (actions == NULL) {
-        free(reloads);
-        free(departures);
-        free(spans);
-        return -1;
-    }
-    uint32_t action_count = 0U;
-    for (uint32_t index = 0U; index < departure_count; ++index) {
-        if (append_action(
-                actions,
-                transition_count,
-                &action_count,
-                departures[index].trigger,
-                departures[index].alias,
-                departures[index].kind
-            ) != 0) {
-            free(reloads);
-            free(departures);
-            free(actions);
-            free(spans);
-            return -1;
-        }
-    }
-    for (uint32_t index = 0U; index < reload_count; ++index) {
-        if (append_action(
-                actions,
-                transition_count,
-                &action_count,
-                reloads[index].trigger,
-                reloads[index].alias,
-                SHADOWSPILL_MEMORY_PREFETCH
-            ) != 0) {
-            free(reloads);
-            free(departures);
-            free(actions);
-            free(spans);
-            return -1;
-        }
-    }
-    qsort(actions, action_count, sizeof(*actions), action_compare);
-
-    if (copy_actions(facts, actions, action_count, coalesced, storage) != 0) {
-        free(reloads);
-        free(departures);
-        free(actions);
-        free(spans);
+    if (choose_triggers(
+            facts, resident, breaks, prefetch_rule, prefetch_headroom, &emission
+        ) != 0 ||
+        build_actions(&emission) != 0 ||
+        copy_actions(
+            facts, emission.actions, emission.action_count, coalesced, storage
+        ) != 0) {
+        emission_destroy(&emission);
         return -1;
     }
 
-    for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
-        if (problem->alias_size_bytes[alias] == 0U) {
-            continue;
-        }
-        if (problem->initial_location[alias] >= 0) {
-            uint32_t output = storage->value.initial_count++;
-            storage->value.initial_aliases[output] = alias;
-            storage->value.initial_locations[output] =
-                resident[cell(alias, facts->boundary_count, 0U)] != 0U
-                ? SHADOWSPILL_MEMORY_DEVICE
-                : SHADOWSPILL_MEMORY_SPILL;
-        }
-        if (problem->final_location[alias] >= 0) {
-            uint32_t output = storage->value.final_count++;
-            storage->value.final_aliases[output] = alias;
-            storage->value.final_locations[output] =
-                (uint8_t)problem->final_location[alias];
-        }
-    }
-    free(reloads);
-    free(departures);
-    free(actions);
-    free(spans);
+    emit_boundary_residency(facts, resident, storage);
+    emission_destroy(&emission);
     return 0;
 }
 

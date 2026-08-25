@@ -1081,6 +1081,264 @@ void shadowspill_residency_workspace_destroy(
     free(workspace);
 }
 
+/* The caller owns every buffer the result points at, so those survive the
+ * reset; everything the reduction is about to decide does not. */
+static void reset_residency_result(ShadowSpillResidencyResult *result) {
+    const ShadowSpillResidencyResult borrowed = {
+        .resident = result->resident,
+        .resident_capacity = result->resident_capacity,
+        .breaks = result->breaks,
+        .break_capacity = result->break_capacity,
+        .cut_aliases = result->cut_aliases,
+        .cut_capacity = result->cut_capacity,
+    };
+    *result = borrowed;
+    result->error_device = UINT32_MAX;
+    result->error_boundary = INT32_MIN;
+}
+
+/* Start from the residency the caller seeded rather than from nothing: a
+ * repair reduces again from the same base its candidate began with. */
+static void seed_residency(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyResult *result
+) {
+    const uint64_t cells =
+        (uint64_t)problem->alias_count * problem->boundary_count;
+    if (cells == 0U) {
+        return;
+    }
+    memcpy(result->resident, options->seed_resident, cells);
+    memcpy(result->breaks, options->seed_breaks, cells);
+}
+
+/* Every cut starts available again, and the per-cell cursors that remember
+ * how far each boundary has searched start over. */
+static int reset_cut_candidates(ShadowSpillResidencyWorkspace *workspace) {
+    const uint32_t cut_count = workspace->cut_index.cut_count;
+    if (workspace->cut_active_capacity < cut_count) {
+        uint8_t *active =
+            realloc(workspace->cut_active, cut_count == 0U ? 1U : (size_t)cut_count);
+        if (active == NULL) {
+            return -1;
+        }
+        workspace->cut_active = active;
+        workspace->cut_active_capacity = cut_count;
+    }
+    if (cut_count != 0U) {
+        memset(workspace->cut_active, 1, (size_t)cut_count);
+    }
+    return 0;
+}
+
+/* The pressure this reduction works on is a copy of the base map, so the
+ * base survives for the next candidate built on the same strategy. */
+static void reset_working_pressure(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    const uint64_t pressure_cells =
+        (uint64_t)problem->device_count * problem->boundary_count;
+    if (pressure_cells == 0U) {
+        return;
+    }
+    const uint32_t variant = options->prefetch_headroom != 0U ? 1U : 0U;
+    memcpy(
+        workspace->pressure,
+        workspace->base_pressure[variant],
+        (size_t)pressure_cells * sizeof(*workspace->pressure)
+    );
+    memset(
+        workspace->cut_cursors,
+        0,
+        (size_t)pressure_cells * sizeof(*workspace->cut_cursors)
+    );
+}
+
+/*
+ * Seed the max-excess heap once from the initial pressure map. The per-cut
+ * delta loop pushes a corrected entry whenever a cell's pressure rises, so
+ * the full boundary-by-device scan never repeats. Excess is a pure function
+ * of the current pressure -- capacity and extra pressure are constant within
+ * one reduction -- so stale entries are validated and corrected at pop time.
+ */
+static int seed_excess_heap(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyWorkspace *workspace
+) {
+    workspace->excess_count = 0U;
+    for (uint32_t device = 0U; device < problem->device_count; ++device) {
+        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
+             ++boundary) {
+            const uint64_t position =
+                (uint64_t)device * problem->boundary_count + boundary;
+            const uint64_t used =
+                workspace->pressure[position] + options->extra_pressure_bytes[position];
+            const uint64_t capacity =
+                shadowspill_boundary_capacity(problem, device, boundary);
+            if (used <= capacity) {
+                continue;
+            }
+            const ExcessEntry entry = {
+                used - capacity,
+                boundary,
+                problem->device_priority[device],
+                device,
+            };
+            if (excess_heap_push(workspace, entry) != 0) {
+                return -1;
+            }
+        }
+    }
+    return 0;
+}
+
+/*
+ * The boundary with the largest excess that is still genuinely over capacity.
+ *
+ * Entries go stale as pressure moves under them, so the top of the heap is
+ * validated before it is trusted: one whose cell now fits is dropped, and one
+ * whose excess has changed is re-pushed with the current value. Returns 1 with
+ * the boundary, 0 when nothing is over capacity, and -1 on failure.
+ */
+static int pop_worst_boundary(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyWorkspace *workspace,
+    uint32_t *device,
+    uint32_t *boundary,
+    uint64_t *used_bytes
+) {
+    while (workspace->excess_count != 0U) {
+        ExcessEntry top = workspace->excess_entries[0];
+        const uint64_t position =
+            (uint64_t)top.device * problem->boundary_count + top.boundary;
+        const uint64_t used =
+            workspace->pressure[position] + options->extra_pressure_bytes[position];
+        const uint64_t capacity =
+            shadowspill_boundary_capacity(problem, top.device, top.boundary);
+        if (used <= capacity) {
+            excess_heap_pop(workspace);
+            continue;
+        }
+        const uint64_t excess = used - capacity;
+        if (excess != top.excess) {
+            excess_heap_pop(workspace);
+            top.excess = excess;
+            if (excess_heap_push(workspace, top) != 0) {
+                return -1;
+            }
+            continue;
+        }
+        *device = top.device;
+        *boundary = top.boundary;
+        *used_bytes = used;
+        return 1;
+    }
+    return 0;
+}
+
+/*
+ * Give up one object, and carry the change through the pressure map.
+ *
+ * Cutting an alias changes what it contributes at every boundary, not just
+ * the one that was over capacity: it stops occupying the boundaries it is no
+ * longer resident at, and starts occupying any it newly spans. A cell that
+ * rose may now be over capacity itself, so it joins the heap.
+ */
+static int apply_cut_and_repressure(
+    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillResidencyOptions *options,
+    ShadowSpillResidencyResult *result,
+    ShadowSpillResidencyWorkspace *workspace,
+    const ResidencyCut *chosen
+) {
+    const uint32_t alias = chosen->alias;
+    alias_contribution(
+        problem, options, result->resident, result->breaks, alias, workspace->before
+    );
+    /* What this reduction gave up, when anyone asked to be told. */
+    if (result->cut_aliases != NULL && result->cut_count < result->cut_capacity) {
+        result->cut_aliases[result->cut_count++] = alias;
+    }
+    apply_cut(problem, result->resident, result->breaks, chosen);
+    refresh_alias_candidates(
+        problem,
+        result->resident,
+        result->breaks,
+        workspace->first_required,
+        workspace->gap_start,
+        workspace->gap_end,
+        &workspace->cut_index,
+        workspace->cut_active,
+        alias
+    );
+    alias_contribution(
+        problem, options, result->resident, result->breaks, alias, workspace->after
+    );
+    const uint32_t device = problem->alias_device[alias];
+    for (uint32_t boundary = 0U; boundary < problem->boundary_count; ++boundary) {
+        const int64_t delta =
+            (int64_t)workspace->after[boundary] - workspace->before[boundary];
+        if (delta == 0) {
+            continue;
+        }
+        const uint64_t position =
+            (uint64_t)device * problem->boundary_count + boundary;
+        if (delta < 0) {
+            workspace->pressure[position] -= problem->alias_size_bytes[alias];
+            continue;
+        }
+        workspace->pressure[position] += problem->alias_size_bytes[alias];
+        const uint64_t used =
+            workspace->pressure[position] + options->extra_pressure_bytes[position];
+        const uint64_t capacity =
+            shadowspill_boundary_capacity(problem, device, boundary);
+        if (used <= capacity) {
+            continue;
+        }
+        const ExcessEntry entry = {
+            used - capacity,
+            boundary,
+            problem->device_priority[device],
+            device,
+        };
+        if (excess_heap_push(workspace, entry) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* No legal cut relieves this boundary, so no residency this strategy can
+ * reach fits it. That is a fact about the problem rather than a failure. */
+static ShadowSpillStatus report_analytic_infeasible(
+    const ShadowSpillResidencyProblem *problem,
+    ShadowSpillResidencyResult *result,
+    uint32_t device,
+    uint32_t boundary,
+    uint64_t used_bytes
+) {
+    result->status = SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
+    result->error_device = device;
+    result->error_boundary = (int32_t)boundary - 1;
+    result->required_bytes = used_bytes;
+    result->capacity_bytes =
+        shadowspill_boundary_capacity(problem, device, boundary);
+    return SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
+}
+
+/*
+ * Remove objects until every boundary fits.
+ *
+ * One step: take the boundary that is furthest over capacity, choose the cut
+ * that relieves it best under the strategy's score, apply it, and let the
+ * pressure map absorb the change. Repeat until nothing is over capacity, or
+ * until a boundary has no legal cut left.
+ */
 ShadowSpillStatus shadowspill_reduce_residency_reusing(
     const ShadowSpillResidencyProblem *problem,
     const ShadowSpillResidencyOptions *options,
@@ -1093,143 +1351,31 @@ ShadowSpillStatus shadowspill_reduce_residency_reusing(
         workspace->device_count != problem->device_count) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    uint8_t *resident_output = result->resident;
-    uint64_t resident_capacity = result->resident_capacity;
-    uint8_t *break_output = result->breaks;
-    uint64_t break_capacity = result->break_capacity;
-    memset(result, 0, sizeof(*result));
-    result->resident = resident_output;
-    result->resident_capacity = resident_capacity;
-    result->breaks = break_output;
-    result->break_capacity = break_capacity;
-    result->error_device = UINT32_MAX;
-    result->error_boundary = INT32_MIN;
-
-    uint64_t cells = (uint64_t)problem->alias_count * problem->boundary_count;
-    if (cells != 0U) {
-        memcpy(result->resident, options->seed_resident, cells);
-        memcpy(result->breaks, options->seed_breaks, cells);
-    }
-
-    uint64_t pressure_cells =
-        (uint64_t)problem->device_count * problem->boundary_count;
-    uint64_t *pressure = workspace->pressure;
-    uint8_t *before = workspace->before;
-    uint8_t *after = workspace->after;
-    uint32_t *first_required = workspace->first_required;
-    int32_t *gap_start = workspace->gap_start;
-    int32_t *gap_end = workspace->gap_end;
+    reset_residency_result(result);
+    seed_residency(problem, options, result);
     if (prepare_seed_geometry(problem, options, workspace) != 0 ||
         prepare_base_pressure(problem, options, workspace) != 0) {
         return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
     }
-    if (workspace->cut_active_capacity < workspace->cut_index.cut_count) {
-        uint8_t *active = realloc(
-            workspace->cut_active,
-            workspace->cut_index.cut_count == 0U
-                ? 1U
-                : (size_t)workspace->cut_index.cut_count
-        );
-        if (active == NULL) {
-            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-        }
-        workspace->cut_active = active;
-        workspace->cut_active_capacity = workspace->cut_index.cut_count;
+    if (reset_cut_candidates(workspace) != 0) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
-    if (workspace->cut_index.cut_count != 0U) {
-        memset(
-            workspace->cut_active,
-            1,
-            (size_t)workspace->cut_index.cut_count
-        );
-    }
-    uint32_t pressure_variant = options->prefetch_headroom != 0U ? 1U : 0U;
-    if (pressure_cells != 0U) {
-        memcpy(
-            pressure,
-            workspace->base_pressure[pressure_variant],
-            (size_t)pressure_cells * sizeof(*pressure)
-        );
-        memset(
-            workspace->cut_cursors,
-            0,
-            (size_t)pressure_cells * sizeof(*workspace->cut_cursors)
-        );
-    }
-
-    /*
-     * Seed the max-excess heap once from the initial pressure map; the
-     * per-cut delta loop below pushes a corrected entry whenever a
-     * cell's pressure increases, so the full boundary-by-device scan
-     * never repeats. Excess is a pure function of the current pressure
-     * (capacity and extra pressure are constant within one reduction),
-     * so stale entries are validated and corrected at pop time.
-     */
-    workspace->excess_count = 0U;
-    for (uint32_t device = 0U; device < problem->device_count; ++device) {
-        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
-             ++boundary) {
-            uint64_t position =
-                (uint64_t)device * problem->boundary_count + boundary;
-            uint64_t used = pressure[position] +
-                options->extra_pressure_bytes[position];
-            uint64_t capacity = shadowspill_boundary_capacity(
-                problem,
-                device,
-                boundary
-            );
-            if (used <= capacity) {
-                continue;
-            }
-            ExcessEntry entry = {
-                used - capacity,
-                boundary,
-                problem->device_priority[device],
-                device,
-            };
-            if (excess_heap_push(workspace, entry) != 0) {
-                return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-            }
-        }
+    reset_working_pressure(problem, options, workspace);
+    if (seed_excess_heap(problem, options, workspace) != 0) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
 
     while (1) {
-        uint32_t selected_device = UINT32_MAX;
-        uint32_t selected_boundary = UINT32_MAX;
-        uint64_t selected_excess = 0U;
-        uint64_t selected_used = 0U;
-        while (workspace->excess_count != 0U) {
-            ExcessEntry top = workspace->excess_entries[0];
-            uint64_t position =
-                (uint64_t)top.device * problem->boundary_count + top.boundary;
-            uint64_t used = pressure[position] +
-                options->extra_pressure_bytes[position];
-            uint64_t capacity = shadowspill_boundary_capacity(
-                problem,
-                top.device,
-                top.boundary
-            );
-            if (used <= capacity) {
-                excess_heap_pop(workspace);
-                continue;
-            }
-            uint64_t excess = used - capacity;
-            if (excess != top.excess) {
-                excess_heap_pop(workspace);
-                top.excess = excess;
-                if (excess_heap_push(workspace, top) != 0) {
-                    return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-                }
-                continue;
-            }
-            selected_device = top.device;
-            selected_boundary = top.boundary;
-            selected_excess = excess;
-            selected_used = used;
-            break;
+        uint32_t device = UINT32_MAX;
+        uint32_t boundary = UINT32_MAX;
+        uint64_t used_bytes = 0U;
+        const int over_capacity = pop_worst_boundary(
+            problem, options, workspace, &device, &boundary, &used_bytes
+        );
+        if (over_capacity < 0) {
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
-        (void)selected_excess;
-        if (selected_device == UINT32_MAX) {
+        if (over_capacity == 0) {
             canonicalize_breaks(
                 result->breaks,
                 result->resident,
@@ -1239,94 +1385,23 @@ ShadowSpillStatus shadowspill_reduce_residency_reusing(
             result->status = SHADOWSPILL_STATUS_OK;
             return SHADOWSPILL_STATUS_OK;
         }
-
-        int32_t boundary_value = (int32_t)selected_boundary - 1;
         ResidencyCut chosen;
         if (!select_cut(
-            problem,
-            selected_device,
-            boundary_value,
-            options->minimize_transfer != 0U,
-            &workspace->cut_index,
-            workspace->cut_active,
-            workspace->cut_cursors,
-            &chosen
-        )) {
-            result->status = SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
-            result->error_device = selected_device;
-            result->error_boundary = boundary_value;
-            result->required_bytes = selected_used;
-            result->capacity_bytes =
-                shadowspill_boundary_capacity(
-                    problem,
-                    selected_device,
-                    selected_boundary
-                );
-            return SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
+                problem,
+                device,
+                (int32_t)boundary - 1,
+                options->minimize_transfer != 0U,
+                &workspace->cut_index,
+                workspace->cut_active,
+                workspace->cut_cursors,
+                &chosen
+            )) {
+            return report_analytic_infeasible(
+                problem, result, device, boundary, used_bytes
+            );
         }
-        uint32_t alias = chosen.alias;
-        alias_contribution(
-            problem,
-            options,
-            result->resident,
-            result->breaks,
-            alias,
-            before
-        );
-        if (result->cut_aliases != NULL &&
-            result->cut_count < result->cut_capacity) {
-            result->cut_aliases[result->cut_count++] = alias;
-        }
-        apply_cut(problem, result->resident, result->breaks, &chosen);
-        refresh_alias_candidates(
-            problem,
-            result->resident,
-            result->breaks,
-            first_required,
-            gap_start,
-            gap_end,
-            &workspace->cut_index,
-            workspace->cut_active,
-            alias
-        );
-        alias_contribution(
-            problem,
-            options,
-            result->resident,
-            result->breaks,
-            alias,
-            after
-        );
-        uint32_t device = problem->alias_device[alias];
-        for (uint32_t boundary = 0U; boundary < problem->boundary_count;
-             ++boundary) {
-            int64_t delta = (int64_t)after[boundary] - before[boundary];
-            if (delta < 0) {
-                pressure[(uint64_t)device * problem->boundary_count + boundary] -=
-                    problem->alias_size_bytes[alias];
-            } else if (delta > 0) {
-                uint64_t position =
-                    (uint64_t)device * problem->boundary_count + boundary;
-                pressure[position] += problem->alias_size_bytes[alias];
-                uint64_t used = pressure[position] +
-                    options->extra_pressure_bytes[position];
-                uint64_t capacity = shadowspill_boundary_capacity(
-                    problem,
-                    device,
-                    boundary
-                );
-                if (used > capacity) {
-                    ExcessEntry entry = {
-                        used - capacity,
-                        boundary,
-                        problem->device_priority[device],
-                        device,
-                    };
-                    if (excess_heap_push(workspace, entry) != 0) {
-                        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-                    }
-                }
-            }
+        if (apply_cut_and_repressure(problem, options, result, workspace, &chosen) != 0) {
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
     }
 }

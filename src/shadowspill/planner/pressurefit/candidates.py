@@ -481,6 +481,7 @@ def _problem_options(
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
         capacity_refinement_bytes=options.capacity_refinement_bytes,
+        record_reduction_steps=int(options.record_reduction_steps),
         best_placed=best_placed or None,
         selection_index=selection_index,
     )

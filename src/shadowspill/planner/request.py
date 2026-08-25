@@ -56,6 +56,12 @@ class PressureFitOptions:
     #: shortfall, which converges in the fewest rounds and is the setting to
     #: reach for when planning time matters more than the last percent.
     capacity_refinement_bytes: int = 256 * 1024 * 1024
+    #: Record what each candidate's search actually did: one step per plan it
+    #: held, with the objects the reducer cut to reach it and what became of
+    #: it. Off by default because it costs an allocation per candidate that
+    #: grows with the search -- worth paying to attribute planner time or
+    #: explain a plan, and not worth paying in a sweep.
+    record_reduction_steps: bool = False
     workers: int = 0
 
     def __post_init__(self) -> None:
@@ -99,6 +105,8 @@ class PressureFitOptions:
             or self.max_repair_attempts < 0
         ):
             raise ValueError("max_repair_attempts must be a non-negative integer")
+        if not isinstance(self.record_reduction_steps, bool):
+            raise ValueError("record_reduction_steps must be a boolean")
         if (
             isinstance(self.workers, bool)
             or not isinstance(self.workers, int)

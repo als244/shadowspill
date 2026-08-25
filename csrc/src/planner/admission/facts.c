@@ -217,6 +217,167 @@ int shadowspill_admission_counts(
     );
 }
 
+/*
+ * Growing the admission workspace.
+ *
+ * The workspace keeps one scratch buffer per thing admission counts, and a
+ * candidate reuses it across its whole search. Reserving means growing every
+ * buffer that a bigger schedule outgrew -- all of them or none, because a
+ * workspace half-grown by a failed allocation would be read with the old
+ * capacities and the new pointers.
+ *
+ * Each buffer is described once here rather than written out at every step,
+ * so what the workspace holds and how each one is sized can be read in one
+ * place.
+ */
+typedef struct ReserveSpec {
+    /* The workspace field, as void ** so one loop can fill every buffer.
+     * Every object pointer has the same representation, which is what makes
+     * that safe. */
+    void **destination;
+    size_t element_size;
+    uint64_t count;
+    /* Whether the buffer is read before it is written. */
+    int zeroed;
+} ReserveSpec;
+
+/* Allocate every buffer or none, then swap them in and release what they
+ * replace. */
+static int reserve_buffers(const ReserveSpec *specs, size_t spec_count) {
+    void **staged = calloc(spec_count, sizeof(*staged));
+    if (staged == NULL) {
+        return -1;
+    }
+    int failed = 0;
+    for (size_t index = 0U; index < spec_count; ++index) {
+        const size_t slots =
+            specs[index].count == 0U ? 1U : (size_t)specs[index].count;
+        staged[index] = specs[index].zeroed
+            ? calloc(slots, specs[index].element_size)
+            : malloc(slots * specs[index].element_size);
+        failed |= staged[index] == NULL;
+    }
+    if (failed) {
+        for (size_t index = 0U; index < spec_count; ++index) {
+            free(staged[index]);
+        }
+        free(staged);
+        return -1;
+    }
+    for (size_t index = 0U; index < spec_count; ++index) {
+        free(*specs[index].destination);
+        *specs[index].destination = staged[index];
+    }
+    free(staged);
+    return 0;
+}
+
+/* Every buffer sized by the lease and operation counts. */
+static int reserve_lease_buffers(
+    ShadowSpillCandidateAdmissionWorkspace *workspace,
+    uint64_t operation_count,
+    uint64_t lease_count,
+    uint64_t dependency_count,
+    uint64_t reuse_dependency_count
+) {
+    const ReserveSpec specs[] = {
+        {(void **)&workspace->operations, sizeof(*workspace->operations),
+         operation_count, 1},
+        {(void **)&workspace->decisions, sizeof(*workspace->decisions),
+         operation_count, 1},
+        {(void **)&workspace->annotations, sizeof(*workspace->annotations),
+         operation_count, 1},
+        {(void **)&workspace->purposes, sizeof(*workspace->purposes),
+         operation_count, 1},
+        {(void **)&workspace->allocation_offsets,
+         sizeof(*workspace->allocation_offsets), operation_count, 0},
+        {(void **)&workspace->dependencies, sizeof(*workspace->dependencies),
+         reuse_dependency_count, 1},
+        {(void **)&workspace->live_leases, sizeof(*workspace->live_leases),
+         lease_count, 1},
+        {(void **)&workspace->lease_aliases, sizeof(*workspace->lease_aliases),
+         lease_count, 0},
+        {(void **)&workspace->lease_start_operations,
+         sizeof(*workspace->lease_start_operations), lease_count, 0},
+        {(void **)&workspace->lease_retire_operations,
+         sizeof(*workspace->lease_retire_operations), lease_count, 0},
+        /* Two entries per lease plus both ends. */
+        {(void **)&workspace->repair_candidate_starts,
+         sizeof(*workspace->repair_candidate_starts), lease_count * 2U + 2U, 0},
+        /* Prefix sums, so one longer than what they sum over. */
+        {(void **)&workspace->repair_blocked_prefix,
+         sizeof(*workspace->repair_blocked_prefix), lease_count + 1U, 0},
+        {(void **)&workspace->repair_unremovable_prefix,
+         sizeof(*workspace->repair_unremovable_prefix), lease_count + 1U, 0},
+        {(void **)&workspace->pending_retirements,
+         sizeof(*workspace->pending_retirements), lease_count, 1},
+        {(void **)&workspace->predecessor_actions,
+         sizeof(*workspace->predecessor_actions), lease_count, 0},
+        {(void **)&workspace->predecessor_tasks,
+         sizeof(*workspace->predecessor_tasks), lease_count, 0},
+    };
+    /* The replay workspace owns its own allocations, so it is built beside
+     * the table rather than in it, and discarded if the table fails. */
+    ShadowSpillAdmissionReplayWorkspace *replay = NULL;
+    if (shadowspill_admission_replay_workspace_create(
+            lease_count, dependency_count, &replay
+        ) != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    if (reserve_buffers(specs, sizeof(specs) / sizeof(*specs)) != 0) {
+        shadowspill_admission_replay_workspace_destroy(replay);
+        return -1;
+    }
+    shadowspill_admission_replay_workspace_destroy(workspace->replay);
+    workspace->replay = replay;
+    workspace->operation_capacity = operation_count;
+    workspace->lease_capacity = lease_count;
+    workspace->dependency_capacity = dependency_count;
+    workspace->reuse_dependency_capacity = reuse_dependency_count;
+    return 0;
+}
+
+/* Every buffer sized by how many actions the schedule has. */
+static int reserve_action_buffers(
+    ShadowSpillCandidateAdmissionWorkspace *workspace, uint32_t action_count
+) {
+    const ReserveSpec specs[] = {
+        {(void **)&workspace->action_trigger_deltas,
+         sizeof(*workspace->action_trigger_deltas), action_count, 1},
+        {(void **)&workspace->action_completion_deltas,
+         sizeof(*workspace->action_completion_deltas), action_count, 1},
+        {(void **)&workspace->reuse_predecessor_actions,
+         sizeof(*workspace->reuse_predecessor_actions), action_count, 1},
+        {(void **)&workspace->reuse_successor_tasks,
+         sizeof(*workspace->reuse_successor_tasks), action_count, 1},
+        {(void **)&workspace->reuse_successor_actions,
+         sizeof(*workspace->reuse_successor_actions), action_count, 1},
+    };
+    if (reserve_buffers(specs, sizeof(specs) / sizeof(*specs)) != 0) {
+        return -1;
+    }
+    workspace->action_capacity = action_count;
+    return 0;
+}
+
+/* Whether any dimension outgrew what the workspace holds. */
+static int lease_buffers_outgrown(
+    const ShadowSpillCandidateAdmissionWorkspace *workspace,
+    uint64_t operation_count,
+    uint64_t lease_count,
+    uint64_t dependency_count,
+    uint64_t reuse_dependency_count
+) {
+    return operation_count > workspace->operation_capacity ||
+        lease_count > workspace->lease_capacity ||
+        dependency_count > workspace->dependency_capacity ||
+        reuse_dependency_count > workspace->reuse_dependency_capacity;
+}
+
+static uint64_t at_least(uint64_t value, uint64_t floor_value) {
+    return value < floor_value ? floor_value : value;
+}
+
 int shadowspill_admission_reserve_buffers(
     const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillIndexedSchedule *schedule,
@@ -226,8 +387,7 @@ int shadowspill_admission_reserve_buffers(
     uint64_t operation_count = 0U;
     uint64_t dependency_count = 0U;
     if (admission_counts(
-            problem, schedule, &lease_count, &operation_count,
-            &dependency_count
+            problem, schedule, &lease_count, &operation_count, &dependency_count
         ) != 0) {
         return -1;
     }
@@ -236,181 +396,27 @@ int shadowspill_admission_reserve_buffers(
         return -1;
     }
     uint64_t reuse_dependency_count = lease_count;
-    if (operation_count > workspace->operation_capacity ||
-        lease_count > workspace->lease_capacity ||
-        dependency_count > workspace->dependency_capacity ||
-        reuse_dependency_count > workspace->reuse_dependency_capacity) {
-        /* Keep every scratch dimension at its prior high-water mark. */
-        if (operation_count < workspace->operation_capacity) {
-            operation_count = workspace->operation_capacity;
-        }
-        if (lease_count < workspace->lease_capacity) {
-            lease_count = workspace->lease_capacity;
-        }
-        if (dependency_count < workspace->dependency_capacity) {
-            dependency_count = workspace->dependency_capacity;
-        }
-        if (reuse_dependency_count < workspace->reuse_dependency_capacity) {
-            reuse_dependency_count = workspace->reuse_dependency_capacity;
-        }
-        ShadowSpillAdmissionReplayOperation *operations = calloc(
-            operation_count == 0U ? 1U : (size_t)operation_count,
-            sizeof(*operations)
-        );
-        ShadowSpillAdmissionReplayDecision *decisions = calloc(
-            operation_count == 0U ? 1U : (size_t)operation_count,
-            sizeof(*decisions)
-        );
-        ShadowSpillAdmissionAnnotation *annotations = calloc(
-            operation_count == 0U ? 1U : (size_t)operation_count,
-            sizeof(*annotations)
-        );
-        uint8_t *purposes = calloc(
-            operation_count == 0U ? 1U : (size_t)operation_count,
-            sizeof(*purposes)
-        );
-        uint32_t *allocation_offsets = malloc(
-            (operation_count == 0U ? 1U : (size_t)operation_count) *
-                sizeof(*allocation_offsets)
-        );
-        ShadowSpillAdmissionReuseDependency *dependencies = calloc(
-            reuse_dependency_count == 0U
-                ? 1U : (size_t)reuse_dependency_count,
-            sizeof(*dependencies)
-        );
-        ShadowSpillAdmissionReplayLiveLease *live_leases = calloc(
-            lease_count == 0U ? 1U : (size_t)lease_count,
-            sizeof(*live_leases)
-        );
-        uint32_t *lease_aliases = malloc(
-            (lease_count == 0U ? 1U : (size_t)lease_count) *
-                sizeof(*lease_aliases)
-        );
-        uint64_t *lease_start_operations = malloc(
-            (lease_count == 0U ? 1U : (size_t)lease_count) *
-                sizeof(*lease_start_operations)
-        );
-        uint64_t *lease_retire_operations = malloc(
-            (lease_count == 0U ? 1U : (size_t)lease_count) *
-                sizeof(*lease_retire_operations)
-        );
-        uint64_t *repair_candidate_starts = malloc(
-            ((size_t)lease_count * 2U + 2U) *
-                sizeof(*repair_candidate_starts)
-        );
-        uint64_t *repair_blocked_prefix = malloc(
-            ((size_t)lease_count + 1U) * sizeof(*repair_blocked_prefix)
-        );
-        uint32_t *repair_unremovable_prefix = malloc(
-            ((size_t)lease_count + 1U) * sizeof(*repair_unremovable_prefix)
-        );
-        ShadowSpillPendingRetirement *pending = calloc(
-            lease_count == 0U ? 1U : (size_t)lease_count,
-            sizeof(*pending)
-        );
-        uint32_t *predecessors = malloc(
-            (lease_count == 0U ? 1U : (size_t)lease_count) *
-                sizeof(*predecessors)
-        );
-        uint32_t *predecessor_tasks = malloc(
-            (lease_count == 0U ? 1U : (size_t)lease_count) *
-                sizeof(*predecessor_tasks)
-        );
-        ShadowSpillAdmissionReplayWorkspace *replay = NULL;
-        if (operations == NULL || decisions == NULL || annotations == NULL ||
-            purposes == NULL || allocation_offsets == NULL ||
-            dependencies == NULL || live_leases == NULL ||
-            lease_aliases == NULL || lease_start_operations == NULL ||
-            lease_retire_operations == NULL ||
-            repair_candidate_starts == NULL ||
-            repair_blocked_prefix == NULL ||
-            repair_unremovable_prefix == NULL || pending == NULL ||
-            predecessors == NULL || predecessor_tasks == NULL ||
-            shadowspill_admission_replay_workspace_create(
-                lease_count, dependency_count, &replay
-            ) != SHADOWSPILL_STATUS_OK) {
-            free(operations);
-            free(decisions);
-            free(annotations);
-            free(purposes);
-            free(allocation_offsets);
-            free(dependencies);
-            free(live_leases);
-            free(lease_aliases);
-            free(lease_start_operations);
-            free(lease_retire_operations);
-            free(repair_candidate_starts);
-            free(repair_blocked_prefix);
-            free(repair_unremovable_prefix);
-            free(pending);
-            free(predecessors);
-            free(predecessor_tasks);
-            shadowspill_admission_replay_workspace_destroy(replay);
+    if (lease_buffers_outgrown(
+            workspace, operation_count, lease_count, dependency_count,
+            reuse_dependency_count
+        )) {
+        /* Keep every scratch dimension at its prior high-water mark: growing
+         * one must not shrink another the same buffers are shared with. */
+        if (reserve_lease_buffers(
+                workspace,
+                at_least(operation_count, workspace->operation_capacity),
+                at_least(lease_count, workspace->lease_capacity),
+                at_least(dependency_count, workspace->dependency_capacity),
+                at_least(
+                    reuse_dependency_count, workspace->reuse_dependency_capacity
+                )
+            ) != 0) {
             return -1;
         }
-        free(workspace->operations);
-        free(workspace->decisions);
-        free(workspace->annotations);
-        free(workspace->purposes);
-        free(workspace->allocation_offsets);
-        free(workspace->dependencies);
-        free(workspace->live_leases);
-        free(workspace->lease_aliases);
-        free(workspace->lease_start_operations);
-        free(workspace->lease_retire_operations);
-        free(workspace->repair_candidate_starts);
-        free(workspace->repair_blocked_prefix);
-        free(workspace->repair_unremovable_prefix);
-        free(workspace->pending_retirements);
-        free(workspace->predecessor_actions);
-        free(workspace->predecessor_tasks);
-        shadowspill_admission_replay_workspace_destroy(workspace->replay);
-        workspace->operations = operations;
-        workspace->decisions = decisions;
-        workspace->annotations = annotations;
-        workspace->purposes = purposes;
-        workspace->allocation_offsets = allocation_offsets;
-        workspace->dependencies = dependencies;
-        workspace->live_leases = live_leases;
-        workspace->lease_aliases = lease_aliases;
-        workspace->lease_start_operations = lease_start_operations;
-        workspace->lease_retire_operations = lease_retire_operations;
-        workspace->repair_candidate_starts = repair_candidate_starts;
-        workspace->repair_blocked_prefix = repair_blocked_prefix;
-        workspace->repair_unremovable_prefix = repair_unremovable_prefix;
-        workspace->pending_retirements = pending;
-        workspace->predecessor_actions = predecessors;
-        workspace->predecessor_tasks = predecessor_tasks;
-        workspace->replay = replay;
-        workspace->operation_capacity = operation_count;
-        workspace->lease_capacity = lease_count;
-        workspace->dependency_capacity = dependency_count;
-        workspace->reuse_dependency_capacity = reuse_dependency_count;
     }
-    if (schedule->action_count > workspace->action_capacity) {
-        const size_t count = schedule->action_count == 0U
-            ? 1U : (size_t)schedule->action_count;
-        int64_t *trigger = calloc(count, sizeof(*trigger));
-        int64_t *completion = calloc(count, sizeof(*completion));
-        uint32_t *predecessors = calloc(count, sizeof(*predecessors));
-        uint32_t *successor_tasks = calloc(count, sizeof(*successor_tasks));
-        uint32_t *successor_actions = calloc(count, sizeof(*successor_actions));
-        if (trigger == NULL || completion == NULL || predecessors == NULL ||
-            successor_tasks == NULL || successor_actions == NULL) {
-            free(trigger);
-            free(completion);
-            free(predecessors);
-            free(successor_tasks);
-            free(successor_actions);
-            return -1;
-        }
-        free_action_buffers(workspace);
-        workspace->action_trigger_deltas = trigger;
-        workspace->action_completion_deltas = completion;
-        workspace->reuse_predecessor_actions = predecessors;
-        workspace->reuse_successor_tasks = successor_tasks;
-        workspace->reuse_successor_actions = successor_actions;
-        workspace->action_capacity = schedule->action_count;
+    if (schedule->action_count > workspace->action_capacity &&
+        reserve_action_buffers(workspace, schedule->action_count) != 0) {
+        return -1;
     }
     return 0;
 }
