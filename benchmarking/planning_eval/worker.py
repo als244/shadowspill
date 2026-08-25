@@ -52,6 +52,20 @@ _EXPECTED_EXHAUSTED = (
 )
 
 
+def _planner_options(config: FrontierConfig) -> PressureFitOptions | None:
+    """The planner settings this config names, or None for the defaults."""
+
+    named = {
+        name: value
+        for name, value in (
+            ("capacity_refinement_bytes", config.capacity_refinement_bytes),
+            ("max_repair_attempts", config.max_repair_attempts),
+        )
+        if value is not None
+    }
+    return PressureFitOptions(**named) if named else None
+
+
 def evaluate_case(
     *,
     config: FrontierConfig,
@@ -177,13 +191,7 @@ def _evaluate_point(
             execution_budget=request.axes.execution_budget_bytes,
             spill_budget=request.axes.spill_budget_bytes,
             transfer_bandwidths=request.transfer_bandwidths,
-            options=(
-                None
-                if config.capacity_refinement_bytes is None
-                else PressureFitOptions(
-                    capacity_refinement_bytes=config.capacity_refinement_bytes
-                )
-            ),
+            options=_planner_options(config),
             planning_cachedir=planning_cache,
             verbose=verbose_pressurefit,
             save_plan=config.pressurefit_cache_mode == "warm",
