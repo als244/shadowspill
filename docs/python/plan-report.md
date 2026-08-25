@@ -215,7 +215,8 @@ PressureFit invocation
         ├── coalescing mode
         ├── outcome
         ├── repair counts
-        └── work counts and component time
+        ├── work counts and section timing
+        └── reduction trajectory (when recorded)
 ```
 
 A candidate policy is the combination of residency strategy, fetch rule, and
@@ -232,11 +233,28 @@ then inspect:
   pressure boundaries;
 - `work.simulation` and `work.admission` to count compiled calls and cache
   reuse;
+- `work.sections` to see where the time went;
 - each failed candidate's `failure_kind` and `failure_detail`.
 
-Invocation-level work includes shared setup and result materialization. It
-need not equal the sum of candidate work. Component work time is summed work,
-not necessarily elapsed wall time when independent problems run concurrently.
+`work.sections` is the same shape at every level of that hierarchy: disjoint
+spans named for the stage that produced them — `prepare`, `setup`, `reduce`,
+`emit`, `simulate`, `repair`, `digest`, `place`, `select`, `teardown` — plus
+`residual_ns` for whatever the orchestrator's span held that no stage claimed.
+They add up exactly: `total_ns` equals their sum. `admit_ns` is the one
+exception, nested inside `simulate_ns` because admission runs as part of
+simulating, and so excluded from that sum. What the stages mean is walked
+through in [PressureFit](../architecture/pressurefit.md#current-algorithm).
+
+Invocation-level work includes shared setup and result materialization, so it
+need not equal the sum of candidate work. Section times are summed work, not
+necessarily elapsed wall time when independent problems run concurrently.
+
+`steps` is present on a candidate only when planning was asked for a
+trajectory. Each step is one plan the candidate held — its makespan, the bytes
+its layout needed, the capacity it was built against, the objects the reducer
+cut to reach it, and whether it was simulated, measured, placed, triggered a
+refinement, was best at the time, or is the answer. Read in order, the steps
+are the search rather than a summary of it.
 
 ## Physical-layout diagnostics
 

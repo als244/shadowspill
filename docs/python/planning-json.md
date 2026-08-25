@@ -294,7 +294,9 @@ all recomputation problems
     ├── outcome
     ├── repair counts
     ├── placement counts
-    └── simulation/admission/work counters and time
+    ├── work counters
+    ├── work.sections — where the time went
+    └── steps — the reduction trajectory, when recorded
 ```
 
 Each evaluation's outcome carries what the candidate's own capacity search
@@ -309,6 +311,42 @@ did, alongside its makespan:
 
 A candidate whose status is `unplaceable` reached no plan that fit, so it has
 no answer regardless of what it simulated.
+
+`work` counts what the search did — residency and schedule cache hits,
+simulation calls, admission calls — and `work.sections` says where its time
+went. The sections are disjoint spans named for the stage that produced them:
+
+| Key | Span |
+|---|---|
+| `prepare_ns` | Deriving the residency problem. Problem level only. |
+| `setup_ns` | Schedule facts and the candidate workspace. |
+| `reduce_ns` | A strategy's base reduction. |
+| `emit_ns` | Turning residency gaps into an ordered schedule. |
+| `simulate_ns` | Replaying the schedule for a makespan. |
+| `repair_ns` | Moving a transfer or making room for one, including the reduction that takes. |
+| `digest_ns` | Naming the schedule. |
+| `place_ns` | Measuring whether the layout fits. |
+| `select_ns` | Deciding what to answer with, and materialising it. |
+| `teardown_ns` | Releasing what the evaluation held. |
+| `residual_ns` | The part of `total_ns` no named section claimed. |
+| `admit_ns` | Admitting the schedule. **Nested inside `simulate_ns`.** |
+
+`total_ns` equals the sum of every key above except `admit_ns`, at each level
+of the hierarchy, so a breakdown always accounts for the whole span rather
+than most of it.
+
+`steps` is present only when planning was asked to record trajectories. Each
+entry is one plan the candidate held, in order:
+
+| Key | Meaning |
+|---|---|
+| `makespan_ns` | What that plan simulated to. |
+| `required_bytes` | Bytes its layout spanned. Zero unless it was measured. |
+| `capacity_bytes` | The object capacity it was built against. |
+| `cut_aliases` | Objects the reducer cut to reach it. |
+| `repairs` | Repairs spent by the time it was reached. |
+| `capacity_violations` | Places it came up short and waited. |
+| `outcome` | `simulated`, `measured`, `placed`, `refined`, `best`, `answer`. |
 
 See [Interpreting a PlanReport](plan-report.md#pressurefit-diagnostics) for the
 meaning of a problem versus a policy.
