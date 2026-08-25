@@ -18,7 +18,7 @@ from .json import (
     _mapping,
     _optional_integer,
     _string,
-    _without_work_times,
+    without_measurements,
 )
 from .selections import (
     RecomputationProblemDiagnostics,
@@ -160,7 +160,7 @@ class PressureFitDiagnostics:
     def stable_dict(self) -> dict[str, object]:
         """Return deterministic search evidence without measured work times."""
 
-        value = _without_work_times(self.to_dict())
+        value = without_measurements(self.to_dict())
         assert isinstance(value, dict)
         return value
 

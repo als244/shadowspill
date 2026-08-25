@@ -6,9 +6,11 @@ from shadowspill.planner import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
+    PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
+    ReductionStep,
 )
 
 
@@ -18,16 +20,34 @@ def _diagnostics() -> PressureFitDiagnostics:
         simulation_pressure_boundary_attempts=2,
     )
     candidate_work = PressureFitWorkDiagnostics(
-        evaluation_time_ns=80,
         residency_cache_misses=1,
         schedule_emissions=1,
         simulation_calls=3,
         admission_calls=2,
-        residency_time_ns=10,
-        schedule_time_ns=20,
-        simulation_time_ns=30,
-        admission_time_ns=15,
-        digest_time_ns=5,
+        sections=PressureFitSectionTiming(
+            total_ns=80,
+            reduce_ns=10,
+            emit_ns=20,
+            simulate_ns=30,
+            digest_ns=5,
+            admit_ns=15,
+            residual_ns=15,
+        ),
+    )
+    step = ReductionStep(
+        makespan_ns=1_000,
+        required_bytes=2_048,
+        capacity_bytes=4_096,
+        cut_aliases=(3, 7),
+        repairs=1,
+        simulation_status=0,
+        capacity_violations=0,
+        simulated=True,
+        measured=True,
+        placed=True,
+        refined=False,
+        best=True,
+        answer=True,
     )
     selection_id = "stage_0=recompute"
     candidate = CandidateDiagnostic(
@@ -38,6 +58,7 @@ def _diagnostics() -> PressureFitDiagnostics:
         schedule_digest="a" * 64,
         repairs=repairs,
         work=candidate_work,
+        steps=(step,),
     )
     problem = RecomputationProblemDiagnostics(
         selection_id=selection_id,
@@ -46,16 +67,19 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_makespan_ns=1_000,
         candidate_evaluations=(candidate,),
         work=PressureFitWorkDiagnostics(
-            evaluation_time_ns=90,
             residency_cache_misses=1,
             schedule_emissions=1,
             simulation_calls=3,
             admission_calls=2,
-            residency_time_ns=10,
-            schedule_time_ns=20,
-            simulation_time_ns=30,
-            admission_time_ns=15,
-            digest_time_ns=5,
+            sections=PressureFitSectionTiming(
+                total_ns=90,
+                reduce_ns=10,
+                emit_ns=20,
+                simulate_ns=30,
+                digest_ns=5,
+                admit_ns=15,
+                residual_ns=25,
+            ),
         ),
     )
     return PressureFitDiagnostics(
@@ -64,20 +88,20 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_makespan_ns=1_000,
         recomputation_problems=(problem,),
         work=PressureFitWorkDiagnostics(
-            evaluation_time_ns=90,
             residency_cache_misses=1,
             schedule_emissions=1,
-            simulation_calls=3,
-            result_simulation_calls=1,
-            admission_calls=2,
-            result_admission_calls=1,
-            residency_time_ns=10,
-            schedule_time_ns=20,
-            simulation_time_ns=30,
-            result_simulation_time_ns=7,
-            admission_time_ns=15,
-            result_admission_time_ns=6,
-            digest_time_ns=5,
+            simulation_calls=4,
+            admission_calls=3,
+            sections=PressureFitSectionTiming(
+                total_ns=97,
+                reduce_ns=10,
+                emit_ns=20,
+                simulate_ns=30,
+                digest_ns=5,
+                select_ns=7,
+                admit_ns=21,
+                residual_ns=25,
+            ),
         ),
     )
 
@@ -96,6 +120,10 @@ def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
     assert candidate.residency_strategy == "tight-transfer"
     assert candidate.prefetch_rule == "latest-safe"
     assert candidate.coalesced
+    assert candidate.steps[0].cut_aliases == (3, 7)
+    assert candidate.steps[0].answer
+    sections = restored.work.sections
+    assert sections.total_ns == sections.named_ns + sections.residual_ns
 
 
 def test_pressurefit_diagnostics_rejects_old_flat_schema() -> None:

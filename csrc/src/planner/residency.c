@@ -1273,6 +1273,10 @@ ShadowSpillStatus shadowspill_reduce_residency_reusing(
             alias,
             before
         );
+        if (result->cut_aliases != NULL &&
+            result->cut_count < result->cut_capacity) {
+            result->cut_aliases[result->cut_count++] = alias;
+        }
         apply_cut(problem, result->resident, result->breaks, &chosen);
         refresh_alias_candidates(
             problem,

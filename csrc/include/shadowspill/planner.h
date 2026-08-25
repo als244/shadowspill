@@ -65,6 +65,11 @@ typedef struct ShadowSpillResidencyResult {
     uint64_t resident_capacity;
     uint8_t *breaks;
     uint64_t break_capacity;
+    /* Optional: the aliases this reduction cut, in the order it cut them.
+       NULL asks for no record, which is what planning normally wants. */
+    uint32_t *cut_aliases;
+    uint64_t cut_capacity;
+    uint64_t cut_count;
 } ShadowSpillResidencyResult;
 
 typedef enum ShadowSpillResidencyStrategy {
@@ -173,6 +178,10 @@ typedef struct ShadowSpillPressureFitProblemOptions {
     /* How much capacity a plan gives back at a time when its layout does
        not fit; zero hands back exactly what it overran. */
     uint64_t capacity_refinement_bytes;
+    /* Record every plan each candidate held, at 48 bytes a step. Off by
+       default: a corpus sweep would otherwise carry millions of steps it
+       never reads. */
+    uint8_t record_reduction_steps;
     /* The shared best-placed plan, or NULL to place without a gate. The
        planner never owns it: one object passed to several searches shares the
        gate between them, separate objects keep them independent. */
@@ -246,8 +255,105 @@ typedef struct ShadowSpillPressureFitRepairDiagnostics {
 } ShadowSpillPressureFitRepairDiagnostics;
 
 /* Exact operations and summed component work for a candidate or problem. */
+/*
+ * Where a candidate's, or a problem's, time went.
+ *
+ * The sections are disjoint and are opened and closed by whichever function
+ * orchestrates them, never by the work itself, so a reader can see the whole
+ * partition in one place rather than inferring it from counters scattered
+ * through the code that does the work.
+ *
+ * `total_ns` is what the orchestrator measured around everything below it, and
+ * `residual_ns` is the part of that total the named sections do not claim --
+ * allocation, bookkeeping, and the glue between one section and the next. It
+ * is reported rather than left implicit so that the parts always add up to the
+ * whole, and so an unexplained residual is visible as a number rather than as
+ * a discrepancy someone has to notice.
+ *
+ * `admit_ns` is the one exception to disjointness and is marked as such: the
+ * dynamic-pool replay happens inside a simulation, so its time is also part of
+ * `simulate_ns` and must not be added again.
+ */
+typedef struct ShadowSpillPressureFitSectionTiming {
+    uint64_t total_ns;
+    /* Deriving the residency problem from the Program. Problem level only. */
+    uint64_t prepare_ns;
+    /* Schedule facts and the candidate workspace. */
+    uint64_t setup_ns;
+    /* Choosing what stays resident, before any candidate repairs it. */
+    uint64_t reduce_ns;
+    /* Turning residency gaps into an ordered schedule. */
+    uint64_t emit_ns;
+    /* Replaying the schedule for a makespan. */
+    uint64_t simulate_ns;
+    /* Moving a transfer or making room for one, and reducing again when that
+       is what it took. */
+    uint64_t repair_ns;
+    /* Naming the schedule. */
+    uint64_t digest_ns;
+    /* Measuring whether the plan has a layout that fits. */
+    uint64_t place_ns;
+    /* Deciding what to answer with, and materialising it. */
+    uint64_t select_ns;
+    /* Releasing everything the evaluation held. */
+    uint64_t teardown_ns;
+    /* Inside `simulate_ns`, not beside it. */
+    uint64_t admit_ns;
+    /* `total_ns` less every disjoint section above. */
+    uint64_t residual_ns;
+} ShadowSpillPressureFitSectionTiming;
+
+/*
+ * One step of a candidate's descent: the plan it held, and what became of it.
+ *
+ * A candidate reduces, emits, simulates, and sometimes measures a layout,
+ * over and over. Only the last plan survives in the result, so without a
+ * record of the steps the reasons a candidate ended where it did are gone by
+ * the time anyone asks. The step is kept small deliberately -- a candidate
+ * can take hundreds, and a corpus sweep runs millions -- so it holds indices
+ * and flags rather than anything it would have to allocate.
+ *
+ * `cut_alias` is the object whose residency the reduction gave up to reach
+ * this step, or SHADOWSPILL_PLANNER_NO_INDEX for the first plan, which was
+ * not reached by cutting anything.
+ */
+typedef struct ShadowSpillPressureFitReductionStep {
+    uint64_t makespan_ns;
+    /* Zero unless this step's layout was measured. */
+    uint64_t required_bytes;
+    /* The capacity this step was planned at. */
+    uint64_t capacity_bytes;
+    /* Where this step's cuts sit in the candidate's flat cut record, and
+       how many there were. A reduction gives up several objects, so the
+       aliases live once in one array rather than per step. */
+    uint32_t cut_offset;
+    uint32_t cut_count;
+    /* Repairs spent when this step was reached. */
+    uint32_t repairs;
+    /* Simulator status, so a step that failed says how. */
+    uint32_t simulation_status;
+    /* Where the plan came up short, if it did. */
+    uint32_t capacity_violations;
+    /* A ShadowSpillReductionStepFlags bitmask. */
+    uint32_t flags;
+} ShadowSpillPressureFitReductionStep;
+
+enum ShadowSpillReductionStepFlags {
+    /* The plan simulated without error. */
+    SHADOWSPILL_STEP_SIMULATED = 1U << 0U,
+    /* Its layout was measured, so `required_bytes` means something. */
+    SHADOWSPILL_STEP_MEASURED = 1U << 1U,
+    /* That layout fit the pool. */
+    SHADOWSPILL_STEP_PLACED = 1U << 2U,
+    /* The plan gave capacity back after this step. */
+    SHADOWSPILL_STEP_REFINED = 1U << 3U,
+    /* This step was, when it was reached, the best plan the candidate had. */
+    SHADOWSPILL_STEP_BEST = 1U << 4U,
+    /* This step is the plan the candidate answered with. */
+    SHADOWSPILL_STEP_ANSWER = 1U << 5U,
+};
+
 typedef struct ShadowSpillPressureFitWorkDiagnostics {
-    uint64_t evaluation_time_ns;
     uint64_t residency_cache_hits;
     uint64_t residency_cache_misses;
     uint64_t schedule_emissions;
@@ -255,11 +361,7 @@ typedef struct ShadowSpillPressureFitWorkDiagnostics {
     uint64_t simulation_calls;
     uint64_t simulation_cache_hits;
     uint64_t admission_calls;
-    uint64_t residency_time_ns;
-    uint64_t schedule_time_ns;
-    uint64_t simulation_time_ns;
-    uint64_t admission_time_ns;
-    uint64_t digest_time_ns;
+    ShadowSpillPressureFitSectionTiming sections;
 } ShadowSpillPressureFitWorkDiagnostics;
 
 typedef struct ShadowSpillPressureFitCandidateDiagnostic {
@@ -271,6 +373,16 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     ShadowSpillPressureFitWorkDiagnostics work;
     uint32_t simulation_status;
     uint64_t makespan_ns;
+    /* Every plan this candidate held, in the order it held them. Owned by
+       the result and released with it. Empty unless the caller asked for a
+       trajectory, because a sweep does not want millions of these. */
+    ShadowSpillPressureFitReductionStep *steps;
+    uint32_t step_count;
+    uint32_t step_capacity;
+    /* Every alias this candidate ever cut, in order; steps index into it. */
+    uint32_t *cut_aliases;
+    uint32_t cut_count;
+    uint32_t cut_capacity;
     /* How many places the accepted plan came up short of capacity and
        waited. Zero means it never waited for memory. */
     uint32_t capacity_violation_count;
@@ -657,6 +769,25 @@ typedef struct ShadowSpillPlacementResult {
     uint64_t required_bytes;
     uint64_t *offsets;
 } ShadowSpillPlacementResult;
+
+/*
+ * The size of one planner structure, so a caller mirroring these layouts can
+ * check its mirror rather than discover a mismatch as corrupted fields. Takes
+ * a ShadowSpillPlannerStruct; returns zero for anything it does not know.
+ */
+SHADOWSPILL_API uint64_t shadowspill_planner_struct_size(uint32_t which);
+
+enum ShadowSpillPlannerStruct {
+    SHADOWSPILL_STRUCT_PROBLEM_OPTIONS = 0,
+    SHADOWSPILL_STRUCT_WORK_DIAGNOSTICS = 1,
+    SHADOWSPILL_STRUCT_CANDIDATE_DIAGNOSTIC = 2,
+    SHADOWSPILL_STRUCT_SECTION_TIMING = 3,
+    SHADOWSPILL_STRUCT_REDUCTION_STEP = 4,
+    SHADOWSPILL_STRUCT_ADMISSION_FACTS = 5,
+    SHADOWSPILL_STRUCT_BEST_PLACED_RECORD = 6,
+    SHADOWSPILL_STRUCT_RESIDENCY_PROBLEM = 7,
+    SHADOWSPILL_STRUCT_RESIDENCY_RESULT = 8,
+};
 
 SHADOWSPILL_API ShadowSpillStatus shadowspill_place_lifetimes(
     const ShadowSpillPlacementProblem *problem,
