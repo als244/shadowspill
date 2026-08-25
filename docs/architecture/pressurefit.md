@@ -88,6 +88,9 @@ plan, not of the search — two candidates can answer at different capacities in
 the same call — and it is described in
 [physical admission](physical-admission.md).
 
+`record_reduction_steps` turns on the per-candidate trajectory described
+under [Trajectories](#trajectories). It changes nothing about the search.
+
 Candidates place layouts and publish what they place to a shared record, so
 which plans are worth measuring depends on what has already been placed. That
 makes the search order-dependent by default; a caller that needs a reproducible

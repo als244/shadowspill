@@ -66,6 +66,12 @@ Setting it to zero does hand back the whole shortfall, which converges in the
 fewest rounds and is the setting to reach for when planning time matters more
 than the last percent of makespan.
 
+`PressureFitOptions.record_reduction_steps` asks each candidate to record its
+reduction trajectory — one `ReductionStep` per plan it held. Off by default:
+it costs an allocation per candidate that grows with the search, which is
+worth paying to attribute planner time or explain a plan, and not worth
+paying in a sweep.
+
 Configuration and results:
 
 - `PressureFitOptions`, `PressureFitResult`, `PressureFitDiagnostics`
