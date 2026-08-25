@@ -194,10 +194,6 @@ def successful_point_evidence(
                     }
                     for item in plan.attempts
                 ],
-                "admission_refinements": [
-                    asdict(item)
-                    for item in plan.result.diagnostics.admission_refinements
-                ],
                 "effective_object_capacity_bytes": (
                     plan.result.diagnostics.effective_object_capacity_bytes
                 ),
