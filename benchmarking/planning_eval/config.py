@@ -120,6 +120,9 @@ class FrontierConfig:
     #: fit. Part of the config so two runs that differ only here are told
     #: apart by their config digest. Absent means the planner's own default.
     capacity_refinement_bytes: int | None = None
+    #: How many repairs one candidate may spend. Absent means the planner's
+    #: own default.
+    max_repair_attempts: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name or _SAFE_NAME.fullmatch(self.name) is None:
@@ -158,6 +161,7 @@ class FrontierConfig:
             ),
             "pressurefit_cache_mode": self.pressurefit_cache_mode,
             "capacity_refinement_bytes": self.capacity_refinement_bytes,
+            "max_repair_attempts": self.max_repair_attempts,
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),
             "grids": [grid.to_dict() for grid in self.grids],
         }
@@ -187,7 +191,7 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             "grids",
         },
         "config",
-        optional={"capacity_refinement_bytes"},
+        optional={"capacity_refinement_bytes", "max_repair_attempts"},
     )
     if data.get("schema") != _SCHEMA:
         raise ValueError(f"config.schema must be {_SCHEMA!r}")
@@ -240,6 +244,13 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             else _integer(
                 data.get("capacity_refinement_bytes"),
                 "config.capacity_refinement_bytes",
+            )
+        ),
+        max_repair_attempts=(
+            None
+            if data.get("max_repair_attempts") is None
+            else _integer(
+                data.get("max_repair_attempts"), "config.max_repair_attempts"
             )
         ),
     )
