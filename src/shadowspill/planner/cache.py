@@ -31,6 +31,7 @@ from .admission.indexed import (
     index_admission_facts,
 )
 from .diagnostics import PressureFitDiagnostics
+from .diagnostics.json import without_measurements
 from .plan import pressurefit
 from .request import PressureFitOptions
 from .result import PressureFitResult
@@ -267,9 +268,7 @@ class PressureFitCache:
                 raise ValueError(
                     f"PressureFit cache entry {path} cannot be read"
                 ) from exc
-            if _stable_cache_payload(existing_payload) != _stable_cache_payload(
-                payload
-            ):
+            if without_measurements(existing_payload) != without_measurements(payload):
                 raise ValueError(
                     "fresh PressureFit output differs from an existing cache entry; "
                     "use overwrite_plan=True or a new implementation_revision: "
@@ -357,20 +356,6 @@ def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics
         raise ValueError(
             f"PressureFit cache entry {path} has invalid diagnostics"
         ) from exc
-
-
-def _stable_cache_payload(value: object) -> object:
-    """Remove measurement-only work times before semantic cache comparison."""
-
-    if isinstance(value, (list, tuple)):
-        return [_stable_cache_payload(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    return {
-        key: _stable_cache_payload(item)
-        for key, item in value.items()
-        if not key.endswith("_time_ns")
-    }
 
 
 __all__ = ["CachedPressureFitResult", "PressureFitCache"]

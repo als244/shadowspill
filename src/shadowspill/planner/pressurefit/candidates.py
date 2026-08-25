@@ -24,19 +24,24 @@ from shadowspill.status import ABI_VERSION, Status
 from ..admission.indexed import IndexedAdmissionFacts
 from ..capi import (
     NO_INDEX,
+    CPressureFitCandidateDiagnostic,
     CPressureFitPreflightResult,
     CPressureFitProblemOptions,
     CPressureFitProblemResult,
     CPressureFitProgramProblem,
     CPressureFitRepairDiagnostics,
+    CPressureFitSectionTiming,
     CPressureFitWorkDiagnostics,
     planner_api,
 )
 from ..diagnostics import (
     CandidateDiagnostic,
     PressureFitRepairDiagnostics,
+    PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
+    ReductionStep,
 )
+from ..diagnostics.counters import STEP_OUTCOMES
 from ..request import PressureFitOptions
 
 _STRATEGY_CODE = {
@@ -81,6 +86,9 @@ class CCandidateDiagnostic:
     placements_attempted: int
     placements_admitted: int
     capacity_refinements: int
+    #: Every plan this candidate held, in order. Empty unless the caller asked
+    #: for a trajectory.
+    steps: tuple[ReductionStep, ...]
     schedule_digest: str | None
     error_task: int
     error_alias: int
@@ -139,9 +147,21 @@ class CProblemResult:
         if repairs != self.repairs:
             raise RuntimeError("PressureFit problem repair counters do not reconcile")
         for name in candidate_work.__dataclass_fields__:
+            if name == "sections":
+                continue
             if getattr(candidate_work, name) > getattr(self.work, name):
                 raise RuntimeError(
                     f"PressureFit candidate work exceeds problem work: {name}"
+                )
+        # Every candidate section is a delta of the same workspace counter the
+        # problem totals, so a candidate can never hold more of one than the
+        # problem it ran inside.
+        for name in PressureFitSectionTiming.__dataclass_fields__:
+            if getattr(candidate_work.sections, name) > getattr(
+                self.work.sections, name
+            ):
+                raise RuntimeError(
+                    f"PressureFit candidate sections exceed problem sections: {name}"
                 )
 
 
@@ -186,6 +206,7 @@ def decode_candidate_diagnostic(
             schedule_digest=value.schedule_digest,
             repairs=value.repairs,
             work=value.work,
+            steps=value.steps,
         )
     if value.status == 7:
         return CandidateDiagnostic(
@@ -205,6 +226,7 @@ def decode_candidate_diagnostic(
             capacity_refinements=value.capacity_refinements,
             repairs=value.repairs,
             work=value.work,
+            steps=value.steps,
         )
     if value.status == 1:
         device_id = simulation.device_ids[value.error_device]
@@ -222,6 +244,7 @@ def decode_candidate_diagnostic(
             failure_detail=detail,
             repairs=value.repairs,
             work=value.work,
+            steps=value.steps,
         )
     if value.status == 3:
         device_id = simulation.device_ids[value.error_device]
@@ -240,6 +263,7 @@ def decode_candidate_diagnostic(
             failure_detail=detail,
             repairs=value.repairs,
             work=value.work,
+            steps=value.steps,
         )
     if value.status == 5:
         if value.simulation_status == 0:
@@ -275,6 +299,7 @@ def decode_candidate_diagnostic(
             ),
             repairs=value.repairs,
             work=value.work,
+            steps=value.steps,
         )
     if value.status != 2:
         raise RuntimeError(
@@ -323,9 +348,20 @@ def _decode_repairs(
     )
 
 
+#: Section names, taken from the compiled layout so the two cannot drift.
+_SECTION_FIELDS = tuple(name for name, *_ in CPressureFitSectionTiming._fields_)
+
+
+def _decode_sections(
+    value: CPressureFitSectionTiming,
+) -> PressureFitSectionTiming:
+    return PressureFitSectionTiming(
+        **{name: int(getattr(value, name)) for name in _SECTION_FIELDS}
+    )
+
+
 def _decode_work(value: CPressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
     return PressureFitWorkDiagnostics(
-        evaluation_time_ns=int(value.evaluation_time_ns),
         residency_cache_hits=int(value.residency_cache_hits),
         residency_cache_misses=int(value.residency_cache_misses),
         schedule_emissions=int(value.schedule_emissions),
@@ -333,11 +369,41 @@ def _decode_work(value: CPressureFitWorkDiagnostics) -> PressureFitWorkDiagnosti
         simulation_calls=int(value.simulation_calls),
         simulation_cache_hits=int(value.simulation_cache_hits),
         admission_calls=int(value.admission_calls),
-        residency_time_ns=int(value.residency_time_ns),
-        schedule_time_ns=int(value.schedule_time_ns),
-        simulation_time_ns=int(value.simulation_time_ns),
-        admission_time_ns=int(value.admission_time_ns),
-        digest_time_ns=int(value.digest_time_ns),
+        sections=_decode_sections(value.sections),
+    )
+
+
+#: Bit per outcome, in the order the planner's flag enum declares them.
+_STEP_FLAGS = tuple((name, 1 << bit) for bit, name in enumerate(STEP_OUTCOMES))
+
+
+def _decode_steps(
+    value: CPressureFitCandidateDiagnostic,
+) -> tuple[ReductionStep, ...]:
+    """Copy one candidate's trajectory out of planner-owned memory.
+
+    Empty unless the caller asked for a trajectory, in which case the arrays
+    below belong to the result and stop existing when it does.
+    """
+
+    if not value.steps or value.step_count == 0:
+        return ()
+    aliases = value.cut_aliases[: value.cut_count] if value.cut_aliases else []
+    return tuple(
+        ReductionStep(
+            makespan_ns=int(step.makespan_ns),
+            required_bytes=int(step.required_bytes),
+            capacity_bytes=int(step.capacity_bytes),
+            cut_aliases=tuple(
+                int(alias)
+                for alias in aliases[step.cut_offset : step.cut_offset + step.cut_count]
+            ),
+            repairs=int(step.repairs),
+            simulation_status=int(step.simulation_status),
+            capacity_violations=int(step.capacity_violations),
+            **{name: bool(step.flags & bit) for name, bit in _STEP_FLAGS},
+        )
+        for step in value.steps[: value.step_count]
     )
 
 
@@ -380,9 +446,7 @@ def _program_problem(
         # Placement measures layouts during the search; it does not
         # prefilter through the dynamic-pool replay, which `admission`
         # above would switch on.
-        placement=(
-            ctypes.pointer(placement.value) if placement is not None else None
-        ),
+        placement=(ctypes.pointer(placement.value) if placement is not None else None),
         alias_json_names=alias_names,
         task_json_names=task_names,
     )
@@ -610,6 +674,7 @@ def _evaluate_problem(
                     placements_attempted=int(value.placements_attempted),
                     placements_admitted=int(value.placements_admitted),
                     capacity_refinements=int(value.capacity_refinements),
+                    steps=_decode_steps(value),
                     schedule_digest=digest,
                     error_task=int(value.error_task),
                     error_alias=int(value.error_alias),

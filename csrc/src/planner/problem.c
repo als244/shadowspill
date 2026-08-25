@@ -1,3 +1,4 @@
+#include "../common/platform.h"
 #include "internal.h"
 
 #include <limits.h>
@@ -919,7 +920,11 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problem(
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     PreparedProblem prepared = {0};
+    /* Deriving the residency problem from the Program, which the evaluation
+     * below never sees and so could never account for. */
+    const uint64_t prepare_started = shadowspill_monotonic_ns();
     ShadowSpillStatus status = prepare_problem(problem, options, &prepared);
+    const uint64_t prepare_ns = shadowspill_monotonic_ns() - prepare_started;
     if (status == SHADOWSPILL_STATUS_OK) {
         status = shadowspill_evaluate_pressurefit_problem(
             &prepared.problem,
@@ -929,7 +934,14 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problem(
     } else {
         result->status = status;
     }
+    const uint64_t teardown_started = shadowspill_monotonic_ns();
     prepared_problem_destroy(&prepared);
+    const uint64_t teardown_ns = shadowspill_monotonic_ns() - teardown_started;
+    /* Both spans sit outside the evaluation's own, so they extend the total
+     * as well as their own sections, and the identity still holds. */
+    result->work.sections.prepare_ns += prepare_ns;
+    result->work.sections.teardown_ns += teardown_ns;
+    result->work.sections.total_ns += prepare_ns + teardown_ns;
     return status;
 }
 

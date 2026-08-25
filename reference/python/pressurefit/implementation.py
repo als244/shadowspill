@@ -21,6 +21,7 @@ from shadowspill.planner.diagnostics import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
+    PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
@@ -372,10 +373,10 @@ def _evaluate_candidate(
     schedule_cache_hits = 0
     simulation_calls = 0
     simulation_cache_hits = 0
-    residency_time_ns = 0
-    schedule_time_ns = 0
-    simulation_time_ns = 0
-    digest_time_ns = 0
+    reduce_ns = 0
+    emit_ns = 0
+    simulate_ns = 0
+    digest_ns = 0
     simulation_prefetch_delay_attempts = 0
     simulation_pressure_boundary_attempts = 0
 
@@ -388,18 +389,23 @@ def _evaluate_candidate(
         )
 
     def work_value() -> PressureFitWorkDiagnostics:
+        total_ns = time.perf_counter_ns() - candidate_started
+        named_ns = reduce_ns + emit_ns + simulate_ns + digest_ns
         return PressureFitWorkDiagnostics(
-            evaluation_time_ns=time.perf_counter_ns() - candidate_started,
             residency_cache_hits=residency_cache_hits,
             residency_cache_misses=residency_cache_misses,
             schedule_emissions=schedule_emissions,
             schedule_cache_hits=schedule_cache_hits,
             simulation_calls=simulation_calls,
             simulation_cache_hits=simulation_cache_hits,
-            residency_time_ns=residency_time_ns,
-            schedule_time_ns=schedule_time_ns,
-            simulation_time_ns=simulation_time_ns,
-            digest_time_ns=digest_time_ns,
+            sections=PressureFitSectionTiming(
+                total_ns=total_ns,
+                reduce_ns=reduce_ns,
+                emit_ns=emit_ns,
+                simulate_ns=simulate_ns,
+                digest_ns=digest_ns,
+                residual_ns=max(total_ns - named_ns, 0),
+            ),
         )
 
     while True:
@@ -423,7 +429,7 @@ def _evaluate_candidate(
                     extra_pressure=extra_pressure,
                     score_cache=spec.problem.cut_scores,
                 )
-                residency_time_ns += time.perf_counter_ns() - residency_started
+                reduce_ns += time.perf_counter_ns() - residency_started
                 spec.problem.residency_plans[residency_key] = residency
             else:
                 residency_cache_hits += 1
@@ -451,7 +457,7 @@ def _evaluate_candidate(
                     coalesced=spec.coalesced,
                     prefetch_headroom=prefetch_headroom,
                 )
-                schedule_time_ns += time.perf_counter_ns() - schedule_started
+                emit_ns += time.perf_counter_ns() - schedule_started
                 schedule_emissions += 1
                 spec.problem.schedule_cache[schedule_key] = schedule
             else:
@@ -497,15 +503,13 @@ def _evaluate_candidate(
                             config=config,
                         )
                     except SimulationInfeasibleError as error:
-                        simulation_time_ns += (
-                            time.perf_counter_ns() - simulation_started
-                        )
+                        simulate_ns += time.perf_counter_ns() - simulation_started
                         simulation_calls += 1
                         spec.problem.simulation_cache[schedule] = (
                             _CachedSimulationFailure.from_error(error)
                         )
                         raise
-                    simulation_time_ns += time.perf_counter_ns() - simulation_started
+                    simulate_ns += time.perf_counter_ns() - simulation_started
                     simulation_calls += 1
                     spec.problem.simulation_cache[schedule] = cached_simulation
                 else:
@@ -560,7 +564,7 @@ def _evaluate_candidate(
             continue
         digest_started = time.perf_counter_ns()
         schedule_digest = schedule.digest
-        digest_time_ns += time.perf_counter_ns() - digest_started
+        digest_ns += time.perf_counter_ns() - digest_started
         return _CandidateOutcome(
             spec,
             CandidateDiagnostic(
@@ -919,7 +923,6 @@ def pressurefit(
         ),
         admission_facts=admission,
     )
-
 
 
 __all__ = ["pressurefit", "validate_schedule_feasibility"]

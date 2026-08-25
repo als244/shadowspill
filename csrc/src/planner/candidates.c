@@ -171,11 +171,131 @@ typedef struct CandidateWorkspace {
     uint64_t schedule_cache_hits;
     uint64_t simulation_calls;
     uint64_t simulation_cache_hits;
-    uint64_t residency_time_ns;
-    uint64_t schedule_time_ns;
-    uint64_t simulation_time_ns;
-    uint64_t digest_time_ns;
+    /* Where the time went. Written only by the functions that orchestrate
+     * the work, never by the work itself. */
+    ShadowSpillPressureFitSectionTiming sections;
+    /* Scratch the reducer appends its cuts to, when a trajectory is being
+     * recorded. Drained into the candidate's record after each reduction. */
+    uint32_t *cut_scratch;
+    uint64_t cut_scratch_capacity;
+    uint64_t cut_scratch_count;
 } CandidateWorkspace;
+
+/*
+ * One section of an orchestrator's time.
+ *
+ * Opened and closed around a call, so the partition of a function's time is
+ * written where that function orchestrates the work rather than inside the
+ * work. A section may be opened against any sink; nesting is expressed by
+ * which sink it is given, not by the helper.
+ */
+typedef struct Section {
+    uint64_t started;
+    uint64_t *sink;
+} Section;
+
+static Section section_open(uint64_t *sink) {
+    return (Section){shadowspill_monotonic_ns(), sink};
+}
+
+static void section_close(Section section) {
+    *section.sink += shadowspill_monotonic_ns() - section.started;
+}
+
+/* What the named sections did not claim. Reported so the parts add up. */
+static void section_close_total(
+    ShadowSpillPressureFitSectionTiming *timing,
+    uint64_t started
+) {
+    timing->total_ns = shadowspill_monotonic_ns() - started;
+    const uint64_t named = timing->prepare_ns + timing->setup_ns +
+        timing->reduce_ns + timing->emit_ns + timing->simulate_ns +
+        timing->repair_ns + timing->digest_ns + timing->place_ns +
+        timing->select_ns + timing->teardown_ns;
+    timing->residual_ns =
+        timing->total_ns > named ? timing->total_ns - named : 0U;
+}
+
+/* Append one step of a candidate's descent, growing the record as needed. */
+static int record_step(
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    ShadowSpillPressureFitReductionStep step
+) {
+    if (diagnostic->step_count == diagnostic->step_capacity) {
+        uint32_t capacity = diagnostic->step_capacity == 0U
+            ? 32U
+            : diagnostic->step_capacity * 2U;
+        if (capacity < diagnostic->step_capacity) {
+            return -1;
+        }
+        ShadowSpillPressureFitReductionStep *grown = realloc(
+            diagnostic->steps, (size_t)capacity * sizeof(*grown)
+        );
+        if (grown == NULL) {
+            return -1;
+        }
+        diagnostic->steps = grown;
+        diagnostic->step_capacity = capacity;
+    }
+    diagnostic->steps[diagnostic->step_count++] = step;
+    return 0;
+}
+
+/* Move the cuts a reduction reported into the candidate's flat record. */
+static int drain_cuts(
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    CandidateWorkspace *workspace
+) {
+    const uint64_t added = workspace->cut_scratch_count;
+    workspace->cut_scratch_count = 0U;
+    if (added == 0U) {
+        return 0;
+    }
+    if (diagnostic->cut_count + added > diagnostic->cut_capacity) {
+        uint32_t capacity = diagnostic->cut_capacity == 0U
+            ? 256U
+            : diagnostic->cut_capacity;
+        while (diagnostic->cut_count + added > capacity) {
+            const uint32_t grown = capacity * 2U;
+            if (grown < capacity) {
+                return -1;
+            }
+            capacity = grown;
+        }
+        uint32_t *aliases = realloc(
+            diagnostic->cut_aliases, (size_t)capacity * sizeof(*aliases)
+        );
+        if (aliases == NULL) {
+            return -1;
+        }
+        diagnostic->cut_aliases = aliases;
+        diagnostic->cut_capacity = capacity;
+    }
+    memcpy(
+        diagnostic->cut_aliases + diagnostic->cut_count,
+        workspace->cut_scratch,
+        (size_t)added * sizeof(*workspace->cut_scratch)
+    );
+    diagnostic->cut_count += (uint32_t)added;
+    return 0;
+}
+
+/* Mark the last recorded step, for facts only known after it was taken. */
+static void mark_last_step(
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    uint32_t flags,
+    uint64_t required_bytes
+) {
+    if (diagnostic->step_count == 0U) {
+        return;
+    }
+    ShadowSpillPressureFitReductionStep *step =
+        &diagnostic->steps[diagnostic->step_count - 1U];
+    step->flags |= flags;
+    if (required_bytes != 0U) {
+        step->required_bytes = required_bytes;
+    }
+}
 
 static uint64_t repair_total(
     const ShadowSpillPressureFitRepairDiagnostics *repairs
@@ -198,11 +318,26 @@ static ShadowSpillPressureFitWorkDiagnostics workspace_work(
         .simulation_calls = workspace->simulation_calls,
         .simulation_cache_hits = workspace->simulation_cache_hits,
         .admission_calls = workspace->admission.calls,
-        .residency_time_ns = workspace->residency_time_ns,
-        .schedule_time_ns = workspace->schedule_time_ns,
-        .simulation_time_ns = workspace->simulation_time_ns,
-        .admission_time_ns = workspace->admission.time_ns,
-        .digest_time_ns = workspace->digest_time_ns,
+        .sections = workspace->sections,
+    };
+}
+
+static ShadowSpillPressureFitSectionTiming section_delta(
+    ShadowSpillPressureFitSectionTiming after,
+    ShadowSpillPressureFitSectionTiming before
+) {
+    return (ShadowSpillPressureFitSectionTiming){
+        .prepare_ns = after.prepare_ns - before.prepare_ns,
+        .setup_ns = after.setup_ns - before.setup_ns,
+        .reduce_ns = after.reduce_ns - before.reduce_ns,
+        .emit_ns = after.emit_ns - before.emit_ns,
+        .simulate_ns = after.simulate_ns - before.simulate_ns,
+        .repair_ns = after.repair_ns - before.repair_ns,
+        .digest_ns = after.digest_ns - before.digest_ns,
+        .place_ns = after.place_ns - before.place_ns,
+        .select_ns = after.select_ns - before.select_ns,
+        .teardown_ns = after.teardown_ns - before.teardown_ns,
+        .admit_ns = after.admit_ns - before.admit_ns,
     };
 }
 
@@ -223,14 +358,7 @@ static ShadowSpillPressureFitWorkDiagnostics work_delta(
         .simulation_cache_hits =
             after.simulation_cache_hits - before.simulation_cache_hits,
         .admission_calls = after.admission_calls - before.admission_calls,
-        .residency_time_ns =
-            after.residency_time_ns - before.residency_time_ns,
-        .schedule_time_ns = after.schedule_time_ns - before.schedule_time_ns,
-        .simulation_time_ns =
-            after.simulation_time_ns - before.simulation_time_ns,
-        .admission_time_ns =
-            after.admission_time_ns - before.admission_time_ns,
-        .digest_time_ns = after.digest_time_ns - before.digest_time_ns,
+        .sections = section_delta(after.sections, before.sections),
     };
 }
 
@@ -912,6 +1040,13 @@ static int candidate_workspace_create(
     workspace->base_breaks = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->repair_resident = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->repair_breaks = calloc(cells == 0U ? 1U : cells, 1U);
+    workspace->cut_scratch_capacity = problem->residency->alias_count;
+    workspace->cut_scratch = calloc(
+        workspace->cut_scratch_capacity == 0U
+            ? 1U
+            : (size_t)workspace->cut_scratch_capacity,
+        sizeof(*workspace->cut_scratch)
+    );
     workspace->removable_aliases = calloc(
         problem->residency->alias_count == 0U
             ? 1U
@@ -926,6 +1061,7 @@ static int candidate_workspace_create(
         workspace->base_resident == NULL || workspace->base_breaks == NULL ||
         workspace->repair_resident == NULL ||
         workspace->repair_breaks == NULL ||
+        workspace->cut_scratch == NULL ||
         workspace->removable_aliases == NULL ||
         workspace->extra_pressure == NULL ||
         shadowspill_schedule_storage_create(
@@ -969,6 +1105,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     free(workspace->repair_breaks);
     free(workspace->removable_aliases);
     free(workspace->extra_pressure);
+    free(workspace->cut_scratch);
     free(workspace->prefetch_constraints);
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
@@ -1099,13 +1236,24 @@ static ShadowSpillStatus reduce(
         .resident_capacity = cells,
         .breaks = breaks,
         .break_capacity = cells,
+        /* Records what this reduction gives up, when anyone is recording.
+         * Several reductions can run before the record is drained, so each
+         * appends after the last rather than from the start. A full scratch
+         * records nothing further: the reducer stops at its capacity. */
+        .cut_aliases = workspace->cut_scratch == NULL
+            ? NULL
+            : workspace->cut_scratch + workspace->cut_scratch_count,
+        .cut_capacity =
+            workspace->cut_scratch_capacity - workspace->cut_scratch_count,
     };
-    return shadowspill_reduce_residency_reusing(
+    const ShadowSpillStatus reduced = shadowspill_reduce_residency_reusing(
         problem->residency,
         options,
         result,
         workspace->residency_workspace
     );
+    workspace->cut_scratch_count += result->cut_count;
+    return reduced;
 }
 
 static ResidencyCacheEntry *find_residency_cache(
@@ -2002,7 +2150,6 @@ static int reduce_repaired_candidate(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
     ShadowSpillResidencyResult residency;
-    const uint64_t started = shadowspill_monotonic_ns();
     const ShadowSpillStatus status = reduce_cached(
         problem,
         workspace,
@@ -2012,7 +2159,6 @@ static int reduce_repaired_candidate(
         workspace->breaks,
         &residency
     );
-    workspace->residency_time_ns += shadowspill_monotonic_ns() - started;
     if (status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
         copy_analytic_error(diagnostic, &residency);
         return 0;
@@ -2038,18 +2184,6 @@ static void initialize_diagnostic(
     diagnostic->error_boundary = INT32_MIN;
 }
 
-/* May this candidate take another repair?
- *
- * Two bounds, and which applies depends on whether the caller handed us a
- * plan to beat. With one, the answer is a bound rather than a guess: repairs
- * only add transfers or stall, so `current` rises monotonically and must
- * cross the incumbent, at which point no further repair can win. Without
- * one there is nothing to compare against and `max_repair_attempts` is the
- * only thing standing between a genuinely infeasible point and an unbounded
- * loop -- the guaranteed progress per repair is a single byte.
- *
- * Both bounds apply when both are available, so a candidate can never repair
- * without limit. */
 /*
  * Whether this candidate gets another reduction.
  *
@@ -2061,58 +2195,794 @@ static void initialize_diagnostic(
  * waiting as often as it adds to it, so a candidate behind the incumbent is
  * exactly the one with something to gain, and cutting it off there abandons
  * the plans most worth finding.
+ *
+ * A candidate that runs out reports `SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED`,
+ * which says the effort ran out -- "we stopped looking", never "there is no
+ * plan".
  */
 static int may_repair_again(
     const ShadowSpillPressureFitProblemOptions *candidate_options,
-    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
-    uint64_t current_makespan_ns
+    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
-    (void)current_makespan_ns;
     return repair_total(&diagnostic->repairs) <
         candidate_options->max_repair_attempts;
 }
 
-/* Why a candidate stopped, when it stopped without converging. `exhausted`
- * means the effort ran out, which is "we stopped looking" and must never be
- * read as "there is no plan". Nothing reports `dominated` any more: a
- * candidate behind the incumbent can now overtake it, so being behind is not
- * a reason to stop. */
-static uint32_t stopped_status(
-    const ShadowSpillPressureFitProblemOptions *candidate_options,
-    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
-    uint64_t current_makespan_ns
+/*
+ * One candidate's search.
+ *
+ * A candidate starts from its strategy's base residency and repeats a fixed
+ * cycle: emit a schedule, simulate it, name it, measure whether its layout
+ * fits, then decide whether to keep looking. It leaves the cycle with an
+ * answer, or without one when it runs out of ways to improve.
+ *
+ * `evaluate_candidate` is that cycle and nothing else. Every step of it is a
+ * stage below, the state they share is `CandidateSearch`, and the timing
+ * sections are opened and closed around the stage calls so that what a
+ * section covers is exactly what its name says.
+ */
+
+/* What a stage tells the cycle to do next. */
+typedef enum StageOutcome {
+    /* Run the next stage of this round. */
+    STAGE_NEXT = 0,
+    /* Something changed; start a new round. */
+    STAGE_REPEAT,
+    /* The candidate is finished. `search->answer` is what to report. */
+    STAGE_DONE,
+} StageOutcome;
+
+typedef struct CandidateSearch {
+    /* Fixed for the whole search. */
+    const ShadowSpillPressureFitProblem *problem;
+    const ShadowSpillScheduleFacts *facts;
+    const ShadowSpillPressureFitProblemOptions *options;
+    CandidateWorkspace *workspace;
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic;
+    ShadowSpillResidencyOptions reduce_options;
+    uint8_t strategy;
+    uint8_t rule;
+    uint8_t coalesced;
+    /* Whether there is a pool to place into at all. Without one the
+     * candidate answers with its fastest plan, which is what a caller that
+     * supplied no topology can be told. */
+    int placing;
+    uint64_t cells;
+    uint64_t pressure_cells;
+
+    /* Moves as the search runs. */
+    int need_emit;
+    /* Capacity is a property of the plan, so it travels with it. */
+    uint64_t plan_capacity_bytes;
+    /* The best plan the search set aside, held in `workspace->best`. */
+    uint64_t best_makespan_ns;
+    uint8_t best_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
+    /* The plan this candidate would answer with: the best it has placed,
+     * which is not always the best it has simulated. */
+    uint64_t placed_makespan_ns;
+    uint8_t placed_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
+
+    /* The round in hand: what the last simulation produced. */
+    ShadowSpillSimulationResult simulation;
+    ShadowSpillStatus simulation_status;
+    ShadowSpillStatus admission_status;
+    ShadowSpillAdmissionReplayResult admission_result;
+    ShadowSpillAdmissionAnnotation admission_annotation;
+    SimulationCacheEntry *simulation_entry;
+    int improves;
+
+    /* What `evaluate_candidate` returns, set with STAGE_DONE. */
+    int answer;
+} CandidateSearch;
+
+static void search_begin(
+    CandidateSearch *search,
+    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleFacts *facts,
+    const ShadowSpillPressureFitProblemOptions *options,
+    CandidateWorkspace *workspace,
+    uint8_t strategy,
+    uint8_t rule,
+    uint8_t coalesced,
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
-    (void)candidate_options;
-    (void)diagnostic;
-    (void)current_makespan_ns;
-    return (uint32_t)SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
+    memset(search, 0, sizeof(*search));
+    search->problem = problem;
+    search->facts = facts;
+    search->options = options;
+    search->workspace = workspace;
+    search->diagnostic = diagnostic;
+    search->strategy = strategy;
+    search->rule = rule;
+    search->coalesced = coalesced;
+    search->placing = problem->placement != NULL;
+    search->cells = (uint64_t)problem->residency->alias_count *
+        problem->residency->boundary_count;
+    search->pressure_cells = (uint64_t)problem->residency->device_count *
+        problem->residency->boundary_count;
+    search->need_emit = 1;
+    search->plan_capacity_bytes = problem->placement == NULL
+        ? 0U
+        : problem->placement->object_capacity_bytes;
+    residency_options(problem, workspace, strategy, &search->reduce_options);
+
+    initialize_diagnostic(diagnostic, strategy, rule, coalesced);
+    memset(
+        workspace->extra_pressure,
+        0,
+        (size_t)search->pressure_cells * sizeof(*workspace->extra_pressure)
+    );
+    workspace->plan_capacity_given_back = 0U;
+    workspace->cut_scratch_count = 0U;
+    memcpy(workspace->resident, workspace->base_resident, (size_t)search->cells);
+    memcpy(workspace->breaks, workspace->base_breaks, (size_t)search->cells);
+    workspace->prefetch_constraint_count = 0U;
+    workspace->current_residency_key = workspace->base_residency_key;
 }
 
-/* A candidate that placed a plan has an answer, whatever became of it
- * afterwards. The shared record already names that plan, so this candidate
- * has to report it: otherwise the record holds a makespan whose plan nobody
- * kept, and the search would answer with a plan it cannot produce. */
-static int finish_with_placed_plan(
-    CandidateWorkspace *workspace,
+/* Report a plan as this candidate's answer. */
+static void set_answer(
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
-    uint64_t placed_makespan_ns,
-    const uint8_t *placed_digest
+    uint64_t makespan_ns,
+    const uint8_t *digest
 ) {
     diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
-    diagnostic->makespan_ns = placed_makespan_ns;
-    memcpy(
-        diagnostic->schedule_digest,
-        placed_digest,
-        SHADOWSPILL_PLANNER_DIGEST_BYTES
-    );
+    diagnostic->makespan_ns = makespan_ns;
+    memcpy(diagnostic->schedule_digest, digest, SHADOWSPILL_PLANNER_DIGEST_BYTES);
+}
+
+/* Answer with a plan the search set aside. The caller reads the answer from
+ * the live schedule, so the kept plan has to move back into it. */
+static int answer_with_kept(CandidateSearch *search, uint64_t makespan_ns) {
+    set_answer(search->diagnostic, makespan_ns, search->best_digest);
     if (shadowspill_schedule_storage_copy(
-            &workspace->schedule, &workspace->best
+            &search->workspace->schedule, &search->workspace->best
         ) != 0) {
         return -1;
     }
     return 1;
 }
 
+/* Stop without an answer of this candidate's own -- unless it placed a plan,
+ * in which case it has one whatever became of it afterwards. The shared
+ * record already names that plan, so this candidate has to report it:
+ * otherwise the record holds a makespan whose plan nobody kept, and the
+ * search would answer with a plan it cannot produce. */
+static int answer_or_stop(CandidateSearch *search) {
+    if (search->placing && search->placed_makespan_ns != 0U) {
+        return answer_with_kept(search, search->placed_makespan_ns);
+    }
+    return 0;
+}
+
+static StageOutcome search_done(CandidateSearch *search, int answer) {
+    search->answer = answer;
+    return STAGE_DONE;
+}
+
+/* Add a step to the trajectory, when the caller asked for one. */
+static int record_search_step(CandidateSearch *search) {
+    if (search->options->record_reduction_steps == 0U) {
+        return 0;
+    }
+    const uint32_t cuts_before = search->diagnostic->cut_count;
+    if (drain_cuts(search->diagnostic, search->workspace) != 0) {
+        return -1;
+    }
+    return record_step(
+        search->diagnostic,
+        (ShadowSpillPressureFitReductionStep){
+            .makespan_ns = search->simulation.makespan_ns,
+            .capacity_bytes = search->plan_capacity_bytes,
+            .cut_offset = cuts_before,
+            .cut_count = search->diagnostic->cut_count - cuts_before,
+            .repairs = (uint32_t)repair_total(&search->diagnostic->repairs),
+            .simulation_status = search->simulation.status,
+            .capacity_violations = search->simulation.capacity_violation_count,
+            .flags = search->simulation.status == SHADOWSPILL_STATUS_OK
+                ? SHADOWSPILL_STEP_SIMULATED
+                : 0U,
+        }
+    );
+}
+
+static void mark_search_step(
+    CandidateSearch *search, uint32_t flags, uint64_t required_bytes
+) {
+    if (search->options->record_reduction_steps != 0U) {
+        mark_last_step(search->diagnostic, flags, required_bytes);
+    }
+}
+
+/*
+ * Diagnostic-only reduction tracing, enabled by SHADOWSPILL_REDUCTION_TRACE
+ * and never active in normal planning.
+ *
+ * Emitted after every simulation rather than only after a failing one,
+ * because a reduction that succeeds is exactly the interesting case: whether
+ * makespan falls monotonically as a candidate reduces, or rises and later
+ * recovers. The resolved program is identified by the problem it was compiled
+ * from, since a policy alone is shared across all five and grouping by it
+ * merges them.
+ */
+static void trace_reduction(const CandidateSearch *search) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        enabled = getenv("SHADOWSPILL_REDUCTION_TRACE") != NULL;
+    }
+    if (!enabled) {
+        return;
+    }
+    fprintf(
+        stderr,
+        "reduction-trace resolved=%llu strategy=%u rule=%u coalesced=%u "
+        "step=%llu status=%d makespan=%llu shortfalls=%u actions=%u\n",
+        (unsigned long long)(uintptr_t)search->problem,
+        search->strategy,
+        search->rule,
+        search->coalesced,
+        (unsigned long long)repair_total(&search->diagnostic->repairs),
+        (int)search->simulation_status,
+        (unsigned long long)search->simulation.makespan_ns,
+        search->simulation.capacity_violation_count,
+        search->workspace->schedule.value.action_count
+    );
+}
+
+/*
+ * Diagnostic-only repair tracing for the planning-efficiency investigation
+ * (docs/internal/plans/planning_efficiency_0818, E012). Enabled by
+ * SHADOWSPILL_REPAIR_TRACE; never active in normal planning.
+ *
+ * `makespan` and the transfer totals are what a dominance bound would be
+ * built from, logged per repair so the investigation can see whether any of
+ * them rises fast enough to cross an incumbent before the candidate converges
+ * anyway. `makespan` is only meaningful when status is OK: the simulator
+ * assigns it on the success path alone.
+ */
+static void trace_repair(const CandidateSearch *search) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        enabled = getenv("SHADOWSPILL_REPAIR_TRACE") != NULL;
+    }
+    if (!enabled) {
+        return;
+    }
+    const ShadowSpillIndexedSchedule *schedule = &search->workspace->schedule.value;
+    uint64_t fetch_bytes = 0U;
+    uint64_t evict_bytes = 0U;
+    for (uint32_t index = 0U; index < schedule->action_count; ++index) {
+        const uint64_t bytes =
+            search->problem->residency->alias_size_bytes[schedule->action_aliases[index]];
+        if (schedule->action_kinds[index] == SHADOWSPILL_MEMORY_PREFETCH) {
+            fetch_bytes += bytes;
+        } else if (schedule->action_kinds[index] == SHADOWSPILL_MEMORY_OFFLOAD) {
+            evict_bytes += bytes;
+        }
+    }
+    fprintf(
+        stderr,
+        "repair-trace strategy=%u rule=%u coalesced=%u attempt=%llu status=%d "
+        "makespan=%llu fetch_bytes=%llu evict_bytes=%llu actions=%u time=%llu "
+        "used=%llu requested=%llu capacity=%llu\n",
+        search->strategy,
+        search->rule,
+        search->coalesced,
+        (unsigned long long)repair_total(&search->diagnostic->repairs),
+        (int)search->simulation_status,
+        (unsigned long long)search->simulation.makespan_ns,
+        (unsigned long long)fetch_bytes,
+        (unsigned long long)evict_bytes,
+        schedule->action_count,
+        (unsigned long long)search->simulation.error_time_ns,
+        (unsigned long long)search->simulation.error_used_bytes,
+        (unsigned long long)search->simulation.error_requested_bytes,
+        (unsigned long long)search->simulation.error_capacity_bytes
+    );
+}
+
+/* Turn the current residency into an ordered schedule. */
+static StageOutcome search_emit(CandidateSearch *search) {
+    CandidateWorkspace *workspace = search->workspace;
+    if (search->rule == SHADOWSPILL_PREFETCH_INTERVAL_ENTRY &&
+        shadowspill_extend_interval_entries(
+            search->facts, workspace->resident, workspace->breaks
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    if (emit_cached(
+            search->facts,
+            workspace,
+            workspace->resident,
+            workspace->breaks,
+            search->rule,
+            search->coalesced,
+            search->reduce_options.prefetch_headroom
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    const int constrained = shadowspill_apply_prefetch_trigger_constraints(
+        search->facts,
+        workspace->prefetch_constraints,
+        workspace->prefetch_constraint_count,
+        &workspace->schedule
+    );
+    if (constrained < 0) {
+        return search_done(search, -1);
+    }
+    if (constrained > 0) {
+        search->diagnostic->status = SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+        return search_done(search, answer_or_stop(search));
+    }
+    search->need_emit = 0;
+    return STAGE_NEXT;
+}
+
+/* Replay the schedule for a makespan, admitting it into the pool on the way. */
+static StageOutcome search_simulate(CandidateSearch *search) {
+    search->admission_status = SHADOWSPILL_STATUS_OK;
+    memset(&search->admission_result, 0, sizeof(search->admission_result));
+    memset(&search->admission_annotation, 0, sizeof(search->admission_annotation));
+    search->simulation_entry = NULL;
+    if (simulate_cached(
+            search->problem,
+            search->workspace,
+            &search->simulation,
+            &search->admission_status,
+            &search->admission_result,
+            &search->admission_annotation,
+            &search->simulation_entry
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    search->simulation_status = (ShadowSpillStatus)search->simulation.status;
+    if (record_search_step(search) != 0) {
+        return search_done(search, -1);
+    }
+    trace_reduction(search);
+    return STAGE_NEXT;
+}
+
+/* Record a trigger move and count it, or stop if it was already tried:
+ * repeating a move the schedule already carries would loop. */
+static StageOutcome record_admission_move(
+    CandidateSearch *search,
+    ShadowSpillPrefetchTriggerConstraint constraint,
+    uint64_t *attempts
+) {
+    const int recorded = record_prefetch_constraint(search->workspace, constraint);
+    if (recorded < 0) {
+        return search_done(search, -1);
+    }
+    if (recorded > 0) {
+        copy_admission_error(
+            search->problem,
+            &search->workspace->schedule.value,
+            &search->admission_result,
+            search->admission_annotation,
+            search->diagnostic
+        );
+        return search_done(search, answer_or_stop(search));
+    }
+    ++*attempts;
+    return STAGE_REPEAT;
+}
+
+/* Admission refused the schedule: move the prefetch that overran, or make
+ * room for it and reduce again. */
+static StageOutcome search_repair_admission(CandidateSearch *search) {
+    if (search->admission_status != SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
+        return STAGE_NEXT;
+    }
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic = search->diagnostic;
+    if (may_repair_again(search->options, diagnostic)) {
+        ShadowSpillPrefetchTriggerConstraint constraint = {0};
+        int moved = advance_admission_prefetch(
+            search->facts,
+            search->admission_annotation,
+            &search->workspace->schedule,
+            &constraint
+        );
+        if (moved < 0) {
+            return search_done(search, -1);
+        }
+        if (moved > 0) {
+            return record_admission_move(
+                search,
+                constraint,
+                &diagnostic->repairs.admission_prefetch_advance_attempts
+            );
+        }
+        moved = delay_admission_prefetch(
+            search->facts,
+            &search->admission_result,
+            search->admission_annotation,
+            &search->workspace->schedule,
+            &constraint
+        );
+        if (moved < 0) {
+            return search_done(search, -1);
+        }
+        if (moved > 0) {
+            return record_admission_move(
+                search,
+                constraint,
+                &diagnostic->repairs.admission_prefetch_delay_attempts
+            );
+        }
+        const int pressed = add_admission_repair_pressure(
+            search->problem,
+            search->workspace,
+            &search->reduce_options,
+            &search->admission_result,
+            search->admission_annotation,
+            &search->workspace->schedule.value
+        );
+        if (pressed < 0) {
+            return search_done(search, -1);
+        }
+        if (pressed > 0) {
+            ++diagnostic->repairs.admission_pressure_boundary_attempts;
+            const int reduced = reduce_repaired_candidate(
+                search->problem,
+                search->workspace,
+                &search->reduce_options,
+                search->strategy,
+                diagnostic
+            );
+            if (reduced < 0) {
+                return search_done(search, -1);
+            }
+            if (reduced == 0) {
+                return search_done(search, answer_or_stop(search));
+            }
+            search->need_emit = 1;
+            return STAGE_REPEAT;
+        }
+    }
+    copy_admission_error(
+        search->problem,
+        &search->workspace->schedule.value,
+        &search->admission_result,
+        search->admission_annotation,
+        diagnostic
+    );
+    if (!may_repair_again(search->options, diagnostic)) {
+        diagnostic->status = SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED;
+    }
+    return search_done(search, answer_or_stop(search));
+}
+
+/* Name the schedule. Two candidates that reduce to the same plan get the same
+ * name, which is how the search recognises a plan it has already measured. */
+static StageOutcome search_digest(CandidateSearch *search) {
+    if (search->simulation_entry->digest_valid == 0U) {
+        shadowspill_schedule_digest(
+            search->problem,
+            &search->workspace->schedule.value,
+            search->simulation_entry->digest
+        );
+        search->simulation_entry->digest_valid = 1U;
+    }
+    search->improves = search->best_makespan_ns == 0U ||
+        search->simulation.makespan_ns < search->best_makespan_ns;
+    return STAGE_NEXT;
+}
+
+/* Keep a plan whose layout fit, offering it to the shared record. */
+static StageOutcome search_keep_placed(CandidateSearch *search) {
+    ShadowSpillBestPlacedRecord record = {
+        .makespan_ns = search->simulation.makespan_ns,
+        .object_capacity_bytes = search->plan_capacity_bytes,
+        .capacity_given_back_bytes = search->workspace->plan_capacity_given_back,
+        .selection_index = search->options->selection_index,
+        .residency_strategy = search->strategy,
+        .prefetch_rule = search->rule,
+        .coalesced = search->coalesced,
+    };
+    memcpy(
+        record.schedule_digest,
+        search->simulation_entry->digest,
+        sizeof(record.schedule_digest)
+    );
+    /* Re-compared under the lock: another candidate may have placed something
+     * better while this was being measured, so being admitted is not being
+     * best. */
+    (void)shadowspill_best_placed_offer(
+        search->options->best_placed, &record, &search->workspace->schedule
+    );
+    ++search->diagnostic->placements_admitted;
+    mark_search_step(search, SHADOWSPILL_STEP_PLACED, 0U);
+    if (search->placed_makespan_ns != 0U &&
+        search->simulation.makespan_ns >= search->placed_makespan_ns) {
+        return STAGE_NEXT;
+    }
+    mark_search_step(search, SHADOWSPILL_STEP_BEST, 0U);
+    search->placed_makespan_ns = search->simulation.makespan_ns;
+    if (shadowspill_schedule_storage_copy(
+            &search->workspace->best, &search->workspace->schedule
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    memcpy(
+        search->best_digest,
+        search->simulation_entry->digest,
+        sizeof(search->best_digest)
+    );
+    return STAGE_NEXT;
+}
+
+/*
+ * The pool cannot place this plan, which is a fact about the plan and not
+ * about the search: it gives back exactly what it overran and reduces again.
+ * Uniform pressure is how a plan expresses a smaller capacity to the reducer.
+ *
+ * The extent does not fall byte for byte with the capacity -- on one measured
+ * point a 1 GiB reduction moved it 2.2 GB -- so handing back the whole
+ * overage can overshoot the capacity that would have fit, which a bounded
+ * step avoids at the cost of more rounds.
+ */
+static StageOutcome search_refine_capacity(
+    CandidateSearch *search, uint64_t required_bytes, uint64_t pool_bytes
+) {
+    CandidateWorkspace *workspace = search->workspace;
+    const uint64_t shortfall = required_bytes - pool_bytes;
+    const uint64_t step = search->options->capacity_refinement_bytes;
+    const uint64_t overage = (step == 0U || shortfall < step) ? shortfall : step;
+    ++search->diagnostic->capacity_refinements;
+    search->plan_capacity_bytes = search->plan_capacity_bytes > overage
+        ? search->plan_capacity_bytes - overage
+        : 0U;
+    for (uint64_t cell = 0U; cell < search->pressure_cells; ++cell) {
+        workspace->extra_pressure[cell] += overage;
+    }
+    workspace->plan_capacity_given_back += overage;
+    mark_search_step(search, SHADOWSPILL_STEP_REFINED, 0U);
+    /* Plan again at the smaller capacity rather than pressing further on what
+     * this capacity produced. */
+    memcpy(workspace->resident, workspace->base_resident, (size_t)search->cells);
+    memcpy(workspace->breaks, workspace->base_breaks, (size_t)search->cells);
+    workspace->prefetch_constraint_count = 0U;
+    if (reduce_repaired_candidate(
+            search->problem,
+            workspace,
+            &search->reduce_options,
+            search->strategy,
+            search->diagnostic
+        ) > 0) {
+        search->need_emit = 1;
+        return STAGE_REPEAT;
+    }
+    /* Nothing left to reduce. The plan in hand is all this round produced, so
+     * settle with it rather than starting another round that would rebuild
+     * the same thing. */
+    return STAGE_NEXT;
+}
+
+/*
+ * Measure whether this plan has a layout that fits.
+ *
+ * Every new plan that could still win is worth measuring. The gate is what
+ * keeps this affordable: a plan no better than one already placed cannot
+ * become the answer, so it is never measured. Skipping plans on any other
+ * ground -- waiting for a local minimum, say -- can leave a candidate that
+ * never placed anything at all, and a candidate with no placed plan has no
+ * answer to give.
+ */
+static StageOutcome search_place(CandidateSearch *search) {
+    if (!shadowspill_best_placed_admits(
+            search->options->best_placed, search->simulation.makespan_ns
+        ) ||
+        memcmp(
+            search->placed_digest,
+            search->simulation_entry->digest,
+            sizeof(search->placed_digest)
+        ) == 0) {
+        return STAGE_NEXT;
+    }
+    memcpy(
+        search->placed_digest,
+        search->simulation_entry->digest,
+        sizeof(search->placed_digest)
+    );
+    const uint64_t pool_bytes = search->problem->placement == NULL
+        ? 0U
+        : search->problem->placement->pool_capacity_bytes;
+    ++search->diagnostic->placements_attempted;
+    /*
+     * The simulation cache keeps makespans, not timelines: its entries drop
+     * the interval arrays, which point into the shared workspace. Placement is
+     * derived from those intervals, so a cache hit has to be replayed before
+     * it can be measured -- otherwise a plan that simply came from the cache
+     * reads as a plan that cannot be placed.
+     */
+    if (search->simulation.task_intervals == NULL) {
+        ShadowSpillStatus replay_status = SHADOWSPILL_STATUS_OK;
+        ShadowSpillAdmissionReplayResult replay_result = {0};
+        if (simulate_schedule(
+                search->problem,
+                &search->workspace->schedule.value,
+                &search->workspace->simulation,
+                &search->workspace->admission,
+                &search->workspace->first_violation,
+                &search->simulation,
+                &replay_status,
+                &replay_result
+            ) != 0) {
+            return search_done(search, -1);
+        }
+    }
+    uint64_t required_bytes = 0U;
+    const int placed = place_plan(
+        search->problem, search->workspace, &search->simulation, &required_bytes
+    );
+    mark_search_step(
+        search,
+        placed == 0 ? SHADOWSPILL_STEP_MEASURED : 0U,
+        placed == 0 ? required_bytes : 0U
+    );
+    if (placed != 0) {
+        return STAGE_NEXT;
+    }
+    if (required_bytes <= pool_bytes) {
+        return search_keep_placed(search);
+    }
+    return search_refine_capacity(search, required_bytes, pool_bytes);
+}
+
+/* Present the recorded shortfall as a simulation error, so the repair path
+ * below reads a success that waited the same way it reads a failure. */
+static void present_shortfall_as_error(CandidateSearch *search) {
+    const ShadowSpillCapacityViolation *shortfall =
+        &search->workspace->first_violation;
+    search->simulation.status =
+        shortfall->reason == SHADOWSPILL_CAPACITY_TASK_DEVICE
+            ? (uint32_t)SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY
+            : (uint32_t)SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY;
+    search->simulation.error_task = shortfall->task;
+    search->simulation.error_alias = shortfall->alias;
+    search->simulation.error_device = shortfall->device;
+    search->simulation.error_location = shortfall->location;
+    search->simulation.error_time_ns = shortfall->time_ns;
+    search->simulation.error_capacity_bytes = shortfall->capacity_bytes;
+    search->simulation.error_used_bytes = shortfall->used_bytes;
+    search->simulation.error_requested_bytes = shortfall->requested_bytes;
+}
+
+/* Decide whether the plan in hand is this candidate's answer. */
+static StageOutcome search_settle(CandidateSearch *search) {
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic = search->diagnostic;
+    /* A plan that waits for memory is valid but unfinished: the wait is time
+     * it pays, and the shortfall that caused it is what repair relieves.
+     * Stopping here accepts that cost untouched. */
+    const int stalling = search->simulation.capacity_violation_count > 0U;
+    if (stalling &&
+        may_repair_again(search->options, diagnostic)) {
+        /* Continuing, so this plan has to be kept: repairing past a success
+         * can make it worse before it makes it better. When placing, the
+         * buffer already holds the best placed plan, which outranks a faster
+         * plan that has no layout. */
+        if (search->improves && !search->placing) {
+            search->best_makespan_ns = search->simulation.makespan_ns;
+            if (shadowspill_schedule_storage_copy(
+                    &search->workspace->best, &search->workspace->schedule
+                ) != 0) {
+                return search_done(search, -1);
+            }
+            memcpy(
+                search->best_digest,
+                search->simulation_entry->digest,
+                sizeof(search->best_digest)
+            );
+        }
+        present_shortfall_as_error(search);
+        return STAGE_NEXT;
+    }
+    /*
+     * With a pool to place into, the candidate's answer is the best plan whose
+     * layout fit -- not the fastest plan it simulated. A plan that cannot be
+     * placed cannot run, so offering it as an answer only pushes the rejection
+     * to a later layer that has to walk capacity down to escape it.
+     */
+    if (search->placing) {
+        if (search->placed_makespan_ns == 0U) {
+            diagnostic->status = SHADOWSPILL_CANDIDATE_UNPLACEABLE;
+            return search_done(search, 0);
+        }
+        diagnostic->capacity_violation_count =
+            search->simulation.capacity_violation_count;
+        return search_done(
+            search, answer_with_kept(search, search->placed_makespan_ns)
+        );
+    }
+    diagnostic->capacity_violation_count =
+        search->simulation.capacity_violation_count;
+    if (search->improves) {
+        /* The live schedule is already the answer, so nothing needs moving. */
+        set_answer(
+            diagnostic,
+            search->simulation.makespan_ns,
+            search->simulation_entry->digest
+        );
+        return search_done(search, 1);
+    }
+    /* An earlier repair reached a better plan; the caller reads the winner
+     * from the live schedule, so put it back. */
+    return search_done(search, answer_with_kept(search, search->best_makespan_ns));
+}
+
+/* The plan came up short. Move the prefetch that caused it, or make room for
+ * it and reduce again; if neither is possible the candidate is finished. */
+static StageOutcome search_repair(CandidateSearch *search) {
+    trace_repair(search);
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic = search->diagnostic;
+    if (may_repair_again(search->options, diagnostic)) {
+        ShadowSpillPrefetchTriggerConstraint constraint = {0};
+        const int delayed = shadowspill_delay_indexed_prefetch(
+            search->facts,
+            &search->simulation,
+            &search->workspace->schedule,
+            &constraint
+        );
+        if (delayed < 0) {
+            return search_done(search, -1);
+        }
+        if (delayed > 0) {
+            const int recorded =
+                record_prefetch_constraint(search->workspace, constraint);
+            if (recorded < 0) {
+                return search_done(search, -1);
+            }
+            if (recorded > 0) {
+                diagnostic->status = SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
+                copy_simulation_error(diagnostic, &search->simulation);
+                return search_done(search, answer_or_stop(search));
+            }
+            ++diagnostic->repairs.simulation_prefetch_delay_attempts;
+            return STAGE_REPEAT;
+        }
+        if (add_repair_pressure(
+                search->problem, search->workspace, &search->simulation
+            ) != 0) {
+            ++diagnostic->repairs.simulation_pressure_boundary_attempts;
+            const int reduced = reduce_repaired_candidate(
+                search->problem,
+                search->workspace,
+                &search->reduce_options,
+                search->strategy,
+                diagnostic
+            );
+            if (reduced < 0) {
+                return search_done(search, -1);
+            }
+            if (reduced > 0) {
+                search->need_emit = 1;
+                return STAGE_REPEAT;
+            }
+            if (search->best_makespan_ns != 0U) {
+                return search_done(
+                    search, answer_with_kept(search, search->best_makespan_ns)
+                );
+            }
+            return search_done(search, answer_or_stop(search));
+        }
+    }
+    /* A candidate that reached a plan keeps it. Falling through here means the
+     * last repair found nothing further to try, which says the search stopped
+     * improving -- not that the plan it already has stopped working. */
+    if (search->best_makespan_ns != 0U) {
+        return search_done(
+            search, answer_with_kept(search, search->best_makespan_ns)
+        );
+    }
+    diagnostic->status =
+        !may_repair_again(search->options, diagnostic) &&
+            simulation_failure_may_be_repairable(search->simulation_status)
+        ? (uint32_t)SHADOWSPILL_CANDIDATE_REPAIR_EXHAUSTED
+        : (uint32_t)SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
+    copy_simulation_error(diagnostic, &search->simulation);
+    return search_done(search, answer_or_stop(search));
+}
 
 static int evaluate_candidate(
     const ShadowSpillPressureFitProblem *problem,
@@ -2124,725 +2994,68 @@ static int evaluate_candidate(
     uint8_t coalesced,
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic
 ) {
-    initialize_diagnostic(diagnostic, strategy, rule, coalesced);
-    uint64_t cells = (uint64_t)problem->residency->alias_count *
-        problem->residency->boundary_count;
-    uint64_t pressure_cells = (uint64_t)problem->residency->device_count *
-        problem->residency->boundary_count;
-    memset(
-        workspace->extra_pressure,
-        0,
-        (size_t)pressure_cells * sizeof(*workspace->extra_pressure)
+    CandidateSearch search;
+    search_begin(
+        &search,
+        problem,
+        facts,
+        candidate_options,
+        workspace,
+        strategy,
+        rule,
+        coalesced,
+        diagnostic
     );
-    workspace->plan_capacity_given_back = 0U;
-    memcpy(workspace->resident, workspace->base_resident, (size_t)cells);
-    memcpy(workspace->breaks, workspace->base_breaks, (size_t)cells);
-    workspace->prefetch_constraint_count = 0U;
-    uint64_t best_makespan_ns = 0U;
-    uint8_t best_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES] = {0};
-    /* The plan this candidate would answer with: the best it has placed,
-     * which is not always the best it has simulated. */
-    uint64_t placed_makespan_ns = 0U;
-    uint8_t placed_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES] = {0};
-    /* Whether there is a pool to place into at all. Without one the
-     * candidate answers with its fastest plan, which is what a caller that
-     * supplied no topology can be told. */
-    const int placing = problem->placement != NULL;
-    /* Capacity is a property of the plan, so it travels with it. */
-    uint64_t plan_capacity_bytes = problem->placement == NULL
-        ? 0U
-        : problem->placement->object_capacity_bytes;
-    const uint64_t pressure_cell_count =
-        (uint64_t)problem->residency->device_count *
-        problem->residency->boundary_count;
-    workspace->current_residency_key = workspace->base_residency_key;
 
-    ShadowSpillResidencyOptions reduce_options;
-    residency_options(problem, workspace, strategy, &reduce_options);
-    int need_emit = 1;
     while (1) {
-        if (need_emit != 0) {
-            uint64_t schedule_started = shadowspill_monotonic_ns();
-            if (rule == SHADOWSPILL_PREFETCH_INTERVAL_ENTRY &&
-                shadowspill_extend_interval_entries(
-                    facts,
-                    workspace->resident,
-                    workspace->breaks
-                ) != 0) {
-                return -1;
-            }
-            const int emitted = emit_cached(
-                facts,
-                workspace,
-                workspace->resident,
-                workspace->breaks,
-                rule,
-                coalesced,
-                reduce_options.prefetch_headroom
-            );
-            if (emitted != 0) {
-                return -1;
-            }
-            workspace->schedule_time_ns +=
-                shadowspill_monotonic_ns() - schedule_started;
-            const int constrained =
-                shadowspill_apply_prefetch_trigger_constraints(
-                    facts,
-                    workspace->prefetch_constraints,
-                    workspace->prefetch_constraint_count,
-                    &workspace->schedule
-                );
-            if (constrained < 0) {
-                return -1;
-            }
-            if (constrained > 0) {
-                diagnostic->status =
-                    SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
-                if (placing && placed_makespan_ns != 0U) {
-                    return finish_with_placed_plan(
-                        workspace, diagnostic, placed_makespan_ns, best_digest
-                    );
-                }
-                return 0;
-            }
-            need_emit = 0;
+        StageOutcome outcome = STAGE_NEXT;
+        if (search.need_emit) {
+            const Section emit = section_open(&workspace->sections.emit_ns);
+            outcome = search_emit(&search);
+            section_close(emit);
         }
-
-        ShadowSpillSimulationResult simulation;
-        ShadowSpillStatus admission_status =
-            SHADOWSPILL_STATUS_OK;
-        ShadowSpillAdmissionReplayResult admission_result = {0};
-        ShadowSpillAdmissionAnnotation admission_error_annotation = {0};
-        SimulationCacheEntry *simulation_entry = NULL;
-        const uint64_t admission_before = workspace->admission.time_ns;
-        uint64_t simulation_started = shadowspill_monotonic_ns();
-        if (simulate_cached(
-                problem,
-                workspace,
-                &simulation,
-                &admission_status,
-                &admission_result,
-                &admission_error_annotation,
-                &simulation_entry
-            ) != 0) {
-            return -1;
+        if (outcome == STAGE_NEXT) {
+            const uint64_t admitted_ns = workspace->admission.time_ns;
+            const Section simulate = section_open(&workspace->sections.simulate_ns);
+            outcome = search_simulate(&search);
+            section_close(simulate);
+            /* Admission runs as part of simulating, so its time is nested
+             * inside the section just closed rather than beside it. */
+            workspace->sections.admit_ns +=
+                workspace->admission.time_ns - admitted_ns;
         }
-        const uint64_t combined_elapsed =
-            shadowspill_monotonic_ns() - simulation_started;
-        const uint64_t admission_elapsed =
-            workspace->admission.time_ns - admission_before;
-        workspace->simulation_time_ns +=
-            combined_elapsed >= admission_elapsed
-                ? combined_elapsed - admission_elapsed
-                : 0U;
-        ShadowSpillStatus simulation_status =
-            (ShadowSpillStatus)simulation.status;
-
-        /*
-         * Diagnostic-only reduction tracing, enabled by
-         * SHADOWSPILL_REDUCTION_TRACE and never active in normal planning.
-         *
-         * Emitted after every simulation rather than only after a failing
-         * one, because a reduction that succeeds is exactly the interesting
-         * case: whether makespan falls monotonically as a candidate reduces,
-         * or rises and later recovers. The resolved program is identified by
-         * the problem it was compiled from, since a policy alone is shared
-         * across all five and grouping by it merges them.
-         */
-        {
-            static _Thread_local int reduction_trace = -1;
-            if (reduction_trace < 0) {
-                reduction_trace =
-                    getenv("SHADOWSPILL_REDUCTION_TRACE") != NULL;
+        if (outcome == STAGE_NEXT) {
+            const Section repair = section_open(&workspace->sections.repair_ns);
+            outcome = search_repair_admission(&search);
+            section_close(repair);
+        }
+        /* A plan that simulated is a plan that could be the answer: name it,
+         * measure whether it fits, and decide whether to keep looking. */
+        if (outcome == STAGE_NEXT &&
+            search.simulation_status == SHADOWSPILL_STATUS_OK) {
+            const Section digest = section_open(&workspace->sections.digest_ns);
+            outcome = search_digest(&search);
+            section_close(digest);
+            if (outcome == STAGE_NEXT) {
+                const Section place = section_open(&workspace->sections.place_ns);
+                outcome = search_place(&search);
+                section_close(place);
             }
-            if (reduction_trace) {
-                fprintf(
-                    stderr,
-                    "reduction-trace resolved=%llu strategy=%u rule=%u "
-                    "coalesced=%u step=%llu status=%d makespan=%llu "
-                    "shortfalls=%u actions=%u\n",
-                    (unsigned long long)(uintptr_t)problem,
-                    strategy,
-                    rule,
-                    coalesced,
-                    (unsigned long long)repair_total(&diagnostic->repairs),
-                    (int)simulation_status,
-                    (unsigned long long)simulation.makespan_ns,
-                    simulation.capacity_violation_count,
-                    workspace->schedule.value.action_count
-                );
+            if (outcome == STAGE_NEXT) {
+                const Section settle = section_open(&workspace->sections.select_ns);
+                outcome = search_settle(&search);
+                section_close(settle);
             }
         }
-
-        if (admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
-            if (may_repair_again(
-                    candidate_options, diagnostic, simulation.makespan_ns
-                )) {
-                ShadowSpillPrefetchTriggerConstraint constraint = {0};
-                int advanced = advance_admission_prefetch(
-                    facts,
-                    admission_error_annotation,
-                    &workspace->schedule,
-                    &constraint
-                );
-                if (advanced < 0) {
-                    return -1;
-                }
-                if (advanced > 0) {
-                    const int recorded = record_prefetch_constraint(
-                        workspace, constraint
-                    );
-                    if (recorded < 0) {
-                        return -1;
-                    }
-                    if (recorded > 0) {
-                        copy_admission_error(
-                            problem,
-                            &workspace->schedule.value,
-                            &admission_result,
-                            admission_error_annotation,
-                            diagnostic
-                        );
-                        if (placing && placed_makespan_ns != 0U) {
-                            return finish_with_placed_plan(
-                                workspace, diagnostic, placed_makespan_ns, best_digest
-                            );
-                        }
-                        return 0;
-                    }
-                    ++diagnostic->repairs.admission_prefetch_advance_attempts;
-                    continue;
-                }
-                int delayed = delay_admission_prefetch(
-                    facts,
-                    &admission_result,
-                    admission_error_annotation,
-                    &workspace->schedule,
-                    &constraint
-                );
-                if (delayed < 0) {
-                    return -1;
-                }
-                if (delayed > 0) {
-                    const int recorded = record_prefetch_constraint(
-                        workspace, constraint
-                    );
-                    if (recorded < 0) {
-                        return -1;
-                    }
-                    if (recorded > 0) {
-                        copy_admission_error(
-                            problem,
-                            &workspace->schedule.value,
-                            &admission_result,
-                            admission_error_annotation,
-                            diagnostic
-                        );
-                        if (placing && placed_makespan_ns != 0U) {
-                            return finish_with_placed_plan(
-                                workspace, diagnostic, placed_makespan_ns, best_digest
-                            );
-                        }
-                        return 0;
-                    }
-                    ++diagnostic->repairs.admission_prefetch_delay_attempts;
-                    continue;
-                }
-                int pressure_added = add_admission_repair_pressure(
-                    problem,
-                    workspace,
-                    &reduce_options,
-                    &admission_result,
-                    admission_error_annotation,
-                    &workspace->schedule.value
-                );
-                if (pressure_added < 0) {
-                    return -1;
-                }
-                if (pressure_added > 0) {
-                    ++diagnostic->repairs.admission_pressure_boundary_attempts;
-                    int reduced = reduce_repaired_candidate(
-                        problem,
-                        workspace,
-                        &reduce_options,
-                        strategy,
-                        diagnostic
-                    );
-                    if (reduced < 0) {
-                        return -1;
-                    }
-                    if (reduced == 0) {
-                        if (placing && placed_makespan_ns != 0U) {
-                            return finish_with_placed_plan(
-                                workspace, diagnostic, placed_makespan_ns, best_digest
-                            );
-                        }
-                        return 0;
-                    }
-                    need_emit = 1;
-                    continue;
-                }
-            }
-            copy_admission_error(
-                problem,
-                &workspace->schedule.value,
-                &admission_result,
-                admission_error_annotation,
-                diagnostic
-            );
-            if (!may_repair_again(
-                    candidate_options, diagnostic, simulation.makespan_ns
-                )) {
-                diagnostic->status = stopped_status(
-                    candidate_options, diagnostic, simulation.makespan_ns
-                );
-            }
-            if (placing && placed_makespan_ns != 0U) {
-                return finish_with_placed_plan(
-                    workspace, diagnostic, placed_makespan_ns, best_digest
-                );
-            }
-            return 0;
+        if (outcome == STAGE_NEXT) {
+            const Section repair = section_open(&workspace->sections.repair_ns);
+            outcome = search_repair(&search);
+            section_close(repair);
         }
-        if (simulation_status == SHADOWSPILL_STATUS_OK) {
-            if (simulation_entry->digest_valid == 0U) {
-                uint64_t digest_started = shadowspill_monotonic_ns();
-                shadowspill_schedule_digest(
-                    problem,
-                    &workspace->schedule.value,
-                    simulation_entry->digest
-                );
-                workspace->digest_time_ns +=
-                    shadowspill_monotonic_ns() - digest_started;
-                simulation_entry->digest_valid = 1U;
-            }
-            const int improves =
-                best_makespan_ns == 0U ||
-                simulation.makespan_ns < best_makespan_ns;
-
-            /*
-             * Every new plan that could still win is worth measuring. The
-             * gate is what keeps this affordable: a plan no better than one
-             * already placed cannot become the answer, so it is never
-             * measured. Skipping plans on any other ground -- waiting for a
-             * local minimum, say -- can leave a candidate that never placed
-             * anything at all, and a candidate with no placed plan has no
-             * answer to give.
-             */
-            if (shadowspill_best_placed_admits(
-                    candidate_options->best_placed, simulation.makespan_ns
-                ) &&
-                memcmp(
-                    placed_digest,
-                    simulation_entry->digest,
-                    sizeof(placed_digest)
-                ) != 0) {
-                memcpy(
-                    placed_digest,
-                    simulation_entry->digest,
-                    sizeof(placed_digest)
-                );
-                uint64_t required_bytes = 0U;
-                const uint64_t pool_bytes =
-                    problem->placement == NULL
-                        ? 0U
-                        : problem->placement->pool_capacity_bytes;
-                ++diagnostic->placements_attempted;
-                /*
-                 * The simulation cache keeps makespans, not timelines: its
-                 * entries drop the interval arrays, which point into the
-                 * shared workspace. Placement is derived from those
-                 * intervals, so a cache hit has to be replayed before it can
-                 * be measured -- otherwise a plan that simply came from the
-                 * cache reads as a plan that cannot be placed.
-                 */
-                if (simulation.task_intervals == NULL) {
-                    ShadowSpillStatus replay_status = SHADOWSPILL_STATUS_OK;
-                    ShadowSpillAdmissionReplayResult replay_result = {0};
-                    if (simulate_schedule(
-                            problem,
-                            &workspace->schedule.value,
-                            &workspace->simulation,
-                            &workspace->admission,
-                            &workspace->first_violation,
-                            &simulation,
-                            &replay_status,
-                            &replay_result
-                        ) != 0) {
-                        return -1;
-                    }
-                }
-                if (place_plan(problem, workspace, &simulation, &required_bytes)
-                        == 0) {
-                    if (required_bytes <= pool_bytes) {
-                        ShadowSpillBestPlacedRecord record = {
-                            .makespan_ns = simulation.makespan_ns,
-                            .object_capacity_bytes = plan_capacity_bytes,
-                            .capacity_given_back_bytes =
-                                workspace->plan_capacity_given_back,
-                            .selection_index = candidate_options->selection_index,
-                            .residency_strategy = strategy,
-                            .prefetch_rule = rule,
-                            .coalesced = (uint8_t)coalesced,
-                        };
-                        memcpy(
-                            record.schedule_digest,
-                            simulation_entry->digest,
-                            sizeof(record.schedule_digest)
-                        );
-                        /* Re-compared under the lock: another candidate may
-                         * have placed something better while this was being
-                         * measured, so being admitted is not being best. */
-                        (void)shadowspill_best_placed_offer(
-                            candidate_options->best_placed,
-                            &record,
-                            &workspace->schedule
-                        );
-                        ++diagnostic->placements_admitted;
-                        if (placed_makespan_ns == 0U ||
-                            simulation.makespan_ns < placed_makespan_ns) {
-                            placed_makespan_ns = simulation.makespan_ns;
-                            if (shadowspill_schedule_storage_copy(
-                                    &workspace->best, &workspace->schedule
-                                ) != 0) {
-                                return -1;
-                            }
-                            memcpy(
-                                best_digest,
-                                simulation_entry->digest,
-                                sizeof(best_digest)
-                            );
-                        }
-                    } else {
-                        /*
-                         * The pool cannot place this plan, which is a fact
-                         * about the plan and not about the search: it gives
-                         * back exactly what it overran and reduces again.
-                         * Uniform pressure is how a plan expresses a smaller
-                         * capacity to the reducer.
-                         */
-                        /* Hand back what the measurement asked for, or a
-                         * bounded step if the caller set one. The extent does
-                         * not fall byte for byte with the capacity -- on one
-                         * measured point a 1 GiB reduction moved it 2.2 GB --
-                         * so the whole overage can overshoot the capacity that
-                         * would have fit, which a step avoids at the cost of
-                         * more rounds. */
-                        const uint64_t shortfall = required_bytes - pool_bytes;
-                        const uint64_t step =
-                            candidate_options->capacity_refinement_bytes;
-                        const uint64_t overage =
-                            (step == 0U || shortfall < step) ? shortfall : step;
-                        ++diagnostic->capacity_refinements;
-                        plan_capacity_bytes = plan_capacity_bytes > overage
-                            ? plan_capacity_bytes - overage
-                            : 0U;
-                        for (uint64_t cell_index = 0U;
-                             cell_index < pressure_cell_count;
-                             ++cell_index) {
-                            workspace->extra_pressure[cell_index] += overage;
-                        }
-                        workspace->plan_capacity_given_back += overage;
-                        /* Plan again at the smaller capacity rather than
-                         * pressing further on what this capacity produced. */
-                        memcpy(
-                            workspace->resident,
-                            workspace->base_resident,
-                            (size_t)cells
-                        );
-                        memcpy(
-                            workspace->breaks,
-                            workspace->base_breaks,
-                            (size_t)cells
-                        );
-                        workspace->prefetch_constraint_count = 0U;
-                        if (reduce_repaired_candidate(
-                                problem,
-                                workspace,
-                                &reduce_options,
-                                strategy,
-                                diagnostic
-                            ) > 0) {
-                            need_emit = 1;
-                            continue;
-                        }
-                    }
-                }
-            }
-            /* A plan that waits for memory is valid but unfinished: the wait
-             * is time it pays, and the shortfall that caused it is what
-             * repair relieves. Stopping here accepts that cost untouched. */
-            const int stalling = simulation.capacity_violation_count > 0U;
-            if (!stalling ||
-                !may_repair_again(
-                    candidate_options, diagnostic, best_makespan_ns
-                )) {
-                /*
-                 * With a pool to place into, the candidate's answer is the
-                 * best plan whose layout fit -- not the fastest plan it
-                 * simulated. A plan that cannot be placed cannot run, so
-                 * offering it as an answer only pushes the rejection to a
-                 * later layer that has to walk capacity down to escape it.
-                 */
-                if (placing) {
-                    if (placed_makespan_ns == 0U) {
-                        diagnostic->status =
-                            SHADOWSPILL_CANDIDATE_UNPLACEABLE;
-                        if (placing && placed_makespan_ns != 0U) {
-                            return finish_with_placed_plan(
-                                workspace, diagnostic, placed_makespan_ns, best_digest
-                            );
-                        }
-                        return 0;
-                    }
-                    diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
-                    diagnostic->capacity_violation_count =
-                        simulation.capacity_violation_count;
-                    diagnostic->makespan_ns = placed_makespan_ns;
-                    memcpy(
-                        diagnostic->schedule_digest,
-                        best_digest,
-                        sizeof(diagnostic->schedule_digest)
-                    );
-                    /* The live schedule is whatever the last reduction left
-                     * behind; the placed one is the answer. */
-                    if (shadowspill_schedule_storage_copy(
-                            &workspace->schedule, &workspace->best
-                        ) != 0) {
-                        return -1;
-                    }
-                    return 1;
-                }
-                diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
-                diagnostic->capacity_violation_count =
-                    simulation.capacity_violation_count;
-                if (improves) {
-                    /* The live schedule is already the answer, so nothing
-                     * needs moving -- which is the whole path when repairing
-                     * past a success is switched off. */
-                    diagnostic->makespan_ns = simulation.makespan_ns;
-                    memcpy(
-                        diagnostic->schedule_digest,
-                        simulation_entry->digest,
-                        sizeof(diagnostic->schedule_digest)
-                    );
-                    return 1;
-                }
-                /* An earlier repair reached a better plan; the caller reads
-                 * the winner from the live schedule, so put it back. */
-                diagnostic->makespan_ns = best_makespan_ns;
-                memcpy(
-                    diagnostic->schedule_digest,
-                    best_digest,
-                    sizeof(diagnostic->schedule_digest)
-                );
-                if (shadowspill_schedule_storage_copy(
-                        &workspace->schedule, &workspace->best
-                    ) != 0) {
-                    return -1;
-                }
-                return 1;
-            }
-            /* Continuing, so this plan has to be kept: repairing past a
-             * success can make it worse before it makes it better. When
-             * placing, the buffer already holds the best placed plan, which
-             * outranks a faster plan that has no layout. */
-            if (improves && !placing) {
-                best_makespan_ns = simulation.makespan_ns;
-                if (shadowspill_schedule_storage_copy(
-                        &workspace->best, &workspace->schedule
-                    ) != 0) {
-                    return -1;
-                }
-                memcpy(
-                    best_digest, simulation_entry->digest, sizeof(best_digest)
-                );
-            }
-            /* Aim the repair at where the plan came up short. Success left
-             * no error behind, so the recorded shortfall stands in for one
-             * and the existing repair path is reused unchanged. */
-            const ShadowSpillCapacityViolation *shortfall =
-                &workspace->first_violation;
-            /* The pressure primitive keys off the status, so a success has to
-             * present as the shortfall it recorded or the primitive declines
-             * and the candidate is accepted unchanged. */
-            simulation.status = shortfall->reason ==
-                    SHADOWSPILL_CAPACITY_TASK_DEVICE
-                ? (uint32_t)SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY
-                : (uint32_t)SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY;
-            simulation.error_task = shortfall->task;
-            simulation.error_alias = shortfall->alias;
-            simulation.error_device = shortfall->device;
-            simulation.error_location = shortfall->location;
-            simulation.error_time_ns = shortfall->time_ns;
-            simulation.error_capacity_bytes = shortfall->capacity_bytes;
-            simulation.error_used_bytes = shortfall->used_bytes;
-            simulation.error_requested_bytes = shortfall->requested_bytes;
+        if (outcome == STAGE_DONE) {
+            return search.answer;
         }
-
-        /*
-         * Diagnostic-only repair tracing for the planning-efficiency
-         * investigation (docs/internal/plans/planning_efficiency_0818,
-         * E012).  Enabled by SHADOWSPILL_REPAIR_TRACE; never active in
-         * normal planning.
-         */
-        static _Thread_local int repair_trace = -1;
-        if (repair_trace < 0) {
-            repair_trace = getenv("SHADOWSPILL_REPAIR_TRACE") != NULL;
-        }
-        if (repair_trace) {
-            /* `makespan` and the transfer totals are what a dominance bound
-             * would be built from, logged per repair so the investigation
-             * can see whether any of them rises fast enough to cross an
-             * incumbent before the candidate converges anyway. `makespan`
-             * is only meaningful when status is OK: the simulator assigns
-             * it on the success path alone. */
-            uint64_t traced_fetch = 0U;
-            uint64_t traced_evict = 0U;
-            for (uint32_t index = 0U;
-                 index < workspace->schedule.value.action_count;
-                 ++index) {
-                const uint32_t alias = workspace->schedule.value.action_aliases[index];
-                const uint64_t bytes = problem->residency->alias_size_bytes[alias];
-                const uint8_t kind = workspace->schedule.value.action_kinds[index];
-                if (kind == SHADOWSPILL_MEMORY_PREFETCH) {
-                    traced_fetch += bytes;
-                } else if (kind == SHADOWSPILL_MEMORY_OFFLOAD) {
-                    traced_evict += bytes;
-                }
-            }
-            fprintf(
-                stderr,
-                "repair-trace strategy=%u rule=%u coalesced=%u "
-                "attempt=%llu status=%d makespan=%llu "
-                "fetch_bytes=%llu evict_bytes=%llu actions=%u "
-                "time=%llu used=%llu requested=%llu capacity=%llu\n",
-                strategy,
-                rule,
-                coalesced,
-                (unsigned long long)repair_total(&diagnostic->repairs),
-                (int)simulation_status,
-                (unsigned long long)simulation.makespan_ns,
-                (unsigned long long)traced_fetch,
-                (unsigned long long)traced_evict,
-                workspace->schedule.value.action_count,
-                (unsigned long long)simulation.error_time_ns,
-                (unsigned long long)simulation.error_used_bytes,
-                (unsigned long long)simulation.error_requested_bytes,
-                (unsigned long long)simulation.error_capacity_bytes
-            );
-        }
-
-        if (may_repair_again(
-                candidate_options, diagnostic, simulation.makespan_ns
-            )) {
-            ShadowSpillPrefetchTriggerConstraint constraint = {0};
-            int delayed = shadowspill_delay_indexed_prefetch(
-                facts,
-                &simulation,
-                &workspace->schedule,
-                &constraint
-            );
-            if (delayed < 0) {
-                return -1;
-            }
-            if (delayed > 0) {
-                const int recorded = record_prefetch_constraint(
-                    workspace, constraint
-                );
-                if (recorded < 0) {
-                    return -1;
-                }
-                if (recorded > 0) {
-                    diagnostic->status =
-                        SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
-                    copy_simulation_error(diagnostic, &simulation);
-                    if (placing && placed_makespan_ns != 0U) {
-                        return finish_with_placed_plan(
-                            workspace, diagnostic, placed_makespan_ns, best_digest
-                        );
-                    }
-                    return 0;
-                }
-                ++diagnostic->repairs.simulation_prefetch_delay_attempts;
-                continue;
-            }
-            if (add_repair_pressure(problem, workspace, &simulation) != 0) {
-                ++diagnostic->repairs.simulation_pressure_boundary_attempts;
-                int reduced = reduce_repaired_candidate(
-                    problem,
-                    workspace,
-                    &reduce_options,
-                    strategy,
-                    diagnostic
-                );
-                if (reduced < 0) {
-                    return -1;
-                }
-                if (reduced == 0) {
-                    if (best_makespan_ns != 0U) {
-                        break;
-                    }
-                    if (placing && placed_makespan_ns != 0U) {
-                        return finish_with_placed_plan(
-                            workspace, diagnostic, placed_makespan_ns, best_digest
-                        );
-                    }
-                    return 0;
-                }
-                need_emit = 1;
-                continue;
-            }
-        }
-        /* A candidate that reached a plan keeps it. Falling through here
-         * means the last repair found nothing further to try, which says
-         * the search stopped improving -- not that the plan it already has
-         * stopped working. */
-        if (best_makespan_ns != 0U) {
-            diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
-            diagnostic->makespan_ns = best_makespan_ns;
-            memcpy(
-                diagnostic->schedule_digest,
-                best_digest,
-                sizeof(diagnostic->schedule_digest)
-            );
-            if (shadowspill_schedule_storage_copy(
-                    &workspace->schedule, &workspace->best
-                ) != 0) {
-                return -1;
-            }
-            return 1;
-        }
-        diagnostic->status =
-            !may_repair_again(
-                candidate_options, diagnostic, simulation.makespan_ns
-            ) &&
-            simulation_failure_may_be_repairable(simulation_status)
-            ? stopped_status(
-                  candidate_options, diagnostic, simulation.makespan_ns
-              )
-            : (uint32_t)SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
-        copy_simulation_error(diagnostic, &simulation);
-        if (placing && placed_makespan_ns != 0U) {
-            return finish_with_placed_plan(
-                workspace, diagnostic, placed_makespan_ns, best_digest
-            );
-        }
-        return 0;
     }
-    /* Reached by a candidate that already has a plan and ran out of ways to
-     * improve it. */
-    diagnostic->status = SHADOWSPILL_CANDIDATE_VALID;
-    diagnostic->makespan_ns = best_makespan_ns;
-    memcpy(
-        diagnostic->schedule_digest, best_digest, sizeof(diagnostic->schedule_digest)
-    );
-    if (shadowspill_schedule_storage_copy(
-            &workspace->schedule, &workspace->best
-        ) != 0) {
-        return -1;
-    }
-    return 1;
 }
 
 static int adopt_selected_schedule(
@@ -2859,11 +3072,40 @@ static int adopt_selected_schedule(
     return 0;
 }
 
+uint64_t shadowspill_planner_struct_size(uint32_t which) {
+    switch (which) {
+    case SHADOWSPILL_STRUCT_PROBLEM_OPTIONS:
+        return sizeof(ShadowSpillPressureFitProblemOptions);
+    case SHADOWSPILL_STRUCT_WORK_DIAGNOSTICS:
+        return sizeof(ShadowSpillPressureFitWorkDiagnostics);
+    case SHADOWSPILL_STRUCT_CANDIDATE_DIAGNOSTIC:
+        return sizeof(ShadowSpillPressureFitCandidateDiagnostic);
+    case SHADOWSPILL_STRUCT_SECTION_TIMING:
+        return sizeof(ShadowSpillPressureFitSectionTiming);
+    case SHADOWSPILL_STRUCT_REDUCTION_STEP:
+        return sizeof(ShadowSpillPressureFitReductionStep);
+    case SHADOWSPILL_STRUCT_ADMISSION_FACTS:
+        return sizeof(ShadowSpillAdmissionFacts);
+    case SHADOWSPILL_STRUCT_BEST_PLACED_RECORD:
+        return sizeof(ShadowSpillBestPlacedRecord);
+    case SHADOWSPILL_STRUCT_RESIDENCY_PROBLEM:
+        return sizeof(ShadowSpillResidencyProblem);
+    case SHADOWSPILL_STRUCT_RESIDENCY_RESULT:
+        return sizeof(ShadowSpillResidencyResult);
+    default:
+        return 0U;
+    }
+}
+
 void shadowspill_pressurefit_problem_result_destroy(
     ShadowSpillPressureFitProblemResult *result
 ) {
     if (result == NULL) {
         return;
+    }
+    for (uint32_t index = 0U; index < result->candidate_count; ++index) {
+        free(result->candidates[index].steps);
+        free(result->candidates[index].cut_aliases);
     }
     free(result->candidates);
     free(result->selected_schedule.action_trigger_tasks);
@@ -2874,6 +3116,204 @@ void shadowspill_pressurefit_problem_result_destroy(
     free(result->selected_schedule.final_aliases);
     free(result->selected_schedule.final_locations);
     memset(result, 0, sizeof(*result));
+}
+
+/*
+ * One resolved program's evaluation.
+ *
+ * The problem level does what the candidate cycle cannot do for itself:
+ * derive the facts every candidate shares, reduce once per strategy so the
+ * candidates built on it start from the same residency, and keep the fastest
+ * answer any of them gave. `shadowspill_evaluate_pressurefit_problem` is that
+ * order and nothing else, with each stage below measured under the section it
+ * belongs to.
+ */
+typedef struct ProblemSearch {
+    const ShadowSpillPressureFitProblem *problem;
+    const ShadowSpillPressureFitProblemOptions *options;
+    ShadowSpillPressureFitProblemResult *result;
+    ShadowSpillScheduleFacts facts;
+    CandidateWorkspace workspace;
+    uint32_t coalesced_count;
+    /* Which candidate the loops are on, and so which diagnostic it writes. */
+    uint32_t candidate_index;
+} ProblemSearch;
+
+/* What one strategy's base reduction produced. Every candidate built on that
+ * strategy starts from it, so it is computed once and shared. */
+typedef struct StrategyBase {
+    ShadowSpillStatus status;
+    ShadowSpillResidencyResult residency;
+} StrategyBase;
+
+/* One diagnostic per candidate policy, allocated before any candidate runs so
+ * that a candidate can write its own without the array moving underneath it. */
+static ShadowSpillStatus problem_allocate_candidates(ProblemSearch *search) {
+    uint32_t count = 0U;
+    if (multiply_u32(
+            search->options->residency_strategy_count,
+            search->options->prefetch_rule_count,
+            &count
+        ) != 0 ||
+        multiply_u32(count, search->coalesced_count, &count) != 0) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    search->result->candidates =
+        calloc(count, sizeof(*search->result->candidates));
+    if (search->result->candidates == NULL) {
+        search->result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
+    search->result->candidate_count = count;
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* The facts every candidate shares, and the buffers they reuse. */
+static int problem_setup(ProblemSearch *search) {
+    if (shadowspill_schedule_facts_create(search->problem, &search->facts) != 0 ||
+        candidate_workspace_create(search->problem, &search->workspace) != 0) {
+        return -1;
+    }
+    /* The emitter measures against the capacity the plan being built kept,
+     * which is the same array the reducer adds to its occupancy. */
+    search->facts.extra_pressure = search->workspace.extra_pressure;
+    return 0;
+}
+
+static void problem_teardown(ProblemSearch *search) {
+    shadowspill_schedule_facts_destroy(&search->facts);
+    candidate_workspace_destroy(&search->workspace);
+}
+
+/* Every failure inside the loops ends the same way: the candidate array stays
+ * for the caller to release with the result, and everything the evaluation
+ * itself held goes now. */
+static ShadowSpillStatus problem_failed(ProblemSearch *search) {
+    search->result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
+    problem_teardown(search);
+    return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
+}
+
+/* Reduce once for this strategy, from a residency carrying no repair
+ * pressure: what a candidate adds later is its own. */
+static void problem_reduce_base(
+    ProblemSearch *search, uint8_t strategy, StrategyBase *base
+) {
+    CandidateWorkspace *workspace = &search->workspace;
+    const uint64_t pressure_cells =
+        (uint64_t)search->problem->residency->device_count *
+        search->problem->residency->boundary_count;
+    memset(
+        workspace->extra_pressure,
+        0,
+        (size_t)pressure_cells * sizeof(*workspace->extra_pressure)
+    );
+    ShadowSpillResidencyOptions reduce_options;
+    residency_options(search->problem, workspace, strategy, &reduce_options);
+    base->status = reduce_cached(
+        search->problem,
+        workspace,
+        &reduce_options,
+        strategy,
+        workspace->base_resident,
+        workspace->base_breaks,
+        &base->residency
+    );
+    workspace->base_residency_key = workspace->current_residency_key;
+}
+
+/* The problem answers with the fastest candidate that answered, and keeps a
+ * copy of its schedule: the workspace's live one belongs to whichever
+ * candidate runs next. */
+static int problem_consider(
+    ProblemSearch *search,
+    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic
+) {
+    ShadowSpillPressureFitProblemResult *result = search->result;
+    if (result->selected_candidate_index != SHADOWSPILL_PLANNER_NO_INDEX &&
+        diagnostic->makespan_ns >= result->selected_makespan_ns) {
+        return 0;
+    }
+    result->selected_candidate_index = search->candidate_index;
+    result->selected_makespan_ns = diagnostic->makespan_ns;
+    if (shadowspill_schedule_storage_copy(
+            &search->workspace.selected, &search->workspace.schedule
+        ) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+/* Run one candidate policy and record what it did. */
+static int problem_evaluate_candidate(
+    ProblemSearch *search,
+    uint8_t strategy,
+    uint8_t rule,
+    uint8_t coalesced,
+    const StrategyBase *base
+) {
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic =
+        &search->result->candidates[search->candidate_index];
+    initialize_diagnostic(diagnostic, strategy, rule, coalesced);
+    if (base->status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
+        /* No legal cut relieves this strategy's pressure, which is a fact
+         * about the strategy: every candidate built on it reports it. */
+        copy_analytic_error(diagnostic, &base->residency);
+        return 0;
+    }
+    if (base->status != SHADOWSPILL_STATUS_OK) {
+        return -1;
+    }
+    const ShadowSpillPressureFitWorkDiagnostics before =
+        workspace_work(&search->workspace);
+    const uint64_t started = shadowspill_monotonic_ns();
+    const int valid = evaluate_candidate(
+        search->problem,
+        &search->facts,
+        search->options,
+        &search->workspace,
+        strategy,
+        rule,
+        coalesced,
+        diagnostic
+    );
+    /* Every counter this candidate moved, and the span it moved them in. */
+    diagnostic->work = work_delta(workspace_work(&search->workspace), before);
+    section_close_total(&diagnostic->work.sections, started);
+    if (valid < 0) {
+        return -1;
+    }
+    return valid > 0 ? problem_consider(search, diagnostic) : 0;
+}
+
+/* Every candidate built on one strategy's base reduction. */
+static int problem_evaluate_strategy(
+    ProblemSearch *search, uint8_t strategy, const StrategyBase *base
+) {
+    for (uint32_t rule_index = 0U;
+         rule_index < search->options->prefetch_rule_count;
+         ++rule_index) {
+        const uint8_t rule = search->options->prefetch_rules[rule_index];
+        for (uint32_t coalesced = 0U; coalesced < search->coalesced_count;
+             ++coalesced) {
+            if (problem_evaluate_candidate(
+                    search, strategy, rule, (uint8_t)coalesced, base
+                ) != 0) {
+                return -1;
+            }
+            ++search->candidate_index;
+        }
+    }
+    return 0;
+}
+
+static ShadowSpillStatus problem_select(ProblemSearch *search) {
+    if (search->result->selected_candidate_index ==
+        SHADOWSPILL_PLANNER_NO_INDEX) {
+        return SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
+    }
+    adopt_selected_schedule(search->result, &search->workspace);
+    return SHADOWSPILL_STATUS_OK;
 }
 
 ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
@@ -2890,147 +3330,54 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
     if (!problem_valid(problem, options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    const uint64_t evaluation_started = shadowspill_monotonic_ns();
 
-    uint32_t coalesced_count = options->evaluate_coalesced != 0U ? 2U : 1U;
-    uint32_t candidate_count = 0U;
-    if (multiply_u32(
-            options->residency_strategy_count,
-            options->prefetch_rule_count,
-            &candidate_count
-        ) != 0 ||
-        multiply_u32(candidate_count, coalesced_count, &candidate_count) != 0) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    const uint64_t started = shadowspill_monotonic_ns();
+    ProblemSearch search = {
+        .problem = problem,
+        .options = options,
+        .result = result,
+        .coalesced_count = options->evaluate_coalesced != 0U ? 2U : 1U,
+    };
+    const ShadowSpillStatus allocated = problem_allocate_candidates(&search);
+    if (allocated != SHADOWSPILL_STATUS_OK) {
+        return allocated;
     }
-    result->candidates = calloc(candidate_count, sizeof(*result->candidates));
-    if (result->candidates == NULL) {
-        result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    }
-    result->candidate_count = candidate_count;
 
-    ShadowSpillScheduleFacts facts = {0};
-    CandidateWorkspace workspace = {0};
-    if (shadowspill_schedule_facts_create(problem, &facts) != 0 ||
-        candidate_workspace_create(problem, &workspace) != 0) {
-        shadowspill_schedule_facts_destroy(&facts);
-        candidate_workspace_destroy(&workspace);
+    const Section setup = section_open(&search.workspace.sections.setup_ns);
+    const int setup_failed = problem_setup(&search);
+    section_close(setup);
+    if (setup_failed) {
+        problem_teardown(&search);
         shadowspill_pressurefit_problem_result_destroy(result);
         result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
-    /* The emitter measures against the capacity the plan being built kept,
-     * which is the same array the reducer adds to its occupancy. */
-    facts.extra_pressure = workspace.extra_pressure;
 
-    uint64_t pressure_cells = (uint64_t)problem->residency->device_count *
-        problem->residency->boundary_count;
-    uint32_t candidate_index = 0U;
-    for (uint32_t strategy_index = 0U;
-         strategy_index < options->residency_strategy_count;
-         ++strategy_index) {
-        uint8_t strategy = options->residency_strategies[strategy_index];
-        memset(
-            workspace.extra_pressure,
-            0,
-            (size_t)pressure_cells * sizeof(*workspace.extra_pressure)
-        );
-        ShadowSpillResidencyOptions reduce_options;
-        residency_options(problem, &workspace, strategy, &reduce_options);
-        ShadowSpillResidencyResult base_result;
-        uint64_t residency_started = shadowspill_monotonic_ns();
-        ShadowSpillStatus base_status = reduce_cached(
-            problem,
-            &workspace,
-            &reduce_options,
-            strategy,
-            workspace.base_resident,
-            workspace.base_breaks,
-            &base_result
-        );
-        workspace.base_residency_key = workspace.current_residency_key;
-        workspace.residency_time_ns += shadowspill_monotonic_ns() - residency_started;
-        for (uint32_t rule_index = 0U; rule_index < options->prefetch_rule_count;
-             ++rule_index) {
-            uint8_t rule = options->prefetch_rules[rule_index];
-            for (uint32_t coalesced = 0U; coalesced < coalesced_count;
-                 ++coalesced) {
-                ShadowSpillPressureFitCandidateDiagnostic *diagnostic =
-                    &result->candidates[candidate_index];
-                initialize_diagnostic(
-                    diagnostic,
-                    strategy,
-                    rule,
-                    (uint8_t)coalesced
-                );
-                if (base_status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
-                    copy_analytic_error(diagnostic, &base_result);
-                } else if (base_status != SHADOWSPILL_STATUS_OK) {
-                    result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-                    shadowspill_schedule_facts_destroy(&facts);
-                    candidate_workspace_destroy(&workspace);
-                    return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-                } else {
-                    const ShadowSpillPressureFitWorkDiagnostics before =
-                        workspace_work(&workspace);
-                    const uint64_t candidate_started = shadowspill_monotonic_ns();
-                    int valid = evaluate_candidate(
-                        problem,
-                        &facts,
-                        options,
-                        &workspace,
-                        strategy,
-                        rule,
-                        (uint8_t)coalesced,
-                        diagnostic
-                    );
-                    diagnostic->work = work_delta(
-                        workspace_work(&workspace), before
-                    );
-                    diagnostic->work.evaluation_time_ns =
-                        shadowspill_monotonic_ns() - candidate_started;
-                    if (valid < 0) {
-                        result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-                        shadowspill_schedule_facts_destroy(&facts);
-                        candidate_workspace_destroy(&workspace);
-                        return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-                    }
-                    if (valid > 0 &&
-                        (result->selected_candidate_index ==
-                             SHADOWSPILL_PLANNER_NO_INDEX ||
-                         diagnostic->makespan_ns < result->selected_makespan_ns)) {
-                        result->selected_candidate_index = candidate_index;
-                        result->selected_makespan_ns = diagnostic->makespan_ns;
-                        if (shadowspill_schedule_storage_copy(
-                                &workspace.selected,
-                                &workspace.schedule
-                            ) != 0) {
-                            result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-                            shadowspill_schedule_facts_destroy(&facts);
-                            candidate_workspace_destroy(&workspace);
-                            return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-                        }
-                    }
-                }
-                ++candidate_index;
-            }
+    for (uint32_t index = 0U; index < options->residency_strategy_count;
+         ++index) {
+        const uint8_t strategy = options->residency_strategies[index];
+        StrategyBase base = {0};
+        const Section reduce = section_open(&search.workspace.sections.reduce_ns);
+        problem_reduce_base(&search, strategy, &base);
+        section_close(reduce);
+        if (problem_evaluate_strategy(&search, strategy, &base) != 0) {
+            return problem_failed(&search);
         }
     }
 
-    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
-    if (result->selected_candidate_index == SHADOWSPILL_PLANNER_NO_INDEX) {
-        status = SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
-    } else {
-        adopt_selected_schedule(result, &workspace);
-    }
+    const Section select = section_open(&search.workspace.sections.select_ns);
+    const ShadowSpillStatus status = problem_select(&search);
+    section_close(select);
+
     result->status = status;
-    result->work = workspace_work(&workspace);
-    result->work.evaluation_time_ns =
-        shadowspill_monotonic_ns() - evaluation_started;
+    result->work = workspace_work(&search.workspace);
     for (uint32_t index = 0U; index < result->candidate_count; ++index) {
         add_repairs(&result->repairs, &result->candidates[index].repairs);
     }
-    shadowspill_schedule_facts_destroy(&facts);
-    candidate_workspace_destroy(&workspace);
+    const Section teardown =
+        section_open(&result->work.sections.teardown_ns);
+    problem_teardown(&search);
+    section_close(teardown);
+    section_close_total(&result->work.sections, started);
     return status;
 }

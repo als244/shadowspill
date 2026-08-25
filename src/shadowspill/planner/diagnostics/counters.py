@@ -1,10 +1,35 @@
-"""What the search did: repairs attempted, and work spent doing them."""
+"""What the search did: repairs attempted, and where the time went."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .json import _integer, _mapping
+
+#: The sections that partition a step's total, in the order work reaches them.
+#: Nested sections -- admission inside simulation -- are deliberately absent.
+SECTION_NAMES = (
+    "prepare_ns",
+    "setup_ns",
+    "reduce_ns",
+    "emit_ns",
+    "simulate_ns",
+    "repair_ns",
+    "digest_ns",
+    "place_ns",
+    "select_ns",
+    "teardown_ns",
+)
+
+#: What became of a plan the search held, in flag-bit order.
+STEP_OUTCOMES = (
+    "simulated",
+    "measured",
+    "placed",
+    "refined",
+    "best",
+    "answer",
+)
 
 
 def _nonnegative(name: str, value: int) -> None:
@@ -121,48 +146,113 @@ class PressureFitRepairDiagnostics:
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitWorkDiagnostics:
-    """Exact search operations and summed component work time.
+class PressureFitSectionTiming:
+    """Disjoint spans of one planning step, as its orchestrator measured them.
 
-    Invocation-level values include shared work performed before or across
-    candidates. Consequently they need not equal the sum of candidate values.
-    Times are summed component work, not necessarily elapsed wall time when
-    independent recomputation problems are evaluated concurrently.
+    Sections do not overlap: exactly one is open at a time, and the function
+    that opens it is the one that names it. ``total_ns`` is the whole span the
+    orchestrator covered, and ``residual_ns`` is whatever part of it no named
+    section claimed, so
+
+        total_ns == named_ns + residual_ns
+
+    holds at every level -- which is the point of the shape. ``admit_ns`` is
+    the exception: admission runs as part of simulating, so it is nested
+    inside ``simulate_ns`` rather than beside it, and stands outside that sum.
+
+    ``prepare_ns`` is problem-level only; a candidate never prepares anything.
     """
 
-    evaluation_time_ns: int = 0
-    residency_cache_hits: int = 0
-    residency_cache_misses: int = 0
-    schedule_emissions: int = 0
-    schedule_cache_hits: int = 0
-    simulation_calls: int = 0
-    simulation_cache_hits: int = 0
-    result_simulation_calls: int = 0
-    admission_calls: int = 0
-    result_admission_calls: int = 0
-    residency_time_ns: int = 0
-    schedule_time_ns: int = 0
-    simulation_time_ns: int = 0
-    result_simulation_time_ns: int = 0
-    admission_time_ns: int = 0
-    result_admission_time_ns: int = 0
-    digest_time_ns: int = 0
+    total_ns: int = 0
+    #: Deriving the residency problem from the program. Problem level only.
+    prepare_ns: int = 0
+    #: Schedule facts and the candidate workspace.
+    setup_ns: int = 0
+    #: Choosing what stays resident, before any candidate repairs it.
+    reduce_ns: int = 0
+    #: Turning residency gaps into an ordered schedule.
+    emit_ns: int = 0
+    #: Replaying the schedule for a makespan.
+    simulate_ns: int = 0
+    #: Moving a transfer or making room for one, and reducing again when that
+    #: is what it took.
+    repair_ns: int = 0
+    #: Naming the schedule.
+    digest_ns: int = 0
+    #: Measuring whether the plan has a layout that fits.
+    place_ns: int = 0
+    #: Deciding what to answer with, and materialising it.
+    select_ns: int = 0
+    #: Releasing everything the evaluation held.
+    teardown_ns: int = 0
+    #: Admitting the schedule into the pool. Inside ``simulate_ns``.
+    admit_ns: int = 0
+    #: ``total_ns`` less every named section above.
+    residual_ns: int = 0
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
             _nonnegative(name, getattr(self, name))
 
     @property
+    def named_ns(self) -> int:
+        """Time every named section claimed. Nested sections excluded."""
+
+        return sum(getattr(self, name) for name in SECTION_NAMES)
+
+    def __add__(self, other: PressureFitSectionTiming) -> PressureFitSectionTiming:
+        if not isinstance(other, PressureFitSectionTiming):
+            return NotImplemented
+        return PressureFitSectionTiming(
+            **{
+                name: getattr(self, name) + getattr(other, name)
+                for name in self.__dataclass_fields__
+            }
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {name: getattr(self, name) for name in self.__dataclass_fields__}
+
+    @classmethod
+    def from_value(
+        cls, value: object, path: str = "sections"
+    ) -> PressureFitSectionTiming:
+        data = _mapping(value, path)
+        return cls(
+            **{
+                name: _integer(data.get(name, 0), f"{path}.{name}")
+                for name in cls.__dataclass_fields__
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PressureFitWorkDiagnostics:
+    """Exact search operations, and the sections the time went to.
+
+    Invocation-level values include shared work performed before or across
+    candidates. Consequently they need not equal the sum of candidate values.
+    Times are summed section work, not necessarily elapsed wall time when
+    independent recomputation problems are evaluated concurrently.
+    """
+
+    residency_cache_hits: int = 0
+    residency_cache_misses: int = 0
+    schedule_emissions: int = 0
+    schedule_cache_hits: int = 0
+    simulation_calls: int = 0
+    simulation_cache_hits: int = 0
+    admission_calls: int = 0
+    sections: PressureFitSectionTiming = field(default_factory=PressureFitSectionTiming)
+
+    def __post_init__(self) -> None:
+        for name in self.__dataclass_fields__:
+            if name != "sections":
+                _nonnegative(name, getattr(self, name))
+
+    @property
     def simulation_requests(self) -> int:
         return self.simulation_calls + self.simulation_cache_hits
-
-    @property
-    def total_simulation_calls(self) -> int:
-        return self.simulation_calls + self.result_simulation_calls
-
-    @property
-    def total_admission_calls(self) -> int:
-        return self.admission_calls + self.result_admission_calls
 
     def __add__(self, other: PressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
         if not isinstance(other, PressureFitWorkDiagnostics):
@@ -176,34 +266,21 @@ class PressureFitWorkDiagnostics:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "evaluation": {"summed_wall_time_ns": self.evaluation_time_ns},
             "residency": {
                 "cache_hits": self.residency_cache_hits,
                 "evaluations": self.residency_cache_misses,
-                "summed_work_time_ns": self.residency_time_ns,
             },
             "schedule": {
                 "cache_hits": self.schedule_cache_hits,
                 "emissions": self.schedule_emissions,
-                "summed_work_time_ns": self.schedule_time_ns,
             },
             "simulation": {
                 "requests": self.simulation_requests,
-                "search_calls": self.simulation_calls,
+                "calls": self.simulation_calls,
                 "cache_hits": self.simulation_cache_hits,
-                "result_materialization_calls": self.result_simulation_calls,
-                "total_calls": self.total_simulation_calls,
-                "summed_work_time_ns": self.simulation_time_ns,
-                "result_materialization_time_ns": (self.result_simulation_time_ns),
             },
-            "admission": {
-                "search_calls": self.admission_calls,
-                "result_materialization_calls": self.result_admission_calls,
-                "total_calls": self.total_admission_calls,
-                "summed_work_time_ns": self.admission_time_ns,
-                "result_materialization_time_ns": self.result_admission_time_ns,
-            },
-            "digest": {"summed_work_time_ns": self.digest_time_ns},
+            "admission": {"calls": self.admission_calls},
+            "sections": self.sections.to_dict(),
         }
 
     @classmethod
@@ -211,17 +288,11 @@ class PressureFitWorkDiagnostics:
         cls, value: object, path: str = "pressurefit_work"
     ) -> PressureFitWorkDiagnostics:
         data = _mapping(value, path)
-        evaluation = _mapping(data.get("evaluation"), f"{path}.evaluation")
         residency = _mapping(data.get("residency"), f"{path}.residency")
         schedule = _mapping(data.get("schedule"), f"{path}.schedule")
         simulation = _mapping(data.get("simulation"), f"{path}.simulation")
         admission = _mapping(data.get("admission"), f"{path}.admission")
-        digest = _mapping(data.get("digest"), f"{path}.digest")
         result = cls(
-            evaluation_time_ns=_integer(
-                evaluation.get("summed_wall_time_ns", 0),
-                f"{path}.evaluation.summed_wall_time_ns",
-            ),
             residency_cache_hits=_integer(
                 residency.get("cache_hits", 0), f"{path}.residency.cache_hits"
             ),
@@ -235,69 +306,100 @@ class PressureFitWorkDiagnostics:
                 schedule.get("cache_hits", 0), f"{path}.schedule.cache_hits"
             ),
             simulation_calls=_integer(
-                simulation.get("search_calls", simulation.get("calls", 0)),
-                f"{path}.simulation.search_calls",
+                simulation.get("calls", 0), f"{path}.simulation.calls"
             ),
             simulation_cache_hits=_integer(
                 simulation.get("cache_hits", 0), f"{path}.simulation.cache_hits"
             ),
-            result_simulation_calls=_integer(
-                simulation.get("result_materialization_calls", 0),
-                f"{path}.simulation.result_materialization_calls",
-            ),
             admission_calls=_integer(
-                admission.get("search_calls", admission.get("calls", 0)),
-                f"{path}.admission.search_calls",
+                admission.get("calls", 0), f"{path}.admission.calls"
             ),
-            result_admission_calls=_integer(
-                admission.get("result_materialization_calls", 0),
-                f"{path}.admission.result_materialization_calls",
-            ),
-            residency_time_ns=_integer(
-                residency.get("summed_work_time_ns", 0),
-                f"{path}.residency.summed_work_time_ns",
-            ),
-            schedule_time_ns=_integer(
-                schedule.get("summed_work_time_ns", 0),
-                f"{path}.schedule.summed_work_time_ns",
-            ),
-            simulation_time_ns=_integer(
-                simulation.get("summed_work_time_ns", 0),
-                f"{path}.simulation.summed_work_time_ns",
-            ),
-            result_simulation_time_ns=_integer(
-                simulation.get("result_materialization_time_ns", 0),
-                f"{path}.simulation.result_materialization_time_ns",
-            ),
-            admission_time_ns=_integer(
-                admission.get("summed_work_time_ns", 0),
-                f"{path}.admission.summed_work_time_ns",
-            ),
-            result_admission_time_ns=_integer(
-                admission.get("result_materialization_time_ns", 0),
-                f"{path}.admission.result_materialization_time_ns",
-            ),
-            digest_time_ns=_integer(
-                digest.get("summed_work_time_ns", 0),
-                f"{path}.digest.summed_work_time_ns",
+            sections=PressureFitSectionTiming.from_value(
+                data.get("sections", {}), f"{path}.sections"
             ),
         )
-        expected = {
-            "requests": result.simulation_requests,
-            "total_calls": result.total_simulation_calls,
-        }
-        for name, expected_value in expected.items():
-            declared = simulation.get(name)
-            if (
-                declared is not None
-                and _integer(declared, f"{path}.simulation.{name}") != expected_value
-            ):
-                raise ValueError(f"{path}.simulation.{name} does not reconcile")
-        declared_admission_calls = admission.get("total_calls")
+        declared = simulation.get("requests")
         if (
-            declared_admission_calls is not None
-            and _integer(declared_admission_calls, f"{path}.admission.total_calls")
-            != result.total_admission_calls
+            declared is not None
+            and _integer(declared, f"{path}.simulation.requests")
+            != result.simulation_requests
         ):
-            raise ValueError(f"{path}.admission.total_calls does not reconcile")
+            raise ValueError(f"{path}.simulation.requests does not reconcile")
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class ReductionStep:
+    """One plan a candidate held, and what became of it.
+
+    A candidate reaches its answer by holding a succession of plans: it
+    reduces, emits, simulates, and either keeps what it got or repairs it and
+    goes again. A step is one turn of that, so the steps in order are the
+    search itself rather than a summary of it -- which plan stalled, which one
+    was measured, which one gave capacity back, and which one it answered with.
+
+    Recorded only when the caller asks: the trajectory costs an allocation per
+    candidate that grows with the search, which is worth paying when
+    attributing planner time or explaining a plan, and not otherwise.
+    """
+
+    makespan_ns: int
+    #: Bytes the layout of this plan spans. Zero unless it was measured.
+    required_bytes: int
+    #: The object capacity this plan was built against, which falls as the
+    #: candidate hands capacity back.
+    capacity_bytes: int
+    #: Objects the reducer cut to reach this plan, by alias index.
+    cut_aliases: tuple[int, ...]
+    #: Repairs the candidate had made when it reached this plan.
+    repairs: int
+    simulation_status: int
+    #: Places this plan came up short of capacity and waited.
+    capacity_violations: int
+    simulated: bool
+    measured: bool
+    placed: bool
+    refined: bool
+    best: bool
+    answer: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "makespan_ns": self.makespan_ns,
+            "required_bytes": self.required_bytes,
+            "capacity_bytes": self.capacity_bytes,
+            "cut_aliases": list(self.cut_aliases),
+            "repairs": self.repairs,
+            "simulation_status": self.simulation_status,
+            "capacity_violations": self.capacity_violations,
+            "outcome": {name: getattr(self, name) for name in STEP_OUTCOMES},
+        }
+
+    @classmethod
+    def from_value(cls, value: object, path: str) -> ReductionStep:
+        data = _mapping(value, path)
+        outcome = _mapping(data.get("outcome"), f"{path}.outcome")
+        aliases = data.get("cut_aliases", [])
+        if not isinstance(aliases, list):
+            raise ValueError(f"{path}.cut_aliases must be a list")
+        return cls(
+            makespan_ns=_integer(data.get("makespan_ns", 0), f"{path}.makespan_ns"),
+            required_bytes=_integer(
+                data.get("required_bytes", 0), f"{path}.required_bytes"
+            ),
+            capacity_bytes=_integer(
+                data.get("capacity_bytes", 0), f"{path}.capacity_bytes"
+            ),
+            cut_aliases=tuple(
+                _integer(alias, f"{path}.cut_aliases[{index}]")
+                for index, alias in enumerate(aliases)
+            ),
+            repairs=_integer(data.get("repairs", 0), f"{path}.repairs"),
+            simulation_status=_integer(
+                data.get("simulation_status", 0), f"{path}.simulation_status"
+            ),
+            capacity_violations=_integer(
+                data.get("capacity_violations", 0), f"{path}.capacity_violations"
+            ),
+            **{name: bool(outcome.get(name, False)) for name in STEP_OUTCOMES},
+        )

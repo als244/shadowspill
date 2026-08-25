@@ -96,6 +96,9 @@ class CResidencyResult(ctypes.Structure):
         ("resident_capacity", ctypes.c_uint64),
         ("breaks", ctypes.POINTER(ctypes.c_uint8)),
         ("break_capacity", ctypes.c_uint64),
+        ("cut_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("cut_capacity", ctypes.c_uint64),
+        ("cut_count", ctypes.c_uint64),
     ]
 
 
@@ -268,6 +271,7 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("max_repair_attempts", ctypes.c_uint32),
         ("initial_placement", ctypes.c_uint8),
         ("capacity_refinement_bytes", ctypes.c_uint64),
+        ("record_reduction_steps", ctypes.c_uint8),
         ("best_placed", ctypes.c_void_p),
         ("selection_index", ctypes.c_uint32),
     ]
@@ -307,9 +311,40 @@ class CPressureFitRepairDiagnostics(ctypes.Structure):
     ]
 
 
+class CPressureFitReductionStep(ctypes.Structure):
+    _fields_ = [
+        ("makespan_ns", ctypes.c_uint64),
+        ("required_bytes", ctypes.c_uint64),
+        ("capacity_bytes", ctypes.c_uint64),
+        ("cut_offset", ctypes.c_uint32),
+        ("cut_count", ctypes.c_uint32),
+        ("repairs", ctypes.c_uint32),
+        ("simulation_status", ctypes.c_uint32),
+        ("capacity_violations", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+    ]
+
+
+class CPressureFitSectionTiming(ctypes.Structure):
+    _fields_ = [
+        ("total_ns", ctypes.c_uint64),
+        ("prepare_ns", ctypes.c_uint64),
+        ("setup_ns", ctypes.c_uint64),
+        ("reduce_ns", ctypes.c_uint64),
+        ("emit_ns", ctypes.c_uint64),
+        ("simulate_ns", ctypes.c_uint64),
+        ("repair_ns", ctypes.c_uint64),
+        ("digest_ns", ctypes.c_uint64),
+        ("place_ns", ctypes.c_uint64),
+        ("select_ns", ctypes.c_uint64),
+        ("teardown_ns", ctypes.c_uint64),
+        ("admit_ns", ctypes.c_uint64),
+        ("residual_ns", ctypes.c_uint64),
+    ]
+
+
 class CPressureFitWorkDiagnostics(ctypes.Structure):
     _fields_ = [
-        ("evaluation_time_ns", ctypes.c_uint64),
         ("residency_cache_hits", ctypes.c_uint64),
         ("residency_cache_misses", ctypes.c_uint64),
         ("schedule_emissions", ctypes.c_uint64),
@@ -317,11 +352,7 @@ class CPressureFitWorkDiagnostics(ctypes.Structure):
         ("simulation_calls", ctypes.c_uint64),
         ("simulation_cache_hits", ctypes.c_uint64),
         ("admission_calls", ctypes.c_uint64),
-        ("residency_time_ns", ctypes.c_uint64),
-        ("schedule_time_ns", ctypes.c_uint64),
-        ("simulation_time_ns", ctypes.c_uint64),
-        ("admission_time_ns", ctypes.c_uint64),
-        ("digest_time_ns", ctypes.c_uint64),
+        ("sections", CPressureFitSectionTiming),
     ]
 
 
@@ -335,6 +366,12 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("work", CPressureFitWorkDiagnostics),
         ("simulation_status", ctypes.c_uint32),
         ("makespan_ns", ctypes.c_uint64),
+        ("steps", ctypes.POINTER(CPressureFitReductionStep)),
+        ("step_count", ctypes.c_uint32),
+        ("step_capacity", ctypes.c_uint32),
+        ("cut_aliases", ctypes.POINTER(ctypes.c_uint32)),
+        ("cut_count", ctypes.c_uint32),
+        ("cut_capacity", ctypes.c_uint32),
         ("capacity_violation_count", ctypes.c_uint32),
         ("placements_attempted", ctypes.c_uint32),
         ("placements_admitted", ctypes.c_uint32),
@@ -394,6 +431,36 @@ class CScheduleAdmissionResult(ctypes.Structure):
     ]
 
 
+def _check_struct_layout(library: ctypes.CDLL) -> None:
+    """Refuse a library whose structures are not the ones mirrored here.
+
+    A mirror that has drifted does not fail loudly: it reads one field where
+    the library wrote another, and the result is corrupted counters rather
+    than an error. Comparing sizes catches the drift at load, where it can
+    still be understood.
+    """
+
+    mirrored = (
+        (0, "CPressureFitProblemOptions", CPressureFitProblemOptions),
+        (1, "CPressureFitWorkDiagnostics", CPressureFitWorkDiagnostics),
+        (2, "CPressureFitCandidateDiagnostic", CPressureFitCandidateDiagnostic),
+        (3, "CPressureFitSectionTiming", CPressureFitSectionTiming),
+        (4, "CPressureFitReductionStep", CPressureFitReductionStep),
+        (5, "CAdmissionFacts", CAdmissionFacts),
+        (6, "CBestPlacedRecord", CBestPlacedRecord),
+        (7, "CResidencyProblem", CResidencyProblem),
+        (8, "CResidencyResult", CResidencyResult),
+    )
+    for which, name, structure in mirrored:
+        expected = library.shadowspill_planner_struct_size(which)
+        actual = ctypes.sizeof(structure)
+        if expected and expected != actual:
+            raise RuntimeError(
+                f"{name} does not match the compiled planner: "
+                f"library {expected} bytes, mirror {actual}"
+            )
+
+
 @cache
 def planner_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
@@ -421,6 +488,9 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CPressureFitProblemResult),
     ]
     library.shadowspill_evaluate_pressurefit_program_problem.restype = ctypes.c_uint32
+    library.shadowspill_planner_struct_size.argtypes = [ctypes.c_uint32]
+    library.shadowspill_planner_struct_size.restype = ctypes.c_uint64
+    _check_struct_layout(library)
     library.shadowspill_best_placed_create.argtypes = []
     library.shadowspill_best_placed_create.restype = ctypes.c_void_p
     library.shadowspill_best_placed_destroy.argtypes = [ctypes.c_void_p]

@@ -78,6 +78,22 @@ Search diagnostics:
 - `RecomputationChoiceDiagnostic`, `RecomputationProblemDiagnostics`
 - `CandidateDiagnostic`
 - `PressureFitRepairDiagnostics`, `PressureFitWorkDiagnostics`
+- `PressureFitSectionTiming`, `ReductionStep`
+
+`PressureFitWorkDiagnostics` counts what the search did and carries a
+`PressureFitSectionTiming` saying where the time went. Sections are disjoint
+spans named by the function that opened them, so `total_ns` equals `named_ns`
+plus `residual_ns` at every level of the hierarchy — candidate, resolved
+program, and whole call. `admit_ns` is the one exception: admission runs as
+part of simulating, so it is nested inside `simulate_ns` rather than beside
+it. Summing two of these adds every section, which is how the aggregate is
+built.
+
+`ReductionStep` is one plan a candidate held: its makespan, the bytes its
+layout needed, the capacity it was built against, the objects the reducer
+cut to reach it, and what became of it — simulated, measured, placed,
+refined, best so far, or the answer. `CandidateDiagnostic.steps` is the whole
+trajectory in order, and is empty unless the caller asked for it.
 
 Failures are `PressureFitInfeasibleError` or
 `PressureFitSearchExhaustedError`.

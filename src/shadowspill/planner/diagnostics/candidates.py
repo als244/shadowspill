@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from .counters import (
     PressureFitRepairDiagnostics,
     PressureFitWorkDiagnostics,
+    ReductionStep,
 )
 from .json import (
     _boolean,
@@ -16,6 +17,15 @@ from .json import (
     _parse_candidate_id,
     _string,
 )
+
+
+def _steps(value: object, path: str) -> tuple[ReductionStep, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{path} must be a list")
+    return tuple(
+        ReductionStep.from_value(step, f"{path}[{index}]")
+        for index, step in enumerate(value)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +56,9 @@ class CandidateDiagnostic:
         default_factory=PressureFitRepairDiagnostics
     )
     work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
+    #: Every plan this candidate held, in the order it held them. Empty
+    #: unless the caller asked for a trajectory.
+    steps: tuple[ReductionStep, ...] = ()
     residency_strategy: str = field(init=False)
     prefetch_rule: str = field(init=False)
     coalesced: bool = field(init=False)
@@ -77,6 +90,7 @@ class CandidateDiagnostic:
             },
             "repairs": self.repairs.to_dict(),
             "work": self.work.to_dict(),
+            "steps": [step.to_dict() for step in self.steps],
         }
 
     @classmethod
@@ -130,6 +144,7 @@ class CandidateDiagnostic:
             work=PressureFitWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
+            steps=_steps(data.get("steps", []), f"{path}.steps"),
         )
         declared_policy = {
             "residency_strategy": _string(
@@ -172,4 +187,5 @@ class CandidateDiagnostic:
             failure_detail=self.failure_detail,
             repairs=self.repairs,
             work=self.work,
+            steps=self.steps,
         )

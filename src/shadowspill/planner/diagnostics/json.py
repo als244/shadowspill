@@ -18,15 +18,24 @@ def _mapping(value: object, path: str) -> dict[str, object]:
     return value
 
 
-def _without_work_times(value: object) -> object:
-    if isinstance(value, list):
-        return [_without_work_times(item) for item in value]
+def without_measurements(value: object) -> object:
+    """Strip everything that measures the run rather than describing the plan.
+
+    Two runs of the same input produce the same plan and different timings, so
+    anything compared or digested across runs has to leave the timings out.
+    `sections` goes whole: every number in it is a measurement.
+    """
+
+    # Tuples become lists: a payload read back from JSON has lists where the
+    # payload just built has tuples, and they have to compare equal.
+    if isinstance(value, (list, tuple)):
+        return [without_measurements(item) for item in value]
     if not isinstance(value, dict):
         return value
     return {
-        key: _without_work_times(item)
+        key: without_measurements(item)
         for key, item in value.items()
-        if not key.endswith("_time_ns")
+        if key != "sections" and not key.endswith("_time_ns")
     }
 
 

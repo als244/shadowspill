@@ -46,8 +46,8 @@ what reduction relieves. A candidate reaching such a plan keeps going and
 answers with the best plan it found, not the first that ran.
 
 Results contain the selected indexed schedule, every candidate status, exact
-repair counters, per-candidate placement counters, component work counters,
-timings, and failure boundary. A candidate
+repair counters, per-candidate placement counters, work counters, the
+sections its time went to, and failure boundary. A candidate
 reports `SHADOWSPILL_CANDIDATE_UNPLACEABLE` when every plan it reached needed
 more contiguous pool than the pool has.
 
@@ -159,20 +159,72 @@ order they arrive in.
   have been skipped, never a wrong answer: the best plan that will ever be
   placed is better than everything already placed, so it is never refused.
 
+- `shadowspill_planner_struct_size()` reports the compiled size of one
+  planner structure, named by `enum ShadowSpillPlannerStruct`. A caller that
+  mirrors these layouts — the Python bindings do — can compare sizes at load
+  and refuse a library it does not match. Drift is otherwise silent: the
+  mirror reads one field where the library wrote another and reports
+  corrupted counters rather than an error.
+
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
 [C API guide](README.md#abi-use).
 
 ## Diagnostics
 
-`ShadowSpillPressureFitWorkDiagnostics` separately counts residency cache
-hits/misses, schedule emissions/cache hits, simulation calls/cache hits,
-admission calls, and time spent in residency, schedule construction,
-simulation, admission, and digesting.
+`ShadowSpillPressureFitWorkDiagnostics` counts the work one evaluation did:
+residency cache hits/misses, schedule emissions/cache hits, simulation calls
+and cache hits, and admission calls. What placing cost and bought —
+`placements_attempted`, `placements_admitted`, `capacity_refinements` — is
+per candidate, on the candidate diagnostic.
+
+Time is reported separately, as `ShadowSpillPressureFitSectionTiming`. Its
+fields are **disjoint sections** rather than overlapping totals: each names
+one span of work, an orchestrator opens and closes it, and no two are ever
+open at once. `total_ns` is the whole span the orchestrator measured, and
+`residual_ns` is what it holds that no named section claimed, so
+
+```text
+total_ns = prepare + setup + reduce + emit + simulate + repair
+         + digest + place + select + teardown + residual
+```
+
+holds exactly, at every level. The one exception is `admit_ns`, which is
+nested *inside* `simulate_ns` rather than beside it, because admission runs
+as part of simulating; it is excluded from the identity above for that
+reason. `prepare_ns` is a problem-level section only — preparing the problem
+happens once, before any candidate exists. `reduce_ns` covers a strategy's
+base reduction; a reduction a repair forces is charged to `repair_ns`, which
+is what pays for it.
+
+What each section covers is walked through stage by stage in
+[PressureFit](../architecture/pressurefit.md#current-algorithm).
+
+Each candidate diagnostic carries its own `sections` covering just that
+candidate, and the problem-level `work.sections` covers the whole
+evaluation; the difference between the problem total and the sum of the
+candidates is the orchestration the problem level did itself.
 
 `ShadowSpillPressureFitRepairDiagnostics` categorizes each monotonic repair by
 whether it advances or delays a fetch or addresses a pressure boundary.
 Candidate, problem, and aggregate Python diagnostics preserve these counts.
+
+### Reduction trajectories
+
+With `record_reduction_steps` set, each candidate also records what its
+search actually did, one `ShadowSpillPressureFitReductionStep` per plan it
+held. A step carries the plan's makespan, the bytes its layout required, the
+capacity it was built against, the repair count reaching it, the simulation
+status, how many capacity boundaries it came up short at, and a `flags` word
+saying what happened to it — whether it was simulated, measured for layout,
+placed, triggered a refinement, was at some point the best plan, or is the
+answer the candidate returned. `cut_offset`/`cut_count` index the candidate's
+flat `cut_aliases` array, naming the objects the reducer cut to reach that
+step.
+
+Recording is off by default: it costs an allocation per candidate that grows
+with the search, which is worth paying when attributing planner time or
+explaining a plan and not otherwise.
 
 ## Concurrency and ownership
 

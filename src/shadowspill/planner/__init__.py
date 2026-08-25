@@ -11,9 +11,11 @@ from .diagnostics import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
+    PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
+    ReductionStep,
 )
 from .plan import plan_program, pressurefit, validate_schedule_feasibility
 from .request import InitialPlacement, PressureFitOptions
@@ -33,9 +35,11 @@ __all__ = [
     "PressureFitRepairDiagnostics",
     "PressureFitResult",
     "PressureFitSearchExhaustedError",
+    "PressureFitSectionTiming",
     "PressureFitWorkDiagnostics",
     "RecomputationChoiceDiagnostic",
     "RecomputationProblemDiagnostics",
+    "ReductionStep",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

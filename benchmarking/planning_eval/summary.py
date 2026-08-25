@@ -50,19 +50,22 @@ _CSV_FIELDS = (
     "schedule_emissions",
     "schedule_cache_hits",
     "simulation_requests",
-    "simulation_search_calls",
+    "simulation_calls",
     "simulation_cache_hits",
-    "simulation_result_materialization_calls",
-    "simulation_total_calls",
-    "admission_search_calls",
-    "admission_result_materialization_calls",
-    "admission_total_calls",
-    "pressurefit_problem_work_time_ns",
-    "residency_work_time_ns",
-    "schedule_work_time_ns",
-    "simulation_work_time_ns",
-    "admission_work_time_ns",
-    "digest_work_time_ns",
+    "admission_calls",
+    "section_total_ns",
+    "section_prepare_ns",
+    "section_setup_ns",
+    "section_reduce_ns",
+    "section_emit_ns",
+    "section_simulate_ns",
+    "section_repair_ns",
+    "section_digest_ns",
+    "section_place_ns",
+    "section_select_ns",
+    "section_teardown_ns",
+    "section_admit_ns",
+    "section_residual_ns",
     "action_count",
     "layout_required_bytes",
     "layout_slack_bytes",
@@ -161,12 +164,11 @@ def _csv_row(
     pressurefit_summary = _mapping(pressurefit.get("summary"))
     pressurefit_repairs = _mapping(pressurefit.get("repairs"))
     pressurefit_work = _mapping(pressurefit.get("work"))
-    evaluation_work = _mapping(pressurefit_work.get("evaluation"))
     residency_work = _mapping(pressurefit_work.get("residency"))
     schedule_work = _mapping(pressurefit_work.get("schedule"))
     simulation_work = _mapping(pressurefit_work.get("simulation"))
     admission_work = _mapping(pressurefit_work.get("admission"))
-    digest_work = _mapping(pressurefit_work.get("digest"))
+    sections = _mapping(pressurefit_work.get("sections"))
     schedule = _mapping(result.get("schedule"))
     admission = _mapping(result.get("physical_admission"))
     plan = _mapping(result.get("annotated_plan"))
@@ -237,31 +239,29 @@ def _csv_row(
         "schedule_emissions": schedule_work.get("emissions"),
         "schedule_cache_hits": schedule_work.get("cache_hits"),
         "simulation_requests": simulation_work.get("requests"),
-        "simulation_search_calls": simulation_work.get("search_calls"),
+        "simulation_calls": simulation_work.get("calls"),
         "simulation_cache_hits": simulation_work.get("cache_hits"),
-        "simulation_result_materialization_calls": simulation_work.get(
-            "result_materialization_calls"
-        ),
-        "simulation_total_calls": simulation_work.get("total_calls"),
-        "admission_search_calls": admission_work.get("search_calls"),
-        "admission_result_materialization_calls": admission_work.get(
-            "result_materialization_calls"
-        ),
-        "admission_total_calls": admission_work.get("total_calls"),
-        "pressurefit_problem_work_time_ns": evaluation_work.get(
-            "summed_wall_time_ns"
-        ),
-        "residency_work_time_ns": residency_work.get("summed_work_time_ns"),
-        "schedule_work_time_ns": schedule_work.get("summed_work_time_ns"),
-        "simulation_work_time_ns": (
-            int(simulation_work.get("summed_work_time_ns") or 0)
-            + int(simulation_work.get("result_materialization_time_ns") or 0)
-        ),
-        "admission_work_time_ns": (
-            int(admission_work.get("summed_work_time_ns") or 0)
-            + int(admission_work.get("result_materialization_time_ns") or 0)
-        ),
-        "digest_work_time_ns": digest_work.get("summed_work_time_ns"),
+        "admission_calls": admission_work.get("calls"),
+        # Disjoint spans that sum to the total, so a row can be read as a
+        # breakdown rather than a set of overlapping measurements.
+        **{
+            f"section_{name}": sections.get(name)
+            for name in (
+                "total_ns",
+                "prepare_ns",
+                "setup_ns",
+                "reduce_ns",
+                "emit_ns",
+                "simulate_ns",
+                "repair_ns",
+                "digest_ns",
+                "place_ns",
+                "select_ns",
+                "teardown_ns",
+                "admit_ns",
+                "residual_ns",
+            )
+        },
         "action_count": schedule.get("action_count"),
         "layout_required_bytes": admission.get("required_bytes"),
         "layout_slack_bytes": admission.get("slack_bytes"),

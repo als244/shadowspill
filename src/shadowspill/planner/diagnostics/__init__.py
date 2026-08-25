@@ -9,7 +9,12 @@ planned (``selections``), each capacity refinement it fell back to
 from __future__ import annotations
 
 from .candidates import CandidateDiagnostic
-from .counters import PressureFitRepairDiagnostics, PressureFitWorkDiagnostics
+from .counters import (
+    PressureFitRepairDiagnostics,
+    PressureFitSectionTiming,
+    PressureFitWorkDiagnostics,
+    ReductionStep,
+)
 from .selections import (
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
@@ -20,7 +25,9 @@ __all__ = [
     "CandidateDiagnostic",
     "PressureFitDiagnostics",
     "PressureFitRepairDiagnostics",
+    "PressureFitSectionTiming",
     "PressureFitWorkDiagnostics",
     "RecomputationChoiceDiagnostic",
     "RecomputationProblemDiagnostics",
+    "ReductionStep",
 ]

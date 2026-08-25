@@ -38,6 +38,7 @@ from ..best import BestPlaced
 from ..diagnostics import (
     PressureFitDiagnostics,
     PressureFitRepairDiagnostics,
+    PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
     RecomputationProblemDiagnostics,
@@ -446,8 +447,13 @@ def finish_pressurefit(
     indexed_schedule = result.selected_schedule
     assert indexed_schedule is not None
     schedule = decode_schedule(indexed_schedule, problem.indexed_template)
-    result_admission_calls = 0
-    result_admission_time_ns = 0
+    # Materialising the winner is the caller's own `select` section: the
+    # search has already chosen, and what remains is producing the plan it
+    # chose. Admission and simulation here are the same work the search did,
+    # so they add to the same counters.
+    selected_started = time.perf_counter_ns()
+    admission_calls = 0
+    admission_ns = 0
     simulation_admission = None
     if problem.indexed_admission is not None:
         admission_started = time.perf_counter_ns()
@@ -456,9 +462,8 @@ def finish_pressurefit(
             problem.indexed_admission,
             indexed_schedule,
         ).simulation_admission
-        result_admission_time_ns = time.perf_counter_ns() - admission_started
-        result_admission_calls = 1
-    simulation_started = time.perf_counter_ns()
+        admission_ns = time.perf_counter_ns() - admission_started
+        admission_calls = 1
     # At full capacity, which is what the plan will actually run at. A plan
     # built at a smaller capacity was *chosen* on how it behaves there, but
     # the machine it runs on is the one the caller described, so that is what
@@ -468,16 +473,19 @@ def finish_pressurefit(
         schedule,
         admission=simulation_admission,
     )
-    result_simulation_time_ns = time.perf_counter_ns() - simulation_started
+    selected_ns = time.perf_counter_ns() - selected_started
     selected_diagnostic = result.candidates[candidate_index]
     aggregate_work = PressureFitWorkDiagnostics()
     for problem_result in results:
         aggregate_work += problem_result.work
     aggregate_work += PressureFitWorkDiagnostics(
-        result_simulation_calls=1,
-        result_admission_calls=result_admission_calls,
-        result_simulation_time_ns=result_simulation_time_ns,
-        result_admission_time_ns=result_admission_time_ns,
+        simulation_calls=1,
+        admission_calls=admission_calls,
+        sections=PressureFitSectionTiming(
+            total_ns=selected_ns,
+            select_ns=selected_ns,
+            admit_ns=admission_ns,
+        ),
     )
     diagnostics = PressureFitDiagnostics(
         selected_candidate_id=selected_diagnostic.candidate_id,
