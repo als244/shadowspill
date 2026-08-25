@@ -293,8 +293,22 @@ all recomputation problems
 └── candidate-policy evaluations
     ├── outcome
     ├── repair counts
+    ├── placement counts
     └── simulation/admission/work counters and time
 ```
+
+Each evaluation's outcome carries what the candidate's own capacity search
+did, alongside its makespan:
+
+| Field | Meaning |
+|---|---|
+| `capacity_violation_count` | Times the plan waited for memory it did not have. A plan that stalls is valid but unfinished. |
+| `placements_attempted` | Layouts measured. Only a plan that could still win is measured, so this counts plans that were worth the cost. |
+| `placements_admitted` | Measured layouts that fit the pool. The candidate answers with the best of these. |
+| `capacity_refinements` | Times the candidate gave capacity back because its layout did not fit, and planned again. |
+
+A candidate whose status is `unplaceable` reached no plan that fit, so it has
+no answer regardless of what it simulated.
 
 See [Interpreting a PlanReport](plan-report.md#pressurefit-diagnostics) for the
 meaning of a problem versus a policy.

@@ -24,7 +24,7 @@ selector](recomputation-selection.md).
 | Primary input | One immutable `Program` whose tasks are ordered and whose objects, aliases, profiles, and dependencies are valid. |
 | Boundary conditions | `initial_residency` and `final_residency` tuples of `ResidencySpec` values. |
 | Machine input | `SimulationConfig`: execution capacities, spill capacity, directional transfer bandwidths, and latencies. |
-| Search input | `PressureFitOptions`: initial placement, residency strategies, fetch rules, coalescing, repair limit, and worker count. |
+| Search input | `PressureFitOptions`: initial placement, residency strategies, fetch rules, coalescing, repair limit, capacity-refinement granularity, and worker count. |
 | Optional physical input | `AdmissionFacts`: task allocation steps, output/replacement ownership, storage handoffs, pool capacity, and alignment. |
 | Output | `PressureFitResult`: selected task alternative, `MemorySchedule`, full `SimulationResult`, and structured diagnostics. |
 | Feasibility authority | The planner preflight, the simulator, and physical admission when an `AdmissionFacts` is supplied. |
@@ -75,11 +75,23 @@ changing the former.
 
 ### Search controls
 
-The default `PressureFitOptions` evaluate five residency-strategy labels, five
-fetch-trigger rules, and ordinary/coalesced emission: 50 candidate policies
+The default `PressureFitOptions` evaluate four residency-strategy labels, four
+fetch-trigger rules, and ordinary/coalesced emission: 32 candidate policies
 per legal task-selection problem. `workers=0` evaluates independent problems
-with up to the available logical CPUs; candidate order and tie-breaking do not
-depend on completion order.
+with up to the available logical CPUs.
+
+`capacity_refinement_bytes` decides how much capacity a plan gives back when
+its layout does not fit the pool, 256 MiB by default. Stepping costs rounds
+and buys plan quality; zero hands back the whole shortfall and converges in
+the fewest rounds. Capacity is a property of a
+plan, not of the search — two candidates can answer at different capacities in
+the same call — and it is described in
+[physical admission](physical-admission.md).
+
+Candidates place layouts and publish what they place to a shared record, so
+which plans are worth measuring depends on what has already been placed. That
+makes the search order-dependent by default; a caller that needs a reproducible
+answer keeps a record per search rather than sharing one.
 
 ## Output
 
@@ -514,7 +526,7 @@ infeasibility was not established.
 
 | Layer | Responsibility |
 |---|---|
-| `shadowspill.planner.pressurefit()` | Input validation, problem concurrency, winner materialization, and outer physical-capacity refinement. |
+| `shadowspill.planner.pressurefit()` | Input validation, problem concurrency, and winner materialization. |
 | `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
 | `csrc/src/planner/graph pairs.c` | Candidate loop, caches, admission/simulation repair, selection, and work diagnostics. |

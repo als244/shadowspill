@@ -34,6 +34,12 @@ reaches the wire. This matches runtime behavior: `after_task()` reserves the
 destination before returning, while the worker may submit the transfer later
 after earlier lane work completes.
 
+A reservation with nowhere to land does not fail the simulation. It waits for
+room and is retried, exactly as the runtime does, so a plan that comes up short
+is slower rather than rejected. The wait appears as a `device-capacity` stall
+and the shortfall as a `CapacityViolation` beside it: the stall says when and
+for how long, the violation says by how much.
+
 The simulator receives `ActionPhysicalDelta` values for these reservations and
 `TaskPhysicalDelta` values for task allocations/releases. It also consumes
 `MemoryReuseDependency` edges emitted by physical admission. A successor that

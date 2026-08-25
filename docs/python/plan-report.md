@@ -247,19 +247,21 @@ Each `PlanPhysicalLayout` describes one admitted role.
 | `strategy` and `layout_digest` | Placement strategy and certificate identity. |
 | `pool_capacity_bytes` | Callable-attributable physical execution-pool capacity. |
 | `original_object_capacity_bytes` | Initial logical object capacity sent to PressureFit. |
-| `effective_object_capacity_bytes` | Object capacity of the accepted refinement. |
+| `effective_object_capacity_bytes` | Object capacity the accepted plan was certified at. |
 | `object_capacity_reduction_bytes` | Capacity ceded to make physical placement feasible. |
 | `fixed_slice_bytes` | Reusable fixed range required by admitted lifetimes. |
 | `dynamic_reserve_bytes` | Terminal outputs that may outlive the reusable slice. |
 | `scratch_reserve_bytes` | Bounded optional dynamic task allocations. |
 | `required_bytes`, `slack_bytes` | Total admitted bytes and remaining pool capacity. |
 | `reuse_dependency_count` | Cross-lane causal edges required for safe range reuse. |
-| `attempts` | PressureFit/admission refinement history. |
+| `attempts` | Certification history. One entry, unless the certificate disagreed with the search's own layout measurement. |
 | `task_memory_envelopes` | Per-task strict-core and dynamic-scratch limits. |
 
-For every accepted layout, `required_bytes <= pool_capacity_bytes`. Repeated
-failed attempts with a large `object_capacity_reduction_bytes` indicate a
-physical-placement constraint, not automatically a logical PressureFit bug.
+For every accepted layout, `required_bytes <= pool_capacity_bytes`. Capacity
+is now given back inside the search, per candidate, so the reduction that made
+a plan placeable is reported on that candidate as `capacity_refinements` rather
+than here; a rejected attempt at this level means the certificate disagreed
+with the search's own measurement, which is a bug rather than a tight fit.
 Use [Physical admission and offset handling](../architecture/physical-admission.md)
 to interpret the certificate.
 

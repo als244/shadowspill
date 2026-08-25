@@ -102,8 +102,9 @@ per-boundary workspace subtraction gives
 
 while admission must place a *fixed-offset extent* $L$ that is larger whenever
 overlapping lifetimes prevent two leases from sharing an offset. A layout whose
-excess $L - C$ fits inside the leeway is admitted with no refinement attempt;
-anything larger drives the capacity-refinement ladder below.
+excess $L - C$ fits inside the leeway is admitted with no refinement
+attempt; anything larger is what the per-candidate capacity refinement
+below resolves during the search.
 
 `PhysicalAdmission.workspace_reserve_bytes` is a separate quantity: the
 contiguous workspace allowance the pool must be able to serve. It is validated
@@ -405,42 +406,59 @@ pointer reaches a backend kernel.
 ## Capacity refinement
 
 A PressureFit schedule may satisfy logical boundary capacity yet require a
-fixed extent larger than $P$. The PyTorch planning orchestrator handles this
-monotonically:
+fixed extent larger than $P$: boundary capacity bounds what is live at an
+instant, while the extent is what the address assignment spans. The second is
+the constraint that decides whether a plan can run, so the search measures it
+itself rather than leaving it to a later layer.
 
-```text
-object-capacity reductions:
-    0 MiB
-    256 MiB, 512 MiB, 768 MiB, 1024 MiB
-    1536 MiB, 2048 MiB, ...
-```
+Each candidate receives the pool topology as `placement` facts, distinct from
+`admission`: supplying `admission` switches on the dynamic-pool replay, which
+rejects schedules that a dependency-certified fixed placement accepts. With
+`placement` in hand a candidate, on reaching a plan that could still win:
 
-For each reduction it:
+1. derives the operations the schedule implies and their lease lifetimes;
+2. places those lifetimes and reads back the extent, adding the leases that
+   outlive the step, since the certificate charges for those too;
+3. if that fits the pool, offers the plan to the shared best-placed record;
+4. otherwise gives capacity back and plans again.
 
-1. reruns or restores PressureFit at the lower logical object capacity;
-2. rebuilds the complete fixed layout against the unchanged physical pool;
-3. re-simulates with physical reuse dependencies;
-4. accepts the first layout that fits.
+Capacity is therefore a property of a plan, not of the search: two candidates
+can answer at different capacities in the same call, and neither one's
+shortfall costs the other anything. A candidate answers with the best plan it
+placed; one that never placed a plan is `unplaceable` and has no answer, since
+a plan with no layout cannot run whatever its makespan.
 
-Reducing logical capacity changes the selected residency/actions and leaves
-more physical slack; it does not shrink the runtime pool. Every rejected and
-accepted attempt records requested/effective object capacity, required bytes,
-physical capacity, PressureFit wall time, physical-admission wall time, and
-candidate diagnostics.
+Giving capacity back reaches the two stages that *shape* a plan and neither
+of the two that *measure* it. The reducer charges it as uniform boundary
+pressure, and the schedule emitter measures its fetch windows and evictions
+against it — a plan emitted against the original capacity packs fetches the
+smaller one cannot hold, and comes back from the simulator having run out of
+memory rather than merely tight. The simulator itself always runs at the
+capacity the caller described, because that is the machine the plan will run
+on: timed at anything else, its makespan and the lease lifetimes derived from
+its timeline belong to a plan that will never execute, and the certificate
+below would disagree with the search that chose it.
 
-The relationship between logical capacity and required extent is neither
-monotone nor continuous. Lowering the capacity by one step can change which
-candidate wins, and different candidate families carry very different
-fixed-extent excess $L - C$: measured on one qwen point, plans built from
-`demand` prefetch carried about 1.4 GiB of excess while `packed-fit` plans
-carried about 3.3 GiB, so the required extent moved by 2 GiB across a 62 MiB
-capacity change. A step therefore may overshoot: the accepted attempt can leave
-a large part of the pool unused while a slightly different capacity would have
-admitted a materially better plan. After the first acceptance the orchestrator
-bisects the interval between the last rejected and first accepted capacities on
-a 64 MiB grid and keeps the highest admitting capacity whose admitted
-re-simulation is no worse, which recovers stranded capacity without ever
-choosing a worse plan than the coarse ladder would have.
+How much a plan gives back at a time is `capacity_refinement_bytes`, 256 MiB
+by default. The extent does not fall byte for byte with the capacity — on one
+measured point a 1 GiB reduction moved it 2.2 GB — so handing back everything
+a layout overran overshoots the capacity that would have fit, and the plan
+built below that capacity is materially worse than the one just under the
+line. Stepping costs rounds and buys quality. Zero hands back the whole
+shortfall and converges in the fewest rounds, which is the setting to reach
+for when planning time matters more than the last percent of makespan.
+
+The shared best-placed record is what keeps this affordable. Placing a plan
+costs far more than simulating one, so a plan whose makespan is already no
+better than a plan someone else has placed is never measured. The record is
+passed in, so its scope is the caller's choice: one call, or every resolved
+program in a search.
+
+The orchestrator above certifies a single capacity. It has no ladder to walk,
+because the plan it receives has already been measured against this pool, at
+the same capacity and from the same timeline; a rejection there is a
+disagreement between the search's measurement and the certificate rather than
+a capacity to retry.
 
 The framework-neutral `pressurefit()` API can alternatively receive an
 `AdmissionFacts` and evaluate the production dynamic-pool policy inside
@@ -540,7 +558,7 @@ supported contract.
 | `shadowspill.pytorch.planning.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
 | `shadowspill.planner.admission.placement` | Deterministic aligned interval placement. |
 | `shadowspill.pytorch.planning.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
-| `shadowspill.pytorch.planning.admission.refinement` | Rerun PressureFit at monotonically lower logical capacity until a layout fits. |
+| `shadowspill.pytorch.planning.admission.refinement` | Certify the fixed layout of the plan the search placed. |
 | `shadowspill.pytorch.planning.admission.layout.runtime` | Translate semantic placements to indexed runtime identities. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/src/runtime/memory/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |

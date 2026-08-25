@@ -22,12 +22,34 @@ constructs allocation steps from scalar workspace or output totals.
 
 `ShadowSpillPressureFitProblem` accepts an already derived residency problem.
 `ShadowSpillPressureFitProgramProblem` accepts the schedule-invariant
-simulation Program and derives residency inputs internally.
+simulation Program and derives residency inputs internally. One problem is one
+resolved program: deciding which resolved programs exist, and in what order to
+try them, belongs above this API. The shared best-placed record is the only
+object that crosses that boundary.
+
+Both problems carry two independent sets of admission facts. `admission`
+switches on the dynamic-pool replay, which rejects a candidate whose schedule
+that policy cannot place. `placement` supplies the same topology for measuring
+layouts during the search without that filter, because a schedule the dynamic
+replay rejects can still have a valid dependency-certified fixed placement; a
+search that prefiltered through `admission` would discard plans that would
+have run. Either may be null.
 
 Candidate options select residency strategy, fetch rule, coalescing, repair
-limit, and initial placement. Results contain the selected indexed schedule,
-every candidate status, exact repair counters, component work counters,
-timings, and failure boundary.
+limit, initial placement, how much capacity a plan gives back at a time when
+its layout does not fit (`capacity_refinement_bytes`, zero for the whole
+shortfall), and the shared best-placed record to measure against.
+
+A plan that comes up short of capacity is never finished, whatever its
+makespan: the waiting is time it pays, and the shortfall behind the waiting is
+what reduction relieves. A candidate reaching such a plan keeps going and
+answers with the best plan it found, not the first that ran.
+
+Results contain the selected indexed schedule, every candidate status, exact
+repair counters, per-candidate placement counters, component work counters,
+timings, and failure boundary. A candidate
+reports `SHADOWSPILL_CANDIDATE_UNPLACEABLE` when every plan it reached needed
+more contiguous pool than the pool has.
 
 `ShadowSpillAdmissionOperations` is parallel arrays in two families. Arrays
 indexed by operation hold `operation_capacity` entries — an operation's
@@ -115,15 +137,18 @@ order they arrive in.
   they were listed in. The assignment and the structure behind it are
   specified in [fixed-offset placement](../architecture/fixed-placement.md).
 - `shadowspill_best_placed_create()`, `shadowspill_best_placed_destroy()`,
-  `shadowspill_best_placed_admits()`, `shadowspill_best_placed_offer()` and
-  `shadowspill_best_placed_read()` share the best plan any caller has actually
-  placed, as a `ShadowSpillBestPlacedRecord` carrying the makespan, the object
-  capacity that plan was built against, the caller's selection index, the
-  candidate policy and the schedule digest. Whatever holds the record at the
-  end is the plan the search selected, so "is this worth measuring" and "what
-  won" are answered by one object. Placing a plan is expensive and a plan no better than one
+  `shadowspill_best_placed_admits()` and `shadowspill_best_placed_read()`
+  share the best plan any caller has actually placed. The record carries the
+  makespan, the object capacity that plan was built against, how much
+  capacity it gave back, the caller's selection index, the candidate policy
+  and the schedule digest; the object also keeps its own copy of the plan,
+  replaced in place when a better one arrives, so the record never names a
+  plan nobody still holds. Whatever it holds at the end is the plan the
+  search selected — selection reads it rather than ranking the candidates a
+  second time. Placing a plan is expensive and a plan no better than one
   already placed cannot win even if it places, so a search calls `admits()`
-  before paying and `offer()` once a placement succeeds. The object knows
+  before paying. `shadowspill_best_placed_offer()` is internal, since the
+  plan it keeps is an internal storage type. The object knows
   nothing about candidates, resolved programs or calls: passing one object to
   several concurrent searches shares the gate between them, and passing
   separate objects keeps them independent. It is lock-free and safe to use

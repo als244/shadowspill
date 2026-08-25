@@ -32,8 +32,11 @@ Invalid construction or cross-reference raises `ValidationError`.
 
 Call `plan_program()` to plan a Program: it expands the Program into its
 resolved programs — one concrete task set per way of fixing the save/recompute
-alternatives — and plans each. `pressurefit()` wraps it with dynamic-slab
-refinement and is what most callers want. PressureFit itself is scoped to a
+alternatives — and plans each. `pressurefit()` wraps it and is what most
+callers want. Both accept `placement` facts beside `admission`: `placement`
+lets each candidate measure whether its plan has a layout that fits the pool,
+while `admission` switches on the dynamic-pool replay, which rejects schedules
+that certified fixed placement accepts. PressureFit itself is scoped to a
 *single* resolved program and knows only tasks, runtimes, object accesses,
 budgets and bandwidths; deciding which resolved programs exist, and in what
 order to try them, belongs to `plan_program()` above it.
@@ -55,10 +58,18 @@ or ABI-incompatible libraries fail immediately rather than falling
 back, and the readable Python equivalents live outside the package in
 `reference/python/`, where production never imports them.
 
+`PressureFitOptions.capacity_refinement_bytes` sets how much capacity a plan
+gives back at a time when its layout does not fit the pool. It defaults to
+256 MiB: the extent does not shrink byte for byte with the capacity, so
+handing back the whole shortfall overshoots the capacity that would have fit.
+Setting it to zero does hand back the whole shortfall, which converges in the
+fewest rounds and is the setting to reach for when planning time matters more
+than the last percent of makespan.
+
 Configuration and results:
 
 - `PressureFitOptions`, `PressureFitResult`, `PressureFitDiagnostics`
-- `InitialPlacement`, `AdmissionRefinement`
+- `InitialPlacement`
 - `AdmissionFacts`, `StorageHandoff`, `TaskAdmissionSpec`
 - `TaskAllocationStep`, `TaskAllocationStepKind`
 
