@@ -204,10 +204,12 @@ each. Those actions are not executed at `before_task`; they are instantiated at
 the `after_task` of their trigger task, against object state as it is then.
 
 An action's destination lease is reserved before the batch is published, so a
-prefetch that cannot fit fails at the boundary that triggered it rather than
-somewhere inside the worker. That reservation is why `after_task` can return
-`NO_PROGRESS`: the trigger's fetch had nowhere to land and nothing was left to
-release for it.
+prefetch that cannot fit is reported at the boundary that triggered it rather
+than somewhere inside the worker. That reservation is why `after_task` can
+return `NO_PROGRESS`: the trigger's fetch had nowhere to land and nothing was
+left to release for it. Coming up short is not fatal here — the fetch waits
+for room and is retried — and the simulator models the same wait, so a plan
+that comes up short is slower rather than rejected.
 
 ## Failure
 

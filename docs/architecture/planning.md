@@ -40,13 +40,15 @@ and pseudocode.
 
 The selected logical schedule is not callable until physical admission
 assigns its execution-pool ranges, proves every shared-range dependency, and
-re-simulates the resulting schedule. If it does not fit, orchestration lowers
-logical object capacity, reruns PressureFit, and retries against the unchanged
-physical pool.
+re-simulates the resulting schedule. Whether it fits is settled during the
+search: each candidate measures its own plan's extent against the pool and
+gives back what it overran, so the schedule reaching this stage has already
+been measured and there is no capacity to lower afterwards.
 
 The complete capacity equations, allocation lifetimes, deterministic placement
 algorithm, offset coordinate systems, fixed-core/dynamic-scratch boundary,
-runtime sealing, refinement sequence, and diagnostics are documented in
+runtime sealing, per-candidate capacity refinement, and diagnostics are
+documented in
 [Physical admission and offset handling](physical-admission.md).
 
 ## Transfer bandwidths
