@@ -36,10 +36,13 @@ alternatives — and plans each. `pressurefit()` wraps it and is what most
 callers want. Both accept `placement` facts beside `admission`: `placement`
 lets each candidate measure whether its plan has a layout that fits the pool,
 while `admission` switches on the dynamic-pool replay, which rejects schedules
-that certified fixed placement accepts. PressureFit itself is scoped to a
-*single* resolved program and knows only tasks, runtimes, object accesses,
-budgets and bandwidths; deciding which resolved programs exist, and in what
-order to try them, belongs to `plan_program()` above it.
+that certified fixed placement accepts. PressureFit takes *one or more*
+resolved programs in a single call and answers each of them, knowing only
+tasks, runtimes, object accesses, budgets and bandwidths. Deciding which
+resolved programs exist, and the order they are searched in, belongs to
+`plan_program()` above it — the order it passes them in is the order they are
+searched, and passing them together is what lets a plan placed under one bound
+the search under the rest.
 
 Call `validate_schedule_feasibility()` to check whether at least one legal
 Program selection satisfies the required task-by-task residency floor. Use
@@ -57,6 +60,17 @@ are derived there, and each lease is placed at a fixed offset there. Missing
 or ABI-incompatible libraries fail immediately rather than falling
 back, and the readable Python equivalents live outside the package in
 `reference/python/`, where production never imports them.
+
+`PressureFitOptions.workers` sizes the threads the library runs the search on.
+Python owns no threads: one call gets its own workers, so two callers planning
+at the same time do not contend. The unit of work is one (resolved program,
+candidate) pair, which is why worker count and resolved-program count are
+independent — eight workers means eight threads whether the call was given one
+resolved program or five. Zero takes one worker per logical CPU; one evaluates
+every pair on the calling thread. It is a scheduling choice, not a search
+input: it does not change which plans are legal or how they simulate, though
+it does change how many candidates get skipped against the shared placement
+record, so per-candidate counters move with it.
 
 `PressureFitOptions.capacity_refinement_bytes` sets how much capacity a plan
 gives back at a time when its layout does not fit the pool. It defaults to
@@ -94,6 +108,13 @@ program, and whole call. `admit_ns` is the one exception: admission runs as
 part of simulating, so it is nested inside `simulate_ns` rather than beside
 it. Summing two of these adds every section, which is how the aggregate is
 built.
+
+Sections measure work rather than elapsed time, so with several workers a
+resolved program's total exceeds the time the call took. `started_ns` and
+`finished_ns`, on both `CandidateDiagnostic` and
+`RecomputationProblemDiagnostics`, are the elapsed-time counterpart:
+nanoseconds from the start of the call, shared by every span in it, so two
+candidates ran at the same time exactly when their spans overlap.
 
 `ReductionStep` is one plan a candidate held: its makespan, the bytes its
 layout needed, the capacity it was built against, the objects the reducer
