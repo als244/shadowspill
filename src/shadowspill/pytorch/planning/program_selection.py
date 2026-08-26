@@ -15,7 +15,13 @@ from ..program import (
     PressureFitProgram,
     TransferBandwidths,
 )
-from .admission import placement_facts, resolve_fixed_layout_selection
+
+# The admission package also re-exports the binding half, which reaches
+# lowering and the live allocator. Selecting a program needs neither.
+from .admission.refinement import (
+    placement_facts,
+    resolve_fixed_layout_selection,
+)
 from .repositories import open_artifact_repositories
 
 
