@@ -17,7 +17,11 @@ from .diagnostics import (
     RecomputationProblemDiagnostics,
     ReductionStep,
 )
-from .plan import plan_program, pressurefit, validate_schedule_feasibility
+from .plan import (
+    plan_program,
+    pressurefit,
+    validate_schedule_feasibility,
+)
 from .request import InitialPlacement, PressureFitOptions
 from .result import (
     PressureFitInfeasibleError,
