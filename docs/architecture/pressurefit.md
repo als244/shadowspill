@@ -12,16 +12,22 @@ transfer capacities, and an optional physical-admission contract, it chooses:
 
 PressureFit does not capture graphs, inspect PyTorch tensors, partition a
 model, construct graph pairs, execute numerical kernels, or advance the
-runtime worker. It consumes only Program facts and machine parameters. A
-Program with no alternatives is a normal input; training programs may supply
-several legal task selections through the separate [recomputation
-selector](recomputation-selection.md).
+runtime worker. It consumes only Program facts and machine parameters.
+
+What PressureFit is handed is a **resolved program**: a Program with one legal
+task selection already chosen. Choosing those selections is the separate
+[recomputation selector](recomputation-selection.md)'s job, and it usually
+produces several — so one call takes one or more resolved programs and answers
+each of them. A Program with no alternatives resolves to exactly one and is a
+normal input. Program and problem are not the same word here: the Program is
+what the caller has, and the problem is the planning question derived from it
+— residency, boundaries, capacities. One problem is one resolved program.
 
 ## Contract at a glance
 
 | Item | Contract |
 |---|---|
-| Primary input | One immutable `Program` whose tasks are ordered and whose objects, aliases, profiles, and dependencies are valid. |
+| Primary input | One or more **resolved programs**, each an immutable `Program` with one legal task selection already chosen, whose tasks are ordered and whose objects, aliases, profiles, and dependencies are valid. The order they are given is the order they are searched. |
 | Boundary conditions | `initial_residency` and `final_residency` tuples of `ResidencySpec` values. |
 | Machine input | `SimulationConfig`: execution capacities, spill capacity, directional transfer bandwidths, and latencies. |
 | Search input | `PressureFitOptions`: initial placement, residency strategies, fetch rules, coalescing, repair limit, capacity-refinement granularity, and worker count. |
@@ -77,8 +83,7 @@ changing the former.
 
 The default `PressureFitOptions` evaluate four residency-strategy labels, four
 fetch-trigger rules, and ordinary/coalesced emission: 32 candidate policies
-per legal task-selection problem. `workers=0` evaluates independent problems
-with up to the available logical CPUs.
+per legal task-selection problem.
 
 `capacity_refinement_bytes` decides how much capacity a plan gives back when
 its layout does not fit the pool, 256 MiB by default. Stepping costs rounds
@@ -96,6 +101,36 @@ which plans are worth measuring depends on what has already been placed. That
 makes the search order-dependent by default; a caller that needs a reproducible
 answer keeps a record per search rather than sharing one.
 
+### Workers and the unit of work
+
+The unit of work is one **(resolved program, candidate) pair**. A worker takes
+the next pair, evaluates it to completion, and takes another, so a worker that
+draws a cheap candidate never waits on the problem it came from.
+
+That granularity is what makes worker count and problem count independent.
+`workers` sizes the threads whether the call was given one resolved program or
+five: eight workers means eight threads either way. The threads belong to the
+call, so two callers planning at once get their own and do not contend.
+`workers=0` takes one per logical CPU; `workers=1` evaluates every pair on the
+calling thread.
+
+Ordering is the caller's: problems are searched in the order they are passed,
+and the array order *is* the policy. Putting them in one call is also what
+shares the placement record between them, so a plan placed under any resolved
+program bounds the search under every other — which is the pruning that makes
+searching several together cheaper than searching each alone.
+
+Worker count is scheduling, not an input to the search: it changes neither
+which plans are legal nor how they simulate. It does change how much of the
+search is skipped, because a candidate is skipped when the record already
+holds something it cannot beat. Per-candidate counters such as
+`placements_attempted` therefore move with worker count, and so can the choice
+between plans that tie.
+
+Because workers interleave, a problem's `work.sections` is the sum of what its
+candidates did rather than the time the call took; `started_ns`/`finished_ns`
+are the elapsed-time counterpart, and [Output](#output) describes both.
+
 ## Output
 
 `PressureFitResult` preserves all inputs needed to explain or replay the
@@ -107,9 +142,10 @@ decision:
   prefetch actions;
 - full `simulation`, including makespan, task/transfer intervals, and peaks;
 - `diagnostics`, including every problem and candidate outcome, repair counts,
-  the work each did and the sections its time went to, schedule digests,
-  capacity refinements, and — when asked for — each candidate's reduction
-  trajectory;
+  the work each did and the sections its time went to, when each ran
+  (`started_ns`/`finished_ns`, nanoseconds from the start of the call, so
+  candidates that overlap ran at the same time), schedule digests, capacity
+  refinements, and — when asked for — each candidate's reduction trajectory;
 - the original `admission_facts`, when supplied.
 
 The Python API uses `prefetch`/`offload` as serialized action names. In
@@ -359,9 +395,12 @@ The transfer score omits this first term. Both then prefer no required
 write-back, removable greedy initial placement, later first use, larger
 objects, longer removable spans, and stable alias/boundary identity.
 
-Each strategy's *base* reduction is computed once and shared by every fetch
-rule and coalescing mode built on it, which is what the problem-level
-`reduce_ns` measures. Reductions a repair forces later are charged to the
+Every fetch rule and coalescing mode built on a strategy starts from the same
+*base* reduction, so a worker memoizes it: the first candidate on a strategy
+pays for it and the rest read it back. The memo belongs to the worker, so
+workers that draw the same strategy each pay once, which is cheaper than
+coordinating over it. Either way the cost lands in `reduce_ns` on the
+candidate that paid it. Reductions a repair forces later are charged to the
 repair that forced them, because that is what they cost.
 
 ### Emit — turning residency gaps into an ordered schedule
@@ -415,9 +454,14 @@ takes the same path a plan that failed does. This is the difference that
 matters most in practice — a plan that runs while waiting is valid but not
 finished, and the waiting is time it pays.
 
-Every change is monotonic and counts against `max_repair_attempts`. A
-non-capacity contradiction is rejected directly. A move the schedule already
-carries is not repeated, because repeating it would loop.
+Every change is monotonic and counts against `max_repair_attempts`, 256 by
+default. A non-capacity contradiction is rejected directly. A move the
+schedule already carries is not repeated, because repeating it would loop.
+
+The default is 256 rather than 64 on measured grounds: over the 2,520-point
+corpus, raising it changes no candidate's status and improves the mean
+makespan by 0.40%, with the wins concentrated where memory is tightest.
+It buys that with planning time, which is what the workers pay for.
 
 Reductions this section triggers are measured inside it, so `repair_ns`
 answers what the repair machinery actually costs rather than what its
@@ -646,10 +690,10 @@ infeasibility across those resolved programs was not established.
 
 | Layer | Responsibility |
 |---|---|
-| `shadowspill.planner.pressurefit()` | Input validation, resolved-program concurrency, and winner materialization. |
+| `shadowspill.planner.pressurefit()` | Input validation, deciding the order the resolved programs are searched in, and winner materialization. It hands them all to one call and owns no threads. |
 | `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `csrc/src/planner/candidates.c` | The candidate cycle and its stages, caches, selection, and section timing. |
+| `csrc/src/planner/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
 | `csrc/src/planner/admission/` | Physical allocation and causal-reuse admission. |
 | `csrc/src/planner/best_placed.c` | The shared record of the best plan any search has placed. |
 | `shadowspill.simulator` / `csrc/src/simulator` | Independent schedule replay and makespan authority. |

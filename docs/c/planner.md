@@ -35,10 +35,15 @@ replay rejects can still have a valid dependency-certified fixed placement; a
 search that prefiltered through `admission` would discard plans that would
 have run. Either may be null.
 
-Candidate options select residency strategy, fetch rule, coalescing, repair
-limit, initial placement, how much capacity a plan gives back at a time when
-its layout does not fit (`capacity_refinement_bytes`, zero for the whole
-shortfall), and the shared best-placed record to measure against.
+Candidate options select residency strategies, fetch rules, coalescing modes,
+repair limit, initial placement, how much capacity a plan gives back at a time
+when its layout does not fit (`capacity_refinement_bytes`, zero for the whole
+shortfall), whether each candidate records its reduction trajectory
+(`record_reduction_steps`), how many threads the call searches on
+(`workers`, zero for one per logical CPU and one for the calling thread), and
+the shared best-placed record to measure against. The three policy axes are
+supplied as explicit arrays with counts, so a caller evaluates exactly the
+combinations it asks for; their product is the candidate count per problem.
 
 A plan that comes up short of capacity is never finished, whatever its
 makespan: the waiting is time it pays, and the shortfall behind the waiting is
@@ -47,7 +52,8 @@ answers with the best plan it found, not the first that ran.
 
 Results contain the selected indexed schedule, every candidate status, exact
 repair counters, per-candidate placement counters, work counters, the
-sections its time went to, and failure boundary. A candidate
+sections its time went to, when it ran (`started_ns`/`finished_ns`), and
+failure boundary. A candidate
 reports `SHADOWSPILL_CANDIDATE_UNPLACEABLE` when every plan it reached needed
 more contiguous pool than the pool has.
 
@@ -99,10 +105,30 @@ order they arrive in.
 - `shadowspill_select_plan()` selects from an explicitly supplied candidate
   set.
 - `shadowspill_reduce_residency()` solves the indexed residency problem.
-- `shadowspill_evaluate_pressurefit_problem()` evaluates all policies for one
-  derived problem.
-- `shadowspill_evaluate_pressurefit_program_problem()` derives and evaluates a
-  complete problem from schedule-invariant inputs.
+- `shadowspill_evaluate_pressurefit_problems()` evaluates all policies for one
+  or more already-derived problems.
+  `shadowspill_evaluate_pressurefit_program_problems()` derives those problems
+  from schedule-invariant inputs first, then does the same. Both take a count,
+  so evaluating a single problem is passing one; there is no separate
+  single-problem entry point. A candidate of a problem is
+  the unit of work and every candidate of every problem competes for the same
+  workers, so **worker count and problem count are independent** — asking for
+  eight workers gets eight threads whether there is one resolved program or
+  five. The threads belong to the call, so concurrent callers do not contend
+  for one another's workers, and `options.workers` sizes them (zero for one
+  per logical CPU, one to evaluate on the calling thread).
+
+  Evaluating them together is what shares the placement record between them:
+  a plan placed under any resolved program bounds the search under every
+  other. Results are written one per problem in input order.
+
+  Worker count is scheduling, not an input to the search: it changes neither
+  which plans are legal nor how they simulate. It does change how much of the
+  search is skipped, since a candidate is skipped when the record already
+  holds something it cannot beat, so per-candidate counters like
+  `placements_attempted` move with it and so can the choice between plans
+  that tie. Each result owns its storage afterwards, including when the call
+  reports a failure, since problems that completed still hold theirs.
 - `shadowspill_validate_pressurefit_program_problem()` returns the structured
   workspace, required-capacity, or missing-initial-residency preflight result
   without evaluating candidate policies.
@@ -201,9 +227,18 @@ What each section covers is walked through stage by stage in
 [PressureFit](../architecture/pressurefit.md#current-algorithm).
 
 Each candidate diagnostic carries its own `sections` covering just that
-candidate, and the problem-level `work.sections` covers the whole
-evaluation; the difference between the problem total and the sum of the
-candidates is the orchestration the problem level did itself.
+candidate. A problem's sections are the sum of its candidates', totals and
+residuals included, which is what keeps the identity above true of the sum;
+`prepare_ns` and `teardown_ns` are added by the entry point around them.
+
+Sections measure work, not elapsed time. Once several workers run at once a
+problem's total exceeds the time the call took, which is the point of the
+workers. Elapsed time is reported separately, as `started_ns` and
+`finished_ns` on both the candidate and the problem: nanoseconds from the
+start of the call that evaluated them. Every span in one call shares that
+origin, so two candidates ran at the same time exactly when their spans
+overlap, and a problem spans its candidates. Both are zero for a candidate no
+worker reached.
 
 `ShadowSpillPressureFitRepairDiagnostics` categorizes each monotonic repair by
 whether it advances or delays a fetch or addresses a pressure boundary.

@@ -296,6 +296,7 @@ all recomputation problems
     ├── placement counts
     ├── work counters
     ├── work.sections — where the time went
+    ├── span — when it ran
     └── steps — the reduction trajectory, when recorded
 ```
 
@@ -334,6 +335,22 @@ went. The sections are disjoint spans named for the stage that produced them:
 `total_ns` equals the sum of every key above except `admit_ns`, at each level
 of the hierarchy, so a breakdown always accounts for the whole span rather
 than most of it.
+
+Sections measure work, not elapsed time. A problem's sections are the sum of
+its candidates', so with several workers the total exceeds the time the call
+took — that gap is the point of the workers. `span` is the other measurement,
+wall clock rather than work:
+
+| Key | Meaning |
+|---|---|
+| `started_ns` | When this candidate or problem started, from the beginning of the call that evaluated it. |
+| `finished_ns` | When it finished, on the same clock. |
+
+Because every span in one call shares an origin, two candidates ran at the
+same time exactly when their spans overlap, and a problem spans its
+candidates. Both are zero for a candidate no worker reached. Spans are
+measurements of a run rather than properties of a plan, so anything compared
+or digested across runs leaves them out, as it does `sections`.
 
 `steps` is present only when planning was asked to record trajectories. Each
 entry is one plan the candidate held, in order:
@@ -396,8 +413,9 @@ pool capacity, accepted status, and the PressureFit evidence for that trial.
 | `refinement_attempts` | Per-attempt PressureFit and physical-admission timing. |
 
 The three component totals reconcile with total wall time. Search work time
-inside PressureFit diagnostics may be larger than wall time when independent
-problems are evaluated concurrently.
+inside PressureFit diagnostics is normally larger than wall time, because the
+search evaluates many candidates at once and `sections` counts work rather
+than elapsed time; `span` is the wall-clock counterpart.
 
 ## Loading and validation
 

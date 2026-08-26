@@ -28,7 +28,10 @@ not repeat capture, compilation, or profiling.
 [Recomputation selection](recomputation-selection.md) constructs the finite set
 of legal task-alternative problems. [PressureFit](pressurefit.md) evaluates
 residency, eviction, fetch-trigger, and coalescing candidates within each
-problem. The two levels remain separate in diagnostics.
+problem. The two levels remain separate in diagnostics. All the problems go
+to PressureFit in one call, in the order they should be searched, so one set
+of workers covers them and each prunes against what the others have already
+placed.
 
 PressureFit works on logical object capacity after provider/fixed-service and
 allocator allowances. It uses the required C planner and simulator; missing or
