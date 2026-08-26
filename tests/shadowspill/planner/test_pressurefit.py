@@ -41,7 +41,7 @@ COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 
 def test_default_repair_budget_covers_deep_monotonic_repairs() -> None:
-    assert PressureFitOptions().max_repair_attempts == 64
+    assert PressureFitOptions().max_repair_attempts == 256
 
 
 def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
