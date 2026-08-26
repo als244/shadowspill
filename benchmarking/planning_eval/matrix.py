@@ -6,7 +6,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 
-from shadowspill.pytorch import PressureFitProgram, TransferBandwidths
+from shadowspill.planner.program import (
+    PressureFitProgram,
+    TransferBandwidths,
+)
 
 from .config import BandwidthScale, FrontierGrid, TransferBandwidthBaseline
 

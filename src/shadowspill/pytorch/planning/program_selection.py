@@ -14,14 +14,14 @@ from shadowspill.planner.admission.refinement import (
     placement_facts,
     resolve_fixed_layout_selection,
 )
-from shadowspill.pytorch.cache import PlanningCache
-
-from ..program import (
+from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
     PressureFitProgram,
     TransferBandwidths,
 )
+from shadowspill.pytorch.cache import PlanningCache
+
 from .repositories import open_artifact_repositories
 
 

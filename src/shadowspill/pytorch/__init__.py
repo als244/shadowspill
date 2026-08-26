@@ -35,13 +35,6 @@ from .diagnostics import (
 )
 from .invocation import InvocationResult
 from .partition import PartitionPolicy, PartitionSpec
-from .program import (
-    AnnotatedProgramPlan,
-    MemoryBudgets,
-    PressureFitProgram,
-    StepProgram,
-    TransferBandwidths,
-)
 from .runtime_adapter import (
     ExecutionTaskIdentity,
     MemoryPool,
@@ -69,12 +62,10 @@ from .state import (
 )
 
 __all__ = [
-    "AnnotatedProgramPlan",
     "DiagnosticsHandle",
     "ExecutionTaskIdentity",
     "ExecutionTiming",
     "InvocationResult",
-    "MemoryBudgets",
     "MemoryPool",
     "ObjectConsistency",
     "ObjectiveResult",
@@ -100,7 +91,6 @@ __all__ = [
     "PlanUniqueStage",
     "PlannedForward",
     "PlannedTrainStep",
-    "PressureFitProgram",
     "Runtime",
     "RuntimeConfigurationError",
     "RuntimeExecutionError",
@@ -109,12 +99,10 @@ __all__ = [
     "SharedOutput",
     "SimulatorTransferComparison",
     "StepDiagnostics",
-    "StepProgram",
     "StepResult",
     "StepTimingSummary",
     "TensorRef",
     "TensorSpec",
-    "TransferBandwidths",
     "TransferCapabilities",
     "TransferProfile",
     "export_model_state",

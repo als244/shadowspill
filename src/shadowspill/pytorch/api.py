@@ -11,15 +11,15 @@ import torch
 import torch.nn as nn
 
 from shadowspill.planner import PressureFitOptions
-from shadowspill.pytorch.cache import PlanningCache
-from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
-from shadowspill.pytorch.partition import PartitionSpec
-from shadowspill.pytorch.program import (
+from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     PressureFitProgram,
     StepProgram,
     TransferBandwidths,
 )
+from shadowspill.pytorch.cache import PlanningCache
+from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
+from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
 from shadowspill.pytorch.sharing import SharedOutput
 from shadowspill.pytorch.state.model import require_model_state_for_plan

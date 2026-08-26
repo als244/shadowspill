@@ -13,7 +13,9 @@ from typing import Any
 
 from benchmarking.program_collection.corpus import SavedProgramCase
 from shadowspill.ir import MemoryActionKind
-from shadowspill.pytorch import AnnotatedProgramPlan
+from shadowspill.planner.program import (
+    AnnotatedProgramPlan,
+)
 from shadowspill.simulator import TransferDirection
 
 from .matrix import FrontierPointRequest
