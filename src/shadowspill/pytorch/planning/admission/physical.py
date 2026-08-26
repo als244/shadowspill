@@ -6,12 +6,12 @@ import ctypes
 
 from shadowspill.errors import AdmissionError
 from shadowspill.ir import ExecutionPlan, MemoryActionKind, PhysicalAdmission
+from shadowspill.planner.admission.layout import FixedPhysicalLayout
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 
 from ...runtime_adapter import PlanMemory
 from ..common import round_up
-from .layout import FixedPhysicalLayout
 
 _MIB = 1 << 20
 

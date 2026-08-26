@@ -7,9 +7,7 @@ from dataclasses import dataclass, field, replace
 
 from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
 from shadowspill.planner import AdmissionFacts, PressureFitOptions
-from shadowspill.simulator import SimulationConfig
-
-from .program_serialization import (
+from shadowspill.planner.serialization import (
     _canonical_json,
     _digest,
     _integer,
@@ -22,6 +20,7 @@ from .program_serialization import (
     _simulation_config_to_dict,
     _string,
 )
+from shadowspill.simulator import SimulationConfig
 
 _PRESSUREFIT_PROGRAM_SCHEMA = "shadowspill.pressurefit_program/v1"
 

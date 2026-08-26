@@ -8,10 +8,7 @@ from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, RecomputationSelection, ResidencySpec
 from shadowspill.planner import AdmissionFacts, PressureFitResult
-from shadowspill.simulator import SimulationAdmission, SimulationResult
-
-from .program_inputs import MemoryBudgets, PressureFitProgram, TransferBandwidths
-from .program_serialization import (
+from shadowspill.planner.serialization import (
     _boolean,
     _canonical_json,
     _digest,
@@ -26,6 +23,9 @@ from .program_serialization import (
     _simulation_result_from_value,
     _string,
 )
+from shadowspill.simulator import SimulationAdmission, SimulationResult
+
+from .program_inputs import MemoryBudgets, PressureFitProgram, TransferBandwidths
 
 if TYPE_CHECKING:
     from .planning.admission import FixedLayoutAttempt, FixedPhysicalLayout

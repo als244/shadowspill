@@ -15,12 +15,12 @@ from .common import (
 )
 
 if TYPE_CHECKING:
-    from ..planning.admission import FixedPhysicalLayout
+    from shadowspill.planner.admission.layout.model import FixedPhysicalLayout
 
 
 def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
-    from ..planning.admission.admission_replay import AdmissionReplayPurpose
-    from ..planning.admission.layout.model import (
+    from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
+    from shadowspill.planner.admission.layout.model import (
         FixedLayoutPlacement,
         FixedLayoutReuse,
         FixedPhysicalLayout,

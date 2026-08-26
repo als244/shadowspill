@@ -6,6 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from shadowspill.planner import PressureFitResult
+from shadowspill.planner.admission.admission_replay import AdmissionReplay
+from shadowspill.planner.admission.layout import (
+    FixedLayoutAdmission,
+    FixedPhysicalLayout,
+)
 from shadowspill.pytorch.profiling import (
     TaskAllocationOperation,
     TaskMeasurement,
@@ -14,13 +19,8 @@ from shadowspill.pytorch.runtime_adapter.bridge import TaskMemoryEnvelope
 from shadowspill.runtime import AdmissionReplayResult
 from shadowspill.simulator import SimulationAdmission, SimulationResult
 
-from .admission_replay import AdmissionReplay
 from .bindings import TaskOutputBinding, output_bindings_for_entrypoints
-from .layout import (
-    DynamicTaskAllocationPolicy,
-    FixedLayoutAdmission,
-    FixedPhysicalLayout,
-)
+from .layout_runtime import DynamicTaskAllocationPolicy
 
 
 @dataclass(frozen=True, slots=True)
