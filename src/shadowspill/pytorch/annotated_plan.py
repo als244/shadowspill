@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, RecomputationSelection, ResidencySpec
@@ -48,11 +48,23 @@ class AnnotatedProgramPlan:
     attempts: tuple[FixedLayoutAttempt, ...]
     pressurefit_cache_hit: bool
     wall_time_ns: int
+    #: Filled on first read. Computing the digest serialises the whole plan --
+    #: tens of megabytes -- and four callers want the same answer, so it is
+    #: worth keeping rather than paying for repeatedly. A one-slot box,
+    #: because the plan itself is frozen.
+    _digest_cache: list[str] = field(
+        default_factory=list, repr=False, compare=False
+    )
 
     @property
     def digest(self) -> str:
         """Stable selected-plan identity, excluding cache and wall-time evidence."""
 
+        if not self._digest_cache:
+            self._digest_cache.append(self._compute_digest())
+        return self._digest_cache[0]
+
+    def _compute_digest(self) -> str:
         value = self.to_dict()
         selection = dict(_mapping(value["selection"], "selection"))
         selection.pop("cache_hit")

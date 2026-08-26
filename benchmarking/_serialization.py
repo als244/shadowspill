@@ -30,6 +30,18 @@ def text_digest(payload: str) -> str:
     return hashlib.sha256(canonicalize_json(payload).encode()).hexdigest()
 
 
+def canonical_text_digest(payload: str) -> str:
+    """Digest a payload that is already canonical, without re-parsing it.
+
+    `text_digest` canonicalises first because it is handed arbitrary JSON. A
+    caller that produced the payload with canonical separators and sorted keys
+    already knows the answer, and re-parsing tens of megabytes to confirm it is
+    pure cost.
+    """
+
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def json_mapping(value: Mapping[str, object], path: str) -> dict[str, object]:
     try:
         encoded = json.dumps(dict(value), sort_keys=True, separators=(",", ":"))
@@ -158,6 +170,7 @@ __all__ = [
     "atomic_json",
     "atomic_text",
     "canonical_json_value",
+    "canonical_text_digest",
     "canonicalize_json",
     "commit_immutable_directory",
     "existing_artifact_is_identical",
