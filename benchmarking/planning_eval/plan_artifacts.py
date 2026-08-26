@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from benchmarking._serialization import (
+    canonical_text_digest,
     commit_immutable_directory,
     existing_artifact_is_identical,
     json_mapping,
     mapping,
-    pretty_json,
     read_mapping,
     string,
     text_digest,
@@ -50,8 +50,10 @@ def save_annotated_plan(
 
     budgets = plan.memory_budgets
     bandwidths = plan.transfer_bandwidths
+    # `to_json` is canonical by construction, so it is both what we store and
+    # what identifies the artifact -- no second serialisation of either.
     payload = plan.to_json()
-    artifact_digest = text_digest(payload)
+    artifact_digest = canonical_text_digest(payload)
     directory = (
         output_root.expanduser().resolve()
         / f"execution-{budgets.execution_bytes}_spill-{budgets.spill_bytes}"
@@ -86,7 +88,7 @@ def save_annotated_plan(
         commit_immutable_directory(
             directory,
             artifact_name="annotated_program_plan.json",
-            payload=pretty_json(payload),
+            payload=payload,
             manifest=manifest,
         )
     return directory.resolve()

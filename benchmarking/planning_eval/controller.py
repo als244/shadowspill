@@ -37,6 +37,15 @@ class ControllerOptions:
     revision: str
 
 
+#: How often to refresh the derived JSONL/CSV/summary while a sweep runs.
+#: Each refresh rebuilds them from every point file on disk, so refreshing
+#: after every program makes the sweep quadratic in program count -- on a
+#: 168-program corpus that cost 0.33 h and grows. The point files are the
+#: source of truth and are written as each point completes, so a stale derived
+#: view costs nothing but freshness, and the final refresh below is exact.
+_SUMMARY_REFRESH_PROGRAMS = 16
+
+
 def run_frontier_collection(
     config: FrontierConfig,
     all_cases: tuple[CorpusProgramCase, ...],
@@ -72,6 +81,7 @@ def run_frontier_collection(
             expected_points_per_program=config.expected_points_per_program,
             case_failures=failures,
         )
+        completed_programs = 0
         global_ordinals = {
             item.case_id: index
             for index, item in enumerate(all_cases, 1)
@@ -119,12 +129,14 @@ def run_frontier_collection(
                 failures.pop(case.case_id, None)
                 _log(paths, f"PROGRAM COMPLETE {prefix}")
             atomic_json(paths.directory / "case-failures.json", failures)
-            write_frontier_summary(
-                paths,
-                expected_programs=len(all_cases),
-                expected_points_per_program=config.expected_points_per_program,
-                case_failures=failures,
-            )
+            completed_programs += 1
+            if completed_programs % _SUMMARY_REFRESH_PROGRAMS == 0:
+                write_frontier_summary(
+                    paths,
+                    expected_programs=len(all_cases),
+                    expected_points_per_program=config.expected_points_per_program,
+                    case_failures=failures,
+                )
         summary = write_frontier_summary(
             paths,
             expected_programs=len(all_cases),
