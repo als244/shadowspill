@@ -8,8 +8,6 @@ import time
 from collections import Counter
 from dataclasses import replace
 
-import torch.nn as nn
-
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import PressureFitResult
 from shadowspill.pytorch.profiling import ProfilingMetadata, ProfilingResult
@@ -380,7 +378,9 @@ def build_training_report(
 
 
 def publish_plan_report(
-    model: nn.Module,
+    # Only the class name is read, to label the archived plan. Naming a
+    # framework type here would make reporting depend on one.
+    model: object,
     report: PlanReport,
     cache: PlanningCache,
     *,
