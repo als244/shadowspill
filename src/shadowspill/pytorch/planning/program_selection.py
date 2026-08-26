@@ -112,7 +112,7 @@ def _with_physical_prediction(
     return replace(
         selected,
         simulation=simulation,
-        diagnostics=selected.diagnostics.with_selected_makespan(
+        diagnostics=selected.diagnostics.replace_selected_makespan(
             simulation.makespan_ns
         ),
         admission_facts=facts,

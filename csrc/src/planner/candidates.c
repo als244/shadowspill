@@ -5,6 +5,8 @@
 #include "candidates_internal.h"
 #include "residency_internal.h"
 
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,9 +34,25 @@ typedef struct HashIndex {
     uint32_t count;
 } HashIndex;
 
-typedef struct ResidencyCacheEntry {
+/* What identifies a residency: a fingerprint of the cells it keeps.
+ *
+ * Two independent 64-bit hashes rather than one, because this is compared
+ * instead of the cells themselves. A single 64-bit hash would collide about
+ * once in 2^32 distinct residencies, which a long sweep would reach; 128 bits
+ * puts it beyond reach, and comparing sixteen bytes replaces comparing
+ * megabytes. */
+typedef struct ResidencyFingerprint {
+    uint64_t low;
+    uint64_t high;
+} ResidencyFingerprint;
+
+static int fingerprint_equal(ResidencyFingerprint left, ResidencyFingerprint right) {
+    return left.low == right.low && left.high == right.high;
+}
+
+typedef struct ResidencyMemoEntry {
     uint64_t hash;
-    uint64_t content_hash;
+    ResidencyFingerprint fingerprint;
     uint8_t minimize_transfer;
     uint8_t prefetch_headroom;
     uint64_t *extra_pressure;
@@ -45,35 +63,55 @@ typedef struct ResidencyCacheEntry {
     int32_t error_boundary;
     uint64_t required_bytes;
     uint64_t capacity_bytes;
-} ResidencyCacheEntry;
+} ResidencyMemoEntry;
 
-typedef struct ResidencyCache {
-    ResidencyCacheEntry *entries;
+/*
+ * Three memo tables, written once and read many times.
+ *
+ * An entry is computed on a miss, inserted, and never changed afterwards, so
+ * a reader only ever sees a finished entry. The single exception is a
+ * simulated plan's digest, which is filled the first time someone needs the
+ * plan named -- naming every plan would cost more than naming the few that
+ * are measured.
+ *
+ * They are independent. A schedule remembers which residency produced it by
+ * that residency's content fingerprint, not by its position in the table
+ * below, so any one of the three can drop entries without invalidating the
+ * others. That is what makes them boundable.
+ *
+ * Measured over the 2,520-point corpus they are not equally worth having:
+ * the schedule table returns about four times what emitting costs, the
+ * simulation table about twice, and the residency table saves minutes across
+ * the whole corpus. The residency table stays because reducing twice for the
+ * same pressure is pointless, not because it is load-bearing.
+ */
+typedef struct ResidencyMemo {
+    ResidencyMemoEntry *entries;
     uint32_t count;
     uint32_t capacity;
     size_t cell_count;
     size_t packed_cell_count;
     size_t pressure_count;
     HashIndex index;
-} ResidencyCache;
+} ResidencyMemo;
 
-typedef struct ScheduleCacheEntry {
+typedef struct ScheduleMemoEntry {
     uint64_t hash;
-    uint32_t residency_key;
+    ResidencyFingerprint residency;
     uint8_t rule;
     uint8_t coalesced;
     uint8_t prefetch_headroom;
     ShadowSpillIndexedSchedule schedule;
-} ScheduleCacheEntry;
+} ScheduleMemoEntry;
 
-typedef struct ScheduleCache {
-    ScheduleCacheEntry *entries;
+typedef struct ScheduleMemo {
+    ScheduleMemoEntry *entries;
     uint32_t count;
     uint32_t capacity;
     HashIndex index;
-} ScheduleCache;
+} ScheduleMemo;
 
-typedef struct SimulationCacheEntry {
+typedef struct SimulationMemoEntry {
     uint64_t hash;
     ShadowSpillIndexedSchedule schedule;
     ShadowSpillSimulationResult result;
@@ -84,14 +122,14 @@ typedef struct SimulationCacheEntry {
     uint32_t admission_status;
     uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
     uint8_t digest_valid;
-} SimulationCacheEntry;
+} SimulationMemoEntry;
 
-typedef struct SimulationCache {
-    SimulationCacheEntry *entries;
+typedef struct SimulationMemo {
+    SimulationMemoEntry *entries;
     uint32_t count;
     uint32_t capacity;
     HashIndex index;
-} SimulationCache;
+} SimulationMemo;
 
 
 /*
@@ -156,15 +194,18 @@ typedef struct CandidateWorkspace {
      * because a candidate places many plans and the sizes barely move. */
     PlacementWorkspace placement;
     ShadowSpillCandidateAdmissionWorkspace admission;
-    ResidencyCache residency_cache;
-    ScheduleCache schedule_cache;
-    SimulationCache simulation_cache;
+    ResidencyMemo residency_memo;
+    ScheduleMemo schedule_memo;
+    SimulationMemo simulation_memo;
     ShadowSpillResidencyWorkspace *residency_workspace;
     ShadowSpillPrefetchTriggerConstraint *prefetch_constraints;
     uint32_t prefetch_constraint_count;
     uint32_t prefetch_constraint_capacity;
-    uint32_t current_residency_key;
-    uint32_t base_residency_key;
+    /* Which residency the workspace currently holds, and the one every
+     * candidate of this strategy starts from. Content, not position, so a
+     * memo below can drop entries without invalidating anything. */
+    ResidencyFingerprint current_residency;
+    ResidencyFingerprint base_residency;
     uint64_t residency_cache_hits;
     uint64_t residency_cache_misses;
     uint64_t schedule_emissions;
@@ -362,6 +403,35 @@ static ShadowSpillPressureFitWorkDiagnostics work_delta(
     };
 }
 
+static ShadowSpillPressureFitWorkDiagnostics add_work(
+    ShadowSpillPressureFitWorkDiagnostics total,
+    ShadowSpillPressureFitWorkDiagnostics part
+) {
+    total.residency_cache_hits += part.residency_cache_hits;
+    total.residency_cache_misses += part.residency_cache_misses;
+    total.schedule_emissions += part.schedule_emissions;
+    total.schedule_cache_hits += part.schedule_cache_hits;
+    total.simulation_calls += part.simulation_calls;
+    total.simulation_cache_hits += part.simulation_cache_hits;
+    total.admission_calls += part.admission_calls;
+    total.sections.prepare_ns += part.sections.prepare_ns;
+    total.sections.setup_ns += part.sections.setup_ns;
+    total.sections.reduce_ns += part.sections.reduce_ns;
+    total.sections.emit_ns += part.sections.emit_ns;
+    total.sections.simulate_ns += part.sections.simulate_ns;
+    total.sections.repair_ns += part.sections.repair_ns;
+    total.sections.digest_ns += part.sections.digest_ns;
+    total.sections.place_ns += part.sections.place_ns;
+    total.sections.select_ns += part.sections.select_ns;
+    total.sections.teardown_ns += part.sections.teardown_ns;
+    total.sections.admit_ns += part.sections.admit_ns;
+    /* The total and the residual add like every other span, which is what
+     * keeps total == named + residual true of the sum. */
+    total.sections.total_ns += part.sections.total_ns;
+    total.sections.residual_ns += part.sections.residual_ns;
+    return total;
+}
+
 static void add_repairs(
     ShadowSpillPressureFitRepairDiagnostics *destination,
     const ShadowSpillPressureFitRepairDiagnostics *source
@@ -383,6 +453,17 @@ static uint64_t hash_bytes(uint64_t hash, const void *data, size_t size) {
     for (size_t index = 0U; index < size; ++index) {
         hash ^= bytes[index];
         hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+/* FNV-1a with a different basis and prime, so the two halves of a
+ * fingerprint do not agree on a collision. */
+static uint64_t hash_bytes_high(uint64_t hash, const void *data, size_t size) {
+    const uint8_t *bytes = data;
+    for (size_t index = 0U; index < size; ++index) {
+        hash ^= bytes[index];
+        hash *= UINT64_C(880355432825459);
     }
     return hash;
 }
@@ -494,7 +575,7 @@ static uint32_t hash_index_next(const HashIndex *index, uint32_t slot) {
     return (slot + 1U) & (index->capacity - 1U);
 }
 
-static uint64_t residency_cache_hash(
+static uint64_t residency_memo_hash(
     const CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options
 ) {
@@ -512,23 +593,19 @@ static uint64_t residency_cache_hash(
     return hash_bytes(
         hash,
         workspace->extra_pressure,
-        workspace->residency_cache.pressure_count *
+        workspace->residency_memo.pressure_count *
             sizeof(*workspace->extra_pressure)
     );
 }
 
-static uint64_t schedule_cache_hash(
-    uint64_t residency_content_hash,
+static uint64_t schedule_memo_hash(
+    ResidencyFingerprint residency,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t prefetch_headroom
 ) {
     uint64_t hash = UINT64_C(1469598103934665603);
-    hash = hash_bytes(
-        hash,
-        &residency_content_hash,
-        sizeof(residency_content_hash)
-    );
+    hash = hash_bytes(hash, &residency, sizeof(residency));
     hash = hash_bytes(hash, &rule, sizeof(rule));
     hash = hash_bytes(hash, &coalesced, sizeof(coalesced));
     return hash_bytes(hash, &prefetch_headroom, sizeof(prefetch_headroom));
@@ -607,8 +684,15 @@ static int problem_valid(
         problem->simulation->task_count == 0U ||
         options->residency_strategies == NULL ||
         options->residency_strategy_count == 0U ||
-        options->prefetch_rules == NULL || options->prefetch_rule_count == 0U) {
+        options->prefetch_rules == NULL || options->prefetch_rule_count == 0U ||
+        options->coalescing_modes == NULL ||
+        options->coalescing_mode_count == 0U) {
         return 0;
+    }
+    for (uint32_t index = 0U; index < options->coalescing_mode_count; ++index) {
+        if (options->coalescing_modes[index] > 1U) {
+            return 0;
+        }
     }
     for (uint32_t index = 0U; index < options->residency_strategy_count;
          ++index) {
@@ -1030,10 +1114,10 @@ static int candidate_workspace_create(
         return -1;
     }
     size_t cells = (size_t)cell_count;
-    workspace->residency_cache.cell_count = cells;
-    workspace->residency_cache.packed_cell_count =
+    workspace->residency_memo.cell_count = cells;
+    workspace->residency_memo.packed_cell_count =
         cells / 8U + (cells % 8U != 0U);
-    workspace->residency_cache.pressure_count = (size_t)pressure_count;
+    workspace->residency_memo.pressure_count = (size_t)pressure_count;
     workspace->resident = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->breaks = calloc(cells == 0U ? 1U : cells, 1U);
     workspace->base_resident = calloc(cells == 0U ? 1U : cells, 1U);
@@ -1114,15 +1198,15 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     placement_workspace_destroy(&workspace->placement);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
     shadowspill_residency_workspace_destroy(workspace->residency_workspace);
-    for (uint32_t index = 0U; index < workspace->residency_cache.count; ++index) {
-        free(workspace->residency_cache.entries[index].extra_pressure);
-        free(workspace->residency_cache.entries[index].resident_bits);
-        free(workspace->residency_cache.entries[index].break_bits);
+    for (uint32_t index = 0U; index < workspace->residency_memo.count; ++index) {
+        free(workspace->residency_memo.entries[index].extra_pressure);
+        free(workspace->residency_memo.entries[index].resident_bits);
+        free(workspace->residency_memo.entries[index].break_bits);
     }
-    free(workspace->residency_cache.entries);
-    free(workspace->residency_cache.index.slots);
-    for (uint32_t index = 0U; index < workspace->schedule_cache.count; ++index) {
-        ScheduleCacheEntry *entry = &workspace->schedule_cache.entries[index];
+    free(workspace->residency_memo.entries);
+    free(workspace->residency_memo.index.slots);
+    for (uint32_t index = 0U; index < workspace->schedule_memo.count; ++index) {
+        ScheduleMemoEntry *entry = &workspace->schedule_memo.entries[index];
         free(entry->schedule.action_trigger_tasks);
         free(entry->schedule.action_aliases);
         free(entry->schedule.action_kinds);
@@ -1131,11 +1215,11 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
         free(entry->schedule.final_aliases);
         free(entry->schedule.final_locations);
     }
-    free(workspace->schedule_cache.entries);
-    free(workspace->schedule_cache.index.slots);
-    for (uint32_t index = 0U; index < workspace->simulation_cache.count; ++index) {
+    free(workspace->schedule_memo.entries);
+    free(workspace->schedule_memo.index.slots);
+    for (uint32_t index = 0U; index < workspace->simulation_memo.count; ++index) {
         ShadowSpillIndexedSchedule *schedule =
-            &workspace->simulation_cache.entries[index].schedule;
+            &workspace->simulation_memo.entries[index].schedule;
         free(schedule->action_trigger_tasks);
         free(schedule->action_aliases);
         free(schedule->action_kinds);
@@ -1144,8 +1228,8 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
         free(schedule->final_aliases);
         free(schedule->final_locations);
     }
-    free(workspace->simulation_cache.entries);
-    free(workspace->simulation_cache.index.slots);
+    free(workspace->simulation_memo.entries);
+    free(workspace->simulation_memo.index.slots);
     memset(workspace, 0, sizeof(*workspace));
 }
 
@@ -1256,18 +1340,18 @@ static ShadowSpillStatus reduce(
     return reduced;
 }
 
-static ResidencyCacheEntry *find_residency_cache(
+static ResidencyMemoEntry *find_residency_memo(
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     uint64_t hash
 ) {
-    ResidencyCache *cache = &workspace->residency_cache;
+    ResidencyMemo *cache = &workspace->residency_memo;
     size_t bytes = cache->pressure_count * sizeof(*workspace->extra_pressure);
     uint32_t slot = hash_index_start(&cache->index, hash);
     while (slot != UINT32_MAX &&
            cache->index.slots[slot].entry_plus_one != 0U) {
         HashSlot indexed = cache->index.slots[slot];
-        ResidencyCacheEntry *entry =
+        ResidencyMemoEntry *entry =
             &cache->entries[indexed.entry_plus_one - 1U];
         if (indexed.hash == hash &&
             entry->minimize_transfer == options->minimize_transfer &&
@@ -1280,7 +1364,7 @@ static ResidencyCacheEntry *find_residency_cache(
     return NULL;
 }
 
-static ResidencyCacheEntry *append_residency_cache(
+static ResidencyMemoEntry *append_residency_memo(
     CandidateWorkspace *workspace,
     const ShadowSpillResidencyOptions *options,
     uint64_t hash,
@@ -1289,13 +1373,13 @@ static ResidencyCacheEntry *append_residency_cache(
     const uint8_t *resident,
     const uint8_t *breaks
 ) {
-    ResidencyCache *cache = &workspace->residency_cache;
+    ResidencyMemo *cache = &workspace->residency_memo;
     if (cache->count == cache->capacity) {
         uint32_t capacity = cache->capacity == 0U ? 16U : cache->capacity * 2U;
         if (capacity < cache->capacity) {
             return NULL;
         }
-        ResidencyCacheEntry *entries = realloc(
+        ResidencyMemoEntry *entries = realloc(
             cache->entries,
             (size_t)capacity * sizeof(*entries)
         );
@@ -1310,7 +1394,7 @@ static ResidencyCacheEntry *append_residency_cache(
         cache->entries = entries;
         cache->capacity = capacity;
     }
-    ResidencyCacheEntry *entry = &cache->entries[cache->count];
+    ResidencyMemoEntry *entry = &cache->entries[cache->count];
     entry->extra_pressure = malloc(
         (cache->pressure_count == 0U ? 1U : cache->pressure_count) *
         sizeof(*entry->extra_pressure)
@@ -1336,15 +1420,26 @@ static ResidencyCacheEntry *append_residency_cache(
     );
     pack_boolean_cells(resident, cache->cell_count, entry->resident_bits);
     pack_boolean_cells(breaks, cache->cell_count, entry->break_bits);
-    entry->content_hash = hash_bytes(
-        hash_bytes(
-            UINT64_C(1469598103934665603),
-            entry->resident_bits,
+    entry->fingerprint = (ResidencyFingerprint){
+        .low = hash_bytes(
+            hash_bytes(
+                UINT64_C(1469598103934665603),
+                entry->resident_bits,
+                cache->packed_cell_count
+            ),
+            entry->break_bits,
             cache->packed_cell_count
         ),
-        entry->break_bits,
-        cache->packed_cell_count
-    );
+        .high = hash_bytes_high(
+            hash_bytes_high(
+                UINT64_C(1099511628211),
+                entry->resident_bits,
+                cache->packed_cell_count
+            ),
+            entry->break_bits,
+            cache->packed_cell_count
+        ),
+    };
     entry->minimize_transfer = options->minimize_transfer;
     entry->prefetch_headroom = options->prefetch_headroom;
     entry->hash = hash;
@@ -1373,10 +1468,10 @@ static ShadowSpillStatus reduce_cached(
     uint8_t *breaks,
     ShadowSpillResidencyResult *result
 ) {
-    ResidencyCache *cache = &workspace->residency_cache;
+    ResidencyMemo *cache = &workspace->residency_memo;
     (void)strategy;
-    uint64_t hash = residency_cache_hash(workspace, options);
-    ResidencyCacheEntry *entry = find_residency_cache(workspace, options, hash);
+    uint64_t hash = residency_memo_hash(workspace, options);
+    ResidencyMemoEntry *entry = find_residency_memo(workspace, options, hash);
     int cache_hit = entry != NULL;
     if (entry == NULL) {
         ++workspace->residency_cache_misses;
@@ -1389,7 +1484,7 @@ static ShadowSpillStatus reduce_cached(
             breaks,
             &computed
         );
-        entry = append_residency_cache(
+        entry = append_residency_memo(
             workspace,
             options,
             hash,
@@ -1404,8 +1499,7 @@ static ShadowSpillStatus reduce_cached(
     } else {
         ++workspace->residency_cache_hits;
     }
-    workspace->current_residency_key =
-        (uint32_t)(entry - workspace->residency_cache.entries);
+    workspace->current_residency = entry->fingerprint;
     if (cache_hit != 0) {
         unpack_boolean_cells(entry->resident_bits, cache->cell_count, resident);
         unpack_boolean_cells(entry->break_bits, cache->cell_count, breaks);
@@ -1424,33 +1518,25 @@ static ShadowSpillStatus reduce_cached(
     return entry->status;
 }
 
-static ScheduleCacheEntry *find_schedule_cache(
+static ScheduleMemoEntry *find_schedule_memo(
     CandidateWorkspace *workspace,
-    uint32_t residency_key,
+    ResidencyFingerprint residency,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t prefetch_headroom,
     uint64_t hash
 ) {
-    ScheduleCache *cache = &workspace->schedule_cache;
-    const ResidencyCacheEntry *current =
-        &workspace->residency_cache.entries[residency_key];
+    ScheduleMemo *cache = &workspace->schedule_memo;
     uint32_t slot = hash_index_start(&cache->index, hash);
     while (slot != UINT32_MAX &&
            cache->index.slots[slot].entry_plus_one != 0U) {
         HashSlot indexed = cache->index.slots[slot];
-        ScheduleCacheEntry *entry =
+        ScheduleMemoEntry *entry =
             &cache->entries[indexed.entry_plus_one - 1U];
-        const ResidencyCacheEntry *cached =
-            &workspace->residency_cache.entries[entry->residency_key];
         if (indexed.hash == hash && entry->rule == rule &&
             entry->coalesced == coalesced &&
             entry->prefetch_headroom == prefetch_headroom &&
-            cached->content_hash == current->content_hash &&
-            memcmp(cached->resident_bits, current->resident_bits,
-                   workspace->residency_cache.packed_cell_count) == 0 &&
-            memcmp(cached->break_bits, current->break_bits,
-                   workspace->residency_cache.packed_cell_count) == 0) {
+            fingerprint_equal(entry->residency, residency)) {
             return entry;
         }
         slot = hash_index_next(&cache->index, slot);
@@ -1588,20 +1674,20 @@ static int indexed_schedule_equal(
         ) == 0;
 }
 
-static SimulationCacheEntry *append_simulation_cache(
+static SimulationMemoEntry *append_simulation_memo(
     CandidateWorkspace *workspace,
     const ShadowSpillSimulationResult *result,
     ShadowSpillStatus admission_status,
     const ShadowSpillAdmissionReplayResult *admission,
     uint64_t hash
 ) {
-    SimulationCache *cache = &workspace->simulation_cache;
+    SimulationMemo *cache = &workspace->simulation_memo;
     if (cache->count == cache->capacity) {
         uint32_t capacity = cache->capacity == 0U ? 16U : cache->capacity * 2U;
         if (capacity < cache->capacity) {
             return NULL;
         }
-        SimulationCacheEntry *entries = realloc(
+        SimulationMemoEntry *entries = realloc(
             cache->entries,
             (size_t)capacity * sizeof(*entries)
         );
@@ -1616,7 +1702,7 @@ static SimulationCacheEntry *append_simulation_cache(
         cache->entries = entries;
         cache->capacity = capacity;
     }
-    SimulationCacheEntry *entry = &cache->entries[cache->count];
+    SimulationMemoEntry *entry = &cache->entries[cache->count];
     if (clone_indexed_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
         return NULL;
     }
@@ -1660,15 +1746,15 @@ static int simulate_cached(
     ShadowSpillStatus *admission_status,
     ShadowSpillAdmissionReplayResult *admission_result,
     ShadowSpillAdmissionAnnotation *admission_error_annotation,
-    SimulationCacheEntry **selected_entry
+    SimulationMemoEntry **selected_entry
 ) {
-    SimulationCache *cache = &workspace->simulation_cache;
+    SimulationMemo *cache = &workspace->simulation_memo;
     uint64_t hash = indexed_schedule_hash(&workspace->schedule.value);
     uint32_t slot = hash_index_start(&cache->index, hash);
     while (slot != UINT32_MAX &&
            cache->index.slots[slot].entry_plus_one != 0U) {
         HashSlot indexed = cache->index.slots[slot];
-        SimulationCacheEntry *entry =
+        SimulationMemoEntry *entry =
             &cache->entries[indexed.entry_plus_one - 1U];
         if (indexed.hash == hash && indexed_schedule_equal(
                 &entry->schedule,
@@ -1714,7 +1800,7 @@ static int simulate_cached(
         return -1;
     }
     ++workspace->simulation_calls;
-    *selected_entry = append_simulation_cache(
+    *selected_entry = append_simulation_memo(
         workspace,
         result,
         *admission_status,
@@ -1724,21 +1810,21 @@ static int simulate_cached(
     return *selected_entry == NULL ? -1 : 0;
 }
 
-static ScheduleCacheEntry *append_schedule_cache(
+static ScheduleMemoEntry *append_schedule_memo(
     CandidateWorkspace *workspace,
-    uint32_t residency_key,
+    ResidencyFingerprint residency,
     uint8_t rule,
     uint8_t coalesced,
     uint8_t prefetch_headroom,
     uint64_t hash
 ) {
-    ScheduleCache *cache = &workspace->schedule_cache;
+    ScheduleMemo *cache = &workspace->schedule_memo;
     if (cache->count == cache->capacity) {
         uint32_t capacity = cache->capacity == 0U ? 16U : cache->capacity * 2U;
         if (capacity < cache->capacity) {
             return NULL;
         }
-        ScheduleCacheEntry *entries = realloc(
+        ScheduleMemoEntry *entries = realloc(
             cache->entries,
             (size_t)capacity * sizeof(*entries)
         );
@@ -1753,12 +1839,12 @@ static ScheduleCacheEntry *append_schedule_cache(
         cache->entries = entries;
         cache->capacity = capacity;
     }
-    ScheduleCacheEntry *entry = &cache->entries[cache->count];
+    ScheduleMemoEntry *entry = &cache->entries[cache->count];
     if (clone_indexed_schedule(&workspace->schedule.value, &entry->schedule) != 0) {
         memset(entry, 0, sizeof(*entry));
         return NULL;
     }
-    entry->residency_key = residency_key;
+    entry->residency = residency;
     entry->rule = rule;
     entry->hash = hash;
     entry->coalesced = coalesced;
@@ -1787,17 +1873,15 @@ static int emit_cached(
     uint8_t coalesced,
     uint8_t prefetch_headroom
 ) {
-    uint64_t hash = schedule_cache_hash(
-        workspace->residency_cache.entries[
-            workspace->current_residency_key
-        ].content_hash,
+    uint64_t hash = schedule_memo_hash(
+        workspace->current_residency,
         rule,
         coalesced,
         prefetch_headroom
     );
-    ScheduleCacheEntry *entry = find_schedule_cache(
+    ScheduleMemoEntry *entry = find_schedule_memo(
         workspace,
-        workspace->current_residency_key,
+        workspace->current_residency,
         rule,
         coalesced,
         prefetch_headroom,
@@ -1825,9 +1909,9 @@ static int emit_cached(
         return -1;
     }
     ++workspace->schedule_emissions;
-    return append_schedule_cache(
+    return append_schedule_memo(
         workspace,
-        workspace->current_residency_key,
+        workspace->current_residency,
         rule,
         coalesced,
         prefetch_headroom,
@@ -2235,7 +2319,11 @@ typedef enum StageOutcome {
 typedef struct CandidateSearch {
     /* Fixed for the whole search. */
     const ShadowSpillPressureFitProblem *problem;
-    const ShadowSpillScheduleFacts *facts;
+    /* The problem's facts, held by value so this candidate can point them at
+     * the capacity *it* has given back. The problem shares one set of facts
+     * between workers, but what a plan gave back belongs to the worker
+     * building it, so the pointer cannot live in the shared copy. */
+    ShadowSpillScheduleFacts facts;
     const ShadowSpillPressureFitProblemOptions *options;
     CandidateWorkspace *workspace;
     ShadowSpillPressureFitCandidateDiagnostic *diagnostic;
@@ -2268,7 +2356,7 @@ typedef struct CandidateSearch {
     ShadowSpillStatus admission_status;
     ShadowSpillAdmissionReplayResult admission_result;
     ShadowSpillAdmissionAnnotation admission_annotation;
-    SimulationCacheEntry *simulation_entry;
+    SimulationMemoEntry *simulation_entry;
     int improves;
 
     /* What `evaluate_candidate` returns, set with STAGE_DONE. */
@@ -2288,7 +2376,12 @@ static void search_begin(
 ) {
     memset(search, 0, sizeof(*search));
     search->problem = problem;
-    search->facts = facts;
+    /* The emitter measures against the capacity the plan being built kept,
+     * which is the same array the reducer adds to its occupancy. Without
+     * this the emitter packs against a capacity the plan no longer has, and
+     * refining capacity never shrinks the layout it produces. */
+    search->facts = *facts;
+    search->facts.extra_pressure = workspace->extra_pressure;
     search->options = options;
     search->workspace = workspace;
     search->diagnostic = diagnostic;
@@ -2317,7 +2410,7 @@ static void search_begin(
     memcpy(workspace->resident, workspace->base_resident, (size_t)search->cells);
     memcpy(workspace->breaks, workspace->base_breaks, (size_t)search->cells);
     workspace->prefetch_constraint_count = 0U;
-    workspace->current_residency_key = workspace->base_residency_key;
+    workspace->current_residency = workspace->base_residency;
 }
 
 /* Report a plan as this candidate's answer. */
@@ -2486,12 +2579,12 @@ static StageOutcome search_emit(CandidateSearch *search) {
     CandidateWorkspace *workspace = search->workspace;
     if (search->rule == SHADOWSPILL_PREFETCH_INTERVAL_ENTRY &&
         shadowspill_extend_interval_entries(
-            search->facts, workspace->resident, workspace->breaks
+            &search->facts, workspace->resident, workspace->breaks
         ) != 0) {
         return search_done(search, -1);
     }
     if (emit_cached(
-            search->facts,
+            &search->facts,
             workspace,
             workspace->resident,
             workspace->breaks,
@@ -2502,7 +2595,7 @@ static StageOutcome search_emit(CandidateSearch *search) {
         return search_done(search, -1);
     }
     const int constrained = shadowspill_apply_prefetch_trigger_constraints(
-        search->facts,
+        &search->facts,
         workspace->prefetch_constraints,
         workspace->prefetch_constraint_count,
         &workspace->schedule
@@ -2578,7 +2671,7 @@ static StageOutcome search_repair_admission(CandidateSearch *search) {
     if (may_repair_again(search->options, diagnostic)) {
         ShadowSpillPrefetchTriggerConstraint constraint = {0};
         int moved = advance_admission_prefetch(
-            search->facts,
+            &search->facts,
             search->admission_annotation,
             &search->workspace->schedule,
             &constraint
@@ -2594,7 +2687,7 @@ static StageOutcome search_repair_admission(CandidateSearch *search) {
             );
         }
         moved = delay_admission_prefetch(
-            search->facts,
+            &search->facts,
             &search->admission_result,
             search->admission_annotation,
             &search->workspace->schedule,
@@ -2675,7 +2768,6 @@ static StageOutcome search_keep_placed(CandidateSearch *search) {
         .makespan_ns = search->simulation.makespan_ns,
         .object_capacity_bytes = search->plan_capacity_bytes,
         .capacity_given_back_bytes = search->workspace->plan_capacity_given_back,
-        .selection_index = search->options->selection_index,
         .residency_strategy = search->strategy,
         .prefetch_rule = search->rule,
         .coalesced = search->coalesced,
@@ -2919,7 +3011,7 @@ static StageOutcome search_repair(CandidateSearch *search) {
     if (may_repair_again(search->options, diagnostic)) {
         ShadowSpillPrefetchTriggerConstraint constraint = {0};
         const int delayed = shadowspill_delay_indexed_prefetch(
-            search->facts,
+            &search->facts,
             &search->simulation,
             &search->workspace->schedule,
             &constraint
@@ -3058,17 +3150,18 @@ static int evaluate_candidate(
     }
 }
 
+/* Hand the winner's schedule to the result, which owns it afterwards. */
 static int adopt_selected_schedule(
     ShadowSpillPressureFitProblemResult *result,
-    CandidateWorkspace *workspace
+    ShadowSpillScheduleStorage *selected
 ) {
-    ShadowSpillIndexedSchedule *source = &workspace->selected.value;
+    ShadowSpillIndexedSchedule *source = &selected->value;
     ShadowSpillIndexedSchedule *destination = &result->selected_schedule;
     *destination = *source;
     memset(source, 0, sizeof(*source));
-    workspace->selected.action_capacity = 0U;
-    workspace->selected.initial_capacity = 0U;
-    workspace->selected.final_capacity = 0U;
+    selected->action_capacity = 0U;
+    selected->initial_capacity = 0U;
+    selected->final_capacity = 0U;
     return 0;
 }
 
@@ -3092,6 +3185,8 @@ uint64_t shadowspill_planner_struct_size(uint32_t which) {
         return sizeof(ShadowSpillResidencyProblem);
     case SHADOWSPILL_STRUCT_RESIDENCY_RESULT:
         return sizeof(ShadowSpillResidencyResult);
+    case SHADOWSPILL_STRUCT_PROBLEM_RESULT:
+        return sizeof(ShadowSpillPressureFitProblemResult);
     default:
         return 0U;
     }
@@ -3119,265 +3214,469 @@ void shadowspill_pressurefit_problem_result_destroy(
 }
 
 /*
- * One resolved program's evaluation.
+ * Evaluating several resolved programs on one set of worker threads.
  *
- * The problem level does what the candidate cycle cannot do for itself:
- * derive the facts every candidate shares, reduce once per strategy so the
- * candidates built on it start from the same residency, and keep the fastest
- * answer any of them gave. `shadowspill_evaluate_pressurefit_problem` is that
- * order and nothing else, with each stage below measured under the section it
- * belongs to.
+ * The unit of work is a candidate of a problem -- one residency strategy, one
+ * fetch rule, one coalescing mode -- and every such unit of every problem
+ * competes for the same workers. Worker count and problem count are
+ * independent: asking for eight workers gets eight threads whether there is
+ * one problem or five, which is the whole reason this takes a list. ("Pool"
+ * is deliberately not used here -- in this codebase a pool is memory, the
+ * execution pool or the spill pool, and these are threads.)
+ *
+ * Three things are shared, and nothing else is:
+ *
+ * - **The task counter**, an atomic index. A worker takes the next one and
+ *   owns it outright; the diagnostic it writes is that task's own slot, so
+ *   diagnostics need no lock.
+ * - **Each problem's winner**, behind a small spin lock. A worker takes it
+ *   only when it has beaten what is recorded, which is rare, and holds it
+ *   only for a schedule copy.
+ * - **The placement record**, which does its own locking and is the one
+ *   thing deliberately shared across problems: a plan placed under any of
+ *   them bounds the search under all of them.
+ *
+ * Everything else a worker touches is its own workspace, including the three
+ * memo tables. They are scratch for the search that worker is doing, so they
+ * need no synchronisation and cannot race. A workspace is sized for one
+ * problem, so a worker that moves to a different problem rebuilds it; tasks
+ * are handed out problem by problem, so that is rare.
  */
-typedef struct ProblemSearch {
+/*
+ * A search has two drivers and one thing they share.
+ *
+ *   ProgramSearch     drives the whole Program: every resolved problem, the
+ *                     task counter workers pull from, and the options
+ *   CandidateSearch   drives one candidate: emit -> simulate -> repair
+ *   SearchedProblem   drives nothing. It is one resolved problem while it is
+ *                     being searched: the facts its candidates share and the
+ *                     problem itself (read-only for the whole search), its
+ *                     slice of the task range, which is how one flat counter
+ *                     serves several problems, and the best plan any worker
+ *                     has placed for it, which is the only part that changes
+ *                     and the only part that needs a lock.
+ */
+typedef struct SearchedProblem {
     const ShadowSpillPressureFitProblem *problem;
-    const ShadowSpillPressureFitProblemOptions *options;
-    ShadowSpillPressureFitProblemResult *result;
     ShadowSpillScheduleFacts facts;
+    ShadowSpillPressureFitProblemResult *result;
+    /* Global index of this problem's first candidate. */
+    uint32_t first_task;
+    uint32_t candidate_count;
+    /* The best plan any worker placed for this problem, and its schedule.
+     * Guarded because several workers can beat it at once. */
+    ShadowSpillScheduleStorage selected;
+    uint64_t selected_makespan_ns;
+    uint32_t selected_candidate;
+    atomic_flag guard;
+    int ready;
+} SearchedProblem;
+
+typedef struct ProgramSearch {
+    const ShadowSpillPressureFitProblemOptions *options;
+    SearchedProblem *problems;
+    uint32_t problem_count;
+    uint32_t total_tasks;
+    _Atomic uint32_t next_task;
+    /* The clock every reported timestamp is measured from, so a caller
+     * reading several problems out of one call sees one timeline. */
+    uint64_t origin_ns;
+} ProgramSearch;
+
+typedef struct SearchWorker {
+    ProgramSearch *search;
     CandidateWorkspace workspace;
-    uint32_t coalesced_count;
-    /* Which candidate the loops are on, and so which diagnostic it writes. */
-    uint32_t candidate_index;
-} ProblemSearch;
+    /* Which problem the workspace is sized for, or NO_INDEX before the first
+     * task. Sizes come from the problem, so this cannot be shared across
+     * problems without rebuilding. */
+    uint32_t workspace_problem;
+    int failed;
+} SearchWorker;
 
-/* What one strategy's base reduction produced. Every candidate built on that
- * strategy starts from it, so it is computed once and shared. */
-typedef struct StrategyBase {
-    ShadowSpillStatus status;
-    ShadowSpillResidencyResult residency;
-} StrategyBase;
-
-/* One diagnostic per candidate policy, allocated before any candidate runs so
- * that a candidate can write its own without the array moving underneath it. */
-static ShadowSpillStatus problem_allocate_candidates(ProblemSearch *search) {
-    uint32_t count = 0U;
-    if (multiply_u32(
-            search->options->residency_strategy_count,
-            search->options->prefetch_rule_count,
-            &count
-        ) != 0 ||
-        multiply_u32(count, search->coalesced_count, &count) != 0) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+/* Which resolved problem owns a global task index, and which of its
+ * candidates the task names. */
+static uint32_t problem_of_task(
+    const ProgramSearch *search, uint32_t task, uint32_t *candidate
+) {
+    for (uint32_t index = 0U; index < search->problem_count; ++index) {
+        const SearchedProblem *problem = &search->problems[index];
+        if (task < problem->first_task + problem->candidate_count) {
+            *candidate = task - problem->first_task;
+            return index;
+        }
     }
-    search->result->candidates =
-        calloc(count, sizeof(*search->result->candidates));
-    if (search->result->candidates == NULL) {
-        search->result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    }
-    search->result->candidate_count = count;
-    return SHADOWSPILL_STATUS_OK;
+    *candidate = 0U;
+    return SHADOWSPILL_PLANNER_NO_INDEX;
 }
 
-/* The facts every candidate shares, and the buffers they reuse. */
-static int problem_setup(ProblemSearch *search) {
-    if (shadowspill_schedule_facts_create(search->problem, &search->facts) != 0 ||
-        candidate_workspace_create(search->problem, &search->workspace) != 0) {
+/* Give this worker a workspace sized for `index`, reusing the one it has when
+ * it is already for that problem. */
+static int worker_workspace_for(SearchWorker *worker, uint32_t index) {
+    if (worker->workspace_problem == index) {
+        return 0;
+    }
+    if (worker->workspace_problem != SHADOWSPILL_PLANNER_NO_INDEX) {
+        candidate_workspace_destroy(&worker->workspace);
+        worker->workspace_problem = SHADOWSPILL_PLANNER_NO_INDEX;
+    }
+    if (candidate_workspace_create(
+            worker->search->problems[index].problem, &worker->workspace
+        ) != 0) {
         return -1;
     }
-    /* The emitter measures against the capacity the plan being built kept,
-     * which is the same array the reducer adds to its occupancy. */
-    search->facts.extra_pressure = search->workspace.extra_pressure;
+    worker->workspace_problem = index;
     return 0;
 }
 
-static void problem_teardown(ProblemSearch *search) {
-    shadowspill_schedule_facts_destroy(&search->facts);
-    candidate_workspace_destroy(&search->workspace);
-}
-
-/* Every failure inside the loops ends the same way: the candidate array stays
- * for the caller to release with the result, and everything the evaluation
- * itself held goes now. */
-static ShadowSpillStatus problem_failed(ProblemSearch *search) {
-    search->result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-    problem_teardown(search);
-    return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
-}
-
-/* Reduce once for this strategy, from a residency carrying no repair
- * pressure: what a candidate adds later is its own. */
-static void problem_reduce_base(
-    ProblemSearch *search, uint8_t strategy, StrategyBase *base
+/* Record a plan as this problem's answer when it beats what is held. */
+static int offer_problem_winner(
+    SearchedProblem *problem,
+    uint32_t candidate,
+    uint64_t makespan_ns,
+    const ShadowSpillScheduleStorage *schedule
 ) {
-    CandidateWorkspace *workspace = &search->workspace;
+    while (atomic_flag_test_and_set_explicit(&problem->guard, memory_order_acquire)) {
+        /* Held only for a schedule copy, and taken only by a worker that has
+         * already beaten the record, so spinning beats descheduling. */
+        shadowspill_thread_yield();
+    }
+    int failed = 0;
+    if (problem->selected_candidate == SHADOWSPILL_PLANNER_NO_INDEX ||
+        makespan_ns < problem->selected_makespan_ns ||
+        (makespan_ns == problem->selected_makespan_ns &&
+         candidate < problem->selected_candidate)) {
+        failed = shadowspill_schedule_storage_copy(
+            &problem->selected, schedule
+        ) != 0;
+        if (!failed) {
+            problem->selected_candidate = candidate;
+            problem->selected_makespan_ns = makespan_ns;
+        }
+    }
+    atomic_flag_clear_explicit(&problem->guard, memory_order_release);
+    return failed ? -1 : 0;
+}
+
+/* Stamp what a task cost and when it ended. Every exit that answered goes
+ * through here, so a candidate that stopped early still lands on the
+ * timeline and still reports the work it did before it stopped. An exit
+ * that failed internally does not: it ends the whole search, and there is
+ * no candidate left to describe. */
+static void finish_task(
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic,
+    const ProgramSearch *search,
+    CandidateWorkspace *workspace,
+    ShadowSpillPressureFitWorkDiagnostics before,
+    uint64_t started
+) {
+    diagnostic->work = work_delta(workspace_work(workspace), before);
+    section_close_total(&diagnostic->work.sections, started);
+    /* Both ends are stamped here, at the end, because evaluating a candidate
+     * initializes the diagnostic again and would erase a start written
+     * before it. */
+    diagnostic->started_ns = started - search->origin_ns;
+    diagnostic->finished_ns = shadowspill_monotonic_ns() - search->origin_ns;
+}
+
+/* Evaluate one candidate. Returns -1 only for an internal failure; a
+ * candidate that simply has no answer returns 0. */
+static int worker_evaluate_task(SearchWorker *worker, uint32_t task) {
+    ProgramSearch *search = worker->search;
+    uint32_t candidate = 0U;
+    const uint32_t index = problem_of_task(search, task, &candidate);
+    if (index == SHADOWSPILL_PLANNER_NO_INDEX) {
+        return -1;
+    }
+    if (worker_workspace_for(worker, index) != 0) {
+        return -1;
+    }
+    SearchedProblem *problem = &search->problems[index];
+    CandidateWorkspace *workspace = &worker->workspace;
+    const ShadowSpillPressureFitProblemOptions *options = search->options;
+
+    const uint32_t modes = options->coalescing_mode_count;
+    const uint32_t rules = options->prefetch_rule_count;
+    const uint8_t mode = options->coalescing_modes[candidate % modes];
+    const uint8_t rule = options->prefetch_rules[(candidate / modes) % rules];
+    const uint8_t strategy =
+        options->residency_strategies[candidate / (modes * rules)];
+
+    ShadowSpillPressureFitCandidateDiagnostic *diagnostic =
+        &problem->result->candidates[candidate];
+    initialize_diagnostic(diagnostic, strategy, rule, mode);
+
+    /* Everything from here on is this candidate's, the base reduction
+     * included: it is work a worker does for this task and nobody else's. */
+    const ShadowSpillPressureFitWorkDiagnostics before = workspace_work(workspace);
+    const uint64_t started = shadowspill_monotonic_ns();
+
+    /* This strategy's base residency, from this worker's own memo. */
     const uint64_t pressure_cells =
-        (uint64_t)search->problem->residency->device_count *
-        search->problem->residency->boundary_count;
+        (uint64_t)problem->problem->residency->device_count *
+        problem->problem->residency->boundary_count;
     memset(
         workspace->extra_pressure,
         0,
         (size_t)pressure_cells * sizeof(*workspace->extra_pressure)
     );
     ShadowSpillResidencyOptions reduce_options;
-    residency_options(search->problem, workspace, strategy, &reduce_options);
-    base->status = reduce_cached(
-        search->problem,
+    residency_options(problem->problem, workspace, strategy, &reduce_options);
+    ShadowSpillResidencyResult base;
+    const Section reduce = section_open(&workspace->sections.reduce_ns);
+    const ShadowSpillStatus base_status = reduce_cached(
+        problem->problem,
         workspace,
         &reduce_options,
         strategy,
         workspace->base_resident,
         workspace->base_breaks,
-        &base->residency
+        &base
     );
-    workspace->base_residency_key = workspace->current_residency_key;
-}
-
-/* The problem answers with the fastest candidate that answered, and keeps a
- * copy of its schedule: the workspace's live one belongs to whichever
- * candidate runs next. */
-static int problem_consider(
-    ProblemSearch *search,
-    const ShadowSpillPressureFitCandidateDiagnostic *diagnostic
-) {
-    ShadowSpillPressureFitProblemResult *result = search->result;
-    if (result->selected_candidate_index != SHADOWSPILL_PLANNER_NO_INDEX &&
-        diagnostic->makespan_ns >= result->selected_makespan_ns) {
+    section_close(reduce);
+    workspace->base_residency = workspace->current_residency;
+    if (base_status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
+        copy_analytic_error(diagnostic, &base);
+        finish_task(diagnostic, search, workspace, before, started);
         return 0;
     }
-    result->selected_candidate_index = search->candidate_index;
-    result->selected_makespan_ns = diagnostic->makespan_ns;
-    if (shadowspill_schedule_storage_copy(
-            &search->workspace.selected, &search->workspace.schedule
-        ) != 0) {
+    if (base_status != SHADOWSPILL_STATUS_OK) {
         return -1;
     }
-    return 0;
-}
 
-/* Run one candidate policy and record what it did. */
-static int problem_evaluate_candidate(
-    ProblemSearch *search,
-    uint8_t strategy,
-    uint8_t rule,
-    uint8_t coalesced,
-    const StrategyBase *base
-) {
-    ShadowSpillPressureFitCandidateDiagnostic *diagnostic =
-        &search->result->candidates[search->candidate_index];
-    initialize_diagnostic(diagnostic, strategy, rule, coalesced);
-    if (base->status == SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE) {
-        /* No legal cut relieves this strategy's pressure, which is a fact
-         * about the strategy: every candidate built on it reports it. */
-        copy_analytic_error(diagnostic, &base->residency);
-        return 0;
-    }
-    if (base->status != SHADOWSPILL_STATUS_OK) {
-        return -1;
-    }
-    const ShadowSpillPressureFitWorkDiagnostics before =
-        workspace_work(&search->workspace);
-    const uint64_t started = shadowspill_monotonic_ns();
     const int valid = evaluate_candidate(
-        search->problem,
-        &search->facts,
-        search->options,
-        &search->workspace,
+        problem->problem,
+        &problem->facts,
+        options,
+        workspace,
         strategy,
         rule,
-        coalesced,
+        mode,
         diagnostic
     );
-    /* Every counter this candidate moved, and the span it moved them in. */
-    diagnostic->work = work_delta(workspace_work(&search->workspace), before);
-    section_close_total(&diagnostic->work.sections, started);
+    finish_task(diagnostic, search, workspace, before, started);
     if (valid < 0) {
         return -1;
     }
-    return valid > 0 ? problem_consider(search, diagnostic) : 0;
-}
-
-/* Every candidate built on one strategy's base reduction. */
-static int problem_evaluate_strategy(
-    ProblemSearch *search, uint8_t strategy, const StrategyBase *base
-) {
-    for (uint32_t rule_index = 0U;
-         rule_index < search->options->prefetch_rule_count;
-         ++rule_index) {
-        const uint8_t rule = search->options->prefetch_rules[rule_index];
-        for (uint32_t coalesced = 0U; coalesced < search->coalesced_count;
-             ++coalesced) {
-            if (problem_evaluate_candidate(
-                    search, strategy, rule, (uint8_t)coalesced, base
-                ) != 0) {
-                return -1;
-            }
-            ++search->candidate_index;
-        }
+    if (valid > 0) {
+        return offer_problem_winner(
+            problem, candidate, diagnostic->makespan_ns, &workspace->schedule
+        );
     }
     return 0;
 }
 
-static ShadowSpillStatus problem_select(ProblemSearch *search) {
-    if (search->result->selected_candidate_index ==
-        SHADOWSPILL_PLANNER_NO_INDEX) {
-        return SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
+static void *worker_main(void *argument) {
+    SearchWorker *worker = argument;
+    shadowspill_name_current_thread("shadowspill.plan");
+    while (worker->failed == 0) {
+        const uint32_t task = atomic_fetch_add_explicit(
+            &worker->search->next_task, 1U, memory_order_relaxed
+        );
+        if (task >= worker->search->total_tasks) {
+            break;
+        }
+        if (worker_evaluate_task(worker, task) != 0) {
+            worker->failed = 1;
+        }
     }
-    adopt_selected_schedule(search->result, &search->workspace);
-    return SHADOWSPILL_STATUS_OK;
+    return NULL;
 }
 
-ShadowSpillStatus shadowspill_evaluate_pressurefit_problem(
-    const ShadowSpillPressureFitProblem *problem,
-    const ShadowSpillPressureFitProblemOptions *options,
-    ShadowSpillPressureFitProblemResult *result
+/* How many threads to evaluate with. Scheduling rather than search, so this
+ * is free to consider the machine: it changes neither which plans are legal
+ * nor how they simulate. It does change how many candidates the shared
+ * record lets a search skip, which is why per-candidate counters move with
+ * it. Never more threads than there is work to give them. */
+static uint32_t worker_count_for(
+    const ShadowSpillPressureFitProblemOptions *options, uint32_t tasks
 ) {
-    if (result == NULL) {
+    if (tasks <= 1U || options->workers == 1U) {
+        return 1U;
+    }
+    const uint32_t wanted = options->workers != 0U
+        ? options->workers
+        : shadowspill_logical_cpu_count();
+    return wanted < tasks ? wanted : tasks;
+}
+
+/* Release everything the search allocated, whatever it managed to finish. */
+static void program_search_destroy(
+    ProgramSearch *search, SearchWorker *workers, uint32_t worker_count
+) {
+    for (uint32_t index = 0U; index < worker_count; ++index) {
+        if (workers[index].workspace_problem != SHADOWSPILL_PLANNER_NO_INDEX) {
+            candidate_workspace_destroy(&workers[index].workspace);
+        }
+    }
+    free(workers);
+    for (uint32_t index = 0U; index < search->problem_count; ++index) {
+        SearchedProblem *problem = &search->problems[index];
+        if (problem->ready) {
+            shadowspill_schedule_facts_destroy(&problem->facts);
+            shadowspill_schedule_storage_destroy(&problem->selected);
+        }
+    }
+    free(search->problems);
+}
+
+ShadowSpillStatus shadowspill_evaluate_pressurefit_problems(
+    const ShadowSpillPressureFitProblem *problems,
+    uint32_t problem_count,
+    const ShadowSpillPressureFitProblemOptions *options,
+    ShadowSpillPressureFitProblemResult *results
+) {
+    if (problems == NULL || results == NULL || problem_count == 0U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    memset(result, 0, sizeof(*result));
-    result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
-    result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    if (!problem_valid(problem, options)) {
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        memset(&results[index], 0, sizeof(results[index]));
+        results[index].selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
+        results[index].status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        if (!problem_valid(&problems[index], options)) {
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        }
+    }
+    uint32_t per_problem = 0U;
+    if (multiply_u32(
+            options->residency_strategy_count,
+            options->prefetch_rule_count,
+            &per_problem
+        ) != 0 ||
+        multiply_u32(per_problem, options->coalescing_mode_count, &per_problem) != 0) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     const uint64_t started = shadowspill_monotonic_ns();
-    ProblemSearch search = {
-        .problem = problem,
+    ProgramSearch search = {
         .options = options,
-        .result = result,
-        .coalesced_count = options->evaluate_coalesced != 0U ? 2U : 1U,
+        .problem_count = problem_count,
+        .origin_ns = started,
     };
-    const ShadowSpillStatus allocated = problem_allocate_candidates(&search);
-    if (allocated != SHADOWSPILL_STATUS_OK) {
-        return allocated;
-    }
-
-    const Section setup = section_open(&search.workspace.sections.setup_ns);
-    const int setup_failed = problem_setup(&search);
-    section_close(setup);
-    if (setup_failed) {
-        problem_teardown(&search);
-        shadowspill_pressurefit_problem_result_destroy(result);
-        result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    search.problems = calloc(problem_count, sizeof(*search.problems));
+    if (search.problems == NULL) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
+    atomic_init(&search.next_task, 0U);
 
-    for (uint32_t index = 0U; index < options->residency_strategy_count;
-         ++index) {
-        const uint8_t strategy = options->residency_strategies[index];
-        StrategyBase base = {0};
-        const Section reduce = section_open(&search.workspace.sections.reduce_ns);
-        problem_reduce_base(&search, strategy, &base);
-        section_close(reduce);
-        if (problem_evaluate_strategy(&search, strategy, &base) != 0) {
-            return problem_failed(&search);
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        SearchedProblem *problem = &search.problems[index];
+        problem->problem = &problems[index];
+        problem->result = &results[index];
+        problem->first_task = search.total_tasks;
+        problem->candidate_count = per_problem;
+        problem->selected_candidate = SHADOWSPILL_PLANNER_NO_INDEX;
+        search.total_tasks += per_problem;
+        results[index].candidates =
+            calloc(per_problem, sizeof(*results[index].candidates));
+        if (results[index].candidates == NULL ||
+            shadowspill_schedule_facts_create(&problems[index], &problem->facts) != 0 ||
+            shadowspill_schedule_storage_create(
+                problems[index].residency->alias_count, &problem->selected
+            ) != 0) {
+            program_search_destroy(&search, NULL, 0U);
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        }
+        results[index].candidate_count = per_problem;
+        problem->ready = 1;
+    }
+
+    const uint32_t worker_count = worker_count_for(options, search.total_tasks);
+    SearchWorker *workers = calloc(worker_count, sizeof(*workers));
+    if (workers == NULL) {
+        program_search_destroy(&search, NULL, 0U);
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
+    for (uint32_t index = 0U; index < worker_count; ++index) {
+        workers[index].search = &search;
+        workers[index].workspace_problem = SHADOWSPILL_PLANNER_NO_INDEX;
+    }
+
+    /* The calling thread is one of the workers, so a single-worker run needs
+     * no thread at all and the common case starts one fewer. */
+    pthread_t *threads = NULL;
+    uint32_t started_threads = 0U;
+    if (worker_count > 1U) {
+        threads = calloc(worker_count - 1U, sizeof(*threads));
+        if (threads == NULL) {
+            program_search_destroy(&search, workers, worker_count);
+            return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        }
+        for (uint32_t index = 1U; index < worker_count; ++index) {
+            if (pthread_create(
+                    &threads[index - 1U], NULL, worker_main, &workers[index]
+                ) != 0) {
+                break;
+            }
+            ++started_threads;
         }
     }
-
-    const Section select = section_open(&search.workspace.sections.select_ns);
-    const ShadowSpillStatus status = problem_select(&search);
-    section_close(select);
-
-    result->status = status;
-    result->work = workspace_work(&search.workspace);
-    for (uint32_t index = 0U; index < result->candidate_count; ++index) {
-        add_repairs(&result->repairs, &result->candidates[index].repairs);
+    worker_main(&workers[0]);
+    for (uint32_t index = 0U; index < started_threads; ++index) {
+        (void)pthread_join(threads[index], NULL);
     }
-    const Section teardown =
-        section_open(&result->work.sections.teardown_ns);
-    problem_teardown(&search);
-    section_close(teardown);
-    section_close_total(&result->work.sections, started);
-    return status;
+    free(threads);
+
+    int failed = 0;
+    for (uint32_t index = 0U; index < worker_count; ++index) {
+        failed |= workers[index].failed;
+    }
+
+    /* Adopt each problem's winner, and sum what its candidates did. */
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        SearchedProblem *problem = &search.problems[index];
+        ShadowSpillPressureFitProblemResult *result = &results[index];
+        for (uint32_t slot = 0U; slot < problem->candidate_count; ++slot) {
+            const ShadowSpillPressureFitCandidateDiagnostic *candidate =
+                &result->candidates[slot];
+            add_repairs(&result->repairs, &candidate->repairs);
+            result->work = add_work(result->work, candidate->work);
+            /* The problem spans its candidates. A candidate no worker
+             * reached has both stamps zero and is skipped, so an untouched
+             * problem keeps the zero span it started with. */
+            if (candidate->finished_ns == 0U) {
+                continue;
+            }
+            if (result->finished_ns == 0U ||
+                candidate->started_ns < result->started_ns) {
+                result->started_ns = candidate->started_ns;
+            }
+            if (candidate->finished_ns > result->finished_ns) {
+                result->finished_ns = candidate->finished_ns;
+            }
+        }
+        if (failed) {
+            result->status = SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
+            continue;
+        }
+        if (problem->selected_candidate == SHADOWSPILL_PLANNER_NO_INDEX) {
+            result->status = SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
+            continue;
+        }
+        result->selected_candidate_index = problem->selected_candidate;
+        result->selected_makespan_ns = problem->selected_makespan_ns;
+        if (adopt_selected_schedule(result, &problem->selected) != 0) {
+            result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+            failed = 1;
+            continue;
+        }
+        result->status = SHADOWSPILL_STATUS_OK;
+    }
+
+    /* A problem's sections are the sum of its candidates', including their
+     * totals and residuals, so the identity total == named + residual still
+     * holds -- as an accounting identity over work done, which is what it has
+     * to be once several workers run at once. Wall time is no longer that
+     * sum and is not reported here: the whole point of the workers is that
+     * the call finishes sooner than the work it did. */
+    (void)started;
+    program_search_destroy(&search, workers, worker_count);
+    if (failed) {
+        return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
+    }
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        if (results[index].status == SHADOWSPILL_STATUS_OK) {
+            return SHADOWSPILL_STATUS_OK;
+        }
+    }
+    return SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
 }

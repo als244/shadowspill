@@ -13,12 +13,9 @@ winner, which is ``refinement``.
 
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
-from functools import cache
+from dataclasses import dataclass
 
 from shadowspill.ir import Program, RecomputationSelection, ResidencySpec
 from shadowspill.simulator import SimulationConfig
@@ -37,7 +34,6 @@ from ..admission.indexed import (
 from ..best import BestPlaced
 from ..diagnostics import (
     PressureFitDiagnostics,
-    PressureFitRepairDiagnostics,
     PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
     RecomputationChoiceDiagnostic,
@@ -51,12 +47,11 @@ from ..result import (
     PressureFitSearchExhaustedError,
 )
 from .candidates import (
-    CCandidateDiagnostic,
     CPreflightResult,
     CProblemResult,
     decode_candidate_diagnostic,
     decode_schedule,
-    evaluate_program_problem,
+    evaluate_program_problems,
     validate_program_problem,
 )
 
@@ -211,121 +206,31 @@ def preflight_problems(
     )
 
 
-def worker_count(options: PressureFitOptions, count: int) -> int:
-    if count <= 1 or options.workers == 1:
-        return 1
-    if options.workers > 1:
-        return min(options.workers, count)
-    return min(max(os.cpu_count() or 1, 1), count)
-
-
-@cache
-def _shared_worker_pool() -> ThreadPoolExecutor:
-    """One process-wide pool for all compiled evaluation units.
-
-    Concurrent plans — the speculative capacity-ladder rungs above
-    all — submit their units here instead of nesting private pools,
-    so live compiled threads never exceed the machine's cores and
-    idle cores drain whichever rung still has work. Worker count is
-    scheduling only; results are merged in deterministic unit order.
-    """
-
-    return ThreadPoolExecutor(max_workers=max(os.cpu_count() or 1, 1))
-
-
 def run_problems(
     problems: tuple[SelectionProblem, ...],
     options: PressureFitOptions,
     *,
     best: BestPlaced | None = None,
 ) -> tuple[CProblemResult | None, ...]:
-    """Evaluate every recomputation selection in the planner.
+    """Evaluate every resolved program in the planner, on its worker threads.
 
-    Each problem's candidates are split by residency strategy into one
-    compiled evaluation per (problem, strategy), so parallelism scales
-    with problem_count x strategy_count instead of problem count
-    alone. The per-problem merge restores the exact serial candidate
-    order and tie-breaks, so the selected schedule is identical to a
-    single-call evaluation; only cross-strategy cache-hit counters can
-    differ.
+    One call, however many resolved programs there are. The library owns the
+    threads and hands out candidates, so worker count and problem count are
+    independent and the placement record is shared across all of them -- a
+    plan placed under any resolved program bounds the search under the rest.
     """
 
-    strategies = options.residency_strategies
-    units = tuple(
-        (problem_index, replace(options, residency_strategies=(strategy,)))
-        for problem_index, _problem in enumerate(problems)
-        for strategy in strategies
-    )
-
-    def evaluate(
-        unit: tuple[int, PressureFitOptions],
-    ) -> CProblemResult | None:
-        problem_index, unit_options = unit
-        problem = problems[problem_index]
-        # Read the bound once per unit. Under a shared object this is the
-        # round barrier: every unit dispatched together sees the same value,
-        # so the result does not depend on which finished first.
-        return evaluate_program_problem(
-            problem.indexed_template,
-            unit_options,
-            admission=problem.indexed_admission,
-            placement=problem.indexed_placement,
-            best_placed=0 if best is None else best.handle,
-            selection_index=problem_index,
-        )
-
-    workers = worker_count(options, len(units))
-    if workers == 1:
-        chunk_results = [evaluate(unit) for unit in units]
-    elif options.workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            chunk_results = list(executor.map(evaluate, units))
-    else:
-        chunk_results = list(_shared_worker_pool().map(evaluate, units))
-    per_problem = len(strategies)
-    return tuple(
-        merge_strategy_results(
-            chunk_results[index * per_problem : (index + 1) * per_problem]
-        )
-        for index in range(len(problems))
-    )
-
-
-def merge_strategy_results(
-    chunks: list[CProblemResult | None],
-) -> CProblemResult | None:
-    """Concatenate per-strategy evaluations back into one problem result."""
-
-    if any(chunk is None for chunk in chunks):
-        return None
-    merged = [chunk for chunk in chunks if chunk is not None]
-    if len(merged) == 1:
-        return merged[0]
-    candidates: list[CCandidateDiagnostic] = []
-    selected_index: int | None = None
-    selected_makespan: int | None = None
-    selected_schedule = None
-    repairs = PressureFitRepairDiagnostics()
-    work = PressureFitWorkDiagnostics()
-    for chunk in merged:
-        offset = len(candidates)
-        candidates.extend(chunk.candidates)
-        repairs += chunk.repairs
-        work += chunk.work
-        if chunk.selected_candidate_index is None:
-            continue
-        assert chunk.selected_makespan_ns is not None
-        if selected_makespan is None or chunk.selected_makespan_ns < selected_makespan:
-            selected_index = offset + chunk.selected_candidate_index
-            selected_makespan = chunk.selected_makespan_ns
-            selected_schedule = chunk.selected_schedule
-    return CProblemResult(
-        selected_candidate_index=selected_index,
-        selected_makespan_ns=selected_makespan,
-        selected_schedule=selected_schedule,
-        candidates=tuple(candidates),
-        repairs=repairs,
-        work=work,
+    return evaluate_program_problems(
+        tuple(
+            (
+                problem.indexed_template,
+                problem.indexed_admission,
+                problem.indexed_placement,
+            )
+            for problem in problems
+        ),
+        options,
+        best_placed=0 if best is None else best.handle,
     )
 
 
@@ -389,6 +294,8 @@ def finish_pressurefit(
                 ),
                 candidate_evaluations=candidates,
                 work=result.work,
+                started_ns=result.started_ns,
+                finished_ns=result.finished_ns,
             )
         )
         if result.selected_candidate_index is None:
@@ -512,8 +419,6 @@ __all__ = [
     "SelectionProblem",
     "build_problems",
     "finish_pressurefit",
-    "merge_strategy_results",
     "preflight_problems",
     "run_problems",
-    "worker_count",
 ]

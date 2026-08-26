@@ -905,43 +905,73 @@ static ShadowSpillStatus prepare_problem(
     return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problem(
-    const ShadowSpillPressureFitProgramProblem *problem,
+ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
+    const ShadowSpillPressureFitProgramProblem *problems,
+    uint32_t problem_count,
     const ShadowSpillPressureFitProblemOptions *options,
-    ShadowSpillPressureFitProblemResult *result
+    ShadowSpillPressureFitProblemResult *results
 ) {
-    if (result == NULL) {
+    if (problems == NULL || results == NULL || problem_count == 0U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    memset(result, 0, sizeof(*result));
-    result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
-    result->status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    if (!program_problem_valid(problem, options)) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        memset(&results[index], 0, sizeof(results[index]));
+        results[index].selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
+        results[index].status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        if (!program_problem_valid(&problems[index], options)) {
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        }
     }
-    PreparedProblem prepared = {0};
-    /* Deriving the residency problem from the Program, which the evaluation
-     * below never sees and so could never account for. */
+    PreparedProblem *prepared = calloc(problem_count, sizeof(*prepared));
+    ShadowSpillPressureFitProblem *derived =
+        calloc(problem_count, sizeof(*derived));
+    if (prepared == NULL || derived == NULL) {
+        free(prepared);
+        free(derived);
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
+
+    /* Deriving the residency problems from their Programs, which the
+     * evaluation below never sees and so could never account for. */
     const uint64_t prepare_started = shadowspill_monotonic_ns();
-    ShadowSpillStatus status = prepare_problem(problem, options, &prepared);
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
+    uint32_t ready = 0U;
+    for (; ready < problem_count; ++ready) {
+        status = prepare_problem(&problems[ready], options, &prepared[ready]);
+        if (status != SHADOWSPILL_STATUS_OK) {
+            break;
+        }
+        derived[ready] = prepared[ready].problem;
+    }
     const uint64_t prepare_ns = shadowspill_monotonic_ns() - prepare_started;
+
     if (status == SHADOWSPILL_STATUS_OK) {
-        status = shadowspill_evaluate_pressurefit_problem(
-            &prepared.problem,
-            options,
-            result
+        status = shadowspill_evaluate_pressurefit_problems(
+            derived, problem_count, options, results
         );
     } else {
-        result->status = status;
+        /* One Program that cannot be prepared is a fact about that Program;
+         * the caller decides whether the rest still answer. */
+        results[ready].status = status;
     }
+
     const uint64_t teardown_started = shadowspill_monotonic_ns();
-    prepared_problem_destroy(&prepared);
+    for (uint32_t index = 0U; index < ready; ++index) {
+        prepared_problem_destroy(&prepared[index]);
+    }
+    free(prepared);
+    free(derived);
     const uint64_t teardown_ns = shadowspill_monotonic_ns() - teardown_started;
+
     /* Both spans sit outside the evaluation's own, so they extend the total
-     * as well as their own sections, and the identity still holds. */
-    result->work.sections.prepare_ns += prepare_ns;
-    result->work.sections.teardown_ns += teardown_ns;
-    result->work.sections.total_ns += prepare_ns + teardown_ns;
+     * as well as their own sections, and the identity still holds. Preparing
+     * and releasing are shared by the call, so each result reports the whole
+     * span rather than a share of it. */
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        results[index].work.sections.prepare_ns += prepare_ns;
+        results[index].work.sections.teardown_ns += teardown_ns;
+        results[index].work.sections.total_ns += prepare_ns + teardown_ns;
+    }
     return status;
 }
 

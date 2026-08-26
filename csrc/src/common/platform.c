@@ -34,11 +34,19 @@ void shadowspill_name_current_thread(const char *name) {
      * callback carries the name for anyone who needs it. */
 }
 
+uint32_t shadowspill_logical_cpu_count(void) {
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwNumberOfProcessors == 0U ? 1U
+                                           : (uint32_t)info.dwNumberOfProcessors;
+}
+
 #else
 
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
+#include <unistd.h>
 
 uint64_t shadowspill_monotonic_ns(void) {
     struct timespec value;
@@ -60,6 +68,11 @@ void shadowspill_name_current_thread(const char *name) {
     /* Linux caps the name at 16 bytes including the terminator. */
     (void)pthread_setname_np(pthread_self(), "shadowspill.wkr");
 #endif
+}
+
+uint32_t shadowspill_logical_cpu_count(void) {
+    const long count = sysconf(_SC_NPROCESSORS_ONLN);
+    return count > 0 ? (uint32_t)count : 1U;
 }
 
 #endif

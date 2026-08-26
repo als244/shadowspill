@@ -15,6 +15,7 @@ from .json import (
     _mapping,
     _optional_integer,
     _optional_string,
+    _span,
     _string,
 )
 
@@ -48,6 +49,12 @@ class RecomputationProblemDiagnostics:
     selected_makespan_ns: int | None
     candidate_evaluations: tuple[CandidateDiagnostic, ...]
     work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
+    #: This problem's span on the same clock its candidates use: from the first
+    #: candidate a worker started to the last one it finished. Several problems
+    #: evaluated in one call overlap, because workers take whatever task is
+    #: next rather than finishing one problem before starting another.
+    started_ns: int = 0
+    finished_ns: int = 0
 
     def __post_init__(self) -> None:
         if any(
@@ -126,6 +133,10 @@ class RecomputationProblemDiagnostics:
                 "candidate_status_counts": self.candidate_status_counts,
             },
             "work": self.work.to_dict(),
+            "span": {
+                "started_ns": self.started_ns,
+                "finished_ns": self.finished_ns,
+            },
             "repairs": self.repairs.to_dict(),
             "candidate_policy_evaluations": [
                 item.to_dict() for item in self.candidate_evaluations
@@ -156,7 +167,8 @@ class RecomputationProblemDiagnostics:
             CandidateDiagnostic.from_value(
                 item,
                 f"{path}.candidate_policy_evaluations[{index}]",
-            ).with_selection_id(selection_id)
+                selection_id,
+            )
             for index, item in enumerate(raw_candidates)
         )
         result = cls(
@@ -185,6 +197,8 @@ class RecomputationProblemDiagnostics:
             work=PressureFitWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
+            started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),
+            finished_ns=_span(data.get("span"), "finished_ns", f"{path}.span"),
         )
         expected_summary = {
             "candidate_policy_count": result.candidate_policy_count,

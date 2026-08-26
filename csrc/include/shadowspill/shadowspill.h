@@ -37,7 +37,7 @@ extern "C" {
  * compiled separately against a contract, and can genuinely differ from the
  * library they load into.
  */
-#define SHADOWSPILL_ABI_VERSION 58U
+#define SHADOWSPILL_ABI_VERSION 61U
 
 /* The version the loaded library was built with. */
 SHADOWSPILL_API uint32_t shadowspill_abi_version(void);

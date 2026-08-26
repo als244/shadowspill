@@ -74,10 +74,10 @@ def validate_pressurefit_inputs(
         )
 
 
-def evaluate_resolution(
+def evaluate_resolutions(
     program: Program,
     *,
-    resolution: Resolution,
+    resolutions: tuple[Resolution, ...],
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
@@ -86,17 +86,20 @@ def evaluate_resolution(
     placement: AdmissionFacts | None = None,
     best: BestPlaced | None = None,
     progress: Callable[[str], None] | None = None,
-) -> tuple[SelectionProblem, CProblemResult | None]:
-    """Plan one resolved program: every candidate policy, one task set.
+) -> tuple[tuple[SelectionProblem, CProblemResult | None], ...]:
+    """Plan every resolved program: each one's candidate policies, one call.
 
-    This is PressureFit proper. It receives a task set with every
-    alternative already fixed and knows nothing about what was chosen
-    between, or that anything was. The caller decides which resolved
-    programs exist and in what order they are tried.
+    This is PressureFit proper. It receives task sets with every alternative
+    already fixed and knows nothing about what was chosen between them. The
+    caller decides which resolved programs exist and in what order.
 
-    Returns the compiled problem beside its result so the caller can decode
-    a winner across several resolved programs at once; `None` means this
-    resolution was rejected before any candidate ran.
+    They are evaluated together because that is what shares the placement
+    record between them, and because the library's workers are then free to
+    move between resolved programs rather than idling on the slowest one.
+
+    Returns each compiled problem beside its result, so the caller can decode
+    a winner across all of them at once; a `None` result means that resolved
+    program was rejected before any candidate ran.
     """
 
     simulator_api()
@@ -109,7 +112,7 @@ def evaluate_resolution(
             config,
             admission,
             placement=placement,
-            resolutions=(resolution,),
+            resolutions=resolutions,
             progress=progress,
         )
     )
@@ -117,7 +120,7 @@ def evaluate_resolution(
     # The candidates publish to the record themselves, as they place, so
     # there is nothing to offer here: by the time this returns, anything
     # worth sharing is already shared.
-    return problems[0], results[0]
+    return tuple(zip(problems, results, strict=True))
 
 
-__all__ = ["evaluate_resolution", "validate_pressurefit_inputs"]
+__all__ = ["evaluate_resolutions", "validate_pressurefit_inputs"]

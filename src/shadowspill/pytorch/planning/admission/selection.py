@@ -90,7 +90,7 @@ class SelectedAdmission:
         return replace(
             selected,
             simulation=self.simulation,
-            diagnostics=selected.diagnostics.with_selected_makespan(
+            diagnostics=selected.diagnostics.replace_selected_makespan(
                 self.simulation.makespan_ns
             ),
         )

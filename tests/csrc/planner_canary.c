@@ -276,7 +276,12 @@ int main(void) {
     };
     const uint8_t problem_strategies[] = {SHADOWSPILL_RESIDENCY_TIGHT_STALL};
     const uint8_t problem_rules[] = {SHADOWSPILL_PREFETCH_LATEST_SAFE};
+    /* Plain emission only. All three axes are lists, and the candidate count
+     * is their product, so leaving this one empty asks for no candidates. */
+    const uint8_t problem_modes[] = {0U};
     const ShadowSpillPressureFitProblemOptions problem_options = {
+        .coalescing_modes = problem_modes,
+        .coalescing_mode_count = 1U,
         .residency_strategies = problem_strategies,
         .residency_strategy_count = 1U,
         .prefetch_rules = problem_rules,
@@ -284,8 +289,9 @@ int main(void) {
         .max_repair_attempts = 1U,
     };
     ShadowSpillPressureFitProblemResult problem_result = {0};
-    if (shadowspill_evaluate_pressurefit_problem(
+    if (shadowspill_evaluate_pressurefit_problems(
             &problem,
+            1U,
             &problem_options,
             &problem_result
         ) != SHADOWSPILL_STATUS_OK ||
@@ -335,8 +341,9 @@ int main(void) {
         return EXIT_FAILURE;
     }
     ShadowSpillPressureFitProblemResult program_problem_result = {0};
-    if (shadowspill_evaluate_pressurefit_program_problem(
+    if (shadowspill_evaluate_pressurefit_program_problems(
             &program_problem,
+            1U,
             &problem_options,
             &program_problem_result
         ) != SHADOWSPILL_STATUS_OK ||
