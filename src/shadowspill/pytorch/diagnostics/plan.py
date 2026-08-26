@@ -15,7 +15,7 @@ from shadowspill.ir import (
     shared_residency_footprint,
 )
 from shadowspill.planner import PressureFitDiagnostics, PressureFitResult
-from shadowspill.pytorch.runtime_adapter import TransferCapabilities, TransferProfile
+from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
 
 
 @dataclass(frozen=True, slots=True)
