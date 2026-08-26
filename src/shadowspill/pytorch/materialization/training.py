@@ -11,10 +11,10 @@ import torch
 import torch.nn as nn
 from torch.export.graph_signature import InputKind
 
+from shadowspill.errors import PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
-from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,

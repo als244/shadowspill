@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import torch
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import (
@@ -17,7 +18,6 @@ from shadowspill.pytorch.capture.storage import (
 )
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
-from ..contracts import CaptureError
 from ..partition import StageExample
 from .catalog import ObjectCatalog, TensorSlot, _view_extent_bytes
 

@@ -10,7 +10,8 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import tree_map
 
-from shadowspill.pytorch.contracts import CaptureError, TensorSpec
+from shadowspill.errors import CaptureError
+from shadowspill.pytorch.contracts import TensorSpec
 
 
 def fake_cuda_model(

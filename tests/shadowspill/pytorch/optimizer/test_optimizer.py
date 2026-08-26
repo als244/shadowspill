@@ -5,7 +5,7 @@ import copy
 import pytest
 import torch
 
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.optimizer import (
     capture_optimizer,

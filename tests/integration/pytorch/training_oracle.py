@@ -8,8 +8,8 @@ from dataclasses import dataclass
 import torch
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, ObjectiveSchema
-from shadowspill.pytorch.contracts import CaptureError
 
 
 @dataclass(frozen=True, slots=True)

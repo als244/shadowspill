@@ -15,6 +15,7 @@ from torch._functorch.partitioners import min_cut_rematerialization_partition
 from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError, ObjectiveError
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -25,7 +26,7 @@ from shadowspill.pytorch.capture.artifacts import (
     normalize_objective_result,
 )
 from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
-from shadowspill.pytorch.contracts import CaptureError, ObjectiveError, ObjectiveResult
+from shadowspill.pytorch.contracts import ObjectiveResult
 
 from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
 

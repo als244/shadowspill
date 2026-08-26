@@ -11,9 +11,11 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+from shadowspill.errors import (
+    InputGuardError,
+)
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
-    InputGuardError,
     Runtime,
     RuntimeConfigurationError,
     TensorRef,

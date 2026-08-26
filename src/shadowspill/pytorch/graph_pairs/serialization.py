@@ -13,6 +13,7 @@ from typing import Literal, TypeGuard
 import torch
 from torch.fx.passes.fake_tensor_prop import FakeTensorProp
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -22,7 +23,6 @@ from shadowspill.pytorch.capture.artifacts import (
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.fx_graph import SerializedFxGraph
 
-from ..contracts import CaptureError
 from .artifacts import GraphPairVariant
 
 

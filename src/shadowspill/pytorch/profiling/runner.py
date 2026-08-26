@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
-from shadowspill.pytorch.contracts import CaptureError, ProfilingError
+from shadowspill.errors import CaptureError, ProfilingError
 
 from .records import (
     ProfileEnvironment,

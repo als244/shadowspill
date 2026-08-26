@@ -5,7 +5,13 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-from shadowspill.pytorch import CaptureError, ObjectiveError, ObjectiveResult
+from shadowspill.errors import (
+    CaptureError,
+    ObjectiveError,
+)
+from shadowspill.pytorch import (
+    ObjectiveResult,
+)
 from shadowspill.pytorch.capture import aot as aot_module
 from shadowspill.pytorch.capture.aot import (
     capture_forward,

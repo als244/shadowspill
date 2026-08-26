@@ -6,12 +6,12 @@ import torch
 import torch.nn as nn
 from torch.export.graph_signature import InputKind
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import live_view_key
 from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTensorRole
 
-from ...contracts import CaptureError
 from ...graph_pairs import PartitionedTrainingCapture
 from ..catalog import (
     ObjectCatalog,

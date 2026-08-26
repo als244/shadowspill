@@ -16,7 +16,8 @@ from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.fx import Graph, GraphModule, Node
 from torch.utils._pytree import tree_flatten
 
-from ..contracts import CaptureError
+from shadowspill.errors import CaptureError
+
 from .artifacts import StageRecord
 from .split import SplitExportGraph
 

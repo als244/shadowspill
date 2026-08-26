@@ -15,7 +15,7 @@ from torch.utils._pytree import (
     tree_unflatten,
 )
 
-from shadowspill.pytorch.contracts import PlanningError
+from shadowspill.errors import PlanningError
 from shadowspill.runtime import ObjectConsistency
 
 from .declarations import SharedInput, SharedOutput

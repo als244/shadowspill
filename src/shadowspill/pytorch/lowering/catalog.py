@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import (
     AliasGroupSpec,
     ObjectRole,
@@ -22,8 +23,6 @@ from shadowspill.pytorch.capture.live_storage import (
     live_view_key,
 )
 from shadowspill.pytorch.capture.storage import OutputView
-
-from ..contracts import CaptureError
 
 
 @dataclass(frozen=True, slots=True)

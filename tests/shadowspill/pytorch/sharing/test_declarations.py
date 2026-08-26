@@ -5,9 +5,11 @@ from dataclasses import dataclass
 import pytest
 import torch
 
+from shadowspill.errors import (
+    PlanningError,
+)
 from shadowspill.pytorch import (
     ObjectConsistency,
-    PlanningError,
     SharedInput,
     SharedOutput,
     TensorRef,

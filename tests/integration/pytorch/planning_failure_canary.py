@@ -13,13 +13,15 @@ import torch
 import torch.nn as nn
 from torch._inductor import config as inductor_config
 
-from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.pytorch import (
+from shadowspill.errors import (
     AdmissionError,
     CaptureError,
     CompilationError,
     PlanInfeasibleError,
     ProfilingError,
+)
+from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.pytorch import (
     Runtime,
     export_model_state,
     import_model_state,

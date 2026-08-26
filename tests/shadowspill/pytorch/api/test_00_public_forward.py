@@ -4,8 +4,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch import (
+from shadowspill.errors import (
     InputGuardError,
+)
+from shadowspill.pytorch import (
     export_model_state,
     import_model_state,
     plan_forward,

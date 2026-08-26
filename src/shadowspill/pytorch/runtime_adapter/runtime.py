@@ -14,6 +14,7 @@ from typing import Any
 
 import torch
 
+from shadowspill.errors import AdmissionError
 from shadowspill.libraries import resolve_library
 from shadowspill.memory import (
     DevicePool,
@@ -23,7 +24,6 @@ from shadowspill.memory import (
 from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
 )
-from shadowspill.pytorch.contracts import AdmissionError
 from shadowspill.pytorch.runtime_adapter.abi import (
     TransferCalibrationConfig,
     TransferRouteKey,

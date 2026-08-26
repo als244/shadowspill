@@ -5,7 +5,8 @@ from __future__ import annotations
 import torch
 from torch.utils._pytree import tree_flatten
 
-from ..contracts import CaptureError
+from shadowspill.errors import CaptureError
+
 from ..partition.artifacts import PartitionedExport
 from .artifacts import DifferentiatedStage
 from .repository import GraphPairRepository

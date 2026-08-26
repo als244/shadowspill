@@ -10,6 +10,11 @@ import pytest
 import torch
 import torch.nn as nn
 
+from shadowspill.errors import (
+    CaptureError,
+    CompilationError,
+    ProfilingError,
+)
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation import compiler as compiler_module
 from shadowspill.pytorch.compilation import inductor as inductor_module
@@ -23,11 +28,6 @@ from shadowspill.pytorch.compilation.inductor import (
     ExecutableTaskManifest,
     compile_explicit_inductor_task,
     compile_inductor_task,
-)
-from shadowspill.pytorch.contracts import (
-    CaptureError,
-    CompilationError,
-    ProfilingError,
 )
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.profiling import (

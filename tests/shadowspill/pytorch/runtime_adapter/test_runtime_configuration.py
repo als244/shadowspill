@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from shadowspill.pytorch import AdmissionError
+from shadowspill.errors import (
+    AdmissionError,
+)
 from shadowspill.pytorch.runtime_adapter.runtime import (
     MemoryPool,
     Runtime,

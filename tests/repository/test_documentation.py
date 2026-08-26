@@ -27,6 +27,7 @@ _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 _MEMORY_MODULE = ROOT / "src" / "shadowspill" / "memory.py"
 _PYTORCH_MODULE = ROOT / "src" / "shadowspill" / "pytorch" / "__init__.py"
 _CORE_PYTHON_MODULES = (
+    ROOT / "src" / "shadowspill" / "errors.py",
     ROOT / "src" / "shadowspill" / "ir" / "__init__.py",
     ROOT / "src" / "shadowspill" / "planner" / "__init__.py",
     ROOT / "src" / "shadowspill" / "simulator" / "__init__.py",

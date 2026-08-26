@@ -8,7 +8,7 @@ from typing import Literal, Protocol, runtime_checkable
 import torch.nn as nn
 from torch.fx import GraphModule, Node
 
-from ..contracts import CaptureError
+from shadowspill.errors import CaptureError
 
 
 @runtime_checkable

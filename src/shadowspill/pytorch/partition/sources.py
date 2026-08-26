@@ -6,7 +6,8 @@ import operator
 
 from torch.fx import Node
 
-from ..contracts import CaptureError
+from shadowspill.errors import CaptureError
+
 from .artifacts import StageValueSource
 
 

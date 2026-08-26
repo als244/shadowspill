@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import (
     MemoryLocation,
     ObjectRole,
@@ -15,7 +16,6 @@ from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.lowering.catalog import ObjectCatalog
 from shadowspill.pytorch.lowering.forward import (
     lower_partitioned_forward_program,
