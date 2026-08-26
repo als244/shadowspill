@@ -25,11 +25,11 @@ from dataclasses import dataclass
 
 from shadowspill.ir import MemoryActionKind, MemorySchedule
 from shadowspill.planner.admission.operations import AdmissionOperations
-from shadowspill.pytorch.planning.admission.admission_replay import (
+from shadowspill.planner.admission.admission_replay import (
     AdmissionReplayPurpose,
 )
-from shadowspill.pytorch.planning.admission.layout.model import LeaseLifetime
-from shadowspill.pytorch.planning.admission.setup import AdmissionSetup
+from shadowspill.planner.admission.layout.model import LeaseLifetime
+from shadowspill.planner.admission.setup import AdmissionSetup
 from shadowspill.simulator import SimulationResult, TaskInterval, TransferInterval
 
 #: Compiled purpose codes, in the order `ShadowSpillAdmissionPurpose` declares.

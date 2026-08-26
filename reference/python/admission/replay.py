@@ -33,7 +33,7 @@ from shadowspill.planner import (
     TaskAdmissionSpec,
     TaskAllocationStepKind,
 )
-from shadowspill.pytorch.planning.admission.admission_replay import (
+from shadowspill.planner.admission.admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
     AdmissionReplayStep,

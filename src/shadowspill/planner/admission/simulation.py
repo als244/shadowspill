@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 from shadowspill.ir import MemorySchedule, Program, RecomputationSelection, TaskSpec
+from shadowspill.planner.admission.admission_replay import (
+    AdmissionReplay,
+    AdmissionReplayPurpose,
+    AdmissionReplayStep,
+    CausalAdmissionDependency,
+)
 from shadowspill.runtime import AdmissionReplayOperationKind
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     MemoryReuseDependency,
     SimulationAdmission,
     TaskPhysicalDelta,
-)
-
-from .admission_replay import (
-    AdmissionReplay,
-    AdmissionReplayPurpose,
-    AdmissionReplayStep,
-    CausalAdmissionDependency,
 )
 
 

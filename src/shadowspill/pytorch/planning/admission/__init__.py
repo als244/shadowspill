@@ -1,6 +1,6 @@
 """Physical-budget reconciliation and exact slab replay."""
 
-from .admission_replay import (
+from shadowspill.planner.admission.admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
     AdmissionReplayStep,
@@ -8,9 +8,7 @@ from .admission_replay import (
     OwnershipTransition,
     OwnershipTransitionKind,
 )
-from .bindings import TaskOutputBinding, build_admission_facts
-from .layout import (
-    DynamicTaskAllocationPolicy,
+from shadowspill.planner.admission.layout import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
     FixedLayoutMeasurement,
@@ -20,22 +18,27 @@ from .layout import (
     build_fixed_layout_admission,
     certify_fixed_layout,
     measure_fixed_layout,
-    project_runtime_fixed_layout,
 )
-from .physical import physical_admission, reconcile_spill_pool, seal_physical_budget
-from .refinement import (
+from shadowspill.planner.admission.refinement import (
     FixedLayoutAttempt,
     FixedLayoutSelection,
     placement_facts,
     resolve_fixed_layout_selection,
 )
+from shadowspill.planner.admission.simulation import simulation_admission_from_replay
+
+from .bindings import TaskOutputBinding, build_admission_facts
+from .layout_runtime import (
+    DynamicTaskAllocationPolicy,
+    project_runtime_fixed_layout,
+)
+from .physical import physical_admission, reconcile_spill_pool, seal_physical_budget
 from .selection import (
     SelectedAdmission,
     build_fixed_selected_admission,
     dynamic_scratch_reserve_bytes,
     output_bindings_for_entrypoints,
 )
-from .simulation import simulation_admission_from_replay
 
 __all__ = [
     "AdmissionReplay",

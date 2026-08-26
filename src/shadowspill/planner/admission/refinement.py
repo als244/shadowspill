@@ -12,14 +12,17 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitResult,
 )
-from shadowspill.planner.cache import CachedPressureFitResult
-from shadowspill.simulator import SimulationConfig
 
 # Straight at the modules rather than the package: `layout/__init__` also
 # re-exports the runtime projection, which binds to the installed
 # allocator. Checking a fixed layout is correct needs none of that.
-from .layout.build import build_fixed_layout_admission
-from .layout.model import FixedLayoutAdmission, FixedLayoutInfeasibleError
+from shadowspill.planner.admission.layout.build import build_fixed_layout_admission
+from shadowspill.planner.admission.layout.model import (
+    FixedLayoutAdmission,
+    FixedLayoutInfeasibleError,
+)
+from shadowspill.planner.cache import CachedPressureFitResult
+from shadowspill.simulator import SimulationConfig
 
 
 @dataclass(frozen=True, slots=True)

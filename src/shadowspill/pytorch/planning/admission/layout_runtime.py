@@ -5,15 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule, Program
+from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
+from shadowspill.planner.admission.layout.model import (
+    FixedLayoutPlacement,
+    FixedPhysicalLayout,
+    LeaseLifetime,
+)
 from shadowspill.pytorch.runtime_adapter.fixed_layout import (
     RuntimeFixedDependency,
     RuntimeFixedLayout,
     RuntimeFixedPlacement,
     RuntimePlacementKind,
 )
-
-from ..admission_replay import AdmissionReplayPurpose
-from .model import FixedLayoutPlacement, FixedPhysicalLayout, LeaseLifetime
 
 _NO_ID = (1 << 64) - 1
 

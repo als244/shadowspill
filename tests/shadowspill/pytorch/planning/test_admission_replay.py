@@ -24,7 +24,7 @@ from shadowspill.planner import (
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
-from shadowspill.pytorch.planning.admission.admission_replay import (
+from shadowspill.planner.admission.admission_replay import (
     AdmissionReplayPurpose,
     OwnershipTransitionKind,
 )

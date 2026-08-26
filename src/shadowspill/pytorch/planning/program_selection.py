@@ -7,6 +7,13 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from shadowspill.planner import PressureFitOptions, PressureFitResult
+
+# The admission package also re-exports the binding half, which reaches
+# lowering and the live allocator. Selecting a program needs neither.
+from shadowspill.planner.admission.refinement import (
+    placement_facts,
+    resolve_fixed_layout_selection,
+)
 from shadowspill.pytorch.cache import PlanningCache
 
 from ..program import (
@@ -14,13 +21,6 @@ from ..program import (
     MemoryBudgets,
     PressureFitProgram,
     TransferBandwidths,
-)
-
-# The admission package also re-exports the binding half, which reaches
-# lowering and the live allocator. Selecting a program needs neither.
-from .admission.refinement import (
-    placement_facts,
-    resolve_fixed_layout_selection,
 )
 from .repositories import open_artifact_repositories
 
