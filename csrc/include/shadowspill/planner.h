@@ -172,7 +172,11 @@ typedef struct ShadowSpillPressureFitProblemOptions {
     uint32_t residency_strategy_count;
     const uint8_t *prefetch_rules;
     uint32_t prefetch_rule_count;
-    uint8_t evaluate_coalesced;
+    /* Which coalescing modes to evaluate: 0 plain, 1 coalesced. A list like
+       the two axes above, so a caller evaluates exactly the combinations it
+       asks for; the product of the three counts is the candidate count. */
+    const uint8_t *coalescing_modes;
+    uint32_t coalescing_mode_count;
     uint32_t max_repair_attempts;
     uint8_t initial_placement;
     /* How much capacity a plan gives back at a time when its layout does
@@ -186,9 +190,12 @@ typedef struct ShadowSpillPressureFitProblemOptions {
        planner never owns it: one object passed to several searches shares the
        gate between them, separate objects keep them independent. */
     ShadowSpillBestPlaced *best_placed;
-    /* Recorded on the winning plan so a caller can tell which resolved
-       program produced it. Never interpreted here. */
-    uint32_t selection_index;
+    /* How many threads evaluate candidates. Zero means one per logical CPU,
+       one means evaluate serially on the calling thread. Scheduling rather
+       than search: it changes neither which plans are legal nor how they
+       simulate, but it does change how many candidates the shared record
+       lets a search skip, so per-candidate counters move with it. */
+    uint32_t workers;
 } ShadowSpillPressureFitProblemOptions;
 
 /*
@@ -396,6 +403,14 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint32_t capacity_refinements;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 
+    /* When this candidate ran, in nanoseconds from the start of the call
+       that evaluated it. Unlike `work.sections`, which is work done, these
+       are wall clock: two candidates ran at the same time exactly when
+       their spans overlap, which is what makes a timeline of the workers
+       readable. Both are zero for a candidate no worker reached. */
+    uint64_t started_ns;
+    uint64_t finished_ns;
+
     uint32_t error_task;
     uint32_t error_alias;
     uint32_t error_device;
@@ -417,6 +432,12 @@ typedef struct ShadowSpillPressureFitProblemResult {
     uint32_t candidate_count;
     ShadowSpillPressureFitRepairDiagnostics repairs;
     ShadowSpillPressureFitWorkDiagnostics work;
+    /* The problem's span on the same clock its candidates use: from the
+       first candidate a worker started to the last one it finished. With
+       several problems in one call these overlap, because workers take
+       whatever task is next rather than finishing a problem first. */
+    uint64_t started_ns;
+    uint64_t finished_ns;
 } ShadowSpillPressureFitProblemResult;
 
 /* Caller-owned output buffers for one selected schedule's exact admission. */
@@ -508,30 +529,40 @@ shadowspill_reduce_residency(
 );
 
 /*
- * Evaluate the complete deterministic candidate set for one already
- * resolved recomputation selection. The function performs no Python calls and
- * retains indexed residency and schedule records throughout evaluation. Result
- * storage is owned by the caller after success or a no-feasible result and
- * must be released with the matching destroy function.
+ * Evaluate several resolved programs on one set of worker threads.
+ *
+ * A candidate of a problem is the unit of work, and every candidate of every
+ * problem here competes for the same workers, so worker count and problem
+ * count are independent. Results are written one per problem, in input order.
+ * Worker count is scheduling only and never an input to an answer.
+ *
+ * The placement record in `options` is shared across all of them, which is
+ * the point of evaluating them together: a plan placed under any resolved
+ * program bounds the search under every other.
+ *
+ * `results` must have `problem_count` entries, each owned by the caller
+ * afterwards and released with the matching destroy function -- including
+ * when this returns a failure, since problems that completed still own
+ * their storage.
  */
 SHADOWSPILL_API ShadowSpillStatus
-shadowspill_evaluate_pressurefit_problem(
-    const ShadowSpillPressureFitProblem *problem,
+shadowspill_evaluate_pressurefit_program_problems(
+    const ShadowSpillPressureFitProgramProblem *problems,
+    uint32_t problem_count,
     const ShadowSpillPressureFitProblemOptions *options,
-    ShadowSpillPressureFitProblemResult *result
+    ShadowSpillPressureFitProblemResult *results
 );
 
 /*
- * Derive one indexed residency problem from a selected simulation program and
- * evaluate the complete deterministic PressureFit candidate set.
- * This is equivalent to constructing ShadowSpillResidencyProblem and its seed
- * explicitly, but avoids materializing alias-by-boundary matrices in Python.
+ * Evaluate several already-derived residency problems together. Same
+ * contract as above, for a caller that built the problems itself.
  */
 SHADOWSPILL_API ShadowSpillStatus
-shadowspill_evaluate_pressurefit_program_problem(
-    const ShadowSpillPressureFitProgramProblem *problem,
+shadowspill_evaluate_pressurefit_problems(
+    const ShadowSpillPressureFitProblem *problems,
+    uint32_t problem_count,
     const ShadowSpillPressureFitProblemOptions *options,
-    ShadowSpillPressureFitProblemResult *result
+    ShadowSpillPressureFitProblemResult *results
 );
 
 SHADOWSPILL_API ShadowSpillStatus
@@ -732,8 +763,6 @@ typedef struct ShadowSpillBestPlacedRecord {
        and the lease lifetimes derived from that timeline -- are not the ones
        the plan was chosen on. */
     uint64_t capacity_given_back_bytes;
-    /* Caller-assigned; the planner never interprets it. */
-    uint32_t selection_index;
     uint8_t residency_strategy;
     uint8_t prefetch_rule;
     uint8_t coalesced;
@@ -787,6 +816,7 @@ enum ShadowSpillPlannerStruct {
     SHADOWSPILL_STRUCT_BEST_PLACED_RECORD = 6,
     SHADOWSPILL_STRUCT_RESIDENCY_PROBLEM = 7,
     SHADOWSPILL_STRUCT_RESIDENCY_RESULT = 8,
+    SHADOWSPILL_STRUCT_PROBLEM_RESULT = 9,
 };
 
 SHADOWSPILL_API ShadowSpillStatus shadowspill_place_lifetimes(

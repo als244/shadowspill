@@ -23,7 +23,7 @@ def without_measurements(value: object) -> object:
 
     Two runs of the same input produce the same plan and different timings, so
     anything compared or digested across runs has to leave the timings out.
-    `sections` goes whole: every number in it is a measurement.
+    `sections` and `span` go whole: every number in them is a measurement.
     """
 
     # Tuples become lists: a payload read back from JSON has lists where the
@@ -35,8 +35,16 @@ def without_measurements(value: object) -> object:
     return {
         key: without_measurements(item)
         for key, item in value.items()
-        if key != "sections" and not key.endswith("_time_ns")
+        if key not in ("sections", "span") and not key.endswith("_time_ns")
     }
+
+
+def _span(value: object, name: str, path: str) -> int:
+    """One end of a wall-clock span, absent from anything digested or old."""
+
+    if value is None:
+        return 0
+    return _optional_integer(_mapping(value, path).get(name), f"{path}.{name}") or 0
 
 
 def _list(value: object, path: str) -> list[object]:

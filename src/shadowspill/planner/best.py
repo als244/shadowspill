@@ -43,7 +43,6 @@ class PlacedPlan:
     #: How much device capacity the plan gave back. Re-timing or re-measuring
     #: it at any other capacity produces a different plan's timeline.
     capacity_given_back_bytes: int
-    selection_index: int
     schedule_digest: bytes
 
 
@@ -75,7 +74,6 @@ class BestPlaced:
             makespan_ns=int(record.makespan_ns),
             object_capacity_bytes=int(record.object_capacity_bytes),
             capacity_given_back_bytes=int(record.capacity_given_back_bytes),
-            selection_index=int(record.selection_index),
             schedule_digest=bytes(record.schedule_digest),
         )
 

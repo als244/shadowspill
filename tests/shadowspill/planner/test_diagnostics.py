@@ -150,12 +150,13 @@ def test_candidate_diagnostic_rejects_old_flat_schema() -> None:
                 "status": "valid",
             },
             "candidate",
+            "none",
         )
 
 
 def test_physical_prediction_updates_nested_selected_candidate() -> None:
     source = _diagnostics()
-    updated = source.with_selected_makespan(1_250)
+    updated = source.replace_selected_makespan(1_250)
 
     assert source.selected_makespan_ns == 1_000
     assert updated.selected_makespan_ns == 1_250

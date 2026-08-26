@@ -100,7 +100,7 @@ class PressureFitDiagnostics:
             )
         )
 
-    def with_selected_makespan(self, makespan_ns: int) -> PressureFitDiagnostics:
+    def replace_selected_makespan(self, makespan_ns: int) -> PressureFitDiagnostics:
         """Replace the selected policy's admission-aware timing consistently."""
 
         _nonnegative("makespan_ns", makespan_ns)

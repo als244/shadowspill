@@ -15,6 +15,7 @@ from .json import (
     _optional_integer,
     _optional_string,
     _parse_candidate_id,
+    _span,
     _string,
 )
 
@@ -49,6 +50,11 @@ class CandidateDiagnostic:
     placements_attempted: int = 0
     placements_admitted: int = 0
     capacity_refinements: int = 0
+    #: When this candidate ran, in nanoseconds from the start of the call that
+    #: evaluated it. ``work.sections`` is work done; these are wall clock, so
+    #: two candidates ran at the same time exactly when their spans overlap.
+    started_ns: int = 0
+    finished_ns: int = 0
     schedule_digest: str | None = None
     failure_kind: str | None = None
     failure_detail: str | None = None
@@ -90,11 +96,21 @@ class CandidateDiagnostic:
             },
             "repairs": self.repairs.to_dict(),
             "work": self.work.to_dict(),
+            "span": {
+                "started_ns": self.started_ns,
+                "finished_ns": self.finished_ns,
+            },
             "steps": [step.to_dict() for step in self.steps],
         }
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> CandidateDiagnostic:
+    def from_value(
+        cls, value: object, path: str, selection_id: str
+    ) -> CandidateDiagnostic:
+        """Read one candidate. The parent supplies ``selection_id``, which is
+        a reference to the containing problem rather than part of the
+        candidate's own record, so it is not in the payload."""
+
         data = _mapping(value, path)
         policy = _mapping(data.get("candidate_policy"), f"{path}.candidate_policy")
         outcome = _mapping(data.get("outcome"), f"{path}.outcome")
@@ -103,7 +119,7 @@ class CandidateDiagnostic:
                 policy.get("candidate_id"),
                 f"{path}.candidate_policy.candidate_id",
             ),
-            selection_id="",
+            selection_id=selection_id,
             status=_string(outcome.get("status"), f"{path}.outcome.status"),
             makespan_ns=_optional_integer(
                 outcome.get("makespan_ns"), f"{path}.outcome.makespan_ns"
@@ -144,6 +160,8 @@ class CandidateDiagnostic:
             work=PressureFitWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
+            started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),
+            finished_ns=_span(data.get("span"), "finished_ns", f"{path}.span"),
             steps=_steps(data.get("steps", []), f"{path}.steps"),
         )
         declared_policy = {
@@ -169,23 +187,3 @@ class CandidateDiagnostic:
                 f"{path}.candidate_policy fields do not match candidate_id"
             )
         return result
-
-    def with_selection_id(self, selection_id: str) -> CandidateDiagnostic:
-        """Attach the containing recomputation problem after deserialization."""
-
-        return CandidateDiagnostic(
-            candidate_id=self.candidate_id,
-            selection_id=selection_id,
-            status=self.status,
-            makespan_ns=self.makespan_ns,
-            capacity_violation_count=self.capacity_violation_count,
-            placements_attempted=self.placements_attempted,
-            placements_admitted=self.placements_admitted,
-            capacity_refinements=self.capacity_refinements,
-            schedule_digest=self.schedule_digest,
-            failure_kind=self.failure_kind,
-            failure_detail=self.failure_detail,
-            repairs=self.repairs,
-            work=self.work,
-            steps=self.steps,
-        )

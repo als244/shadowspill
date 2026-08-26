@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from shadowspill.ir import (
@@ -58,6 +58,8 @@ _RULE_CODE = {
     "latest-safe": 3,
     "demand": 4,
 }
+_STRATEGY_NAME = {code: name for name, code in _STRATEGY_CODE.items()}
+_RULE_NAME = {code: name for name, code in _RULE_CODE.items()}
 _ACTION_KIND = {
     0: MemoryActionKind.RELEASE,
     1: MemoryActionKind.OFFLOAD,
@@ -86,6 +88,12 @@ class CCandidateDiagnostic:
     placements_attempted: int
     placements_admitted: int
     capacity_refinements: int
+    #: When this candidate ran, in nanoseconds from the start of the call that
+    #: evaluated it. ``work.sections`` is work done; these are wall clock, so
+    #: two candidates ran at once exactly when their spans overlap. Both are
+    #: zero for a candidate no worker reached.
+    started_ns: int
+    finished_ns: int
     #: Every plan this candidate held, in order. Empty unless the caller asked
     #: for a trajectory.
     steps: tuple[ReductionStep, ...]
@@ -137,6 +145,12 @@ class CProblemResult:
     candidates: tuple[CCandidateDiagnostic, ...]
     repairs: PressureFitRepairDiagnostics
     work: PressureFitWorkDiagnostics
+    #: This problem's span on the same clock its candidates use: from the first
+    #: candidate a worker started to the last one it finished. With several
+    #: problems in one call these overlap, because workers take whatever task
+    #: is next rather than finishing a problem first.
+    started_ns: int
+    finished_ns: int
 
     def __post_init__(self) -> None:
         repairs = PressureFitRepairDiagnostics()
@@ -192,6 +206,23 @@ def decode_candidate_diagnostic(
     simulation: IndexedSimulationTemplate,
 ) -> CandidateDiagnostic:
     """Convert one indexed diagnostic without changing its semantic fields."""
+
+    return replace(
+        _decode_candidate_status(
+            value, selection_id=selection_id, simulation=simulation
+        ),
+        started_ns=value.started_ns,
+        finished_ns=value.finished_ns,
+    )
+
+
+def _decode_candidate_status(
+    value: CCandidateDiagnostic,
+    *,
+    selection_id: str,
+    simulation: IndexedSimulationTemplate,
+) -> CandidateDiagnostic:
+    """The shape of the diagnostic, which depends on how the candidate ended."""
 
     if value.status == 0:
         return CandidateDiagnostic(
@@ -457,13 +488,7 @@ def _problem_options(
     options: PressureFitOptions,
     *,
     best_placed: int = 0,
-    selection_index: int = 0,
-) -> tuple[
-    CPressureFitProblemOptions,
-    tuple[str, ...],
-    tuple[str, ...],
-    tuple[object, ...],
-]:
+) -> tuple[CPressureFitProblemOptions, tuple[object, ...]]:
     strategy_names = tuple(options.residency_strategies)
     rule_names = tuple(options.prefetch_rules)
     strategies = (ctypes.c_uint8 * len(strategy_names))(
@@ -472,20 +497,24 @@ def _problem_options(
     rules = (ctypes.c_uint8 * len(rule_names))(
         *(_RULE_CODE[value] for value in rule_names)
     )
+    # The library takes the modes as a list like the other two axes; the
+    # option a caller sets is the bool.
+    mode_values = (0, 1) if options.evaluate_coalesced else (0,)
+    modes = (ctypes.c_uint8 * len(mode_values))(*mode_values)
     compiled = CPressureFitProblemOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
         prefetch_rules=rules,
         prefetch_rule_count=len(rule_names),
-        evaluate_coalesced=int(options.evaluate_coalesced),
+        coalescing_modes=modes,
+        coalescing_mode_count=len(mode_values),
         max_repair_attempts=options.max_repair_attempts,
         initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
         capacity_refinement_bytes=options.capacity_refinement_bytes,
         record_reduction_steps=int(options.record_reduction_steps),
         best_placed=best_placed or None,
-        selection_index=selection_index,
     )
-    return compiled, strategy_names, rule_names, (strategies, rules)
+    return compiled, (strategies, rules, modes)
 
 
 def validate_program_problem(
@@ -613,30 +642,14 @@ def decode_schedule(
     )
 
 
-def _evaluate_problem(
+def _decode_problem_result(
+    library: ctypes.CDLL,
+    status: int,
+    problem_result: CPressureFitProblemResult,
     simulation: IndexedSimulationTemplate,
-    options: PressureFitOptions,
-    *,
-    admission: IndexedAdmissionFacts | None,
-    placement: IndexedAdmissionFacts | None = None,
-    best_placed: int = 0,
-    selection_index: int = 0,
 ) -> CProblemResult | None:
-    """Invoke and decode one compiled program-problem evaluation."""
+    """Copy one evaluation out of planner-owned memory and release it."""
 
-    problem_options, strategy_names, rule_names, _option_buffers = _problem_options(
-        options, best_placed=best_placed, selection_index=selection_index
-    )
-    problem_result = CPressureFitProblemResult()
-    library = planner_api()
-    problem, _problem_buffers = _program_problem(simulation, admission, placement)
-    status = int(
-        library.shadowspill_evaluate_pressurefit_program_problem(
-            ctypes.byref(problem),
-            ctypes.byref(problem_options),
-            ctypes.byref(problem_result),
-        )
-    )
     try:
         if status == Status.ANALYTIC_INFEASIBLE:
             return None
@@ -651,13 +664,8 @@ def _evaluate_problem(
         candidates: list[CCandidateDiagnostic] = []
         for index in range(int(problem_result.candidate_count)):
             value = problem_result.candidates[index]
-            variants_per_rule = 2 if options.evaluate_coalesced else 1
-            strategy = strategy_names[index // (len(rule_names) * variants_per_rule)]
-            within_strategy = index % (
-                len(rule_names) * (2 if options.evaluate_coalesced else 1)
-            )
-            divisor = 2 if options.evaluate_coalesced else 1
-            rule = rule_names[within_strategy // divisor]
+            strategy = _STRATEGY_NAME[int(value.residency_strategy)]
+            rule = _RULE_NAME[int(value.prefetch_rule)]
             digest = (
                 bytes(value.schedule_digest).hex() if int(value.status) == 0 else None
             )
@@ -675,6 +683,8 @@ def _evaluate_problem(
                     placements_attempted=int(value.placements_attempted),
                     placements_admitted=int(value.placements_admitted),
                     capacity_refinements=int(value.capacity_refinements),
+                    started_ns=int(value.started_ns),
+                    finished_ns=int(value.finished_ns),
                     steps=_decode_steps(value),
                     schedule_digest=digest,
                     error_task=int(value.error_task),
@@ -703,6 +713,8 @@ def _evaluate_problem(
             candidates=tuple(candidates),
             repairs=_decode_repairs(problem_result.repairs),
             work=_decode_work(problem_result.work),
+            started_ns=int(problem_result.started_ns),
+            finished_ns=int(problem_result.finished_ns),
         )
     finally:
         library.shadowspill_pressurefit_problem_result_destroy(
@@ -710,32 +722,61 @@ def _evaluate_problem(
         )
 
 
-def evaluate_program_problem(
-    simulation: IndexedSimulationTemplate,
+def evaluate_program_problems(
+    problems: tuple[
+        tuple[
+            IndexedSimulationTemplate,
+            IndexedAdmissionFacts | None,
+            IndexedAdmissionFacts | None,
+        ],
+        ...,
+    ],
     options: PressureFitOptions,
     *,
-    admission: IndexedAdmissionFacts | None = None,
-    placement: IndexedAdmissionFacts | None = None,
     best_placed: int = 0,
-    selection_index: int = 0,
-) -> CProblemResult | None:
-    """Derive indexed planning facts and evaluate every candidate entirely in C.
+) -> tuple[CProblemResult | None, ...]:
+    """Evaluate several resolved programs on one set of worker threads.
 
-    `placement` supplies the pool topology so a candidate can measure whether
-    its plan has a layout that fits, which is the constraint that decides
-    whether a plan can run at all. It is deliberately separate from
-    `admission`: supplying that switches on the dynamic-pool replay, which
-    rejects plans certified fixed placement accepts, so a search that
-    prefiltered through it would discard plans that would have run.
+    The library owns the threads and hands a candidate of a problem to
+    whichever worker is free, so worker count and problem count are
+    independent -- `options.workers` sizes the threads whether there is one
+    resolved program here or five. Sharing one call is also what shares the
+    placement record between them: a plan placed under any of these bounds
+    the search under every other.
     """
 
-    return _evaluate_problem(
-        simulation,
-        options,
-        admission=admission,
-        placement=placement,
-        best_placed=best_placed,
-        selection_index=selection_index,
+    if not problems:
+        return ()
+    library = planner_api()
+    problem_options, _option_buffers = _problem_options(
+        options, best_placed=best_placed
+    )
+    problem_options.workers = options.workers
+    compiled = (CPressureFitProgramProblem * len(problems))()
+    # Held until the call returns: the library borrows every array in them.
+    buffers: list[object] = []
+    for index, (simulation, admission, placement) in enumerate(problems):
+        value, held = _program_problem(simulation, admission, placement)
+        compiled[index] = value
+        buffers.append(held)
+    results = (CPressureFitProblemResult * len(problems))()
+    status = int(
+        library.shadowspill_evaluate_pressurefit_program_problems(
+            compiled,
+            len(problems),
+            ctypes.byref(problem_options),
+            results,
+        )
+    )
+    if status == Status.INVALID_ARGUMENT:
+        raise ProblemPreparationError("PressureFit problem rejected the selected facts")
+    # Every problem carries its own status; the call's status is only the
+    # summary, so each is decoded on its own terms.
+    return tuple(
+        _decode_problem_result(
+            library, int(results[index].status), results[index], simulation
+        )
+        for index, (simulation, _admission, _placement) in enumerate(problems)
     )
 
 
@@ -747,6 +788,6 @@ __all__ = [
     "ProblemPreparationError",
     "decode_candidate_diagnostic",
     "decode_schedule",
-    "evaluate_program_problem",
+    "evaluate_program_problems",
     "validate_program_problem",
 ]

@@ -234,26 +234,11 @@ class CPlacementResult(ctypes.Structure):
     ]
 
 
-class CPressureFitProblem(ctypes.Structure):
-    _fields_ = [
-        ("abi_version", ctypes.c_uint32),
-        ("residency", ctypes.POINTER(CResidencyProblem)),
-        ("simulation", ctypes.POINTER(CProgram)),
-        ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
-        ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
-        ("admission", ctypes.POINTER(CAdmissionFacts)),
-        ("placement", ctypes.POINTER(CAdmissionFacts)),
-        ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
-        ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
-    ]
-
-
 class CBestPlacedRecord(ctypes.Structure):
     _fields_ = [
         ("makespan_ns", ctypes.c_uint64),
         ("object_capacity_bytes", ctypes.c_uint64),
         ("capacity_given_back_bytes", ctypes.c_uint64),
-        ("selection_index", ctypes.c_uint32),
         ("residency_strategy", ctypes.c_uint8),
         ("prefetch_rule", ctypes.c_uint8),
         ("coalesced", ctypes.c_uint8),
@@ -267,13 +252,14 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("residency_strategy_count", ctypes.c_uint32),
         ("prefetch_rules", ctypes.POINTER(ctypes.c_uint8)),
         ("prefetch_rule_count", ctypes.c_uint32),
-        ("evaluate_coalesced", ctypes.c_uint8),
+        ("coalescing_modes", ctypes.POINTER(ctypes.c_uint8)),
+        ("coalescing_mode_count", ctypes.c_uint32),
         ("max_repair_attempts", ctypes.c_uint32),
         ("initial_placement", ctypes.c_uint8),
         ("capacity_refinement_bytes", ctypes.c_uint64),
         ("record_reduction_steps", ctypes.c_uint8),
         ("best_placed", ctypes.c_void_p),
-        ("selection_index", ctypes.c_uint32),
+        ("workers", ctypes.c_uint32),
     ]
 
 
@@ -377,6 +363,8 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("placements_admitted", ctypes.c_uint32),
         ("capacity_refinements", ctypes.c_uint32),
         ("schedule_digest", ctypes.c_uint8 * 32),
+        ("started_ns", ctypes.c_uint64),
+        ("finished_ns", ctypes.c_uint64),
         ("error_task", ctypes.c_uint32),
         ("error_alias", ctypes.c_uint32),
         ("error_device", ctypes.c_uint32),
@@ -400,6 +388,8 @@ class CPressureFitProblemResult(ctypes.Structure):
         ("candidate_count", ctypes.c_uint32),
         ("repairs", CPressureFitRepairDiagnostics),
         ("work", CPressureFitWorkDiagnostics),
+        ("started_ns", ctypes.c_uint64),
+        ("finished_ns", ctypes.c_uint64),
     ]
 
 
@@ -450,6 +440,7 @@ def _check_struct_layout(library: ctypes.CDLL) -> None:
         (6, "CBestPlacedRecord", CBestPlacedRecord),
         (7, "CResidencyProblem", CResidencyProblem),
         (8, "CResidencyResult", CResidencyResult),
+        (9, "CPressureFitProblemResult", CPressureFitProblemResult),
     )
     for which, name, structure in mirrored:
         expected = library.shadowspill_planner_struct_size(which)
@@ -476,18 +467,13 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CResidencyResult),
     ]
     library.shadowspill_reduce_residency.restype = ctypes.c_uint32
-    library.shadowspill_evaluate_pressurefit_problem.argtypes = [
-        ctypes.POINTER(CPressureFitProblem),
-        ctypes.POINTER(CPressureFitProblemOptions),
-        ctypes.POINTER(CPressureFitProblemResult),
-    ]
-    library.shadowspill_evaluate_pressurefit_problem.restype = ctypes.c_uint32
-    library.shadowspill_evaluate_pressurefit_program_problem.argtypes = [
+    library.shadowspill_evaluate_pressurefit_program_problems.argtypes = [
         ctypes.POINTER(CPressureFitProgramProblem),
+        ctypes.c_uint32,
         ctypes.POINTER(CPressureFitProblemOptions),
         ctypes.POINTER(CPressureFitProblemResult),
     ]
-    library.shadowspill_evaluate_pressurefit_program_problem.restype = ctypes.c_uint32
+    library.shadowspill_evaluate_pressurefit_program_problems.restype = ctypes.c_uint32
     library.shadowspill_planner_struct_size.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_struct_size.restype = ctypes.c_uint64
     _check_struct_layout(library)
@@ -561,7 +547,6 @@ __all__ = [
     "CPlanCandidate",
     "CPressureFitCandidateDiagnostic",
     "CPressureFitPreflightResult",
-    "CPressureFitProblem",
     "CPressureFitProblemOptions",
     "CPressureFitProblemResult",
     "CPressureFitProgramProblem",

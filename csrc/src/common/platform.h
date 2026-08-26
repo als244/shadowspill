@@ -21,4 +21,8 @@ void shadowspill_thread_yield(void);
 /* Best-effort debugger/profiler label for the calling thread. */
 void shadowspill_name_current_thread(const char *name);
 
+/* Logical CPUs available to this process; at least 1. Used to size worker
+   counts, which is scheduling only and never changes an answer. */
+uint32_t shadowspill_logical_cpu_count(void);
+
 #endif
