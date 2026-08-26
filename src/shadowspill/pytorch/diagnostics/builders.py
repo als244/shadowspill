@@ -15,20 +15,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
-from shadowspill.pytorch.capture.storage import (
-    MutationBinding,
-    OutputView,
-    StorageRoot,
-    TaskStorageContract,
-)
-from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.compilation.layout import (
-    CompiledTaskLayout,
-    reconcile_compiled_task_layout,
-    replacement_transition_bytes,
-)
-from shadowspill.pytorch.diagnostics.plan import (
+from shadowspill.planner.diagnostics.plan import (
     PlanAllocationABIStep,
     PlanAllocationEvent,
     PlanCompiledOutputView,
@@ -42,6 +29,19 @@ from shadowspill.pytorch.diagnostics.plan import (
     PlanStorageRoot,
     PlanTaskStage,
     PlanUniqueStage,
+)
+from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
+from shadowspill.pytorch.capture.storage import (
+    MutationBinding,
+    OutputView,
+    StorageRoot,
+    TaskStorageContract,
+)
+from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
+from shadowspill.pytorch.compilation.layout import (
+    CompiledTaskLayout,
+    reconcile_compiled_task_layout,
+    replacement_transition_bytes,
 )
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,

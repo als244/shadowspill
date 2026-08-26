@@ -10,7 +10,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch.diagnostics.plan import PlanReport
+from shadowspill.planner.diagnostics.plan import PlanReport
 from shadowspill.pytorch.diagnostics.step import DiagnosticsHandle, StepResult
 from shadowspill.pytorch.execution import ForwardExecutor, TrainingExecutor
 from shadowspill.pytorch.guards import InputSignature, validate_training_inputs

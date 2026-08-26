@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming,
     ArmedTaskTiming,
@@ -34,7 +35,6 @@ from .execution import (
     TaskExecutionTiming,
     TransferTrace,
 )
-from .mapping import FrozenMapping
 
 
 @dataclass(frozen=True, slots=True)

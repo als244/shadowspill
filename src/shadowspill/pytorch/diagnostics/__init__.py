@@ -1,6 +1,6 @@
 """Immutable planning and step-execution diagnostics."""
 
-from .plan import (
+from shadowspill.planner.diagnostics.plan import (
     PlanAllocationABIStep,
     PlanAllocationEvent,
     PlanCacheArtifact,
@@ -24,6 +24,7 @@ from .plan import (
     PlanTaskStage,
     PlanUniqueStage,
 )
+
 from .step import (
     DiagnosticsHandle,
     ExecutionTiming,
