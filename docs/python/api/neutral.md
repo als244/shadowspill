@@ -3,6 +3,30 @@
 These modules expose the IR, planner, simulator, and physical-admission values
 used by the PyTorch frontend and by standalone tooling.
 
+## `shadowspill.errors`
+
+What planning raises when it cannot answer. One hierarchy, because callers
+catch `PlanningError` to mean "planning did not produce a plan" without
+caring which phase gave up:
+
+- `PlanningError` is the base. `CaptureError`, `CompilationError` and
+  `ProfilingError` name the phase that gave up; the latter two carry the
+  structural contract, task kind, and operators involved.
+- `AdmissionError` covers memory that cannot be physically admitted, and
+  `PlanInfeasibleError` narrows that to "no schedule satisfies the declared
+  constraints", carrying the kind, device, boundary task, and the required
+  and available bytes.
+- `PlanSearchExhaustedError` means a bounded search stopped without proving
+  either feasibility or infeasibility — a different claim from
+  `PlanInfeasibleError`.
+- `InputGuardError` is raised before mutation when runtime inputs differ from
+  the template, and `ObjectiveError` when an objective does not satisfy the
+  training contract.
+
+These carry no framework types. They live here rather than beside any one
+phase because the planner has to raise and catch them without importing a
+framework.
+
 ## `shadowspill.ir`
 
 Logical program values:

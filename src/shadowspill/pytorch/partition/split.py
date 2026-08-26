@@ -16,9 +16,9 @@ from torch.fx import GraphModule, Interpreter, Node
 from torch.fx.passes.split_module import split_module
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.aot import ExportCapture
 
-from ..contracts import CaptureError
 from .artifacts import StageRecord
 from .sources import stage_value_source
 

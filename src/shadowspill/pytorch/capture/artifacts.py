@@ -15,13 +15,14 @@ from torch.fx import GraphModule
 from torch.fx.node import Node, map_arg
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
+from shadowspill.errors import CaptureError, ObjectiveError
 from shadowspill.pytorch.capture.live_storage import live_storage_identity
 from shadowspill.pytorch.capture.storage import (
     ExplicitMutation,
     TaskStorageContract,
     capture_task_storage_contract,
 )
-from shadowspill.pytorch.contracts import CaptureError, ObjectiveError, ObjectiveResult
+from shadowspill.pytorch.contracts import ObjectiveResult
 
 from .torch_deprecations import copy_graph_module
 

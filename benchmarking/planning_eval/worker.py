@@ -10,14 +10,16 @@ from benchmarking.program_collection.corpus import (
     SavedProgramCase,
     load_step_program,
 )
+from shadowspill.errors import (
+    PlanInfeasibleError,
+    PlanSearchExhaustedError,
+)
 from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitOptions,
     PressureFitSearchExhaustedError,
 )
 from shadowspill.pytorch import (
-    PlanInfeasibleError,
-    PlanSearchExhaustedError,
     PressureFitProgram,
     StepProgram,
     pressurefit_program,

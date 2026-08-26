@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import TaskProfile
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
@@ -15,8 +16,6 @@ from shadowspill.pytorch.compilation.layout import (
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
-
-from ..contracts import CaptureError
 
 ProfileMeasurementKey = str | tuple[str, str | None]
 ProfiledArtifact = GraphArtifact | OptimizerTaskArtifact

@@ -17,7 +17,7 @@ import torch
 from torch.fx import Graph, GraphModule, Node
 from torch.fx.node import map_aggregate
 
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.errors import CaptureError
 
 
 @dataclass(frozen=True, slots=True)

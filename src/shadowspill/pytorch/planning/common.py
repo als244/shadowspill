@@ -9,6 +9,12 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import (
+    AdmissionError,
+    PlanInfeasibleError,
+    PlanningError,
+    PlanSearchExhaustedError,
+)
 from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitSearchExhaustedError,
@@ -21,12 +27,6 @@ from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
-from ..contracts import (
-    AdmissionError,
-    PlanInfeasibleError,
-    PlanningError,
-    PlanSearchExhaustedError,
-)
 from ..runtime_adapter import PlanMemory
 
 _MIB = 1 << 20

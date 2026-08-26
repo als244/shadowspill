@@ -9,8 +9,8 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
+from shadowspill.errors import PlanningError
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
-from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState

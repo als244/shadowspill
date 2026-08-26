@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import ctypes
 
+from shadowspill.errors import AdmissionError
 from shadowspill.ir import ExecutionPlan, MemoryActionKind, PhysicalAdmission
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 
-from ...contracts import AdmissionError
 from ...runtime_adapter import PlanMemory
 from ..common import round_up
 from .layout import FixedPhysicalLayout

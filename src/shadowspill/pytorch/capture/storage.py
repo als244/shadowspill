@@ -15,12 +15,12 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.fx import GraphModule, Node
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
     live_storage_identity,
 )
 from shadowspill.pytorch.capture.schema import operator_alias_contract
-from shadowspill.pytorch.contracts import CaptureError
 
 
 class StorageRootKind(StrEnum):

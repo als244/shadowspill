@@ -6,10 +6,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from shadowspill.errors import CaptureError, ProfilingError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layout
-from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 
 from .manifest_repository import CompiledManifestRepository
 from .records import ProfileEnvironment, ProfileKey, TaskMeasurement

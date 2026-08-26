@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Literal
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import (
     MutationSpec,
     RecomputationGroup,
@@ -19,7 +20,6 @@ from shadowspill.pytorch.optimizer import (
     OptimizerTask,
 )
 
-from ...contracts import CaptureError
 from ..catalog import TensorSlot
 from ..profiles import TaskProfileCatalog
 from .artifacts import (

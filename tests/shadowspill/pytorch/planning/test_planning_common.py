@@ -7,6 +7,12 @@ import pytest
 import torch
 import torch.nn as nn
 
+from shadowspill.errors import (
+    AdmissionError,
+    PlanInfeasibleError,
+    PlanningError,
+    PlanSearchExhaustedError,
+)
 from shadowspill.planner import (
     CandidateDiagnostic,
     PressureFitInfeasibleError,
@@ -14,10 +20,6 @@ from shadowspill.planner import (
     PressureFitSearchExhaustedError,
 )
 from shadowspill.pytorch import (
-    AdmissionError,
-    PlanInfeasibleError,
-    PlanningError,
-    PlanSearchExhaustedError,
     TensorSpec,
 )
 from shadowspill.pytorch.materialization import representative_cpu_inputs

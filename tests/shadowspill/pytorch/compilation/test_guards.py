@@ -5,7 +5,13 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from shadowspill.pytorch import InputGuardError, PlanningError, TensorSpec
+from shadowspill.errors import (
+    InputGuardError,
+    PlanningError,
+)
+from shadowspill.pytorch import (
+    TensorSpec,
+)
 from shadowspill.pytorch.guards import (
     capture_input_signature,
     capture_training_signatures,

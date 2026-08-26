@@ -7,12 +7,12 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import RecomputationSelection
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.graph_pairs import GraphPairVariant, partition_training_capture
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,

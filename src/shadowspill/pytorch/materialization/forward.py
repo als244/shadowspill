@@ -12,10 +12,11 @@ import torch.nn as nn
 from torch.export.graph_signature import InputKind
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
+from shadowspill.errors import InputGuardError, PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
-from shadowspill.pytorch.contracts import InputGuardError, PlanningError, TensorSpec
+from shadowspill.pytorch.contracts import TensorSpec
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram
 from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews

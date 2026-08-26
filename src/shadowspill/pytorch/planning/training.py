@@ -12,6 +12,11 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from shadowspill.errors import (
+    AdmissionError,
+    CompilationError,
+    PlanningError,
+)
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
     AdmissionFacts,
@@ -67,10 +72,7 @@ from shadowspill.simulator import SimulationConfig
 from ..cache import PlanningCache
 from ..callables import PlannedTrainStep
 from ..contracts import (
-    AdmissionError,
-    CompilationError,
     ObjectiveResult,
-    PlanningError,
 )
 from ..diagnostics import PlanProfilingMetadata, PlanReport
 from ..execution import TrainingExecutor

@@ -12,6 +12,7 @@ from typing import Any, cast
 import torch
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError, ProfilingError
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -20,7 +21,6 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.contracts import CaptureError, ProfilingError
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     materialize_opaque_optimizer,

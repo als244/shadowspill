@@ -5,12 +5,12 @@ from __future__ import annotations
 import torch
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.artifacts import AotGraphPair
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
-from ...contracts import CaptureError
 from ...graph_pairs import (
     DifferentiatedStage,
     GraphPairVariant,

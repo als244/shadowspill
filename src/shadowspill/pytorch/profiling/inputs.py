@@ -9,12 +9,12 @@ from dataclasses import dataclass
 
 import torch
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
     TaskInputRole,
 )
-from shadowspill.pytorch.contracts import CaptureError
 
 REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v5"
 

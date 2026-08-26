@@ -12,7 +12,9 @@ from typing import Any
 import torch
 from torch.utils._pytree import TreeSpec, tree_flatten, treespec_dumps
 
-from .contracts import InputGuardError, PlanningError, TensorSpec
+from shadowspill.errors import InputGuardError, PlanningError
+
+from .contracts import TensorSpec
 
 
 @dataclass(frozen=True, slots=True)

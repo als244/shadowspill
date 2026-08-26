@@ -13,6 +13,12 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.export.graph_signature import InputKind
 from torch.utils._pytree import TreeSpec, tree_flatten
 
+from shadowspill.errors import (
+    AdmissionError,
+    CaptureError,
+    CompilationError,
+    PlanningError,
+)
 from shadowspill.ir import (
     EntrypointSpec,
     ExecutionPlan,
@@ -54,7 +60,6 @@ from shadowspill.runtime import ObjectConsistency
 
 from ..cache import PlanningCache
 from ..callables import PlannedForward
-from ..contracts import AdmissionError, CaptureError, CompilationError, PlanningError
 from ..diagnostics import PlanReport
 from ..execution import ForwardExecutor
 from ..guards import InputSignature, capture_input_signature

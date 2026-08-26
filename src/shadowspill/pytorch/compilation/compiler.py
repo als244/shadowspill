@@ -9,9 +9,9 @@ from dataclasses import dataclass
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.contracts import CaptureError
 
 from .inductor import (
     ExecutableRootAllocation,

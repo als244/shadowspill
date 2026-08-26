@@ -13,12 +13,12 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx import GraphModule
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
     TaskInputRole,
 )
-from shadowspill.pytorch.contracts import CaptureError
 
 from .artifacts import (
     OpaqueOptimizerArtifact,

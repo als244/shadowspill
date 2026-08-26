@@ -8,11 +8,11 @@ from dataclasses import dataclass, field, replace
 
 import torch
 
+from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation import compiler as compiler_api
 from shadowspill.pytorch.compilation.compiler import CompiledTask, CompiledTaskSet
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.contracts import CompilationError
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 
 from .inputs import (

@@ -1,18 +1,10 @@
 """Public PyTorch values and planning entrypoints for ShadowSpill."""
 
+
 from .api import make_step_program, plan_forward, plan_step, pressurefit_program
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
-    AdmissionError,
-    CaptureError,
-    CompilationError,
-    InputGuardError,
-    ObjectiveError,
     ObjectiveResult,
-    PlanInfeasibleError,
-    PlanningError,
-    PlanSearchExhaustedError,
-    ProfilingError,
     TensorSpec,
 )
 from .diagnostics import (
@@ -77,19 +69,14 @@ from .state import (
 )
 
 __all__ = [
-    "AdmissionError",
     "AnnotatedProgramPlan",
-    "CaptureError",
-    "CompilationError",
     "DiagnosticsHandle",
     "ExecutionTaskIdentity",
     "ExecutionTiming",
-    "InputGuardError",
     "InvocationResult",
     "MemoryBudgets",
     "MemoryPool",
     "ObjectConsistency",
-    "ObjectiveError",
     "ObjectiveResult",
     "PartitionPolicy",
     "PartitionSpec",
@@ -102,22 +89,18 @@ __all__ = [
     "PlanDiagnostics",
     "PlanGraphPair",
     "PlanGraphProfile",
-    "PlanInfeasibleError",
     "PlanMutationBinding",
     "PlanObjectFootprint",
     "PlanOutputView",
     "PlanPhaseTiming",
     "PlanProfilingMetadata",
     "PlanReport",
-    "PlanSearchExhaustedError",
     "PlanStorageRoot",
     "PlanTaskStage",
     "PlanUniqueStage",
     "PlannedForward",
     "PlannedTrainStep",
-    "PlanningError",
     "PressureFitProgram",
-    "ProfilingError",
     "Runtime",
     "RuntimeConfigurationError",
     "RuntimeExecutionError",

@@ -7,13 +7,13 @@ from collections.abc import Mapping
 import torch.nn as nn
 from torch.utils._pytree import tree_flatten
 
+from shadowspill.errors import CaptureError
 from shadowspill.ir import MemoryLocation, SharedResidencyPolicy
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.profiling import TaskMeasurement
 
-from ...contracts import CaptureError
 from ...partition import PartitionedExport
 from ..profiles import TaskProfileCatalog
 from ..program import execution_device_id, publish_program

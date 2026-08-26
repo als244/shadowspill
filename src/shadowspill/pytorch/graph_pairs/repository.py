@@ -12,10 +12,10 @@ from pathlib import Path
 
 import torch
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 
-from ..contracts import CaptureError
 from ..partition.artifacts import StageExample
 from .artifacts import TaskGraphPairs
 from .build import build_default_graph_pairs

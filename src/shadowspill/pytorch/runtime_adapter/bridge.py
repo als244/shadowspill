@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import torch
 
+from shadowspill.errors import PlanningError
 from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
@@ -16,7 +17,6 @@ from shadowspill.ir import (
     Program,
     TaskSpec,
 )
-from shadowspill.pytorch.contracts import PlanningError
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     FixedDependencyDescription,

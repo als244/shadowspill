@@ -6,7 +6,7 @@ from collections.abc import Collection
 
 from torch.export.graph_signature import InputKind, InputSpec
 
-from shadowspill.pytorch.contracts import CaptureError
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.graph_pairs.artifacts import (
     DifferentiatedStage,
     PartitionedTrainingCapture,

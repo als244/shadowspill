@@ -12,6 +12,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.storage import (
     OutputView,
     StorageRoot,
@@ -19,7 +20,6 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
 )
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
-from shadowspill.pytorch.contracts import CaptureError
 from shadowspill.pytorch.profiling.records import (
     TaskAllocationEvent,
     TaskAllocationOperation,

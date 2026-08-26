@@ -39,6 +39,7 @@ from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.experimental.symbolic_shapes import ShapeEnv
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
+from shadowspill.errors import CaptureError, CompilationError
 from shadowspill.pytorch.capture.storage import (
     MutationBinding,
     OutputView,
@@ -53,7 +54,6 @@ from shadowspill.pytorch.compilation.inductor_manifest import (
     load_task_manifest,
     store_task_manifest,
 )
-from shadowspill.pytorch.contracts import CaptureError, CompilationError
 
 
 @dataclass(frozen=True, slots=True)
