@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, RecomputationSelection, ResidencySpec
 from shadowspill.planner import AdmissionFacts, PressureFitResult
+from shadowspill.planner.program_inputs import (
+    MemoryBudgets,
+    PressureFitProgram,
+    TransferBandwidths,
+)
 from shadowspill.planner.serialization import (
     _boolean,
     _canonical_json,
@@ -25,10 +30,9 @@ from shadowspill.planner.serialization import (
 )
 from shadowspill.simulator import SimulationAdmission, SimulationResult
 
-from .program_inputs import MemoryBudgets, PressureFitProgram, TransferBandwidths
-
 if TYPE_CHECKING:
-    from .planning.admission import FixedLayoutAttempt, FixedPhysicalLayout
+    from .admission.layout.model import FixedPhysicalLayout
+    from .admission.refinement import FixedLayoutAttempt
 
 _ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v2"
 
@@ -176,7 +180,7 @@ class AnnotatedProgramPlan:
 
     @classmethod
     def from_dict(cls, value: object) -> AnnotatedProgramPlan:
-        from .planning.admission import FixedLayoutAttempt
+        from .admission.refinement import FixedLayoutAttempt
 
         data = _mapping(value, "annotated_program_plan")
         if data.get("schema") != _ANNOTATED_PROGRAM_PLAN_SCHEMA:

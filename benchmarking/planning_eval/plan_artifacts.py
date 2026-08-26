@@ -19,7 +19,10 @@ from benchmarking.program_collection.corpus import (
     SavedProgramCase,
     load_step_program,
 )
-from shadowspill.pytorch import AnnotatedProgramPlan, StepProgram
+from shadowspill.planner.program import (
+    AnnotatedProgramPlan,
+    StepProgram,
+)
 
 _SELECTION_SCHEMA = "shadowspill.planning_corpus.selection/v1"
 

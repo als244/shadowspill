@@ -13,9 +13,11 @@ from benchmarking.program_collection.corpus import (
     save_step_program,
 )
 from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.planner.program import (
+    StepProgram,
+)
 from shadowspill.pytorch import (
     Runtime,
-    StepProgram,
     export_model_state,
     import_model_state,
     make_step_program,

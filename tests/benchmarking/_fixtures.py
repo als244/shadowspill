@@ -19,7 +19,7 @@ from shadowspill.planner import (
     PressureFitOptions,
     TaskAdmissionSpec,
 )
-from shadowspill.pytorch import (
+from shadowspill.planner.program import (
     PressureFitProgram,
     StepProgram,
 )

@@ -5,6 +5,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from shadowspill.planner.diagnostics.plan import (
+    PlanCacheArtifact,
+    PlanProfilingMetadata,
+)
+from shadowspill.planner.program_inputs import PressureFitProgram
 from shadowspill.planner.serialization import (
     _canonical_json,
     _digest,
@@ -15,9 +20,6 @@ from shadowspill.planner.serialization import (
     _pair,
     _string,
 )
-
-from .diagnostics import PlanCacheArtifact, PlanProfilingMetadata
-from .program_inputs import PressureFitProgram
 
 _STEP_PROGRAM_SCHEMA = "shadowspill.step_program/v1"
 

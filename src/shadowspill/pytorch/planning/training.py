@@ -25,6 +25,7 @@ from shadowspill.planner import (
     PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
 )
+from shadowspill.planner.program import PressureFitProgram, StepProgram
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     capture_training_objective,
@@ -93,7 +94,6 @@ from ..materialization import representative_cpu_inputs
 from ..partition import (
     PartitionSpec,
 )
-from ..program import PressureFitProgram, StepProgram
 from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
 from .admission import (
     FixedLayoutInfeasibleError,
