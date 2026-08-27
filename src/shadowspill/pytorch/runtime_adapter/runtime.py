@@ -25,8 +25,10 @@ from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
+    PlanDescription,
     TransferCalibrationConfig,
     TransferRouteKey,
+    runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
     TransferProfile as RuntimeTransferProfile,
@@ -152,6 +154,12 @@ class Runtime:
                 worker_poll_nanoseconds=worker_poll_nanoseconds,
             )
             self._installed = installed
+            # The neutral runtime this process bound. Holding it here is what
+            # lets the calls that need nothing else go straight to the neutral
+            # library, instead of through an entry point that would only fetch
+            # this pointer and forward. It is dropped on close, so a call after
+            # close fails on the closed guard rather than on a stale pointer.
+            self._runtime_handle: int = installed.runtime_handle
             self._lock = threading.RLock()
             self._closed = False
             self._unusable_reason: str | None = None
@@ -345,8 +353,8 @@ class Runtime:
             self._require_open()
             handle = ctypes.c_size_t()
             status = int(
-                self._installed.library.shadowspill_pytorch_object_handle_acquire(
-                    object_id, ctypes.byref(handle)
+                runtime_library().shadowspill_object_handle_acquire(
+                    self._runtime_handle, object_id, ctypes.byref(handle)
                 )
             )
             if status != 0 or handle.value == 0:
@@ -362,7 +370,7 @@ class Runtime:
                     handle=int(handle.value),
                 )
             except BaseException:
-                self._installed.library.shadowspill_pytorch_object_handle_release(
+                runtime_library().shadowspill_object_handle_release(
                     handle.value
                 )
                 raise
@@ -380,7 +388,7 @@ class Runtime:
             if self._active_object_references <= 0:
                 raise RuntimeError("runtime object reference ownership underflow")
             status = int(
-                self._installed.library.shadowspill_pytorch_object_handle_release(
+                runtime_library().shadowspill_object_handle_release(
                     reference._require_handle()
                 )
             )
@@ -403,8 +411,8 @@ class Runtime:
             self._require_open()
             handle = ctypes.c_size_t()
             status = int(
-                self._installed.library.shadowspill_pytorch_object_handle_acquire(
-                    object_id, ctypes.byref(handle)
+                runtime_library().shadowspill_object_handle_acquire(
+                    self._runtime_handle, object_id, ctypes.byref(handle)
                 )
             )
             if status != 0 or handle.value == 0:
@@ -415,15 +423,13 @@ class Runtime:
             operation_status = 0
             try:
                 operation_status = int(
-                    self._installed.library.
-                    shadowspill_pytorch_object_release_generation(
+                    runtime_library().shadowspill_object_release_generation(
                         handle.value, expected_generation
                     )
                 )
             finally:
                 release_status = int(
-                    self._installed.library.
-                    shadowspill_pytorch_object_handle_release(handle.value)
+                    runtime_library().shadowspill_object_handle_release(handle.value)
                 )
             if operation_status != 0:
                 raise RuntimeExecutionError(
@@ -534,11 +540,16 @@ class Runtime:
                 )
             plan_handle_value = ctypes.c_size_t()
             status = int(
-                self._installed.library.shadowspill_pytorch_plan_create(
-                    execution_pool.pool_id,
-                    spill_pool.pool_id,
-                    fetch_route.route_id,
-                    evict_route.route_id,
+                runtime_library().shadowspill_plan_create(
+                    self._runtime_handle,
+                    ctypes.byref(
+                        PlanDescription(
+                            execution_pool_id=execution_pool.pool_id,
+                            spill_pool_id=spill_pool.pool_id,
+                            fetch_route_id=fetch_route.route_id,
+                            evict_route_id=evict_route.route_id,
+                        )
+                    ),
                     ctypes.byref(plan_handle_value),
                 )
             )
@@ -587,6 +598,15 @@ class Runtime:
             finally:
                 self._active_plan_handles.discard(plan_handle)
 
+    def _wait_plan_idle(self, plan_handle: int) -> None:
+        """Block until the plan has no work in flight."""
+
+        status = int(runtime_library().shadowspill_plan_wait_idle(plan_handle))
+        if status != 0:
+            raise RuntimeError(
+                f"compiled executor did not become idle (status {status})"
+            )
+
     def _abort_plan(self, plan_handle: int | None = None) -> None:
         """Release cold-path task records after a failed planning call."""
 
@@ -604,13 +624,13 @@ class Runtime:
 
     def _close_and_destroy_plan(self, plan_handle: int) -> None:
         status = int(
-            self._installed.library.shadowspill_pytorch_plan_close(plan_handle)
+            runtime_library().shadowspill_plan_close(plan_handle)
         )
         if status != 0:
             raise RuntimeConfigurationError(
                 f"handle plan close failed with status {status}"
             )
-        self._installed.library.shadowspill_pytorch_plan_destroy(plan_handle)
+        runtime_library().shadowspill_plan_destroy(plan_handle)
 
     def _prepare_failure_cleanup(
         self,

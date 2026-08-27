@@ -1,8 +1,14 @@
 # PyTorch adapter C API
 
-Include `<shadowspill/pytorch_adapter.h>`. The adapter is the only compiled
-component that knows PyTorch allocator/storage conventions. It bootstraps the
-neutral runtime and translates Python/ATen-facing values into runtime handles.
+Include `<shadowspill/pytorch_adapter.h>`. This is the only compiled component
+that knows PyTorch allocator and storage conventions. It does four things:
+installs PyTorch's allocator, bootstraps the process-global neutral runtime and
+publishes its handle, wraps provider streams and profiler ranges at task
+boundaries, and validates PyTorch storage views.
+
+It deliberately does not restate the neutral runtime. Anything reachable with a
+handle the neutral runtime already owns is called there directly, so this
+header carries only what needs PyTorch or the provider.
 
 ## Bootstrap and capabilities
 
@@ -37,52 +43,65 @@ compiled code can use an invalid address.
 
 - `shadowspill_pytorch_register_object()` and
   `shadowspill_pytorch_register_placeholder_object()` create runtime objects.
-- `shadowspill_pytorch_unregister_object()` and
-  `shadowspill_pytorch_rekey_object()` manage identity.
-- `shadowspill_pytorch_plan_publish_initial_allocation()` and
-  `shadowspill_pytorch_task_publish_allocation()` publish initial and repeated
-  task storages through immutable plan/task records.
+- `shadowspill_unregister_object()` and `shadowspill_rekey_object()` manage
+  identity.
+- `shadowspill_plan_publish_initial_allocation()` and
+  `shadowspill_task_publish_allocation()` publish initial and repeated task
+  storages through immutable plan/task records.
 - `shadowspill_pytorch_validate_object_binding()` rejects stale imported CPU
   storage views. Device storage acquisition is validated by its admitted task
   or object-acquisition handle before the adapter installs the returned
   address.
-- `shadowspill_pytorch_write_object()` and
-  `shadowspill_pytorch_read_object()` move persistent state through an
-  explicitly selected pool.
+- `shadowspill_write_object()` and `shadowspill_read_object()` move persistent
+  state through an explicitly selected pool.
 - `shadowspill_pytorch_transfer_acquired_object_to_caller()` and
   `shadowspill_pytorch_release_caller_allocation()` manage public outputs.
-- `shadowspill_pytorch_object_snapshot()` returns diagnostic state.
-- `shadowspill_pytorch_object_location_snapshot()` returns one explicit
+- `shadowspill_object_snapshot()` returns diagnostic state.
+- `shadowspill_object_location_snapshot()` returns one explicit
   pool-location view without assigning execution or spill meaning to it.
-- `shadowspill_pytorch_object_handle_acquire()` and
-  `shadowspill_pytorch_object_handle_release()` retain and release opaque
+- `shadowspill_object_handle_acquire()` and
+  `shadowspill_object_handle_release()` retain and release opaque
   runtime-global object ownership across callable boundaries.
-- `shadowspill_pytorch_object_release_generation()` releases one exact
-  completed residency generation without destroying its logical object or
-  plan binding.
+- `shadowspill_object_release_generation()` releases one exact completed
+  residency generation without destroying its logical object or plan
+  binding.
 
 ## Execution boundaries
 
-The adapter exposes the neutral plan owner without introducing frontend object
+These publish the neutral plan owner without introducing frontend object
 semantics:
 
-- `shadowspill_pytorch_plan_create()`
-- `shadowspill_pytorch_plan_close()`
-- `shadowspill_pytorch_plan_destroy()`
-- `shadowspill_pytorch_plan_bind_object()`
-- `shadowspill_pytorch_plan_admit_task()`
-- `shadowspill_pytorch_plan_publish_initial_allocation()`
-- `shadowspill_pytorch_task_publish_allocation()` and
-  `shadowspill_pytorch_validate_task_replacement_binding()`
-- `shadowspill_pytorch_plan_admit_action_batch()` and
-  `shadowspill_pytorch_submit_action_batch_handle()`
-- `shadowspill_pytorch_plan_admit_object_acquisition()` and
-  `shadowspill_pytorch_acquire_objects_handle()`
+- `shadowspill_pytorch_validate_task_replacement_binding()`
+- `shadowspill_pytorch_submit_action_batch_handle()`
+- `shadowspill_pytorch_acquire_objects_handle()`
 - `shadowspill_pytorch_transfer_acquired_object_to_caller()`
-- `shadowspill_pytorch_plan_admit_fixed_layout()`
-- `shadowspill_pytorch_plan_seal_fixed_layout()`
-- `shadowspill_pytorch_plan_clear_tasks()`
-- `shadowspill_pytorch_plan_wait_idle()`
+
+Each of those either wraps a provider stream or validates a frontend storage
+view, which is work only this library can do. Everything else in plan
+admission needs nothing but handles the neutral runtime already owns, so the
+frontend calls those on the neutral library, passing the runtime from
+`shadowspill_pytorch_runtime_handle()`:
+
+- `shadowspill_plan_bind_object()`, `shadowspill_plan_admit_task()`,
+  `shadowspill_plan_publish_initial_allocation()`
+- `shadowspill_plan_admit_fixed_layout()`,
+  `shadowspill_plan_seal_fixed_layout()`
+- `shadowspill_plan_admit_object_acquisition()`,
+  `shadowspill_plan_admit_action_batch()`, `shadowspill_plan_create()`
+- `shadowspill_object_handle_acquire()`,
+  `shadowspill_task_publish_allocation()`
+- `shadowspill_plan_close()`, `shadowspill_plan_destroy()`,
+  `shadowspill_plan_clear_tasks()`, `shadowspill_plan_wait_idle()`
+- `shadowspill_object_handle_release()`,
+  `shadowspill_object_release_generation()`
+
+Acquiring an object handle stays on the adapter while releasing one does not:
+acquiring resolves an id against the bound runtime, releasing needs only the
+handle.
+
+`shadowspill_pytorch_runtime_handle()` publishes the neutral runtime this
+process bound. Everything reachable with that handle alone is called on the
+neutral library; what remains here needs something only this library has.
 
 Plan creation receives explicit execution/spill pool IDs and fetch/evict route
 IDs. The adapter does not infer routes from global runtime roles.
@@ -118,19 +137,22 @@ and offset handling](../architecture/physical-admission.md).
 - `shadowspill_pytorch_debug_task_timing_enable()`,
   `shadowspill_pytorch_debug_task_timing_read()`, and
   `shadowspill_pytorch_debug_task_timing_disable()` manage task events.
-- `shadowspill_pytorch_trace_prepare()`, `shadowspill_pytorch_trace_begin()`,
-  `shadowspill_pytorch_trace_end()`, and `shadowspill_pytorch_trace_read()`
-  manage structured runtime tracing.
-- `shadowspill_pytorch_allocation_telemetry_start()`,
-  `shadowspill_pytorch_allocation_telemetry_stop()`, and
-  `shadowspill_pytorch_allocation_telemetry_read()` manage allocation profiling.
+
+Structured runtime tracing (`shadowspill_trace_prepare()`,
+`shadowspill_trace_begin()`, `shadowspill_trace_end()`,
+`shadowspill_trace_read()`) and allocation profiling
+(`shadowspill_allocation_telemetry_start()`,
+`shadowspill_allocation_telemetry_stop()`,
+`shadowspill_allocation_telemetry_read()`) are neutral runtime calls the
+frontend makes directly, passing the handle from
+`shadowspill_pytorch_runtime_handle()`.
 
 ## Failure and lifecycle
 
 `shadowspill_pytorch_allocator_failure()` and
 `shadowspill_pytorch_allocator_statistics()` return structured state.
 `shadowspill_pytorch_allocator_wait_idle()` is an explicit lifecycle barrier;
-`shadowspill_pytorch_plan_wait_idle()` is the plan-local active-poll boundary
+`shadowspill_plan_wait_idle()` is the plan-local active-poll boundary
 used for callable recurrence and teardown. It ignores unrelated plans;
 `shadowspill_pytorch_recover_no_progress()` performs the documented recovery
 operation.

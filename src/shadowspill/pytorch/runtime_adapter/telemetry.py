@@ -6,7 +6,6 @@ import ctypes
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any
 
 from shadowspill.pytorch.profiling.records import (
     TaskAllocationEvent,
@@ -14,6 +13,7 @@ from shadowspill.pytorch.profiling.records import (
     TaskOutputInputBinding,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AllocationEvent as CAllocationEvent
+from shadowspill.pytorch.runtime_adapter.abi import runtime_library
 
 NO_ID = (1 << 64) - 1
 
@@ -247,34 +247,41 @@ class _TraceNormalizer:
         )
 
 
-def start_allocation_telemetry(library: Any, *, capacity: int) -> None:
+def start_allocation_telemetry(runtime_handle: int, *, capacity: int) -> None:
     """Start a fixed-capacity capture without allocating in callbacks."""
 
     if capacity <= 0:
         raise ValueError("telemetry capacity must be positive")
-    status = int(library.shadowspill_pytorch_allocation_telemetry_start(capacity))
+    status = int(runtime_library().shadowspill_allocation_telemetry_start(
+            runtime_handle, capacity
+        ))
     if status != 0:
         raise AllocationTelemetryError(
             f"allocation telemetry start failed with status {status}"
         )
 
 
-def stop_allocation_telemetry(library: Any) -> None:
+def stop_allocation_telemetry(runtime_handle: int) -> None:
     """Stop capture, preserving its complete event buffer for a later read."""
 
-    status = int(library.shadowspill_pytorch_allocation_telemetry_stop())
+    status = int(
+        runtime_library().shadowspill_allocation_telemetry_stop(runtime_handle)
+    )
     if status != 0:
         raise AllocationTelemetryError(
             f"allocation telemetry stop failed with status {status}"
         )
 
 
-def read_allocation_telemetry(library: Any) -> tuple[CapturedAllocationEvent, ...]:
+def read_allocation_telemetry(
+    runtime_handle: int,
+) -> tuple[CapturedAllocationEvent, ...]:
     """Copy and validate the complete ordered capture from the C runtime."""
 
     count = ctypes.c_uint64()
     status = int(
-        library.shadowspill_pytorch_allocation_telemetry_read(
+        runtime_library().shadowspill_allocation_telemetry_read(
+            runtime_handle,
             None, 0, ctypes.byref(count)
         )
     )
@@ -287,7 +294,8 @@ def read_allocation_telemetry(library: Any) -> tuple[CapturedAllocationEvent, ..
     buffer = (CAllocationEvent * count.value)()
     copied = ctypes.c_uint64()
     status = int(
-        library.shadowspill_pytorch_allocation_telemetry_read(
+        runtime_library().shadowspill_allocation_telemetry_read(
+            runtime_handle,
             buffer, count.value, ctypes.byref(copied)
         )
     )

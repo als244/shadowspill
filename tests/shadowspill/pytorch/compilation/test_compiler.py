@@ -219,7 +219,11 @@ def test_explicit_inductor_path_matches_outer_aot_for_inference(
 def test_manifest_hydration_restores_arguments_before_measurement() -> None:
     artifact = _artifact()
     profiler = CudaTaskProfiler(
-        _TaskLibrary(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        _TaskLibrary(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     profiler.prepare_manifests((artifact,))
     observed_arguments: list[int] = []
@@ -301,7 +305,11 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
 ) -> None:
     library = _TaskLibrary()
     profiler = CudaTaskProfiler(
-        library, device_ordinal=0, warmup_iterations=1, sample_iterations=2
+        library,
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=2,
     )
     workspace = SimpleNamespace(
         peak_requested_bytes=64,
@@ -393,7 +401,11 @@ def test_workspace_boundary_always_stops_telemetry(
     )
     library = _TaskLibrary()
     profiler = CudaTaskProfiler(
-        library, device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        library,
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     artifact = _artifact()
     executable = _compiled_task(artifact, lambda *args: torch.ones(1))
@@ -405,6 +417,7 @@ def test_workspace_boundary_always_stops_telemetry(
     failing_library = _TaskLibrary(before_status=5)
     failing = CudaTaskProfiler(
         failing_library,
+        runtime_handle=0,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -448,7 +461,11 @@ def test_workspace_releases_disposable_results_before_scope_end(
         lambda events, **options: object(),
     )
     profiler = CudaTaskProfiler(
-        Library(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        Library(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     artifact = _artifact()
     executable = _compiled_task(artifact, lambda: Result())
@@ -472,7 +489,11 @@ def test_output_allocation_lookup_is_exact() -> None:
             return 0
 
     profiler = CudaTaskProfiler(
-        _Lookup(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        _Lookup(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     tensor = torch.empty(4, device="cuda")
     assert profiler._output_allocation_views((tensor, tensor.view(2, 2))) == (
@@ -487,7 +508,11 @@ def test_output_allocation_lookup_is_exact() -> None:
             return 5
 
     missing = CudaTaskProfiler(
-        _Missing(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        _Missing(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     with pytest.raises(CaptureError, match="outside"):
         missing._output_allocation_views(tensor)
@@ -507,14 +532,18 @@ def test_profiler_rejects_empty_calibration(
     options: dict[str, int], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        CudaTaskProfiler(object(), device_ordinal=0, **options)
+        CudaTaskProfiler(object(), runtime_handle=0, device_ordinal=0, **options)
 
 
 def test_retention_audit_accepts_a_stable_live_byte_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        object(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     workspace = SimpleNamespace(persistent_extent_bytes=(32,))
     measurements = iter((100, 132, 132, 132))
@@ -539,7 +568,11 @@ def test_retention_audit_rejects_unbounded_growth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        object(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     workspace = SimpleNamespace(persistent_extent_bytes=(32,))
     measurements = iter((100, 132, 164, 196))
@@ -565,7 +598,11 @@ def test_profiler_rejects_unknown_artifact_protocol() -> None:
         compatibility_digest = "unknown"
 
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        object(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     artifact = _Unknown()
     with pytest.raises(TypeError, match="unsupported profiling artifact"):
@@ -588,7 +625,11 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_once)
     library = _TaskLibrary()
     profiler = CudaTaskProfiler(
-        library, device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        library,
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     indexed = profiler.take_compiled_tasks((artifact, artifact))
     assert tuple(indexed.functions) == (artifact.compatibility_digest,)
@@ -611,7 +652,11 @@ def test_compiler_failure_has_structural_problem_and_preserves_cause(
 
     monkeypatch.setattr(compiler_module, "compile_artifact", fail_compile)
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        object(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
 
     with pytest.raises(CompilationError, match="compiler exploded") as captured:
@@ -639,7 +684,11 @@ def test_profile_failure_has_structural_problem_and_preserves_cause(
         ),
     )
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        object(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     monkeypatch.setattr(
         profiler,
@@ -680,7 +729,11 @@ def test_measurement_releases_cuda_examples_between_structural_contracts(
     measurement = TaskMeasurement(1, 0, 0, (), (1,), "test")
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_with_large_example)
     profiler = CudaTaskProfiler(
-        object(), device_ordinal=0, warmup_iterations=1, sample_iterations=1
+        object(),
+        runtime_handle=0,
+        device_ordinal=0,
+        warmup_iterations=1,
+        sample_iterations=1,
     )
     stale_frames: list[object] = []
 

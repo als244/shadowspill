@@ -16,7 +16,7 @@ from typing import Final
 #: Everything in libshadowspill ships together and versions together; see
 #: `<shadowspill/shadowspill.h>`. Backends and the PyTorch adapter are
 #: compiled separately and keep their own.
-ABI_VERSION: Final = 61
+ABI_VERSION: Final = 62
 
 
 class Status(IntEnum):

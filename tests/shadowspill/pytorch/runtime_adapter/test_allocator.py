@@ -32,6 +32,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TransferCalibrationConfig,
     TransferProfile,
     configure_adapter_library,
+    configure_runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import (
     AllocatorInstallError,
@@ -65,6 +66,7 @@ class _Function:
 
 class _Library:
     shadowspill_pytorch_adapter_capabilities = _Function()
+    shadowspill_pytorch_runtime_handle = _Function()
     shadowspill_pytorch_profile_range_begin = _Function()
     shadowspill_pytorch_profile_range_end = _Function()
     shadowspill_pytorch_physical_admission = _Function()
@@ -83,47 +85,18 @@ class _Library:
     shadowspill_pytorch_debug_task_timing_read = _Function()
     shadowspill_pytorch_debug_task_timing_disable = _Function()
     shadowspill_pytorch_profiler_annotations_set = _Function()
-    shadowspill_pytorch_allocation_telemetry_start = _Function()
-    shadowspill_pytorch_allocation_telemetry_stop = _Function()
-    shadowspill_pytorch_allocation_telemetry_read = _Function()
-    shadowspill_pytorch_trace_prepare = _Function()
-    shadowspill_pytorch_trace_begin = _Function()
-    shadowspill_pytorch_trace_end = _Function()
-    shadowspill_pytorch_trace_read = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_register_object = _Function()
     shadowspill_pytorch_register_placeholder_object = _Function()
-    shadowspill_pytorch_write_object = _Function()
-    shadowspill_pytorch_read_object = _Function()
-    shadowspill_pytorch_unregister_object = _Function()
-    shadowspill_pytorch_rekey_object = _Function()
     shadowspill_pytorch_allocation_scope_begin = _Function()
     shadowspill_pytorch_allocation_scope_end = _Function()
     shadowspill_pytorch_allocation_scope_abort = _Function()
-    shadowspill_pytorch_plan_create = _Function()
-    shadowspill_pytorch_plan_close = _Function()
-    shadowspill_pytorch_plan_destroy = _Function()
-    shadowspill_pytorch_object_handle_acquire = _Function()
-    shadowspill_pytorch_object_handle_release = _Function()
-    shadowspill_pytorch_object_release_generation = _Function()
-    shadowspill_pytorch_plan_bind_object = _Function()
-    shadowspill_pytorch_plan_admit_task = _Function()
-    shadowspill_pytorch_plan_publish_initial_allocation = _Function()
-    shadowspill_pytorch_task_publish_allocation = _Function()
     shadowspill_pytorch_validate_task_replacement_binding = _Function()
-    shadowspill_pytorch_plan_admit_fixed_layout = _Function()
-    shadowspill_pytorch_plan_seal_fixed_layout = _Function()
-    shadowspill_pytorch_plan_clear_tasks = _Function()
-    shadowspill_pytorch_plan_wait_idle = _Function()
-    shadowspill_pytorch_plan_admit_object_acquisition = _Function()
     shadowspill_pytorch_acquire_objects_handle = _Function()
     shadowspill_pytorch_transfer_acquired_object_to_caller = _Function()
-    shadowspill_pytorch_plan_admit_action_batch = _Function()
     shadowspill_pytorch_submit_action_batch_handle = _Function()
     shadowspill_pytorch_before_task_handle = _Function()
     shadowspill_pytorch_after_task_handle = _Function()
-    shadowspill_pytorch_object_snapshot = _Function()
-    shadowspill_pytorch_object_location_snapshot = _Function()
     shadowspill_pytorch_validate_object_binding = _Function()
     shadowspill_pytorch_abort_task_handle = _Function()
 
@@ -184,11 +157,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
-    assert library.shadowspill_pytorch_plan_wait_idle.argtypes == [ctypes.c_size_t]
-    assert library.shadowspill_pytorch_object_release_generation.argtypes == [
-        ctypes.c_size_t,
-        ctypes.c_uint64,
-    ]
     assert library.shadowspill_pytorch_debug_task_timing_enable.argtypes == [
         ctypes.c_uint32
     ]
@@ -198,27 +166,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(ctypes.c_uint32),
     ]
     assert library.shadowspill_pytorch_debug_task_timing_disable.argtypes == []
-    assert library.shadowspill_pytorch_allocation_telemetry_start.argtypes == [
-        ctypes.c_uint64
-    ]
-    assert library.shadowspill_pytorch_allocation_telemetry_stop.argtypes == []
-    assert library.shadowspill_pytorch_allocation_telemetry_read.argtypes == [
-        ctypes.POINTER(AllocationEvent),
-        ctypes.c_uint64,
-        ctypes.POINTER(ctypes.c_uint64),
-    ]
-    assert library.shadowspill_pytorch_trace_prepare.argtypes == [
-        ctypes.POINTER(TraceConfig)
-    ]
-    assert library.shadowspill_pytorch_trace_begin.argtypes == [ctypes.c_uint64]
-    assert library.shadowspill_pytorch_trace_end.argtypes == []
-    assert library.shadowspill_pytorch_trace_read.argtypes == [
-        ctypes.POINTER(TraceSummary),
-        ctypes.POINTER(TraceEvent),
-        ctypes.c_uint64,
-        ctypes.POINTER(AllocationEvent),
-        ctypes.c_uint64,
-    ]
     assert library.shadowspill_pytorch_allocation_for_pointer.argtypes == [
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),
@@ -230,53 +177,11 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint8,
         ctypes.c_uint64,
     ]
-    assert library.shadowspill_pytorch_write_object.argtypes == [
-        ctypes.c_uint32,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
-    assert library.shadowspill_pytorch_read_object.argtypes == [
-        ctypes.c_uint32,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
-    assert library.shadowspill_pytorch_unregister_object.argtypes == [ctypes.c_uint64]
-    assert library.shadowspill_pytorch_rekey_object.argtypes == [
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
     assert library.shadowspill_pytorch_validate_object_binding.argtypes == [
         ctypes.c_uint32,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_uint64,
-    ]
-    assert library.shadowspill_pytorch_object_handle_acquire.argtypes == [
-        ctypes.c_uint64,
-        ctypes.POINTER(ctypes.c_size_t),
-    ]
-    assert library.shadowspill_pytorch_object_handle_release.argtypes == [
-        ctypes.c_size_t
-    ]
-    assert library.shadowspill_pytorch_plan_bind_object.argtypes == [
-        ctypes.c_size_t,
-        ctypes.c_uint64,
-        ctypes.c_size_t,
-        ctypes.c_uint8,
-    ]
-    assert library.shadowspill_pytorch_task_publish_allocation.argtypes == [
-        ctypes.c_size_t,
-        ctypes.c_uint32,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
-    ]
-    assert library.shadowspill_pytorch_plan_publish_initial_allocation.argtypes == [
-        ctypes.c_size_t,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.POINTER(ObjectBinding),
     ]
     assert library.shadowspill_pytorch_validate_task_replacement_binding.argtypes == [
         ctypes.c_size_t,
@@ -303,6 +208,68 @@ def test_adapter_signatures_are_configured_together() -> None:
     assert library.shadowspill_pytorch_allocation_scope_abort.argtypes == []
     assert library.shadowspill_pytorch_abort_task_handle.argtypes == [
         ctypes.c_size_t,
+    ]
+
+
+class _RuntimeLibrary:
+    """Stands in for the neutral runtime the bridge calls plan admission on."""
+
+    shadowspill_plan_bind_object = _Function()
+    shadowspill_plan_admit_task = _Function()
+    shadowspill_plan_publish_initial_allocation = _Function()
+    shadowspill_plan_admit_fixed_layout = _Function()
+    shadowspill_plan_admit_object_acquisition = _Function()
+    shadowspill_plan_admit_action_batch = _Function()
+    shadowspill_object_handle_release = _Function()
+    shadowspill_object_release_generation = _Function()
+    shadowspill_trace_prepare = _Function()
+    shadowspill_trace_begin = _Function()
+    shadowspill_trace_end = _Function()
+    shadowspill_trace_read = _Function()
+    shadowspill_allocation_telemetry_start = _Function()
+    shadowspill_allocation_telemetry_stop = _Function()
+    shadowspill_allocation_telemetry_read = _Function()
+    shadowspill_unregister_object = _Function()
+    shadowspill_rekey_object = _Function()
+    shadowspill_object_snapshot = _Function()
+    shadowspill_object_location_snapshot = _Function()
+    shadowspill_read_object = _Function()
+    shadowspill_write_object = _Function()
+    shadowspill_plan_create = _Function()
+    shadowspill_object_handle_acquire = _Function()
+    shadowspill_task_publish_allocation = _Function()
+    shadowspill_plan_close = _Function()
+    shadowspill_plan_destroy = _Function()
+    shadowspill_plan_wait_idle = _Function()
+    shadowspill_plan_clear_tasks = _Function()
+    shadowspill_plan_seal_fixed_layout = _Function()
+
+
+def test_runtime_signatures_are_configured_together() -> None:
+    """Plan admission is declared on the neutral runtime, not the adapter.
+
+    The adapter used to wrap each of these to marshal a handle it did not
+    own. Declaring them here is what lets the bridge skip that hop.
+    """
+
+    library = _RuntimeLibrary()
+    configure_runtime_library(library)
+
+    assert library.shadowspill_plan_wait_idle.argtypes == [ctypes.c_size_t]
+    assert library.shadowspill_plan_wait_idle.restype == ctypes.c_uint32
+    assert library.shadowspill_plan_destroy.restype is None
+    assert library.shadowspill_plan_bind_object.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_size_t,
+        ctypes.c_uint8,
+    ]
+    assert library.shadowspill_object_handle_release.argtypes == [ctypes.c_size_t]
+    assert library.shadowspill_plan_publish_initial_allocation.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ObjectBinding),
     ]
 
 

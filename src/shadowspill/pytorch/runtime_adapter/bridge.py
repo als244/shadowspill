@@ -29,6 +29,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskDescription,
     TaskDispatchTiming,
     TaskPublicationDescription,
+    runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
     TaskAllocationContractStep as CTaskAllocationContractStep,
@@ -201,6 +202,10 @@ class RuntimeBridge:
             raise ValueError("execution and spill pools must be distinct")
         self.runtime = runtime
         self.library = runtime._installed.library
+        # Plan admission is the neutral runtime's own API, so the bridge
+        # calls it there rather than through an adapter that only cast
+        # the handle and passed it along.
+        self.runtime_library = runtime_library()
         self.plan_handle = plan_handle
         self.execution_pool_id = execution_pool_id
         self.spill_pool_id = spill_pool_id
@@ -307,8 +312,10 @@ class RuntimeBridge:
             self._binding_consistency[alias_id] = consistency
         handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_object_handle_acquire(
-                self._runtime_object_id(alias_id), ctypes.byref(handle)
+            self.runtime_library.shadowspill_object_handle_acquire(
+                self.runtime._runtime_handle,
+                self._runtime_object_id(alias_id),
+                ctypes.byref(handle),
             ),
             f"acquire runtime object {alias_id}",
         )
@@ -318,7 +325,7 @@ class RuntimeBridge:
             )
         try:
             self._require(
-                self.library.shadowspill_pytorch_plan_bind_object(
+                self.runtime_library.shadowspill_plan_bind_object(
                     self.plan_handle,
                     _plan_local_id(alias_id, "alias_"),
                     handle.value,
@@ -328,7 +335,7 @@ class RuntimeBridge:
             )
         finally:
             self._require(
-                self.library.shadowspill_pytorch_object_handle_release(handle.value),
+                self.runtime_library.shadowspill_object_handle_release(handle.value),
                 f"release runtime object handle {alias_id}",
             )
 
@@ -401,7 +408,7 @@ class RuntimeBridge:
         )
         task_handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_plan_admit_task(
+            self.runtime_library.shadowspill_plan_admit_task(
                 self.plan_handle,
                 ctypes.byref(buffers.description),
                 ctypes.byref(task_handle),
@@ -458,7 +465,7 @@ class RuntimeBridge:
             dependency_count=len(layout.dependencies),
         )
         status = int(
-            self.library.shadowspill_pytorch_plan_admit_fixed_layout(
+            self.runtime_library.shadowspill_plan_admit_fixed_layout(
                 self.plan_handle, ctypes.byref(description)
             )
         )
@@ -524,7 +531,7 @@ class RuntimeBridge:
         )
         action_batch_handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_plan_admit_action_batch(
+            self.runtime_library.shadowspill_plan_admit_action_batch(
                 self.plan_handle,
                 task_number,
                 runtime_actions if action_pairs else None,
@@ -547,7 +554,7 @@ class RuntimeBridge:
         if not self._fixed_layout_installed:
             raise RuntimeExecutionError("no fixed physical layout was admitted")
         self._require(
-            self.library.shadowspill_pytorch_plan_seal_fixed_layout(self.plan_handle),
+            self.runtime_library.shadowspill_plan_seal_fixed_layout(self.plan_handle),
             "seal fixed physical layout",
         )
 
@@ -753,17 +760,17 @@ class RuntimeBridge:
         """Allocate reusable bounded CPU trace buffers without enabling trace."""
 
         prepare_runtime_trace(
-            self.library,
+            self.runtime._runtime_handle,
             event_capacity=event_capacity,
             allocation_event_capacity=allocation_event_capacity,
         )
 
     def begin_runtime_trace(self, *, step_id: int) -> None:
-        begin_runtime_trace(self.library, step_id=step_id)
+        begin_runtime_trace(self.runtime._runtime_handle, step_id=step_id)
 
     def end_and_read_runtime_trace(self) -> CapturedRuntimeTrace:
-        end_runtime_trace(self.library)
-        return read_runtime_trace(self.library)
+        end_runtime_trace(self.runtime._runtime_handle)
+        return read_runtime_trace(self.runtime._runtime_handle)
 
     def statistics(self) -> AdapterStatistics:
         result = AdapterStatistics()
@@ -904,11 +911,12 @@ class RuntimeBridge:
         if expected == 0:
             return
         self._require(
-            self.library.shadowspill_pytorch_write_object(
-                self.spill_pool_id,
+            self.runtime_library.shadowspill_write_object(
+                self.runtime._runtime_handle,
                 self._runtime_object_id(alias_id),
-                expected,
+                self.spill_pool_id,
                 storage.data_ptr(),
+                expected,
             ),
             "write host object",
         )
@@ -926,11 +934,12 @@ class RuntimeBridge:
         if expected == 0:
             return
         self._require(
-            self.library.shadowspill_pytorch_read_object(
-                self.spill_pool_id,
+            self.runtime_library.shadowspill_read_object(
+                self.runtime._runtime_handle,
                 self._runtime_object_id(alias_id),
-                expected,
+                self.spill_pool_id,
                 storage.data_ptr(),
+                expected,
             ),
             "read host object",
         )
@@ -950,8 +959,9 @@ class RuntimeBridge:
                 self._zero_generations.pop(alias_id, None)
                 continue
             self._require(
-                self.library.shadowspill_pytorch_unregister_object(
-                    self._runtime_object_id(alias_id)
+                self.runtime_library.shadowspill_unregister_object(
+                    self.runtime._runtime_handle,
+                    self._runtime_object_id(alias_id),
                 ),
                 "unregister object",
             )
@@ -970,7 +980,7 @@ class RuntimeBridge:
         binding = ObjectBinding()
         storage = tensor.untyped_storage()
         self._require(
-            self.library.shadowspill_pytorch_plan_publish_initial_allocation(
+            self.runtime_library.shadowspill_plan_publish_initial_allocation(
                 self.plan_handle,
                 _plan_local_id(alias_id, "alias_"),
                 storage.data_ptr(),
@@ -1040,7 +1050,7 @@ class RuntimeBridge:
         )
         handle = ctypes.c_size_t()
         self._require(
-            self.library.shadowspill_pytorch_plan_admit_object_acquisition(
+            self.runtime_library.shadowspill_plan_admit_object_acquisition(
                 self.plan_handle,
                 identifiers,
                 len(runtime_aliases),
@@ -1092,7 +1102,7 @@ class RuntimeBridge:
         """Discard immutable task records and their fixed layout."""
 
         self._require(
-            self.library.shadowspill_pytorch_plan_clear_tasks(self.plan_handle),
+            self.runtime_library.shadowspill_plan_clear_tasks(self.plan_handle),
             "clear plan tasks",
         )
         self._admitted_task_handles.clear()
@@ -1104,7 +1114,7 @@ class RuntimeBridge:
         """Actively wait only for work owned by this admitted plan."""
 
         self._require(
-            self.library.shadowspill_pytorch_plan_wait_idle(self.plan_handle),
+            self.runtime_library.shadowspill_plan_wait_idle(self.plan_handle),
             "wait for plan idle",
         )
 
@@ -1239,8 +1249,10 @@ class RuntimeBridge:
             )
         snapshot = ObjectSnapshot()
         self._require(
-            self.library.shadowspill_pytorch_object_snapshot(
-                self._runtime_object_id(alias_id), ctypes.byref(snapshot)
+            self.runtime_library.shadowspill_object_snapshot(
+                self.runtime._runtime_handle,
+                self._runtime_object_id(alias_id),
+                ctypes.byref(snapshot),
             ),
             f"snapshot object {alias_id}",
         )
@@ -1283,8 +1295,10 @@ class RuntimeBridge:
         for alias_id in dict.fromkeys(alias_ids):
             snapshot = ObjectSnapshot()
             status = int(
-                self.library.shadowspill_pytorch_object_snapshot(
-                    self._runtime_object_id(alias_id), ctypes.byref(snapshot)
+                self.runtime_library.shadowspill_object_snapshot(
+                    self.runtime._runtime_handle,
+                    self._runtime_object_id(alias_id),
+                    ctypes.byref(snapshot),
                 )
             )
             if status != 0:

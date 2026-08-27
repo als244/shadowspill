@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+from functools import cache
 from typing import Any, Final
+
+from shadowspill.libraries import load_shadowspill_library
 
 ADAPTER_ABI_VERSION: Final = 56
 
@@ -338,6 +341,17 @@ class AdapterStatistics(ctypes.Structure):
     ]
 
 
+class PlanDescription(ctypes.Structure):
+    """The pools and routes one plan is created against."""
+
+    _fields_ = [
+        ("execution_pool_id", ctypes.c_uint32),
+        ("spill_pool_id", ctypes.c_uint32),
+        ("fetch_route_id", ctypes.c_uint32),
+        ("evict_route_id", ctypes.c_uint32),
+    ]
+
+
 class ObjectBinding(ctypes.Structure):
     _fields_ = [
         ("object_id", ctypes.c_uint64),
@@ -481,11 +495,206 @@ def configure_adapter_library(library: Any) -> None:
     _configure_allocator(library)
     _configure_transfer_calibration(library)
     _configure_debug_timing(library)
-    _configure_telemetry(library)
-    _configure_trace(library)
     _configure_objects(library)
     _configure_task_boundaries(library)
     _configure_execution(library)
+
+
+#: Plan admission and object handles are the neutral runtime's own API. The
+#: adapter used to wrap each of these to marshal a `uintptr_t` in and out; the
+#: pointer it handed back was always the neutral object, so the bridge calls
+#: them directly. A handle is declared `c_size_t` rather than `c_void_p`
+#: because it is pointer-sized either way and reads back as a plain integer.
+_RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
+    ("shadowspill_plan_close", [ctypes.c_size_t], ctypes.c_uint32),
+    ("shadowspill_plan_destroy", [ctypes.c_size_t], None),
+    ("shadowspill_plan_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),
+    ("shadowspill_plan_clear_tasks", [ctypes.c_size_t], ctypes.c_uint32),
+    ("shadowspill_plan_seal_fixed_layout", [ctypes.c_size_t], ctypes.c_uint32),
+    (
+        "shadowspill_plan_bind_object",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_uint8],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_plan_admit_task",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(TaskDescription),
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_plan_publish_initial_allocation",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.POINTER(ObjectBinding),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_plan_admit_fixed_layout",
+        [ctypes.c_size_t, ctypes.POINTER(FixedLayoutDescription)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_plan_admit_object_acquisition",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_plan_admit_action_batch",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.POINTER(RuntimeAction),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_uint32,
+    ),
+    ("shadowspill_object_handle_release", [ctypes.c_size_t], ctypes.c_uint32),
+    (
+        "shadowspill_object_release_generation",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    ("shadowspill_trace_end", [ctypes.c_size_t], ctypes.c_uint32),
+    (
+        "shadowspill_trace_prepare",
+        [ctypes.c_size_t, ctypes.POINTER(TraceConfig)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_trace_begin",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_trace_read",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(TraceSummary),
+            ctypes.POINTER(TraceEvent),
+            ctypes.c_uint64,
+            ctypes.POINTER(AllocationEvent),
+            ctypes.c_uint64,
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_allocation_telemetry_start",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    ("shadowspill_allocation_telemetry_stop", [ctypes.c_size_t], ctypes.c_uint32),
+    (
+        "shadowspill_allocation_telemetry_read",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(AllocationEvent),
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_unregister_object",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_rekey_object",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_object_snapshot",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.POINTER(ObjectSnapshot)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_object_location_snapshot",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.POINTER(ObjectLocationSnapshot),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_read_object",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_write_object",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_object_handle_acquire",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_task_publish_allocation",
+        [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.c_uint64,
+            ctypes.POINTER(ObjectBinding),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_plan_create",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(PlanDescription),
+            ctypes.POINTER(ctypes.c_size_t),
+        ],
+        ctypes.c_uint32,
+    ),
+)
+
+
+@cache
+def runtime_library() -> Any:
+    """The neutral runtime library, with the signatures the bridge calls."""
+
+    library = load_shadowspill_library()
+    configure_runtime_library(library)
+    return library
+
+
+def configure_runtime_library(library: Any) -> None:
+    """Declare the neutral runtime signatures the bridge calls directly."""
+
+    for name, arguments, result in _RUNTIME_SIGNATURES:
+        _signature(library, name, arguments, result)
 
 
 def _signature(
@@ -504,6 +713,12 @@ def _configure_capabilities(library: Any) -> None:
         library,
         "shadowspill_pytorch_adapter_capabilities",
         [ctypes.POINTER(AdapterCapabilities)],
+        ctypes.c_uint32,
+    )
+    _signature(
+        library,
+        "shadowspill_pytorch_runtime_handle",
+        [ctypes.POINTER(ctypes.c_size_t)],
         ctypes.c_uint32,
     )
 
@@ -631,53 +846,6 @@ def _configure_debug_timing(library: Any) -> None:
     )
 
 
-def _configure_telemetry(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_allocation_telemetry_start",
-        [ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library, "shadowspill_pytorch_allocation_telemetry_stop", [], ctypes.c_uint32
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_allocation_telemetry_read",
-        [
-            ctypes.POINTER(AllocationEvent),
-            ctypes.c_uint64,
-            ctypes.POINTER(ctypes.c_uint64),
-        ],
-        ctypes.c_uint32,
-    )
-
-
-def _configure_trace(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_trace_prepare",
-        [ctypes.POINTER(TraceConfig)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library, "shadowspill_pytorch_trace_begin", [ctypes.c_uint64], ctypes.c_uint32
-    )
-    _signature(library, "shadowspill_pytorch_trace_end", [], ctypes.c_uint32)
-    _signature(
-        library,
-        "shadowspill_pytorch_trace_read",
-        [
-            ctypes.POINTER(TraceSummary),
-            ctypes.POINTER(TraceEvent),
-            ctypes.c_uint64,
-            ctypes.POINTER(AllocationEvent),
-            ctypes.c_uint64,
-        ],
-        ctypes.c_uint32,
-    )
-
-
 def _configure_objects(library: Any) -> None:
     _signature(
         library,
@@ -695,46 +863,6 @@ def _configure_objects(library: Any) -> None:
         library,
         "shadowspill_pytorch_register_placeholder_object",
         [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_write_object",
-        [ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_read_object",
-        [ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_unregister_object",
-        [ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_rekey_object",
-        [ctypes.c_uint64, ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_object_snapshot",
-        [ctypes.c_uint64, ctypes.POINTER(ObjectSnapshot)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_object_location_snapshot",
-        [
-            ctypes.c_uint64,
-            ctypes.c_uint32,
-            ctypes.POINTER(ObjectLocationSnapshot),
-        ],
         ctypes.c_uint32,
     )
     _signature(
@@ -770,123 +898,8 @@ def _configure_task_boundaries(library: Any) -> None:
 def _configure_execution(library: Any) -> None:
     _signature(
         library,
-        "shadowspill_pytorch_plan_create",
-        [
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_size_t),
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_close",
-        [ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_destroy",
-        [ctypes.c_size_t],
-        None,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_object_handle_acquire",
-        [ctypes.c_uint64, ctypes.POINTER(ctypes.c_size_t)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_object_handle_release",
-        [ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_object_release_generation",
-        [ctypes.c_size_t, ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_bind_object",
-        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_size_t, ctypes.c_uint8],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_admit_task",
-        [
-            ctypes.c_size_t,
-            ctypes.POINTER(TaskDescription),
-            ctypes.POINTER(ctypes.c_size_t),
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_publish_initial_allocation",
-        [
-            ctypes.c_size_t,
-            ctypes.c_uint64,
-            ctypes.c_uint64,
-            ctypes.POINTER(ObjectBinding),
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_task_publish_allocation",
-        [
-            ctypes.c_size_t,
-            ctypes.c_uint32,
-            ctypes.c_uint64,
-            ctypes.POINTER(ObjectBinding),
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
         "shadowspill_pytorch_validate_task_replacement_binding",
         [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_admit_fixed_layout",
-        [ctypes.c_size_t, ctypes.POINTER(FixedLayoutDescription)],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_seal_fixed_layout",
-        [ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_clear_tasks",
-        [ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_wait_idle",
-        [ctypes.c_size_t],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_admit_object_acquisition",
-        [
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_uint64),
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_size_t),
-        ],
         ctypes.c_uint32,
     )
     _signature(
@@ -911,18 +924,6 @@ def _configure_execution(library: Any) -> None:
             ctypes.c_uint64,
             ctypes.c_uint64,
             ctypes.POINTER(Allocation),
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_plan_admit_action_batch",
-        [
-            ctypes.c_size_t,
-            ctypes.c_uint64,
-            ctypes.POINTER(RuntimeAction),
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_size_t),
         ],
         ctypes.c_uint32,
     )
