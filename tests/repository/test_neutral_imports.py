@@ -16,8 +16,9 @@ import sys
 
 import pytest
 
-#: Each must import without torch appearing in `sys.modules`.
+#: Each must import without a framework appearing in `sys.modules`.
 NEUTRAL_MODULES = (
+    "shadowspill",
     "shadowspill.errors",
     "shadowspill.ir",
     "shadowspill.planner",
@@ -30,10 +31,17 @@ NEUTRAL_MODULES = (
     "shadowspill.simulator",
 )
 
+#: `mlops` is a workload package; the neutral tree must not reach for one.
+_FRAMEWORKS = ("torch", "mlops")
+
 _PROBE = """
 import importlib, sys
 importlib.import_module({name!r})
-loaded = sorted(m for m in sys.modules if m == "torch" or m.startswith("torch."))
+roots = {frameworks!r}
+loaded = sorted(
+    m for m in sys.modules
+    if any(m == r or m.startswith(r + ".") for r in roots)
+)
 if loaded:
     print(",".join(loaded[:8]))
     raise SystemExit(1)
@@ -42,7 +50,7 @@ if loaded:
 
 def _imports_without_torch(module: str) -> tuple[bool, str]:
     completed = subprocess.run(
-        [sys.executable, "-c", _PROBE.format(name=module)],
+        [sys.executable, "-c", _PROBE.format(name=module, frameworks=_FRAMEWORKS)],
         capture_output=True,
         text=True,
         check=False,
@@ -55,7 +63,7 @@ def _imports_without_torch(module: str) -> tuple[bool, str]:
 @pytest.mark.parametrize("module", NEUTRAL_MODULES)
 def test_neutral_module_imports_without_torch(module: str) -> None:
     clean, detail = _imports_without_torch(module)
-    assert clean, f"{module} pulled torch in: {detail}"
+    assert clean, f"{module} pulled a framework in: {detail}"
 
 
 def test_planning_a_saved_program_needs_no_frontend() -> None:
@@ -68,4 +76,4 @@ def test_planning_a_saved_program_needs_no_frontend() -> None:
 
     for module in ("shadowspill.planner", "benchmarking.planning_eval.worker"):
         clean, detail = _imports_without_torch(module)
-        assert clean, f"{module} pulled torch in: {detail}"
+        assert clean, f"{module} pulled a framework in: {detail}"
