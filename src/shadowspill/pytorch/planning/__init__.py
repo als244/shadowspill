@@ -22,7 +22,7 @@ from .forward import (
     pressurefit_forward_program,
     profile_forward_tasks,
 )
-from .repositories import PlanningArtifactRepositories, open_artifact_repositories
+from .stores import PlanningStores, open_planning_stores
 from .training import (
     admit_training_plan,
     build_training_programs,
@@ -39,7 +39,7 @@ __all__ = [
     "ForwardCaptureArtifacts",
     "ForwardProfileArtifacts",
     "ForwardProgramArtifacts",
-    "PlanningArtifactRepositories",
+    "PlanningStores",
     "PlanningTimer",
     "TrainingAdmissionArtifacts",
     "TrainingCaptureArtifacts",
@@ -56,7 +56,7 @@ __all__ = [
     "capture_training_graphs",
     "compile_selected_training_tasks",
     "materialize_training_state",
-    "open_artifact_repositories",
+    "open_planning_stores",
     "pressurefit_forward_program",
     "pressurefit_training_programs",
     "profile_forward_tasks",

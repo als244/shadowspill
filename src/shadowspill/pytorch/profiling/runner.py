@@ -13,7 +13,7 @@ from .records import (
     ProfilingResult,
     TaskMeasurement,
 )
-from .repository import ProfileRepository
+from .store import ProfileStore
 
 
 class ProfilableArtifact(Protocol):
@@ -28,7 +28,7 @@ def profile_unique_artifacts(
     *,
     environment: ProfileEnvironment,
     measure: Callable[[ProfilableArtifact], TaskMeasurement],
-    cache: ProfileRepository,
+    cache: ProfileStore,
     validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None = None,
     progress: Callable[[int, int, str, str], None] | None = None,
     profiling_metadata_digests: Sequence[str | None] | None = None,
@@ -130,7 +130,7 @@ def _measure_unique_keys(
     positions: dict[str, list[int]],
     representatives: dict[str, ProfilableArtifact],
     measure: Callable[[ProfilableArtifact], TaskMeasurement],
-    cache: ProfileRepository,
+    cache: ProfileStore,
     validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None,
     progress: Callable[[int, int, str, str], None] | None,
 ) -> tuple[dict[str, TaskMeasurement], int, int]:
@@ -159,7 +159,7 @@ def _resolve_measurement(
     key: ProfileKey,
     artifact: ProfilableArtifact,
     measure: Callable[[ProfilableArtifact], TaskMeasurement],
-    cache: ProfileRepository,
+    cache: ProfileStore,
     validate: Callable[[ProfilableArtifact, TaskMeasurement], None] | None,
     progress: Callable[[int, int, str, str], None] | None,
     index: int,

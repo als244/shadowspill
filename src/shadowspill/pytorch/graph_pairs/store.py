@@ -30,7 +30,7 @@ from .serialization import (
 _GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v7"
 
 
-class GraphPairRepository:
+class GraphPairStore:
     """Reuse AOT graph pairs while rebinding occurrence-specific values."""
 
     def __init__(
@@ -257,4 +257,4 @@ class GraphPairRepository:
         )
 
 
-__all__ = ["GraphPairRepository"]
+__all__ = ["GraphPairStore"]

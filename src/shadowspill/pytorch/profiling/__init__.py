@@ -39,8 +39,8 @@ from .records import (
     TaskMeasurement,
     TaskOutputInputBinding,
 )
-from .repository import PlanningArtifactRecorder, ProfileRepository
 from .runner import ProfilableArtifact, profile_unique_artifacts
+from .store import PlanningArtifactRecorder, ProfileStore
 
 __all__ = [
     "PROFILE_SCHEMA",
@@ -52,7 +52,7 @@ __all__ = [
     "ProfilableArtifact",
     "ProfileEnvironment",
     "ProfileKey",
-    "ProfileRepository",
+    "ProfileStore",
     "ProfilingMetadata",
     "ProfilingResult",
     "RepresentativeInputSet",

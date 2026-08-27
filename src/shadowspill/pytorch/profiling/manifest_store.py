@@ -17,12 +17,12 @@ from pathlib import Path
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.profiling.records import ProfileKey
-from shadowspill.pytorch.profiling.repository import PlanningArtifactRecorder
+from shadowspill.pytorch.profiling.store import PlanningArtifactRecorder
 
 _SCHEMA = "shadowspill.compiled_task_manifest/v2"
 
 
-class CompiledManifestRepository:
+class CompiledManifestStore:
     """Atomic compiler-manifest sidecars keyed by a structural profile key."""
 
     def __init__(
@@ -149,4 +149,4 @@ class CompiledManifestRepository:
         )
 
 
-__all__ = ["CompiledManifestRepository"]
+__all__ = ["CompiledManifestStore"]

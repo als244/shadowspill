@@ -20,7 +20,7 @@ from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
     ProfileKey,
-    ProfileRepository,
+    ProfileStore,
     TaskAllocationContract,
     TaskAllocationEvent,
     TaskAllocationOperation,
@@ -125,7 +125,7 @@ def test_structural_profile_runs_once_and_warm_cache_runs_nothing(
             persistent_extent_bytes=(32,),
         )
 
-    cache = ProfileRepository(tmp_path)
+    cache = ProfileStore(tmp_path)
     cold = profile_unique_artifacts(
         artifacts,
         environment=_environment(),
@@ -162,7 +162,7 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
         calls += 1
         return TaskMeasurement(1, 0, 0, (), (1,), "test")
 
-    cache = ProfileRepository(tmp_path)
+    cache = ProfileStore(tmp_path)
     profile_unique_artifacts(
         artifacts,
         environment=_environment(),
@@ -242,7 +242,7 @@ def test_profile_identity_ignores_control_contents(
         artifacts,
         environment=_environment(),
         measure=measure,
-        cache=ProfileRepository(tmp_path),
+        cache=ProfileStore(tmp_path),
     )
     assert calls == 1
     assert result.unique_keys == 1
@@ -270,14 +270,14 @@ def test_profile_identity_accepts_scalar_integer_control(tmp_path: Path) -> None
         (artifact,),
         environment=_environment(),
         measure=lambda _artifact: TaskMeasurement(1, 0, 0, (), (1,), "scalar"),
-        cache=ProfileRepository(tmp_path),
+        cache=ProfileStore(tmp_path),
     )
     assert result.unique_keys == 1
 
 
 def test_invalid_cached_physical_profile_is_remeasured(tmp_path: Path) -> None:
     artifact = _artifacts()[0]
-    cache = ProfileRepository(tmp_path)
+    cache = ProfileStore(tmp_path)
     calls = 0
 
     def measure(_artifact: GraphArtifact) -> TaskMeasurement:
@@ -331,7 +331,7 @@ def test_profiling_metadata_splits_measurements_without_recompiling_identity(
             persistent_extent_bytes=(32,),
         )
 
-    cache = ProfileRepository(tmp_path)
+    cache = ProfileStore(tmp_path)
     cold = profile_unique_artifacts(
         (artifact, artifact),
         environment=_environment(),

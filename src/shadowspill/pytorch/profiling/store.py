@@ -28,7 +28,7 @@ class PlanningArtifactRecorder(Protocol):
     ) -> None: ...
 
 
-class ProfileRepository:
+class ProfileStore:
     """Atomic per-key JSON cache independent of planning task identity."""
 
     def __init__(
@@ -168,4 +168,4 @@ class ProfileRepository:
             )
 
 
-__all__ = ["PlanningArtifactRecorder", "ProfileRepository"]
+__all__ = ["PlanningArtifactRecorder", "ProfileStore"]

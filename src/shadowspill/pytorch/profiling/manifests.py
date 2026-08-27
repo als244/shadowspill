@@ -11,10 +11,10 @@ from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layout
 
-from .manifest_repository import CompiledManifestRepository
+from .manifest_store import CompiledManifestStore
 from .records import ProfileEnvironment, ProfileKey, TaskMeasurement
-from .repository import ProfileRepository
 from .runner import ProfilableArtifact
+from .store import ProfileStore
 
 
 class ManifestCompiler(Protocol):
@@ -75,7 +75,7 @@ def resolve_task_manifests(
     artifacts: Sequence[ProfilableArtifact],
     *,
     environment: ProfileEnvironment,
-    profile_cache: ProfileRepository,
+    profile_cache: ProfileStore,
     compiler: ManifestCompiler,
     progress: Callable[[int, int, str, str], None] | None = None,
 ) -> ResolvedTaskManifests:
@@ -114,9 +114,9 @@ def _unique_graph_artifacts(
 
 
 def _manifest_cache(
-    profile_cache: ProfileRepository,
-) -> CompiledManifestRepository:
-    return CompiledManifestRepository(
+    profile_cache: ProfileStore,
+) -> CompiledManifestStore:
+    return CompiledManifestStore(
         profile_cache.compiled_manifest_root,
         read_enabled=profile_cache.read_enabled,
         write_enabled=profile_cache.write_enabled,
@@ -128,7 +128,7 @@ def _manifest_cache(
 def _read_manifests(
     artifacts: dict[str, GraphArtifact],
     environment: ProfileEnvironment,
-    cache: CompiledManifestRepository,
+    cache: CompiledManifestStore,
     *,
     progress: Callable[[int, int, str, str], None] | None,
 ) -> tuple[dict[str, ExecutableTaskManifest], list[GraphArtifact]]:
@@ -155,7 +155,7 @@ def _compile_missing_manifests(
     missing: Sequence[GraphArtifact],
     manifests: dict[str, ExecutableTaskManifest],
     environment: ProfileEnvironment,
-    cache: CompiledManifestRepository,
+    cache: CompiledManifestStore,
     compiler: ManifestCompiler,
 ) -> None:
     hydrated = compiler.prepare_manifests(missing)
