@@ -134,7 +134,7 @@ def valid_cached_variant(value: object) -> TypeGuard[CachedGraphPairVariant]:
 
 def restore_cached_variant(value: object) -> GraphPairVariant:
     if not valid_cached_variant(value):
-        raise CaptureError("AOT graph-pair cache contains an invalid variant")
+        raise CaptureError("AOT graph-pair store contains an invalid variant")
     option_id, memory_budget, cached = value
     return GraphPairVariant(option_id, memory_budget, cached.restore())
 

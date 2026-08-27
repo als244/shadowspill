@@ -14,7 +14,7 @@ def partition_training_capture(
     capture: TrainingObjectiveCapture,
     *,
     partition: PartitionSpec = "auto",
-    graph_pair_repository: GraphPairStore | None = None,
+    graph_pair_store: GraphPairStore | None = None,
     representative_root_inputs: tuple[object, ...] | None = None,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template."""
@@ -29,7 +29,7 @@ def partition_training_capture(
         training=capture,
         partitioned=partitioned,
         stages=capture_training_stages(
-            partitioned, graph_pair_repository=graph_pair_repository
+            partitioned, graph_pair_store=graph_pair_store
         ),
     )
 

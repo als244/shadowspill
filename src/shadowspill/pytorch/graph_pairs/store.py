@@ -124,17 +124,17 @@ class GraphPairStore:
             ValueError,
             pickle.UnpicklingError,
         ) as exc:
-            raise CaptureError(f"AOT graph-pair cache entry {path} is invalid") from exc
+            raise CaptureError(f"AOT graph-pair store entry {path} is invalid") from exc
         if (
             not isinstance(payload, dict)
             or payload.get("schema") != _GRAPH_PAIR_CACHE_SCHEMA
             or payload.get("key") != key
         ):
-            raise CaptureError(f"AOT graph-pair cache entry {path} has the wrong key")
+            raise CaptureError(f"AOT graph-pair store entry {path} has the wrong key")
         reference_option_id = payload.get("reference_option_id")
         if not isinstance(reference_option_id, str) or not reference_option_id:
             raise CaptureError(
-                f"AOT graph-pair cache entry {path} has no reference option"
+                f"AOT graph-pair store entry {path} has no reference option"
             )
         variants = payload.get("variants")
         if (
@@ -142,7 +142,7 @@ class GraphPairStore:
             or not variants
             or any(not valid_cached_variant(item) for item in variants)
         ):
-            raise CaptureError(f"AOT graph-pair cache entry {path} has invalid data")
+            raise CaptureError(f"AOT graph-pair store entry {path} has invalid data")
         result = TaskGraphPairs(
             structural_contract=key[0],
             root_output_indices=key[1],
