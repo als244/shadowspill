@@ -27,7 +27,6 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectUpdate,
     RuntimeAction,
     TaskDescription,
-    TaskDispatchTiming,
     TaskPublicationDescription,
     runtime_library,
 )
@@ -109,14 +108,6 @@ class TaskMemoryEnvelope:
             raise ValueError("scratch allocation maximum exceeds scratch live limit")
         if any(len(value) != 64 for value in self.allocation_path_digests):
             raise ValueError("allocation path digests must be SHA-256")
-
-
-@dataclass(frozen=True, slots=True)
-class TaskDispatchTimestamps:
-    before_task_enter_ns: int
-    before_task_exit_ns: int
-    after_task_enter_ns: int
-    after_task_exit_ns: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,7 +211,6 @@ class RuntimeBridge:
         self._borrowed: set[str] = set()
         self._binding_consistency: dict[str, int] = {}
         self._runtime_object_ids: dict[str, int] = {}
-        self._debug_task_timing_capacity = 0
         self._admitted_task_handles: set[int] = set()
         self._admitted_action_batches: dict[
             int, tuple[int, tuple[tuple[str, MemoryActionKind], ...]]
@@ -705,54 +695,6 @@ class RuntimeBridge:
             contract_values,
             labels,
         )
-
-    def enable_debug_task_timing(self, task_ids: Iterable[str]) -> None:
-        """Enable optional compute-stream host callbacks for selected tasks."""
-
-        task_ordinals = tuple(_plan_local_id(task_id, "task_") for task_id in task_ids)
-        capacity = max(task_ordinals, default=-1) + 1
-        if capacity <= 0:
-            raise RuntimeExecutionError("debug task timing requires a task")
-        self._require(
-            self.library.shadowspill_pytorch_debug_task_timing_enable(capacity),
-            "enable debug task timing",
-        )
-        self._debug_task_timing_capacity = capacity
-
-    def read_debug_task_timing(
-        self,
-    ) -> dict[str, TaskDispatchTimestamps]:
-        """Read host-callback timestamps after the compute stream is idle."""
-
-        capacity = self._debug_task_timing_capacity
-        if capacity <= 0:
-            return {}
-        records = (TaskDispatchTiming * capacity)()
-        count = ctypes.c_uint32()
-        self._require(
-            self.library.shadowspill_pytorch_debug_task_timing_read(
-                records, capacity, ctypes.byref(count)
-            ),
-            "read debug task timing",
-        )
-        return {
-            f"task_{int(item.task_id):06d}": TaskDispatchTimestamps(
-                before_task_enter_ns=int(item.before_task_enter_timestamp_ns),
-                before_task_exit_ns=int(item.before_task_exit_timestamp_ns),
-                after_task_enter_ns=int(item.after_task_enter_timestamp_ns),
-                after_task_exit_ns=int(item.after_task_exit_timestamp_ns),
-            )
-            for item in records[: count.value]
-        }
-
-    def disable_debug_task_timing(self) -> None:
-        if self._debug_task_timing_capacity <= 0:
-            return
-        self._require(
-            self.library.shadowspill_pytorch_debug_task_timing_disable(),
-            "disable debug task timing",
-        )
-        self._debug_task_timing_capacity = 0
 
     def prepare_runtime_trace(
         self, *, event_capacity: int, allocation_event_capacity: int

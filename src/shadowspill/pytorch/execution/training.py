@@ -269,10 +269,6 @@ class TrainingExecutor(AnnotatedExecutor):
         """Lazily allocate reusable trace buffers and timing events."""
 
         runs = tuple(run for run in (self._initial, self._recurrent) if run is not None)
-        self._bridge.enable_debug_task_timing(
-            record.task.task_id for run in runs for record in run.execution
-        )
-        self._bridge.disable_debug_task_timing()
         self._bridge.prepare_runtime_trace(
             event_capacity=self._trace_event_capacity,
             allocation_event_capacity=self._trace_allocation_capacity,
@@ -364,11 +360,7 @@ class TrainingExecutor(AnnotatedExecutor):
         """Open the current invocation's runtime trace after prior work is idle."""
 
         timing.statistics_before = self._bridge.statistics()
-        try:
-            self._bridge.begin_runtime_trace(step_id=self._invocations + 1)
-        except BaseException:
-            self._bridge.disable_debug_task_timing()
-            raise
+        self._bridge.begin_runtime_trace(step_id=self._invocations + 1)
 
     def _submit_initial_placement(
         self,
@@ -496,7 +488,6 @@ class TrainingExecutor(AnnotatedExecutor):
             simulation=run.simulation,
             trace_setup_ns=trace_setup_ns,
         )
-        self._bridge.enable_debug_task_timing(armed.task_order)
         self._armed_execution_timing = armed
 
     def arm_selected_span_timing(self) -> None:
@@ -557,12 +548,9 @@ class TrainingExecutor(AnnotatedExecutor):
             return
         stream = timing.stream or torch.cuda.current_stream()
         stream.synchronize()
-        try:
-            self._bridge.disable_debug_task_timing()
-        finally:
-            with suppress(BaseException):
-                self._bridge.end_and_read_runtime_trace()
-            self._armed_execution_timing = None
+        with suppress(BaseException):
+            self._bridge.end_and_read_runtime_trace()
+        self._armed_execution_timing = None
 
     def _record_compute_start(self, stream: torch.cuda.Stream | None) -> None:
         if stream is None:
@@ -599,6 +587,7 @@ class TrainingExecutor(AnnotatedExecutor):
             return None
         task = timing.tasks[entrypoint.task_id]
         task.dispatch_started_ns = time.perf_counter_ns()
+        task.before_task_enter_ns = task.dispatch_started_ns
         return task
 
     @staticmethod
@@ -606,6 +595,7 @@ class TrainingExecutor(AnnotatedExecutor):
         if task is None:
             return
         task.dispatch_finished_ns = time.perf_counter_ns()
+        task.after_task_exit_ns = task.dispatch_finished_ns
 
     @staticmethod
     def _record_task_readiness(
@@ -1011,6 +1001,8 @@ class TrainingExecutor(AnnotatedExecutor):
         """Dispatch only the numerical task represented by ``prepared``."""
 
         started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
+        if prepared.timing is not None:
+            prepared.timing.before_task_exit_ns = started_ns
         with (
             self._profile_range(
                 f"shadowspill.compiled_call.{prepared.record.trace_label}"
@@ -1024,7 +1016,9 @@ class TrainingExecutor(AnnotatedExecutor):
                     raise AssertionError("compiled task function is unavailable")
                 raw_outputs = prepared.function(*prepared.arguments)
         if prepared.timing is not None:
-            prepared.timing.dispatch_invoke_ns = time.perf_counter_ns() - started_ns
+            invoked_ns = time.perf_counter_ns()
+            prepared.timing.dispatch_invoke_ns = invoked_ns - started_ns
+            prepared.timing.after_task_enter_ns = invoked_ns
         self._record_task_end(prepared.timing, prepared.stream)
         if prepared.record.task.task_id == prepared.run.lowered.optimizer_task_id:
             self._record_compute_end(prepared.stream)

@@ -81,9 +81,6 @@ class _Library:
     shadowspill_pytorch_allocator_wait_idle = _Function()
     shadowspill_pytorch_calibrate_transfer_capabilities = _Function()
     shadowspill_pytorch_transfer_profiles = _Function()
-    shadowspill_pytorch_debug_task_timing_enable = _Function()
-    shadowspill_pytorch_debug_task_timing_read = _Function()
-    shadowspill_pytorch_debug_task_timing_disable = _Function()
     shadowspill_pytorch_profiler_annotations_set = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_register_object = _Function()
@@ -157,15 +154,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(AdapterFailure)
     ]
     assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
-    assert library.shadowspill_pytorch_debug_task_timing_enable.argtypes == [
-        ctypes.c_uint32
-    ]
-    assert library.shadowspill_pytorch_debug_task_timing_read.argtypes == [
-        ctypes.POINTER(TaskDispatchTiming),
-        ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint32),
-    ]
-    assert library.shadowspill_pytorch_debug_task_timing_disable.argtypes == []
     assert library.shadowspill_pytorch_allocation_for_pointer.argtypes == [
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),
