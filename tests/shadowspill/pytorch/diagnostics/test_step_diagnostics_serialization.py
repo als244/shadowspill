@@ -75,9 +75,13 @@ def _diagnostics() -> StepDiagnostics:
         profiled_task_seconds=1.0,
         real_task_event_seconds=1.0,
         task_event_delta_seconds=0.0,
-        simulated_inter_task_gap_seconds=0.0,
-        real_inter_task_gap_seconds=0.0,
-        inter_task_gap_delta_seconds=0.0,
+        simulated_inter_task_idle_seconds=0.0,
+        real_inter_task_idle_seconds=0.0,
+        inter_task_idle_delta_seconds=0.0,
+        simulated_inter_task_readiness_wait_seconds=0.0,
+        real_inter_task_readiness_wait_seconds=0.0,
+        real_inter_task_exposed_overhead_seconds=0.0,
+        real_initial_readiness_wait_seconds=0.0,
         simulated_selected_span_seconds=1.0,
         real_selected_span_seconds=1.0,
         selected_span_delta_seconds=0.0,
@@ -109,4 +113,4 @@ def test_step_diagnostics_torch_serialization_preserves_immutable_mappings() -> 
     assert isinstance(restored.timing.tasks, FrozenMapping)
     assert isinstance(restored.transfers.simulator_comparison, FrozenMapping)
     assert isinstance(restored.simulator_comparison, FrozenMapping)
-    assert restored.as_dict()["schema"] == "shadowspill.step_diagnostics/v1"
+    assert restored.as_dict()["schema"] == "shadowspill.step_diagnostics/v2"

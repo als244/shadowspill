@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.timing import (
@@ -185,7 +186,6 @@ def _build_task_timing(
         readiness_wait_seconds=(
             float(task.readiness_event.elapsed_time(task.start_event)) / 1_000.0
         ),
-        task_compute_seconds=gpu_duration,
         before_readiness_waits_sequence=sequence_base + 1,
         before_task_compute_sequence=sequence_base + 2,
         after_task_compute_sequence=sequence_base + 3,
@@ -575,6 +575,36 @@ def _build_simulator_comparison(
     )
 
 
+def _idle_composition(
+    tasks: tuple[TaskExecutionTiming, ...],
+) -> tuple[float, float, float]:
+    """Split compute-stream idle into waiting for inputs and not being reached.
+
+    Between one task ending and the next computing, the stream does two
+    things: it travels to the next task's readiness marker, then it waits
+    there until that task's inputs are resident. The first is what dispatch
+    costs, the second is what residency costs, and together they are the whole
+    idle -- the span starts at the first task's compute, so nothing else fits
+    between the two ends.
+
+    The first task's wait is returned separately because it finishes where the
+    span starts, which puts it outside every span-relative number here while
+    still being time the step spent.
+    """
+
+    ordered = sorted(tasks, key=lambda item: item.before_task_compute_seconds or 0.0)
+    if not ordered:
+        return 0.0, 0.0, 0.0
+    readiness = 0.0
+    dispatch = 0.0
+    for previous, current in pairwise(ordered):
+        readiness += current.readiness_wait_seconds or 0.0
+        reached = current.before_readiness_waits_seconds or 0.0
+        finished = previous.after_task_compute_seconds or 0.0
+        dispatch += max(0.0, reached - finished)
+    return readiness, dispatch, ordered[0].readiness_wait_seconds or 0.0
+
+
 def _build_step_summary(
     timing: ArmedExecutionTiming,
     tasks: tuple[TaskExecutionTiming, ...],
@@ -619,16 +649,24 @@ def _build_step_summary(
         )
         for phase in phases
     )
-    simulated_gaps = max(0.0, simulated_span_seconds - profiled_task_seconds)
-    real_gaps = max(0.0, real_span_seconds - real_task_seconds)
+    simulated_idle = max(0.0, simulated_span_seconds - profiled_task_seconds)
+    real_idle = max(0.0, real_span_seconds - real_task_seconds)
+    readiness, dispatch, initial_readiness = _idle_composition(tasks)
+    simulated_readiness = (
+        sum(item.stall_ns for item in selected_intervals) / 1e9
+    )
     makespan_seconds = simulation.makespan_ns / 1e9
     return StepTimingSummary(
         profiled_task_seconds=profiled_task_seconds,
         real_task_event_seconds=real_task_seconds,
         task_event_delta_seconds=real_task_seconds - profiled_task_seconds,
-        simulated_inter_task_gap_seconds=simulated_gaps,
-        real_inter_task_gap_seconds=real_gaps,
-        inter_task_gap_delta_seconds=real_gaps - simulated_gaps,
+        simulated_inter_task_idle_seconds=simulated_idle,
+        real_inter_task_idle_seconds=real_idle,
+        inter_task_idle_delta_seconds=real_idle - simulated_idle,
+        simulated_inter_task_readiness_wait_seconds=simulated_readiness,
+        real_inter_task_readiness_wait_seconds=readiness,
+        real_inter_task_exposed_overhead_seconds=dispatch,
+        real_initial_readiness_wait_seconds=initial_readiness,
         simulated_selected_span_seconds=simulated_span_seconds,
         real_selected_span_seconds=real_span_seconds,
         selected_span_delta_seconds=real_span_seconds - simulated_span_seconds,

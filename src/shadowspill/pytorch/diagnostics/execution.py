@@ -35,7 +35,6 @@ class TaskExecutionTiming:
     before_task_compute_seconds: float | None
     after_task_compute_seconds: float | None
     readiness_wait_seconds: float | None
-    task_compute_seconds: float | None
     before_readiness_waits_sequence: int
     before_task_compute_sequence: int
     after_task_compute_sequence: int
@@ -103,7 +102,6 @@ class TaskExecutionTiming:
             "before_task_compute_seconds": self.before_task_compute_seconds,
             "after_task_compute_seconds": self.after_task_compute_seconds,
             "readiness_wait_seconds": self.readiness_wait_seconds,
-            "task_compute_seconds": self.task_compute_seconds,
             "before_readiness_waits_sequence": (self.before_readiness_waits_sequence),
             "before_task_compute_sequence": self.before_task_compute_sequence,
             "after_task_compute_sequence": self.after_task_compute_sequence,
@@ -423,9 +421,27 @@ class StepTimingSummary:
     profiled_task_seconds: float
     real_task_event_seconds: float
     task_event_delta_seconds: float
-    simulated_inter_task_gap_seconds: float
-    real_inter_task_gap_seconds: float
-    inter_task_gap_delta_seconds: float
+    #: Compute-stream idle inside the span, and the two things that cause it.
+    #: A task waits for its inputs to be resident, or the stream has not
+    #: reached the task yet. The two account for the idle exactly.
+    simulated_inter_task_idle_seconds: float
+    real_inter_task_idle_seconds: float
+    inter_task_idle_delta_seconds: float
+    simulated_inter_task_readiness_wait_seconds: float
+    real_inter_task_readiness_wait_seconds: float
+    #: The rest of the interval: the frontend had not reached the next task,
+    #: so nothing was on the stream to run. Exposed, because the frontend does
+    #: this work at every boundary and running ahead hides whatever its lead
+    #: covers; what is left here is the shortfall, not the cost of the work.
+    #: This says nothing about a stream left idle inside a task, which no field
+    #: here measures. Where the frontend stayed ahead it is the floor between
+    #: two stream event records rather than a cost -- measured at a quarter of
+    #: a microsecond to about one -- so read a microsecond or two as nothing
+    #: and anything above that as real.
+    real_inter_task_exposed_overhead_seconds: float
+    #: The first task's wait ends where the span begins, so this is the one
+    #: cost the span cannot contain: the fetches a step opens with.
+    real_initial_readiness_wait_seconds: float
     simulated_selected_span_seconds: float
     real_selected_span_seconds: float
     selected_span_delta_seconds: float
@@ -439,9 +455,23 @@ class StepTimingSummary:
             "profiled_task_seconds": self.profiled_task_seconds,
             "real_task_event_seconds": self.real_task_event_seconds,
             "task_event_delta_seconds": self.task_event_delta_seconds,
-            "simulated_inter_task_gap_seconds": (self.simulated_inter_task_gap_seconds),
-            "real_inter_task_gap_seconds": self.real_inter_task_gap_seconds,
-            "inter_task_gap_delta_seconds": self.inter_task_gap_delta_seconds,
+            "simulated_inter_task_idle_seconds": (
+                self.simulated_inter_task_idle_seconds
+            ),
+            "real_inter_task_idle_seconds": self.real_inter_task_idle_seconds,
+            "inter_task_idle_delta_seconds": self.inter_task_idle_delta_seconds,
+            "simulated_inter_task_readiness_wait_seconds": (
+                self.simulated_inter_task_readiness_wait_seconds
+            ),
+            "real_inter_task_readiness_wait_seconds": (
+                self.real_inter_task_readiness_wait_seconds
+            ),
+            "real_inter_task_exposed_overhead_seconds": (
+                self.real_inter_task_exposed_overhead_seconds
+            ),
+            "real_initial_readiness_wait_seconds": (
+                self.real_initial_readiness_wait_seconds
+            ),
             "simulated_selected_span_seconds": self.simulated_selected_span_seconds,
             "real_selected_span_seconds": self.real_selected_span_seconds,
             "selected_span_delta_seconds": self.selected_span_delta_seconds,
@@ -473,7 +503,7 @@ class StepDiagnostics:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema": "shadowspill.step_diagnostics/v1",
+            "schema": "shadowspill.step_diagnostics/v2",
             "timing": self.timing.as_dict(include_tasks=False),
             "tasks": {
                 execution_task_id: item.as_dict()
