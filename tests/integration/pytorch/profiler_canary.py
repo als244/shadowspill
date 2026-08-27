@@ -17,7 +17,7 @@ from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.materialization import flat_runtime_arguments
 from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
-    ProfileRepository,
+    ProfileStore,
     profile_environment,
     profile_unique_artifacts,
 )
@@ -77,7 +77,7 @@ def main() -> int:
         sample_iterations=3,
     )
     with tempfile.TemporaryDirectory() as directory:
-        cache = ProfileRepository(directory)
+        cache = ProfileStore(directory)
         measured = profile_unique_artifacts(
             artifacts,
             environment=profile_environment(

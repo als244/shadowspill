@@ -7,14 +7,14 @@ from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from ..partition import PartitionSpec, partition_export
 from .artifacts import PartitionedTrainingCapture
 from .capture import capture_training_stages
-from .repository import GraphPairRepository
+from .store import GraphPairStore
 
 
 def partition_training_capture(
     capture: TrainingObjectiveCapture,
     *,
     partition: PartitionSpec = "auto",
-    graph_pair_repository: GraphPairRepository | None = None,
+    graph_pair_repository: GraphPairStore | None = None,
     representative_root_inputs: tuple[object, ...] | None = None,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template."""

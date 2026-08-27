@@ -9,17 +9,17 @@ from shadowspill.errors import CaptureError
 
 from ..partition.artifacts import PartitionedExport
 from .artifacts import DifferentiatedStage
-from .repository import GraphPairRepository
+from .store import GraphPairStore
 
 
 def capture_training_stages(
     partitioned: PartitionedExport,
     *,
-    graph_pair_repository: GraphPairRepository | None = None,
+    graph_pair_repository: GraphPairStore | None = None,
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs."""
 
-    cache = graph_pair_repository or GraphPairRepository()
+    cache = graph_pair_repository or GraphPairStore()
     return tuple(
         _capture_training_stage(
             partitioned,
@@ -34,7 +34,7 @@ def _capture_training_stage(
     partitioned: PartitionedExport,
     stage_index: int,
     *,
-    graph_pair_repository: GraphPairRepository,
+    graph_pair_repository: GraphPairStore,
 ) -> DifferentiatedStage:
     example = partitioned.stages[stage_index]
     leaves, _ = tree_flatten(example.output)

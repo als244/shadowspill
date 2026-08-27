@@ -18,6 +18,7 @@ from shadowspill.ir import (
     RecomputationSelection,
     ResidencySpec,
 )
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.simulator import SimulationConfig, simulate
 from shadowspill.simulator.indexed import (
     index_simulation_template,
@@ -364,3 +365,61 @@ def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics
 
 
 __all__ = ["PlanLookup", "PlanStore"]
+
+
+def resolve_plan(
+artifact_store: ArtifactStore,
+plans: PlanStore,
+    program: Program,
+    *,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...],
+    config: SimulationConfig,
+    options: PressureFitOptions | None = None,
+    admission: AdmissionFacts | None = None,
+    placement: AdmissionFacts | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> PlanLookup:
+    """Resolve one plan, planning only when the store does not have it.
+
+    The request and its Program are archived first, so a plan on disk can
+    always be traced back to what was asked for.
+    """
+
+    artifact_store.archive_program(program)
+    selected_options = options or PressureFitOptions()
+    artifact_store.archive_pressurefit_request(
+        {
+            "schema": "shadowspill.pressurefit_request/v1",
+            "program_digest": program.digest,
+            "initial_residency": [
+                item.to_dict() for item in initial_residency
+            ],
+            "final_residency": [item.to_dict() for item in final_residency],
+            "simulation": {
+                "devices": [asdict(item) for item in config.devices],
+                "spill_capacity_bytes": config.spill_capacity_bytes,
+            },
+            "options": {
+                "initial_placement": selected_options.initial_placement.value,
+                "residency_strategies": list(
+                    selected_options.residency_strategies
+                ),
+                "prefetch_rules": list(selected_options.prefetch_rules),
+                "evaluate_coalesced": selected_options.evaluate_coalesced,
+                "max_repair_attempts": selected_options.max_repair_attempts,
+                "workers": selected_options.workers,
+            },
+            "admission": None if admission is None else admission.to_dict(),
+        }
+    )
+    return plans.resolve(
+        program,
+        initial_residency=initial_residency,
+        final_residency=final_residency,
+        config=config,
+        options=selected_options,
+        admission=admission,
+        placement=placement,
+        progress=progress,
+    )

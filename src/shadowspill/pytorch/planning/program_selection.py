@@ -15,6 +15,7 @@ from shadowspill.planner.admission.refinement import (
     resolve_fixed_layout_selection,
 )
 from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
@@ -22,7 +23,7 @@ from shadowspill.planner.program import (
     TransferBandwidths,
 )
 
-from .repositories import open_artifact_repositories
+from .stores import open_planning_stores
 
 
 def select_program(
@@ -44,12 +45,14 @@ def select_program(
         transfer_bandwidths=transfer_bandwidths,
     )
     selected_options = options or program.options
-    repositories = open_artifact_repositories(artifact_store)
+    stores = open_planning_stores(artifact_store)
     progress = _progress_printer() if verbose else None
     selection = resolve_fixed_layout_selection(
         config,
         facts,
-        lambda candidate_config: repositories.resolve_pressurefit(
+        lambda candidate_config: resolve_plan(
+            stores.store,
+            stores.plans,
             program.program,
             initial_residency=program.initial_residency,
             final_residency=program.final_residency,

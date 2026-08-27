@@ -11,7 +11,7 @@ from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
-    GraphPairRepository,
+    GraphPairStore,
     capture_training_stages,
     saved_value_footprint,
 )
@@ -128,7 +128,7 @@ def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:
 
 def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     mode, partitioned = _capture()
-    repository = GraphPairRepository()
+    repository = GraphPairStore()
     with mode:
         stages = capture_training_stages(
             partitioned,
@@ -162,12 +162,12 @@ def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
 def test_graph_pair_repository_persists_structural_inventories(tmp_path: Path) -> None:
     mode, partitioned = _capture()
     with mode:
-        first = GraphPairRepository(tmp_path)
+        first = GraphPairStore(tmp_path)
         expected = capture_training_stages(
             partitioned,
             graph_pair_repository=first,
         )
-        second = GraphPairRepository(tmp_path)
+        second = GraphPairStore(tmp_path)
         actual = capture_training_stages(
             partitioned,
             graph_pair_repository=second,

@@ -33,6 +33,7 @@ from shadowspill.planner import (
     validate_schedule_feasibility,
 )
 from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
@@ -119,7 +120,7 @@ from .reporting import (
     fixed_layout_diagnostic,
     publish_plan_report,
 )
-from .repositories import PlanningArtifactRepositories, open_artifact_repositories
+from .stores import PlanningStores, open_planning_stores
 
 
 def capture_forward_graph(
@@ -130,7 +131,7 @@ def capture_forward_graph(
     partition: PartitionSpec,
     profiling_metadata: object,
     shared_outputs: Sequence[SharedOutput] = (),
-    artifact_store: PlanningArtifactRepositories,
+    stores: PlanningStores,
     timer: PlanningTimer,
 ) -> ForwardCaptureArtifacts:
     """Validate and capture one forward graph without numerical CUDA execution."""
@@ -160,7 +161,7 @@ def capture_forward_graph(
             cpu_inputs,
             device_ordinal=device_ordinal,
             partition=partition,
-            artifact_store=artifact_store,
+            stores=stores,
             timer=timer,
             shared_outputs=shared_outputs,
             pool_names=tuple(memory.runtime.pools),
@@ -244,7 +245,7 @@ def _capture_partitioned_forward(
     *,
     device_ordinal: int,
     partition: PartitionSpec,
-    artifact_store: PlanningArtifactRepositories,
+    stores: PlanningStores,
     timer: PlanningTimer,
     shared_outputs: Sequence[SharedOutput],
     pool_names: tuple[str, ...],
@@ -275,7 +276,7 @@ def _capture_partitioned_forward(
             del output_leaves
             capture = capture_forward(fake_model, fake_inputs)
         with timer.measure("export_archival"):
-            artifact_store.archive_export(capture, mode="forward", position=0)
+            stores.archive_export(capture, mode="forward", position=0)
         representative_roots = tuple(
             value.detach() if isinstance(value, torch.Tensor) else value
             for value in flat_runtime_arguments(capture, model, cpu_inputs)
@@ -307,7 +308,7 @@ def profile_forward_tasks(
     *,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
-    artifact_store: PlanningArtifactRepositories,
+    stores: PlanningStores,
     timer: PlanningTimer,
 ) -> ForwardProfileArtifacts:
     """Compile and profile every unique structural task contract exactly once."""
@@ -321,13 +322,13 @@ def profile_forward_tasks(
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
         provider_id="shadowspill.device_pool",
-        implementation_revision=artifact_store.store.implementation_revision,
+        implementation_revision=stores.store.implementation_revision,
     )
     with timer.measure("compiler_manifest"):
         manifests = resolve_task_manifests(
             captured.tasks,
             environment=environment,
-            profile_cache=artifact_store.profiles,
+            profile_cache=stores.profiles,
             compiler=profiler,
             progress=lambda index, total, state, digest: timer.progress(
                 f"compiled manifest {index}/{total} {state}: {digest[:12]}"
@@ -338,7 +339,7 @@ def profile_forward_tasks(
             captured.tasks,
             environment=environment,
             measure=profiler.measure,
-            cache=artifact_store.profiles,
+            cache=stores.profiles,
             validate=lambda artifact, measurement: validate_compiled_profile(
                 artifact,
                 measurement,
@@ -448,7 +449,7 @@ def build_forward_program(
 def pressurefit_forward_program(
     program: ForwardProgramArtifacts,
     *,
-    artifact_store: PlanningArtifactRepositories,
+    stores: PlanningStores,
     timer: PlanningTimer,
 ) -> FixedLayoutSelection:
     """Resolve the exact PressureFit result for a canonical forward Program."""
@@ -475,7 +476,9 @@ def pressurefit_forward_program(
             return resolve_fixed_layout_selection(
                 program.simulation_config,
                 program.admission,
-                lambda config: artifact_store.resolve_pressurefit(
+                lambda config: resolve_plan(
+                    stores.store,
+                    stores.plans,
                     program.lowered.program,
                     initial_residency=program.lowered.initial_residency,
                     final_residency=program.lowered.final_residency,
@@ -504,7 +507,7 @@ def admit_forward_plan(
     selection: FixedLayoutSelection,
     *,
     memory: PlanMemory,
-    artifact_store: PlanningArtifactRepositories,
+    stores: PlanningStores,
     timer: PlanningTimer,
     started: int,
 ) -> PlannedForward:
@@ -595,7 +598,7 @@ def admit_forward_plan(
             selected_admission,
             admitted_result,
             execution_plan,
-            artifact_store=artifact_store,
+            stores=stores,
             memory=memory,
             timer=timer,
             started=started,
@@ -673,7 +676,7 @@ def _forward_plan_report(
     admitted_result: PressureFitResult,
     execution_plan: ExecutionPlan,
     *,
-    artifact_store: PlanningArtifactRepositories,
+    stores: PlanningStores,
     memory: PlanMemory,
     timer: PlanningTimer,
     started: int,
@@ -702,8 +705,8 @@ def _forward_plan_report(
         compiler_phase_timings_by_contract=(
             profiled.profiler.compilation_phase_timings_by_contract
         ),
-        store_directories=artifact_store.store.diagnostics(),
-        touched_cache_artifacts=cache_artifacts(artifact_store.store),
+        store_directories=stores.store.diagnostics(),
+        touched_cache_artifacts=cache_artifacts(stores.store),
         profiling_metadata=(captured.workload,),
         physical_layouts=(
             fixed_layout_diagnostic(
@@ -717,7 +720,7 @@ def _forward_plan_report(
     return publish_plan_report(
         model,
         report,
-        artifact_store.store,
+        stores.store,
         started=started,
     )
 
@@ -739,7 +742,7 @@ def build_forward(
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
-    artifacts = open_artifact_repositories(artifact_store)
+    artifacts = open_planning_stores(artifact_store)
     captured = capture_forward_graph(
         model,
         example_inputs=example_inputs,
@@ -747,20 +750,20 @@ def build_forward(
         partition=partition,
         profiling_metadata=profiling_metadata,
         shared_outputs=shared_outputs,
-        artifact_store=artifacts,
+        stores=artifacts,
         timer=timer,
     )
     profiled = profile_forward_tasks(
         captured,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
-        artifact_store=artifacts,
+        stores=artifacts,
         timer=timer,
     )
     program = build_forward_program(captured, profiled, memory=memory, timer=timer)
     selected = pressurefit_forward_program(
         program,
-        artifact_store=artifacts,
+        stores=artifacts,
         timer=timer,
     )
     return admit_forward_plan(
@@ -770,7 +773,7 @@ def build_forward(
         program,
         selected,
         memory=memory,
-        artifact_store=artifacts,
+        stores=artifacts,
         timer=timer,
         started=started,
     )
