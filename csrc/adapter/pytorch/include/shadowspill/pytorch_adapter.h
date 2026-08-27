@@ -336,22 +336,6 @@ shadowspill_pytorch_allocation_scope_end(
 SHADOWSPILL_PYTORCH_API void
 shadowspill_pytorch_allocation_scope_abort(void);
 
-/* Allocate/reset pre-sized callback records before a measured invocation. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_debug_task_timing_enable(uint32_t task_capacity);
-
-/* Read completed records after synchronizing the measured compute stream. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_debug_task_timing_read(
-    ShadowSpillPytorchTaskDispatchTiming *records,
-    uint32_t record_capacity,
-    uint32_t *record_count
-);
-
-/* Disable and release records; rejected while a callback remains in flight. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_debug_task_timing_disable(void);
-
 /* Closes a task NVTX range when frontend execution raises before after_task. */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_abort_task_handle(

@@ -25,6 +25,13 @@ class ArmedTaskTiming:
     end_event: torch.cuda.Event
     dispatch_started_ns: int = 0
     dispatch_finished_ns: int = 0
+    #: The two task boundaries, which are everything the frontend does between
+    #: one task's kernels and the next's. Dispatch begins in the first and ends
+    #: in the second, so nothing it does falls outside them.
+    before_task_enter_ns: int = 0
+    before_task_exit_ns: int = 0
+    after_task_enter_ns: int = 0
+    after_task_exit_ns: int = 0
     dispatch_before_finished_ns: int = 0
     dispatch_after_started_ns: int = 0
     dispatch_stream_resolution_ns: int = 0

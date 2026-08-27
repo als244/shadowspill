@@ -494,7 +494,6 @@ def configure_adapter_library(library: Any) -> None:
     _configure_physical_memory(library)
     _configure_allocator(library)
     _configure_transfer_calibration(library)
-    _configure_debug_timing(library)
     _configure_objects(library)
     _configure_task_boundaries(library)
     _configure_execution(library)
@@ -821,28 +820,6 @@ def _configure_transfer_calibration(library: Any) -> None:
             ctypes.POINTER(ctypes.c_uint64),
         ],
         ctypes.c_uint32,
-    )
-
-
-def _configure_debug_timing(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_debug_task_timing_enable",
-        [ctypes.c_uint32],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_debug_task_timing_read",
-        [
-            ctypes.POINTER(TaskDispatchTiming),
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_uint32),
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library, "shadowspill_pytorch_debug_task_timing_disable", [], ctypes.c_uint32
     )
 
 

@@ -15,7 +15,6 @@ from shadowspill.pytorch.diagnostics.timing import (
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
-    TaskDispatchTimestamps,
 )
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
@@ -40,7 +39,6 @@ from .execution import (
 
 @dataclass(frozen=True, slots=True)
 class _TraceEvidence:
-    callbacks: Mapping[str, TaskDispatchTimestamps]
     runtime_trace: CapturedRuntimeTrace
     statistics_before: AdapterStatistics
     statistics_after: AdapterStatistics
@@ -87,17 +85,12 @@ def _resolve_trace_evidence(
     timing: ArmedExecutionTiming,
     bridge: RuntimeBridge,
 ) -> _TraceEvidence:
-    """Drain the explicitly traced call before copying callback evidence."""
+    """Drain the explicitly traced call before copying its evidence."""
 
     timing.end_event.synchronize()
     if timing.stream is None:
         raise AssertionError("validated execution timing lost its compute stream")
-    # The end event precedes after_task's completion callback.
     timing.stream.synchronize()
-    try:
-        callbacks = bridge.read_debug_task_timing()
-    finally:
-        bridge.disable_debug_task_timing()
     # Terminal transfers must be included in the same invocation trace.
     bridge.wait_idle()
     runtime_trace = bridge.end_and_read_runtime_trace()
@@ -105,7 +98,6 @@ def _resolve_trace_evidence(
     if statistics_before is None:
         raise AssertionError("validated execution timing lost initial statistics")
     return _TraceEvidence(
-        callbacks=callbacks,
         runtime_trace=runtime_trace,
         statistics_before=statistics_before,
         statistics_after=bridge.statistics(),
@@ -124,7 +116,6 @@ def _build_task_timings(
             timing,
             task_id,
             task,
-            evidence.callbacks.get(task_id),
             evidence.runtime_trace.begin_timestamp_ns,
         )
         tasks.append(result)
@@ -138,8 +129,7 @@ def _build_task_timing(
     execution: ArmedExecutionTiming,
     task_id: str,
     task: ArmedTaskTiming,
-    callback: TaskDispatchTimestamps | None,
-    callback_origin_ns: int,
+    origin_ns: int,
 ) -> TaskExecutionTiming:
     compute_duration = float(task.start_event.elapsed_time(task.end_event)) / 1_000.0
     readiness_seconds = (
@@ -161,16 +151,16 @@ def _build_task_timing(
         microbatch=task.entrypoint.microbatch,
         expected_profile_seconds=task.expected_profile_seconds,
         before_task_enter_timestamp_ns=(
-            callback.before_task_enter_ns if callback is not None else 0
+            task.before_task_enter_ns
         ),
         before_task_exit_timestamp_ns=(
-            callback.before_task_exit_ns if callback is not None else 0
+            task.before_task_exit_ns
         ),
         after_task_enter_timestamp_ns=(
-            callback.after_task_enter_ns if callback is not None else 0
+            task.after_task_enter_ns
         ),
         after_task_exit_timestamp_ns=(
-            callback.after_task_exit_ns if callback is not None else 0
+            task.after_task_exit_ns
         ),
         compute_duration_seconds=compute_duration,
         compute_reached_seconds=readiness_seconds,
@@ -183,25 +173,25 @@ def _build_task_timing(
         compute_started_sequence=sequence_base + 2,
         compute_finished_sequence=sequence_base + 3,
         runtime_before_task_enter_seconds=_relative_seconds(
-            callback.before_task_enter_ns if callback is not None else 0,
-            callback_origin_ns,
+            task.before_task_enter_ns,
+            origin_ns,
         ),
         runtime_before_task_exit_seconds=_relative_seconds(
-            callback.before_task_exit_ns if callback is not None else 0,
-            callback_origin_ns,
+            task.before_task_exit_ns,
+            origin_ns,
         ),
         runtime_after_task_enter_seconds=_relative_seconds(
-            callback.after_task_enter_ns if callback is not None else 0,
-            callback_origin_ns,
+            task.after_task_enter_ns,
+            origin_ns,
         ),
         frontend_lead_seconds=_frontend_lead(
             readiness_seconds,
-            callback.before_task_exit_ns if callback is not None else 0,
-            callback_origin_ns,
+            task.before_task_exit_ns,
+            origin_ns,
         ),
         runtime_after_task_exit_seconds=_relative_seconds(
-            callback.after_task_exit_ns if callback is not None else 0,
-            callback_origin_ns,
+            task.after_task_exit_ns,
+            origin_ns,
         ),
         dispatch_before_task_seconds=(
             task.dispatch_before_finished_ns - task.dispatch_started_ns
