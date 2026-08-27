@@ -132,7 +132,7 @@ def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     with mode:
         stages = capture_training_stages(
             partitioned,
-            graph_pair_repository=repository,
+            graph_pair_store=repository,
         )
 
     assert repository.misses == 3
@@ -159,18 +159,18 @@ def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:
     assert first_storages != second_storages
 
 
-def test_graph_pair_repository_persists_structural_inventories(tmp_path: Path) -> None:
+def test_graph_pair_store_persists_structural_inventories(tmp_path: Path) -> None:
     mode, partitioned = _capture()
     with mode:
         first = GraphPairStore(tmp_path)
         expected = capture_training_stages(
             partitioned,
-            graph_pair_repository=first,
+            graph_pair_store=first,
         )
         second = GraphPairStore(tmp_path)
         actual = capture_training_stages(
             partitioned,
-            graph_pair_repository=second,
+            graph_pair_store=second,
         )
 
     assert first.unique_keys == 3

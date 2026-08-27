@@ -291,7 +291,7 @@ def _partition_training_graphs(
             partition_training_capture(
                 capture,
                 partition=partition,
-                graph_pair_repository=stores.graph_pairs,
+                graph_pair_store=stores.graph_pairs,
                 representative_root_inputs=root_inputs,
             )
             for capture, root_inputs in zip(

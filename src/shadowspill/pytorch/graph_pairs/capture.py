@@ -15,16 +15,16 @@ from .store import GraphPairStore
 def capture_training_stages(
     partitioned: PartitionedExport,
     *,
-    graph_pair_repository: GraphPairStore | None = None,
+    graph_pair_store: GraphPairStore | None = None,
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs."""
 
-    cache = graph_pair_repository or GraphPairStore()
+    store = graph_pair_store or GraphPairStore()
     return tuple(
         _capture_training_stage(
             partitioned,
             index,
-            graph_pair_repository=cache,
+            graph_pair_store=store,
         )
         for index in range(len(partitioned.stages))
     )
@@ -34,7 +34,7 @@ def _capture_training_stage(
     partitioned: PartitionedExport,
     stage_index: int,
     *,
-    graph_pair_repository: GraphPairStore,
+    graph_pair_store: GraphPairStore,
 ) -> DifferentiatedStage:
     example = partitioned.stages[stage_index]
     leaves, _ = tree_flatten(example.output)
@@ -56,7 +56,7 @@ def _capture_training_stage(
         raise CaptureError("terminal objective loss is not differentiable")
     return DifferentiatedStage(
         example=example,
-        graph_pairs=graph_pair_repository.resolve(
+        graph_pairs=graph_pair_store.resolve(
             example,
             roots,
             specialize_unit_tangents=stage_index == len(partitioned.stages) - 1,
