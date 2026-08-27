@@ -46,7 +46,6 @@ class TaskExecutionTiming:
     dispatch_before_task_seconds: float
     dispatch_stream_resolution_seconds: float
     dispatch_readiness_marker_seconds: float
-    dispatch_runtime_before_task_seconds: float
     dispatch_input_lookup_seconds: float
     dispatch_storage_rebind_seconds: float
     dispatch_argument_assembly_seconds: float
@@ -60,7 +59,6 @@ class TaskExecutionTiming:
     dispatch_output_publish_seconds: float
     dispatch_dematerialize_seconds: float
     dispatch_postprocess_seconds: float
-    dispatch_runtime_after_task_seconds: float
     dispatch_cleanup_seconds: float
     dispatch_after_task_seconds: float
     dispatch_total_seconds: float
@@ -122,9 +120,6 @@ class TaskExecutionTiming:
                 self.dispatch_stream_resolution_seconds
             ),
             "dispatch_readiness_marker_seconds": self.dispatch_readiness_marker_seconds,
-            "dispatch_runtime_before_task_seconds": (
-                self.dispatch_runtime_before_task_seconds
-            ),
             "dispatch_input_lookup_seconds": self.dispatch_input_lookup_seconds,
             "dispatch_storage_rebind_seconds": self.dispatch_storage_rebind_seconds,
             "dispatch_argument_assembly_seconds": (
@@ -146,9 +141,6 @@ class TaskExecutionTiming:
             "dispatch_output_publish_seconds": self.dispatch_output_publish_seconds,
             "dispatch_dematerialize_seconds": self.dispatch_dematerialize_seconds,
             "dispatch_postprocess_seconds": self.dispatch_postprocess_seconds,
-            "dispatch_runtime_after_task_seconds": (
-                self.dispatch_runtime_after_task_seconds
-            ),
             "dispatch_cleanup_seconds": self.dispatch_cleanup_seconds,
             "dispatch_after_task_seconds": self.dispatch_after_task_seconds,
             "dispatch_total_seconds": self.dispatch_total_seconds,
@@ -515,7 +507,7 @@ class StepDiagnostics:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema": "shadowspill.step_diagnostics/v3",
+            "schema": "shadowspill.step_diagnostics/v4",
             "timing": self.timing.as_dict(include_tasks=False),
             "tasks": {
                 execution_task_id: item.as_dict()
