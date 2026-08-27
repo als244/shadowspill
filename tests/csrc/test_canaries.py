@@ -12,7 +12,6 @@ anyone noticing.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
@@ -48,48 +47,12 @@ def _build_directory() -> Path | None:
     return trees[0]
 
 
-def _busy_accelerator() -> str | None:
-    """What else is holding the accelerator, if anything.
-
-    The canaries each have their own CTest timeout, and those budgets assume
-    the device is theirs: measured here the labelled set takes ~104s idle and
-    ~218s with something else resident.
-
-    That 2x does not by itself explain a 7s canary hitting a 120s limit. The
-    timeouts seen while writing this turned out to be a filesystem-wide scan
-    of an NFS mount running in the background, which starves these tests of
-    I/O -- not the device at all.
-
-    The check stays because timing canaries against a busy device is still
-    the wrong thing to do, and a contended run cannot tell a real regression
-    from its neighbour. It is a precondition, not a diagnosis.
-    """
-
-    if shutil.which("nvidia-smi") is None:
-        return None
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-compute-apps=pid,used_memory",
-             "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    others = [
-        line for line in result.stdout.splitlines()
-        if line.strip() and not line.startswith(f"{os.getpid()},")
-    ]
-    return "; ".join(others) if others else None
-
-
-def _run_ctest(*selectors: str, needs_accelerator: bool = False) -> None:
+def _run_ctest(*selectors: str) -> None:
     build = _build_directory()
     if build is None:
         pytest.skip("no CMake build tree; canaries are built by an editable install")
     if shutil.which("ctest") is None:
         pytest.skip("ctest is not on PATH")
-    if needs_accelerator and (busy := _busy_accelerator()) is not None:
-        pytest.skip(f"another process is holding the accelerator: {busy}")
     try:
         completed = subprocess.run(
             ["ctest", "--output-on-failure", "--no-tests=error", *selectors],
@@ -126,4 +89,4 @@ def test_c_canaries_pass() -> None:
 def test_cuda_c_canaries_pass() -> None:
     """The canaries CMake labelled `cuda`, which need the qualified backend."""
 
-    _run_ctest("--label-regex", "cuda", needs_accelerator=True)
+    _run_ctest("--label-regex", "cuda")
