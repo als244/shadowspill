@@ -32,7 +32,7 @@ def select_program(
     spill_budget_bytes: int | None,
     transfer_bandwidths: TransferBandwidths | None,
     options: PressureFitOptions | None,
-    planning_cache: ArtifactStore,
+    artifact_store: ArtifactStore,
     verbose: bool,
 ) -> AnnotatedProgramPlan:
     """Select and physically admit one reusable Program."""
@@ -44,7 +44,7 @@ def select_program(
         transfer_bandwidths=transfer_bandwidths,
     )
     selected_options = options or program.options
-    repositories = open_artifact_repositories(planning_cache)
+    repositories = open_artifact_repositories(artifact_store)
     progress = _progress_printer() if verbose else None
     selection = resolve_fixed_layout_selection(
         config,

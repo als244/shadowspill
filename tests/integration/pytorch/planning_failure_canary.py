@@ -206,7 +206,7 @@ def _plan(
         runtime=runtime,
         execution="execution",
         spill="spill",
-        planning_cachedir=cache,
+        artifact_store_dir=cache,
         force_fresh=True,
         save_plan=False,
         verbose=False,

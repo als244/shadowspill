@@ -134,7 +134,7 @@ plan_forward(
     execution_device=None,
     partition="auto",
     verbose=True,
-    planning_cachedir=None,
+    artifact_store_dir=None,
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
@@ -220,7 +220,7 @@ plan_step(
     partition="auto",
     optimizer_ordering="stage_interleaved",
     verbose=True,
-    planning_cachedir=None,
+    artifact_store_dir=None,
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
@@ -244,7 +244,7 @@ Shared planning arguments have these meanings:
 | `dynamic_scratch_reserve_bytes` | Optional lower bound for bounded dynamic scratch; cannot reduce the measured requirement. |
 | `execution_device` | Accelerator ordinal or `torch.device`; `None` uses the current PyTorch device. |
 | `partition` | `"auto"`, `"whole"`, or `PartitionPolicy`. |
-| `planning_cachedir` | Shared content-addressed artifact root. |
+| `artifact_store_dir` | Shared content-addressed artifact root. |
 | `profiling_metadata` | JSON-compatible identity for data-sensitive task measurement. |
 | `allocation_probe_seeds` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | Identical repeats per probe seed. |
@@ -276,7 +276,7 @@ make_step_program(
     partition="auto",
     optimizer_ordering="stage_interleaved",
     verbose=True,
-    planning_cachedir=None,
+    artifact_store_dir=None,
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
@@ -296,7 +296,7 @@ pressurefit_program(
     spill_budget=None,
     transfer_bandwidths=None,
     options=None,
-    planning_cachedir=None,
+    artifact_store_dir=None,
     verbose=True,
     save_plan=True,
     force_fresh=False,

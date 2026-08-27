@@ -79,7 +79,7 @@ train_step = plan_step(
     spill="spill",
     execution_budget=20 << 30,
     spill_budget=60 << 30,
-    planning_cachedir="/local-fast-storage/shadowspill-planning",
+    artifact_store_dir="/local-fast-storage/shadowspill-planning",
     profiling_metadata=[
         {"sequence_lengths": [4096]},
         {"sequence_lengths": [512] * 8},

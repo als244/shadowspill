@@ -34,7 +34,7 @@ class StepProgram:
     signature_digests: tuple[str, ...]
     profiling_metadata: tuple[PlanProfilingMetadata, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
-    cache_directories: tuple[tuple[str, str], ...]
+    store_directories: tuple[tuple[str, str], ...]
     cache_artifacts: tuple[PlanCacheArtifact, ...]
     transfer_capabilities_json: str
     unique_profile_count: int
@@ -104,7 +104,7 @@ class StepProgram:
             },
             "transfer_capabilities": json.loads(self.transfer_capabilities_json),
             "cache_lineage": {
-                "directories": [list(item) for item in self.cache_directories],
+                "directories": [list(item) for item in self.store_directories],
                 "artifacts": [item.as_dict() for item in self.cache_artifacts],
             },
         }
@@ -200,13 +200,13 @@ class StepProgram:
                 for index, raw in enumerate(timings)
                 for pair in (_pair(raw, f"step_program.phase_timings_ns[{index}]"),)
             ),
-            cache_directories=tuple(
+            store_directories=tuple(
                 (
-                    _string(pair[0], f"step_program.cache_directories[{index}][0]"),
-                    _string(pair[1], f"step_program.cache_directories[{index}][1]"),
+                    _string(pair[0], f"step_program.store_directories[{index}][0]"),
+                    _string(pair[1], f"step_program.store_directories[{index}][1]"),
                 )
                 for index, raw in enumerate(directories)
-                for pair in (_pair(raw, f"step_program.cache_directories[{index}]"),)
+                for pair in (_pair(raw, f"step_program.store_directories[{index}]"),)
             ),
             cache_artifacts=tuple(
                 PlanCacheArtifact(

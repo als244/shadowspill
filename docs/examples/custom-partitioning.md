@@ -48,7 +48,7 @@ train_step = plan_step(
     execution="execution",
     spill="spill",
     partition=EveryNNodes(nodes_per_stage=12),
-    planning_cachedir=planning_cache,
+    artifact_store_dir=artifact_store,
 )
 ```
 

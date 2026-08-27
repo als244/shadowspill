@@ -1,11 +1,11 @@
-# Planning cache
+# Artifact store
 
-`planning_cachedir` selects one content-addressed artifact store shared by
+`artifact_store_dir` selects one content-addressed artifact store shared by
 `plan_step()`, `plan_forward()`, `make_step_program()`, and
 `pressurefit_program()`.
 
 ```text
-planning_cachedir/
+artifact_store_dir/
 ├── pytorch/
 │   ├── exports/          normalized Export archives and manifests
 │   └── inductor/         PyTorch Inductor and Triton caches
@@ -61,7 +61,7 @@ Export is performed on each planning call so Python objective and signature
 semantics are freshly validated. A matching Export archive is retained as
 evidence; it is not treated as permission to skip capture.
 
-When `planning_cachedir` is omitted, the package uses a user cache location.
+When `artifact_store_dir` is omitted, the package uses a user cache location.
 Long-running or reproducible work should pass an explicit local-filesystem
 directory. Network filesystems are unsuitable for compiler caches and
 high-frequency atomic artifact publication.

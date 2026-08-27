@@ -674,7 +674,7 @@ class PlanDiagnostics:
     unique_stages: tuple[PlanUniqueStage, ...] = ()
     compiler_phase_timings_ns: tuple[tuple[str, int], ...] = ()
     compiler_profiles: tuple[PlanCompilerProfile, ...] = ()
-    cache_directories: tuple[tuple[str, str], ...] = ()
+    store_directories: tuple[tuple[str, str], ...] = ()
     cache_artifacts: tuple[PlanCacheArtifact, ...] = ()
     profiling_metadata: tuple[PlanProfilingMetadata, ...] = ()
     pressurefit_runs: tuple[PressureFitDiagnostics, ...] = ()
@@ -712,7 +712,7 @@ class PlanDiagnostics:
                     for item in self.compiler_profiles
                 },
             },
-            "cache_directories": dict(self.cache_directories),
+            "store_directories": dict(self.store_directories),
             "cache_artifacts": [item.as_dict() for item in self.cache_artifacts],
             "profiling_metadata": [item.as_dict() for item in self.profiling_metadata],
             "capture": {

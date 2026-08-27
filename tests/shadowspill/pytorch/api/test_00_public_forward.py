@@ -58,7 +58,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         runtime=runtime,
         execution="execution",
         spill="spill",
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
         profiling_metadata={"batch_size": 3, "width": 17},
     )
     assert planned.plan_report.mode == "forward"

@@ -121,7 +121,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         runtime=runtime,
         execution="execution",
         spill="spill",
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
         profiling_metadata=(
             {"batch_size": 2, "tag": "left"},
             {"batch_size": 4, "tag": "right"},
@@ -260,7 +260,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         runtime=runtime,
         execution="execution",
         spill="spill",
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
     optimizer_owner = persistent_state(runtime, training._optimizer)
@@ -346,7 +346,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
         runtime=runtime,
         execution="execution",
         spill="spill",
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
     )
     actual = training(values)
     torch.testing.assert_close(actual.objectives[0].cpu(), expected.loss.detach())
@@ -413,7 +413,7 @@ def test_public_training_partitions_cuda_only_optimizer_and_replays(
         runtime=runtime,
         execution="execution",
         spill="spill",
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
     optimizer_tasks = tuple(

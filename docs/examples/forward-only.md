@@ -17,7 +17,7 @@ run_forward = plan_forward(
     runtime=runtime,
     execution="execution",
     spill="spill",
-    planning_cachedir="artifacts/planning-cache",
+    artifact_store_dir="artifacts/store",
 )
 
 output = run_forward([torch.randn(8, 128)])

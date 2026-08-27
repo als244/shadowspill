@@ -29,7 +29,7 @@ class ControllerOptions:
 
     #: The revision every case this run produces records.
     revision: str
-    planning_cache: Path
+    artifact_store: Path
     resume: bool
     timeout_seconds: int
     max_attempts: int
@@ -48,7 +48,7 @@ def run_collection(
     """Collect every selected Program, recording failures and continuing."""
 
     paths = CollectionPaths.initialize(output_root, config)
-    options.planning_cache.mkdir(parents=True, exist_ok=True)
+    options.artifact_store.mkdir(parents=True, exist_ok=True)
     _preflight_resume(paths, selected, options)
     started_at = utc_now()
     selected_ids = tuple(request.case_id for request in selected)
@@ -211,7 +211,7 @@ def _worker_command(
         "--output-dir",
         str(paths.output_root),
         "--planning-cache",
-        str(options.planning_cache),
+        str(options.artifact_store),
         "--result",
         str(result_path),
     ]

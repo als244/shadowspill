@@ -35,7 +35,7 @@ def collect_program(
     request: ProgramRequest,
     *,
     output_root: Path,
-    planning_cache: Path,
+    artifact_store: Path,
     verbose: bool,
     force_fresh: bool,
 ) -> dict[str, object]:
@@ -106,7 +106,7 @@ def collect_program(
                 execution_device=request.runtime.execution_device,
                 optimizer_ordering=request.planning.optimizer_ordering,
                 verbose=verbose,
-                planning_cachedir=planning_cache,
+                artifact_store_dir=artifact_store,
                 profiling_metadata=profiling_metadata(case),
                 allocation_probe_seeds=request.planning.allocation_probe_seeds,
                 allocation_probe_repetitions=(
@@ -221,7 +221,7 @@ def main() -> int:
         result = collect_program(
             request,
             output_root=arguments.output_dir.expanduser().resolve(),
-            planning_cache=arguments.planning_cache.expanduser().resolve(),
+            artifact_store=arguments.artifact_store.expanduser().resolve(),
             verbose=not arguments.quiet_plan,
             force_fresh=arguments.force_fresh,
         )

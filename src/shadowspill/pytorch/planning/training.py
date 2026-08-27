@@ -155,7 +155,7 @@ def capture_training_graphs(
     memory: PlanMemory,
     partition: PartitionSpec,
     profiling_metadata: Sequence[object] | None,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline."""
@@ -181,7 +181,7 @@ def capture_training_graphs(
             cpu_inputs,
             fake_mode=fake_mode,
             device_ordinal=device_ordinal,
-            artifact_cache=artifact_cache,
+            artifact_store=artifact_store,
             timer=timer,
         )
         partitioned = _partition_training_graphs(
@@ -190,7 +190,7 @@ def capture_training_graphs(
             cpu_inputs,
             fake_mode=fake_mode,
             partition=partition,
-            artifact_cache=artifact_cache,
+            artifact_store=artifact_store,
             timer=timer,
         )
         with timer.measure("storage_layout_lowering"):
@@ -245,7 +245,7 @@ def _capture_training_objectives(
     *,
     fake_mode: FakeTensorMode,
     device_ordinal: int,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> tuple[TrainingObjectiveCapture, ...]:
     with fake_mode, timer.measure("objective_export"):
@@ -263,7 +263,7 @@ def _capture_training_objectives(
         )
     with timer.measure("export_archival"):
         for position, capture in enumerate(captures):
-            artifact_cache.archive_export(
+            artifact_store.archive_export(
                 capture.exported,
                 mode="training_objective",
                 position=position,
@@ -278,7 +278,7 @@ def _partition_training_graphs(
     *,
     fake_mode: FakeTensorMode,
     partition: PartitionSpec,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> tuple[PartitionedTrainingCapture, ...]:
     representative_roots = tuple(
@@ -290,7 +290,7 @@ def _partition_training_graphs(
             partition_training_capture(
                 capture,
                 partition=partition,
-                graph_pair_repository=artifact_cache.graph_pairs,
+                graph_pair_repository=artifact_store.graph_pairs,
                 representative_root_inputs=root_inputs,
             )
             for capture, root_inputs in zip(
@@ -387,7 +387,7 @@ def profile_training_tasks(
     *,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
     """Compile/profile each unique graph-pair and optimizer structural contract."""
@@ -417,13 +417,13 @@ def profile_training_tasks(
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
         provider_id="shadowspill.device_pool",
-        implementation_revision=artifact_cache.store.implementation_revision,
+        implementation_revision=artifact_store.store.implementation_revision,
     )
     manifests = _resolve_training_manifests(
         inventory,
         profiler,
         environment,
-        artifact_cache,
+        artifact_store,
         timer,
     )
     profiles = _profile_training_inventory(
@@ -431,7 +431,7 @@ def profile_training_tasks(
         profiler,
         environment,
         manifests,
-        artifact_cache,
+        artifact_store,
         timer,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
@@ -472,14 +472,14 @@ def _resolve_training_manifests(
     inventory: _TrainingTaskInventory,
     profiler: CudaTaskProfiler,
     environment: ProfileEnvironment,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> ResolvedTaskManifests:
     with timer.measure("compiler_manifest"):
         manifests = resolve_task_manifests(
             inventory.compile_tasks,
             environment=environment,
-            profile_cache=artifact_cache.profiles,
+            profile_cache=artifact_store.profiles,
             compiler=profiler,
             progress=lambda index, total, state, digest: timer.progress(
                 f"compiled manifest {index}/{total} {state}: {digest[:12]}"
@@ -497,7 +497,7 @@ def _profile_training_inventory(
     profiler: CudaTaskProfiler,
     environment: ProfileEnvironment,
     manifests: ResolvedTaskManifests,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
     *,
     allocation_probe_seeds: int,
@@ -508,7 +508,7 @@ def _profile_training_inventory(
             inventory.profile_tasks,
             environment=environment,
             measure=profiler.measure,
-            cache=artifact_cache.profiles,
+            cache=artifact_store.profiles,
             validate=lambda artifact, measurement: validate_compiled_profile(
                 artifact,
                 measurement,
@@ -679,7 +679,7 @@ def _report_training_program_inventory(
 def pressurefit_training_programs(
     programs: TrainingProgramArtifacts,
     *,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
 ) -> TrainingSelections:
     """Resolve recurrent and, when required, lazy-state first-step selections."""
@@ -717,7 +717,7 @@ def pressurefit_training_programs(
             recurrent = resolve_fixed_layout_selection(
                 programs.simulation_config,
                 programs.recurrent_admission,
-                lambda config: artifact_cache.resolve_pressurefit(
+                lambda config: artifact_store.resolve_pressurefit(
                     programs.recurrent.program,
                     initial_residency=programs.recurrent.initial_residency,
                     final_residency=programs.recurrent.final_residency,
@@ -735,7 +735,7 @@ def pressurefit_training_programs(
                 resolve_fixed_layout_selection(
                     programs.simulation_config,
                     programs.initial_admission,
-                    lambda config: artifact_cache.resolve_pressurefit(
+                    lambda config: artifact_store.resolve_pressurefit(
                         programs.initial.program,
                         initial_residency=programs.initial.initial_residency,
                         final_residency=programs.initial.final_residency,
@@ -815,7 +815,7 @@ def admit_training_plan(
     *,
     memory: PlanMemory,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
     started: int,
 ) -> PlannedTrainStep:
@@ -920,7 +920,7 @@ def admit_training_plan(
             recurrent_plan,
             initial_plan,
             optimizer_ordering=optimizer_ordering,
-            artifact_cache=artifact_cache,
+            artifact_store=artifact_store,
             memory=memory,
             timer=timer,
             started=started,
@@ -1026,7 +1026,7 @@ def _training_plan_report(
     initial_plan: ExecutionPlan | None,
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     memory: PlanMemory,
     timer: PlanningTimer,
     started: int,
@@ -1060,9 +1060,9 @@ def _training_plan_report(
         captured_stage_count=sum(
             len(capture.stages) for capture in captured.partitioned
         ),
-        aot_unique_stage_contracts=artifact_cache.graph_pairs.unique_keys,
-        aot_graph_pair_cache_hits=artifact_cache.graph_pairs.hits,
-        aot_graph_pair_cache_misses=artifact_cache.graph_pairs.misses,
+        aot_unique_stage_contracts=artifact_store.graph_pairs.unique_keys,
+        aot_graph_pair_cache_hits=artifact_store.graph_pairs.hits,
+        aot_graph_pair_cache_misses=artifact_store.graph_pairs.misses,
         pressurefit_results=(
             (admitted.recurrent_result,)
             if admitted.initial_result is None
@@ -1074,8 +1074,8 @@ def _training_plan_report(
         compiler_phase_timings_by_contract=(
             profiled.profiler.compilation_phase_timings_by_contract
         ),
-        cache_directories=artifact_cache.store.diagnostics(),
-        touched_cache_artifacts=cache_artifacts(artifact_cache.store),
+        store_directories=artifact_store.store.diagnostics(),
+        touched_cache_artifacts=cache_artifacts(artifact_store.store),
         profiling_metadata=captured.workloads,
         physical_layouts=(
             *(
@@ -1101,7 +1101,7 @@ def _training_plan_report(
     return publish_plan_report(
         model,
         report,
-        artifact_cache.store,
+        artifact_store.store,
         started=started,
     )
 
@@ -1182,7 +1182,7 @@ def make_training_program(
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
-    planning_cache: ArtifactStore,
+    artifact_store: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
@@ -1191,7 +1191,7 @@ def make_training_program(
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
-    artifacts = open_artifact_repositories(planning_cache)
+    artifacts = open_artifact_repositories(artifact_store)
     captured = capture_training_graphs(
         model,
         objective=objective,
@@ -1200,7 +1200,7 @@ def make_training_program(
         memory=memory,
         partition=partition,
         profiling_metadata=profiling_metadata,
-        artifact_cache=artifacts,
+        artifact_store=artifacts,
         timer=timer,
     )
     materialized = materialize_training_state(
@@ -1216,7 +1216,7 @@ def make_training_program(
             materialized,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
-            artifact_cache=artifacts,
+            artifact_store=artifacts,
             timer=timer,
         )
         captured = replace(captured, partitioned=profiled.partitioned)
@@ -1235,7 +1235,7 @@ def make_training_program(
             programs,
             memory=memory,
             optimizer_ordering=optimizer_ordering,
-            artifact_cache=artifacts,
+            artifact_store=artifacts,
             timer=timer,
             started=started,
         )
@@ -1284,16 +1284,16 @@ def _public_step_program(
     *,
     memory: PlanMemory,
     optimizer_ordering: str,
-    artifact_cache: PlanningArtifactRepositories,
+    artifact_store: PlanningArtifactRepositories,
     timer: PlanningTimer,
     started: int,
 ) -> StepProgram:
     """Archive Programs and publish only stable, serializable planning facts."""
 
     with timer.measure("program_archival"):
-        artifact_cache.store.archive_program(programs.recurrent.program)
+        artifact_store.store.archive_program(programs.recurrent.program)
         if programs.initial.program.digest != programs.recurrent.program.digest:
-            artifact_cache.store.archive_program(programs.initial.program)
+            artifact_store.store.archive_program(programs.initial.program)
     scratch_reserve = dynamic_scratch_reserve_bytes(
         programs.measurements_by_profile,
         minimum_bytes=programs.dynamic_scratch_reserve_bytes,
@@ -1340,8 +1340,8 @@ def _public_step_program(
             for index, item in enumerate(captured.workloads)
         ),
         phase_timings_ns=_program_phase_timings(timer, elapsed),
-        cache_directories=artifact_cache.store.diagnostics(),
-        cache_artifacts=cache_artifacts(artifact_cache.store),
+        store_directories=artifact_store.store.diagnostics(),
+        cache_artifacts=cache_artifacts(artifact_store.store),
         transfer_capabilities_json=json.dumps(
             memory.transfers.as_dict(), sort_keys=True, separators=(",", ":")
         ),
@@ -1418,7 +1418,7 @@ def build_training(
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
-    planning_cache: ArtifactStore,
+    artifact_store: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
@@ -1427,7 +1427,7 @@ def build_training(
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
-    artifacts = open_artifact_repositories(planning_cache)
+    artifacts = open_artifact_repositories(artifact_store)
     captured = capture_training_graphs(
         model,
         objective=objective,
@@ -1436,7 +1436,7 @@ def build_training(
         memory=memory,
         partition=partition,
         profiling_metadata=profiling_metadata,
-        artifact_cache=artifacts,
+        artifact_store=artifacts,
         timer=timer,
     )
     materialized = materialize_training_state(
@@ -1452,7 +1452,7 @@ def build_training(
             materialized,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
-            artifact_cache=artifacts,
+            artifact_store=artifacts,
             timer=timer,
         )
         captured = replace(captured, partitioned=profiled.partitioned)
@@ -1466,7 +1466,7 @@ def build_training(
         )
         selections = pressurefit_training_programs(
             programs,
-            artifact_cache=artifacts,
+            artifact_store=artifacts,
             timer=timer,
         )
         executable = compile_selected_training_tasks(
@@ -1493,7 +1493,7 @@ def build_training(
         executable,
         memory=memory,
         optimizer_ordering=optimizer_ordering,
-        artifact_cache=artifacts,
+        artifact_store=artifacts,
         timer=timer,
         started=started,
     )

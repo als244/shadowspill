@@ -177,7 +177,7 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             verbose=False,
         )
         adopted = _snapshot(runtime, record.current_object_id)

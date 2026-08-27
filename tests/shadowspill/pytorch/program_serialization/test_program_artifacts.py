@@ -110,13 +110,13 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     selected = pressurefit_program(
         source,
         transfer_bandwidths=transfer_bandwidths,
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
         verbose=False,
     )
     cached = pressurefit_program(
         _pressurefit_program(),
         transfer_bandwidths=transfer_bandwidths,
-        planning_cachedir=tmp_path,
+        artifact_store_dir=tmp_path,
         verbose=False,
     )
     encoded = json.loads(selected.to_json())
@@ -176,7 +176,7 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
         signature_digests=("a" * 64,),
         profiling_metadata=(),
         phase_timings_ns=(("capture", 1), ("total", 1)),
-        cache_directories=(("root", str(tmp_path / "planning-cache")),),
+        store_directories=(("root", str(tmp_path / "store")),),
         cache_artifacts=(),
         transfer_capabilities_json="{}",
         unique_profile_count=1,
@@ -185,7 +185,7 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     different_evidence = replace(
         step_program,
         phase_timings_ns=(("capture", 2), ("total", 3)),
-        cache_directories=(("root", "/different/cache"),),
+        store_directories=(("root", "/different/cache"),),
     )
     assert different_evidence.digest == step_program.digest
     identity = ProgramCaseIdentity("llama3", "mlops", 4_096, 1_024, 2)
@@ -215,7 +215,7 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     selected = pressurefit_program(
         loaded_program.recurrent,
         transfer_bandwidths=TransferBandwidths(1_000_000, 2_000_000),
-        planning_cachedir=tmp_path / "planning-cache",
+        artifact_store_dir=tmp_path / "store",
         verbose=False,
     )
     selection_directory = save_annotated_plan(

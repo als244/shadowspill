@@ -10,7 +10,7 @@ The directory is intentionally split between task-oriented guides and the
 ## Guides
 
 - [Quickstart](quickstart.md)
-- [Planning cache](planning-cache.md)
+- [Artifact store](artifact-store.md)
 - [PyTorch allocator integration](allocator.md)
 - [Errors, failures, and cleanup](failures.md)
 - [Interpreting a PlanReport](plan-report.md)
