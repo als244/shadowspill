@@ -7,7 +7,7 @@ from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 from typing import Any, cast
 
-import mlops  # type: ignore[import-untyped]
+import mlops
 import torch
 import torch.nn as nn
 

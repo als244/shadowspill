@@ -22,7 +22,11 @@ class RMSNorm(nn.Module):
 class GatedRMSNorm(RMSNorm):
     """Gated RMSNorm parameter container using the external operation."""
 
-    def forward(self, value: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+    # A gate is a second input, so this deliberately does not accept what
+    # RMSNorm accepts. The base class is here for the parameter it holds.
+    def forward(  # type: ignore[override]
+        self, value: torch.Tensor, gate: torch.Tensor
+    ) -> torch.Tensor:
         return mlops.gated_rms_norm(value, gate, self.weight, self.epsilon)
 
 

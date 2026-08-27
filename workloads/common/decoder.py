@@ -28,13 +28,21 @@ class RMSNorm(nn.Module):
 class GatedRMSNorm(RMSNorm):
     """RMS normalization followed by a SiLU gate."""
 
-    def forward(self, value: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+    # A gate is a second input, so this deliberately does not accept what
+    # RMSNorm accepts. The base class is here for the normalization itself.
+    def forward(  # type: ignore[override]
+        self, value: torch.Tensor, gate: torch.Tensor
+    ) -> torch.Tensor:
         normalized = super().forward(value)
         return (normalized.float() * F.silu(gate.float())).to(value.dtype)
 
 
 class RotaryEmbedding(nn.Module):
     """Caller-owned, fixed-capacity FP32 rotary tables."""
+
+    # register_buffer leaves no type behind for the assignments in _apply.
+    cosine: torch.Tensor
+    sine: torch.Tensor
 
     def __init__(self, width: int, *, base: float, capacity: int) -> None:
         super().__init__()
@@ -52,7 +60,7 @@ class RotaryEmbedding(nn.Module):
         self.register_buffer("sine", doubled.sin(), persistent=False)
 
     def _apply(self, function: object, recurse: bool = True) -> RotaryEmbedding:
-        super()._apply(function, recurse=recurse)  # type: ignore[arg-type]
+        super()._apply(function, recurse=recurse)  # type: ignore[no-untyped-call]
         self.cosine = self.cosine.float()
         self.sine = self.sine.float()
         return self

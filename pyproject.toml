@@ -49,6 +49,19 @@ python_version = "3.12"
 strict = true
 packages = ["shadowspill"]
 
+# The external operation library ships no annotations.
+[[tool.mypy.overrides]]
+module = "mlops.*"
+ignore_missing_imports = true
+
+# A workload is model code sitting on two untyped surfaces: torch types
+# Module.__call__ as returning Any, and the operation library above returns
+# Any throughout. Every forward would need a cast that asserts nothing, so
+# the Any-return check is off here. The gate itself covers `shadowspill`.
+[[tool.mypy.overrides]]
+module = "workloads.*"
+warn_return_any = false
+
 [tool.coverage.run]
 branch = true
 source = ["shadowspill"]
