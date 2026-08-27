@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -12,6 +13,7 @@ from functorch.compile import make_boxed_func  # type: ignore[import-untyped]
 from torch._functorch import config as functorch_config
 from torch._functorch.aot_autograd import aot_function
 from torch._functorch.partitioners import min_cut_rematerialization_partition
+from torch._guards import detect_fake_mode
 from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
 from torch.utils._pytree import tree_flatten
 
@@ -709,13 +711,14 @@ def accumulate_gradient_outputs(
     So the graph takes the running gradient as an argument and returns the sum.
     This rewrites outputs rather than the operations that produce them, so it
     holds for any backward: whatever computed the gradient, its result is what
-    gets added to. Where the producer is a matmul the compiler folds the two
-    into one accumulating call, and where it is anything else the addition
-    stands on its own.
+    gets added to. Leaving the fusion to the compiler is what makes that
+    generality affordable, since an accumulating matmul and a standalone add
+    are the same graph here.
 
-    The result is declared as a mutation of the argument it accumulates onto,
-    which is how the runtime knows the returned gradient replaces it rather
-    than joining it.
+    The addition is in place, so the running gradient keeps its storage and
+    the compiler can fold the add into whatever produced the contribution. It
+    is declared as a mutation of that argument, which is how the runtime knows
+    the returned gradient is the argument rather than a new one.
     """
 
     if not leaf_indices:
@@ -732,7 +735,7 @@ def accumulate_gradient_outputs(
     if len(placeholders) != len(backward.example_arguments):
         raise CaptureError("backward placeholder count changed before accumulation")
     anchor = placeholders[-1]
-    priors: list[object] = []
+    geometry: list[torch.Tensor] = []
     mutations: list[ExplicitMutation] = []
     for offset, leaf in enumerate(leaf_indices):
         produced = outputs[leaf]
@@ -745,11 +748,11 @@ def accumulate_gradient_outputs(
         anchor = prior
         with graph.inserting_before(output_node):
             total = graph.call_function(
-                torch.ops.aten.add.Tensor, args=(prior, produced)
+                torch.ops.aten.add_.Tensor, args=(prior, produced)
             )
         total.meta = dict(produced.meta)
         outputs[leaf] = total
-        priors.append(torch.zeros_like(value))
+        geometry.append(value)
         mutations.append(
             ExplicitMutation(
                 input_position=len(backward.example_arguments) + offset,
@@ -758,6 +761,11 @@ def accumulate_gradient_outputs(
             )
         )
     output_node.args = (tuple(outputs),)
+    # The arguments this adds have to belong to the same fake mode as the ones
+    # already there, and the caller need not be inside that mode.
+    fake_mode = detect_fake_mode(backward.example_arguments)
+    with fake_mode if fake_mode is not None else nullcontext():
+        priors = tuple(torch.zeros_like(item) for item in geometry)
     graph.lint()
     graph_module.recompile()
     return GraphArtifact.capture(

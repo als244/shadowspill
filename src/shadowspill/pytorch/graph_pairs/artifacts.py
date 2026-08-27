@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
-from shadowspill.pytorch.capture.artifacts import AotGraphPair
+from shadowspill.pytorch.capture.aot import (
+    TrainingObjectiveCapture,
+    accumulate_gradient_outputs,
+)
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+    TaskInputRole,
+)
 
 from ..partition.artifacts import PartitionedExport, StageExample
 
@@ -17,6 +24,15 @@ class GraphPairVariant:
     option_id: str
     memory_budget: float | None
     pair: AotGraphPair
+    accumulates: bool = False
+    """Whether this backward adds its gradients onto ones it is given.
+
+    Microbatches after the first contribute to gradients that already exist,
+    so they run a backward that takes those gradients as further arguments
+    and returns the sum. Which form a stage uses follows from its microbatch,
+    not from planning, so both forms share one option ID and the planner sees
+    the same recomputation choices at every microbatch.
+    """
 
     def __post_init__(self) -> None:
         if not self.option_id:
@@ -27,6 +43,27 @@ class GraphPairVariant:
             raise ValueError(
                 "only min-cut graph-pair variants carry an activation-memory budget"
             )
+
+    def accumulating(self) -> GraphPairVariant:
+        """Return the form of this variant that adds onto the gradients it is given.
+
+        Only parameter gradients outlive a microbatch; a cotangent belongs to
+        the microbatch that produced it. So the parameter gradients this
+        backward returns are exactly the ones a later microbatch has to add
+        to, and taking them as arguments moves that addition inside the task.
+        """
+
+        return replace(
+            self,
+            pair=replace(
+                self.pair,
+                backward=accumulate_gradient_outputs(
+                    self.pair.backward,
+                    parameter_gradient_leaves(self.pair),
+                ),
+            ),
+            accumulates=True,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +85,8 @@ class TaskGraphPairs:
             raise ValueError("graph pairs option IDs must be unique")
         if self.reference_option_id not in option_ids:
             raise ValueError("graph-pair reference option is absent")
+        if any(item.accumulates for item in self.variants):
+            raise ValueError("graph-pair variants are captured without accumulation")
 
     @property
     def reference(self) -> AotGraphPair:
@@ -62,6 +101,48 @@ class TaskGraphPairs:
             if item.option_id == option_id:
                 return item
         raise KeyError(option_id)
+
+    def options(self, *, accumulates: bool) -> tuple[GraphPairVariant, ...]:
+        """Return the variants one microbatch may choose between.
+
+        Every microbatch offers the same recomputation choices; which form of
+        them it runs follows from its position rather than from planning. A
+        step with a single microbatch never asks for the accumulating form, so
+        it is never built, compiled, or profiled.
+        """
+
+        if not accumulates:
+            return self.variants
+        return tuple(item.accumulating() for item in self.variants)
+
+
+def parameter_gradient_leaves(pair: AotGraphPair) -> tuple[int, ...]:
+    """Report which backward outputs are gradients of parameters.
+
+    A backward returns one gradient per differentiable forward argument, at
+    the argument\'s own position, so the forward\'s provenance says which of
+    those outputs belong to parameters. Arguments that need no gradient leave
+    a hole, and those are not accumulated onto.
+    """
+
+    provenance = pair.forward.input_provenance
+    produced = _produced_output_leaves(pair.backward)
+    return tuple(
+        position
+        for position in pair.forward.tensor_argument_positions
+        if position < len(provenance)
+        and provenance[position].role is TaskInputRole.PARAMETER
+        and position in produced
+    )
+
+
+def _produced_output_leaves(backward: GraphArtifact) -> frozenset[int]:
+    output = next(
+        node for node in backward.graph_module.graph.nodes if node.op == "output"
+    )
+    return frozenset(
+        index for index, value in enumerate(output.args[0]) if value is not None
+    )
 
 
 @dataclass(frozen=True, slots=True)

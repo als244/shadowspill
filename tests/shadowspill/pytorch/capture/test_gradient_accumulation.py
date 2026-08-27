@@ -55,17 +55,22 @@ def _materialize(value: object, device: str) -> object:
 
 
 @pytest.mark.cuda
-def test_rewritten_backward_returns_the_sum() -> None:
+def test_rewritten_backward_adds_into_the_gradient_it_is_given() -> None:
+    """The sum lands in the storage that was passed in, not in a new tensor."""
+
     backward, leaves = _two_layer_backward("cuda")
     accumulating = accumulate_gradient_outputs(backward, leaves)
 
     arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
     plain = backward.graph_module(*arguments)
     priors = [torch.randn_like(plain[leaf]) for leaf in leaves]
+    originals = [prior.clone() for prior in priors]
     total = accumulating.graph_module(*arguments, *priors)
 
-    for leaf, prior in zip(leaves, priors, strict=True):
-        assert torch.allclose(total[leaf], plain[leaf] + prior, rtol=1e-4, atol=1e-4)
+    for index, leaf in enumerate(leaves):
+        expected = plain[leaf] + originals[index]
+        assert torch.allclose(total[leaf], expected, rtol=1e-4, atol=1e-4)
+        assert total[leaf].data_ptr() == priors[index].data_ptr()
 
 
 @pytest.mark.cuda

@@ -7,7 +7,11 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
-from shadowspill.pytorch.capture.artifacts import AotGraphPair
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+    TaskInputRole,
+)
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 
@@ -15,6 +19,7 @@ from ...graph_pairs import (
     DifferentiatedStage,
     GraphPairVariant,
     PartitionedTrainingCapture,
+    parameter_gradient_leaves,
     saved_value_footprint,
 )
 from ..catalog import (
@@ -256,8 +261,57 @@ def _prepare_stage_variants(
             canonical_outputs,
             terminal=terminal,
         )
-        for option in stage.graph_pairs.variants
+        for option in stage.graph_pairs.options(accumulates=position > 0)
     }
+
+
+def _prior_gradient_positions(backward: GraphArtifact) -> tuple[int, ...]:
+    """Report the arguments a backward adds its gradients into.
+
+    These are appended after the tangents, so anything that reasons about the
+    tangent arity has to discount them.
+    """
+
+    return tuple(
+        index
+        for index, item in enumerate(backward.input_provenance)
+        if item.role is TaskInputRole.GRADIENT
+    )
+
+
+def _prior_gradient_inputs(
+    pair: AotGraphPair,
+    backward_inputs: tuple[TensorSlot, ...],
+    forward_inputs: tuple[TensorSlot, ...],
+    gradient_by_parameter: dict[str, str],
+) -> tuple[TensorSlot, ...]:
+    """Bind the gradients an accumulating backward adds onto.
+
+    The arguments were appended in the order of the outputs they accumulate
+    into, so pairing the two in that order says which gradient each one is.
+    Each of those outputs is the gradient of the forward argument at the same
+    position, so the parameter there names the gradient the sum belongs in —
+    the same rule the contributions follow, which keeps the two agreeing.
+    """
+
+    sources = {slot.leaf_index: slot.object_id for slot in forward_inputs}
+    priors: list[TensorSlot] = []
+    for position, leaf in zip(
+        _prior_gradient_positions(pair.backward),
+        parameter_gradient_leaves(pair),
+        strict=True,
+    ):
+        parameter = sources.get(leaf)
+        destination = (
+            gradient_by_parameter.get(parameter) if parameter is not None else None
+        )
+        if destination is None:
+            raise CaptureError(
+                "accumulating backward expects a parameter gradient at leaf "
+                f"{leaf}, which is not one"
+            )
+        priors.append(TensorSlot(position, destination))
+    return (*backward_inputs, *priors)
 
 
 def _prepare_stage_variant(
@@ -307,6 +361,13 @@ def _prepare_stage_variant(
         objects.catalog,
         terminal=terminal,
     )
+    if option.accumulates:
+        backward_inputs = _prior_gradient_inputs(
+            pair,
+            backward_inputs,
+            forward_inputs,
+            objects.gradient_by_parameter,
+        )
     contributions, backward_handoffs = _variant_backward_contributions(
         position,
         stage_index,
@@ -479,7 +540,9 @@ def _stage_backward_inputs(
         TensorSlot(index, slot.object_id)
         for index, slot in enumerate(forward_outputs[public_count:])
     )
-    tangent_values = pair.backward.example_arguments[pair.saved_value_count :]
+    priors = len(_prior_gradient_positions(pair.backward))
+    arguments = pair.backward.example_arguments
+    tangent_values = arguments[pair.saved_value_count : len(arguments) - priors]
     explicit_indices = stage.differentiable_output_indices[
         : len(stage.differentiable_output_indices) - pair.specialized_unit_tangent_count
     ]
