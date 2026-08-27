@@ -31,6 +31,7 @@ from shadowspill.planner import (
     AdmissionFacts,
     PressureFitOptions,
     TaskAdmissionSpec,
+    pressurefit_program,
 )
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
@@ -38,9 +39,6 @@ from shadowspill.planner.program import (
     PressureFitProgram,
     StepProgram,
     TransferBandwidths,
-)
-from shadowspill.pytorch import (
-    pressurefit_program,
 )
 from shadowspill.simulator import SimulationConfig
 

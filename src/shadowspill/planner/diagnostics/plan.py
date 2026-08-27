@@ -14,7 +14,8 @@ from shadowspill.ir import (
     TaskProfile,
     shared_residency_footprint,
 )
-from shadowspill.planner import PressureFitDiagnostics, PressureFitResult
+from shadowspill.planner.diagnostics import PressureFitDiagnostics
+from shadowspill.planner.result import PressureFitResult
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
 
 

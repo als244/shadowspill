@@ -70,6 +70,28 @@ resolved programs exist, and the order they are searched in, belongs to
 searched, and passing them together is what lets a plan placed under one bound
 the search under the rest.
 
+`pressurefit_program()` selects and physically admits a saved
+`PressureFitProgram` under requested budgets and `TransferBandwidths`,
+without capture, compilation or profiling:
+
+<!-- source-signature: src/shadowspill/planner/plan.py:pressurefit_program -->
+```text
+pressurefit_program(
+    program,
+    *,
+    execution_budget=None,
+    spill_budget=None,
+    transfer_bandwidths=None,
+    options=None,
+    artifact_store_dir=None,
+    verbose=True,
+    save_plan=True,
+    force_fresh=False,
+    overwrite_plan=False,
+    implementation_revision=None,
+) -> AnnotatedProgramPlan
+```
+
 Call `validate_schedule_feasibility()` to check whether at least one legal
 Program selection satisfies the required task-by-task residency floor. Use
 `simulate()` to validate an explicit schedule. See the [PressureFit

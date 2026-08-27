@@ -255,8 +255,9 @@ Shared planning arguments have these meanings:
 
 `make_step_program()` performs capture, compilation, profiling, and canonical
 lowering but does not run PressureFit or leave an active callable.
-`pressurefit_program()` independently selects and physically admits a saved
-`PressureFitProgram` under requested budgets and `TransferBandwidths`.
+Planning a saved `PressureFitProgram` needs no frontend, so
+`pressurefit_program()` lives in
+[`shadowspill.planner`](neutral.md) rather than here.
 
 <!-- source-signature: src/shadowspill/pytorch/api.py:make_step_program -->
 ```text
@@ -287,23 +288,6 @@ make_step_program(
 ) -> StepProgram
 ```
 
-<!-- source-signature: src/shadowspill/pytorch/api.py:pressurefit_program -->
-```text
-pressurefit_program(
-    program,
-    *,
-    execution_budget=None,
-    spill_budget=None,
-    transfer_bandwidths=None,
-    options=None,
-    artifact_store_dir=None,
-    verbose=True,
-    save_plan=True,
-    force_fresh=False,
-    overwrite_plan=False,
-    implementation_revision=None,
-) -> AnnotatedProgramPlan
-```
 
 Budgets default to the selected runtime pool capacities and cannot exceed
 them. `execution_device=None` uses PyTorch's current accelerator; an explicit

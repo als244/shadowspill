@@ -7,11 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner import (
-    AdmissionFacts,
-    PressureFitDiagnostics,
-    PressureFitResult,
-)
+from shadowspill.planner.admission import AdmissionFacts
 
 # Straight at the modules rather than the package: `layout/__init__` also
 # re-exports the runtime projection, which binds to the installed
@@ -21,7 +17,9 @@ from shadowspill.planner.admission.layout.model import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
 )
+from shadowspill.planner.diagnostics import PressureFitDiagnostics
 from shadowspill.planner.plan_store import PlanLookup
+from shadowspill.planner.result import PressureFitResult
 from shadowspill.simulator import SimulationConfig
 
 

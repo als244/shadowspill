@@ -367,6 +367,18 @@ def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics
 __all__ = ["PlanLookup", "PlanStore"]
 
 
+def open_plan_store(artifact_store: ArtifactStore) -> PlanStore:
+    """Open the plan store one artifact-store policy implies."""
+
+    return PlanStore(
+        artifact_store.pressurefit_selections,
+        read_enabled=artifact_store.read_enabled,
+        write_enabled=artifact_store.write_enabled,
+        overwrite=artifact_store.overwrite_plan,
+        artifact_recorder=artifact_store.record,
+    )
+
+
 def resolve_plan(
 artifact_store: ArtifactStore,
 plans: PlanStore,
