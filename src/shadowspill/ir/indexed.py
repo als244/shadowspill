@@ -137,9 +137,16 @@ def _flatten_strings(
     return tuple(offsets), tuple(values)
 
 
-def _flatten_integers(
+def flatten_rows(
     rows: tuple[tuple[int, ...], ...],
 ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Pack ragged rows into one values array and its row offsets.
+
+    Row `i` is `values[offsets[i]:offsets[i + 1]]`. The indexed forms in
+    both this package and the simulator are built this way, so it lives
+    here, at the layer below.
+    """
+
     offsets = [0]
     values: list[int] = []
     for row in rows:
@@ -175,7 +182,7 @@ def index_program(program: Program) -> IndexedProgram:
     output_offsets, outputs = _flatten_strings(
         tuple(task.outputs for task in program.tasks), object_index
     )
-    mutation_offsets, mutation_objects = _flatten_integers(
+    mutation_offsets, mutation_objects = flatten_rows(
         tuple(
             tuple(object_index[item.object_id] for item in task.mutations)
             for task in program.tasks

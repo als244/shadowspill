@@ -20,7 +20,10 @@ from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     TrainingStorageLayout,
 )
-from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
+from shadowspill.pytorch.materialization.replacement import (
+    MaterializedState,
+    ReplacementStorageViews,
+)
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
@@ -40,7 +43,7 @@ class _Registration:
 _InitialSource = tuple[torch.Tensor, tuple[int, int] | None]
 
 
-class TrainingMaterializedState:
+class TrainingMaterializedState(MaterializedState):
     """Own model, input, and fixed storages while preserving Tensor identities."""
 
     def __init__(
@@ -287,11 +290,6 @@ class TrainingMaterializedState:
             alias_id=alias_id,
             tensors=unique,
         )
-
-    def publish_replacement_views(self, replacement: ReplacementStorageViews) -> None:
-        """Keep the stable frontend representative rebound by the runtime boundary."""
-
-        self.object_store[replacement.alias_id] = replacement.tensors[0]
 
     def state_dict(self) -> OrderedDict[str, torch.Tensor]:
         if self._closed:
@@ -544,17 +542,6 @@ class TrainingMaterializedState:
             task_number=task_number,
         )
 
-    def _read_model_aliases(
-        self,
-        *,
-        aliases: set[str] | None = None,
-    ) -> dict[str, torch.Tensor]:
-        self.bridge.wait_idle()
-        owners = self._empty_model_aliases(aliases=aliases)
-        for alias_id, owner in owners.items():
-            self.bridge.read_spill_tensor(alias_id, owner)
-        return owners
-
     def _empty_model_aliases(
         self,
         *,
@@ -592,16 +579,6 @@ class TrainingMaterializedState:
         )
         view.requires_grad_(source.requires_grad)
         return view
-
-    @staticmethod
-    def _cpu_view(owner: torch.Tensor, tensor: torch.Tensor) -> torch.Tensor:
-        return torch.empty(0, dtype=tensor.dtype, device="cpu").set_(
-            owner.untyped_storage(),
-            tensor.storage_offset(),
-            tuple(tensor.shape),
-            tuple(tensor.stride()),
-        )
-
 
 def _flat_training_arguments(
     capture: TrainingObjectiveCapture,

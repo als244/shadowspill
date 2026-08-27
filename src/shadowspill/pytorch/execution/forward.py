@@ -28,7 +28,7 @@ from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
 from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
 
-from .annotations import TaskBoundaryAnnotations
+from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
 
 
 @dataclass(slots=True)
@@ -303,7 +303,7 @@ class _ExecutingStage(nn.Module):
             self._bridge.abort_task(self._task_handle)
 
 
-class ForwardExecutor:
+class ForwardExecutor(AnnotatedExecutor):
     """Execute one selected forward plan and return ordinary output tensors."""
 
     def __init__(
@@ -433,19 +433,6 @@ class ForwardExecutor:
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
 
-    def set_profiler_annotations(self, enabled: bool) -> None:
-        """Toggle provider annotations for this forward callable."""
-
-        self._task_annotations.set_enabled(enabled)
-
-    def finish_profiler_annotations(self) -> None:
-        """Drain annotated asynchronous work before disabling its provider."""
-
-        if not self._task_annotations.enabled:
-            return
-        self._bridge.wait_plan_idle()
-        self.set_profiler_annotations(False)
-
     def __call__(self, arguments: Sequence[object]) -> object:
         if self._invocations:
             # Forward v1 is also non-cyclic: begin only after the preceding
@@ -486,11 +473,6 @@ class ForwardExecutor:
         self._invocations += 1
         self._active_shared_outputs = created
         return tree_unflatten(public_leaves, self._output_tree_spec)
-
-    def record_invocation_completion(self) -> Callable[[], None]:
-        """Record the explicit public-result completion boundary."""
-
-        return self._completion.record()
 
     def validate_invocation(self) -> None:
         """Reject a call that would overwrite a still-owned output slot."""
