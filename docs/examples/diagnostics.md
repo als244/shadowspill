@@ -13,14 +13,16 @@ report = train_step.plan_report
 summary = step.summary
 print("profiled task sum", summary.profiled_task_seconds)
 print("real task-event sum", summary.real_task_event_seconds)
-print("simulated inter-task gaps", summary.simulated_inter_task_gap_seconds)
-print("real inter-task gaps", summary.real_inter_task_gap_seconds)
+print("simulated inter-task idle", summary.simulated_inter_task_idle_seconds)
+print("real inter-task idle", summary.real_inter_task_idle_seconds)
+print("  waiting for inputs", summary.real_inter_task_readiness_wait_seconds)
+print("  stream had nothing to run", summary.real_inter_task_exposed_overhead_seconds)
 print("simulated selected span", summary.simulated_selected_span_seconds)
 print("real selected span", summary.real_selected_span_seconds)
 
 largest = sorted(
     step.tasks.values(),
-    key=lambda item: item.task_compute_seconds or 0.0,
+    key=lambda item: item.gpu_duration_seconds or 0.0,
     reverse=True,
 )
 

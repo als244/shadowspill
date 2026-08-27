@@ -603,7 +603,7 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
         "## Transfer diagnostics",
         "## Allocator diagnostics",
         "## Runtime counters and trace integrity",
-        "shadowspill.step_diagnostics/v1",
+        "shadowspill.step_diagnostics/v2",
     ):
         assert required in step_diagnostics
 

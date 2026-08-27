@@ -50,8 +50,8 @@ summary = diagnostics.summary
 
 print("profiled tasks", summary.profiled_task_seconds)
 print("real task events", summary.real_task_event_seconds)
-print("simulated gaps", summary.simulated_inter_task_gap_seconds)
-print("real gaps", summary.real_inter_task_gap_seconds)
+print("simulated idle", summary.simulated_inter_task_idle_seconds)
+print("real idle", summary.real_inter_task_idle_seconds)
 print("simulated span", summary.simulated_selected_span_seconds)
 print("real span", summary.real_selected_span_seconds)
 print("simulator makespan", summary.simulator_makespan_seconds)
@@ -73,15 +73,60 @@ The fields mean:
 | `profiled_task_seconds` | Sum of isolated task profiles selected by the plan. |
 | `real_task_event_seconds` | Sum of compute-stream intervals measured in the real step. |
 | `task_event_delta_seconds` | Real task-event sum minus profiled sum. |
-| `simulated_inter_task_gap_seconds` | Gaps between simulated selected task intervals. |
-| `real_inter_task_gap_seconds` | Gaps between real selected task events. |
-| `inter_task_gap_delta_seconds` | Real gap sum minus simulated gap sum. |
+| `simulated_inter_task_idle_seconds` | Idle between simulated selected task intervals. |
+| `real_inter_task_idle_seconds` | Idle between real selected task events. |
+| `inter_task_idle_delta_seconds` | Real idle sum minus simulated idle sum. |
+| `real_inter_task_readiness_wait_seconds` | Idle spent waiting for a task's inputs to be resident. |
+| `real_inter_task_exposed_overhead_seconds` | The rest of that idle: the frontend had not reached the next task. |
+| `simulated_inter_task_readiness_wait_seconds` | The modeled counterpart of the readiness wait. |
+| `real_initial_readiness_wait_seconds` | The first task's wait, which precedes the span. |
 | `simulated_selected_span_seconds` | First selected task start through last selected task end in simulation. |
 | `real_selected_span_seconds` | Same boundary using real compute-stream events. |
 | `selected_span_delta_seconds` | Real selected span minus simulated selected span. |
 | `simulator_makespan_seconds` | Complete simulated schedule, including modeled terminal work. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
 | `phase_comparisons` | Profiled versus real task-event sum by semantic phase. |
+
+`real_inter_task_idle_seconds` is exactly `real_inter_task_readiness_wait_seconds` plus
+`real_inter_task_exposed_overhead_seconds`: the stream is either waiting on a task's
+inputs, or it has nothing to run at all. Between one task ending and the next
+computing, the compute stream travels to the next task's readiness marker and
+then waits there until that task's inputs are resident; the first is what
+dispatch costs and the second is what residency costs. Reading the total alone
+invites the wrong conclusion, because the two move independently -- a schedule
+that fetches later raises the wait while leaving dispatch untouched.
+
+It is called exposed because the frontend does this work at every boundary,
+and running ahead hides whatever the lead covers. The field is the shortfall,
+not the cost of the work. Do not reach for `dispatch_total_seconds` as the
+other half of that comparison: the host blocks inside the launch call once the
+device queue is full, so most of it is time spent waiting for the device
+rather than working -- `dispatch_invoke_seconds` tracks its own task's
+`gpu_duration_seconds` at a median ratio of 0.94.
+
+`real_inter_task_exposed_overhead_seconds` is zero wherever the frontend runs ahead of
+the device, because a task it has already reached has its readiness marker on
+the stream before the previous task ends. It is never *exactly* zero, because two
+consecutive event records on a stream sit about half a microsecond apart no
+matter what lies between them. Measured over one olmoe step that floor ran
+from 0.24 microseconds at the lowest boundary to 1.22 at the upper quartile,
+so read a microsecond or two as nothing and anything above it as real.
+
+The distribution is what to read, not the total. Over one olmoe step, 71 of 89
+boundaries came in near that floor and together contributed 67 microseconds,
+while 18 boundaries contributed the remaining 28.9 milliseconds -- every one of them a backward-to-optimizer transition, where
+the frontend had spent its lead. A rising median means the frontend is losing
+its lead everywhere; a heavy tail means it is losing it somewhere specific,
+and the boundary names say where.
+
+The simulator places a task as soon as its dependencies are met, so it has no
+notion of a stream travelling to a marker, and so cannot starve one. That
+absence is the point of reporting the two separately: whatever
+`real_inter_task_exposed_overhead_seconds` holds is cost the model does not represent.
+
+`real_initial_readiness_wait_seconds` is the first task's wait. It ends where
+the span begins, so no span-relative number here contains it, and on a step
+that opens by fetching its parameters it can exceed everything that follows.
 | `trace_complete` | False when any required trace source overflowed or was incomplete. |
 
 Use the selected span for the warmed first-task-to-final-task comparison. Do
@@ -124,11 +169,10 @@ Useful derived values are:
 - `dispatch_before_task_seconds`: complete frontend `before_task` wall time;
 - `readiness_wait_seconds`: compute-stream delay introduced by unfinished
   readiness dependencies;
-- `task_compute_seconds`: real compute-stream task interval;
 - `dispatch_after_task_seconds`: complete frontend `after_task` wall time;
 - `dispatch_total_seconds`: before + dispatch + after host work;
-- `gpu_start_seconds`, `gpu_end_seconds`, `gpu_duration_seconds`: aligned task
-  interval used in cross-execution analysis.
+- `gpu_start_seconds`, `gpu_end_seconds`, `gpu_duration_seconds`: the compute-
+  stream task interval, aligned for cross-execution analysis.
 
 A compute-stream readiness gap does not imply that the Python thread blocked.
 Ordinary fetch readiness is expressed as a stream event wait. A large host
@@ -294,7 +338,7 @@ specific result. `summary.trace_complete` provides the combined verdict.
 ## Exporting diagnostics
 
 `StepDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.step_diagnostics/v1`:
+`shadowspill.step_diagnostics/v2`:
 
 ```python
 import json
