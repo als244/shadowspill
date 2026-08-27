@@ -178,7 +178,7 @@ def _run_case(
             )
             command_environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
         if not is_reference:
-            command.extend(("--planning-cachedir", str(plan_cache)))
+            command.extend(("--artifact-store-dir", str(plan_cache)))
             if not detailed_artifacts:
                 command.append("--no-save-plan")
             if detailed_artifacts:

@@ -11,7 +11,7 @@ PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
   --config benchmarking/planning_eval/configs/full_pressurefit_frontier_v1.json \
   --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_v1 \
   --output-dir benchmarking/planning_eval/results/full_pressurefit_frontier_v1 \
-  --planning-cache benchmarking/program_collection/planning_caches/full_model_program_corpus_v1
+  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_v1
 ```
 
 The v1 matrix evaluates 15 budget/bandwidth points per Program. All 2,520

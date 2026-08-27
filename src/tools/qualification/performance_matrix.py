@@ -336,7 +336,7 @@ def main() -> int:
                 manifest.family,
                 manifest.implementation,
                 str(artifact),
-                "--planning-cachedir",
+                "--artifact-store-dir",
                 str(output / "artifact_store" / manifest.identity),
             ]
             if arguments.force_fresh:

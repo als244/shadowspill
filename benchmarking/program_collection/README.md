@@ -11,7 +11,7 @@ The obvious launcher is:
 python -m benchmarking.program_collection.collect \
   --config benchmarking/program_collection/configs/full_model_program_corpus_v1.json \
   --output-dir benchmarking/datasets/input_programs/full_model_program_corpus_v1 \
-  --planning-cache benchmarking/program_collection/planning_caches/full_model_program_corpus_v1
+  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_v1
 ```
 
 The v1 configuration expands model providers and `DataGeometry` axes into 168
@@ -29,7 +29,7 @@ Resume and validate an existing dataset without rebuilding completed Programs:
 python -m benchmarking.program_collection.collect \
   --config benchmarking/program_collection/configs/full_model_program_corpus_v1.json \
   --output-dir benchmarking/datasets/input_programs/full_model_program_corpus_v1 \
-  --planning-cache benchmarking/program_collection/planning_caches/full_model_program_corpus_v1 \
+  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_v1 \
   --resume
 ```
 

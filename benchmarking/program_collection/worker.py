@@ -210,7 +210,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--planning-cache", type=Path, required=True)
+    parser.add_argument("--artifact-store", type=Path, required=True)
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--quiet-plan", action="store_true")
     parser.add_argument("--force-fresh", action="store_true")
