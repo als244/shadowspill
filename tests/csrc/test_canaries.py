@@ -12,6 +12,7 @@ anyone noticing.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,27 @@ def _build_directory() -> Path | None:
     return trees[0]
 
 
+def _failed_canaries(output: str) -> tuple[str, ...]:
+    """The canaries ctest named in its closing summary.
+
+    Without this a failure is reported as the wrapper that ran ctest, and
+    which canary broke is only findable by reading the whole dump.
+    """
+
+    lines = output.splitlines()
+    try:
+        start = lines.index("The following tests FAILED:") + 1
+    except ValueError:
+        return ()
+    named = []
+    for line in lines[start:]:
+        match = re.match(r"\s*\d+ - (\S+) \(", line)
+        if match is None:
+            break
+        named.append(match.group(1))
+    return tuple(named)
+
+
 def _run_ctest(*selectors: str) -> None:
     build = _build_directory()
     if build is None:
@@ -71,10 +93,17 @@ def _run_ctest(*selectors: str) -> None:
             "fired first, so ctest itself is wedged"
         )
     if completed.returncode != 0:
-        # The canaries report by exit status and print little, so the whole
-        # output is the evidence.
+        failed = _failed_canaries(completed.stdout)
+        # Lead with the canary, because that first line is what a summary
+        # shows. The canaries report by exit status and print little, so the
+        # whole output follows as the evidence.
+        headline = (
+            ", ".join(failed)
+            if failed
+            else f"ctest {' '.join(selectors)} (no canary named)"
+        )
         pytest.fail(
-            f"ctest {' '.join(selectors)} failed with {completed.returncode}\n"
+            f"{headline} failed with {completed.returncode}\n"
             f"{completed.stdout}\n{completed.stderr}"
         )
 
