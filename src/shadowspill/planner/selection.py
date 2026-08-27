@@ -6,8 +6,6 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 
-from shadowspill.planner import PressureFitOptions, PressureFitResult
-
 # The admission package also re-exports the binding half, which reaches
 # lowering and the live allocator. Selecting a program needs neither.
 from shadowspill.planner.admission.refinement import (
@@ -15,15 +13,15 @@ from shadowspill.planner.admission.refinement import (
     resolve_fixed_layout_selection,
 )
 from shadowspill.planner.artifact_store import ArtifactStore
-from shadowspill.planner.plan_store import resolve_plan
+from shadowspill.planner.plan_store import open_plan_store, resolve_plan
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
     PressureFitProgram,
     TransferBandwidths,
 )
-
-from .stores import open_planning_stores
+from shadowspill.planner.request import PressureFitOptions
+from shadowspill.planner.result import PressureFitResult
 
 
 def select_program(
@@ -45,14 +43,14 @@ def select_program(
         transfer_bandwidths=transfer_bandwidths,
     )
     selected_options = options or program.options
-    stores = open_planning_stores(artifact_store)
+    plans = open_plan_store(artifact_store)
     progress = _progress_printer() if verbose else None
     selection = resolve_fixed_layout_selection(
         config,
         facts,
         lambda candidate_config: resolve_plan(
-            stores.store,
-            stores.plans,
+            artifact_store,
+            plans,
             program.program,
             initial_residency=program.initial_residency,
             final_residency=program.final_residency,
@@ -111,7 +109,7 @@ def _with_physical_prediction(
 ) -> PressureFitResult:
     """Replace logical timing with dependency-certified physical simulation."""
 
-    from shadowspill.planner import AdmissionFacts
+    from shadowspill.planner.admission import AdmissionFacts
     from shadowspill.simulator import SimulationResult
 
     if not isinstance(simulation, SimulationResult):

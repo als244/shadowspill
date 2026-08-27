@@ -19,13 +19,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from shadowspill.planner import AdmissionFacts, PressureFitResult
+from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.admission.indexed import encode_schedule
 from shadowspill.planner.admission.operations import (
     AdmissionOperations,
     build_admission_operations,
 )
 from shadowspill.planner.admission.placement import place_records
+from shadowspill.planner.result import PressureFitResult
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     SimulationAdmission,

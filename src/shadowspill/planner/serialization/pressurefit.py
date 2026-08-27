@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from shadowspill.planner import (
-    PressureFitDiagnostics,
-    PressureFitOptions,
-)
-from shadowspill.planner.request import InitialPlacement
+from shadowspill.planner.diagnostics import PressureFitDiagnostics
+from shadowspill.planner.request import InitialPlacement, PressureFitOptions
 
 from .common import (
     _boolean,

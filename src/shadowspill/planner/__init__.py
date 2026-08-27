@@ -20,6 +20,7 @@ from .diagnostics import (
 from .plan import (
     plan_program,
     pressurefit,
+    pressurefit_program,
     validate_schedule_feasibility,
 )
 from .request import InitialPlacement, PressureFitOptions
@@ -50,5 +51,6 @@ __all__ = [
     "TaskAllocationStepKind",
     "plan_program",
     "pressurefit",
+    "pressurefit_program",
     "validate_schedule_feasibility",
 ]

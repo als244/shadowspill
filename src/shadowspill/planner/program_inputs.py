@@ -6,7 +6,8 @@ import json
 from dataclasses import dataclass, field, replace
 
 from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
-from shadowspill.planner import AdmissionFacts, PressureFitOptions
+from shadowspill.planner.admission import AdmissionFacts
+from shadowspill.planner.request import PressureFitOptions
 from shadowspill.planner.serialization import (
     _canonical_json,
     _digest,

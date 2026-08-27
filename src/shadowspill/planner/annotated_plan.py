@@ -7,12 +7,13 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, RecomputationSelection, ResidencySpec
-from shadowspill.planner import AdmissionFacts, PressureFitResult
+from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.program_inputs import (
     MemoryBudgets,
     PressureFitProgram,
     TransferBandwidths,
 )
+from shadowspill.planner.result import PressureFitResult
 from shadowspill.planner.serialization import (
     _boolean,
     _canonical_json,

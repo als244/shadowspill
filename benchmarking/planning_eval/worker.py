@@ -18,13 +18,11 @@ from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitOptions,
     PressureFitSearchExhaustedError,
+    pressurefit_program,
 )
 from shadowspill.planner.program import (
     PressureFitProgram,
     StepProgram,
-)
-from shadowspill.pytorch import (
-    pressurefit_program,
 )
 from shadowspill.simulator import SimulationInfeasibleError
 

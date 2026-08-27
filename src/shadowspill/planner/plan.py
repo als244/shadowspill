@@ -18,6 +18,7 @@ budget, and nothing that belongs to a frontend.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -27,6 +28,7 @@ from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.capi import simulator_api
 
 from .admission import AdmissionFacts
+from .artifact_store import ArtifactStore
 from .best import BestPlaced
 from .capi import planner_api
 from .pressurefit import evaluate_resolutions, validate_pressurefit_inputs
@@ -34,6 +36,11 @@ from .pressurefit.search import (
     build_problems,
     finish_pressurefit,
     preflight_problems,
+)
+from .program import (
+    AnnotatedProgramPlan,
+    PressureFitProgram,
+    TransferBandwidths,
 )
 from .recomputation import Resolution, resolutions
 from .request import PressureFitOptions
@@ -282,3 +289,49 @@ __all__ = [
     "pressurefit",
     "validate_schedule_feasibility",
 ]
+
+
+def pressurefit_program(
+    program: PressureFitProgram,
+    *,
+    execution_budget: int | None = None,
+    spill_budget: int | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
+    options: PressureFitOptions | None = None,
+    artifact_store_dir: str | os.PathLike[str] | None = None,
+    verbose: bool = True,
+    save_plan: bool = True,
+    force_fresh: bool = False,
+    overwrite_plan: bool = False,
+    implementation_revision: str | None = None,
+) -> AnnotatedProgramPlan:
+    """Run recomputation, PressureFit, simulation, and physical admission.
+
+    ``program`` is normally ``make_step_program(...).recurrent`` or the value
+    reconstructed by :meth:`PressureFitProgram.from_value`. This operation is
+    model- and runtime-independent and may be repeated for a budget/bandwidth
+    frontier without capture, compilation, or profiling.
+    """
+
+
+    from .selection import select_program
+
+    if options is not None and not isinstance(options, PressureFitOptions):
+        raise TypeError("options must be PressureFitOptions or None")
+    cache = ArtifactStore.resolve(
+        artifact_store_dir,
+        save_plan=save_plan,
+        force_fresh=force_fresh,
+        overwrite_plan=overwrite_plan,
+        implementation_revision=implementation_revision,
+    )
+    cache.initialize()
+    return select_program(
+        program,
+        execution_budget_bytes=execution_budget,
+        spill_budget_bytes=spill_budget,
+        transfer_bandwidths=transfer_bandwidths,
+        options=options,
+        artifact_store=cache,
+        verbose=verbose,
+    )

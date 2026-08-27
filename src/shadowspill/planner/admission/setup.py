@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import Program, RecomputationSelection
-from shadowspill.planner import AdmissionFacts
+from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.indexed import (
     IndexedAdmissionFacts,

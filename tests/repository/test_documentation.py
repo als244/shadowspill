@@ -61,7 +61,7 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/api.py:make_step_program",
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
-    "src/shadowspill/pytorch/api.py:pressurefit_program",
+    "src/shadowspill/planner/plan.py:pressurefit_program",
     "src/shadowspill/pytorch/callables.py:PlannedForward.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedForward.submit",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__",

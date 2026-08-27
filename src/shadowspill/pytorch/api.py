@@ -10,13 +10,9 @@ from typing import Any, Literal, NoReturn
 import torch
 import torch.nn as nn
 
-from shadowspill.planner import PressureFitOptions
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.program import (
-    AnnotatedProgramPlan,
-    PressureFitProgram,
     StepProgram,
-    TransferBandwidths,
 )
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
@@ -386,54 +382,8 @@ def make_step_program(
         )
 
 
-def pressurefit_program(
-    program: PressureFitProgram,
-    *,
-    execution_budget: int | None = None,
-    spill_budget: int | None = None,
-    transfer_bandwidths: TransferBandwidths | None = None,
-    options: PressureFitOptions | None = None,
-    artifact_store_dir: str | os.PathLike[str] | None = None,
-    verbose: bool = True,
-    save_plan: bool = True,
-    force_fresh: bool = False,
-    overwrite_plan: bool = False,
-    implementation_revision: str | None = None,
-) -> AnnotatedProgramPlan:
-    """Run recomputation, PressureFit, simulation, and physical admission.
-
-    ``program`` is normally ``make_step_program(...).recurrent`` or the value
-    reconstructed by :meth:`PressureFitProgram.from_value`. This operation is
-    model- and runtime-independent and may be repeated for a budget/bandwidth
-    frontier without capture, compilation, or profiling.
-    """
-
-    from .planning.program_selection import select_program
-
-    if options is not None and not isinstance(options, PressureFitOptions):
-        raise TypeError("options must be PressureFitOptions or None")
-    cache = ArtifactStore.resolve(
-        artifact_store_dir,
-        save_plan=save_plan,
-        force_fresh=force_fresh,
-        overwrite_plan=overwrite_plan,
-        implementation_revision=implementation_revision,
-    )
-    cache.initialize()
-    return select_program(
-        program,
-        execution_budget_bytes=execution_budget,
-        spill_budget_bytes=spill_budget,
-        transfer_bandwidths=transfer_bandwidths,
-        options=options,
-        artifact_store=cache,
-        verbose=verbose,
-    )
-
-
 __all__ = [
     "make_step_program",
     "plan_forward",
     "plan_step",
-    "pressurefit_program",
 ]
