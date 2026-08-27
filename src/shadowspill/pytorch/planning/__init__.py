@@ -1,6 +1,7 @@
 """Composable high-level PyTorch planning boundaries."""
 
-from ..cache import PlanningCache
+from shadowspill.planner.artifact_store import ArtifactStore
+
 from .artifacts import (
     ForwardCaptureArtifacts,
     ForwardProfileArtifacts,
@@ -34,11 +35,11 @@ from .training import (
 )
 
 __all__ = [
+    "ArtifactStore",
     "ForwardCaptureArtifacts",
     "ForwardProfileArtifacts",
     "ForwardProgramArtifacts",
     "PlanningArtifactRepositories",
-    "PlanningCache",
     "PlanningTimer",
     "TrainingAdmissionArtifacts",
     "TrainingCaptureArtifacts",

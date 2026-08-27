@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.pytorch import cache as cache_module
-from shadowspill.pytorch.cache import PlanningCache
+from shadowspill.planner import artifact_store as store_module
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.pytorch.profiling.metadata import (
     canonicalize_profiling_metadata,
     training_profiling_metadata,
@@ -40,7 +40,7 @@ def test_profiling_metadata_is_canonical_and_position_aligned() -> None:
 
 
 def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None:
-    cache = PlanningCache.resolve(
+    cache = ArtifactStore.resolve(
         tmp_path,
         implementation_revision="mlops-build-17",
     )
@@ -87,12 +87,12 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
 
 def test_planning_cache_policy_flags_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires"):
-        PlanningCache.resolve(tmp_path, overwrite_plan=True)
+        ArtifactStore.resolve(tmp_path, overwrite_plan=True)
     with pytest.raises(ValueError, match="non-empty"):
-        PlanningCache.resolve(tmp_path, implementation_revision=" ")
+        ArtifactStore.resolve(tmp_path, implementation_revision=" ")
 
     transient_root = tmp_path / "transient"
-    transient = PlanningCache.resolve(transient_root, save_plan=False)
+    transient = ArtifactStore.resolve(transient_root, save_plan=False)
     with transient.activate_pytorch():
         assert not transient_root.exists()
 
@@ -100,7 +100,7 @@ def test_planning_cache_policy_flags_fail_closed(tmp_path: Path) -> None:
 def test_force_fresh_publishes_a_write_enabled_isolated_pytorch_cache(
     tmp_path: Path,
 ) -> None:
-    cache = PlanningCache.resolve(
+    cache = ArtifactStore.resolve(
         tmp_path,
         force_fresh=True,
         implementation_revision="fresh-cache-test",
@@ -143,8 +143,8 @@ def test_inductor_cache_publish_crosses_filesystems_atomically(
             raise OSError(errno.EXDEV, "cross-device link")
         replace(left, right)
 
-    monkeypatch.setattr(cache_module.os, "replace", cross_device_once)
-    cache_module._publish_cache_tree(source, destination, overwrite=False)
+    monkeypatch.setattr(store_module.os, "replace", cross_device_once)
+    store_module._publish_cache_tree(source, destination, overwrite=False)
 
     assert (destination / "triton" / "kernel").read_text() == "indexed"
     assert source.is_dir()

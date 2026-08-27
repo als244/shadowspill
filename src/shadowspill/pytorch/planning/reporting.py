@@ -10,9 +10,9 @@ from dataclasses import replace
 
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import PressureFitResult
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.pytorch.profiling import ProfilingMetadata, ProfilingResult
 
-from ..cache import PlanningCache
 from ..diagnostics import (
     PlanCacheArtifact,
     PlanCompilerProfile,
@@ -31,7 +31,7 @@ from .admission import FixedLayoutSelection, SelectedAdmission
 from .common import fixed_execution_bytes
 
 
-def cache_artifacts(cache: PlanningCache) -> tuple[PlanCacheArtifact, ...]:
+def cache_artifacts(cache: ArtifactStore) -> tuple[PlanCacheArtifact, ...]:
     """Return immutable public evidence for every touched cache artifact."""
 
     return tuple(
@@ -382,7 +382,7 @@ def publish_plan_report(
     # framework type here would make reporting depend on one.
     model: object,
     report: PlanReport,
-    cache: PlanningCache,
+    cache: ArtifactStore,
     *,
     started: int,
 ) -> PlanReport:

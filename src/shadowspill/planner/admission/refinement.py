@@ -21,7 +21,7 @@ from shadowspill.planner.admission.layout.model import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
 )
-from shadowspill.planner.cache import CachedPressureFitResult
+from shadowspill.planner.plan_store import PlanLookup
 from shadowspill.simulator import SimulationConfig
 
 
@@ -43,7 +43,7 @@ class FixedLayoutAttempt:
 class FixedLayoutSelection:
     """One PressureFit selection and the exact physical certificate it passed."""
 
-    pressurefit: CachedPressureFitResult
+    pressurefit: PlanLookup
     facts: AdmissionFacts
     admission: FixedLayoutAdmission
     attempts: tuple[FixedLayoutAttempt, ...]
@@ -54,8 +54,8 @@ class FixedLayoutSelection:
         return self.pressurefit.result
 
     @property
-    def cache_hit(self) -> bool:
-        return self.pressurefit.cache_hit
+    def from_store(self) -> bool:
+        return self.pressurefit.from_store
 
     @property
     def capacity_reduction_bytes(self) -> int:
@@ -101,7 +101,7 @@ def placement_facts(
 def resolve_fixed_layout_selection(
     config: SimulationConfig,
     facts: AdmissionFacts,
-    resolve: Callable[[SimulationConfig], CachedPressureFitResult],
+    resolve: Callable[[SimulationConfig], PlanLookup],
     *,
     scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
@@ -196,7 +196,7 @@ def resolve_fixed_layout_selection(
 
 
 def _effective_object_capacity(
-    selected: CachedPressureFitResult,
+    selected: PlanLookup,
     *,
     requested_capacity: int,
 ) -> int:

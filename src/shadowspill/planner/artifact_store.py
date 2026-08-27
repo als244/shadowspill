@@ -68,8 +68,8 @@ class _ArtifactLedger:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanningCache:
-    """Resolved directories and artifact ledger for one planning call.
+class ArtifactStore:
+    """Where one planning call reads and writes its artifacts.
 
     The four public phase directories remain stable.  Content-addressed leaf
     paths provide identity; the ``plans`` tree is a readable index linking one
@@ -101,7 +101,7 @@ class PlanningCache:
         force_fresh: bool = False,
         overwrite_plan: bool = False,
         implementation_revision: str | None = None,
-    ) -> PlanningCache:
+    ) -> ArtifactStore:
         for name, selected in (
             ("save_plan", save_plan),
             ("force_fresh", force_fresh),
@@ -714,4 +714,4 @@ the artifacts touched by that call.  Do not edit content-addressed entries.
 """
 
 
-__all__ = ["PlanningArtifact", "PlanningCache"]
+__all__ = ["ArtifactStore", "PlanningArtifact"]

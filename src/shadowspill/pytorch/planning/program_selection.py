@@ -14,13 +14,13 @@ from shadowspill.planner.admission.refinement import (
     placement_facts,
     resolve_fixed_layout_selection,
 )
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
     PressureFitProgram,
     TransferBandwidths,
 )
-from shadowspill.pytorch.cache import PlanningCache
 
 from .repositories import open_artifact_repositories
 
@@ -32,7 +32,7 @@ def select_program(
     spill_budget_bytes: int | None,
     transfer_bandwidths: TransferBandwidths | None,
     options: PressureFitOptions | None,
-    planning_cache: PlanningCache,
+    planning_cache: ArtifactStore,
     verbose: bool,
 ) -> AnnotatedProgramPlan:
     """Select and physically admit one reusable Program."""
@@ -95,7 +95,7 @@ def select_program(
         simulation_admission=selection.admission.simulator_input,
         simulation=selection.admission.simulation,
         attempts=selection.attempts,
-        pressurefit_cache_hit=selection.cache_hit,
+        plan_from_store=selection.from_store,
         wall_time_ns=time.perf_counter_ns() - started,
     )
 

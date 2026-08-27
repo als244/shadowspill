@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from shadowspill.planner import PressureFitOptions
-from shadowspill.planner.cache import PressureFitCache
+from shadowspill.planner.plan_store import PlanStore
 
 from ._examples import config, exact_capacity_program, exact_capacity_residency
 
@@ -17,9 +17,9 @@ FEW_CANDIDATES = PressureFitOptions(
 )
 
 
-def test_pressurefit_cache_preserves_the_complete_selection(tmp_path: Path) -> None:
+def test_plan_store_preserves_the_complete_selection(tmp_path: Path) -> None:
     initial, final = exact_capacity_residency()
-    cache = PressureFitCache(tmp_path)
+    cache = PlanStore(tmp_path)
     first = cache.resolve(
         exact_capacity_program(),
         initial_residency=initial,
@@ -40,24 +40,24 @@ def test_pressurefit_cache_preserves_the_complete_selection(tmp_path: Path) -> N
         ),
     )
 
-    assert not first.cache_hit
-    assert second.cache_hit
+    assert not first.from_store
+    assert second.from_store
     assert second.result.schedule == first.result.schedule
     assert second.result.selections == first.result.selections
     assert second.result.simulation == first.result.simulation
     assert second.result.diagnostics == first.result.diagnostics
 
 
-def test_pressurefit_cache_ignores_only_fresh_work_timings(tmp_path: Path) -> None:
+def test_plan_store_ignores_only_fresh_work_timings(tmp_path: Path) -> None:
     initial, final = exact_capacity_residency()
-    first = PressureFitCache(tmp_path).resolve(
+    first = PlanStore(tmp_path).resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
         options=FEW_CANDIDATES,
     )
-    fresh = PressureFitCache(tmp_path, read_enabled=False).resolve(
+    fresh = PlanStore(tmp_path, read_enabled=False).resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
@@ -65,8 +65,8 @@ def test_pressurefit_cache_ignores_only_fresh_work_timings(tmp_path: Path) -> No
         options=FEW_CANDIDATES,
     )
 
-    assert not first.cache_hit
-    assert not fresh.cache_hit
+    assert not first.from_store
+    assert not fresh.from_store
     assert fresh.result.schedule == first.result.schedule
     assert fresh.result.diagnostics.work.simulation_calls == (
         first.result.diagnostics.work.simulation_calls
@@ -75,7 +75,7 @@ def test_pressurefit_cache_ignores_only_fresh_work_timings(tmp_path: Path) -> No
 
 def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
     initial, final = exact_capacity_residency()
-    cache = PressureFitCache(tmp_path)
+    cache = PlanStore(tmp_path)
     cache.resolve(
         exact_capacity_program(),
         initial_residency=initial,
@@ -100,7 +100,7 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
 
 def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> None:
     initial, final = exact_capacity_residency()
-    cache = PressureFitCache(tmp_path)
+    cache = PlanStore(tmp_path)
     cache.resolve(
         exact_capacity_program(),
         initial_residency=initial,

@@ -54,15 +54,20 @@ class _ArtifactRecorder(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class CachedPressureFitResult:
-    """One selected result plus whether it came from persistent storage."""
+class PlanLookup:
+    """One selected plan, and whether it was read back or planned now."""
 
     result: PressureFitResult
-    cache_hit: bool
+    #: True when the plan was read back rather than planned now.
+    from_store: bool
 
 
-class PressureFitCache:
-    """Atomic cache whose key excludes non-semantic worker concurrency."""
+class PlanStore:
+    """Selected plans on disk, keyed by the request that produced them.
+
+    The key excludes worker concurrency, which changes how the search is
+    scheduled but not which plan it may answer with.
+    """
 
     def __init__(
         self,
@@ -97,7 +102,7 @@ class PressureFitCache:
         admission: AdmissionFacts | None = None,
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
-    ) -> CachedPressureFitResult:
+    ) -> PlanLookup:
         """Return a validated cached selection or run unmodified PressureFit."""
 
         selected_options = options or PressureFitOptions()
@@ -124,7 +129,7 @@ class PressureFitCache:
             else None
         )
         if cached is not None:
-            return CachedPressureFitResult(cached, True)
+            return PlanLookup(cached, True)
         result = pressurefit(
             program,
             initial_residency=initial_residency,
@@ -136,7 +141,7 @@ class PressureFitCache:
             progress=progress,
         )
         self._write(key, result, admission)
-        return CachedPressureFitResult(result, False)
+        return PlanLookup(result, False)
 
     def _read(
         self,
@@ -358,4 +363,4 @@ def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics
         ) from exc
 
 
-__all__ = ["CachedPressureFitResult", "PressureFitCache"]
+__all__ = ["PlanLookup", "PlanStore"]

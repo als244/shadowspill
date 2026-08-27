@@ -34,7 +34,12 @@ if TYPE_CHECKING:
     from .admission.layout.model import FixedPhysicalLayout
     from .admission.refinement import FixedLayoutAttempt
 
-_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v2"
+_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v3"
+#: v2 wrote `selection.cache_hit` for what v3 calls `selection.from_store`.
+#: Only the name changed, so v2 payloads are still read.
+_READABLE_SCHEMAS = frozenset(
+    {_ANNOTATED_PROGRAM_PLAN_SCHEMA, "shadowspill.annotated_program_plan/v2"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +55,9 @@ class AnnotatedProgramPlan:
     simulation_admission: SimulationAdmission
     simulation: SimulationResult
     attempts: tuple[FixedLayoutAttempt, ...]
-    pressurefit_cache_hit: bool
+    #: Whether the plan was read back from the plan store rather than
+    #: planned during this call.
+    plan_from_store: bool
     wall_time_ns: int
     #: Filled on first read. Computing the digest serialises the whole plan --
     #: tens of megabytes -- and four callers want the same answer, so it is
@@ -71,7 +78,8 @@ class AnnotatedProgramPlan:
     def _compute_digest(self) -> str:
         value = self.to_dict()
         selection = dict(_mapping(value["selection"], "selection"))
-        selection.pop("cache_hit")
+        selection.pop("from_store", None)
+        selection.pop("cache_hit", None)
         selection.pop("diagnostics")
         value["selection"] = selection
         physical = dict(
@@ -115,7 +123,7 @@ class AnnotatedProgramPlan:
             "memory_budgets": self.memory_budgets.to_dict(),
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),
             "selection": {
-                "cache_hit": self.pressurefit_cache_hit,
+                "from_store": self.plan_from_store,
                 "diagnostics": self.result.diagnostics.to_dict(),
                 "final_residency": [
                     item.to_dict() for item in self.result.final_residency
@@ -183,7 +191,7 @@ class AnnotatedProgramPlan:
         from .admission.refinement import FixedLayoutAttempt
 
         data = _mapping(value, "annotated_program_plan")
-        if data.get("schema") != _ANNOTATED_PROGRAM_PLAN_SCHEMA:
+        if data.get("schema") not in _READABLE_SCHEMAS:
             raise ValueError("annotated_program_plan.schema: unsupported schema")
         program = PressureFitProgram.from_value(
             data.get("source_program"), "annotated_program_plan.source_program"
@@ -429,9 +437,10 @@ class AnnotatedProgramPlan:
             simulation_admission=simulation_admission,
             simulation=simulation,
             attempts=attempts,
-            pressurefit_cache_hit=_boolean(
-                selection.get("cache_hit"),
-                "annotated_program_plan.selection.cache_hit",
+            plan_from_store=_boolean(
+                # v2 spelled this `cache_hit`.
+                selection.get("from_store", selection.get("cache_hit")),
+                "annotated_program_plan.selection.from_store",
             ),
             wall_time_ns=total_wall_time_ns,
         )

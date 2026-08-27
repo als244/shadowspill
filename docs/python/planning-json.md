@@ -9,7 +9,7 @@ for corpus collection, budget sweeps, inspection, and reproducible planning.
 | `Program` | `shadowspill.program/v3` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
 | `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, admission topology, and search options. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
-| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v2` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
+| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v3` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
 
 The ordinary reusable workflow is:
 
@@ -41,7 +41,7 @@ Three identity rules matter:
 2. A `StepProgram.digest` excludes phase time and cache paths, so the same
    planning content has one identity regardless of where or how long it took
    to construct.
-3. An `AnnotatedProgramPlan.digest` excludes cache-hit status, diagnostic work
+3. An `AnnotatedProgramPlan.digest` excludes whether the plan came from the store, diagnostic work
    time, and orchestration wall time, while retaining selected schedule,
    budgets, transfer bandwidths, and the physical certificate.
 
@@ -233,10 +233,12 @@ runtime calibration matrix captured during Program construction.
 
 ## AnnotatedProgramPlan format
 
-An annotated plan is one admitted planning point:
+An annotated plan is one admitted planning point. `from_json()` also reads
+`shadowspill.annotated_program_plan/v2`, which differs only in spelling
+`selection.from_store` as `selection.cache_hit`:
 
 ```text
-shadowspill.annotated_program_plan/v2
+shadowspill.annotated_program_plan/v3
 ├── source_program
 ├── memory_budgets
 ├── transfer_bandwidths
@@ -270,7 +272,7 @@ shadowspill.annotated_program_plan/v2
 
 | Key | Meaning |
 |---|---|
-| `cache_hit` | Whether the selected PressureFit result came from the artifact cache. |
+| `from_store` | Whether the selected plan was read back from the plan store rather than planned during this call. v2 spelled this `cache_hit`; both are read. |
 | `diagnostics` | Full recomputation-problem and candidate-policy search evidence. |
 | `initial_residency`, `final_residency` | Selected boundary state. |
 | `options` | Effective `PressureFitOptions`. |
