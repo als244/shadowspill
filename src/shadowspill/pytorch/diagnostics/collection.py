@@ -129,7 +129,7 @@ def _build_task_timings(
         )
         tasks.append(result)
         phase_seconds[result.phase] = (
-            phase_seconds.get(result.phase, 0.0) + result.gpu_duration_seconds
+            phase_seconds.get(result.phase, 0.0) + result.compute_duration_seconds
         )
     return tuple(tasks), phase_seconds
 
@@ -141,9 +141,7 @@ def _build_task_timing(
     callback: TaskDispatchTimestamps | None,
     callback_origin_ns: int,
 ) -> TaskExecutionTiming:
-    gpu_start = float(execution.start_event.elapsed_time(task.start_event)) / 1_000.0
-    gpu_end = float(execution.start_event.elapsed_time(task.end_event)) / 1_000.0
-    gpu_duration = float(task.start_event.elapsed_time(task.end_event)) / 1_000.0
+    compute_duration = float(task.start_event.elapsed_time(task.end_event)) / 1_000.0
     readiness_seconds = (
         float(execution.origin_event.elapsed_time(task.readiness_event)) / 1_000.0
     )
@@ -174,19 +172,14 @@ def _build_task_timing(
         after_task_exit_timestamp_ns=(
             callback.after_task_exit_ns if callback is not None else 0
         ),
-        stream_reached_timestamp_ns=int(readiness_seconds * 1e9),
-        compute_started_timestamp_ns=int(compute_start_seconds * 1e9),
-        compute_finished_timestamp_ns=int(compute_end_seconds * 1e9),
-        gpu_start_seconds=gpu_start,
-        gpu_end_seconds=gpu_end,
-        gpu_duration_seconds=gpu_duration,
-        stream_reached_seconds=readiness_seconds,
+        compute_duration_seconds=compute_duration,
+        compute_reached_seconds=readiness_seconds,
         compute_started_seconds=compute_start_seconds,
         compute_finished_seconds=compute_end_seconds,
         readiness_wait_seconds=(
             float(task.readiness_event.elapsed_time(task.start_event)) / 1_000.0
         ),
-        stream_reached_sequence=sequence_base + 1,
+        compute_reached_sequence=sequence_base + 1,
         compute_started_sequence=sequence_base + 2,
         compute_finished_sequence=sequence_base + 3,
         runtime_before_task_enter_seconds=_relative_seconds(
@@ -270,8 +263,8 @@ def _build_execution_timing(
 ) -> ExecutionTiming:
     optimizer = tuple(item for item in tasks if item.phase == "optimizer")
     optimizer_seconds = (
-        max(item.gpu_end_seconds for item in optimizer)
-        - min(item.gpu_start_seconds for item in optimizer)
+        max(item.compute_finished_seconds for item in optimizer)
+        - min(item.compute_started_seconds for item in optimizer)
         if optimizer
         else 0.0
     )
@@ -555,7 +548,7 @@ def _build_simulator_comparison(
     if missing:
         raise RuntimeError(f"simulator evidence omitted selected tasks: {missing!r}")
     simulated_origin_ns = min(intervals[item.task_id].start_ns for item in tasks)
-    real_origin_seconds = min(item.gpu_start_seconds for item in tasks)
+    real_origin_seconds = min(item.compute_started_seconds for item in tasks)
     return FrozenMapping(
         {
             item.execution_task_id: SimulatorTaskComparison(
@@ -567,9 +560,9 @@ def _build_simulator_comparison(
                     intervals[item.task_id].start_ns - simulated_origin_ns
                 )
                 / 1e9,
-                real_start_seconds=item.gpu_start_seconds - real_origin_seconds,
+                real_start_seconds=item.compute_started_seconds - real_origin_seconds,
                 start_delta_seconds=(
-                    item.gpu_start_seconds
+                    item.compute_started_seconds
                     - real_origin_seconds
                     - (intervals[item.task_id].start_ns - simulated_origin_ns) / 1e9
                 ),
@@ -577,16 +570,16 @@ def _build_simulator_comparison(
                     intervals[item.task_id].end_ns - simulated_origin_ns
                 )
                 / 1e9,
-                real_end_seconds=item.gpu_end_seconds - real_origin_seconds,
+                real_end_seconds=item.compute_finished_seconds - real_origin_seconds,
                 end_delta_seconds=(
-                    item.gpu_end_seconds
+                    item.compute_finished_seconds
                     - real_origin_seconds
                     - (intervals[item.task_id].end_ns - simulated_origin_ns) / 1e9
                 ),
                 expected_profile_seconds=item.expected_profile_seconds,
-                observed_gpu_seconds=item.gpu_duration_seconds,
+                observed_gpu_seconds=item.compute_duration_seconds,
                 duration_delta_seconds=(
-                    item.gpu_duration_seconds - item.expected_profile_seconds
+                    item.compute_duration_seconds - item.expected_profile_seconds
                 ),
             )
             for item in tasks
@@ -618,7 +611,7 @@ def _idle_composition(
     dispatch = 0.0
     for previous, current in pairwise(ordered):
         readiness += current.readiness_wait_seconds or 0.0
-        reached = current.stream_reached_seconds or 0.0
+        reached = current.compute_reached_seconds or 0.0
         finished = previous.compute_finished_seconds or 0.0
         dispatch += max(0.0, reached - finished)
     return readiness, dispatch, ordered[0].readiness_wait_seconds or 0.0
@@ -634,7 +627,7 @@ def _build_step_summary(
     if simulation is None:
         raise RuntimeError("execution trace omitted selected simulator evidence")
     profiled_task_seconds = sum(item.expected_profile_seconds for item in tasks)
-    real_task_seconds = sum(item.gpu_duration_seconds for item in tasks)
+    real_task_seconds = sum(item.compute_duration_seconds for item in tasks)
     simulated_intervals = {item.task_id: item for item in simulation.task_intervals}
     selected_intervals = tuple(
         simulated_intervals[item.task_id]
@@ -658,10 +651,10 @@ def _build_step_summary(
                 item.expected_profile_seconds for item in tasks if item.phase == phase
             ),
             real_task_event_seconds=sum(
-                item.gpu_duration_seconds for item in tasks if item.phase == phase
+                item.compute_duration_seconds for item in tasks if item.phase == phase
             ),
             delta_seconds=sum(
-                item.gpu_duration_seconds - item.expected_profile_seconds
+                item.compute_duration_seconds - item.expected_profile_seconds
                 for item in tasks
                 if item.phase == phase
             ),
