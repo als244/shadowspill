@@ -201,6 +201,11 @@ def _build_task_timing(
             callback.after_task_enter_ns if callback is not None else 0,
             callback_origin_ns,
         ),
+        frontend_lead_seconds=_frontend_lead(
+            readiness_seconds,
+            callback.before_task_exit_ns if callback is not None else 0,
+            callback_origin_ns,
+        ),
         runtime_after_task_exit_seconds=_relative_seconds(
             callback.after_task_exit_ns if callback is not None else 0,
             callback_origin_ns,
@@ -238,6 +243,20 @@ def _build_task_timing(
         dispatch_total_seconds=(task.dispatch_finished_ns - task.dispatch_started_ns)
         / 1e9,
     )
+
+
+def _frontend_lead(
+    reached_seconds: float, handed_off_ns: int, origin_ns: int
+) -> float | None:
+    """How far ahead of the compute stream the frontend was for one task.
+
+    Both ends are already relative to the same step origin: the stream's
+    marker is measured from the origin event, and the handoff from the trace
+    beginning, which the runtime records at the same point.
+    """
+
+    handed_off = _relative_seconds(handed_off_ns, origin_ns)
+    return None if handed_off is None else reached_seconds - handed_off
 
 
 def _relative_seconds(timestamp_ns: int, origin_ns: int) -> float | None:
@@ -652,6 +671,12 @@ def _build_step_summary(
     simulated_idle = max(0.0, simulated_span_seconds - profiled_task_seconds)
     real_idle = max(0.0, real_span_seconds - real_task_seconds)
     readiness, dispatch, initial_readiness = _idle_composition(tasks)
+    leads = [
+        item.frontend_lead_seconds
+        for item in tasks
+        if item.frontend_lead_seconds is not None
+    ]
+    minimum_lead = min(leads) if leads else 0.0
     simulated_readiness = (
         sum(item.stall_ns for item in selected_intervals) / 1e9
     )
@@ -667,6 +692,7 @@ def _build_step_summary(
         real_inter_task_readiness_wait_seconds=readiness,
         real_inter_task_exposed_overhead_seconds=dispatch,
         real_initial_readiness_wait_seconds=initial_readiness,
+        real_minimum_frontend_lead_seconds=minimum_lead,
         simulated_selected_span_seconds=simulated_span_seconds,
         real_selected_span_seconds=real_span_seconds,
         selected_span_delta_seconds=real_span_seconds - simulated_span_seconds,

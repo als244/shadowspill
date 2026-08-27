@@ -82,6 +82,7 @@ def _diagnostics() -> StepDiagnostics:
         real_inter_task_readiness_wait_seconds=0.0,
         real_inter_task_exposed_overhead_seconds=0.0,
         real_initial_readiness_wait_seconds=0.0,
+        real_minimum_frontend_lead_seconds=0.0,
         simulated_selected_span_seconds=1.0,
         real_selected_span_seconds=1.0,
         selected_span_delta_seconds=0.0,
