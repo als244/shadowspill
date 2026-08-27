@@ -299,7 +299,11 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             checkpoint_seconds = time.perf_counter() - checkpoint_started
             checkpoint_step = cast(int, checkpoint["step"])
         warm_started = time.perf_counter()
-        warm_result = training(case.microbatches, runtime_trace=True)
+        warm_result = training(
+            case.microbatches,
+            runtime_trace=True,
+            profiler_annotations=arguments.profiler_annotations,
+        )
         if warm_result.diagnostics is None:
             raise AssertionError("full-model warm trace omitted diagnostics")
         warm_diagnostics = warm_result.diagnostics.result()
@@ -330,7 +334,10 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             for step in range(arguments.steps_per_group):
                 training._arm_selected_span_timing()
                 call_started = time.perf_counter()
-                step_result = training(case.microbatches)
+                step_result = training(
+                    case.microbatches,
+                    profiler_annotations=arguments.profiler_annotations,
+                )
                 dispatch_seconds.append(time.perf_counter() - call_started)
                 selected_spans.append(training._collect_selected_span_seconds())
                 retained_results.append(step_result)
@@ -499,6 +506,14 @@ def main() -> int:
         help=(
             "run the throughput protocol without the anonymous full-state "
             "checkpoint copy; this is a runtime probe, not checkpoint qualification"
+        ),
+    )
+    parser.add_argument(
+        "--profiler-annotations",
+        action="store_true",
+        help=(
+            "emit NVTX ranges around task boundaries and compiled calls, so an "
+            "external profiler can attribute time to the task that spent it"
         ),
     )
     parser.add_argument("--force-fresh", action="store_true")

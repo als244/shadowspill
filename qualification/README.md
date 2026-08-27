@@ -57,5 +57,10 @@ DURATION records. The console stream is duplicated with timestamps into
 `matrix.log` beside `summary.json`, and each cell keeps one timestamped log.
 
 Framework-free PressureFit benchmarking belongs in
-`benchmarking/planning_eval/fixture_benchmark.py`. Step and NSYS inspection
-belong in `src/tools/diagnostics/`.
+`benchmarking/planning_eval/fixture_benchmark.py`. Step inspection belongs in
+`src/tools/diagnostics/`.
+
+`--profiler-annotations` on the performance launcher emits NVTX ranges around
+task boundaries and compiled calls, so an external profiler can attribute time
+to the task that spent it. It is off by default because the ranges cost
+something to emit and a gate run should not pay for them.
