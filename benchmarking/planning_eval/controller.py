@@ -30,7 +30,7 @@ from .summary import write_frontier_summary
 
 @dataclass(frozen=True, slots=True)
 class ControllerOptions:
-    planning_cache: Path
+    artifact_store: Path
     resume: bool
     verbose_pressurefit: bool
     #: The revision every point started under this run records.
@@ -57,7 +57,7 @@ def run_frontier_collection(
 ) -> dict[str, object]:
     """Evaluate selected cases while preserving and continuing past failures."""
 
-    options.planning_cache.mkdir(parents=True, exist_ok=True)
+    options.artifact_store.mkdir(parents=True, exist_ok=True)
     _preflight_resume(paths, selected_cases, options.resume)
     failures = _load_case_failures(paths)
     with _CollectionLock(paths.directory / "collection.lock"):
@@ -199,7 +199,7 @@ def _run_case_until_complete(
         command = _worker_command(
             paths,
             case,
-            planning_cache=options.planning_cache,
+            artifact_store=options.artifact_store,
             verbose_pressurefit=options.verbose_pressurefit,
             global_point_base=global_point_base,
             global_point_count=global_point_count,
@@ -328,7 +328,7 @@ def _worker_command(
     paths: BaselinePaths,
     case: CorpusProgramCase,
     *,
-    planning_cache: Path,
+    artifact_store: Path,
     verbose_pressurefit: bool,
     global_point_base: int,
     global_point_count: int,
@@ -345,7 +345,7 @@ def _worker_command(
         "--case-dir",
         str(case.directory),
         "--planning-cache",
-        str(planning_cache),
+        str(artifact_store),
         "--global-point-base",
         str(global_point_base),
         "--global-point-count",

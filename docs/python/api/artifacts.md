@@ -33,7 +33,7 @@ step_program = make_step_program(
     runtime=runtime,
     execution="device",
     spill="spill",
-    planning_cachedir=planning_cache,
+    artifact_store_dir=artifact_store,
 )
 Path("program.json").write_text(step_program.to_json())
 
@@ -63,7 +63,7 @@ annotated = pressurefit_program(
         fetch_bytes_per_second=28_000_000_000,
         evict_bytes_per_second=28_000_000_000,
     ),
-    planning_cachedir=planning_cache,
+    artifact_store_dir=artifact_store,
 )
 ```
 

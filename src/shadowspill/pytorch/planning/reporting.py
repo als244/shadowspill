@@ -67,7 +67,7 @@ def build_forward_report(
     compiler_phase_timings_by_contract: tuple[
         tuple[str, tuple[tuple[str, int], ...]], ...
     ] = (),
-    cache_directories: tuple[tuple[str, str], ...] = (),
+    store_directories: tuple[tuple[str, str], ...] = (),
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...] = (),
     profiling_metadata: tuple[ProfilingMetadata, ...] = (),
     physical_layouts: tuple[PlanPhysicalLayout, ...] = (),
@@ -90,7 +90,7 @@ def build_forward_report(
         unique_stages=unique_stages,
         compiler_phase_timings_ns=compiler_phase_timings_ns,
         compiler_phase_timings_by_contract=compiler_phase_timings_by_contract,
-        cache_directories=cache_directories,
+        store_directories=store_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
         pressurefit_results=pressurefit_results,
@@ -133,7 +133,7 @@ def _forward_diagnostics(
     compiler_phase_timings_by_contract: tuple[
         tuple[str, tuple[tuple[str, int], ...]], ...
     ],
-    cache_directories: tuple[tuple[str, str], ...],
+    store_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
     pressurefit_results: tuple[PressureFitResult, ...],
@@ -164,7 +164,7 @@ def _forward_diagnostics(
             )
             for structural_contract_key, values in compiler_phase_timings_by_contract
         ),
-        cache_directories=cache_directories,
+        store_directories=store_directories,
         cache_artifacts=touched_cache_artifacts,
         profiling_metadata=tuple(
             PlanProfilingMetadata(index, item.digest, item.canonical_json)
@@ -309,7 +309,7 @@ def build_training_report(
     compiler_phase_timings_by_contract: tuple[
         tuple[str, tuple[tuple[str, int], ...]], ...
     ],
-    cache_directories: tuple[tuple[str, str], ...],
+    store_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
     physical_layouts: tuple[PlanPhysicalLayout, ...],
@@ -339,7 +339,7 @@ def build_training_report(
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
         compiler_phase_timings_ns=compiler_phase_timings_ns,
         compiler_phase_timings_by_contract=compiler_phase_timings_by_contract,
-        cache_directories=cache_directories,
+        store_directories=store_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
         pressurefit_results=pressurefit_results,
@@ -358,7 +358,7 @@ def build_training_report(
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
         compiler_phase_timings_ns=compiler_phase_timings_ns,
-        cache_directories=cache_directories,
+        store_directories=store_directories,
     )
     return replace(
         report,

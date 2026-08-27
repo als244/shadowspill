@@ -55,7 +55,7 @@ def main() -> int:
         return 0
     options = ControllerOptions(
         revision=arguments.revision or _head(Path.cwd()),
-        planning_cache=arguments.planning_cache.expanduser().resolve(),
+        artifact_store=arguments.artifact_store.expanduser().resolve(),
         resume=arguments.resume,
         timeout_seconds=timeout,
         max_attempts=max_attempts,

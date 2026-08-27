@@ -63,7 +63,7 @@ def main() -> int:
             execution="execution",
             spill="spill",
             partition="whole",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
         )
         task = planned.plan_report.execution_plan.program.tasks[0]
         if len(task.mutations) != 1:

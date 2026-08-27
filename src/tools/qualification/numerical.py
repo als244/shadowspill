@@ -465,7 +465,7 @@ def _planned_worker(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
-    planning_cachedir: Path | None,
+    artifact_store_dir: Path | None,
     profiling_metadata: list[object] | None,
     save_plan: bool,
     force_fresh: bool,
@@ -533,7 +533,7 @@ def _planned_worker(
             execution="execution",
             spill="spill",
             optimizer_ordering=optimizer_ordering,
-            planning_cachedir=planning_cachedir,
+            artifact_store_dir=artifact_store_dir,
             profiling_metadata=workload_metadata,
             save_plan=save_plan,
             force_fresh=force_fresh,
@@ -736,7 +736,9 @@ def _planned_worker(
         },
         "planning_cache_request": {
             "directory": (
-                None if planning_cachedir is None else str(planning_cachedir.resolve())
+                None
+                if artifact_store_dir is None
+                else str(artifact_store_dir.resolve())
             ),
             "save_plan": save_plan,
             "force_fresh": force_fresh,
@@ -996,7 +998,7 @@ def _orchestrate(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
-    planning_cachedir: Path | None,
+    artifact_store_dir: Path | None,
     profiling_metadata_argument: str | None,
     save_plan: bool,
     force_fresh: bool,
@@ -1050,7 +1052,7 @@ def _orchestrate(
             env=environment,
         )
     planned_options: list[str] = []
-    selected_cache = planning_cachedir or result_directory / "planning_cache"
+    selected_cache = artifact_store_dir or result_directory / "artifact_store"
     planned_options.extend(("--planning-cachedir", str(selected_cache)))
     if not save_plan:
         planned_options.append("--no-save-plan")
@@ -1246,7 +1248,7 @@ def main() -> int:
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
-            planning_cachedir=arguments.planning_cachedir,
+            artifact_store_dir=arguments.artifact_store_dir,
             profiling_metadata_argument=arguments.profiling_metadata,
             save_plan=not arguments.no_save_plan,
             force_fresh=arguments.force_fresh,
@@ -1289,7 +1291,7 @@ def main() -> int:
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
-            planning_cachedir=arguments.planning_cachedir,
+            artifact_store_dir=arguments.artifact_store_dir,
             profiling_metadata=profiling_metadata_value,
             save_plan=not arguments.no_save_plan,
             force_fresh=arguments.force_fresh,

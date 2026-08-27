@@ -20,7 +20,7 @@ from shadowspill.ir import ExecutionPlan, Program
 
 _PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
 _CACHE_ENVIRONMENT_LOCK = threading.RLock()
-_LAYOUT_SCHEMA = "shadowspill.planning_cache/v1"
+_LAYOUT_SCHEMA = "shadowspill.artifact_store/v1"
 _EXPORT_SCHEMA = "shadowspill.pytorch.export/v1"
 _PLAN_MANIFEST_SCHEMA = "shadowspill.plan_manifest/v1"
 _ACCESS_KINDS = {"managed", "matched", "read", "write"}
@@ -123,9 +123,9 @@ class ArtifactStore:
             try:
                 root = Path(value).expanduser().resolve()
             except TypeError as exc:
-                raise TypeError("planning_cachedir must be path-like") from exc
+                raise TypeError("artifact_store_dir must be path-like") from exc
             if root.exists() and not root.is_dir():
-                raise ValueError("planning_cachedir must name a directory")
+                raise ValueError("artifact_store_dir must name a directory")
             return cls(
                 root,
                 root / "pytorch",

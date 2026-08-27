@@ -107,7 +107,7 @@ def plan_forward(
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     verbose: bool = True,
-    planning_cachedir: str | os.PathLike[str] | None = None,
+    artifact_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: object = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -128,7 +128,7 @@ def plan_forward(
     is a JSON-compatible, key-only description of value-sensitive profiling
     behavior. It is not passed to the model or returned callable.
 
-    ``planning_cachedir`` selects the shared artifact store. ``force_fresh``
+    ``artifact_store_dir`` selects the shared artifact store. ``force_fresh``
     disables cache reads; ``save_plan`` controls writes; and
     ``overwrite_plan`` replaces an existing identity only during a saved fresh
     run. ``implementation_revision`` invalidates compiler/profile artifacts
@@ -174,7 +174,7 @@ def plan_forward(
         )
         planning_started = True
         cache = ArtifactStore.resolve(
-            planning_cachedir,
+            artifact_store_dir,
             save_plan=save_plan,
             force_fresh=force_fresh,
             overwrite_plan=overwrite_plan,
@@ -187,7 +187,7 @@ def plan_forward(
                 memory=memory,
                 partition=partition,
                 verbose=verbose,
-                planning_cache=cache,
+                artifact_store=cache,
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
@@ -218,7 +218,7 @@ def plan_step(
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     verbose: bool = True,
-    planning_cachedir: str | os.PathLike[str] | None = None,
+    artifact_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -271,7 +271,7 @@ def plan_step(
         )
         planning_started = True
         cache = ArtifactStore.resolve(
-            planning_cachedir,
+            artifact_store_dir,
             save_plan=save_plan,
             force_fresh=force_fresh,
             overwrite_plan=overwrite_plan,
@@ -287,7 +287,7 @@ def plan_step(
                 partition=partition,
                 optimizer_ordering=optimizer_ordering,
                 verbose=verbose,
-                planning_cache=cache,
+                artifact_store=cache,
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
@@ -317,7 +317,7 @@ def make_step_program(
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     verbose: bool = True,
-    planning_cachedir: str | os.PathLike[str] | None = None,
+    artifact_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -350,7 +350,7 @@ def make_step_program(
         )
         planning_started = True
         cache = ArtifactStore.resolve(
-            planning_cachedir,
+            artifact_store_dir,
             save_plan=save_plan,
             force_fresh=force_fresh,
             overwrite_plan=overwrite_plan,
@@ -366,7 +366,7 @@ def make_step_program(
                 partition=partition,
                 optimizer_ordering=optimizer_ordering,
                 verbose=verbose,
-                planning_cache=cache,
+                artifact_store=cache,
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
@@ -393,7 +393,7 @@ def pressurefit_program(
     spill_budget: int | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
     options: PressureFitOptions | None = None,
-    planning_cachedir: str | os.PathLike[str] | None = None,
+    artifact_store_dir: str | os.PathLike[str] | None = None,
     verbose: bool = True,
     save_plan: bool = True,
     force_fresh: bool = False,
@@ -413,7 +413,7 @@ def pressurefit_program(
     if options is not None and not isinstance(options, PressureFitOptions):
         raise TypeError("options must be PressureFitOptions or None")
     cache = ArtifactStore.resolve(
-        planning_cachedir,
+        artifact_store_dir,
         save_plan=save_plan,
         force_fresh=force_fresh,
         overwrite_plan=overwrite_plan,
@@ -426,7 +426,7 @@ def pressurefit_program(
         spill_budget_bytes=spill_budget,
         transfer_bandwidths=transfer_bandwidths,
         options=options,
-        planning_cache=cache,
+        artifact_store=cache,
         verbose=verbose,
     )
 

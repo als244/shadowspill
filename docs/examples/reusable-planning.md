@@ -24,7 +24,7 @@ step_program = make_step_program(
     runtime=runtime,
     execution="execution",
     spill="spill",
-    planning_cachedir=planning_cache,
+    artifact_store_dir=artifact_store,
     profiling_metadata=profiling_metadata,
 )
 
@@ -48,7 +48,7 @@ for execution_budget, spill_budget, bandwidth in points:
             evict_bytes_per_second=bandwidth,
             provenance="explicit sweep",
         ),
-        planning_cachedir=planning_cache,
+        artifact_store_dir=artifact_store,
     )
     output = Path(f"annotated-{annotated.digest}.json")
     output.write_text(annotated.to_json(), encoding="utf-8")

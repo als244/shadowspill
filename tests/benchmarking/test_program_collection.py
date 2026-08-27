@@ -225,7 +225,7 @@ def test_controller_records_each_failure_and_continues(
         output_root=output,
         options=ControllerOptions(
             revision="0" * 40,
-            planning_cache=tmp_path / "cache",
+            artifact_store=tmp_path / "cache",
             resume=False,
             timeout_seconds=10,
             max_attempts=1,
@@ -274,7 +274,7 @@ def test_controller_records_controller_exception_and_continues(
         output_root=output,
         options=ControllerOptions(
             revision="0" * 40,
-            planning_cache=tmp_path / "cache",
+            artifact_store=tmp_path / "cache",
             resume=False,
             timeout_seconds=10,
             max_attempts=1,

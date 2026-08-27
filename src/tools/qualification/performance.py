@@ -187,9 +187,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
     output = arguments.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     cache = (
-        arguments.planning_cachedir.expanduser().resolve()
-        if arguments.planning_cachedir is not None
-        else output.parent / "planning_cache" / manifest.identity
+        arguments.artifact_store_dir.expanduser().resolve()
+        if arguments.artifact_store_dir is not None
+        else output.parent / "artifact_store" / manifest.identity
     )
     # The runtime owns its physical capacities.  Register and calibrate those
     # capacities before anonymous workload state claims the host pages that
@@ -240,7 +240,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             spill_budget=planning_spill_budget,
             optimizer_ordering="stage_interleaved",
             verbose=True,
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata=_profile_metadata(case.microbatches),
             save_plan=True,
             force_fresh=arguments.force_fresh,

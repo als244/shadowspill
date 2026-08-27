@@ -687,7 +687,7 @@ def test_superseded_public_documentation_is_removed() -> None:
         "lowering_contract.md",
         "memory-budget-semantics.md",
         "planner.md",
-        "planning-cache.md",
+        "artifact-store.md",
         "pytorch-allocator.md",
         "pytorch-frontend.md",
         "runtime.md",

@@ -82,7 +82,7 @@ def _fixture() -> StepProgram:
         signature_digests=("0" * 64,),
         profiling_metadata=(),
         phase_timings_ns=(("fixture", 1), ("total", 1)),
-        cache_directories=(),
+        store_directories=(),
         cache_artifacts=(),
         transfer_capabilities_json="{}",
         unique_profile_count=1,

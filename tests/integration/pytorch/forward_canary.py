@@ -109,7 +109,7 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata={"batch_size": 4, "width": 16},
         )
         if len(planned.plan_report.execution_plan.program.tasks) != 3:
@@ -212,7 +212,7 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata={"batch_size": 4, "width": 16},
             shared_outputs=(shared_output("mean", retain_in="execution"),),
         )
@@ -247,7 +247,7 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata={"shared_input": "scalar_mean"},
         )
         peer_consumer = plan_forward(
@@ -258,7 +258,7 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata={"shared_input": "scalar_mean"},
         )
         before_consumer = _statistics()

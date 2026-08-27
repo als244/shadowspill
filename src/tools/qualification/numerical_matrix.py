@@ -156,7 +156,7 @@ def _run_case(
         command_environment = dict(environment)
         is_reference = command_index == 0 and len(commands) == 2
         plan_cache = (
-            (output_directory / "planning_cache" / prefix)
+            (output_directory / "artifact_store" / prefix)
             if cache_directory is None
             else cache_directory.expanduser().resolve() / prefix
         )

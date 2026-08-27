@@ -123,7 +123,7 @@ def main() -> int:
             selected,
             paths=paths,
             options=ControllerOptions(
-                planning_cache=arguments.planning_cache.expanduser().resolve(),
+                artifact_store=arguments.artifact_store.expanduser().resolve(),
                 resume=arguments.resume,
                 verbose_pressurefit=arguments.verbose_pressurefit,
                 revision=arguments.revision or provenance.head,

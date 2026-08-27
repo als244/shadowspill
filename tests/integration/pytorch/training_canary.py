@@ -149,7 +149,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata=(
                 {"batch_size": 3, "label": "short"},
                 {"batch_size": 5, "label": "long"},
@@ -479,7 +479,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            planning_cachedir=cache,
+            artifact_store_dir=cache,
             profiling_metadata=(
                 {"batch_size": 3, "label": "short"},
                 {"batch_size": 5, "label": "long"},
