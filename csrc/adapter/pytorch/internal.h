@@ -15,6 +15,17 @@ void *shadowspill_pytorch_cuda_malloc_impl(
     void *stream
 );
 
+/*
+ * Stamp one task-boundary timestamp. The frontend's task boundary is the whole
+ * storage operation, not the runtime call inside it: acquiring a task also
+ * rebinds its storages to the addresses the runtime returned, and publishing
+ * one adopts, rebinds and dematerialises before the runtime hears about it.
+ * Recording from there keeps before/invoke/after adjacent, with no frontend
+ * work falling between them. Boundaries are before enter, before exit, after
+ * enter, after exit.
+ */
+void shadowspill_pytorch_record_task_boundary(uint64_t task_id, uint8_t boundary);
+
 /* Format the first allocator/runtime failure for the exception-safe wrapper. */
 ShadowSpillStatus shadowspill_pytorch_cuda_malloc_failure_message(
     char *destination,

@@ -5,6 +5,7 @@
 #include <c10/cuda/CUDAStream.h>
 #include <torch/library.h>
 
+#include "internal.h"
 #include "torch_profiler.h"
 
 #include <cstdint>
@@ -19,6 +20,24 @@ struct RangeGuard {
   ~RangeGuard() { shadowspill_pytorch_profile_range_end(range); }
 
   ShadowSpillProfilerRange range;
+};
+
+// Stamps a task boundary on entry and again however this scope leaves, so an
+// operation that throws still closes the boundary it opened.
+struct TaskBoundaryTrace {
+  TaskBoundaryTrace(int64_t task_handle, uint8_t enter, uint8_t leave)
+      : task_id(shadowspill_task_id(
+            reinterpret_cast<const ShadowSpillTaskHandle*>(
+                static_cast<uintptr_t>(task_handle)))),
+        leave_boundary(leave) {
+    shadowspill_pytorch_record_task_boundary(task_id, enter);
+  }
+  ~TaskBoundaryTrace() {
+    shadowspill_pytorch_record_task_boundary(task_id, leave_boundary);
+  }
+
+  uint64_t task_id;
+  uint8_t leave_boundary;
 };
 
 struct CallerLease {
@@ -199,6 +218,7 @@ void before_task_storages(
 ) {
   TORCH_CHECK(task_handle > 0, "task handle must be positive");
   TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  TaskBoundaryTrace boundary{task_handle, 0U, 1U};
   const size_t count = tensors.size();
   for (const at::Tensor& tensor : tensors) {
     TORCH_CHECK(tensor.is_cuda(), "task acquisition requires CUDA tensors");
@@ -441,6 +461,7 @@ void after_task_storages(
 ) {
   TORCH_CHECK(task_handle > 0, "task handle must be positive");
   TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  TaskBoundaryTrace boundary{task_handle, 2U, 3U};
   adopt_storages(adopted_tensors, publication_ordinals, task_handle);
   rebind_replacement_views(
       replacement_tensors,

@@ -170,7 +170,7 @@ static uint64_t monotonic_nanoseconds(void) {
     return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
 }
 
-static void record_debug_dispatch_boundary(
+void shadowspill_pytorch_record_task_boundary(
     uint64_t task_id,
     uint8_t boundary
 ) {
@@ -1473,10 +1473,8 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
     const uint64_t task_id = shadowspill_task_id(handle);
-    record_debug_dispatch_boundary(task_id, 0U);
     if (task_range_active || task_handle == 0U ||
         task_id == SHADOWSPILL_RUNTIME_NO_ID) {
-        record_debug_dispatch_boundary(task_id, 1U);
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (atomic_load_explicit(
@@ -1505,7 +1503,6 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     if (status != SHADOWSPILL_STATUS_OK) {
         end_task_range();
     }
-    record_debug_dispatch_boundary(task_id, 1U);
     return status;
 }
 
@@ -1515,8 +1512,6 @@ ShadowSpillStatus shadowspill_pytorch_after_task_handle(
 ) {
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
-    const uint64_t task_id = shadowspill_task_id(handle);
-    record_debug_dispatch_boundary(task_id, 2U);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;
@@ -1529,7 +1524,6 @@ ShadowSpillStatus shadowspill_pytorch_after_task_handle(
             shadowspill_cuda_wrap_stream(compute_stream_address)
         );
     end_task_range();
-    record_debug_dispatch_boundary(task_id, 3U);
     return status;
 }
 
@@ -1732,8 +1726,6 @@ ShadowSpillStatus shadowspill_pytorch_abort_task_handle(
 ) {
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
-    const uint64_t task_id = shadowspill_task_id(handle);
-    record_debug_dispatch_boundary(task_id, 3U);
     int32_t device_ordinal;
     ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
     (void)device_ordinal;

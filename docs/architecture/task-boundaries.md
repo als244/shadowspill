@@ -14,6 +14,44 @@ Related: [memory runtime](memory-runtime.md) for pools, leases and the worker;
 [physical admission](physical-admission.md) for the layout a plan is admitted
 under; [Runtime C API](../c/runtime.md) for the exact signatures.
 
+## Where the boundary begins and ends
+
+The two calls above are the neutral half. A frontend cannot stop there: the
+runtime answers with addresses, and something has to put those addresses into
+the frontend's own objects. That work is the frontend's by definition -- the
+runtime does not know what a PyTorch storage is, and keeping it that way is
+the point of the split -- so a task boundary is the whole operation, not the
+call inside it.
+
+```text
+before_task boundary                     # the frontend's, start to finish
+    check every input tensor is on the expected device
+    resolve the compute stream
+    shadowspill_before_task_handle(...)  # the neutral call, returns bindings
+    check each binding against the storage that will receive it
+    point each storage at the address the runtime returned
+
+    ... the task's kernels run ...
+
+after_task boundary
+    adopt the storages the task produced
+    rebind replacement views onto them
+    dematerialise what the plan said to release
+    shadowspill_after_task_handle(...)   # the neutral call
+```
+
+Read as a whole, execution alternates boundary, kernels, boundary, with
+nothing in between: every frontend action between two tasks falls inside one
+of them. This is what the boundary timestamps measure -- they are stamped by
+the operation, not by the neutral call within it, so a step's cost cannot hide
+in the space around a call. See
+[step diagnostics](../python/step-diagnostics.md) for the fields.
+
+The PyTorch frontend does the above in one operation per boundary, so a task
+that fails partway cannot leave a scope open; see
+`shadowspill_abort_task_handle` below for what closes it when the boundary
+cannot complete.
+
 ## What each call is responsible for
 
 ### `shadowspill_before_task_handle`

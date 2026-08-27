@@ -928,15 +928,12 @@ class TrainingExecutor(AnnotatedExecutor):
         tensors: tuple[torch.Tensor, ...],
         timing: _ArmedTaskTiming | None,
     ) -> None:
-        started_ns = time.perf_counter_ns() if timing is not None else 0
         try:
             self._acquire_input_storages(record, stream, tensors)
         except RuntimeError as error:
             states = self._bridge.input_failure_states(record.input_aliases)
             detail = "; ".join(states) if states else "all snapshots device-ready"
             raise RuntimeError(f"{error}; input_states=[{detail}]") from error
-        if timing is not None:
-            timing.dispatch_runtime_before_task_ns = time.perf_counter_ns() - started_ns
 
     def _acquire_input_storages(
         self,
@@ -1105,7 +1102,6 @@ class TrainingExecutor(AnnotatedExecutor):
         processed: _ProcessedTaskOutputs,
         dematerialized: tuple[torch.Tensor, ...],
     ) -> None:
-        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         annotation_id = (
             self._task_annotations.begin(
                 f"shadowspill.runtime.after_task.{prepared.record.trace_label}"
@@ -1119,10 +1115,6 @@ class TrainingExecutor(AnnotatedExecutor):
             if annotation_id:
                 self._task_annotations.end(annotation_id)
         prepared.runtime_scope_open = False
-        if prepared.timing is not None:
-            prepared.timing.dispatch_runtime_after_task_ns = (
-                time.perf_counter_ns() - started_ns
-            )
 
     def _publish_admitted_task(
         self,

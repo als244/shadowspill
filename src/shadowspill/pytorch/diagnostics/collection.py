@@ -209,7 +209,6 @@ def _build_task_timing(
         / 1e9,
         dispatch_stream_resolution_seconds=task.dispatch_stream_resolution_ns / 1e9,
         dispatch_readiness_marker_seconds=task.dispatch_readiness_marker_ns / 1e9,
-        dispatch_runtime_before_task_seconds=task.dispatch_runtime_before_task_ns / 1e9,
         dispatch_input_lookup_seconds=task.dispatch_input_lookup_ns / 1e9,
         dispatch_storage_rebind_seconds=task.dispatch_storage_rebind_ns / 1e9,
         dispatch_argument_assembly_seconds=task.dispatch_argument_assembly_ns / 1e9,
@@ -227,7 +226,6 @@ def _build_task_timing(
         dispatch_output_publish_seconds=task.dispatch_output_publish_ns / 1e9,
         dispatch_dematerialize_seconds=task.dispatch_dematerialize_ns / 1e9,
         dispatch_postprocess_seconds=task.dispatch_postprocess_ns / 1e9,
-        dispatch_runtime_after_task_seconds=task.dispatch_runtime_after_task_ns / 1e9,
         dispatch_cleanup_seconds=task.dispatch_cleanup_ns / 1e9,
         dispatch_after_task_seconds=(
             task.dispatch_finished_ns - task.dispatch_after_started_ns

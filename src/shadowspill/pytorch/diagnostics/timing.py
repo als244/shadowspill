@@ -29,7 +29,6 @@ class ArmedTaskTiming:
     dispatch_after_started_ns: int = 0
     dispatch_stream_resolution_ns: int = 0
     dispatch_readiness_marker_ns: int = 0
-    dispatch_runtime_before_task_ns: int = 0
     dispatch_input_lookup_ns: int = 0
     dispatch_storage_rebind_ns: int = 0
     dispatch_argument_assembly_ns: int = 0
@@ -43,7 +42,6 @@ class ArmedTaskTiming:
     dispatch_output_publish_ns: int = 0
     dispatch_dematerialize_ns: int = 0
     dispatch_postprocess_ns: int = 0
-    dispatch_runtime_after_task_ns: int = 0
     dispatch_cleanup_ns: int = 0
 
 

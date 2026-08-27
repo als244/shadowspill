@@ -202,12 +202,13 @@ Useful derived values are:
   against;
 - `runtime_before_task_enter_seconds`, `runtime_before_task_exit_seconds`,
   `runtime_after_task_enter_seconds`, `runtime_after_task_exit_seconds`: when
-  the frontend entered and left each runtime boundary call, on the host clock
-  and from the same step origin. These are what order host work against the
-  device. They are not the `dispatch_runtime_*` spans: those wrap the whole
-  step the frontend takes there, which acquires and rebinds the task's input
-  storages as well as calling the boundary, so they run a median of 13 to 19
-  microseconds longer. The difference is that storage work.
+  the frontend entered and left each task boundary, on the host clock and from
+  the same step origin. These are what order host work against the device, and
+  they bracket the whole boundary -- the runtime call and the storage work
+  around it -- so nothing the frontend does between tasks falls outside them.
+  Their differences are the cost of each boundary; see
+  [task boundaries](../architecture/task-boundaries.md) for what happens
+  inside.
 
 A compute-stream readiness gap does not imply that the Python thread blocked.
 Ordinary fetch readiness is expressed as a stream event wait. A large host
@@ -222,7 +223,6 @@ capacity wait.
 |---|---|
 | `dispatch_stream_resolution_seconds` | Resolve the current compute stream. |
 | `dispatch_readiness_marker_seconds` | Record the pre-readiness timing marker. |
-| `dispatch_runtime_before_task_seconds` | Neutral runtime acquisition/readiness publication. |
 | `dispatch_input_lookup_seconds` | Resolve frontend tensor/object bindings. |
 | `dispatch_storage_rebind_seconds` | Rebind changed PyTorch storages. |
 | `dispatch_argument_assembly_seconds` | Assemble predecoded callable arguments. |
@@ -242,7 +242,6 @@ The callable portion is `dispatch_invoke_seconds`.
 | `dispatch_output_publish_seconds` | Publish public outputs. |
 | `dispatch_dematerialize_seconds` | Drop frontend bindings selected for release. |
 | `dispatch_postprocess_seconds` | Aggregate mode-specific postprocessing. |
-| `dispatch_runtime_after_task_seconds` | Record completion and submit planned actions. |
 | `dispatch_cleanup_seconds` | Remove released bindings and terminal state. |
 
 The enclosing `dispatch_before_task_seconds` and `dispatch_after_task_seconds` are the
@@ -373,7 +372,7 @@ specific result. `summary.trace_complete` provides the combined verdict.
 ## Exporting diagnostics
 
 `StepDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.step_diagnostics/v3`:
+`shadowspill.step_diagnostics/v4`:
 
 ```python
 import json

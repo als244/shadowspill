@@ -21,7 +21,6 @@ from typing import Any, cast
 _BEFORE_COMPONENTS = (
     "dispatch_stream_resolution_seconds",
     "dispatch_readiness_marker_seconds",
-    "dispatch_runtime_before_task_seconds",
     "dispatch_input_lookup_seconds",
     "dispatch_storage_rebind_seconds",
     "dispatch_argument_assembly_seconds",
@@ -30,7 +29,6 @@ _AFTER_COMPONENTS = (
     "dispatch_output_flatten_seconds",
     "dispatch_output_publish_seconds",
     "dispatch_dematerialize_seconds",
-    "dispatch_runtime_after_task_seconds",
     "dispatch_cleanup_seconds",
 )
 _OUTPUT_SUBCOMPONENTS = (
@@ -43,7 +41,7 @@ _ALL_COMPONENTS = (*_BEFORE_COMPONENTS, "dispatch_invoke_seconds", *_AFTER_COMPO
 
 
 def _diagnostics(payload: Mapping[str, Any], sample: int) -> Mapping[str, Any]:
-    if payload.get("schema") == "shadowspill.step_diagnostics/v3":
+    if payload.get("schema") == "shadowspill.step_diagnostics/v4":
         return payload
     trace = payload.get("trace")
     if isinstance(trace, Mapping):
