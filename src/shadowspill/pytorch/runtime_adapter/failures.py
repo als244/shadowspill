@@ -6,7 +6,10 @@ import ctypes
 from dataclasses import dataclass
 from typing import Any
 
-from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure
+from shadowspill.pytorch.runtime_adapter.abi import (
+    AdapterFailure,
+    AdapterStatistics,
+)
 from shadowspill.status import Status
 
 _NO_ID = (1 << 64) - 1
@@ -384,6 +387,39 @@ def generic_runtime_error(
             )
         )
     return RuntimeExecutionError("\n".join(lines), diagnostics=diagnostics)
+
+
+def wait_allocator_idle(library: Any, *, problem: str) -> str | None:
+    """Drain the runtime, and say what stayed outstanding if it will not.
+
+    Returns None once the runtime is idle. Callers raise their own error
+    rather than sharing one, because the phases that drain -- installing,
+    profiling, planning -- report failure in their own terms. What they do
+    share is the description, since the counters that explain a runtime that
+    will not settle are the same wherever it happens.
+    """
+
+    status = int(library.shadowspill_pytorch_allocator_wait_idle())
+    if status == 0:
+        return None
+    detail = f"status={status}"
+    if hasattr(library, "shadowspill_pytorch_allocator_statistics"):
+        statistics = AdapterStatistics()
+        if int(
+            library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(statistics)
+            )
+        ) == 0:
+            runtime = statistics.runtime
+            detail = (
+                f"{detail} pending={runtime.pending_retirements} "
+                f"fenced={runtime.retirement_records_fenced} "
+                f"evented={runtime.retirement_records_evented} "
+                f"preparing={runtime.retirement_records_preparing} "
+                f"unfenced={runtime.retirement_records_unfenced} "
+                f"actions={runtime.queued_actions}"
+            )
+    return f"the runtime did not become idle during {problem}: {detail}"
 
 
 def raise_if_allocator_failed(library: Any, operation: str) -> None:

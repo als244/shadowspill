@@ -20,6 +20,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RouteConfig,
     configure_adapter_library,
 )
+from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
 from shadowspill.status import ABI_VERSION
 
 _REQUIRED_STORAGE_OPERATIONS = (
@@ -251,11 +252,9 @@ def _initialize_provider_state(
         del left
         torch.cuda.current_stream(device_ordinal).synchronize()
 
-    status = int(library.shadowspill_pytorch_allocator_wait_idle())
-    if status != 0:
-        raise AllocatorInstallError(
-            f"CUDA provider initialization did not become idle (status {status})"
-        )
+    message = wait_allocator_idle(library, problem="provider initialization")
+    if message is not None:
+        raise AllocatorInstallError(message)
     statistics = AdapterStatistics()
     status = int(
         library.shadowspill_pytorch_allocator_statistics(ctypes.byref(statistics))
@@ -296,11 +295,11 @@ def validate_dynamic_execution_reservation(
 
     if reserved_bytes < installed.fixed_execution_bytes:
         raise ValueError("fixed execution reservation is smaller than bootstrap")
-    status = int(installed.library.shadowspill_pytorch_allocator_wait_idle())
-    if status != 0:
-        raise AllocatorInstallError(
-            f"fixed execution reservation did not become idle (status {status})"
-        )
+    message = wait_allocator_idle(
+        installed.library, problem="fixed execution reservation"
+    )
+    if message is not None:
+        raise AllocatorInstallError(message)
     statistics = AdapterStatistics()
     status = int(
         installed.library.shadowspill_pytorch_allocator_statistics(
