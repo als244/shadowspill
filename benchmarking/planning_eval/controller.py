@@ -344,7 +344,7 @@ def _worker_command(
         str(paths.directory),
         "--case-dir",
         str(case.directory),
-        "--planning-cache",
+        "--artifact-store",
         str(artifact_store),
         "--global-point-base",
         str(global_point_base),

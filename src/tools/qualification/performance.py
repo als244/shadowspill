@@ -502,7 +502,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("--force-fresh", action="store_true")
-    parser.add_argument("--planning-cachedir", type=Path)
+    parser.add_argument("--artifact-store-dir", type=Path)
     parser.add_argument("--implementation-revision")
     parser.add_argument(
         "--spill-budget-gib",

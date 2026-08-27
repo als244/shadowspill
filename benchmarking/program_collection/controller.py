@@ -210,7 +210,7 @@ def _worker_command(
         request.case_id,
         "--output-dir",
         str(paths.output_root),
-        "--planning-cache",
+        "--artifact-store",
         str(options.artifact_store),
         "--result",
         str(result_path),

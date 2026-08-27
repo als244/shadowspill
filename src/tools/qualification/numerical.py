@@ -1034,7 +1034,7 @@ def _orchestrate(
         )
     planned_options: list[str] = []
     selected_cache = artifact_store_dir or result_directory / "artifact_store"
-    planned_options.extend(("--planning-cachedir", str(selected_cache)))
+    planned_options.extend(("--artifact-store-dir", str(selected_cache)))
     if not save_plan:
         planned_options.append("--no-save-plan")
     if force_fresh:
@@ -1112,7 +1112,7 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--planning-cachedir",
+        "--artifact-store-dir",
         type=Path,
         help="shared planning artifact root (run mode defaults below the result dir)",
     )

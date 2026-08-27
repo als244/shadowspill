@@ -467,7 +467,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--baseline-dir", type=Path, required=True)
     parser.add_argument("--case-dir", type=Path, required=True)
-    parser.add_argument("--planning-cache", type=Path, required=True)
+    parser.add_argument("--artifact-store", type=Path, required=True)
     parser.add_argument("--global-point-base", type=int, required=True)
     parser.add_argument("--global-point-count", type=int, required=True)
     parser.add_argument("--revision", required=True)

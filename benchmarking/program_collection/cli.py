@@ -90,7 +90,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--planning-cache", type=Path, required=True)
+    parser.add_argument("--artifact-store", type=Path, required=True)
     parser.add_argument(
         "--resume",
         action="store_true",
