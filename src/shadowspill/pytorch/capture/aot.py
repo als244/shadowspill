@@ -695,6 +695,86 @@ def _tensor_only_mutations(
     return tuple(result)
 
 
+def accumulate_gradient_outputs(
+    backward: GraphArtifact,
+    leaf_indices: Sequence[int],
+) -> GraphArtifact:
+    """Return a backward that adds its gradients onto ones it is given.
+
+    Every microbatch after the first contributes to a gradient that already
+    exists. Left alone, the graph hands back a fresh gradient and something
+    outside it has to do the addition, which puts real device work between
+    tasks where no plan accounts for it.
+
+    So the graph takes the running gradient as an argument and returns the sum.
+    This rewrites outputs rather than the operations that produce them, so it
+    holds for any backward: whatever computed the gradient, its result is what
+    gets added to. Where the producer is a matmul the compiler folds the two
+    into one accumulating call, and where it is anything else the addition
+    stands on its own.
+
+    The result is declared as a mutation of the argument it accumulates onto,
+    which is how the runtime knows the returned gradient replaces it rather
+    than joining it.
+    """
+
+    if not leaf_indices:
+        return backward
+    graph_module = copy_graph_module(backward.graph_module)
+    graph = graph_module.graph
+    output_node = next(node for node in graph.nodes if node.op == "output")
+    outputs = list(output_node.args[0])
+    for leaf in leaf_indices:
+        if leaf < 0 or leaf >= len(outputs) or outputs[leaf] is None:
+            raise CaptureError(f"backward has no gradient output at leaf {leaf}")
+
+    placeholders = [node for node in graph.nodes if node.op == "placeholder"]
+    if len(placeholders) != len(backward.example_arguments):
+        raise CaptureError("backward placeholder count changed before accumulation")
+    anchor = placeholders[-1]
+    priors: list[object] = []
+    mutations: list[ExplicitMutation] = []
+    for offset, leaf in enumerate(leaf_indices):
+        produced = outputs[leaf]
+        value = produced.meta.get("val")
+        if not isinstance(value, torch.Tensor):
+            raise CaptureError(f"backward gradient at leaf {leaf} has no geometry")
+        with graph.inserting_after(anchor):
+            prior = graph.placeholder(f"shadowspill_prior_grad_{leaf}")
+        prior.meta = dict(produced.meta)
+        anchor = prior
+        with graph.inserting_before(output_node):
+            total = graph.call_function(
+                torch.ops.aten.add.Tensor, args=(prior, produced)
+            )
+        total.meta = dict(produced.meta)
+        outputs[leaf] = total
+        priors.append(torch.zeros_like(value))
+        mutations.append(
+            ExplicitMutation(
+                input_position=len(backward.example_arguments) + offset,
+                output_leaf_index=leaf,
+                target=f"shadowspill_prior_grad_{leaf}",
+            )
+        )
+    output_node.args = (tuple(outputs),)
+    graph.lint()
+    graph_module.recompile()
+    return GraphArtifact.capture(
+        kind="backward",
+        graph_module=graph_module,
+        example_inputs=(*backward.example_arguments, *priors),
+        explicit_mutations=tuple(mutations),
+        input_provenance=(
+            *backward.input_provenance,
+            *(
+                TaskInputProvenance(role=TaskInputRole.GRADIENT)
+                for _ in leaf_indices
+            ),
+        ),
+    )
+
+
 def _specialize_terminal_unit_tangents(
     backward: GraphArtifact, roots: tuple[torch.Tensor, ...]
 ) -> tuple[GraphArtifact, int]:
