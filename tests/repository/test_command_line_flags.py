@@ -27,9 +27,11 @@ def _cli_modules() -> list[Path]:
         ["git", "ls-files", "*.py"],
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout.split()
+    # This file names the call it looks for, so it matches its own search.
+    here = Path(__file__).resolve()
     return [
         ROOT / f for f in tracked
-        if "add_argument(" in (ROOT / f).read_text()
+        if (ROOT / f).resolve() != here and "add_argument(" in (ROOT / f).read_text()
     ]
 
 
