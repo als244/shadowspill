@@ -35,7 +35,6 @@ _OUTPUT_SUBCOMPONENTS = (
     "dispatch_output_classification_seconds",
     "dispatch_output_adoption_seconds",
     "dispatch_output_state_publish_seconds",
-    "dispatch_gradient_accumulation_seconds",
 )
 _ALL_COMPONENTS = (*_BEFORE_COMPONENTS, "dispatch_invoke_seconds", *_AFTER_COMPONENTS)
 

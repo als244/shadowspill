@@ -238,7 +238,6 @@ The callable portion is `dispatch_invoke_seconds`.
 | `dispatch_output_classification_seconds` | Match leaves with output/mutation contracts. |
 | `dispatch_output_adoption_seconds` | Adopt returned allocations into logical objects. |
 | `dispatch_output_state_publish_seconds` | Publish output state and bindings. |
-| `dispatch_gradient_accumulation_seconds` | Accumulate explicit gradient contributions. |
 | `dispatch_output_publish_seconds` | Publish public outputs. |
 | `dispatch_dematerialize_seconds` | Drop frontend bindings selected for release. |
 | `dispatch_postprocess_seconds` | Aggregate mode-specific postprocessing. |

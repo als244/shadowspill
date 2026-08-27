@@ -1363,12 +1363,7 @@ class TrainingExecutor(AnnotatedExecutor):
                 time.perf_counter_ns() - started_ns
             )
         if destinations:
-            started_ns = time.perf_counter_ns() if timing is not None else 0
             torch._foreach_add_(destinations, contributions)
-            if timing is not None:
-                timing.dispatch_gradient_accumulation_ns = (
-                    time.perf_counter_ns() - started_ns
-                )
         return tuple(adopted)
 
     def _created_optimizer_state(

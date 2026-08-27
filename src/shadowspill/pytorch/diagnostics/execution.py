@@ -55,7 +55,6 @@ class TaskExecutionTiming:
     dispatch_output_classification_seconds: float
     dispatch_output_adoption_seconds: float
     dispatch_output_state_publish_seconds: float
-    dispatch_gradient_accumulation_seconds: float
     dispatch_output_publish_seconds: float
     dispatch_dematerialize_seconds: float
     dispatch_postprocess_seconds: float
@@ -134,9 +133,6 @@ class TaskExecutionTiming:
             "dispatch_output_adoption_seconds": self.dispatch_output_adoption_seconds,
             "dispatch_output_state_publish_seconds": (
                 self.dispatch_output_state_publish_seconds
-            ),
-            "dispatch_gradient_accumulation_seconds": (
-                self.dispatch_gradient_accumulation_seconds
             ),
             "dispatch_output_publish_seconds": self.dispatch_output_publish_seconds,
             "dispatch_dematerialize_seconds": self.dispatch_dematerialize_seconds,
