@@ -5,6 +5,7 @@ from .artifacts import (
     GraphPairVariant,
     PartitionedTrainingCapture,
     TaskGraphPairs,
+    parameter_gradient_leaves,
 )
 from .capture import capture_training_stages
 from .controls import resolve_partitioned_saved_controls
@@ -20,6 +21,7 @@ __all__ = [
     "SavedValueFootprint",
     "TaskGraphPairs",
     "capture_training_stages",
+    "parameter_gradient_leaves",
     "partition_training_capture",
     "resolve_partitioned_saved_controls",
     "saved_value_footprint",

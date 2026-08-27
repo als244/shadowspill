@@ -13,7 +13,11 @@ from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
-from shadowspill.pytorch.graph_pairs import GraphPairVariant, partition_training_capture
+from shadowspill.pytorch.graph_pairs import (
+    GraphPairVariant,
+    TaskGraphPairs,
+    partition_training_capture,
+)
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
     lower_partitioned_training_program,
@@ -164,7 +168,20 @@ def _measurement(artifact: object) -> TaskMeasurement:
     )
 
 
-def _lowered(*, include_intermediate_variant: bool = False) -> LoweredTrainingProgram:
+def _both_forms(graph_pairs: TaskGraphPairs) -> tuple[GraphPairVariant, ...]:
+    """Every option in both forms, so a fixture can profile whichever is used."""
+
+    return (
+        *graph_pairs.options(accumulates=False),
+        *graph_pairs.options(accumulates=True),
+    )
+
+
+def _lowered(
+    *,
+    include_intermediate_variant: bool = False,
+    microbatches: int = 2,
+) -> LoweredTrainingProgram:
     real_model = _Model()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
     for parameter in real_model.parameters():
@@ -178,7 +195,7 @@ def _lowered(*, include_intermediate_variant: bool = False) -> LoweredTrainingPr
     examples = (
         [torch.randn(4, 3), torch.randn(4, 2)],
         [torch.randn(5, 3), torch.randn(5, 2)],
-    )
+    )[:microbatches]
     with mode:
         captures = tuple(
             partition_training_capture(
@@ -216,7 +233,7 @@ def _lowered(*, include_intermediate_variant: bool = False) -> LoweredTrainingPr
             artifact
             for capture in captures
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -344,7 +361,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
             artifact
             for capture in captures
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -409,7 +426,7 @@ def test_preinitialized_optimizer_uses_one_recurrent_state_flow() -> None:
             artifact
             for capture in captures
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -472,7 +489,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
         *(
             artifact
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -555,7 +572,7 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
         *(
             artifact
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -605,7 +622,7 @@ def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
         *(
             artifact
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -662,7 +679,7 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
         *(
             artifact
             for stage in capture.stages
-            for option in stage.graph_pairs.variants
+            for option in _both_forms(stage.graph_pairs)
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
@@ -704,3 +721,34 @@ def test_training_lowering_rejects_empty_templates() -> None:
         lower_training_storage_layout(model, ())
     with pytest.raises(CaptureError, match="requires a microbatch"):
         lower_partitioned_training_program(model, (), {}, optimizer_capture)
+
+
+def test_later_microbatches_add_onto_the_gradients_they_inherit() -> None:
+    """The backward itself performs the accumulation, so the task declares it."""
+
+    lowered = _lowered()
+    backwards = tuple(
+        task for task in lowered.program.tasks if task.phase == "backward"
+    )
+    assert backwards
+    assert any(task.mutations for task in backwards)
+    assert all(
+        object_id in task.inputs
+        for task in backwards
+        for object_id in (item.object_id for item in task.mutations)
+    )
+
+
+def test_one_microbatch_has_nothing_to_accumulate_onto() -> None:
+    """A single microbatch creates its gradients, so it runs the captured backward.
+
+    Nothing about accumulation reaches it: the accumulating form is derived
+    per microbatch position, so it is never built, compiled, or profiled here.
+    """
+
+    lowered = _lowered(microbatches=1)
+    backwards = tuple(
+        task for task in lowered.program.tasks if task.phase == "backward"
+    )
+    assert backwards
+    assert all(not task.mutations for task in backwards)

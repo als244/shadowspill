@@ -110,6 +110,31 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
     )
 
 
+def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:
+    """Capture produces one form; the other is derived by whoever needs it.
+
+    A step with a single microbatch never asks, so it pays nothing for a form
+    it would not run.
+    """
+
+    mode, partitioned = _capture()
+    with mode:
+        stages = capture_training_stages(partitioned)
+
+    pairs = stages[0].graph_pairs
+    assert pairs.options(accumulates=False) is pairs.variants
+    accumulating = pairs.options(accumulates=True)
+    assert all(item.accumulates for item in accumulating)
+    assert tuple(item.option_id for item in accumulating) == tuple(
+        item.option_id for item in pairs.variants
+    )
+    assert all(
+        len(derived.pair.backward.example_arguments)
+        > len(captured.pair.backward.example_arguments)
+        for captured, derived in zip(pairs.variants, accumulating, strict=True)
+    )
+
+
 def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:
     mode, partitioned = _capture()
     with (

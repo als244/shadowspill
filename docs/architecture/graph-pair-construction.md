@@ -63,6 +63,26 @@ The current default builder emits exactly two. “Every legal variant” therefo
 means every option configured by the builder, not every mathematically
 possible cut of the AOT joint graph.
 
+## Accumulating onto gradients that already exist
+
+Every microbatch after the first contributes to gradients its predecessors
+created. `options(accumulates=True)` returns each variant in the form that
+takes those gradients as further arguments and adds into them, so the addition
+happens inside the backward task instead of after it, where no plan accounts
+for it. Only parameter gradients outlive a microbatch; a cotangent belongs to
+the microbatch that produced it, so those are left alone.
+
+The addition is in place, which is why the task declares a mutation of the
+argument rather than a fresh output: the running gradient keeps its storage,
+and the compiler is free to fold the add into whatever produced the
+contribution.
+
+Which form a microbatch runs follows from its position, not from planning, so
+both forms share one option ID and every microbatch is offered the same
+recomputation choices. The accumulating form is derived on demand rather than
+captured, so a step with a single microbatch never builds, compiles, or
+profiles a form it would not run.
+
 ## Differentiation roots
 
 For a nonterminal stage, every floating or complex output leaf that requires a

@@ -335,7 +335,7 @@ def _training_unique_stage(
             manifests,
             metadata_digests,
         )
-        for option in representative.graph_pairs.variants
+        for option in representative.graph_pairs.options(accumulates=microbatch > 0)
     )
     return PlanUniqueStage(
         unique_stage_id=index.unique_id_by_key[structural_key],

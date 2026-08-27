@@ -1523,7 +1523,7 @@ def _training_task_inventory(
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
         for stage in partitioned.stages:
-            for option in stage.graph_pairs.variants:
+            for option in stage.graph_pairs.options(accumulates=position > 0):
                 for artifact in (option.pair.forward, option.pair.backward):
                     compile_by_digest.setdefault(
                         artifact.compatibility_digest,
