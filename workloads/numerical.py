@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import mlops
 import torch
@@ -52,6 +52,12 @@ _DEFAULT_DATA_GEOMETRY: tuple[dict[str, Any], ...] = (
 )
 
 
+class SupportsLoss(Protocol):
+    """The objective a workload exposes, whatever arguments it takes."""
+
+    def loss(self, *values: Any, **options: Any) -> torch.Tensor: ...
+
+
 @dataclass(frozen=True, slots=True)
 class NumericalCase:
     family: str
@@ -61,14 +67,15 @@ class NumericalCase:
 
     def objective(self, model: nn.Module, *values: Any) -> torch.Tensor:
         tokens, targets, sequence_lengths = values
+        workload = cast(SupportsLoss, model)
         if self.family == "olmoe":
-            return model.loss(
+            return workload.loss(
                 tokens,
                 targets,
                 seq_lens=sequence_lengths,
                 aux_coef=0.01,
             )
-        return model.loss(tokens, targets, seq_lens=sequence_lengths)
+        return workload.loss(tokens, targets, seq_lens=sequence_lengths)
 
     def implementations(self) -> AbstractContextManager[Any]:
         return implementation_context(self.family, self.model_implementation)
@@ -83,7 +90,7 @@ class NumericalCase:
             },
             {"params": [item for item in values if item.ndim < 2], "weight_decay": 0.0},
         )
-        return mlops.optim.AdamW(groups, lr=3e-4)
+        return cast(torch.optim.Optimizer, mlops.optim.AdamW(groups, lr=3e-4))
 
 
 def build_case(
@@ -136,6 +143,8 @@ def build_case(
     if case_options:
         raise ValueError("case_options require a custom case_factory")
     torch.manual_seed(seed)
+    config: Llama3Config | Qwen35Config | OLMoEConfig
+    model_type: Callable[[Any], nn.Module]
     if family == "llama3":
         config = replace(Llama3Config.numerical(), max_seq_len=192)
         model_type = PyTorchLlama3 if model_implementation == "pytorch" else MlopsLlama3
@@ -152,7 +161,8 @@ def build_case(
             config = replace(config, **dict(model_config))
         except TypeError as exc:
             raise ValueError(f"invalid {family} model_config: {exc}") from exc
-    model: nn.Module = model_type(config).to(torch.bfloat16)
+    # The branch above pairs each config with the class that reads it.
+    model: nn.Module = model_type(cast(Any, config)).to(torch.bfloat16)
     selected_geometry = data_geometry or _DEFAULT_DATA_GEOMETRY
     microbatches: list[list[Any]] = []
     for index, item in enumerate(selected_geometry):

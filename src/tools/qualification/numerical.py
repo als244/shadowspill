@@ -364,7 +364,7 @@ def _reference_worker(
                 backward_start = event_factory(enable_timing=True)
                 backward_end = event_factory(enable_timing=True)
                 backward_start.record(torch.cuda.current_stream())
-                loss.backward()
+                loss.backward()  # type: ignore[no-untyped-call]
                 backward_end.record(torch.cuda.current_stream())
                 task_events.append(
                     ("backward", microbatch_index, backward_start, backward_end)
@@ -565,7 +565,7 @@ def _planned_worker(
         execution_timings: list[dict[str, object]] = []
         step_diagnostics: list[dict[str, object]] = []
         step_summaries: list[dict[str, object]] = []
-        checkpoint: object | None = None
+        checkpoint: Mapping[str, object] | None = None
         expected_replay: list[list[float]] = []
         for step in range(steps):
             started = time.perf_counter()

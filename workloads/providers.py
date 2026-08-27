@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 
-from mlops.dispatch import use_implementations  # type: ignore[import-untyped]
+from mlops.dispatch import use_implementations
 
 ModelImplementation = Literal["pytorch", "mlops"]
 

@@ -127,7 +127,9 @@ class MoE(nn.Module):
         for expert in range(config.n_experts):
             coefficient = (weights * (experts == expert)).sum(dim=-1)
             gate_and_up = hidden @ self.w13_experts[expert]
-            gate, up = gate_and_up.split(config.d_ff_expert, dim=-1)
+            gate, up = gate_and_up.split(  # type: ignore[no-untyped-call]
+                config.d_ff_expert, dim=-1
+            )
             contribution = swiglu(gate, up) @ self.w2_experts[expert]
             routed = routed + coefficient[..., None] * contribution.float()
         return (residual.float() + routed).to(hidden.dtype), auxiliary
