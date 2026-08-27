@@ -27,7 +27,10 @@ from shadowspill.pytorch.optimizer import (
     opaque_optimizer_outputs,
 )
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, Allocation
-from shadowspill.pytorch.runtime_adapter.failures import raise_if_allocator_failed
+from shadowspill.pytorch.runtime_adapter.failures import (
+    raise_if_allocator_failed,
+    wait_allocator_idle,
+)
 from shadowspill.pytorch.runtime_adapter.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
@@ -392,7 +395,7 @@ class CudaTaskProfiler:
                     )
                 )
             timing = self._collect_timing_samples(executable, stream, phase_timings)
-            self._library.shadowspill_pytorch_allocator_wait_idle()
+            self._diagnose_allocator_idle(problem="timing measurement")
             persistent_high_water = max(
                 persistent_high_water, self._requested_allocated_bytes()
             )
@@ -438,7 +441,7 @@ class CudaTaskProfiler:
             for probe_index in range(self._allocation_probe_seeds):
                 executable = self._executables.release_occurrence_values(executable)
                 stream.synchronize()
-                self._library.shadowspill_pytorch_allocator_wait_idle()
+                self._diagnose_allocator_idle(problem="allocation path probe")
                 executable = self._executables.with_arguments(
                     executable,
                     probe_index=probe_index,
@@ -488,7 +491,7 @@ class CudaTaskProfiler:
         for _ in range(self._warmups):
             self._invoke_profile_task(executable, stream)
         stream.synchronize()
-        self._library.shadowspill_pytorch_allocator_wait_idle()
+        self._diagnose_allocator_idle(problem="provider warmup")
         high_water = max(baseline, self._requested_allocated_bytes())
         high_water = self._await_stable_provider_state(
             executable,
@@ -687,7 +690,7 @@ class CudaTaskProfiler:
         # ones still hold their ranges - measured at 4,271 leases and 7.4 GiB
         # outstanding, against a pool that has to fit the task being measured.
         stream.synchronize()
-        self._library.shadowspill_pytorch_allocator_wait_idle()
+        self._diagnose_allocator_idle(problem="task warmup")
 
     def _measure_task_once(
         self,
@@ -706,7 +709,7 @@ class CudaTaskProfiler:
             self._library.shadowspill_pytorch_allocation_scope_abort()
             raise
         finish.synchronize()
-        self._library.shadowspill_pytorch_allocator_wait_idle()
+        self._diagnose_allocator_idle(problem="task timing sample")
         elapsed_ms = cast(float, start.elapsed_time(finish))
         return max(0, round(elapsed_ms * 1_000_000))
 
@@ -746,7 +749,7 @@ class CudaTaskProfiler:
         del right
         del left
         stream.synchronize()
-        self._library.shadowspill_pytorch_allocator_wait_idle()
+        self._diagnose_allocator_idle(problem="device conditioning")
         self._device_conditioned = True
 
     def _open_allocation_scope(self) -> int:
@@ -851,23 +854,9 @@ class CudaTaskProfiler:
     ) -> None:
         """Block on the runtime's progress-safe quiescence boundary."""
 
-        status = int(self._library.shadowspill_pytorch_allocator_wait_idle())
-        if status == 0:
-            return
-        detail = f"status={status}"
-        if hasattr(self._library, "shadowspill_pytorch_allocator_statistics"):
-            statistics = self._allocator_statistics().runtime
-            detail = (
-                f"{detail} pending={statistics.pending_retirements} "
-                f"fenced={statistics.retirement_records_fenced} "
-                f"evented={statistics.retirement_records_evented} "
-                f"preparing={statistics.retirement_records_preparing} "
-                f"unfenced={statistics.retirement_records_unfenced} "
-                f"actions={statistics.queued_actions}"
-            )
-        raise AllocationTelemetryError(
-            f"allocator failed to become idle during {problem}: {detail}"
-        )
+        message = wait_allocator_idle(self._library, problem=problem)
+        if message is not None:
+            raise AllocationTelemetryError(message)
 
     def _measure_opaque_optimizer(
         self, artifact: OpaqueOptimizerArtifact
@@ -1198,7 +1187,7 @@ class CudaTaskProfiler:
                     f"{status}"
                 )
             stream.synchronize()
-            self._library.shadowspill_pytorch_allocator_wait_idle()
+            self._diagnose_allocator_idle(problem="workspace measurement")
         except BaseException as error:
             primary_error = error
             if task_open:

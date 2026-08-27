@@ -58,6 +58,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
 from shadowspill.runtime import ObjectConsistency
 
 from ..callables import PlannedForward
@@ -362,7 +363,11 @@ def profile_forward_tasks(
             ),
         )
         _verify_manifest_identity(manifests, compiled_tasks)
-        captured.installed.library.shadowspill_pytorch_allocator_wait_idle()
+        message = wait_allocator_idle(
+            captured.installed.library, problem="compiled entrypoint release"
+        )
+        if message is not None:
+            raise PlanningError(message)
         validate_dynamic_execution_reservation(
             captured.installed,
             reserved_bytes=(

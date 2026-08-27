@@ -66,6 +66,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
 from shadowspill.pytorch.state.optimizer import (
     import_optimizer_state_for_plan,
     release_optimizer_state_from_plan,
@@ -799,7 +800,11 @@ def compile_selected_training_tasks(
         )
         _verify_compiled_manifest_identity(profiled.manifests, compiled)
         profiled.profiler.discard_compiled_tasks()
-        installed.library.shadowspill_pytorch_allocator_wait_idle()
+        message = wait_allocator_idle(
+            installed.library, problem="compiled task release"
+        )
+        if message is not None:
+            raise PlanningError(message)
         validate_dynamic_execution_reservation(
             installed,
             reserved_bytes=(
@@ -1273,7 +1278,11 @@ def _release_program_build_executables(
 
     with timer.measure("compilation"):
         profiled.profiler.discard_compiled_tasks()
-        installed.library.shadowspill_pytorch_allocator_wait_idle()
+        message = wait_allocator_idle(
+            installed.library, problem="compiled task release"
+        )
+        if message is not None:
+            raise PlanningError(message)
         validate_dynamic_execution_reservation(
             installed,
             reserved_bytes=(
