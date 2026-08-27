@@ -11,13 +11,13 @@ import torch
 import torch.nn as nn
 
 from shadowspill.planner import PressureFitOptions
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     PressureFitProgram,
     StepProgram,
     TransferBandwidths,
 )
-from shadowspill.pytorch.cache import PlanningCache
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
@@ -173,7 +173,7 @@ def plan_forward(
             execution_device=execution_device,
         )
         planning_started = True
-        cache = PlanningCache.resolve(
+        cache = ArtifactStore.resolve(
             planning_cachedir,
             save_plan=save_plan,
             force_fresh=force_fresh,
@@ -270,7 +270,7 @@ def plan_step(
             execution_device=execution_device,
         )
         planning_started = True
-        cache = PlanningCache.resolve(
+        cache = ArtifactStore.resolve(
             planning_cachedir,
             save_plan=save_plan,
             force_fresh=force_fresh,
@@ -349,7 +349,7 @@ def make_step_program(
             execution_device=execution_device,
         )
         planning_started = True
-        cache = PlanningCache.resolve(
+        cache = ArtifactStore.resolve(
             planning_cachedir,
             save_plan=save_plan,
             force_fresh=force_fresh,
@@ -412,7 +412,7 @@ def pressurefit_program(
 
     if options is not None and not isinstance(options, PressureFitOptions):
         raise TypeError("options must be PressureFitOptions or None")
-    cache = PlanningCache.resolve(
+    cache = ArtifactStore.resolve(
         planning_cachedir,
         save_plan=save_plan,
         force_fresh=force_fresh,

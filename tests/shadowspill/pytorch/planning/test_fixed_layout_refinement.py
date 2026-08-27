@@ -12,7 +12,7 @@ from shadowspill.planner import (
     RecomputationProblemDiagnostics,
     TaskAdmissionSpec,
 )
-from shadowspill.planner.cache import CachedPressureFitResult
+from shadowspill.planner.plan_store import PlanLookup
 from shadowspill.pytorch.planning.admission import (
     resolve_fixed_layout_selection,
 )
@@ -24,7 +24,7 @@ def _selection(
     config: SimulationConfig,
     *,
     effective_capacity: int | None = None,
-) -> CachedPressureFitResult:
+) -> PlanLookup:
     program = Program(
         devices=(DEVICE,),
         alias_groups=(),
@@ -34,7 +34,7 @@ def _selection(
     )
     schedule = MemorySchedule((), (), ())
     simulation = simulate(program, schedule, config=config)
-    return CachedPressureFitResult(
+    return PlanLookup(
         PressureFitResult(
             program,
             PressureFitOptions(workers=1),

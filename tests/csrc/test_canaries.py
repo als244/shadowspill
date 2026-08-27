@@ -55,12 +55,14 @@ def _busy_accelerator() -> str | None:
     the device is theirs: measured here the labelled set takes ~104s idle and
     ~218s with something else resident.
 
-    That 2x does not by itself explain the one timeout seen -- a 7s canary
-    hitting a 120s limit needs far more than 2x, and what hung it is not
-    known. Sharing the device is still the wrong thing to be doing while
-    timing canaries, and a run that starts contended cannot say whether a
-    later failure is a real regression, so refuse to start rather than
-    report a result that cannot be trusted.
+    That 2x does not by itself explain a 7s canary hitting a 120s limit. The
+    timeouts seen while writing this turned out to be a filesystem-wide scan
+    of an NFS mount running in the background, which starves these tests of
+    I/O -- not the device at all.
+
+    The check stays because timing canaries against a busy device is still
+    the wrong thing to do, and a contended run cannot tell a real regression
+    from its neighbour. It is a precondition, not a diagnosis.
     """
 
     if shutil.which("nvidia-smi") is None:

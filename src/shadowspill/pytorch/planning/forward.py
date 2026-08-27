@@ -32,6 +32,7 @@ from shadowspill.planner import (
     PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
 )
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
@@ -58,7 +59,6 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import ObjectConsistency
 
-from ..cache import PlanningCache
 from ..callables import PlannedForward
 from ..diagnostics import PlanReport
 from ..execution import ForwardExecutor
@@ -692,7 +692,7 @@ def _forward_plan_report(
         profiled.profiles,
         tuple(timer.values),
         started,
-        recomputation_cache_hit=selection.cache_hit,
+        recomputation_cache_hit=selection.from_store,
         pressurefit_results=(admitted_result,),
         captured_stage_count=len(captured.partitioned.stages),
         aot_unique_stage_contracts=profiled.profiles.unique_keys,
@@ -729,7 +729,7 @@ def build_forward(
     memory: PlanMemory,
     partition: PartitionSpec,
     verbose: bool,
-    planning_cache: PlanningCache,
+    planning_cache: ArtifactStore,
     profiling_metadata: object,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,

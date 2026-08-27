@@ -11,12 +11,12 @@ from dataclasses import asdict, dataclass
 
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import AdmissionFacts, PressureFitOptions
-from shadowspill.planner.cache import CachedPressureFitResult, PressureFitCache
+from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.planner.plan_store import PlanLookup, PlanStore
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileRepository
 from shadowspill.simulator import SimulationConfig
 
-from ..cache import PlanningCache
 from ..graph_pairs import GraphPairRepository
 
 
@@ -24,9 +24,9 @@ from ..graph_pairs import GraphPairRepository
 class PlanningArtifactRepositories:
     """Typed lookup/write boundary for one planning call's artifacts."""
 
-    store: PlanningCache
+    store: ArtifactStore
     profiles: ProfileRepository
-    pressurefit: PressureFitCache
+    pressurefit: PlanStore
     graph_pairs: GraphPairRepository
 
     def archive_export(
@@ -77,7 +77,7 @@ class PlanningArtifactRepositories:
         admission: AdmissionFacts | None = None,
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
-    ) -> CachedPressureFitResult:
+    ) -> PlanLookup:
         """Return a validated selection, running PressureFit only on a miss."""
 
         self.store.archive_program(program)
@@ -119,7 +119,7 @@ class PlanningArtifactRepositories:
         )
 
 
-def open_artifact_repositories(store: PlanningCache) -> PlanningArtifactRepositories:
+def open_artifact_repositories(store: ArtifactStore) -> PlanningArtifactRepositories:
     """Translate one public cache policy into typed artifact lookups."""
 
     return PlanningArtifactRepositories(
@@ -132,7 +132,7 @@ def open_artifact_repositories(store: PlanningCache) -> PlanningArtifactReposito
             overwrite=store.overwrite_plan,
             artifact_recorder=store.record,
         ),
-        pressurefit=PressureFitCache(
+        pressurefit=PlanStore(
             store.pressurefit_selections,
             read_enabled=store.read_enabled,
             write_enabled=store.write_enabled,

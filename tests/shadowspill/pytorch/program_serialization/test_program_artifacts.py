@@ -150,8 +150,8 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     )
     assert encoded["timing"]["total_wall_time_ns"] == selected.wall_time_ns
     assert len(encoded["timing"]["refinement_attempts"]) == len(selected.attempts)
-    assert not selected.pressurefit_cache_hit
-    assert cached.pressurefit_cache_hit
+    assert not selected.plan_from_store
+    assert cached.plan_from_store
     assert cached.digest == selected.digest
 
     old_timing = dict(encoded)

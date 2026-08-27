@@ -25,6 +25,7 @@ from shadowspill.planner import (
     PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
 )
+from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.program import PressureFitProgram, StepProgram
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
@@ -70,7 +71,6 @@ from shadowspill.pytorch.state.optimizer import (
 )
 from shadowspill.simulator import SimulationConfig
 
-from ..cache import PlanningCache
 from ..callables import PlannedTrainStep
 from ..contracts import (
     ObjectiveResult,
@@ -1042,11 +1042,11 @@ def _training_plan_report(
                 item.digest for item in captured.workloads
             ),
         )
-    hits = int(selections.recurrent.cache_hit) + (
-        0 if selections.initial is None else int(selections.initial.cache_hit)
+    hits = int(selections.recurrent.from_store) + (
+        0 if selections.initial is None else int(selections.initial.from_store)
     )
-    misses = int(not selections.recurrent.cache_hit) + (
-        0 if selections.initial is None else int(not selections.initial.cache_hit)
+    misses = int(not selections.recurrent.from_store) + (
+        0 if selections.initial is None else int(not selections.initial.from_store)
     )
     report = build_training_report(
         tuple(signature.digest for signature in captured.signatures),
@@ -1182,7 +1182,7 @@ def make_training_program(
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
-    planning_cache: PlanningCache,
+    planning_cache: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
@@ -1418,7 +1418,7 @@ def build_training(
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     verbose: bool,
-    planning_cache: PlanningCache,
+    planning_cache: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
