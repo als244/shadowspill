@@ -210,9 +210,6 @@ def _build_task_timing(
         dispatch_output_adoption_seconds=task.dispatch_output_adoption_ns / 1e9,
         dispatch_output_state_publish_seconds=task.dispatch_output_state_publish_ns
         / 1e9,
-        dispatch_gradient_accumulation_seconds=(
-            task.dispatch_gradient_accumulation_ns / 1e9
-        ),
         dispatch_output_publish_seconds=task.dispatch_output_publish_ns / 1e9,
         dispatch_dematerialize_seconds=task.dispatch_dematerialize_ns / 1e9,
         dispatch_postprocess_seconds=task.dispatch_postprocess_ns / 1e9,

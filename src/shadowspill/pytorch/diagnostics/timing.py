@@ -45,7 +45,6 @@ class ArmedTaskTiming:
     dispatch_output_classification_ns: int = 0
     dispatch_output_adoption_ns: int = 0
     dispatch_output_state_publish_ns: int = 0
-    dispatch_gradient_accumulation_ns: int = 0
     dispatch_output_publish_ns: int = 0
     dispatch_dematerialize_ns: int = 0
     dispatch_postprocess_ns: int = 0
