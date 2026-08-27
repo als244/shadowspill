@@ -80,6 +80,7 @@ The fields mean:
 | `real_inter_task_exposed_overhead_seconds` | The rest of that idle: the frontend had not reached the next task. |
 | `simulated_inter_task_readiness_wait_seconds` | The modeled counterpart of the readiness wait. |
 | `real_initial_readiness_wait_seconds` | The first task's wait, which precedes the span. |
+| `real_minimum_frontend_lead_seconds` | The smallest lead the frontend held over the stream. |
 | `simulated_selected_span_seconds` | First selected task start through last selected task end in simulation. |
 | `real_selected_span_seconds` | Same boundary using real compute-stream events. |
 | `selected_span_delta_seconds` | Real selected span minus simulated selected span. |
@@ -118,6 +119,15 @@ while 18 boundaries contributed the remaining 28.9 milliseconds -- every one of 
 the frontend had spent its lead. A rising median means the frontend is losing
 its lead everywhere; a heavy tail means it is losing it somewhere specific,
 and the boundary names say where.
+
+`frontend_lead_seconds` is the other side of the same coin, and the two are
+worth reading together: exposed overhead is what the lead failed to cover, so
+it stays at the floor while the lead holds and appears the moment it reaches
+zero. Both ends come from the same step origin -- the stream's marker is
+measured from the origin event and the handoff from the trace beginning, which
+the runtime records at the same point -- so no clock fitting is involved.
+`real_minimum_frontend_lead_seconds` is the margin that was left over the
+whole step.
 
 The simulator places a task as soon as its dependencies are met, so it has no
 notion of a stream travelling to a marker, and so cannot starve one. That
@@ -166,6 +176,8 @@ host:                                                output/runtime work -- exit
 
 Useful derived values are:
 
+- `frontend_lead_seconds`: how long after the frontend handed this task off
+  the compute stream arrived at it, so how far ahead the frontend was;
 - `dispatch_before_task_seconds`: complete frontend `before_task` wall time;
 - `readiness_wait_seconds`: compute-stream delay introduced by unfinished
   readiness dependencies;

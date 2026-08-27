@@ -42,6 +42,12 @@ class TaskExecutionTiming:
     runtime_before_task_exit_seconds: float | None
     runtime_after_task_enter_seconds: float | None
     runtime_after_task_exit_seconds: float | None
+    #: How long after the frontend handed this task off the compute stream
+    #: arrived at it. Positive means the frontend was that far ahead; at zero
+    #: the stream has caught up and the next thing it waits on is the frontend
+    #: itself. Measured to the stream reaching the task, so a task that then
+    #: waits for its inputs still counts as having been handed off in time.
+    frontend_lead_seconds: float | None
     dispatch_before_task_seconds: float
     dispatch_stream_resolution_seconds: float
     dispatch_readiness_marker_seconds: float
@@ -111,6 +117,7 @@ class TaskExecutionTiming:
             "runtime_before_task_exit_seconds": self.runtime_before_task_exit_seconds,
             "runtime_after_task_enter_seconds": self.runtime_after_task_enter_seconds,
             "runtime_after_task_exit_seconds": self.runtime_after_task_exit_seconds,
+            "frontend_lead_seconds": self.frontend_lead_seconds,
             "dispatch_before_task_seconds": self.dispatch_before_task_seconds,
             "dispatch_stream_resolution_seconds": (
                 self.dispatch_stream_resolution_seconds
@@ -442,6 +449,9 @@ class StepTimingSummary:
     #: The first task's wait ends where the span begins, so this is the one
     #: cost the span cannot contain: the fetches a step opens with.
     real_initial_readiness_wait_seconds: float
+    #: The smallest lead any task had. The exposed overhead above is what
+    #: happens once this reaches zero, so it is the margin that was left.
+    real_minimum_frontend_lead_seconds: float
     simulated_selected_span_seconds: float
     real_selected_span_seconds: float
     selected_span_delta_seconds: float
@@ -471,6 +481,9 @@ class StepTimingSummary:
             ),
             "real_initial_readiness_wait_seconds": (
                 self.real_initial_readiness_wait_seconds
+            ),
+            "real_minimum_frontend_lead_seconds": (
+                self.real_minimum_frontend_lead_seconds
             ),
             "simulated_selected_span_seconds": self.simulated_selected_span_seconds,
             "real_selected_span_seconds": self.real_selected_span_seconds,
