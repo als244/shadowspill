@@ -554,12 +554,12 @@ supported contract.
 | Module | Responsibility |
 |---|---|
 | `shadowspill.planner.admission` | Immutable framework-neutral task and pool topology. |
-| `shadowspill.pytorch.planning.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
-| `shadowspill.pytorch.planning.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
+| `shadowspill.planner.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
+| `shadowspill.planner.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
 | `shadowspill.planner.admission.placement` | Deterministic aligned interval placement. |
-| `shadowspill.pytorch.planning.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
-| `shadowspill.pytorch.planning.admission.refinement` | Certify the fixed layout of the plan the search placed. |
-| `shadowspill.pytorch.planning.admission.layout.runtime` | Translate semantic placements to indexed runtime identities. |
+| `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
+| `shadowspill.planner.admission.refinement` | Certify the fixed layout of the plan the search placed. |
+| `shadowspill.pytorch.planning.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/src/runtime/memory/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 
