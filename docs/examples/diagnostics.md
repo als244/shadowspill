@@ -22,7 +22,7 @@ print("real selected span", summary.real_selected_span_seconds)
 
 largest = sorted(
     step.tasks.values(),
-    key=lambda item: item.gpu_duration_seconds or 0.0,
+    key=lambda item: item.compute_duration_seconds or 0.0,
     reverse=True,
 )
 

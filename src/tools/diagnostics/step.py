@@ -131,7 +131,7 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
                 "phase": task["phase"],
                 "microbatch": task.get("microbatch"),
                 "expected_profile_seconds": task["expected_profile_seconds"],
-                "gpu_duration_seconds": task["gpu_duration_seconds"],
+                "compute_duration_seconds": task["compute_duration_seconds"],
                 "dispatch_before_task_seconds": task["dispatch_before_task_seconds"],
                 "dispatch_before_accounted_seconds": before_accounted,
                 "dispatch_before_unattributed_seconds": max(
@@ -209,7 +209,7 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         "task_count": len(tasks),
         "selected_task_span_seconds": float(timing.get("compute_seconds", 0.0)),
         "task_interval_sum_seconds": sum(
-            _seconds(task, "gpu_duration_seconds") for task in tasks
+            _seconds(task, "compute_duration_seconds") for task in tasks
         ),
         "dispatch_boundary_sum_seconds": sum(
             _seconds(task, "dispatch_before_task_seconds")

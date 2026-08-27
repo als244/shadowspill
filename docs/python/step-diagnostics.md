@@ -100,10 +100,11 @@ that fetches later raises the wait while leaving dispatch untouched.
 It is called exposed because the frontend does this work at every boundary,
 and running ahead hides whatever the lead covers. The field is the shortfall,
 not the cost of the work. Do not reach for `dispatch_total_seconds` as the
-other half of that comparison: the host blocks inside the launch call once the
-device queue is full, so most of it is time spent waiting for the device
-rather than working -- `dispatch_invoke_seconds` tracks its own task's
-`gpu_duration_seconds` at a median ratio of 0.94.
+other half of that comparison. Most of it is the frontend blocked rather than
+working: `dispatch_invoke_seconds` tracks its own task's
+`compute_duration_seconds` at a median ratio of 0.94, and its largest values
+run several times its own task's compute, so it is waiting on work already
+submitted. What exactly it waits on there is not recorded.
 
 `real_inter_task_exposed_overhead_seconds` is zero wherever the frontend runs ahead of
 the device, because a task it has already reached has its readiness marker on
@@ -153,7 +154,7 @@ Every `TaskExecutionTiming` contains exactly seven primary timestamps:
 | Host `CLOCK_MONOTONIC` | `before_task_exit_timestamp_ns` |
 | Host `CLOCK_MONOTONIC` | `after_task_enter_timestamp_ns` |
 | Host `CLOCK_MONOTONIC` | `after_task_exit_timestamp_ns` |
-| Compute stream | `stream_reached_timestamp_ns` |
+| Compute stream | `compute_reached_timestamp_ns` |
 | Compute stream | `compute_started_timestamp_ns` |
 | Compute stream | `compute_finished_timestamp_ns` |
 
@@ -175,9 +176,9 @@ host:                                                output/runtime work -- exit
 ```
 
 Names say what they are: a field naming an event -- `stream_reached`,
-`compute_started`, `gpu_start` -- is when that happened, measured from the
-step origin, while a field naming a span -- `readiness_wait`, `gpu_duration`,
-`frontend_lead` -- is how long it lasted. The compute-stream markers used to
+`compute_reached`, `compute_started` -- is when that happened, measured from
+the step origin, while a field naming a span -- `readiness_wait`,
+`compute_duration`, `frontend_lead` -- is how long it lasted. The compute-stream markers used to
 be called `before_readiness_waits`, `before_task_compute` and
 `after_task_compute`, which described where they sat in the dispatch sequence
 rather than what they record, and read as durations beside the durations.
@@ -187,7 +188,7 @@ Useful derived values are:
 - `frontend_lead_seconds`: how long after the frontend handed this task off
   the compute stream arrived at it, so how far ahead the frontend was;
 - `dispatch_before_task_seconds`: complete frontend `before_task` wall time;
-- `stream_reached_seconds`: when the compute stream arrived at the task;
+- `compute_reached_seconds`: when the compute stream arrived at the task;
 - `readiness_wait_seconds`: how long it then waited there for unfinished
   readiness dependencies;
 - `dispatch_after_task_seconds`: complete frontend `after_task` wall time;
@@ -195,18 +196,18 @@ Useful derived values are:
 - `compute_started_seconds`, `compute_finished_seconds`: when the task's
   kernels began and ended, measured from the step origin, so the whole step
   shares one timeline;
-- `gpu_start_seconds`, `gpu_end_seconds`, `gpu_duration_seconds`: the same
-  interval measured from the first task's compute instead, which is the
-  alignment cross-execution analysis compares against, plus its length;
+- `compute_duration_seconds`: how long they ran;
 - `expected_profile_seconds`: what isolated profiling measured for this task,
   which is what the plan was built from and what the real interval is judged
   against;
 - `runtime_before_task_enter_seconds`, `runtime_before_task_exit_seconds`,
   `runtime_after_task_enter_seconds`, `runtime_after_task_exit_seconds`: when
   the frontend entered and left each runtime boundary call, on the host clock
-  and from the same step origin. Their differences are the `dispatch_runtime_*`
-  spans; the timestamps themselves are what orders host work against the
-  stream.
+  and from the same step origin. These are what order host work against the
+  device. They are not the `dispatch_runtime_*` spans: those wrap the whole
+  step the frontend takes there, which acquires and rebinds the task's input
+  storages as well as calling the boundary, so they run a median of 13 to 19
+  microseconds longer. The difference is that storage work.
 
 A compute-stream readiness gap does not imply that the Python thread blocked.
 Ordinary fetch readiness is expressed as a stream event wait. A large host

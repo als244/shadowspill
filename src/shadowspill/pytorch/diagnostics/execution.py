@@ -25,17 +25,12 @@ class TaskExecutionTiming:
     before_task_exit_timestamp_ns: int
     after_task_enter_timestamp_ns: int
     after_task_exit_timestamp_ns: int
-    stream_reached_timestamp_ns: int
-    compute_started_timestamp_ns: int
-    compute_finished_timestamp_ns: int
-    gpu_start_seconds: float
-    gpu_end_seconds: float
-    gpu_duration_seconds: float
-    stream_reached_seconds: float | None
-    compute_started_seconds: float | None
-    compute_finished_seconds: float | None
-    readiness_wait_seconds: float | None
-    stream_reached_sequence: int
+    compute_duration_seconds: float
+    compute_reached_seconds: float
+    compute_started_seconds: float
+    compute_finished_seconds: float
+    readiness_wait_seconds: float
+    compute_reached_sequence: int
     compute_started_sequence: int
     compute_finished_sequence: int
     runtime_before_task_enter_seconds: float | None
@@ -94,23 +89,19 @@ class TaskExecutionTiming:
                 },
                 "compute_stream": {
                     "clock": "cuda_event_elapsed_from_step_origin",
-                    "stream_reached": (
-                        self.stream_reached_timestamp_ns
-                    ),
-                    "compute_started": self.compute_started_timestamp_ns,
-                    "compute_finished": self.compute_finished_timestamp_ns,
+                    "compute_reached": int(self.compute_reached_seconds * 1e9),
+                    "compute_started": int(self.compute_started_seconds * 1e9),
+                    "compute_finished": int(self.compute_finished_seconds * 1e9),
                 },
             },
-            "gpu_start_seconds": self.gpu_start_seconds,
-            "gpu_end_seconds": self.gpu_end_seconds,
-            "gpu_duration_seconds": self.gpu_duration_seconds,
-            "stream_reached_seconds": self.stream_reached_seconds,
+            "compute_duration_seconds": self.compute_duration_seconds,
+            "compute_reached_seconds": self.compute_reached_seconds,
             "compute_started_seconds": self.compute_started_seconds,
             "compute_finished_seconds": (
                 self.compute_finished_seconds
             ),
             "readiness_wait_seconds": self.readiness_wait_seconds,
-            "stream_reached_sequence": (self.stream_reached_sequence),
+            "compute_reached_sequence": (self.compute_reached_sequence),
             "compute_started_sequence": self.compute_started_sequence,
             "compute_finished_sequence": self.compute_finished_sequence,
             "runtime_before_task_enter_seconds": (
