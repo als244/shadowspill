@@ -19,7 +19,10 @@ from shadowspill.pytorch.capture.live_storage import unique_live_tensors
 from shadowspill.pytorch.contracts import TensorSpec
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram
-from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
+from shadowspill.pytorch.materialization.replacement import (
+    MaterializedState,
+    ReplacementStorageViews,
+)
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.pytorch.sharing import (
@@ -141,7 +144,7 @@ class _Registration:
 type _MaterializationEntry = tuple[torch.Tensor, int | None]
 
 
-class MaterializedForwardState:
+class MaterializedForwardState(MaterializedState):
     """Own CUDA placeholders and restore original registered objects on close."""
 
     def __init__(
@@ -365,11 +368,6 @@ class MaterializedForwardState:
             tensors=unique,
         )
 
-    def publish_replacement_views(self, replacement: ReplacementStorageViews) -> None:
-        """Keep the stable frontend representative rebound by the runtime boundary."""
-
-        self.object_store[replacement.alias_id] = replacement.tensors[0]
-
     def restore_cpu_and_unregister(self) -> None:
         """Synchronize, write model state back, and reclaim all plan objects."""
 
@@ -421,26 +419,6 @@ class MaterializedForwardState:
                 sizes[alias_id], dtype=torch.uint8, device="cpu"
             )
         return result
-
-    def _read_model_aliases(
-        self,
-        *,
-        aliases: set[str] | None = None,
-    ) -> dict[str, torch.Tensor]:
-        self.bridge.wait_idle()
-        owners = self._empty_model_aliases(aliases=aliases)
-        for alias_id, owner in owners.items():
-            self.bridge.read_spill_tensor(alias_id, owner)
-        return owners
-
-    @staticmethod
-    def _cpu_view(owner: torch.Tensor, tensor: torch.Tensor) -> torch.Tensor:
-        return torch.empty(0, dtype=tensor.dtype, device="cpu").set_(
-            owner.untyped_storage(),
-            tensor.storage_offset(),
-            tuple(tensor.shape),
-            tuple(tensor.stride()),
-        )
 
     def _materialize(self) -> None:
         registrations = self._registrations()

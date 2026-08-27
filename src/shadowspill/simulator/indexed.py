@@ -17,6 +17,7 @@ from shadowspill.ir import (
     TaskSpec,
     shared_residency_footprint,
 )
+from shadowspill.ir.indexed import flatten_rows
 from shadowspill.status import ABI_VERSION, Status
 
 from .capi import (
@@ -93,17 +94,6 @@ def _i64_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_int64]:
 def _u8_array(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint8]:
     array_type = ctypes.c_uint8 * max(1, len(values))
     return array_type.from_buffer_copy(bytes(values)) if values else array_type()
-
-
-def _offsets(
-    rows: tuple[tuple[int, ...], ...],
-) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    offsets = [0]
-    values: list[int] = []
-    for row in rows:
-        values.extend(row)
-        offsets.append(len(values))
-    return tuple(offsets), tuple(values)
 
 
 @dataclass(slots=True)
@@ -208,10 +198,10 @@ def index_simulation_template(
     mutation_deltas = tuple(
         item.version_delta for task in tasks for item in task.mutations
     )
-    dependency_offsets, dependency_values = _offsets(dependencies)
-    input_offsets, input_values = _offsets(inputs)
-    output_offsets, output_values = _offsets(outputs)
-    mutation_offsets, mutation_values = _offsets(mutations)
+    dependency_offsets, dependency_values = flatten_rows(dependencies)
+    input_offsets, input_values = flatten_rows(inputs)
+    output_offsets, output_values = flatten_rows(outputs)
+    mutation_offsets, mutation_values = flatten_rows(mutations)
 
     buffers: list[object] = []
 

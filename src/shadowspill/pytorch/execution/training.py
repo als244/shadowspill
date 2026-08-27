@@ -57,7 +57,7 @@ from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelInd
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
 from shadowspill.simulator import SimulationResult
 
-from .annotations import TaskBoundaryAnnotations
+from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
 from .records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,
 )
@@ -114,7 +114,7 @@ class _ProcessedTaskOutputs:
         return frozenset(item.alias_id for item in self.replacements)
 
 
-class TrainingExecutor:
+class TrainingExecutor(AnnotatedExecutor):
     """Execute selected forward/backward variants and one optimizer update."""
 
     def __init__(
@@ -306,19 +306,6 @@ class TrainingExecutor:
             end_event.record(stream)
         stream.synchronize()
 
-    def set_profiler_annotations(self, enabled: bool) -> None:
-        """Toggle provider annotations independently of runtime tracing."""
-
-        self._task_annotations.set_enabled(enabled)
-
-    def finish_profiler_annotations(self) -> None:
-        """Drain annotated asynchronous work before disabling its provider."""
-
-        if not self._task_annotations.enabled:
-            return
-        self._bridge.wait_plan_idle()
-        self.set_profiler_annotations(False)
-
     def __call__(
         self, inputs: Sequence[Sequence[Any]]
     ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...]]:
@@ -332,11 +319,6 @@ class TrainingExecutor:
         if timing is not None:
             timing.dispatch_call_finished_ns = time.perf_counter_ns()
         return losses, metrics
-
-    def record_invocation_completion(self) -> Callable[[], None]:
-        """Record the explicit public-result completion boundary."""
-
-        return self._completion.record()
 
     def _begin_invocation(
         self,
