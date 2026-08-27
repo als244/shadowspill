@@ -603,7 +603,7 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
         "## Transfer diagnostics",
         "## Allocator diagnostics",
         "## Runtime counters and trace integrity",
-        "shadowspill.step_diagnostics/v2",
+        "shadowspill.step_diagnostics/v3",
     ):
         assert required in step_diagnostics
 
@@ -694,3 +694,38 @@ def test_superseded_public_documentation_is_removed() -> None:
         "simulator.md",
     ):
         assert not (DOCS / name).exists()
+
+
+def test_every_timing_field_is_described_where_timings_are_explained() -> None:
+    """A timing field nobody can interpret is a timing field nobody can use.
+
+    These are the numbers an investigation reads, and several of them are
+    only meaningful once you know which origin they count from and whether
+    they are an instant or a span. Adding one without saying which is how the
+    next reader draws the wrong conclusion from it.
+    """
+
+    source = (
+        ROOT / "src/shadowspill/pytorch/diagnostics/execution.py"
+    ).read_text()
+    guide = (ROOT / "docs/python/step-diagnostics.md").read_text()
+    tree = ast.parse(source)
+    undocumented: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if node.name not in {"TaskExecutionTiming", "StepTimingSummary"}:
+            continue
+        missing = [
+            item.target.id
+            for item in node.body
+            if isinstance(item, ast.AnnAssign)
+            and isinstance(item.target, ast.Name)
+            and item.target.id.endswith(("_seconds", "_ns"))
+            and item.target.id not in guide
+        ]
+        if missing:
+            undocumented[node.name] = missing
+    assert not undocumented, (
+        f"timing fields absent from step-diagnostics.md: {undocumented}"
+    )

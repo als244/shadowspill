@@ -38,19 +38,19 @@ def _task(
         "phase": "forward",
         "microbatch": 0,
         "expected_profile_seconds": finished - started,
-        "before_readiness_waits_timestamp_ns": int(reached * 1e9),
-        "before_task_compute_timestamp_ns": int(started * 1e9),
-        "after_task_compute_timestamp_ns": int(finished * 1e9),
+        "stream_reached_timestamp_ns": int(reached * 1e9),
+        "compute_started_timestamp_ns": int(started * 1e9),
+        "compute_finished_timestamp_ns": int(finished * 1e9),
         "gpu_start_seconds": started,
         "gpu_end_seconds": finished,
         "gpu_duration_seconds": finished - started,
-        "before_readiness_waits_seconds": reached,
-        "before_task_compute_seconds": started,
-        "after_task_compute_seconds": finished,
+        "stream_reached_seconds": reached,
+        "compute_started_seconds": started,
+        "compute_finished_seconds": finished,
         "readiness_wait_seconds": started - reached,
-        "before_readiness_waits_sequence": ordinal * 3 + 1,
-        "before_task_compute_sequence": ordinal * 3 + 2,
-        "after_task_compute_sequence": ordinal * 3 + 3,
+        "stream_reached_sequence": ordinal * 3 + 1,
+        "compute_started_sequence": ordinal * 3 + 2,
+        "compute_finished_sequence": ordinal * 3 + 3,
     }
     return TaskExecutionTiming(
         **{
@@ -77,7 +77,7 @@ def test_idle_is_exactly_waiting_plus_not_yet_reached() -> None:
     assert dispatch == pytest.approx(0.5 + 0.05)
     assert initial == pytest.approx(2.0)
 
-    span = tasks[-1].after_task_compute_seconds - tasks[0].before_task_compute_seconds
+    span = tasks[-1].compute_finished_seconds - tasks[0].compute_started_seconds
     busy = sum(item.gpu_duration_seconds for item in tasks)
     assert readiness + dispatch == pytest.approx(span - busy)
 

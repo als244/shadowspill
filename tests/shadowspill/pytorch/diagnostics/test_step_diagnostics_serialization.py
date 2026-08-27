@@ -114,4 +114,4 @@ def test_step_diagnostics_torch_serialization_preserves_immutable_mappings() -> 
     assert isinstance(restored.timing.tasks, FrozenMapping)
     assert isinstance(restored.transfers.simulator_comparison, FrozenMapping)
     assert isinstance(restored.simulator_comparison, FrozenMapping)
-    assert restored.as_dict()["schema"] == "shadowspill.step_diagnostics/v2"
+    assert restored.as_dict()["schema"] == "shadowspill.step_diagnostics/v3"
