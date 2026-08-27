@@ -359,16 +359,16 @@ def main(arguments: Iterable[str] | None = None) -> int:
                             task_timing.before_task_exit_timestamp_ns,
                             task_timing.after_task_enter_timestamp_ns,
                             task_timing.after_task_exit_timestamp_ns,
-                            task_timing.before_readiness_waits_timestamp_ns,
-                            task_timing.before_task_compute_timestamp_ns,
-                            task_timing.after_task_compute_timestamp_ns,
+                            task_timing.stream_reached_timestamp_ns,
+                            task_timing.compute_started_timestamp_ns,
+                            task_timing.compute_finished_timestamp_ns,
                         )
                     ):
                         raise AssertionError("task omitted one of seven timestamps")
                     if (
-                        task_timing.before_readiness_waits_seconds is None
-                        or task_timing.before_task_compute_seconds is None
-                        or task_timing.after_task_compute_seconds is None
+                        task_timing.stream_reached_seconds is None
+                        or task_timing.compute_started_seconds is None
+                        or task_timing.compute_finished_seconds is None
                         or task_timing.readiness_wait_seconds is None
                         or task_timing.gpu_duration_seconds is None
                         or task_timing.runtime_before_task_enter_seconds is None
@@ -378,16 +378,16 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     ):
                         raise AssertionError("host callback timing omitted a boundary")
                     if (
-                        not task_timing.before_readiness_waits_sequence
-                        < task_timing.before_task_compute_sequence
-                        < task_timing.after_task_compute_sequence
+                        not task_timing.stream_reached_sequence
+                        < task_timing.compute_started_sequence
+                        < task_timing.compute_finished_sequence
                     ):
                         raise AssertionError(
                             "host callback boundary order is invalid for "
                             f"{task_timing.task_id}: "
-                            f"{task_timing.before_readiness_waits_sequence}, "
-                            f"{task_timing.before_task_compute_sequence}, "
-                            f"{task_timing.after_task_compute_sequence}"
+                            f"{task_timing.stream_reached_sequence}, "
+                            f"{task_timing.compute_started_sequence}, "
+                            f"{task_timing.compute_finished_sequence}"
                         )
             if actual.step_number != step + 1 or len(actual.objectives) != 2:
                 raise AssertionError("StepResult has the wrong logical step")

@@ -153,9 +153,9 @@ Every `TaskExecutionTiming` contains exactly seven primary timestamps:
 | Host `CLOCK_MONOTONIC` | `before_task_exit_timestamp_ns` |
 | Host `CLOCK_MONOTONIC` | `after_task_enter_timestamp_ns` |
 | Host `CLOCK_MONOTONIC` | `after_task_exit_timestamp_ns` |
-| Compute stream | `before_readiness_waits_timestamp_ns` |
-| Compute stream | `before_task_compute_timestamp_ns` |
-| Compute stream | `after_task_compute_timestamp_ns` |
+| Compute stream | `stream_reached_timestamp_ns` |
+| Compute stream | `compute_started_timestamp_ns` |
+| Compute stream | `compute_finished_timestamp_ns` |
 
 The host and compute-stream timestamps are different clock domains. Compare
 durations within a domain; use the precomputed aligned seconds fields for
@@ -174,17 +174,39 @@ host:                                                after_task enter
 host:                                                output/runtime work -- exit
 ```
 
+Names say what they are: a field naming an event -- `stream_reached`,
+`compute_started`, `gpu_start` -- is when that happened, measured from the
+step origin, while a field naming a span -- `readiness_wait`, `gpu_duration`,
+`frontend_lead` -- is how long it lasted. The compute-stream markers used to
+be called `before_readiness_waits`, `before_task_compute` and
+`after_task_compute`, which described where they sat in the dispatch sequence
+rather than what they record, and read as durations beside the durations.
+
 Useful derived values are:
 
 - `frontend_lead_seconds`: how long after the frontend handed this task off
   the compute stream arrived at it, so how far ahead the frontend was;
 - `dispatch_before_task_seconds`: complete frontend `before_task` wall time;
-- `readiness_wait_seconds`: compute-stream delay introduced by unfinished
+- `stream_reached_seconds`: when the compute stream arrived at the task;
+- `readiness_wait_seconds`: how long it then waited there for unfinished
   readiness dependencies;
 - `dispatch_after_task_seconds`: complete frontend `after_task` wall time;
 - `dispatch_total_seconds`: before + dispatch + after host work;
-- `gpu_start_seconds`, `gpu_end_seconds`, `gpu_duration_seconds`: the compute-
-  stream task interval, aligned for cross-execution analysis.
+- `compute_started_seconds`, `compute_finished_seconds`: when the task's
+  kernels began and ended, measured from the step origin, so the whole step
+  shares one timeline;
+- `gpu_start_seconds`, `gpu_end_seconds`, `gpu_duration_seconds`: the same
+  interval measured from the first task's compute instead, which is the
+  alignment cross-execution analysis compares against, plus its length;
+- `expected_profile_seconds`: what isolated profiling measured for this task,
+  which is what the plan was built from and what the real interval is judged
+  against;
+- `runtime_before_task_enter_seconds`, `runtime_before_task_exit_seconds`,
+  `runtime_after_task_enter_seconds`, `runtime_after_task_exit_seconds`: when
+  the frontend entered and left each runtime boundary call, on the host clock
+  and from the same step origin. Their differences are the `dispatch_runtime_*`
+  spans; the timestamps themselves are what orders host work against the
+  stream.
 
 A compute-stream readiness gap does not imply that the Python thread blocked.
 Ordinary fetch readiness is expressed as a stream event wait. A large host
@@ -350,7 +372,7 @@ specific result. `summary.trace_complete` provides the combined verdict.
 ## Exporting diagnostics
 
 `StepDiagnostics.as_dict()` returns a JSON-friendly value with schema
-`shadowspill.step_diagnostics/v2`:
+`shadowspill.step_diagnostics/v3`:
 
 ```python
 import json

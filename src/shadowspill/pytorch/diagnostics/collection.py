@@ -174,21 +174,21 @@ def _build_task_timing(
         after_task_exit_timestamp_ns=(
             callback.after_task_exit_ns if callback is not None else 0
         ),
-        before_readiness_waits_timestamp_ns=int(readiness_seconds * 1e9),
-        before_task_compute_timestamp_ns=int(compute_start_seconds * 1e9),
-        after_task_compute_timestamp_ns=int(compute_end_seconds * 1e9),
+        stream_reached_timestamp_ns=int(readiness_seconds * 1e9),
+        compute_started_timestamp_ns=int(compute_start_seconds * 1e9),
+        compute_finished_timestamp_ns=int(compute_end_seconds * 1e9),
         gpu_start_seconds=gpu_start,
         gpu_end_seconds=gpu_end,
         gpu_duration_seconds=gpu_duration,
-        before_readiness_waits_seconds=readiness_seconds,
-        before_task_compute_seconds=compute_start_seconds,
-        after_task_compute_seconds=compute_end_seconds,
+        stream_reached_seconds=readiness_seconds,
+        compute_started_seconds=compute_start_seconds,
+        compute_finished_seconds=compute_end_seconds,
         readiness_wait_seconds=(
             float(task.readiness_event.elapsed_time(task.start_event)) / 1_000.0
         ),
-        before_readiness_waits_sequence=sequence_base + 1,
-        before_task_compute_sequence=sequence_base + 2,
-        after_task_compute_sequence=sequence_base + 3,
+        stream_reached_sequence=sequence_base + 1,
+        compute_started_sequence=sequence_base + 2,
+        compute_finished_sequence=sequence_base + 3,
         runtime_before_task_enter_seconds=_relative_seconds(
             callback.before_task_enter_ns if callback is not None else 0,
             callback_origin_ns,
@@ -611,15 +611,15 @@ def _idle_composition(
     still being time the step spent.
     """
 
-    ordered = sorted(tasks, key=lambda item: item.before_task_compute_seconds or 0.0)
+    ordered = sorted(tasks, key=lambda item: item.compute_started_seconds or 0.0)
     if not ordered:
         return 0.0, 0.0, 0.0
     readiness = 0.0
     dispatch = 0.0
     for previous, current in pairwise(ordered):
         readiness += current.readiness_wait_seconds or 0.0
-        reached = current.before_readiness_waits_seconds or 0.0
-        finished = previous.after_task_compute_seconds or 0.0
+        reached = current.stream_reached_seconds or 0.0
+        finished = previous.compute_finished_seconds or 0.0
         dispatch += max(0.0, reached - finished)
     return readiness, dispatch, ordered[0].readiness_wait_seconds or 0.0
 

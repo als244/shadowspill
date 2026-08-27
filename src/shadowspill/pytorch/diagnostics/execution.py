@@ -25,19 +25,19 @@ class TaskExecutionTiming:
     before_task_exit_timestamp_ns: int
     after_task_enter_timestamp_ns: int
     after_task_exit_timestamp_ns: int
-    before_readiness_waits_timestamp_ns: int
-    before_task_compute_timestamp_ns: int
-    after_task_compute_timestamp_ns: int
+    stream_reached_timestamp_ns: int
+    compute_started_timestamp_ns: int
+    compute_finished_timestamp_ns: int
     gpu_start_seconds: float
     gpu_end_seconds: float
     gpu_duration_seconds: float
-    before_readiness_waits_seconds: float | None
-    before_task_compute_seconds: float | None
-    after_task_compute_seconds: float | None
+    stream_reached_seconds: float | None
+    compute_started_seconds: float | None
+    compute_finished_seconds: float | None
     readiness_wait_seconds: float | None
-    before_readiness_waits_sequence: int
-    before_task_compute_sequence: int
-    after_task_compute_sequence: int
+    stream_reached_sequence: int
+    compute_started_sequence: int
+    compute_finished_sequence: int
     runtime_before_task_enter_seconds: float | None
     runtime_before_task_exit_seconds: float | None
     runtime_after_task_enter_seconds: float | None
@@ -94,29 +94,37 @@ class TaskExecutionTiming:
                 },
                 "compute_stream": {
                     "clock": "cuda_event_elapsed_from_step_origin",
-                    "before_readiness_waits": (
-                        self.before_readiness_waits_timestamp_ns
+                    "stream_reached": (
+                        self.stream_reached_timestamp_ns
                     ),
-                    "before_task_compute": self.before_task_compute_timestamp_ns,
-                    "after_task_compute": self.after_task_compute_timestamp_ns,
+                    "compute_started": self.compute_started_timestamp_ns,
+                    "compute_finished": self.compute_finished_timestamp_ns,
                 },
             },
             "gpu_start_seconds": self.gpu_start_seconds,
             "gpu_end_seconds": self.gpu_end_seconds,
             "gpu_duration_seconds": self.gpu_duration_seconds,
-            "before_readiness_waits_seconds": self.before_readiness_waits_seconds,
-            "before_task_compute_seconds": self.before_task_compute_seconds,
-            "after_task_compute_seconds": self.after_task_compute_seconds,
+            "stream_reached_seconds": self.stream_reached_seconds,
+            "compute_started_seconds": self.compute_started_seconds,
+            "compute_finished_seconds": (
+                self.compute_finished_seconds
+            ),
             "readiness_wait_seconds": self.readiness_wait_seconds,
-            "before_readiness_waits_sequence": (self.before_readiness_waits_sequence),
-            "before_task_compute_sequence": self.before_task_compute_sequence,
-            "after_task_compute_sequence": self.after_task_compute_sequence,
+            "stream_reached_sequence": (self.stream_reached_sequence),
+            "compute_started_sequence": self.compute_started_sequence,
+            "compute_finished_sequence": self.compute_finished_sequence,
             "runtime_before_task_enter_seconds": (
                 self.runtime_before_task_enter_seconds
             ),
-            "runtime_before_task_exit_seconds": self.runtime_before_task_exit_seconds,
-            "runtime_after_task_enter_seconds": self.runtime_after_task_enter_seconds,
-            "runtime_after_task_exit_seconds": self.runtime_after_task_exit_seconds,
+            "runtime_before_task_exit_seconds": (
+                self.runtime_before_task_exit_seconds
+            ),
+            "runtime_after_task_enter_seconds": (
+                self.runtime_after_task_enter_seconds
+            ),
+            "runtime_after_task_exit_seconds": (
+                self.runtime_after_task_exit_seconds
+            ),
             "frontend_lead_seconds": self.frontend_lead_seconds,
             "dispatch_before_task_seconds": self.dispatch_before_task_seconds,
             "dispatch_stream_resolution_seconds": (
@@ -516,7 +524,7 @@ class StepDiagnostics:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema": "shadowspill.step_diagnostics/v2",
+            "schema": "shadowspill.step_diagnostics/v3",
             "timing": self.timing.as_dict(include_tasks=False),
             "tasks": {
                 execution_task_id: item.as_dict()

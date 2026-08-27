@@ -43,7 +43,7 @@ _ALL_COMPONENTS = (*_BEFORE_COMPONENTS, "dispatch_invoke_seconds", *_AFTER_COMPO
 
 
 def _diagnostics(payload: Mapping[str, Any], sample: int) -> Mapping[str, Any]:
-    if payload.get("schema") == "shadowspill.step_diagnostics/v2":
+    if payload.get("schema") == "shadowspill.step_diagnostics/v3":
         return payload
     trace = payload.get("trace")
     if isinstance(trace, Mapping):
@@ -167,8 +167,8 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
         dispatch_boundary = prior_after + outer_gap + next_before
         compute_gap = max(
             0.0,
-            _seconds(current, "before_task_compute_seconds")
-            - _seconds(previous, "after_task_compute_seconds"),
+            _seconds(current, "compute_started_seconds")
+            - _seconds(previous, "compute_finished_seconds"),
         )
         previous_components = {
             key: _seconds(previous, key) for key in _AFTER_COMPONENTS
