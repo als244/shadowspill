@@ -181,8 +181,11 @@ retirements; unrelated plans continue independently.
 | Backend | Provider allocation, copy, stream, event, and profiler operations | Object or schedule policy |
 
 The framework-neutral IR, planner, simulator, admission engine, and runtime do
-not import PyTorch. Provider driver and profiler calls remain inside concrete
-backends or framework adapters.
+not import PyTorch, and a test asserts it rather than leaving it to
+convention. Producing a Program -- capture, lowering, compilation, profiling
+-- is the frontend's work; everything from a Program onwards is neutral, so
+planning a saved Program pulls in no framework. Provider driver and profiler
+calls remain inside concrete backends or framework adapters.
 
 ## One logical object through the system
 

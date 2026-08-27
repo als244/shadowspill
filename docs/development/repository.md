@@ -48,7 +48,7 @@ src/shadowspill/
     ├── runtime_adapter/   Python-to-C runtime and allocator boundary
     ├── diagnostics/       PlanReport and StepDiagnostics
     ├── state/             persistent model/optimizer import
-    └── program_serialization/
+    └── serialization/   (moved to shadowspill/planner/)
 ```
 
 High-level modules expose small orchestration functions. Detailed algorithms

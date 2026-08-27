@@ -4,17 +4,18 @@ Use `make_step_program()` when capture, graph-pair construction, compilation,
 profiling, and canonical Program lowering should occur once. The resulting
 `StepProgram` can be serialized and its recurrent or initial
 `PressureFitProgram` evaluated repeatedly without executing the model or
-repeating compiler work.
+repeating compiler work. Capturing one needs the frontend; planning one
+again does not, so the second half of this example imports no torch.
 
 ```python
 from pathlib import Path
 
-from shadowspill.pytorch import (
+from shadowspill.planner import (
     StepProgram,
     TransferBandwidths,
-    make_step_program,
     pressurefit_program,
 )
+from shadowspill.pytorch import make_step_program
 
 step_program = make_step_program(
     model,

@@ -21,7 +21,9 @@ capture/export and stage partitioning
 
 `make_step_program()` stops before PressureFit. `pressurefit_program()` accepts
 that saved program with new budgets or transfer bandwidths, so budget sweeps do
-not repeat capture, compilation, or profiling.
+not repeat capture, compilation, or profiling. Capturing a Program needs the
+frontend; planning a saved one does not, so `pressurefit_program()` lives in
+`shadowspill.planner` and a sweep never imports torch.
 
 ## Policy selection
 

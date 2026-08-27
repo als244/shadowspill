@@ -294,7 +294,7 @@ from allocator pointers or FakeTensor storage identity.
 | `shadowspill.pytorch.graph_pairs.build` | Define the configured variant set and invoke AOT capture. |
 | `shadowspill.pytorch.graph_pairs.artifacts` | Immutable pair, variant, task-graph-pairs, and differentiated-stage records. |
 | `shadowspill.pytorch.graph_pairs.footprint` | Classify saved input, boundary, and internal storage roots. |
-| `shadowspill.pytorch.graph_pairs.repository` | Structural cache identity, persistence, and occurrence rebinding. |
+| `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and occurrence rebinding. |
 | `shadowspill.pytorch.profiling` | Compile and measure each unique forward/backward artifact. |
 | `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit Program groups. |
 
