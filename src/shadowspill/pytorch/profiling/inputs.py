@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -363,7 +362,3 @@ def _seed(structural_contract_key: str, position: int, probe_index: int) -> int:
     )
 
 
-def copy_static_argument(value: object) -> object:
-    """Keep geometry-only compiler materialization's static-copy behavior."""
-
-    return copy.deepcopy(value)

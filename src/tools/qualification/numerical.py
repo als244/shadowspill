@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import ctypes
 import hashlib
 import json
 import os
@@ -24,9 +23,11 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
-from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
 from tools.qualification.model_state import import_case_model, release_case_model
+from tools.qualification.runtime_evidence import (
+    adapter_statistics,
+    check_physical_budget,
+)
 from workloads.numerical import (
     DEFAULT_DEVICE_BUDGETS,
     ModelImplementation,
@@ -252,26 +253,6 @@ def _case_identity(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _adapter_statistics() -> AdapterStatistics:
-    installed = installed_allocator()
-    if installed is None:
-        raise RuntimeError("ShadowSpill allocator is not installed")
-    result = AdapterStatistics()
-    status = int(
-        installed.library.shadowspill_pytorch_allocator_statistics(ctypes.byref(result))
-    )
-    if status != 0:
-        raise RuntimeError(f"allocator statistics failed with status {status}")
-    return result
-
-
-def _check_physical_budget() -> int:
-    installed = installed_allocator()
-    if installed is None:
-        raise RuntimeError("ShadowSpill allocator is not installed")
-    return int(installed.library.shadowspill_pytorch_check_physical_budget())
 
 
 def _planning_breakdown(
@@ -576,8 +557,8 @@ def _planned_worker(
                 "size_bytes": plan_report_path.stat().st_size,
                 "sha256": hashlib.sha256(plan_report_path.read_bytes()).hexdigest(),
             }
-        physical_statuses = [_check_physical_budget()]
-        execution_baseline = _adapter_statistics()
+        physical_statuses = [check_physical_budget()]
+        execution_baseline = adapter_statistics()
         losses: list[list[float]] = []
         timings: list[float] = []
         compute_timings: list[float] = []
@@ -593,7 +574,7 @@ def _planned_worker(
                 raise AssertionError("runtime_trace=True omitted execution diagnostics")
             diagnostics = step_result.diagnostics.result()
             execution_timing = diagnostics.timing
-            physical_statuses.append(_check_physical_budget())
+            physical_statuses.append(check_physical_budget())
             timings.append(time.perf_counter() - started)
             compute_timings.append(execution_timing.compute_seconds)
             execution_timings.append(
@@ -630,7 +611,7 @@ def _planned_worker(
             if step_result.diagnostics is None:
                 raise AssertionError("runtime_trace=True omitted replay diagnostics")
             step_result.diagnostics.result()
-            physical_statuses.append(_check_physical_budget())
+            physical_statuses.append(check_physical_budget())
             replay_losses.append([float(item) for item in step_result.objectives])
             del step_result
             print(
@@ -642,7 +623,7 @@ def _planned_worker(
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
         report = training.plan_report
-        runtime_statistics = _adapter_statistics()
+        runtime_statistics = adapter_statistics()
         training.close()
         # Reference parity, checkpoint replay, and transfer evidence all read
         # the state_dict() copies captured above; the model itself is never

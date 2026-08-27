@@ -17,38 +17,33 @@ class CaptureError(PlanningError):
     """Raised when the frontend cannot represent the requested fixed graph."""
 
 
-class CompilationError(PlanningError):
+class TaskPhaseError(PlanningError):
+    """A phase that failed on one task, and which task it was.
+
+    Compiling and profiling both fail per task and both want to say which
+    one, so they carry the same three facts rather than each inventing them.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        structural_contract: str | None = None,
+        task_kind: str | None = None,
+        operators: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.structural_contract = structural_contract
+        self.task_kind = task_kind
+        self.operators = operators
+
+
+class CompilationError(TaskPhaseError):
     """Raised when a captured structural task cannot be compiled."""
 
-    def __init__(
-        self,
-        message: str,
-        *,
-        structural_contract: str | None = None,
-        task_kind: str | None = None,
-        operators: tuple[str, ...] = (),
-    ) -> None:
-        super().__init__(message)
-        self.structural_contract = structural_contract
-        self.task_kind = task_kind
-        self.operators = operators
 
-
-class ProfilingError(PlanningError):
+class ProfilingError(TaskPhaseError):
     """Raised when an isolated task cannot be measured or audited."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        structural_contract: str | None = None,
-        task_kind: str | None = None,
-        operators: tuple[str, ...] = (),
-    ) -> None:
-        super().__init__(message)
-        self.structural_contract = structural_contract
-        self.task_kind = task_kind
-        self.operators = operators
 
 
 class AdmissionError(PlanningError):
@@ -98,4 +93,5 @@ __all__ = [
     "PlanSearchExhaustedError",
     "PlanningError",
     "ProfilingError",
+    "TaskPhaseError",
 ]

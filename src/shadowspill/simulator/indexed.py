@@ -690,20 +690,6 @@ def simulate_template(
     return _simulate_projection(_bind_schedule(template, schedule, admission), schedule)
 
 
-def simulate_template_summary(
-    template: IndexedSimulationTemplate,
-    schedule: MemorySchedule,
-) -> IndexedSimulationSummary:
-    """Replay a candidate without decoding its detailed interval report."""
-
-    projection = _bind_schedule(template, schedule)
-    _tasks, _transfers, _peaks, _violations, result = _run_projection(
-        projection,
-        schedule,
-    )
-    return IndexedSimulationSummary(int(result.makespan_ns))
-
-
 @dataclass(frozen=True, slots=True)
 class IntervalArrays:
     """The simulator's own interval arrays, borrowed by compiled consumers.
@@ -866,5 +852,4 @@ __all__ = [
     "index_simulation_template",
     "simulate_program",
     "simulate_template",
-    "simulate_template_summary",
 ]

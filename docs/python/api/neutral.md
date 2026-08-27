@@ -9,9 +9,11 @@ What planning raises when it cannot answer. One hierarchy, because callers
 catch `PlanningError` to mean "planning did not produce a plan" without
 caring which phase gave up:
 
-- `PlanningError` is the base. `CaptureError`, `CompilationError` and
-  `ProfilingError` name the phase that gave up; the latter two carry the
-  structural contract, task kind, and operators involved.
+- `PlanningError` is the base, and `CaptureError` names a graph the
+  frontend could not represent.
+- `TaskPhaseError` is a phase that failed on one task and says which:
+  `CompilationError` and `ProfilingError` both carry the structural
+  contract, task kind, and operators involved, so they share it.
 - `AdmissionError` covers memory that cannot be physically admitted, and
   `PlanInfeasibleError` narrows that to "no schedule satisfies the declared
   constraints", carrying the kind, device, boundary task, and the required
