@@ -919,6 +919,13 @@ class CudaTaskProfiler:
                 stream,
                 lambda executable: self._invoke_profile_task(executable, stream),
             )
+            # That call drains before it returns, but the optimizer it built
+            # and the outputs it produced are released as it returns, which is
+            # after the drain. Their retirements are event-fenced, so reading
+            # now would count memory that is already free -- a few hundred
+            # bytes that move with how far the worker happened to get, which no
+            # equality test can see through.
+            self._diagnose_allocator_idle(problem="opaque optimizer first step")
             current = self._requested_allocated_bytes()
             persistent_high_water = max(persistent_high_water, current)
             if iteration + 1 >= self._warmups and current == previous:
