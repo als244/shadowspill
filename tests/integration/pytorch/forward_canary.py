@@ -25,7 +25,11 @@ from shadowspill.pytorch import (
     shared_input,
     shared_output,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, ObjectSnapshot
+from shadowspill.pytorch.runtime_adapter.abi import (
+    AdapterStatistics,
+    ObjectSnapshot,
+    runtime_library,
+)
 from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
 
 
@@ -62,8 +66,8 @@ def _statistics() -> AdapterStatistics:
 def _object_exists(runtime: Runtime, object_id: int) -> bool:
     snapshot = ObjectSnapshot()
     return int(
-        runtime._installed.library.shadowspill_pytorch_object_snapshot(
-            object_id, ctypes.byref(snapshot)
+        runtime_library().shadowspill_object_snapshot(
+            runtime._runtime_handle, object_id, ctypes.byref(snapshot)
         )
     ) == 0
 

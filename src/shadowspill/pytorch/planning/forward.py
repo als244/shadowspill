@@ -315,6 +315,7 @@ def profile_forward_tasks(
 
     profiler = CudaTaskProfiler(
         captured.installed.library,
+        runtime_handle=captured.installed.runtime_handle,
         device_ordinal=captured.device_ordinal,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,

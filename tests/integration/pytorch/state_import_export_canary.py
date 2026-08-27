@@ -24,6 +24,7 @@ from shadowspill.pytorch import (
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     ObjectSnapshot,
+    runtime_library,
 )
 from shadowspill.pytorch.state.storage import persistent_state
 
@@ -56,7 +57,8 @@ def _statistics(runtime: Runtime) -> AdapterStatistics:
 def _snapshot(runtime: Runtime, object_id: int) -> ObjectSnapshot:
     result = ObjectSnapshot()
     status = int(
-        runtime._installed.library.shadowspill_pytorch_object_snapshot(
+        runtime_library().shadowspill_object_snapshot(
+            runtime._runtime_handle,
             object_id, ctypes.byref(result)
         )
     )

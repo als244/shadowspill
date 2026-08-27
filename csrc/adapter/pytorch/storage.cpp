@@ -311,15 +311,23 @@ void adopt_storages(
         tensor.numel());
   }
 
+  uintptr_t runtime_handle = 0;
+  TORCH_CHECK(
+      shadowspill_pytorch_runtime_handle(&runtime_handle) ==
+          SHADOWSPILL_STATUS_OK,
+      "the ShadowSpill runtime is closed");
+  auto *const runtime = reinterpret_cast<ShadowSpillRuntime *>(runtime_handle);
+
   for (const auto index : c10::irange(count)) {
     const uint64_t address = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
         tensors[index].storage().data_ptr().get()));
     ShadowSpillObjectBinding binding = {};
     const ShadowSpillStatus status =
-        shadowspill_pytorch_task_publish_allocation(
-            static_cast<uintptr_t>(task_handle),
+        shadowspill_task_publish_allocation(
+            runtime,
+            reinterpret_cast<const ShadowSpillTaskHandle *>(task_handle),
             static_cast<uint32_t>(publication_ordinals[index]),
-            address,
+            reinterpret_cast<const void *>(static_cast<uintptr_t>(address)),
             &binding);
     TORCH_CHECK(
         status == SHADOWSPILL_STATUS_OK,

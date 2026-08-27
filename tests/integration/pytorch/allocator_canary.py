@@ -16,17 +16,31 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectBinding,
     ObjectSnapshot,
     PhysicalMemory,
+    PlanDescription,
     RuntimeAction,
     TaskDescription,
+    runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 
+def _runtime_handle(library: object) -> int:
+    handle = ctypes.c_size_t()
+    status = int(library.shadowspill_pytorch_runtime_handle(ctypes.byref(handle)))
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"runtime handle unavailable (status {status})")
+    return int(handle.value)
+
+
 def _create_plan(library: object) -> int:
     handle = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_create(0, 1, 0, 1, ctypes.byref(handle))
+        runtime_library().shadowspill_plan_create(
+            _runtime_handle(library),
+            ctypes.byref(PlanDescription(0, 1, 0, 1)),
+            ctypes.byref(handle),
+        )
     )
     if status != 0 or handle.value == 0:
         raise AssertionError(f"plan creation failed with status {status}")
@@ -36,7 +50,8 @@ def _create_plan(library: object) -> int:
 def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
     handle = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_object_handle_acquire(
+        runtime_library().shadowspill_object_handle_acquire(
+            _runtime_handle(library),
             object_id, ctypes.byref(handle)
         )
     )
@@ -44,14 +59,14 @@ def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
         raise AssertionError(f"object handle acquisition failed with status {status}")
     try:
         status = int(
-            library.shadowspill_pytorch_plan_bind_object(
+            runtime_library().shadowspill_plan_bind_object(
                 plan, object_id, handle.value, 0
             )
         )
         if status != 0:
             raise AssertionError(f"plan object binding failed with status {status}")
     finally:
-        library.shadowspill_pytorch_object_handle_release(handle.value)
+        runtime_library().shadowspill_object_handle_release(handle.value)
 
 
 def _publish_initial(
@@ -75,7 +90,7 @@ def _publish_initial(
     _bind_plan_object(library, plan, object_id)
     binding = ObjectBinding()
     status = int(
-        library.shadowspill_pytorch_plan_publish_initial_allocation(
+        runtime_library().shadowspill_plan_publish_initial_allocation(
             plan, object_id, tensor.data_ptr(), ctypes.byref(binding)
         )
     )
@@ -96,7 +111,7 @@ def _submit_actions(
     encoded = (RuntimeAction * len(actions))(*actions)
     handle = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_admit_action_batch(
+        runtime_library().shadowspill_plan_admit_action_batch(
             plan, batch_id, encoded, len(actions), ctypes.byref(handle)
         )
     )
@@ -133,7 +148,7 @@ def _admit_task(
     )
     handle = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_admit_task(
+        runtime_library().shadowspill_plan_admit_task(
             plan, ctypes.byref(description), ctypes.byref(handle)
         )
     )
@@ -283,8 +298,10 @@ def main() -> int:
     snapshot = ObjectSnapshot()
     if (
         int(
-            library.shadowspill_pytorch_object_snapshot(
-                binding.object_id, ctypes.byref(snapshot)
+            runtime_library().shadowspill_object_snapshot(
+                _runtime_handle(library),
+                binding.object_id,
+                ctypes.byref(snapshot),
             )
         )
         != 0
@@ -422,7 +439,7 @@ def main() -> int:
     caller_handle = ctypes.c_size_t()
     if (
         int(
-            library.shadowspill_pytorch_plan_admit_object_acquisition(
+            runtime_library().shadowspill_plan_admit_object_acquisition(
                 plan, caller_ids, 1, ctypes.byref(caller_handle)
             )
         )
@@ -499,7 +516,7 @@ def main() -> int:
         raise AssertionError("sealed statistics query failed")
     if sealed_statistics.physical_budget_sealed != 1:
         raise AssertionError("adapter did not retain the physical seal")
-    if int(library.shadowspill_pytorch_plan_clear_tasks(plan)) != 0:
+    if int(runtime_library().shadowspill_plan_clear_tasks(plan)) != 0:
         raise AssertionError("execution-plan clear failed after physical sealing")
     cleared_statistics = AdapterStatistics()
     if (
@@ -520,9 +537,9 @@ def main() -> int:
         > installed.admission.device_budget_bytes
     ):
         raise AssertionError("physical peak exceeded the device cap")
-    if int(library.shadowspill_pytorch_plan_close(plan)) != 0:
+    if int(runtime_library().shadowspill_plan_close(plan)) != 0:
         raise AssertionError("plan close failed")
-    library.shadowspill_pytorch_plan_destroy(plan)
+    runtime_library().shadowspill_plan_destroy(plan)
     return 0
 
 

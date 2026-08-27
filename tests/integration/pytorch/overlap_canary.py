@@ -13,8 +13,10 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     ObjectBinding,
     ObjectSnapshot,
+    PlanDescription,
     RuntimeAction,
     TaskDescription,
+    runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
@@ -43,7 +45,7 @@ def _publish_initial(
     binding = ObjectBinding()
     _require_ok(
         int(
-            library.shadowspill_pytorch_plan_publish_initial_allocation(
+            runtime_library().shadowspill_plan_publish_initial_allocation(
                 plan,
                 object_id,
                 tensor.data_ptr(),
@@ -55,12 +57,12 @@ def _publish_initial(
     return binding
 
 
-def _snapshot(library: object, object_id: int) -> ObjectSnapshot:
+def _snapshot(runtime_handle: int, object_id: int) -> ObjectSnapshot:
     snapshot = ObjectSnapshot()
     _require_ok(
         int(
-            library.shadowspill_pytorch_object_snapshot(
-                object_id, ctypes.byref(snapshot)
+            runtime_library().shadowspill_object_snapshot(
+                runtime_handle, object_id, ctypes.byref(snapshot)
             )
         ),
         "object snapshot",
@@ -68,12 +70,24 @@ def _snapshot(library: object, object_id: int) -> ObjectSnapshot:
     return snapshot
 
 
+def _runtime_handle(library: object) -> int:
+    handle = ctypes.c_size_t()
+    _require_ok(
+        int(library.shadowspill_pytorch_runtime_handle(ctypes.byref(handle))),
+        "runtime handle",
+    )
+    return int(handle.value)
+
+
 def _create_plan(library: object) -> int:
+    runtime_handle = _runtime_handle(library)
     handle = ctypes.c_size_t()
     _require_ok(
         int(
-            library.shadowspill_pytorch_plan_create(
-                0, 1, 0, 1, ctypes.byref(handle)
+            runtime_library().shadowspill_plan_create(
+                runtime_handle,
+                ctypes.byref(PlanDescription(0, 1, 0, 1)),
+                ctypes.byref(handle),
             )
         ),
         "plan creation",
@@ -84,11 +98,12 @@ def _create_plan(library: object) -> int:
 
 
 def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
+    runtime_handle = _runtime_handle(library)
     handle = ctypes.c_size_t()
     _require_ok(
         int(
-            library.shadowspill_pytorch_object_handle_acquire(
-                object_id, ctypes.byref(handle)
+            runtime_library().shadowspill_object_handle_acquire(
+                runtime_handle, object_id, ctypes.byref(handle)
             )
         ),
         "object handle acquisition",
@@ -96,14 +111,14 @@ def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
     try:
         _require_ok(
             int(
-                library.shadowspill_pytorch_plan_bind_object(
+                runtime_library().shadowspill_plan_bind_object(
                     plan, object_id, handle.value, 0
                 )
             ),
             "plan object binding",
         )
     finally:
-        library.shadowspill_pytorch_object_handle_release(handle.value)
+        runtime_library().shadowspill_object_handle_release(handle.value)
 
 
 def _submit_actions(
@@ -119,7 +134,7 @@ def _submit_actions(
     handle = ctypes.c_size_t()
     _require_ok(
         int(
-            library.shadowspill_pytorch_plan_admit_action_batch(
+            runtime_library().shadowspill_plan_admit_action_batch(
                 plan,
                 batch_id,
                 action_array,
@@ -162,7 +177,7 @@ def _admit_task(
     handle = ctypes.c_size_t()
     _require_ok(
         int(
-            library.shadowspill_pytorch_plan_admit_task(
+            runtime_library().shadowspill_plan_admit_task(
                 plan, ctypes.byref(description), ctypes.byref(handle)
             )
         ),
@@ -307,9 +322,9 @@ def main() -> int:
 
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        first_state = _snapshot(library, first_binding.object_id)
-        second_state = _snapshot(library, second_binding.object_id)
-        third_state = _snapshot(library, third_binding.object_id)
+        first_state = _snapshot(installed.runtime_handle, first_binding.object_id)
+        second_state = _snapshot(installed.runtime_handle, second_binding.object_id)
+        third_state = _snapshot(installed.runtime_handle, third_binding.object_id)
         if (
             first_state.residency == 0
             and second_state.residency == 1
@@ -363,8 +378,8 @@ def main() -> int:
         int(library.shadowspill_pytorch_profiler_annotations_set(0)),
         "disable profiler annotations",
     )
-    _require_ok(int(library.shadowspill_pytorch_plan_close(plan)), "plan close")
-    library.shadowspill_pytorch_plan_destroy(plan)
+    _require_ok(int(runtime_library().shadowspill_plan_close(plan)), "plan close")
+    runtime_library().shadowspill_plan_destroy(plan)
     return 0
 
 

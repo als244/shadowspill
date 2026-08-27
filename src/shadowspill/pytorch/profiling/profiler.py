@@ -95,6 +95,7 @@ class CudaTaskProfiler:
         self,
         library: Any,
         *,
+        runtime_handle: int,
         device_ordinal: int,
         warmup_iterations: int = 3,
         sample_iterations: int = 5,
@@ -113,6 +114,7 @@ class CudaTaskProfiler:
                 "allocation paths require at least one seed and two repetitions"
             )
         self._library = library
+        self._runtime_handle = runtime_handle
         self._device_ordinal = device_ordinal
         self._warmups = warmup_iterations
         self._samples = sample_iterations
@@ -1147,7 +1149,9 @@ class CudaTaskProfiler:
         task_id = self._next_scope_id
         self._next_scope_id += 1
         execution_started = time.perf_counter_ns()
-        start_allocation_telemetry(self._library, capacity=self._telemetry_capacity)
+        start_allocation_telemetry(
+            self._runtime_handle, capacity=self._telemetry_capacity
+        )
         task_open = False
         output: object | None = None
         primary_error: BaseException | None = None
@@ -1195,7 +1199,7 @@ class CudaTaskProfiler:
             raise
         finally:
             try:
-                stop_allocation_telemetry(self._library)
+                stop_allocation_telemetry(self._runtime_handle)
             except BaseException as cleanup_error:
                 if primary_error is None:
                     raise
@@ -1204,7 +1208,7 @@ class CudaTaskProfiler:
                 )
         execution_wall = time.perf_counter_ns() - execution_started
         copy_started = time.perf_counter_ns()
-        events = read_allocation_telemetry(self._library)
+        events = read_allocation_telemetry(self._runtime_handle)
         copy_wall = time.perf_counter_ns() - copy_started
         replay_started = time.perf_counter_ns()
         profile = summarize_task_workspace(

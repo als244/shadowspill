@@ -4,6 +4,7 @@ import ctypes
 
 import pytest
 
+from shadowspill.pytorch.runtime_adapter import telemetry as telemetry_module
 from shadowspill.pytorch.runtime_adapter.abi import AllocationEvent as CAllocationEvent
 from shadowspill.pytorch.runtime_adapter.telemetry import (
     AllocationCategory,
@@ -182,7 +183,9 @@ class _ReadFunction:
     def __init__(self, events: tuple[CAllocationEvent, ...]) -> None:
         self.events = events
 
-    def __call__(self, destination: object, capacity: int, count: object) -> int:
+    def __call__(
+        self, runtime_handle: int, destination: object, capacity: int, count: object
+    ) -> int:
         ctypes.cast(count, ctypes.POINTER(ctypes.c_uint64))[0] = len(self.events)
         if destination is not None:
             assert capacity >= len(self.events)
@@ -192,12 +195,16 @@ class _ReadFunction:
         return 0
 
 
-class _Library:
+class _RuntimeLibrary:
+    """Stands in for the neutral runtime the reader now calls."""
+
     def __init__(self, events: tuple[CAllocationEvent, ...]) -> None:
-        self.shadowspill_pytorch_allocation_telemetry_read = _ReadFunction(events)
+        self.shadowspill_allocation_telemetry_read = _ReadFunction(events)
 
 
-def test_read_decodes_no_task_and_validates_sequence() -> None:
+def test_read_decodes_no_task_and_validates_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     raw = CAllocationEvent(
         sequence=0,
         task_id=(1 << 64) - 1,
@@ -210,10 +217,13 @@ def test_read_decodes_no_task_and_validates_sequence() -> None:
         kind=AllocationEventKind.CREATED,
         category=AllocationCategory.ANONYMOUS,
     )
-    decoded = read_allocation_telemetry(_Library((raw,)))
+    monkeypatch.setattr(
+        telemetry_module, "runtime_library", lambda: _RuntimeLibrary((raw,))
+    )
+    decoded = read_allocation_telemetry(0)
     assert decoded[0].task_id is None
     assert decoded[0].charged_bytes == 1
 
     raw.sequence = 2
     with pytest.raises(AllocationTelemetryError, match="sequence"):
-        read_allocation_telemetry(_Library((raw,)))
+        read_allocation_telemetry(0)

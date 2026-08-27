@@ -72,6 +72,7 @@ def main() -> int:
 
     profiler = CudaTaskProfiler(
         installed.library,
+        runtime_handle=installed.runtime_handle,
         device_ordinal=0,
         warmup_iterations=2,
         sample_iterations=3,

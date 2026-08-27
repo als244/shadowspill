@@ -9,7 +9,10 @@ from typing import Any
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.abi import ObjectLocationSnapshot
+from shadowspill.pytorch.runtime_adapter.abi import (
+    ObjectLocationSnapshot,
+    runtime_library,
+)
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.runtime import (
     MemoryPool,
@@ -119,7 +122,9 @@ def register_tensor_storages(
                 ),
                 f"import persistent object {object_id}",
             )
-            snapshot = _snapshot(library, object_id, selected_pool.pool_id)
+            snapshot = _snapshot(
+                runtime._runtime_handle, object_id, selected_pool.pool_id
+            )
             pool_pointer = int(snapshot.pointer or 0)
             if not snapshot.has_lease or not snapshot.current:
                 raise RuntimeError(
@@ -170,10 +175,11 @@ def unregister_tensor_storages(
 ) -> None:
     """Release newly registered storages during rollback."""
 
-    library = runtime._installed.library
     for item in reversed(tuple(storages)):
         _require_status(
-            library.shadowspill_pytorch_unregister_object(item.current_object_id),
+            runtime_library().shadowspill_unregister_object(
+                runtime._runtime_handle, item.current_object_id
+            ),
             f"release persistent object {item.current_object_id}",
         )
 
@@ -223,11 +229,12 @@ def export_tensors(
     ]
     for item, owner in zip(state.storages, owners, strict=True):
         _require_status(
-            library.shadowspill_pytorch_read_object(
-                item.pool_id,
+            runtime_library().shadowspill_read_object(
+                runtime._runtime_handle,
                 item.current_object_id,
-                item.size_bytes,
+                item.pool_id,
                 int(owner.untyped_storage().data_ptr()),
+                item.size_bytes,
             ),
             f"export persistent object {item.current_object_id}",
         )
@@ -241,7 +248,9 @@ def export_tensors(
     if release_runtime:
         for item in state.storages:
             _require_status(
-                library.shadowspill_pytorch_unregister_object(item.current_object_id),
+                runtime_library().shadowspill_unregister_object(
+                runtime._runtime_handle, item.current_object_id
+            ),
                 f"release persistent object {item.current_object_id}",
             )
         registry.remove(target)
@@ -270,14 +279,14 @@ def adopt_persistent_tensor(
     item = state.by_storage_identity().get(int(tensor.untyped_storage()._cdata))
     if item is None:
         return None
-    library = runtime._installed.library
     if item.frontend_storage_is_separate:
         _require_status(
-            library.shadowspill_pytorch_write_object(
-                item.pool_id,
+            runtime_library().shadowspill_write_object(
+                runtime._runtime_handle,
                 item.current_object_id,
-                item.size_bytes,
+                item.pool_id,
                 int(item.anchor.untyped_storage().data_ptr()),
+                item.size_bytes,
             ),
             f"refresh persistent object {item.current_object_id}",
         )
@@ -299,16 +308,16 @@ def restore_persistent_state(
 
     if state is None:
         return
-    library = runtime._installed.library
     for item in state.storages:
         if not item.frontend_storage_is_separate:
             continue
         _require_status(
-            library.shadowspill_pytorch_read_object(
-                item.pool_id,
+            runtime_library().shadowspill_read_object(
+                runtime._runtime_handle,
                 item.current_object_id,
-                item.size_bytes,
+                item.pool_id,
                 int(item.anchor.untyped_storage().data_ptr()),
+                item.size_bytes,
             ),
             f"restore persistent object {item.current_object_id}",
         )
@@ -318,13 +327,13 @@ def restore_persistent_state(
 def restore_persistent_object_ids(runtime: Runtime) -> None:
     """Return adopted objects to their stable IDs after task records clear."""
 
-    library = runtime._installed.library
     for state in registry_for(runtime).values():
         for item in state.storages:
             if item.current_object_id == item.persistent_object_id:
                 continue
             _require_status(
-                library.shadowspill_pytorch_rekey_object(
+                runtime_library().shadowspill_rekey_object(
+                    runtime._runtime_handle,
                     item.current_object_id,
                     item.persistent_object_id,
                 ),
@@ -406,12 +415,12 @@ def _validate_pool(
 
 
 def _snapshot(
-    library: Any, object_id: int, pool_id: int
+    runtime_handle: int, object_id: int, pool_id: int
 ) -> ObjectLocationSnapshot:
     result = ObjectLocationSnapshot()
     _require_status(
-        library.shadowspill_pytorch_object_location_snapshot(
-            object_id, pool_id, ctypes.byref(result)
+        runtime_library().shadowspill_object_location_snapshot(
+            runtime_handle, object_id, pool_id, ctypes.byref(result)
         ),
         f"inspect persistent object {object_id}",
     )

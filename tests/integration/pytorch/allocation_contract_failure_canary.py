@@ -9,8 +9,10 @@ from pathlib import Path
 import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import (
+    PlanDescription,
     TaskAllocationContractStep,
     TaskDescription,
+    runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import (
@@ -24,10 +26,22 @@ TASK_ID = 17
 CONTRACT_MISMATCH = Status.TASK_ALLOCATION_CONTRACT_MISMATCH
 
 
+def _runtime_handle(library: object) -> int:
+    handle = ctypes.c_size_t()
+    status = int(library.shadowspill_pytorch_runtime_handle(ctypes.byref(handle)))
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"runtime handle unavailable (status {status})")
+    return int(handle.value)
+
+
 def _admit_task(library: object, description: TaskDescription) -> int:
     plan = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_create(0, 1, 0, 1, ctypes.byref(plan))
+        runtime_library().shadowspill_plan_create(
+            _runtime_handle(library),
+            ctypes.byref(PlanDescription(0, 1, 0, 1)),
+            ctypes.byref(plan),
+        )
     )
     if status != 0 or plan.value == 0:
         raise AssertionError(
@@ -35,7 +49,7 @@ def _admit_task(library: object, description: TaskDescription) -> int:
         )
     task = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_admit_task(
+        runtime_library().shadowspill_plan_admit_task(
             plan.value, ctypes.byref(description), ctypes.byref(task)
         )
     )

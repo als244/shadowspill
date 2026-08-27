@@ -8,7 +8,12 @@ from pathlib import Path
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, TaskDescription
+from shadowspill.pytorch.runtime_adapter.abi import (
+    AdapterFailure,
+    PlanDescription,
+    TaskDescription,
+    runtime_library,
+)
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from shadowspill.pytorch.runtime_adapter.failures import (
     ExecutionTaskIdentity,
@@ -24,16 +29,28 @@ NO_PROGRESS = Status.NO_PROGRESS
 REQUEST_BYTES = 128 << 20
 
 
+def _runtime_handle(library: object) -> int:
+    handle = ctypes.c_size_t()
+    status = int(library.shadowspill_pytorch_runtime_handle(ctypes.byref(handle)))
+    if status != 0 or handle.value == 0:
+        raise AssertionError(f"runtime handle unavailable (status {status})")
+    return int(handle.value)
+
+
 def _admit_task(library: object, description: TaskDescription) -> tuple[int, int]:
     plan = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_create(0, 1, 0, 1, ctypes.byref(plan))
+        runtime_library().shadowspill_plan_create(
+            _runtime_handle(library),
+            ctypes.byref(PlanDescription(0, 1, 0, 1)),
+            ctypes.byref(plan),
+        )
     )
     if status != 0 or plan.value == 0:
         raise AssertionError(f"failed to create OOM canary plan: status={status}")
     task = ctypes.c_size_t()
     status = int(
-        library.shadowspill_pytorch_plan_admit_task(
+        runtime_library().shadowspill_plan_admit_task(
             plan.value, ctypes.byref(description), ctypes.byref(task)
         )
     )
@@ -158,9 +175,9 @@ def main() -> int:
     probe = torch.empty((1024,), dtype=torch.uint8, device="cuda")
     if probe.data_ptr() == 0:
         raise AssertionError("allocator remained unusable after recovery")
-    if int(installed.library.shadowspill_pytorch_plan_close(plan_handle)) != 0:
+    if int(runtime_library().shadowspill_plan_close(plan_handle)) != 0:
         raise AssertionError("failed to close OOM canary plan")
-    installed.library.shadowspill_pytorch_plan_destroy(plan_handle)
+    runtime_library().shadowspill_plan_destroy(plan_handle)
     return 0
 
 

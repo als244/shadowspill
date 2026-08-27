@@ -241,6 +241,19 @@ static ShadowSpillRuntime *bound_runtime(int32_t *device_ordinal) {
     );
 }
 
+ShadowSpillStatus shadowspill_pytorch_runtime_handle(
+    uintptr_t *runtime_handle
+) {
+    if (runtime_handle == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    *runtime_handle = (uintptr_t)runtime;
+    return runtime == NULL ? SHADOWSPILL_STATUS_CLOSED : SHADOWSPILL_STATUS_OK;
+}
+
 static uint32_t bound_allocator_pool_id(void) {
     return atomic_load_explicit(
         &adapter.published_allocator_pool_id, memory_order_relaxed
@@ -1250,92 +1263,6 @@ ShadowSpillStatus shadowspill_pytorch_transfer_profiles(
     );
 }
 
-ShadowSpillStatus shadowspill_pytorch_allocation_telemetry_start(
-    uint64_t capacity
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_allocation_telemetry_start(runtime, capacity);
-}
-
-ShadowSpillStatus shadowspill_pytorch_allocation_telemetry_stop(void) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_allocation_telemetry_stop(runtime);
-}
-
-ShadowSpillStatus shadowspill_pytorch_allocation_telemetry_read(
-    ShadowSpillAllocationEvent *events,
-    uint64_t capacity,
-    uint64_t *count
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_allocation_telemetry_read(
-              runtime, events, capacity, count
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_trace_prepare(
-    const ShadowSpillTraceConfig *config
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_trace_prepare(runtime, config);
-}
-
-ShadowSpillStatus shadowspill_pytorch_trace_begin(uint64_t step_id) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_trace_begin(runtime, step_id);
-}
-
-ShadowSpillStatus shadowspill_pytorch_trace_end(void) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_trace_end(runtime);
-}
-
-ShadowSpillStatus shadowspill_pytorch_trace_read(
-    ShadowSpillTraceSummary *summary,
-    ShadowSpillTraceEvent *events,
-    uint64_t event_capacity,
-    ShadowSpillAllocationEvent *allocation_events,
-    uint64_t allocation_event_capacity
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_trace_read(
-              runtime,
-              summary,
-              events,
-              event_capacity,
-              allocation_events,
-              allocation_event_capacity
-          );
-}
-
 ShadowSpillStatus shadowspill_pytorch_allocation_for_pointer(
     uint64_t address,
     ShadowSpillAllocation *allocation
@@ -1418,75 +1345,6 @@ ShadowSpillStatus shadowspill_pytorch_register_placeholder_object(
     return shadowspill_register_object(runtime, &description);
 }
 
-ShadowSpillStatus shadowspill_pytorch_rekey_object(
-    uint64_t object_id,
-    uint64_t replacement_object_id
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_rekey_object(runtime, object_id, replacement_object_id);
-}
-
-ShadowSpillStatus shadowspill_pytorch_write_object(
-    uint32_t pool_id,
-    uint64_t object_id,
-    uint64_t size_bytes,
-    uint64_t source_address
-) {
-    if (size_bytes != 0U && source_address == 0U) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_write_object(
-              runtime,
-              object_id,
-              pool_id,
-              (const void *)(uintptr_t)source_address,
-              size_bytes
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_read_object(
-    uint32_t pool_id,
-    uint64_t object_id,
-    uint64_t size_bytes,
-    uint64_t destination_address
-) {
-    if (size_bytes != 0U && destination_address == 0U) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_read_object(
-              runtime,
-              object_id,
-              pool_id,
-              (void *)(uintptr_t)destination_address,
-              size_bytes
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_unregister_object(
-    uint64_t object_id
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_unregister_object(runtime, object_id);
-}
-
 ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
     uint64_t allocation_id,
     uintptr_t stream
@@ -1502,170 +1360,6 @@ ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
               allocation_id,
               shadowspill_cuda_wrap_stream(stream)
           );
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_create(
-    uint32_t execution_pool_id,
-    uint32_t spill_pool_id,
-    uint32_t fetch_route_id,
-    uint32_t evict_route_id,
-    uintptr_t *plan_handle
-) {
-    if (plan_handle == NULL) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    *plan_handle = 0U;
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    ShadowSpillPlan *plan = NULL;
-    const ShadowSpillPlanDescription description = {
-        .execution_pool_id = execution_pool_id,
-        .spill_pool_id = spill_pool_id,
-        .fetch_route_id = fetch_route_id,
-        .evict_route_id = evict_route_id,
-    };
-    const ShadowSpillStatus status = shadowspill_plan_create(
-        runtime, &description, &plan
-    );
-    if (status == SHADOWSPILL_STATUS_OK) {
-        *plan_handle = (uintptr_t)plan;
-    }
-    return status;
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_close(
-    uintptr_t plan_handle
-) {
-    return plan_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_close((ShadowSpillPlan *)plan_handle);
-}
-
-void shadowspill_pytorch_plan_destroy(uintptr_t plan_handle) {
-    shadowspill_plan_destroy((ShadowSpillPlan *)plan_handle);
-}
-
-ShadowSpillStatus shadowspill_pytorch_object_handle_acquire(
-    uint64_t runtime_object_id,
-    uintptr_t *object_handle
-) {
-    if (object_handle == NULL) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    *object_handle = 0U;
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    ShadowSpillObjectHandle *handle = NULL;
-    const ShadowSpillStatus status = shadowspill_object_handle_acquire(
-        runtime, runtime_object_id, &handle
-    );
-    if (status == SHADOWSPILL_STATUS_OK) {
-        *object_handle = (uintptr_t)handle;
-    }
-    return status;
-}
-
-ShadowSpillStatus shadowspill_pytorch_object_handle_release(
-    uintptr_t object_handle
-) {
-    return shadowspill_object_handle_release(
-        (ShadowSpillObjectHandle *)object_handle
-    );
-}
-
-ShadowSpillStatus shadowspill_pytorch_object_release_generation(
-    uintptr_t object_handle,
-    uint64_t expected_generation
-) {
-    return object_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_object_release_generation(
-              (const ShadowSpillObjectHandle *)object_handle,
-              expected_generation
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_bind_object(
-    uintptr_t plan_handle,
-    uint64_t plan_object_id,
-    uintptr_t object_handle,
-    uint8_t consistency
-) {
-    return plan_handle == 0U || object_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_bind_object(
-              (ShadowSpillPlan *)plan_handle,
-              plan_object_id,
-              (const ShadowSpillObjectHandle *)object_handle,
-              consistency
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_admit_task(
-    uintptr_t plan_handle,
-    const ShadowSpillTaskDescription *description,
-    uintptr_t *task_handle
-) {
-    if (plan_handle == 0U || task_handle == NULL) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    *task_handle = 0U;
-    const ShadowSpillTaskHandle *handle = NULL;
-    const ShadowSpillStatus status = shadowspill_plan_admit_task(
-        (ShadowSpillPlan *)plan_handle, description, &handle
-    );
-    if (status == SHADOWSPILL_STATUS_OK) {
-        *task_handle = (uintptr_t)handle;
-    }
-    return status;
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_publish_initial_allocation(
-    uintptr_t plan_handle,
-    uint64_t plan_object_id,
-    uint64_t address,
-    ShadowSpillObjectBinding *binding
-) {
-    return plan_handle == 0U || address == 0U || binding == NULL
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_publish_initial_allocation(
-              (ShadowSpillPlan *)plan_handle,
-              plan_object_id,
-              (const void *)(uintptr_t)address,
-              binding
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_task_publish_allocation(
-    uintptr_t task_handle,
-    uint32_t publication_ordinal,
-    uint64_t address,
-    ShadowSpillObjectBinding *binding
-) {
-    if (task_handle == 0U || address == 0U || binding == NULL) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    return shadowspill_task_publish_allocation(
-        runtime,
-        (const ShadowSpillTaskHandle *)task_handle,
-        publication_ordinal,
-        (const void *)(uintptr_t)address,
-        binding
-    );
 }
 
 ShadowSpillStatus
@@ -1691,92 +1385,6 @@ shadowspill_pytorch_validate_task_replacement_binding(
               (const void *)(uintptr_t)retired_address,
               (const void *)(uintptr_t)successor_address
           );
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_admit_fixed_layout(
-    uintptr_t plan_handle,
-    const ShadowSpillFixedLayoutDescription *description
-) {
-    return plan_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_admit_fixed_layout(
-              (ShadowSpillPlan *)plan_handle, description
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_seal_fixed_layout(
-    uintptr_t plan_handle
-) {
-    return plan_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_seal_fixed_layout(
-              (ShadowSpillPlan *)plan_handle
-          );
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_clear_tasks(
-    uintptr_t plan_handle
-) {
-    return plan_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_clear_tasks((ShadowSpillPlan *)plan_handle);
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_wait_idle(
-    uintptr_t plan_handle
-) {
-    return plan_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_plan_wait_idle((ShadowSpillPlan *)plan_handle);
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_admit_object_acquisition(
-    uintptr_t plan_handle,
-    const uint64_t *object_ids,
-    uint32_t object_count,
-    uintptr_t *acquisition_handle
-) {
-    if (plan_handle == 0U || acquisition_handle == NULL) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    *acquisition_handle = 0U;
-    const ShadowSpillObjectAcquisitionHandle *handle = NULL;
-    const ShadowSpillStatus status =
-        shadowspill_plan_admit_object_acquisition(
-            (ShadowSpillPlan *)plan_handle,
-            object_ids,
-            object_count,
-            &handle
-        );
-    if (status == SHADOWSPILL_STATUS_OK) {
-        *acquisition_handle = (uintptr_t)handle;
-    }
-    return status;
-}
-
-ShadowSpillStatus shadowspill_pytorch_plan_admit_action_batch(
-    uintptr_t plan_handle,
-    uint64_t batch_id,
-    const ShadowSpillRuntimeAction *actions,
-    uint32_t action_count,
-    uintptr_t *action_batch_handle
-) {
-    if (plan_handle == 0U || action_batch_handle == NULL) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    *action_batch_handle = 0U;
-    const ShadowSpillActionBatchHandle *handle = NULL;
-    const ShadowSpillStatus status = shadowspill_plan_admit_action_batch(
-        (ShadowSpillPlan *)plan_handle,
-        batch_id,
-        actions,
-        action_count,
-        &handle
-    );
-    if (status == SHADOWSPILL_STATUS_OK) {
-        *action_batch_handle = (uintptr_t)handle;
-    }
-    return status;
 }
 
 ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
@@ -1983,34 +1591,6 @@ void shadowspill_pytorch_allocation_scope_abort(void) {
     end_task_range();
 }
 
-ShadowSpillStatus shadowspill_pytorch_object_snapshot(
-    uint64_t object_id,
-    ShadowSpillObjectSnapshot *snapshot
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    return shadowspill_object_snapshot(runtime, object_id, snapshot);
-}
-
-ShadowSpillStatus shadowspill_pytorch_object_location_snapshot(
-    uint64_t object_id,
-    uint32_t pool_id,
-    ShadowSpillObjectLocationSnapshot *snapshot
-) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_object_location_snapshot(
-              runtime, object_id, pool_id, snapshot
-          );
-}
-
 ShadowSpillStatus shadowspill_pytorch_validate_object_binding(
     uint32_t pool_id,
     uint64_t object_id,
@@ -2020,9 +1600,15 @@ ShadowSpillStatus shadowspill_pytorch_validate_object_binding(
     if (address == 0U && size_bytes != 0U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    if (runtime == NULL) {
+        return SHADOWSPILL_STATUS_CLOSED;
+    }
     ShadowSpillObjectLocationSnapshot snapshot = {0};
-    ShadowSpillStatus status = shadowspill_pytorch_object_location_snapshot(
-        object_id, pool_id, &snapshot
+    ShadowSpillStatus status = shadowspill_object_location_snapshot(
+        runtime, object_id, pool_id, &snapshot
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;

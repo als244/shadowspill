@@ -51,6 +51,10 @@ class InstalledAllocator:
     allocator: Any
     path: Path
     admission: PhysicalAdmission
+    #: The neutral runtime this process bound. Callers that only need a
+    #: runtime call the neutral library with this, rather than going through
+    #: an entry point here that would fetch the same pointer and forward.
+    runtime_handle: int = 0
     fixed_execution_bytes: int = 0
 
 
@@ -178,9 +182,22 @@ def install_allocator(
         allocator,
         path,
         admission,
+        _published_runtime_handle(library),
         fixed_execution_bytes,
     )
     return _installed
+
+
+def _published_runtime_handle(library: Any) -> int:
+    """Read the neutral runtime the bootstrap just published."""
+
+    handle = ctypes.c_size_t(0)
+    status = int(library.shadowspill_pytorch_runtime_handle(ctypes.byref(handle)))
+    if status != 0:
+        raise RuntimeError(
+            f"the runtime was not published after bootstrap (status {status})"
+        )
+    return int(handle.value)
 
 
 def _initialize_provider_state(

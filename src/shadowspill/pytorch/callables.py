@@ -220,15 +220,7 @@ class PlannedForward:
         self._profiler_annotations_active = False
 
     def _release_executor(self) -> None:
-        status = int(
-            self._runtime._installed.library.shadowspill_pytorch_plan_wait_idle(
-                self._plan_handle
-            )
-        )
-        if status != 0:
-            raise RuntimeError(
-                f"compiled forward executor did not become idle (status {status})"
-            )
+        self._runtime._wait_plan_idle(self._plan_handle)
         executor = self._executor
         del self._executor
         del executor
@@ -518,15 +510,7 @@ class PlannedTrainStep:
         self._profiler_annotations_active = False
 
     def _release_executor(self) -> None:
-        status = int(
-            self._runtime._installed.library.shadowspill_pytorch_plan_wait_idle(
-                self._plan_handle
-            )
-        )
-        if status != 0:
-            raise RuntimeError(
-                f"compiled training executor did not become idle (status {status})"
-            )
+        self._runtime._wait_plan_idle(self._plan_handle)
         executor = self._executor
         del self._executor
         del executor

@@ -5,13 +5,13 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     AllocationEvent,
     TraceConfig,
     TraceEvent,
     TraceSummary,
+    runtime_library,
 )
 from shadowspill.pytorch.runtime_adapter.telemetry import (
     NO_ID,
@@ -133,7 +133,7 @@ class CapturedRuntimeTrace:
 
 
 def prepare_runtime_trace(
-    library: Any, *, event_capacity: int, allocation_event_capacity: int
+    runtime_handle: int, *, event_capacity: int, allocation_event_capacity: int
 ) -> None:
     if event_capacity <= 0 or allocation_event_capacity <= 0:
         raise ValueError("trace capacities must be positive")
@@ -142,27 +142,32 @@ def prepare_runtime_trace(
         event_capacity=event_capacity,
         allocation_event_capacity=allocation_event_capacity,
     )
-    status = int(library.shadowspill_pytorch_trace_prepare(ctypes.byref(config)))
+    status = int(runtime_library().shadowspill_trace_prepare(
+            runtime_handle, ctypes.byref(config)
+        ))
     if status != 0:
         raise RuntimeError(f"runtime trace preparation failed with status {status}")
 
 
-def begin_runtime_trace(library: Any, *, step_id: int) -> None:
-    status = int(library.shadowspill_pytorch_trace_begin(step_id))
+def begin_runtime_trace(
+    runtime_handle: int, *, step_id: int) -> None:
+    status = int(runtime_library().shadowspill_trace_begin(runtime_handle, step_id))
     if status != 0:
         raise RuntimeError(f"runtime trace begin failed with status {status}")
 
 
-def end_runtime_trace(library: Any) -> None:
-    status = int(library.shadowspill_pytorch_trace_end())
+def end_runtime_trace(runtime_handle: int) -> None:
+    status = int(runtime_library().shadowspill_trace_end(runtime_handle))
     if status != 0:
         raise RuntimeError(f"runtime trace end failed with status {status}")
 
 
-def read_runtime_trace(library: Any) -> CapturedRuntimeTrace:
+def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
     summary = TraceSummary()
     status = int(
-        library.shadowspill_pytorch_trace_read(ctypes.byref(summary), None, 0, None, 0)
+        runtime_library().shadowspill_trace_read(
+            runtime_handle, ctypes.byref(summary), None, 0, None, 0
+        )
     )
     if status != 0 or int(summary.abi_version) != ABI_VERSION:
         raise RuntimeError(f"runtime trace query failed with status {status}")
@@ -170,7 +175,8 @@ def read_runtime_trace(library: Any) -> CapturedRuntimeTrace:
     allocation_buffer = (AllocationEvent * int(summary.allocation_event_count))()
     copied = TraceSummary()
     status = int(
-        library.shadowspill_pytorch_trace_read(
+        runtime_library().shadowspill_trace_read(
+            runtime_handle,
             ctypes.byref(copied),
             event_buffer if summary.event_count else None,
             int(summary.event_count),
