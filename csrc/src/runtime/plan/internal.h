@@ -155,6 +155,18 @@ ShadowSpillStatus shadowspill_fixed_layout_wait_for_dependencies(
     ShadowSpillBackendStream stream
 );
 
+/*
+ * Resolves every planned task allocation's range-reuse dependency at the task
+ * boundary rather than at the allocation that first needs the range, so the
+ * stall falls in an interval the boundary owns.
+ */
+ShadowSpillStatus shadowspill_fixed_layout_wait_for_task_allocations(
+    ShadowSpillPlan *plan,
+    uint64_t task_id,
+    uint64_t invocation,
+    ShadowSpillBackendStream stream
+);
+
 void shadowspill_plan_destroy_all(ShadowSpillRuntime *runtime);
 
 #endif

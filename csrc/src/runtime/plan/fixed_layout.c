@@ -461,6 +461,39 @@ ShadowSpillStatus shadowspill_fixed_layout_wait_for_dependencies(
     }
 }
 
+ShadowSpillStatus shadowspill_fixed_layout_wait_for_task_allocations(
+    ShadowSpillPlan *plan,
+    uint64_t task_id,
+    uint64_t invocation,
+    ShadowSpillBackendStream stream
+) {
+    if (plan == NULL || !plan->fixed_layout.sealed) {
+        return SHADOWSPILL_STATUS_OK;
+    }
+    const ShadowSpillFixedLayoutState *layout = &plan->fixed_layout;
+    for (uint64_t index = 0U; index < layout->placement_count; ++index) {
+        const ShadowSpillFixedPlacementDescription *placement =
+            &layout->placements[index];
+        if (placement->kind != SHADOWSPILL_FIXED_TASK_ALLOCATION ||
+            placement->task_id != task_id) {
+            continue;
+        }
+        const ShadowSpillStatus status =
+            shadowspill_fixed_layout_wait_for_dependencies(
+                plan,
+                SHADOWSPILL_FIXED_TASK_ALLOCATION,
+                task_id,
+                placement->ordinal,
+                invocation,
+                stream
+            );
+        if (status != SHADOWSPILL_STATUS_OK) {
+            return status;
+        }
+    }
+    return SHADOWSPILL_STATUS_OK;
+}
+
 static ShadowSpillStatus copy_layout_description(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description

@@ -30,6 +30,7 @@ before_task boundary                     # the frontend's, start to finish
     shadowspill_before_task_handle(...)  # the neutral call, returns bindings
     check each binding against the storage that will receive it
     point each storage at the address the runtime returned
+    shadowspill_wait_task_allocations(...)  # ranges this task will allocate into
 
     ... the task's kernels run ...
 
@@ -80,6 +81,31 @@ The refusal in the middle is how a failure anywhere - including on the worker
 thread - stops the next task. Object acquisition consults the failure latch
 before it hands any object over, so a runtime that has already failed cannot
 start new work.
+
+### `shadowspill_wait_task_allocations_handle`
+
+```text
+wait_task_allocations(runtime, task, compute_stream)
+    for every allocation the plan pinned to a range for this task:
+        for each transfer that still owns that range:
+            if it has not been dispatched yet, spin until the worker
+                publishes its completion event
+            make the compute stream wait on that event
+```
+
+A task's inputs are acquired above, but its workspace and intermediates are
+allocated later, as the compiled graph runs. Each of those reuses a range the
+plan assigned, and the range may still belong to a transfer in flight. The
+allocator resolves that where the allocation happens, which is inside the
+task, where a wait cannot be told apart from compute. Resolving them here
+instead costs the overlap the late version got -- the first kernel now waits
+on a range only the last allocation needs -- and buys an interval where the
+wait is measurable. See `allocation_reuse_wait_seconds` in
+[step diagnostics](../python/step-diagnostics.md).
+
+The spin is a rendezvous with the worker, not with the copy: it ends when the
+transfer has *started* and published its event, and the copy itself is then
+waited on by the stream rather than the host.
 
 ### `shadowspill_after_task_handle`
 

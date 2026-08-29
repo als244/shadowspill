@@ -369,7 +369,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         task_timing.compute_reached_seconds is None
                         or task_timing.compute_started_seconds is None
                         or task_timing.compute_finished_seconds is None
-                        or task_timing.readiness_wait_seconds is None
+                        or task_timing.input_readiness_wait_seconds is None
+                        or task_timing.allocation_reuse_wait_seconds is None
                         or task_timing.compute_duration_seconds is None
                         or task_timing.runtime_before_task_enter_seconds is None
                         or task_timing.runtime_before_task_exit_seconds is None

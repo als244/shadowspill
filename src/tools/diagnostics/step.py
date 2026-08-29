@@ -187,8 +187,11 @@ def analyze(payload: Mapping[str, Any], *, sample: int = -1) -> dict[str, object
                 ),
                 "dispatch_outer_loop_gap_seconds": outer_gap,
                 "compute_stream_gap_seconds": compute_gap,
-                "next_readiness_wait_seconds": _seconds(
-                    current, "readiness_wait_seconds"
+                "next_input_readiness_wait_seconds": _seconds(
+                    current, "input_readiness_wait_seconds"
+                ),
+                "next_allocation_reuse_wait_seconds": _seconds(
+                    current, "allocation_reuse_wait_seconds"
                 ),
                 "previous_after_components": previous_components,
                 "next_before_components": current_components,

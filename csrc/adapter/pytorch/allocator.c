@@ -1456,6 +1456,24 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     return status;
 }
 
+ShadowSpillStatus shadowspill_pytorch_wait_task_allocations(
+    uintptr_t task_handle,
+    uintptr_t compute_stream_address
+) {
+    const ShadowSpillTaskHandle *handle =
+        (const ShadowSpillTaskHandle *)task_handle;
+    int32_t device_ordinal;
+    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    (void)device_ordinal;
+    return runtime == NULL || task_handle == 0U
+        ? SHADOWSPILL_STATUS_CLOSED
+        : shadowspill_wait_task_allocations_handle(
+            runtime,
+            handle,
+            shadowspill_cuda_wrap_stream(compute_stream_address)
+        );
+}
+
 ShadowSpillStatus shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,
     uintptr_t compute_stream_address

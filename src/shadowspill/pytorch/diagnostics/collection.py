@@ -166,8 +166,13 @@ def _build_task_timing(
         compute_reached_seconds=readiness_seconds,
         compute_started_seconds=compute_start_seconds,
         compute_finished_seconds=compute_end_seconds,
-        readiness_wait_seconds=(
-            float(task.readiness_event.elapsed_time(task.start_event)) / 1_000.0
+        input_readiness_wait_seconds=(
+            float(task.readiness_event.elapsed_time(task.inputs_ready_event))
+            / 1_000.0
+        ),
+        allocation_reuse_wait_seconds=(
+            float(task.inputs_ready_event.elapsed_time(task.start_event))
+            / 1_000.0
         ),
         compute_reached_sequence=sequence_base + 1,
         compute_started_sequence=sequence_base + 2,
@@ -575,14 +580,16 @@ def _build_simulator_comparison(
 def _idle_composition(
     tasks: tuple[TaskExecutionTiming, ...],
 ) -> tuple[float, float, float]:
-    """Split compute-stream idle into waiting for inputs and not being reached.
+    """Split compute-stream idle into waiting and not being reached.
 
     Between one task ending and the next computing, the stream does two
     things: it travels to the next task's readiness marker, then it waits
-    there until that task's inputs are resident. The first is what dispatch
-    costs, the second is what residency costs, and together they are the whole
-    idle -- the span starts at the first task's compute, so nothing else fits
-    between the two ends.
+    there. The waiting has two causes -- the task's inputs are still being
+    fetched, and the ranges its allocations will reuse are still owned by a
+    transfer -- and both are counted here. The first is what dispatch costs,
+    the rest is what residency costs, and together they are the whole idle:
+    the span starts at the first task's compute, so nothing else fits between
+    the two ends.
 
     The first task's wait is returned separately because it finishes where the
     span starts, which puts it outside every span-relative number here while
@@ -595,11 +602,16 @@ def _idle_composition(
     readiness = 0.0
     dispatch = 0.0
     for previous, current in pairwise(ordered):
-        readiness += current.readiness_wait_seconds or 0.0
+        readiness += (current.input_readiness_wait_seconds or 0.0) + (
+            current.allocation_reuse_wait_seconds or 0.0
+        )
         reached = current.compute_reached_seconds or 0.0
         finished = previous.compute_finished_seconds or 0.0
         dispatch += max(0.0, reached - finished)
-    return readiness, dispatch, ordered[0].readiness_wait_seconds or 0.0
+    first = (ordered[0].input_readiness_wait_seconds or 0.0) + (
+        ordered[0].allocation_reuse_wait_seconds or 0.0
+    )
+    return readiness, dispatch, first
 
 
 def _build_step_summary(

@@ -878,6 +878,31 @@ ShadowSpillStatus shadowspill_before_task_handle(
     return status;
 }
 
+ShadowSpillStatus shadowspill_wait_task_allocations_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    ShadowSpillBackendStream compute_stream
+) {
+    const ShadowSpillTaskRecord *record = handle;
+    if (runtime == NULL || record == NULL ||
+        record->plan_owner == NULL || record->plan_owner->runtime != runtime ||
+        record->boundary_kind != SHADOWSPILL_BOUNDARY_TASK) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    /*
+     * Every allocation this task will make reuses a range the plan already
+     * assigned it.  Resolving those here, while the boundary still owns the
+     * interval, keeps the wait out of the task's own compute span.  The
+     * allocator keeps its call, which then finds the dependency published.
+     */
+    return shadowspill_fixed_layout_wait_for_task_allocations(
+        record->plan_owner,
+        record->task_id,
+        shadowspill_current_task_invocation(runtime),
+        compute_stream
+    );
+}
+
 ShadowSpillStatus shadowspill_after_task_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,

@@ -189,8 +189,14 @@ Useful derived values are:
   the compute stream arrived at it, so how far ahead the frontend was;
 - `dispatch_before_task_seconds`: complete frontend `before_task` wall time;
 - `compute_reached_seconds`: when the compute stream arrived at the task;
-- `readiness_wait_seconds`: how long it then waited there for unfinished
-  readiness dependencies;
+- `input_readiness_wait_seconds`: how long it then waited for this task's
+  input objects to finish being fetched;
+- `allocation_reuse_wait_seconds`: how long it waited after that for the
+  ranges this task's planned allocations occupy to be released by whatever
+  transfer still owned them. The two are separate because their causes are:
+  the first is data that has not arrived, the second is an address that is
+  not free yet. Both leave the compute stream idle, and the boundary owns
+  both, so `real_inter_task_idle_seconds` counts them together;
 - `dispatch_after_task_seconds`: complete frontend `after_task` wall time;
 - `dispatch_total_seconds`: before + dispatch + after host work;
 - `compute_started_seconds`, `compute_finished_seconds`: when the task's

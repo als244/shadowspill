@@ -207,7 +207,13 @@ class TrainingExecutor(AnnotatedExecutor):
         self._trace_end_event: torch.cuda.Event | None = None
         self._trace_origin_event: torch.cuda.Event | None = None
         self._trace_task_events: dict[
-            str, tuple[torch.cuda.Event, torch.cuda.Event, torch.cuda.Event]
+            str,
+            tuple[
+                torch.cuda.Event,
+                torch.cuda.Event,
+                torch.cuda.Event,
+                torch.cuda.Event,
+            ],
         ] = {}
         self._span_start_event: torch.cuda.Event | None = None
         self._span_end_event: torch.cuda.Event | None = None
@@ -287,6 +293,7 @@ class TrainingExecutor(AnnotatedExecutor):
                 event_factory(enable_timing=True),
                 event_factory(enable_timing=True),
                 event_factory(enable_timing=True),
+                event_factory(enable_timing=True),
             )
             for task_id in task_ids
         }
@@ -296,10 +303,9 @@ class TrainingExecutor(AnnotatedExecutor):
         self._trace_origin_event.record(stream)
         self._trace_start_event.record(stream)
         self._trace_end_event.record(stream)
-        for readiness_event, start_event, end_event in self._trace_task_events.values():
-            readiness_event.record(stream)
-            start_event.record(stream)
-            end_event.record(stream)
+        for events in self._trace_task_events.values():
+            for event in events:
+                event.record(stream)
         stream.synchronize()
 
     def __call__(
@@ -607,6 +613,17 @@ class TrainingExecutor(AnnotatedExecutor):
             task.readiness_event.record(stream)
 
     @staticmethod
+    def _record_task_inputs_ready(
+        task: _ArmedTaskTiming | None, stream: torch.cuda.Stream | None
+    ) -> None:
+        """Mark where waiting for inputs ends and waiting for ranges begins."""
+
+        if task is not None:
+            if stream is None:
+                raise AssertionError("task timing omitted its CUDA stream")
+            task.inputs_ready_event.record(stream)
+
+    @staticmethod
     def _record_task_start(
         task: _ArmedTaskTiming | None, stream: torch.cuda.Stream | None
     ) -> None:
@@ -804,6 +821,19 @@ class TrainingExecutor(AnnotatedExecutor):
                 if timing is not None:
                     timing.dispatch_rebind_ns = (
                         time.perf_counter_ns() - rebind_started_ns
+                    )
+                self._record_task_inputs_ready(timing, stream)
+                reuse_started_ns = time.perf_counter_ns() if timing is not None else 0
+                with self._profile_range(
+                    f"shadowspill.allocation_reuse.{record.trace_label}"
+                ):
+                    self._bridge.wait_task_allocations(
+                        record.task_handle,
+                        self._state.device.index or 0,
+                    )
+                if timing is not None:
+                    timing.dispatch_allocation_reuse_ns = (
+                        time.perf_counter_ns() - reuse_started_ns
                     )
                 prepared = _PreparedTask(
                     run=run,

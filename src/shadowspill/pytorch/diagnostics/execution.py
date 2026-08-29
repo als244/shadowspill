@@ -29,7 +29,8 @@ class TaskExecutionTiming:
     compute_reached_seconds: float
     compute_started_seconds: float
     compute_finished_seconds: float
-    readiness_wait_seconds: float
+    input_readiness_wait_seconds: float
+    allocation_reuse_wait_seconds: float
     compute_reached_sequence: int
     compute_started_sequence: int
     compute_finished_sequence: int
@@ -97,7 +98,8 @@ class TaskExecutionTiming:
             "compute_finished_seconds": (
                 self.compute_finished_seconds
             ),
-            "readiness_wait_seconds": self.readiness_wait_seconds,
+            "input_readiness_wait_seconds": self.input_readiness_wait_seconds,
+            "allocation_reuse_wait_seconds": self.allocation_reuse_wait_seconds,
             "compute_reached_sequence": (self.compute_reached_sequence),
             "compute_started_sequence": self.compute_started_sequence,
             "compute_finished_sequence": self.compute_finished_sequence,
