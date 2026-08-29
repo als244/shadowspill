@@ -76,7 +76,7 @@ The fields mean:
 | `simulated_inter_task_idle_seconds` | Idle between simulated selected task intervals. |
 | `real_inter_task_idle_seconds` | Idle between real selected task events. |
 | `inter_task_idle_delta_seconds` | Real idle sum minus simulated idle sum. |
-| `real_inter_task_readiness_wait_seconds` | Idle spent waiting for a task's inputs to be resident. |
+| `real_inter_task_readiness_wait_seconds` | Idle spent waiting at a task's boundary, for its inputs and for the ranges it allocates into. |
 | `real_inter_task_exposed_overhead_seconds` | The rest of that idle: the frontend had not reached the next task. |
 | `simulated_inter_task_readiness_wait_seconds` | The modeled counterpart of the readiness wait. |
 | `real_initial_readiness_wait_seconds` | The first task's wait, which precedes the span. |
@@ -89,13 +89,19 @@ The fields mean:
 | `phase_comparisons` | Profiled versus real task-event sum by semantic phase. |
 
 `real_inter_task_idle_seconds` is exactly `real_inter_task_readiness_wait_seconds` plus
-`real_inter_task_exposed_overhead_seconds`: the stream is either waiting on a task's
-inputs, or it has nothing to run at all. Between one task ending and the next
+`real_inter_task_exposed_overhead_seconds`: the stream is either waiting at a task's
+boundary, or it has nothing to run at all. Between one task ending and the next
 computing, the compute stream travels to the next task's readiness marker and
-then waits there until that task's inputs are resident; the first is what
-dispatch costs and the second is what residency costs. Reading the total alone
-invites the wrong conclusion, because the two move independently -- a schedule
-that fetches later raises the wait while leaving dispatch untouched.
+then waits there -- first for the task's inputs to be resident, then for the
+ranges its allocations reuse to be released. The travel is what dispatch costs
+and the waiting is what residency costs. Reading the total alone invites the
+wrong conclusion, because the parts move independently -- a schedule that
+fetches later raises the wait while leaving dispatch untouched.
+
+The waiting is reported by cause, as `input_readiness_wait_seconds` and
+`allocation_reuse_wait_seconds` per task. Both leave the stream equally idle,
+so the aggregate counts them together; they are separate fields because one is
+data that has not arrived and the other is an address that is not free.
 
 It is called exposed because the frontend does this work at every boundary,
 and running ahead hides whatever the lead covers. The field is the shortfall,
