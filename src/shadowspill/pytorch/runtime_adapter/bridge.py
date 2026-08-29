@@ -1124,6 +1124,18 @@ class RuntimeBridge:
             device_ordinal,
         )
 
+    def wait_task_allocations(
+        self,
+        task_handle: int,
+        device_ordinal: int,
+    ) -> None:
+        """Resolve the range-reuse dependencies of this task's allocations."""
+
+        torch.ops.shadowspill._wait_task_allocations(
+            task_handle,
+            device_ordinal,
+        )
+
     def after_task_and_update(
         self,
         task_handle: int,

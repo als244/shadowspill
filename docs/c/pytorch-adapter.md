@@ -108,6 +108,10 @@ IDs. The adapter does not infer routes from global runtime roles.
 
 Task calls mirror the neutral runtime:
 
+- `shadowspill_pytorch_wait_task_allocations()` forwards the boundary's
+  range-reuse resolution to the neutral runtime on the caller's current
+  compute stream. Its operator carries no tensor, so it is registered against
+  the schema rather than against a dispatch key.
 - `shadowspill_pytorch_before_task_handle()` and
   `shadowspill_pytorch_after_task_handle()` are the production task boundary.
   The before boundary exposes the task-owned borrowed binding array instead

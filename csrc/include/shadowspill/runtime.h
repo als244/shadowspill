@@ -1001,6 +1001,18 @@ shadowspill_before_task_handle(
     uint32_t *binding_count
 );
 
+/*
+ * Resolves every planned allocation's range-reuse dependency for one task,
+ * so the wait belongs to the task boundary rather than to the allocation
+ * inside the task that first needs the range.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_wait_task_allocations_handle(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillTaskHandle *handle,
+    ShadowSpillBackendStream compute_stream
+);
+
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_after_task_handle(
     ShadowSpillRuntime *runtime,

@@ -192,6 +192,21 @@ void acquire_storages(
   }
 }
 
+void wait_task_allocations(int64_t task_handle, int64_t device_ordinal) {
+  TORCH_CHECK(task_handle > 0, "task handle must be positive");
+  TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  const c10::cuda::CUDAStream stream =
+      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
+  const ShadowSpillStatus status =
+      shadowspill_pytorch_wait_task_allocations(
+          static_cast<uintptr_t>(task_handle),
+          reinterpret_cast<uintptr_t>(stream.stream()));
+  TORCH_CHECK(
+      status == SHADOWSPILL_STATUS_OK,
+      "task allocation dependency wait failed: ",
+      shadowspill_status_string(status));
+}
+
 void before_task_storages(
     at::TensorList tensors,
     int64_t task_handle,
@@ -528,6 +543,9 @@ TORCH_LIBRARY(shadowspill, library) {
   library.def(
       "_before_task_storages(Tensor(a!)[] tensors, int task_handle, "
       "int device_ordinal) -> ()");
+  library.def(
+      "_wait_task_allocations(int task_handle, int device_ordinal) -> ()",
+      TORCH_FN(wait_task_allocations));
   library.def("_dematerialize_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_after_task_storages(Tensor(a!)[] adopted_tensors, int[] "

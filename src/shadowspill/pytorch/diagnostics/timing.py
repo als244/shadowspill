@@ -21,8 +21,10 @@ class ArmedTaskTiming:
     execution_ordinal: int
     semantic_name: str
     readiness_event: torch.cuda.Event
+    inputs_ready_event: torch.cuda.Event
     start_event: torch.cuda.Event
     end_event: torch.cuda.Event
+    dispatch_allocation_reuse_ns: int = 0
     dispatch_started_ns: int = 0
     dispatch_finished_ns: int = 0
     #: The two task boundaries, which are everything the frontend does between

@@ -22,6 +22,7 @@ def _task(
     reached: float,
     started: float,
     finished: float,
+    reuse: float = 0.0,
 ) -> TaskExecutionTiming:
     """One task placed on the compute-stream timeline by its three markers.
 
@@ -44,7 +45,8 @@ def _task(
         "compute_reached_seconds": reached,
         "compute_started_seconds": started,
         "compute_finished_seconds": finished,
-        "readiness_wait_seconds": started - reached,
+        "input_readiness_wait_seconds": (started - reached) - reuse,
+        "allocation_reuse_wait_seconds": reuse,
         "compute_reached_sequence": ordinal * 3 + 1,
         "compute_started_sequence": ordinal * 3 + 2,
         "compute_finished_sequence": ordinal * 3 + 3,
@@ -91,6 +93,30 @@ def test_the_first_wait_is_reported_apart_from_the_span() -> None:
     assert initial == pytest.approx(9.0)
     assert readiness == pytest.approx(0.0)
     assert dispatch == pytest.approx(0.0)
+
+
+def test_waiting_holds_both_the_inputs_and_the_ranges() -> None:
+    """A task waits for its inputs, then for the ranges it allocates into.
+
+    The two are separate fields because they have separate causes, but the
+    stream is equally idle for both, so the composition has to count them
+    together or the idle stops adding up.
+    """
+
+    tasks = (
+        _task(0, reached=0.0, started=1.0, finished=2.0),
+        # waited 0.4 in all: 0.1 for a fetch, then 0.3 for a range to free
+        _task(1, reached=2.0, started=2.4, finished=3.4, reuse=0.3),
+    )
+    readiness, dispatch, initial = _idle_composition(tasks)
+
+    assert readiness == pytest.approx(0.4)
+    assert dispatch == pytest.approx(0.0)
+    assert initial == pytest.approx(1.0)
+
+    span = tasks[-1].compute_finished_seconds - tasks[0].compute_started_seconds
+    busy = sum(item.compute_duration_seconds for item in tasks)
+    assert readiness + dispatch == pytest.approx(span - busy)
 
 
 def test_no_tasks_compose_to_nothing() -> None:

@@ -116,6 +116,13 @@ runtime's pool, route, event, and object owners:
   the sole production execution boundary. For an action-bearing task, the
   after boundary publishes its preallocated batch and actively waits only for
   worker submission acknowledgement, never for route completion.
+- `shadowspill_wait_task_allocations_handle()` resolves, at the boundary, the
+  range-reuse dependency of every allocation the plan pinned to this task. The
+  allocator resolves the same dependency where the allocation happens, which
+  is inside the task; doing it here as well means the wait falls in an
+  interval the boundary owns and can be measured apart from compute. It is
+  idempotent with respect to the allocator's own call, which then finds every
+  dependency already published.
 - `shadowspill_abort_task_handle()` closes that same handle-bound task scope
   when frontend execution raises before `after_task`; it does not cancel work
   already submitted to the device.
