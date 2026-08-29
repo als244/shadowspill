@@ -8,11 +8,18 @@ Run the complete 168-Program, 2,520-point baseline:
 
 ```bash
 PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
-  --config benchmarking/planning_eval/configs/full_pressurefit_frontier_v1.json \
-  --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_v1 \
-  --output-dir benchmarking/planning_eval/results/full_pressurefit_frontier_v1 \
-  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_v1
+  --config benchmarking/planning_eval/configs/full_pressurefit_frontier_v1_repairs256.json \
+  --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_0582aa0 \
+  --output-dir benchmarking/planning_eval/results/full_pressurefit_frontier_<rev>_repairs256 \
+  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_0582aa0
 ```
+
+A corpus is named for the revision that collected it, and it holds whole
+Programs, so it stops loading when the Program schema moves on. Point the
+run at the newest corpus under `input_programs/`, not at a name copied
+from here; `full_model_program_corpus_v1` predates `shadowspill.program/v3`
+and now fails on its first point. Give the output directory the revision
+being measured, so two baselines can be told apart later.
 
 The v1 matrix evaluates 15 budget/bandwidth points per Program. All 2,520
 points use three global bidirectional-concurrent transfer pairs: 1/2x, 1x, and
