@@ -30,6 +30,7 @@ def rebind_task_graph_pairs(
                     example,
                     graph_pairs.root_output_indices,
                 ),
+                item.accumulates,
             )
             for item in graph_pairs.variants
         ),

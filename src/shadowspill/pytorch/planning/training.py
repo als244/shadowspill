@@ -294,11 +294,10 @@ def _partition_training_graphs(
                 partition=partition,
                 graph_pair_store=stores.graph_pairs,
                 representative_root_inputs=root_inputs,
+                accumulating=position > 0,
             )
-            for capture, root_inputs in zip(
-                captures,
-                representative_roots,
-                strict=True,
+            for position, (capture, root_inputs) in enumerate(
+                zip(captures, representative_roots, strict=True)
             )
         )
 

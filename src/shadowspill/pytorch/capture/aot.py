@@ -612,11 +612,26 @@ def rebind_backward_input_provenance(
     original_output_count = forward.output_count - pair.saved_value_count
     if original_output_count < 0:
         raise CaptureError("AOT graph pair has an invalid saved-value count")
-    return _backward_input_provenance(
-        forward,
-        original_output_count=original_output_count,
-        saved_value_count=pair.saved_value_count,
-        backward_argument_count=pair.backward.argument_count,
+    # A backward that accumulates takes the running gradients as further
+    # arguments. They come from the plan rather than from the forward, so
+    # projecting the forward cannot rebuild them; carry them across instead.
+    priors = tuple(
+        item
+        for item in pair.backward.input_provenance
+        if item.role is TaskInputRole.GRADIENT
+    )
+    if priors and pair.backward.input_provenance[-len(priors) :] != priors:
+        raise CaptureError(
+            "accumulated gradient arguments are not the backward's last ones"
+        )
+    return (
+        *_backward_input_provenance(
+            forward,
+            original_output_count=original_output_count,
+            saved_value_count=pair.saved_value_count,
+            backward_argument_count=pair.backward.argument_count - len(priors),
+        ),
+        *priors,
     )
 
 

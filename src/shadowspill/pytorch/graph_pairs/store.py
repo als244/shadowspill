@@ -8,6 +8,7 @@ import os
 import pickle
 import tempfile
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 
 import torch
@@ -62,6 +63,7 @@ class GraphPairStore:
         roots: tuple[int, ...],
         *,
         specialize_unit_tangents: bool,
+        accumulating: bool = False,
     ) -> TaskGraphPairs:
         stage_contract = GraphArtifact.input_compatibility_digest(
             graph_module=example.stage.graph_module,
@@ -77,7 +79,9 @@ class GraphPairStore:
             if existing is not None:
                 self._pairs[key] = existing
                 self.hits += 1
-                return rebind_task_graph_pairs(existing, example)
+                return rebind_task_graph_pairs(
+                    self._with_accumulating(key, existing, accumulating), example
+                )
             existing = build_default_graph_pairs(
                 example,
                 roots,
@@ -86,9 +90,33 @@ class GraphPairStore:
             self._pairs[key] = existing
             self._write(key, existing)
             self.misses += 1
-            return existing
+            return self._with_accumulating(key, existing, accumulating)
         self.hits += 1
-        return rebind_task_graph_pairs(existing, example)
+        return rebind_task_graph_pairs(
+            self._with_accumulating(key, existing, accumulating), example
+        )
+
+    def _with_accumulating(
+        self,
+        key: tuple[str, tuple[int, ...], bool],
+        pairs: TaskGraphPairs,
+        accumulating: bool,
+    ) -> TaskGraphPairs:
+        """Give this contract its accumulating form the first time one is asked for.
+
+        Deriving it costs a graph capture, so it belongs with the structural
+        entry rather than with each occurrence that rebinds from it. A step
+        whose microbatches never accumulate never asks, and never pays.
+        """
+
+        if not accumulating or any(item.accumulates for item in pairs.variants):
+            return pairs
+        grown = replace(
+            pairs,
+            variants=(*pairs.variants, *pairs.accumulating_variants()),
+        )
+        self._pairs[key] = grown
+        return grown
 
     def _path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
         if self._root is None:

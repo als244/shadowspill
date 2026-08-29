@@ -16,8 +16,14 @@ def partition_training_capture(
     partition: PartitionSpec = "auto",
     graph_pair_store: GraphPairStore | None = None,
     representative_root_inputs: tuple[object, ...] | None = None,
+    accumulating: bool = False,
 ) -> PartitionedTrainingCapture:
-    """Partition and differentiate one captured objective template."""
+    """Partition and differentiate one captured objective template.
+
+    ``accumulating`` says this capture belongs to a microbatch that adds onto
+    gradients its predecessors created, so its stages need the backward form
+    that does the adding.
+    """
 
     partitioned = partition_export(
         capture.exported,
@@ -29,7 +35,9 @@ def partition_training_capture(
         training=capture,
         partitioned=partitioned,
         stages=capture_training_stages(
-            partitioned, graph_pair_store=graph_pair_store
+            partitioned,
+            graph_pair_store=graph_pair_store,
+            accumulating=accumulating,
         ),
     )
 
