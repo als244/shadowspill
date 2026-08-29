@@ -168,12 +168,22 @@ def _measurement(artifact: object) -> TaskMeasurement:
     )
 
 
+def _with_both_forms(
+    plain: tuple[GraphPairVariant, ...], *, accumulating: bool
+) -> tuple[GraphPairVariant, ...]:
+    """Substituted variants need their accumulating forms like captured ones."""
+
+    if not accumulating:
+        return plain
+    return (*plain, *(item.accumulating() for item in plain))
+
+
 def _both_forms(graph_pairs: TaskGraphPairs) -> tuple[GraphPairVariant, ...]:
     """Every option in both forms, so a fixture can profile whichever is used."""
 
     return (
         *graph_pairs.options(accumulates=False),
-        *graph_pairs.options(accumulates=True),
+        *(graph_pairs.options(accumulates=True) or graph_pairs.accumulating_variants()),
     )
 
 
@@ -199,9 +209,10 @@ def _lowered(
     with mode:
         captures = tuple(
             partition_training_capture(
-                capture_training(model, _objective, fake_cuda_inputs(values, mode))
+                capture_training(model, _objective, fake_cuda_inputs(values, mode)),
+                accumulating=position > 0,
             )
-            for values in examples
+            for position, values in enumerate(examples)
         )
     if include_intermediate_variant:
         captures = tuple(
@@ -212,14 +223,17 @@ def _lowered(
                         stage,
                         graph_pairs=replace(
                             stage.graph_pairs,
-                            variants=(
-                                stage.graph_pairs.variant("save"),
-                                GraphPairVariant(
-                                    "recompute_050",
-                                    0.5,
-                                    stage.graph_pairs.variant("recompute").pair,
+                            variants=_with_both_forms(
+                                (
+                                    stage.graph_pairs.variant("save"),
+                                    GraphPairVariant(
+                                        "recompute_050",
+                                        0.5,
+                                        stage.graph_pairs.variant("recompute").pair,
+                                    ),
+                                    stage.graph_pairs.variant("recompute"),
                                 ),
-                                stage.graph_pairs.variant("recompute"),
+                                accumulating=len(capture.stages) and microbatches > 1,
                             ),
                         ),
                     )
@@ -352,9 +366,10 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
                     fake_cuda_inputs(
                         [torch.randn(rows, 3), torch.randn(rows, 2)], mode
                     ),
-                )
+                ),
+                accumulating=position > 0,
             )
-            for rows in (4, 5)
+            for position, rows in enumerate((4, 5))
         )
     artifacts = (
         *(

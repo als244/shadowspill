@@ -58,6 +58,7 @@ def _resolve_stage(
                     variant.option_id,
                     variant.memory_budget,
                     resolve_pair(variant.pair, metadata_digest),
+                    variant.accumulates,
                 )
                 for variant in graph_pairs.variants
             ),

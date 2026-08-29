@@ -111,27 +111,38 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
 
 
 def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:
-    """Capture produces one form; the other is derived by whoever needs it.
+    """Deriving the second form costs a capture, so nobody pays for it unasked.
 
-    A step with a single microbatch never asks, so it pays nothing for a form
-    it would not run.
+    A step whose microbatches never accumulate never asks, and the contract
+    keeps only the form it will run. Asking once grows the structural entry,
+    so every later occurrence rebinds rather than deriving again.
     """
 
     mode, partitioned = _capture()
+    store = GraphPairStore()
     with mode:
-        stages = capture_training_stages(partitioned)
+        plain = capture_training_stages(partitioned, graph_pair_store=store)
+        accumulating = capture_training_stages(
+            partitioned, graph_pair_store=store, accumulating=True
+        )
 
-    pairs = stages[0].graph_pairs
-    assert pairs.options(accumulates=False) is pairs.variants
-    accumulating = pairs.options(accumulates=True)
-    assert all(item.accumulates for item in accumulating)
-    assert tuple(item.option_id for item in accumulating) == tuple(
-        item.option_id for item in pairs.variants
+    assert all(
+        not any(item.accumulates for item in stage.graph_pairs.variants)
+        for stage in plain
+    ), "a capture that never accumulates carries only the captured form"
+
+    pairs = accumulating[0].graph_pairs
+    derived = pairs.options(accumulates=True)
+    captured = pairs.options(accumulates=False)
+    assert len(derived) == len(captured)
+    assert all(item.accumulates for item in derived)
+    assert tuple(item.option_id for item in derived) == tuple(
+        item.option_id for item in captured
     )
     assert all(
-        len(derived.pair.backward.example_arguments)
-        > len(captured.pair.backward.example_arguments)
-        for captured, derived in zip(pairs.variants, accumulating, strict=True)
+        len(new.pair.backward.example_arguments)
+        > len(old.pair.backward.example_arguments)
+        for old, new in zip(captured, derived, strict=True)
     )
 
 

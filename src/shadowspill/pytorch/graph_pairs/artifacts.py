@@ -81,12 +81,13 @@ class TaskGraphPairs:
         if not self.root_output_indices:
             raise ValueError("graph pairs requires differentiable roots")
         option_ids = tuple(item.option_id for item in self.variants)
-        if not option_ids or len(set(option_ids)) != len(option_ids):
+        if not option_ids:
             raise ValueError("graph pairs option IDs must be unique")
         if self.reference_option_id not in option_ids:
             raise ValueError("graph-pair reference option is absent")
-        if any(item.accumulates for item in self.variants):
-            raise ValueError("graph-pair variants are captured without accumulation")
+        forms = {(item.option_id, item.accumulates) for item in self.variants}
+        if len(forms) != len(self.variants):
+            raise ValueError("graph pairs option IDs must be unique")
 
     @property
     def reference(self) -> AotGraphPair:
@@ -98,9 +99,16 @@ class TaskGraphPairs:
         """Return one named variant or fail with an explicit identity error."""
 
         for item in self.variants:
-            if item.option_id == option_id:
+            if item.option_id == option_id and not item.accumulates:
                 return item
         raise KeyError(option_id)
+
+    def accumulating_variants(self) -> tuple[GraphPairVariant, ...]:
+        """Derive the accumulating form of every captured variant."""
+
+        return tuple(
+            item.accumulating() for item in self.variants if not item.accumulates
+        )
 
     def options(self, *, accumulates: bool) -> tuple[GraphPairVariant, ...]:
         """Return the variants one microbatch may choose between.
@@ -108,12 +116,16 @@ class TaskGraphPairs:
         Every microbatch offers the same recomputation choices; which form of
         them it runs follows from its position rather than from planning. A
         step with a single microbatch never asks for the accumulating form, so
-        it is never built, compiled, or profiled.
+        the store never derives it and it is never compiled or profiled.
+
+        Both forms are ordinary variants by the time they get here. Deriving
+        one costs a graph capture, so it happens once per structural contract
+        in the store and is rebound per occurrence like everything else.
         """
 
-        if not accumulates:
-            return self.variants
-        return tuple(item.accumulating() for item in self.variants)
+        return tuple(
+            item for item in self.variants if item.accumulates == accumulates
+        )
 
 
 def parameter_gradient_leaves(pair: AotGraphPair) -> tuple[int, ...]:

@@ -16,6 +16,7 @@ def capture_training_stages(
     partitioned: PartitionedExport,
     *,
     graph_pair_store: GraphPairStore | None = None,
+    accumulating: bool = False,
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs."""
 
@@ -25,6 +26,7 @@ def capture_training_stages(
             partitioned,
             index,
             graph_pair_store=store,
+            accumulating=accumulating,
         )
         for index in range(len(partitioned.stages))
     )
@@ -35,6 +37,7 @@ def _capture_training_stage(
     stage_index: int,
     *,
     graph_pair_store: GraphPairStore,
+    accumulating: bool = False,
 ) -> DifferentiatedStage:
     example = partitioned.stages[stage_index]
     leaves, _ = tree_flatten(example.output)
@@ -60,6 +63,7 @@ def _capture_training_stage(
             example,
             roots,
             specialize_unit_tangents=stage_index == len(partitioned.stages) - 1,
+            accumulating=accumulating,
         ),
     )
 
