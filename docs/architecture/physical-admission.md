@@ -312,6 +312,14 @@ transfer-stream wait; it does not synchronize the host until completion. If
 the action has not yet published its event, the foreground path asks the
 worker to progress and waits only for that event identity to become available.
 
+For a task allocation the foreground path is the task boundary, which resolves
+every dependency the plan pinned to that task before the task is marked
+started. The allocator resolves the same dependency again where the allocation
+happens and finds it already published. Resolving it at the boundary is what
+keeps the wait outside the task's own compute span, where a stall cannot be
+told apart from computing; see
+[task boundaries](task-boundaries.md).
+
 The dependency is generation-specific. A completion from another invocation
 or an old lease cannot authorize reuse.
 

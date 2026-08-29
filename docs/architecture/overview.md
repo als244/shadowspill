@@ -149,7 +149,8 @@ sequenceDiagram
 ```
 
 `before_task()` covers runtime acquisition, readiness waits, storage rebinding,
-and argument assembly. `after_task()` covers output classification, mutation
+argument assembly, and the range-reuse waits of every allocation the plan
+pinned to the task, so a task that has started is a task that only computes. `after_task()` covers output classification, mutation
 publication, releases, destination reservation, action publication, and the
 worker submission acknowledgement. The acknowledgement covers route/event
 submission, never transfer completion. A transfer dependency is placed on the
