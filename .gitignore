@@ -34,6 +34,7 @@ compile_commands.json
 /benchmarking/datasets/input_programs/
 /benchmarking/program_collection/planning_caches/
 /benchmarking/program_collection/results/
+/benchmarking/planning_eval/planning_caches/
 /benchmarking/planning_eval/results/
 *.nsys-rep
 *.sqlite
