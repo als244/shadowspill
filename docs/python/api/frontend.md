@@ -197,7 +197,7 @@ control inputs require an explicit CPU `profiling_value` on `SharedInput`.
 The `ObjectConsistency` enumeration contains these two policies.
 
 Several planned callables may remain admitted to one runtime and may bind the
-same `ObjectRef`. Distinct callables may be submitted without synchronizing the
+same `TensorRef`. Distinct callables may be submitted without synchronizing the
 dispatcher between them. Causal shared inputs consume the current published
 generation; unordered shared inputs deliberately omit value ordering while
 retaining lease safety.
@@ -249,7 +249,7 @@ Shared planning arguments have these meanings:
 | `allocation_probe_seeds` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | Identical repeats per probe seed. |
 | `SharedInput` / `shared_input()` | Zero-copy binding of an existing runtime-owned `TensorRef` in `example_inputs`. |
-| `shared_outputs` | Forward-output leaves retained as runtime-owned `TensorRef` values. |
+| `shared_outputs` | Forward-output leaves retained as runtime-owned `TensorRef` values. `plan_forward` only. |
 | `save_plan`, `force_fresh`, `overwrite_plan` | Artifact cache policy. |
 | `implementation_revision` | Explicit implementation identity for compiler/profile invalidation. |
 

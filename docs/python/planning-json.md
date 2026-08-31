@@ -16,7 +16,7 @@ The ordinary reusable workflow is:
 ```python
 from pathlib import Path
 
-from shadowspill.pytorch import AnnotatedProgramPlan, StepProgram
+from shadowspill.planner.program import AnnotatedProgramPlan, StepProgram
 
 Path("step-program.json").write_text(step_program.to_json(), encoding="utf-8")
 loaded_program = StepProgram.from_json(
@@ -312,8 +312,9 @@ did, alongside its makespan:
 | `placements_admitted` | Measured layouts that fit the pool. The candidate answers with the best of these. |
 | `capacity_refinements` | Times the candidate gave capacity back because its layout did not fit, and planned again. |
 
-A candidate whose status is `unplaceable` reached no plan that fit, so it has
-no answer regardless of what it simulated.
+A candidate whose status is `infeasible` with failure kind `unplaceable`
+reached no plan that fit, so it has no answer regardless of what it
+simulated.
 
 `work` counts what the search did — residency and schedule cache hits,
 simulation calls, admission calls — and `work.sections` says where its time

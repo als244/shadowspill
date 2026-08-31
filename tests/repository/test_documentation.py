@@ -81,6 +81,7 @@ def _markdown_files() -> tuple[Path, ...]:
         ".git",
         ".hypothesis",
         ".mypy_cache",
+        ".pytest_cache",
         ".venv",
         "build",
         "datasets",
@@ -91,7 +92,7 @@ def _markdown_files() -> tuple[Path, ...]:
         path
         for path in ROOT.rglob("*.md")
         if not any(part in ignored for part in path.parts)
-        and not path.is_relative_to(DOCS / "internal")
+        and "internal" not in path.parts
     )
 
 
@@ -332,6 +333,7 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "examples/reusable-planning.md",
         "examples/diagnostics.md",
         "examples/custom-partitioning.md",
+        "examples/concurrent-callables.md",
         "c/README.md",
         "development/README.md",
         "investigations/README.md",
@@ -396,6 +398,7 @@ def test_examples_cover_complete_public_workflows() -> None:
             "step.simulator_comparison",
         ),
         "custom-partitioning.md": ("assign_stages(", "partition=EveryNNodes("),
+        "concurrent-callables.md": (".submit(", ".close()"),
     }
     for name, required in expected.items():
         reference = (examples / name).read_text()

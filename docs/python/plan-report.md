@@ -117,7 +117,7 @@ The other planning-cost views are:
 
 An artifact with `access="matched"` agreed with a freshly produced in-memory
 value but was not read as planning authority. `managed` identifies a directory
-owned by another component, such as the compiler cache. The [planning cache
+owned by another component, such as the compiler cache. The [artifact store
 guide](artifact-store.md) defines the directory and identity contract.
 
 ## Tasks are keyed by execution ID

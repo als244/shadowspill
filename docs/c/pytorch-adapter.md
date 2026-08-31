@@ -138,9 +138,6 @@ and offset handling](../architecture/physical-admission.md).
   `shadowspill_pytorch_profile_range_end()` manage explicit ranges.
 - `shadowspill_pytorch_abort_task_handle()` closes the matching admitted task
   scope and its profiler range after frontend execution aborts.
-- `shadowspill_pytorch_debug_task_timing_enable()`,
-  `shadowspill_pytorch_debug_task_timing_read()`, and
-  `shadowspill_pytorch_debug_task_timing_disable()` manage task events.
 
 Structured runtime tracing (`shadowspill_trace_prepare()`,
 `shadowspill_trace_begin()`, `shadowspill_trace_end()`,

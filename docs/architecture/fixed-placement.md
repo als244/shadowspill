@@ -204,7 +204,10 @@ range someone still holds.
 
 ## Judging the result
 
-Two numbers, both cheap and both worth reporting:
+Two numbers, both cheap and both worth reporting. Neither is implemented;
+the metrics the code does compute are `predicted_fragmentation_bytes`,
+`peak_fragmentation_bytes`, and `external_fragmentation_bytes`, which
+measure different quantities:
 
 - `fragmentation_bytes` = slice size − peak live bytes, and
   `fragmentation_ratio` = slice size ÷ peak live bytes. **1.00 means the

@@ -9,9 +9,9 @@ Run the complete 168-Program, 2,520-point baseline:
 ```bash
 PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
   --config benchmarking/planning_eval/configs/full_pressurefit_frontier_v1_repairs256.json \
-  --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_0582aa0 \
+  --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_d65e6ef \
   --output-dir benchmarking/planning_eval/results/full_pressurefit_frontier_<rev>_repairs256 \
-  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_0582aa0
+  --artifact-store benchmarking/planning_eval/planning_caches/frontier_<rev>
 ```
 
 A corpus is named for the revision that collected it, and it holds whole
@@ -24,7 +24,7 @@ being measured, so two baselines can be told apart later.
 The v1 matrix evaluates 15 budget/bandwidth points per Program. All 2,520
 points use three global bidirectional-concurrent transfer pairs: 1/2x, 1x, and
 2x the calibrated fetch/evict bandwidths. PressureFit is cold by default; the
-saved planning cache is used only where the configuration explicitly permits
+saved artifact store is used only where the configuration explicitly permits
 it.
 
 Each point log contains:
@@ -42,10 +42,15 @@ duplicated in `collection.log`, so the same command is easy to follow in tmux.
 
 Every point is journaled before PressureFit begins and atomically publishes one
 of `succeeded`, `infeasible`, `search_exhausted`, or `error`. A worker exit or
-300-second active-point timeout is attributed to that point; there is no point
+active-point timeout is attributed to that point; there is no point
 retry. The controller advances to the next point/Program and preserves the
 failure evidence. Use `--resume` only when intentionally continuing an existing
 baseline.
+
+`point_timeout_seconds` is a required configuration field with no default;
+the shipped configs set it to 300. `--case GLOB`, `--start-at CASE_ID`,
+`--limit N`, `--verbose-pressurefit`, and `--dry-run` select or preview
+subsets without changing what a completed baseline means.
 
 Resume uses the same launch command plus `--resume`. It locates the incomplete
 baseline from the config and corpus identities, validates every terminal point,
@@ -84,11 +89,15 @@ and are never silently retried.
 ```text
 <output>/<baseline-identity>/
 ├── config.json
-├── corpus-manifest.json
-├── provenance.json
+├── manifest.json
+├── summary.json
+├── case-failures.json
 ├── collection.log
 ├── frontier.csv
 ├── frontier.jsonl
+├── git-status.txt
+├── launch-command.txt
+├── planner.patch
 └── cases/<program>/
     ├── points/<point>/point.json
     ├── annotated-plans/<budgets>/<bandwidths>/<plan>/<artifact>/

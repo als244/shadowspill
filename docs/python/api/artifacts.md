@@ -23,7 +23,8 @@ it was produced.
 ```python
 from pathlib import Path
 
-from shadowspill.pytorch import StepProgram, make_step_program
+from shadowspill.planner.program import StepProgram
+from shadowspill.pytorch import make_step_program
 
 step_program = make_step_program(
     model,
@@ -53,7 +54,8 @@ budget cannot exceed the runtime capacities used to compile and profile it.
 Use `to_json()`, `from_json()`, or `from_value()` for serialization.
 
 ```python
-from shadowspill.pytorch import TransferBandwidths, pressurefit_program
+from shadowspill.planner import pressurefit_program
+from shadowspill.planner.program import TransferBandwidths
 
 annotated = pressurefit_program(
     loaded.recurrent,

@@ -39,7 +39,12 @@ and the PyTorch adapter. Check those against the plugin you loaded. Do not
 hardcode a numeric ABI value.
 
 Every public function returns a `ShadowSpillStatus` unless its signature is
-explicitly `void`. One vocabulary covers the whole library: the three codes
+explicitly `void` or it is an accessor, constructor, or query whose return
+value is the answer itself - `shadowspill_abi_version`,
+`shadowspill_status_string`, `shadowspill_failure_reason_string`,
+`shadowspill_task_id`, `shadowspill_task_trace_label`,
+`shadowspill_best_placed_create`, `shadowspill_best_placed_admits`, and
+`shadowspill_planner_struct_size`. One vocabulary covers the whole library: the three codes
 every component agrees on sit at 0-2, and each component owns a band after
 that, so a status decodes to exactly one meaning without knowing which
 component produced it. `shadowspill_status_string()` maps any of them to a
@@ -65,14 +70,15 @@ The other headers are small enough to read start to finish.
   them and names a matching destroy function.
 - Runtime handles own their internal records, events, streams, worker, and
   pool arenas until close/destroy.
-- Backend problem pointers are borrowed and must outlive the runtime.
+- Backend `state` pointers are borrowed and must outlive the runtime.
 - Distinct simulator results and admission-replay workspaces may be used by
   different threads; one workspace is not shared concurrently.
 
 ## Platforms
 
 The public headers are POSIX-free: no pthreads, no `<stdatomic.h>`, no
-platform types. A consumer needs `<stdint.h>` and nothing else, and the export
+platform types. A consumer needs `<stdint.h>`, and `<stddef.h>` for the
+simulator and backend headers, and nothing else; the export
 declaration follows the platform - `__declspec(dllimport)` on Windows unless
 the translation unit is building the library itself, which the build says with
 `SHADOWSPILL_BUILDING`.

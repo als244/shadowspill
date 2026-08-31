@@ -110,8 +110,10 @@ below resolves during the search.
 contiguous workspace allowance the pool must be able to serve. It is validated
 against the slab and reported, but it is not subtracted from $P$ and does not
 define $C$. The current leeway is derived from it — the allowance above the
-peak task workspace, a quarter of that peak under the default 5/4 policy —
-which is historical rather than principled, since the excess it absorbs is a
+peak task workspace, a quarter of that peak under the default 5/4 policy,
+subject to a 512 MiB floor and 2 MiB rounding, which bind instead of the
+ratio below a peak of roughly 410 MiB — which is historical rather than
+principled, since the excess it absorbs is a
 property of lifetime overlap rather than of workspace.
 
 For one fixed layout, let:
@@ -278,11 +280,11 @@ If two predicted lifetimes overlap, their byte ranges must be disjoint:
 \]
 
 The deterministic placer orders leases by decreasing size, decreasing count
-of distinct simulated timeline boundaries spanned, earlier start, and stable
-lease ID. It assigns the lowest aligned gap not occupied by an overlapping
-lifetime. The maximum range end is $L$. This is a deterministic packing
-heuristic; admission proves its result fits but does not claim that $L$ is the
-minimum possible extent over every placement.
+of distinct simulated timeline boundaries spanned, earlier start, and lowest
+input index; it never sees lease identity. It assigns the lowest aligned gap
+not occupied by an overlapping lifetime. The maximum range end is $L$. This
+is a deterministic packing heuristic; admission proves its result fits but
+does not claim that $L$ is the minimum possible extent over every placement.
 
 Predicted time alone is never the safety proof. After placement, admission
 examines each physical range in causal birth order. Whenever a successor
