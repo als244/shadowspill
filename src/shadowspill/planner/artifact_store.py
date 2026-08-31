@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowspill.ir import ExecutionPlan, Program
+from shadowspill.ir.program import PROGRAM_SCHEMA
 
 _PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
 _CACHE_ENVIRONMENT_LOCK = threading.RLock()
@@ -459,7 +460,7 @@ class ArtifactStore:
             digest=program.digest,
             path=path,
             access=operation,
-            schema="shadowspill.program/v1",
+            schema=PROGRAM_SCHEMA,
         )
         return path
 
