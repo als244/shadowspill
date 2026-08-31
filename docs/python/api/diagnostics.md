@@ -65,7 +65,9 @@ metric leaves remain tensors; static leaves preserve their captured values.
 `DiagnosticsHandle` for a traced step. Resolving the handle returns
 `StepDiagnostics` and may wait for recorded events.
 
-Each execution has `ExecutionTiming` and exactly seven boundary timestamps:
+Each execution has `ExecutionTiming`, whose `tasks` hold one
+`TaskExecutionTiming` apiece, and each of those carries exactly seven
+boundary timestamps:
 
 - host `before_task` entry and exit;
 - host `after_task` entry and exit;

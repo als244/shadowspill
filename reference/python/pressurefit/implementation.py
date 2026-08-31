@@ -883,15 +883,13 @@ def pressurefit(
     admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> PressureFitResult:
-    """Select a schedule and monotonically refine dynamic-slab headroom.
+    """Select a schedule at the caller's object capacity.
 
-    PressureFit first uses the caller's conservative object capacity.  If all
-    logically valid schedules fail exact dynamic ``MemoryPool`` admission,
-    object capacity is reduced by at least 128 MiB.  The increment doubles on
-    every subsequent failure and is never smaller than the measured contiguous
-    deficit rounded to allocator granularity.  Increments double through 1 GiB
-    and then grow by 512 MiB per attempt. Selection then repeats without
-    changing physical pool capacity, task semantics, or action rules.
+    Selection runs once.  The global capacity ladder this used to describe -
+    reducing object capacity and repeating the whole selection - is retired;
+    a candidate that misses exact dynamic ``MemoryPool`` admission now refines
+    within the search, so physical pool capacity, task semantics, and action
+    rules are unchanged either way.
     """
 
     # Preserve the framework-neutral semantic diagnostics before entering the

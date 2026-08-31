@@ -16,7 +16,7 @@ are separate frontend/planner concerns. Exact range placement is documented in
 `ShadowSpillResidencyProblem` contains indexed aliases, boundaries, initial and
 final locations, task access, transfer cost, and per-boundary capacity.
 `ShadowSpillAdmissionFacts` adds exact task allocation/free steps, the
-anonymous live-set peak derived from those steps, fresh outputs,
+anonymous live-set multiset flattened per task from those steps, fresh outputs,
 replacements, handoffs, and task-allocation slots. Executable admission never
 constructs allocation steps from scalar workspace or output totals.
 

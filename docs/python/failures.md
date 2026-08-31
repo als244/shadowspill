@@ -89,7 +89,7 @@ The runtime status names are:
 | Status | Interpretation |
 |---|---|
 | `invalid_argument` | A runtime API argument violated its contract. |
-| `allocation_failure` | A backend or pool allocation failed without a stronger classification. |
+| `internal_failure` | A backend or pool allocation failed without a stronger classification. |
 | `out_of_memory` | The requested physical memory is unavailable. |
 | `no_progress` | No free range exists and no known pending transition can satisfy the request. |
 | `invalid_state` | An object, lease, action, or lifecycle transition is invalid. |

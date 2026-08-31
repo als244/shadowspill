@@ -98,8 +98,10 @@ under [Trajectories](#trajectories). It changes nothing about the search.
 
 Candidates place layouts and publish what they place to a shared record, so
 which plans are worth measuring depends on what has already been placed. That
-makes the search order-dependent by default; a caller that needs a reproducible
-answer keeps a record per search rather than sharing one.
+makes the search order-dependent by default. Scoping a record per search does
+not remove that: one record is shared by every resolved program dispatched
+concurrently within a call. A caller that needs a reproducible answer sets
+`workers=1`.
 
 ### Workers and the unit of work
 
@@ -633,7 +635,7 @@ effect.
 | `headroom-transfer` | Prefer cuts that avoid write-back before other tie-breaks | Yes | Uses the same conservative early-fetch charge, but removes the stall estimate from the first score position. It tends to favor clean releases and lower eviction work even when another cut has a better local overlap estimate. |
 | `tight-stall` | Minimize estimated exposed stall first | No | Fits only the current logical residency/output pressure. It may retain more useful residency than a headroom candidate, but later trigger-time fetch reservations can expose pressure that admission or simulation must repair. |
 | `tight-transfer` | Prefer cuts that avoid write-back before other tie-breaks | No | Combines tight logical accounting with the transfer-oriented cut order. It can reduce eviction traffic, while accepting greater risk that selected gaps or fetch timing expose stall or trigger-time capacity pressure. |
-| `relaxed-stall` | Minimize estimated exposed stall first | No | Currently maps to the same reduction controls as `tight-stall`, so it produces no distinct pressure behavior unless another implementation control is added. It remains a separate candidate identity in diagnostics. |
+| `relaxed-stall` (not in the default portfolio) | Minimize estimated exposed stall first | No | Currently maps to the same reduction controls as `tight-stall`, so it produces no distinct pressure behavior unless another implementation control is added. It remains a separate candidate identity in diagnostics. |
 
 Headroom accounting charges a fetched residency span one boundary earlier
 than its logical entry. It is conservative boundary accounting, not a transfer
@@ -646,7 +648,7 @@ simulator and admission model's responsibility.
 |---|---|---|
 | `packed-fifo` | Work backward from consumer deadlines while packing each device's single fetch lane; earlier fetches account for residual occupancy left by later packed work. | Seeks lane utilization and overlap across the complete reload set. It may enqueue a destination earlier than capacity permits, so admission can delay it or force another residency cut. |
 | `packed-fit` | Start with packed FIFO triggers, then move implicated triggers later until their early destination occupancy fits analytic capacity where possible. | Reduces trigger-time capacity pressure relative to unconstrained packing, at the cost of less transfer lead time and potentially more consumer stall. |
-| `interval-entry` | Extend each later residency span toward earlier boundaries while exact analytic capacity fits, then place fetches with packed FIFO. | Uses otherwise idle object capacity to create more transfer lead time. It can hide latency, but increases how long fetched destinations occupy execution memory. |
+| `interval-entry` (not in the default portfolio) | Extend each later residency span toward earlier boundaries while exact analytic capacity fits, then place fetches with packed FIFO. | Uses otherwise idle object capacity to create more transfer lead time. It can hide latency, but increases how long fetched destinations occupy execution memory. |
 | `latest-safe` | Independently subtract each fetch's duration from its ideal consumer deadline and choose the latest task boundary no later than that time. | Limits early residency for each object, but does not jointly pack the FIFO. Several individually safe choices may queue behind one another and expose lane-induced consumer stall. |
 | `demand` | Trigger at the final legal enqueue boundary, normally immediately before the first consumer. | Minimizes pre-consumer destination occupancy and is often capacity-friendly, but deliberately exposes most or all fetch latency when the object is not already ready. |
 

@@ -10,11 +10,8 @@ again does not, so the second half of this example imports no torch.
 ```python
 from pathlib import Path
 
-from shadowspill.planner import (
-    StepProgram,
-    TransferBandwidths,
-    pressurefit_program,
-)
+from shadowspill.planner import pressurefit_program
+from shadowspill.planner.program import StepProgram, TransferBandwidths
 from shadowspill.pytorch import make_step_program
 
 step_program = make_step_program(
@@ -71,5 +68,5 @@ For reproducible sweeps, store together:
 - the `StepProgram` JSON;
 - every `AnnotatedProgramPlan` JSON;
 - the sweep configuration and source revision;
-- the planning cache on a fast local filesystem;
+- the artifact store on a fast local filesystem;
 - any explicit transfer-bandwidth provenance.

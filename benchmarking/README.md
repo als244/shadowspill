@@ -13,11 +13,13 @@ benchmarking/
 │   ├── collect.py                      collection launcher
 │   ├── configs/                        versioned collection matrices
 │   ├── corpus.py                       Program serialization and validation
-│   └── planning_caches/                local Export/compile/profile cache
+│   └── planning_caches/                local Export/compile/profile artifact store
 └── planning_eval/
     ├── evaluate.py                     frontier launcher
+    ├── planning_caches/                the frontier run's own artifact store
     ├── configs/                        versioned budget/bandwidth matrices
     ├── plan_artifacts.py               annotated-plan serialization
+    ├── _serialization.py               shared encode/decode helpers
     └── results/                        complete measured baselines
 ```
 
@@ -36,7 +38,7 @@ records use that terminology consistently.
 
 The current full dataset is:
 
-`benchmarking/datasets/input_programs/full_model_program_corpus_v1`
+`benchmarking/datasets/input_programs/full_model_program_corpus_d65e6ef`
 
 It contains 168 already-collected Programs. Generated datasets, caches, and
 results are intentionally git-ignored; their versioned configurations,

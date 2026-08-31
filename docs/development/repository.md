@@ -10,6 +10,7 @@ shadowspill/
 ├── csrc/                  the C library, its backends, and public C headers
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
+├── reference/             executable reference implementations
 ├── benchmarking/          reusable Program datasets and planning evaluation
 ├── qualification/         thin numerical and performance release gates
 ├── docs/                  architecture, Python, C, development, and investigations
@@ -32,6 +33,11 @@ Programs across budgets and transfer bandwidths.
 src/shadowspill/
 ├── ir/                    framework-neutral values and indexed projections
 ├── planner/               PressureFit orchestration and compiled bindings
+│   ├── admission/         neutral physical admission
+│   ├── diagnostics/       PlanReport values
+│   ├── pressurefit/       the search itself
+│   ├── recomputation/     resolved-program enumeration
+│   └── serialization/     neutral artifact encode/decode
 ├── simulator/             the simulator and diagnostic timeline
 ├── runtime/               physical admission and replay bindings
 └── pytorch/
@@ -47,8 +53,8 @@ src/shadowspill/
     ├── execution/         before/compiled/after task skeletons
     ├── runtime_adapter/   Python-to-C runtime and allocator boundary
     ├── diagnostics/       PlanReport and StepDiagnostics
+    ├── sharing/           runtime-owned TensorRef handles
     ├── state/             persistent model/optimizer import
-    └── serialization/   (moved to shadowspill/planner/)
 ```
 
 High-level modules expose small orchestration functions. Detailed algorithms
@@ -73,8 +79,8 @@ csrc/
                            allocator/storage/profiler bridge sources
 ```
 
-Everything under `src/` builds into one library. Backends and the PyTorch
-adapter are separate targets with their own `CMakeLists.txt`, because each is
+Everything under `src/` builds into one library. The backends share one
+`CMakeLists.txt` and the PyTorch adapter has its own, because each is
 compiled elsewhere against a toolchain the rest of the tree must not require.
 Provider dependencies stay inside those boundaries.
 

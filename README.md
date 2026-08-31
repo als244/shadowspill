@@ -85,6 +85,8 @@ tracing, forward-only planning, and complete state lifecycle handling.
 | `benchmarking/` | Reusable Program collection and planning evaluation |
 | `qualification/` | Numerical and performance release gates |
 | `src/tools/` | Source-tree diagnostics and acceptance tooling |
+| `reference/` | Executable reference implementations of the planner |
+| `scripts/` | One-command environment setup |
 | `docs/` | Architecture, Python, C, development, and investigation guides |
 
 ## Documentation

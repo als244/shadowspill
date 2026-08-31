@@ -87,6 +87,7 @@ The fields mean:
 | `simulator_makespan_seconds` | Complete simulated schedule, including modeled terminal work. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
 | `phase_comparisons` | Profiled versus real task-event sum by semantic phase. |
+| `trace_complete` | False when any required trace source overflowed or was incomplete. |
 
 `real_inter_task_idle_seconds` is exactly `real_inter_task_readiness_wait_seconds` plus
 `real_inter_task_exposed_overhead_seconds`: the stream is either waiting at a task's
@@ -144,8 +145,6 @@ absence is the point of reporting the two separately: whatever
 `real_initial_readiness_wait_seconds` is the first task's wait. It ends where
 the span begins, so no span-relative number here contains it, and on a step
 that opens by fetching its parameters it can exceed everything that follows.
-| `trace_complete` | False when any required trace source overflowed or was incomplete. |
-
 Use the selected span for the warmed first-task-to-final-task comparison. Do
 not compare an end-to-end host call that includes startup/cooldown with a
 selected-task simulator interval without accounting for those boundaries.
@@ -160,9 +159,9 @@ Every `TaskExecutionTiming` contains exactly seven primary timestamps:
 | Host `CLOCK_MONOTONIC` | `before_task_exit_timestamp_ns` |
 | Host `CLOCK_MONOTONIC` | `after_task_enter_timestamp_ns` |
 | Host `CLOCK_MONOTONIC` | `after_task_exit_timestamp_ns` |
-| Compute stream | `compute_reached_timestamp_ns` |
-| Compute stream | `compute_started_timestamp_ns` |
-| Compute stream | `compute_finished_timestamp_ns` |
+| Compute stream | `compute_reached_seconds` |
+| Compute stream | `compute_started_seconds` |
+| Compute stream | `compute_finished_seconds` |
 
 The host and compute-stream timestamps are different clock domains. Compare
 durations within a domain; use the precomputed aligned seconds fields for
@@ -181,8 +180,8 @@ host:                                                after_task enter
 host:                                                output/runtime work -- exit
 ```
 
-Names say what they are: a field naming an event -- `stream_reached`,
-`compute_reached`, `compute_started` -- is when that happened, measured from
+Names say what they are: a field naming an event -- `compute_reached`,
+`compute_started`, `compute_finished` -- is when that happened, measured from
 the step origin, while a field naming a span -- `readiness_wait`,
 `compute_duration`, `frontend_lead` -- is how long it lasted. The compute-stream markers used to
 be called `before_readiness_waits`, `before_task_compute` and
