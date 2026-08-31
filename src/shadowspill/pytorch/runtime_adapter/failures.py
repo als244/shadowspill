@@ -119,7 +119,7 @@ class RuntimeFailureDiagnostics:
         """Whether ShadowSpill should replace a secondary provider exception."""
 
         return self.status in {
-            6,  # plan_violation
+            Status.PLAN_VIOLATION,
             _TASK_ALLOCATION_ENVELOPE_EXCEEDED,
             _TASK_ALLOCATION_CONTRACT_MISMATCH,
         }
