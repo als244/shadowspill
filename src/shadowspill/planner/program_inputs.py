@@ -276,9 +276,7 @@ class PressureFitProgram:
                 "dynamic_scratch_reserve_bytes": (self.dynamic_scratch_reserve_bytes),
             },
             "simulation_config": _simulation_config_to_dict(self.simulation_config),
-            # Schema v1 spells these facts a "facts"; every stored corpus
-            # case is verified against digests taken over that name.
-            "admission_topology": self.admission_facts.to_dict(),
+            "admission_facts": self.admission_facts.to_dict(),
             "pressurefit_options": _options_to_dict(self.options),
         }
 
@@ -313,9 +311,7 @@ class PressureFitProgram:
             simulation_config=_simulation_config_from_value(
                 data.get("simulation_config"), f"{path}.simulation_config"
             ),
-            admission_facts=AdmissionFacts.from_dict(
-                data.get("admission_topology")
-            ),
+            admission_facts=AdmissionFacts.from_dict(data.get("admission_facts")),
             source_execution_budget_bytes=_integer(
                 capacity.get("source_execution_budget_bytes"),
                 f"{path}.capacity_contract.source_execution_budget_bytes",

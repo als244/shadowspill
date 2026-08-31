@@ -15,9 +15,7 @@ from enum import StrEnum
 
 from shadowspill.ir import Program
 
-#: Schema v3 named these facts a "topology". The stored corpus carries that
-#: string and its digests are taken over it, so the wire keeps the name.
-_SCHEMA = "shadowspill.admission_topology/v3"
+_SCHEMA = "shadowspill.admission_facts/v3"
 
 
 class TaskAllocationStepKind(StrEnum):

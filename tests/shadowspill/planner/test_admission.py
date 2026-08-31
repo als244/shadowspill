@@ -525,10 +525,10 @@ def test_admission_facts_use_only_the_current_physical_schema() -> None:
     facts = _causal_facts()
     payload = facts.to_dict()
 
-    assert payload["schema"] == "shadowspill.admission_topology/v3"
+    assert payload["schema"] == "shadowspill.admission_facts/v3"
     assert AdmissionFacts.from_json(facts.to_json()) == facts
 
-    payload["schema"] = "shadowspill.admission_topology/v2"
+    payload["schema"] = "shadowspill.admission_facts/v2"
     with pytest.raises(ValueError, match="unsupported schema"):
         AdmissionFacts.from_dict(payload)
 
