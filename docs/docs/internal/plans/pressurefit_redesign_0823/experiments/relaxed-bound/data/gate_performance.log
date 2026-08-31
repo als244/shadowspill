@@ -1,6 +1,0 @@
-Traceback (most recent call last):
-  File "<frozen runpy>", line 198, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/home/shein/Documents/grad_school/research/shadowspill/src/tools/qualification/performance_matrix.py", line 14, in <module>
-    from workloads.full_model import FullModelManifest, manifests
-ModuleNotFoundError: No module named 'workloads'
