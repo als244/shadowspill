@@ -56,6 +56,11 @@ with a PASS/FAIL block carrying per-gate status and UTC START, STOP, and
 DURATION records. The console stream is duplicated with timestamps into
 `matrix.log` beside `summary.json`, and each cell keeps one timestamped log.
 
+The performance matrix judges throughput against floors measured on one
+machine. Its `--measure-only` reports the measurement without those floors,
+closing cells as MEASURED rather than PASS, which is the mode to run on a
+machine the floors did not come from.
+
 Framework-free PressureFit benchmarking belongs in
 `benchmarking/planning_eval/fixture_benchmark.py`. Step inspection belongs in
 `src/tools/diagnostics/`.

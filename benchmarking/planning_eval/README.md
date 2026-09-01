@@ -27,6 +27,16 @@ points use three global bidirectional-concurrent transfer pairs: 1/2x, 1x, and
 saved artifact store is used only where the configuration explicitly permits
 it.
 
+This package needs no GPU. It constructs no model and profiles no kernel: the
+task costs it plans against were measured when the corpus was collected and
+are carried in each `StepProgram`. So a run measures the planner on the
+machine it runs on, against costs recorded on the machine that collected the
+corpus, and those need not be the same machine. Planner worker count is
+resolved from the logical CPU count when `workers` is left at its default of
+auto, so parallelism follows the host without configuration. The 2,520-point
+baseline took 3.22 hours on this tree's machine; the wall time is dominated by
+selection, so a host with more cores finishes sooner.
+
 Each point log contains:
 
 - `[program/168]` and `[point/2520]` progress;

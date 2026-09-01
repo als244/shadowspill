@@ -38,7 +38,7 @@ default; checkpoint/replay release coverage lives in the numerical matrix.
 shrinking that physical pool. The planning budget is rejected immediately if
 it exceeds the configured capacity.
 
-Run the complete five-cell matrix with:
+Run the matrix with:
 
 ```bash
 python -m qualification.performance.matrix \
@@ -47,6 +47,10 @@ python -m qualification.performance.matrix \
   --keep-going \
   --planning-spill-budget-gib mlops_qwen35=100
 ```
+
+That runs the three cells carrying a throughput floor, of the five defined.
+A cell without a floor cannot pass or fail, so it is not in the default set;
+`--cells` reaches the other two.
 
 The matrix runs every cell as a checkpoint-free throughput probe: it forwards
 `--skip-checkpoint` so the anonymous full-state copy never coexists with the
@@ -60,3 +64,35 @@ and diagnoses one warm step, restores the checkpoint, then measures three
 groups of four steps. Without it, the warm step is kept rather than restored
 and the same three groups follow. Planning, compilation, warmup, and restore
 are outside timed execution.
+
+## Measuring on another machine
+
+The floors in `workloads.full_model` are throughput measured on one machine.
+On any other machine a pass says nothing and a failure says only that the
+hardware differs, so `--measure-only` runs the same protocol and reports the
+measurement instead of judging it:
+
+```bash
+python -m qualification.performance.matrix \
+  --output-directory qualification/results/<machine-name> \
+  --force-fresh \
+  --keep-going \
+  --measure-only
+```
+
+Each cell prints its median step, throughput, predicted step with simulator
+error, and planning time. The gate lines are gone, and so are the regression
+and predecessor ratios, which divide by throughput from the floor machine and
+would describe that gap rather than this run. Cells close as MEASURED or
+ERROR rather than PASS or FAIL, and the matrix exits on whether the cells ran.
+Every gate field is still written to the artifact and `summary.json` records
+the mode, so a run stays judgeable later against floors that suit the machine
+that produced it.
+
+The cells need the device to themselves: each plans against a 16 GiB
+execution budget and a 112 GiB pinned host spill arena, and the host cannot
+hold that arena alongside another process's reservation. A machine that is
+short of either fails at runtime bootstrap rather than measuring something
+misleading. Adopting a machine's own numbers as floors means replacing the
+`workloads.full_model` table, which is a deliberate edit and not something a
+measuring run does.
