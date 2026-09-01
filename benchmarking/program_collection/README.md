@@ -65,3 +65,18 @@ does not invalidate resume or integrity validation. The current 168 Programs
 and their artifact store were collected in this tree, most recently on
 2026-08-29 at `d65e6ef`; the collection log under `_collections/` records
 when and at what revision.
+
+## Collecting on another machine
+
+Collection needs an execution device and a working provider backend: it
+builds each model, compiles it, and profiles real kernels. The 168-Program
+corpus took 5.24 hours to collect on this tree's machine.
+
+The measured task costs are written into each `StepProgram`, so a corpus
+describes the machine that collected it. That is what makes a corpus reusable
+by `planning_eval` without a GPU, and it is also the reason a corpus is not a
+portable description of different hardware. Evaluating planning against
+another machine's costs means collecting a corpus there; reusing this one
+measures the planner against the costs recorded here, whatever machine the
+planner runs on. Name the output directory for the revision that collected
+it, as the existing corpora are, so the two cases stay distinguishable.
