@@ -27,7 +27,7 @@ def main() -> int:
     installed = install_allocator(
         Path(sys.argv[1]).resolve(),
         device_ordinal=0,
-        device_budget_bytes=1 << 30,
+        device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
         **two_pool_topology(1 << 20),
         worker_poll_nanoseconds=1_000,
