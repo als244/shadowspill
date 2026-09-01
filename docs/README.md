@@ -67,6 +67,10 @@ trees.
 11. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
+12. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+    invocation cycle: why repetition is sound, the synchronization points
+    between one step and the next, the first-use order of the opening
+    restore, and what step time means.
 
 ## Examples
 
