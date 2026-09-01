@@ -20,6 +20,7 @@ from shadowspill.ir import (
     TaskSpec,
     ValidationError,
 )
+from shadowspill.ir.schedule import first_use_initial_order
 
 from ._examples import SAVE_SELECTION, representative_plan, representative_program
 
@@ -119,3 +120,28 @@ def test_output_invalidates_a_retained_spill_copy() -> None:
 
     with pytest.raises(ValidationError, match="current host residency"):
         stale.validate(program)
+
+
+def test_first_use_initial_order_follows_the_task_sequence() -> None:
+    program = representative_program()
+    schedule = MemorySchedule(
+        # Deliberately emitted against first-use order, with one alias no
+        # task consumes as an input and one entry that is not on device.
+        initial_residency=(
+            ResidencySpec("activation_storage", MemoryLocation.DEVICE),
+            ResidencySpec("output_storage", MemoryLocation.DEVICE),
+            ResidencySpec("weight_storage", MemoryLocation.DEVICE),
+            ResidencySpec("input_storage", MemoryLocation.SPILL),
+        ),
+        actions=(),
+    )
+
+    # forward_save consumes input then weight; consume reads the
+    # activation later; nothing reads output, so it keeps its emitted
+    # position after every consumed alias. The spilled entry never
+    # appears.
+    assert first_use_initial_order(program, schedule) == (
+        "weight_storage",
+        "activation_storage",
+        "output_storage",
+    )
