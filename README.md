@@ -14,7 +14,8 @@ From a fresh checkout:
 
 The script creates `.venv`, installs the supported PyTorch and device-backend
 stack, builds the C planner, simulator, runtime, backend, and PyTorch adapter,
-and verifies the installation. To use an existing virtual or Conda
+installs the mlops operation library with its implementation providers, and
+verifies the installation. To use an existing virtual or Conda
 environment:
 
 ```bash
