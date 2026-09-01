@@ -41,10 +41,17 @@ _MINIMUM_REGRESSION_RATIO = 0.95
 #: averaging it away. On 2026-08-31 mlops_olmoe measured +4.35%, +4.58% and
 #: +5.93% across three runs against a 0.05 limit, straddling it and failing
 #: the matrix intermittently on a bias that is understood rather than new.
-#: Raised to 0.10 to keep the gate on real prediction failures until the
-#: prologue is gone. The fix is planning-side and not a simulator change:
-#: fetch the initial objects at the end of the prior step, where the transfer
-#: lanes are idle, so there is no startup cost left to model.
+#: Raised to 0.10 to keep the gate on real prediction failures. Most of the
+#: prologue was queue order, not queue size — the first task's inputs sat at
+#: the end of the FIFO initial-placement batch — and is addressed by
+#: first-use ordering (shadowspill.ir.schedule.first_use_initial_order).
+#: Ending the step already holding its initial objects was priced by the
+#: solver and rejected: capacity violations on every qualification cell and
+#: more simulated makespan than the waste it recovers (see
+#: docs/investigations/step-prologue-and-terminal-tail.md). The remaining
+#: one-sided bias is the terminal-drain serialization, input staging, and
+#: profile optimism; revisit this limit once post-ordering distributions
+#: exist.
 _MAXIMUM_SIMULATOR_ERROR = 0.10
 
 

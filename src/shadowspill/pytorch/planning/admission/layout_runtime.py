@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule, Program
+from shadowspill.ir import MemoryActionKind, MemorySchedule, Program
+from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.layout.model import (
     FixedLayoutPlacement,
@@ -125,10 +126,13 @@ def _initial_placements(
 ) -> tuple[RuntimeFixedPlacement, ...]:
     initial_leases = dict(layout.initial_alias_leases)
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
+    # The batch pairs action N with ACTION_DESTINATION ordinal N, so the
+    # ordinals here must follow the same first-use order the executors
+    # submit the prefetches in.
     aliases = tuple(
-        item.alias_group_id
-        for item in schedule.initial_residency
-        if item.location is MemoryLocation.DEVICE and sizes[item.alias_group_id] != 0
+        alias_group_id
+        for alias_group_id in first_use_initial_order(program, schedule)
+        if sizes[alias_group_id] != 0
     )
     if set(aliases) != set(initial_leases):
         raise ValueError("fixed layout initial objects differ from the schedule")
