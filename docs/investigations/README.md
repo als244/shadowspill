@@ -10,6 +10,10 @@ runtime design. They are historical analyses, not normative API contracts.
   timing-dependent schedule/runtime disagreement and its causal correction.
 - [Qwen runtime overheads](qwen-runtime-overheads.md) reconciles the original
   standard-allocator, simulator, and ShadowSpill execution measurements.
+- [Step prologue and terminal tail](step-prologue-and-terminal-tail.md)
+  decomposes the per-invocation cost outside the selected span, explains the
+  simulator's one-sided optimism, and records why first-use ordering was
+  adopted over steady-state residency.
 
 Current behavior is defined by the [architecture](../architecture/overview.md),
 [Python](../python/README.md), and [C](../c/README.md) documentation.
