@@ -19,13 +19,13 @@ def main() -> int:
     installed = install_allocator(
         Path(sys.argv[1]).resolve(),
         device_ordinal=0,
-        device_budget_bytes=1 << 30,
-        provider_headroom_bytes=64 * MIB,
+        device_budget_bytes=2 << 30,
+        provider_headroom_bytes=256 * MIB,
         **two_pool_topology(1 * MIB),
         worker_poll_nanoseconds=10_000,
     )
     library = installed.library
-    if int(library.shadowspill_pytorch_seal_physical_budget(64 * MIB, 16)) != 0:
+    if int(library.shadowspill_pytorch_seal_physical_budget(256 * MIB, 16)) != 0:
         raise AssertionError("physical budget did not seal before growth injection")
 
     cuda = ctypes.CDLL("libcuda.so.1")
@@ -34,7 +34,7 @@ def main() -> int:
     cuda.cuMemFree_v2.argtypes = [ctypes.c_uint64]
     cuda.cuMemFree_v2.restype = ctypes.c_int
     external = ctypes.c_uint64()
-    if cuda.cuMemAlloc_v2(ctypes.byref(external), 80 * MIB) != 0:
+    if cuda.cuMemAlloc_v2(ctypes.byref(external), 320 * MIB) != 0:
         raise AssertionError("failed to inject external provider growth")
     try:
         status = int(library.shadowspill_pytorch_check_physical_budget())
@@ -60,9 +60,9 @@ def main() -> int:
             raise AssertionError(
                 "provider growth was misclassified as callback failure"
             )
-        if statistics.observed_external_high_water_bytes <= 64 * MIB:
+        if statistics.observed_external_high_water_bytes <= 256 * MIB:
             raise AssertionError("external high-water did not exceed its reservation")
-        if statistics.peak_process_physical_bytes <= 1 << 30:
+        if statistics.peak_process_physical_bytes <= 2 << 30:
             raise AssertionError("negative canary did not actually exceed the cap")
     finally:
         if cuda.cuMemFree_v2(external.value) != 0:

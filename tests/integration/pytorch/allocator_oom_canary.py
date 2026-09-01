@@ -10,6 +10,7 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterFailure,
+    AdapterStatistics,
     PlanDescription,
     TaskDescription,
     runtime_library,
@@ -26,7 +27,8 @@ from shadowspill.status import Status
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 NO_PROGRESS = Status.NO_PROGRESS
-REQUEST_BYTES = 128 << 20
+# Above the whole device budget, so it cannot fit whatever the context baseline costs.
+REQUEST_BYTES = 4 << 30
 
 
 def _runtime_handle(library: object) -> int:
@@ -63,7 +65,7 @@ def main() -> int:
     installed = install_allocator(
         Path(sys.argv[1]).resolve(),
         device_ordinal=0,
-        device_budget_bytes=1 << 30,
+        device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
         **two_pool_topology(1 << 20),
         worker_poll_nanoseconds=10_000,
@@ -95,6 +97,20 @@ def main() -> int:
         stream.cuda_stream,
         expected_bindings=0,
     )
+    # In a pool large enough for provider initialization, install leaves the
+    # cuBLAS workspace resident, so the free space to preserve is the
+    # runtime's own measurement, not the raw pool capacity.
+    statistics = AdapterStatistics()
+    if (
+        int(
+            installed.library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(statistics)
+            )
+        )
+        != 0
+    ):
+        raise AssertionError("pre-request statistics query failed")
+    free_before_request = int(statistics.runtime.free_bytes)
     try:
         torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
     except torch.OutOfMemoryError as error:
@@ -127,7 +143,7 @@ def main() -> int:
         raise AssertionError("adapter lost the requested allocation size")
     if failure.runtime.status != NO_PROGRESS:
         raise AssertionError("adapter did not preserve the runtime's first cause")
-    if failure.runtime.free_bytes != installed.admission.allocator_pool_bytes:
+    if failure.runtime.free_bytes != free_before_request:
         raise AssertionError("diagnostic free-space accounting is incorrect")
     task = ExecutionTaskIdentity(
         execution_task_id="execution_000017",
