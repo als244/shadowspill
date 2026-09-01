@@ -67,7 +67,10 @@ can compare, execution by execution and transfer by transfer:
 
 Simulator fidelity is evaluated on warmed execution. Startup fetches and final
 cooldown are reported separately so their transfer and readiness costs remain
-visible rather than being folded into selected-task timing.
+visible rather than being folded into selected-task timing. [Step
+boundaries](step-boundaries.md) defines that cycle — which synchronization
+points separate repeated invocations, and which of the boundary costs the
+makespan does and does not price.
 
 The [StepResult diagnostics guide](../python/step-diagnostics.md) defines the
 real-versus-simulated task and transfer fields, clock domains, selected-span
