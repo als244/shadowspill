@@ -178,6 +178,7 @@ def _cell_result_details(
     *,
     started_at: str,
     elapsed: float,
+    measure_only: bool = False,
 ) -> list[str]:
     """Summarize one finished cell's gates, evidence, and timing."""
 
@@ -193,9 +194,10 @@ def _cell_result_details(
                 ("simulator_gate_passed", "SIMULATOR"),
                 ("regression_gate_passed", "REGRESSION"),
             )
-            for key, label in gates:
-                value = artifact_payload.get(key)
-                details.append(f"GATE {label}: {'pass' if value else 'FAIL'}")
+            if not measure_only:
+                for key, label in gates:
+                    value = artifact_payload.get(key)
+                    details.append(f"GATE {label}: {'pass' if value else 'FAIL'}")
             median_step = artifact_payload.get("median_step_seconds")
             throughput = artifact_payload.get("median_tokens_per_second")
             if isinstance(median_step, float) and isinstance(throughput, float):
@@ -210,12 +212,16 @@ def _cell_result_details(
                     f"PREDICTED STEP: {predicted:.4f} seconds "
                     f"(simulator error {error:+.2%})"
                 )
-            ratio = artifact_payload.get("regression_throughput_ratio")
-            if isinstance(ratio, float):
-                details.append(f"REGRESSION RATIO: {ratio:.2%}")
-            ratio = artifact_payload.get("predecessor_throughput_ratio")
-            if isinstance(ratio, float):
-                details.append(f"PREDECESSOR RATIO: {ratio:.2%}")
+            # Both ratios divide by throughput measured on the machine that
+            # set the floors, so on another machine they describe the
+            # hardware rather than this run.
+            if not measure_only:
+                ratio = artifact_payload.get("regression_throughput_ratio")
+                if isinstance(ratio, float):
+                    details.append(f"REGRESSION RATIO: {ratio:.2%}")
+                ratio = artifact_payload.get("predecessor_throughput_ratio")
+                if isinstance(ratio, float):
+                    details.append(f"PREDECESSOR RATIO: {ratio:.2%}")
         planning = artifact_payload.get("planning_seconds")
         if isinstance(planning, float):
             details.append(f"PLANNING: {planning:.3f} seconds")
@@ -257,6 +263,16 @@ def main() -> int:
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
+        "--measure-only",
+        action="store_true",
+        help=(
+            "report each cell's throughput without judging it, and exit on "
+            "whether the cells ran rather than on whether they passed. The "
+            "floors were measured on one machine and mean nothing on another, "
+            "so this is the mode to port with"
+        ),
+    )
+    parser.add_argument(
         "--checkpoint",
         action="store_true",
         help=(
@@ -286,6 +302,8 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.checkpoint and arguments.plan_only:
         parser.error("--checkpoint has no effect with --plan-only")
+    if arguments.measure_only and arguments.plan_only:
+        parser.error("--measure-only has nothing to measure with --plan-only")
     identities = frozenset(manifest.identity for manifest in manifests())
     try:
         planning_budgets = _parse_cell_planning_budgets(
@@ -306,6 +324,8 @@ def main() -> int:
         mode = "checkpoint, warm step, restore, 3x4 measured steps"
     else:
         mode = "throughput probe without checkpoint, warm step, 3x4 measured steps"
+    if arguments.measure_only:
+        mode += "; reported without gates"
     rows: list[dict[str, object]] = []
     failed = False
     matrix_started = time.perf_counter()
@@ -350,6 +370,8 @@ def main() -> int:
                 # coverage stays in the numerical matrix and behind
                 # --checkpoint here.
                 command.append("--skip-checkpoint")
+            if arguments.measure_only:
+                command.append("--measure-only")
             if manifest.identity in planning_budgets:
                 command.extend(
                     (
@@ -380,8 +402,12 @@ def main() -> int:
             artifact_payload: dict[str, object] | None = None
             if artifact.is_file():
                 artifact_payload = json.loads(artifact.read_text())
+            # Measure-only asks whether the cell ran, not whether it was good
+            # enough; the cell subprocess already declines to fail on gates.
             passed = bool(
-                artifact_payload.get("passed") if artifact_payload else False
+                (artifact_payload is not None)
+                if arguments.measure_only
+                else (artifact_payload.get("passed") if artifact_payload else False)
             )
             failure_record: dict[str, object] | None = None
             if failure_path.is_file():
@@ -393,7 +419,11 @@ def main() -> int:
                     log=log,
                     failure_path=failure_path,
                 )
-            status = "PASS" if return_code == 0 and passed else "FAIL"
+            ran = return_code == 0 and passed
+            if arguments.measure_only:
+                status = "MEASURED" if ran else "ERROR"
+            else:
+                status = "PASS" if ran else "FAIL"
             console.block(
                 f"CELL {status} {prefix} {manifest.identity}",
                 _cell_result_details(
@@ -401,6 +431,7 @@ def main() -> int:
                     failure_record,
                     started_at=started_at,
                     elapsed=elapsed,
+                    measure_only=arguments.measure_only,
                 ),
             )
             row = {
@@ -424,6 +455,7 @@ def main() -> int:
         summary = {
             "schema": "shadowspill.full_model_matrix/v1",
             "plan_only": arguments.plan_only,
+            "measure_only": arguments.measure_only,
             "cells": rows,
             "passed": bool(rows)
             and not failed
@@ -433,11 +465,16 @@ def main() -> int:
             json.dumps(summary, indent=2, sort_keys=True) + "\n"
         )
         console.emit()
+        if arguments.measure_only:
+            banner = "MATRIX MEASURED" if summary["passed"] else "MATRIX ERROR"
+            counted = "CELLS MEASURED: "
+        else:
+            banner = "MATRIX " + ("PASS" if summary["passed"] else "FAIL")
+            counted = "CELLS PASSED: "
         console.block(
-            "MATRIX " + ("PASS" if summary["passed"] else "FAIL"),
+            banner,
             [
-                "CELLS PASSED: "
-                f"{sum(1 for row in rows if row['passed'])}/{len(chosen)}",
+                counted + f"{sum(1 for row in rows if row['passed'])}/{len(chosen)}",
                 f"SUMMARY: {output / 'summary.json'}",
                 f"STOP: {utc_now()}",
                 f"DURATION: {time.perf_counter() - matrix_started:.3f} seconds",

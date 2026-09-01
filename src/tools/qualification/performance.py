@@ -518,6 +518,15 @@ def main() -> int:
     parser.add_argument("--steps-per-group", type=int, default=4)
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
+        "--measure-only",
+        action="store_true",
+        help=(
+            "report throughput without judging it; the gates compare against "
+            "floors measured on one machine, so they carry no meaning on "
+            "another. The artifact still records every gate field"
+        ),
+    )
+    parser.add_argument(
         "--skip-checkpoint",
         action="store_true",
         help=(
@@ -551,6 +560,8 @@ def main() -> int:
         parser.error("groups and steps-per-group must be positive")
     if arguments.plan_only and arguments.skip_checkpoint:
         parser.error("--skip-checkpoint has no effect with --plan-only")
+    if arguments.plan_only and arguments.measure_only:
+        parser.error("--measure-only has nothing to measure with --plan-only")
     if arguments.spill_budget_gib is not None and arguments.spill_budget_gib <= 0:
         parser.error("--spill-budget-gib must be positive")
     if (
@@ -578,7 +589,12 @@ def main() -> int:
         raise
     arguments.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     identity = f"{arguments.implementation}_{arguments.family}"
-    print(f"RESULT {'PASS' if result['passed'] else 'FAIL'}: {identity}", flush=True)
+    if arguments.measure_only:
+        print(f"RESULT MEASURED: {identity}", flush=True)
+    else:
+        print(
+            f"RESULT {'PASS' if result['passed'] else 'FAIL'}: {identity}", flush=True
+        )
     if not arguments.plan_only:
         gates = (
             ("protocol_complete", "PROTOCOL"),
@@ -589,8 +605,9 @@ def main() -> int:
             ("simulator_gate_passed", "SIMULATOR"),
             ("regression_gate_passed", "REGRESSION"),
         )
-        for key, label in gates:
-            print(f"  GATE {label}: {'pass' if result[key] else 'FAIL'}")
+        if not arguments.measure_only:
+            for key, label in gates:
+                print(f"  GATE {label}: {'pass' if result[key] else 'FAIL'}")
         print(
             f"  MEDIAN STEP: {result['median_step_seconds']:.4f} seconds "
             f"({result['median_tokens_per_second']:.1f} tokens/s)"
@@ -599,17 +616,22 @@ def main() -> int:
             f"  PREDICTED STEP: {result['predicted_makespan_seconds']:.4f} "
             f"seconds (simulator error {result['simulator_relative_error']:+.2%})"
         )
-        ratio = result["regression_throughput_ratio"]
-        if isinstance(ratio, float):
-            print(f"  REGRESSION RATIO: {ratio:.2%}")
-        # Reported, never gated: how close this run is to the predecessor system
-        # ShadowSpill replaces. See workloads.full_model for the provenance.
-        ratio = result["predecessor_throughput_ratio"]
-        if isinstance(ratio, float):
-            print(f"  PREDECESSOR RATIO: {ratio:.2%}")
+        # Both ratios divide by throughput measured on the machine that set
+        # the floors, so on any other machine they describe the hardware
+        # rather than this run.  Measure-only reports the measurement itself.
+        if not arguments.measure_only:
+            ratio = result["regression_throughput_ratio"]
+            if isinstance(ratio, float):
+                print(f"  REGRESSION RATIO: {ratio:.2%}")
+            # Reported, never gated: how close this run is to the predecessor
+            # system ShadowSpill replaces. See workloads.full_model for the
+            # provenance.
+            ratio = result["predecessor_throughput_ratio"]
+            if isinstance(ratio, float):
+                print(f"  PREDECESSOR RATIO: {ratio:.2%}")
     print(f"  PLANNING: {result['planning_seconds']:.3f} seconds")
     print(f"  ARTIFACT: {arguments.output}", flush=True)
-    if not result["passed"] and not arguments.plan_only:
+    if not result["passed"] and not arguments.plan_only and not arguments.measure_only:
         return 1
     return 0
 
