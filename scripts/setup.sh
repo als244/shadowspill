@@ -70,13 +70,13 @@ if [[ ! -x "${python_executable}" ]]; then
   exit 1
 fi
 
-echo "[1/4] Installing PyTorch 2.13 with backend '${torch_backend}'"
+echo "[1/5] Installing PyTorch 2.13 with backend '${torch_backend}'"
 "${uv_executable}" pip install \
   --python "${python_executable}" \
   --torch-backend "${torch_backend}" \
   "torch>=2.13,<2.14"
 
-echo "[2/4] Building and installing ShadowSpill"
+echo "[2/5] Building and installing ShadowSpill"
 torch_cmake_prefix="$(
   "${python_executable}" -c '
 from importlib.util import find_spec
@@ -95,7 +95,20 @@ print(Path(next(iter(spec.submodule_search_locations))) / "share" / "cmake")
   --config-setting "cmake.define.Python3_EXECUTABLE=${python_executable}" \
   --editable "${project_root}[pytorch,dev]"
 
-echo "[3/4] Verifying PyTorch and the accelerator backend"
+echo "[3/5] Installing mlops with its implementation providers"
+mlops_checkout="$(cd "${project_root}/.." && pwd)/mlops"
+if [[ -x "${mlops_checkout}/scripts/setup.sh" ]]; then
+  "${mlops_checkout}/scripts/setup.sh" \
+    --python "${python_executable}" \
+    --torch-backend "${torch_backend}"
+else
+  "${uv_executable}" pip install \
+    --python "${python_executable}" \
+    --torch-backend "${torch_backend}" \
+    "mlops[providers,dev] @ git+https://github.com/als244/mlops.git"
+fi
+
+echo "[4/5] Verifying PyTorch and the accelerator backend"
 "${python_executable}" - <<'PY'
 import torch
 
@@ -112,9 +125,15 @@ if not torch.cuda.is_available():
 print(f"PyTorch: {torch.__version__}")
 print(f"CUDA backend: {torch.version.cuda}")
 print(f"GPU: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+
+from importlib.metadata import version
+
+import mlops  # noqa: F401  -- the operation library installed alongside
+
+print(f"mlops: {version('mlops')}")
 PY
 
-echo "[4/4] Verifying ShadowSpill's installed libraries"
+echo "[5/5] Verifying ShadowSpill's installed libraries"
 "${python_executable}" - <<'PY'
 import ctypes
 
