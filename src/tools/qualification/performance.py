@@ -34,25 +34,19 @@ from workloads.providers import ModelImplementation
 
 _MINIMUM_REGRESSION_RATIO = 0.95
 
-#: The simulator does not price the startup cost of loading a step's initial
-#: objects, so its prediction is systematically optimistic and this error is
-#: one-sided. Every step pays that prologue, not just the first: the prior
-#: step ends with those objects spilled, so the median carries it rather than
-#: averaging it away. On 2026-08-31 mlops_olmoe measured +4.35%, +4.58% and
-#: +5.93% across three runs against a 0.05 limit, straddling it and failing
-#: the matrix intermittently on a bias that is understood rather than new.
-#: Raised to 0.10 to keep the gate on real prediction failures. Most of the
-#: prologue was queue order, not queue size — the first task's inputs sat at
-#: the end of the FIFO initial-placement batch — and is addressed by
-#: first-use ordering (shadowspill.ir.schedule.first_use_initial_order).
-#: Ending the step already holding its initial objects was priced by the
-#: solver and rejected: capacity violations on every qualification cell and
-#: more simulated makespan than the waste it recovers (see
+#: The simulator prices the selected span and the terminal tail; the opening
+#: restore is unmodeled but, since first-use ordering of the initial
+#: placement batch (shadowspill.ir.schedule.first_use_initial_order), bounded
+#: by the first task's own inputs rather than the whole initial set. Across
+#: the three re-baselining runs of 2026-09-01 the error spans [-1.91%,
+#: +0.42%] — slightly pessimistic where it errs — so 0.05 restores the
+#: original limit with better than 2.5x margin. The limit sat at 0.10 while
+#: the unmodeled restore cost 275-330 ms per step; ending the step already
+#: holding its initial objects was priced by the solver and rejected (see
 #: docs/investigations/step-prologue-and-terminal-tail.md). The remaining
-#: one-sided bias is the terminal-drain serialization, input staging, and
-#: profile optimism; revisit this limit once post-ordering distributions
-#: exist.
-_MAXIMUM_SIMULATOR_ERROR = 0.10
+#: unmodeled terms are the terminal-drain serialization, input staging, and
+#: profile fidelity.
+_MAXIMUM_SIMULATOR_ERROR = 0.05
 
 
 def _phase_seconds(report: Any) -> dict[str, float]:
