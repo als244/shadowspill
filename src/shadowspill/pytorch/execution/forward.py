@@ -11,6 +11,7 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.errors import PlanningError
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
+from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
@@ -333,10 +334,9 @@ class ForwardExecutor(AnnotatedExecutor):
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
         self._initial_prefetches = tuple(
-            item.alias_group_id
-            for item in plan.schedule.initial_residency
-            if item.location.value == "device"
-            and bridge.requires_storage(item.alias_group_id)
+            alias_group_id
+            for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
+            if bridge.requires_storage(alias_group_id)
         )
         initial_actions = tuple(
             self._initial_prefetch_action(alias_id)

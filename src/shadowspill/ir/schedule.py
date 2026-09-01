@@ -356,10 +356,53 @@ class MemorySchedule:
             )
 
 
+def first_use_initial_order(
+    program: Program, schedule: MemorySchedule
+) -> tuple[str, ...]:
+    """The schedule's initial device aliases, ordered by first consuming task.
+
+    The runtime realizes initial residency as one FIFO transfer batch, so
+    the batch's order decides how long the earliest tasks wait for their
+    inputs. The schedule emits the set in alias order, which strands a
+    first task's input arbitrarily deep in the queue; ordering by the
+    program's task sequence lets every task's inputs arrive no later than
+    the work ahead of them requires. Aliases first consumed by the same
+    task follow that task's own input order; aliases no task consumes keep
+    their emitted relative order after all consumed ones.
+    """
+
+    emitted = tuple(
+        item.alias_group_id
+        for item in schedule.initial_residency
+        if item.location is MemoryLocation.DEVICE
+    )
+    wanted = set(emitted)
+    alias_of = {
+        item.object_id: item.alias_group_id
+        for item in program.objects
+        if item.alias_group_id in wanted
+    }
+    rank: dict[str, int] = {}
+    for task in program.tasks:
+        consumed = tuple(task.inputs) + tuple(
+            mutation.object_id for mutation in task.mutations
+        )
+        for object_id in consumed:
+            alias = alias_of.get(object_id)
+            if alias is not None and alias not in rank:
+                rank[alias] = len(rank)
+    unused = len(rank)
+    position = {alias: index for index, alias in enumerate(emitted)}
+    return tuple(
+        sorted(emitted, key=lambda alias: (rank.get(alias, unused), position[alias]))
+    )
+
+
 __all__ = [
     "MemoryAction",
     "MemoryActionKind",
     "MemoryLocation",
     "MemorySchedule",
     "ResidencySpec",
+    "first_use_initial_order",
 ]

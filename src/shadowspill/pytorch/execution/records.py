@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
+from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
@@ -155,10 +156,9 @@ def build_plan_run(
         },
         execution=execution,
         initial_prefetches=tuple(
-            item.alias_group_id
-            for item in plan.schedule.initial_residency
-            if item.location.value == "device"
-            and bridge.requires_storage(item.alias_group_id)
+            alias_group_id
+            for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
+            if bridge.requires_storage(alias_group_id)
         ),
         public_by_microbatch=_public_outputs(entrypoints, bridge),
     )
