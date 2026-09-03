@@ -22,23 +22,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _cli_modules() -> list[Path]:
-    tracked = subprocess.run(
-        ["git", "ls-files", "*.py"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split()
-    # This file names the call it looks for, so it matches its own search.
-    here = Path(__file__).resolve()
-    return [
-        ROOT / f
-        for f in tracked
-        if (ROOT / f).resolve() != here and "add_argument(" in (ROOT / f).read_text()
-    ]
-
-
 def _declared_flags(tree: ast.AST) -> set[str]:
     """The attribute names `argparse` will produce for each long option."""
 
@@ -67,13 +50,42 @@ def _declared_flags(tree: ast.AST) -> set[str]:
     return names
 
 
+def _cli_modules() -> list[Path]:
+    """Every module that declares a long option, and so has something to check.
+
+    A module whose parser takes only positional arguments declares no
+    attribute that could drift from its flag, so it is not a case here.
+    Leaving it in as a case that skips itself reports a skip on every run,
+    which reads like something was not checked rather than like there was
+    nothing to check.
+    """
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    # This file names the call it looks for, so it matches its own search.
+    here = Path(__file__).resolve()
+    candidates = [
+        ROOT / f
+        for f in tracked
+        if (ROOT / f).resolve() != here and "add_argument(" in (ROOT / f).read_text()
+    ]
+    return [
+        path
+        for path in candidates
+        if _declared_flags(ast.parse(path.read_text(), filename=str(path)))
+    ]
+
+
 @pytest.mark.parametrize("path", _cli_modules(), ids=lambda p: str(p.relative_to(ROOT)))
 def test_declared_flags_are_read(path: Path) -> None:
     source = path.read_text()
     tree = ast.parse(source, filename=str(path))
     declared = _declared_flags(tree)
-    if not declared:
-        pytest.skip("no long options declared")
 
     # Any attribute access of that name counts: the parsed namespace is passed
     # around under several names (`arguments`, `args`, `options`).
