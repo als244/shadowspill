@@ -495,9 +495,7 @@ def _allocation_lifetimes(
             all_identities.add(event.allocation_id)
         else:
             released = (
-                live.pop(event.allocation_id)
-                if event.allocation_id in live
-                else None
+                live.pop(event.allocation_id) if event.allocation_id in live else None
             )
             if released is None:
                 raise ValueError(f"allocation {event.allocation_id!r} is not live")
@@ -513,9 +511,7 @@ def _allocation_lifetimes(
     return lifetimes, by_identity
 
 
-def _lifetimes_overlap(
-    left: _AllocationLifetime, right: _AllocationLifetime
-) -> bool:
+def _lifetimes_overlap(left: _AllocationLifetime, right: _AllocationLifetime) -> bool:
     return left.start < right.end and right.start < left.end
 
 

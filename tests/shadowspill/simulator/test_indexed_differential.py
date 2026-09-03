@@ -158,7 +158,7 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
             MemoryAction(
                 "trigger",
                 "storage",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
         ),
         final_residency=(ResidencySpec("storage", MemoryLocation.DEVICE),),
@@ -251,8 +251,7 @@ def test_random_linear_programs_match(
     assert actual == expected
 
 
-def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out(
-) -> None:
+def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out() -> None:
     """The simulator attaches its own interval arrays to a result so
     a indexed consumer can read the timings without re-encoding them. They
     address library memory, so anything that writes a result out - `asdict`,

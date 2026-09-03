@@ -136,12 +136,12 @@ def representative_schedule() -> MemorySchedule:
             MemoryAction(
                 "forward_save",
                 "activation_storage",
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             ),
             MemoryAction(
                 "backward_marker",
                 "activation_storage",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
             MemoryAction(
                 "consume",

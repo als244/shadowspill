@@ -1,0 +1,51 @@
+{
+  "case": "single-device overlapped evict and fetch",
+  "configuration": {
+    "device_capacity_bytes": 512,
+    "spill_capacity_bytes": 1024,
+    "h2d_bytes_per_nanosecond": 1,
+    "d2h_bytes_per_nanosecond": 1
+  },
+  "intervals": [
+    [
+      "produce",
+      0,
+      100,
+      "compute"
+    ],
+    [
+      "to_slow:activation",
+      100,
+      228,
+      "to_slow"
+    ],
+    [
+      "middle",
+      100,
+      500,
+      "compute"
+    ],
+    [
+      "from_slow:activation",
+      500,
+      628,
+      "from_slow"
+    ],
+    [
+      "spacer",
+      500,
+      800,
+      "compute"
+    ],
+    [
+      "consume",
+      800,
+      900,
+      "compute"
+    ]
+  ],
+  "device_peak_bytes": 272,
+  "spill_peak_bytes": 128,
+  "makespan_ns": 900,
+  "legacy_oracle_match": true
+}

@@ -143,12 +143,12 @@ def representative_program_schedule_without_shared_weight() -> MemorySchedule:
             MemoryAction(
                 "forward_save",
                 "activation_storage",
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             ),
             MemoryAction(
                 "backward_marker",
                 "activation_storage",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
             MemoryAction(
                 "consume",

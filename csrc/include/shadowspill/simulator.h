@@ -20,8 +20,8 @@ typedef enum ShadowSpillMemoryLocation {
 
 typedef enum ShadowSpillMemoryActionKind {
     SHADOWSPILL_MEMORY_RELEASE = 0,
-    SHADOWSPILL_MEMORY_OFFLOAD = 1,
-    SHADOWSPILL_MEMORY_PREFETCH = 2,
+    SHADOWSPILL_MEMORY_EVICT = 1,
+    SHADOWSPILL_MEMORY_FETCH = 2,
 } ShadowSpillMemoryActionKind;
 
 typedef enum ShadowSpillTransferDirection {
@@ -141,9 +141,9 @@ typedef enum ShadowSpillCapacityViolationReason {
     /* Retained spill copies alone exceed the spill pool. */
     SHADOWSPILL_CAPACITY_INITIAL_SPILL = 1,
     /* A fetch would not fit on the device. */
-    SHADOWSPILL_CAPACITY_PREFETCH_DEVICE = 2,
-    /* An evict would not fit in the spill pool. */
-    SHADOWSPILL_CAPACITY_OFFLOAD_SPILL = 3,
+    SHADOWSPILL_CAPACITY_FETCH_DEVICE = 2,
+    /* An eviction would not fit in the spill pool. */
+    SHADOWSPILL_CAPACITY_EVICT_SPILL = 3,
     /* A task's outputs and workspace would not fit on the device. */
     SHADOWSPILL_CAPACITY_TASK_DEVICE = 4,
 } ShadowSpillCapacityViolationReason;
@@ -151,7 +151,7 @@ typedef enum ShadowSpillCapacityViolationReason {
 /*
  * One point where the plan wanted more memory than its budget allowed.
  *
- * A prefetch that does not fit waits rather than failing, so pressure that
+ * A fetch that does not fit waits rather than failing, so pressure that
  * used to end the simulation now only slows it down. The stall says when the
  * plan waited and for how long; this says by how much it was short, which is
  * what a repair needs in order to know how much to change.

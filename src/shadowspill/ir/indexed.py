@@ -33,8 +33,8 @@ MEMORY_LOCATION_CODE = {
 }
 MEMORY_ACTION_CODE = {
     MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.OFFLOAD: 1,
-    MemoryActionKind.PREFETCH: 2,
+    MemoryActionKind.EVICT: 1,
+    MemoryActionKind.FETCH: 2,
 }
 
 

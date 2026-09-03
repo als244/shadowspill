@@ -117,8 +117,8 @@ class EncodedIndexedSchedule:
 
 _ACTION_KIND = {
     MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.OFFLOAD: 1,
-    MemoryActionKind.PREFETCH: 2,
+    MemoryActionKind.EVICT: 1,
+    MemoryActionKind.FETCH: 2,
 }
 _LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.SPILL: 1}
 _ALLOCATION_KIND = {

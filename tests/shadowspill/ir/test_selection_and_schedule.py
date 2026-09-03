@@ -84,11 +84,11 @@ def _retained_spill_output_program() -> Program:
     )
 
 
-def test_offload_refreshes_a_retained_spill_copy() -> None:
+def test_evict_refreshes_a_retained_spill_copy() -> None:
     program = _retained_spill_output_program()
     schedule = MemorySchedule(
         initial_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
-        actions=(MemoryAction("update", "state_storage", MemoryActionKind.OFFLOAD),),
+        actions=(MemoryAction("update", "state_storage", MemoryActionKind.EVICT),),
         final_residency=(ResidencySpec("state_storage", MemoryLocation.SPILL),),
     )
 

@@ -140,12 +140,8 @@ class MemoryReuseDependency:
     successor_action_index: int | None = None
 
     def __post_init__(self) -> None:
-        _require_non_negative(
-            self.predecessor_action_index, "predecessor_action_index"
-        )
-        if (self.successor_task_id is None) == (
-            self.successor_action_index is None
-        ):
+        _require_non_negative(self.predecessor_action_index, "predecessor_action_index")
+        if (self.successor_task_id is None) == (self.successor_action_index is None):
             raise ValueError(
                 "exactly one memory-reuse successor task or action is required"
             )
@@ -153,13 +149,9 @@ class MemoryReuseDependency:
             not self.successor_task_id
             or self.successor_task_id.strip() != self.successor_task_id
         ):
-            raise ValueError(
-                "successor_task_id must be a non-empty normalized string"
-            )
+            raise ValueError("successor_task_id must be a non-empty normalized string")
         if self.successor_action_index is not None:
-            _require_non_negative(
-                self.successor_action_index, "successor_action_index"
-            )
+            _require_non_negative(self.successor_action_index, "successor_action_index")
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,7 +294,7 @@ class SimulationInfeasibleError(ValueError):
 class CapacityViolation:
     """One instant where a plan wanted more memory than its budget allowed.
 
-    A prefetch or task launch that does not fit waits rather than failing, so
+    A fetch or task launch that does not fit waits rather than failing, so
     this does not mean the plan was rejected -- it means the plan paid for
     the shortfall in stall. `reason` says which of the two came up short, and
     `excess_bytes` says by how much, which is what a repair needs to know how

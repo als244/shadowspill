@@ -145,9 +145,7 @@ def test_probe_seeds_change_only_synthetic_floating_values() -> None:
         ),
     )
 
-    first = materialize_representative_inputs(
-        artifact, device_ordinal=0, probe_index=0
-    )
+    first = materialize_representative_inputs(artifact, device_ordinal=0, probe_index=0)
     second = materialize_representative_inputs(
         artifact, device_ordinal=0, probe_index=1
     )
@@ -197,9 +195,7 @@ def test_integer_task_input_requires_authentic_value() -> None:
     result = materialize_representative_inputs(authentic, device_ordinal=0)
     torch.testing.assert_close(result.arguments[0], left)
     torch.testing.assert_close(result.arguments[1], right)
-    assert {item.value_policy for item in result.summaries} == {
-        "authentic_control"
-    }
+    assert {item.value_policy for item in result.summaries} == {"authentic_control"}
 
 
 def test_allocator_failure_is_checked_before_representative_population() -> None:

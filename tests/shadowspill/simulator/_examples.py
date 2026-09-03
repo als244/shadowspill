@@ -102,12 +102,12 @@ def overlap_schedule() -> MemorySchedule:
             MemoryAction(
                 "produce",
                 "activation_storage",
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             ),
             MemoryAction(
                 "middle",
                 "activation_storage",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
             MemoryAction(
                 "consume",
@@ -192,8 +192,8 @@ def ordered_action_schedule() -> MemorySchedule:
     return MemorySchedule(
         initial_residency=(),
         actions=(
-            MemoryAction("long_task", "long_storage", MemoryActionKind.OFFLOAD),
-            MemoryAction("short_task", "short_storage", MemoryActionKind.OFFLOAD),
+            MemoryAction("long_task", "long_storage", MemoryActionKind.EVICT),
+            MemoryAction("short_task", "short_storage", MemoryActionKind.EVICT),
         ),
         final_residency=(
             ResidencySpec("long_storage", MemoryLocation.SPILL),

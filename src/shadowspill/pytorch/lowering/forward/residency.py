@@ -23,9 +23,7 @@ def derive_forward_residency(
         raise TypeError("public output residency must use MemoryLocation")
     aliases = objects.catalog.alias_groups()
     shared_aliases = {
-        group.alias_group_id
-        for group in aliases
-        if group.shared_residency is not None
+        group.alias_group_id for group in aliases if group.shared_residency is not None
     }
     logical_objects = objects.catalog.objects()
     initial_aliases = {

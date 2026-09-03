@@ -51,7 +51,7 @@ def _selected():  # type: ignore[no-untyped-def]
         config=config(),
         options=PressureFitOptions(
             residency_strategies=("relaxed-stall",),
-            prefetch_rules=("latest-safe",),
+            fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
         ),
     )

@@ -35,9 +35,8 @@ def lower_partitioned_forward_program(
     device_ordinal: int = 0,
     profile_compatibility_digests: tuple[str, ...] | None = None,
     public_output_locations: Mapping[int, MemoryLocation] | None = None,
-    shared_residency_by_root: Mapping[
-        int, tuple[SharedResidencyPolicy, bool]
-    ] | None = None,
+    shared_residency_by_root: Mapping[int, tuple[SharedResidencyPolicy, bool]]
+    | None = None,
 ) -> LoweredForwardProgram:
     """Create one deterministic canonical program from forward task positions."""
 

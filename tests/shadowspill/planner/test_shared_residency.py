@@ -72,7 +72,7 @@ def test_pressurefit_never_creates_actions_for_shared_aliases() -> None:
         config=_config(),
         options=PressureFitOptions(
             residency_strategies=("relaxed-stall",),
-            prefetch_rules=("latest-safe",),
+            fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
         ),
     )

@@ -132,9 +132,7 @@ def _initialize_at_compiler_boundary(
             return False
         return reached_boundary
     finally:
-        for parameter, gradient in zip(
-            parameters, original_gradients, strict=True
-        ):
+        for parameter, gradient in zip(parameters, original_gradients, strict=True):
             parameter.grad = gradient
         gradient_owners.clear()
 

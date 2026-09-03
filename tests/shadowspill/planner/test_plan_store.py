@@ -12,7 +12,7 @@ from ._examples import config, exact_capacity_program, exact_capacity_residency
 
 FEW_CANDIDATES = PressureFitOptions(
     residency_strategies=("relaxed-stall",),
-    prefetch_rules=("latest-safe",),
+    fetch_rules=("latest-safe",),
     evaluate_coalesced=False,
 )
 
@@ -34,7 +34,7 @@ def test_plan_store_preserves_the_complete_selection(tmp_path: Path) -> None:
         config=config(),
         options=PressureFitOptions(
             residency_strategies=FEW_CANDIDATES.residency_strategies,
-            prefetch_rules=FEW_CANDIDATES.prefetch_rules,
+            fetch_rules=FEW_CANDIDATES.fetch_rules,
             evaluate_coalesced=False,
             workers=8,
         ),

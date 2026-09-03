@@ -118,9 +118,7 @@ class _TrainingTaskEmitter:
                         item.pair.forward,
                         self.profiles.additional_workspace_for_outputs(
                             item.pair.forward,
-                            self.profiles.replacement_output_leaves(
-                                item.pair.forward
-                            ),
+                            self.profiles.replacement_output_leaves(item.pair.forward),
                             metadata_digest,
                         ),
                         metadata_digest=metadata_digest,

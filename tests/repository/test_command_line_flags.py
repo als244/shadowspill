@@ -25,12 +25,16 @@ ROOT = Path(__file__).resolve().parents[2]
 def _cli_modules() -> list[Path]:
     tracked = subprocess.run(
         ["git", "ls-files", "*.py"],
-        cwd=ROOT, capture_output=True, text=True, check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split()
     # This file names the call it looks for, so it matches its own search.
     here = Path(__file__).resolve()
     return [
-        ROOT / f for f in tracked
+        ROOT / f
+        for f in tracked
         if (ROOT / f).resolve() != here and "add_argument(" in (ROOT / f).read_text()
     ]
 
@@ -40,13 +44,18 @@ def _declared_flags(tree: ast.AST) -> set[str]:
 
     names: set[str] = set()
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "add_argument"):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+        ):
             continue
         explicit = next(
-            (k.value.value for k in node.keywords
-             if k.arg == "dest" and isinstance(k.value, ast.Constant)),
+            (
+                k.value.value
+                for k in node.keywords
+                if k.arg == "dest" and isinstance(k.value, ast.Constant)
+            ),
             None,
         )
         if explicit:
@@ -68,10 +77,9 @@ def test_declared_flags_are_read(path: Path) -> None:
 
     # Any attribute access of that name counts: the parsed namespace is passed
     # around under several names (`arguments`, `args`, `options`).
-    read = {
-        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-    } | {
-        node.value for node in ast.walk(tree)
+    read = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} | {
+        node.value
+        for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     }
     unread = sorted(name for name in declared if name not in read)

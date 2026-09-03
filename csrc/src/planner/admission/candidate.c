@@ -138,7 +138,7 @@ static int project_result(
         }
         if (predecessor_action >= schedule->action_count ||
             schedule->action_kinds[predecessor_action] !=
-                SHADOWSPILL_MEMORY_OFFLOAD ||
+                SHADOWSPILL_MEMORY_EVICT ||
             workspace->projected_reuse_count >= workspace->action_capacity) {
             return -1;
         }

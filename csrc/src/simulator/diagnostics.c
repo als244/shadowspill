@@ -101,7 +101,7 @@ int shadowspill_report_deadlock(
     ShadowSpillSimulationResult *result
 ) {
     /*
-     * A prefetch with nowhere to land waits rather than failing, so when the
+     * A fetch with nowhere to land waits rather than failing, so when the
      * simulation can no longer advance, the action that is still waiting is
      * the root cause. It was never queued -- its transfer record is
      * untouched -- so it has to be recognised from the submission cursor
@@ -113,10 +113,10 @@ int shadowspill_report_deadlock(
         uint32_t alias = program->action_aliases[action];
         uint32_t device = program->alias_device[alias];
         if (work->tasks[trigger].state == SHADOWSPILL_TASK_COMPLETE &&
-            program->action_kinds[action] == SHADOWSPILL_MEMORY_PREFETCH) {
+            program->action_kinds[action] == SHADOWSPILL_MEMORY_FETCH) {
             shadowspill_set_capacity_error(
                 result,
-                SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
+                SHADOWSPILL_STATUS_FETCH_DEVICE_CAPACITY,
                 work,
                 trigger,
                 alias,
@@ -129,10 +129,10 @@ int shadowspill_report_deadlock(
             return 0;
         }
         if (work->tasks[trigger].state == SHADOWSPILL_TASK_COMPLETE &&
-            program->action_kinds[action] == SHADOWSPILL_MEMORY_OFFLOAD) {
+            program->action_kinds[action] == SHADOWSPILL_MEMORY_EVICT) {
             shadowspill_set_capacity_error(
                 result,
-                SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
+                SHADOWSPILL_STATUS_EVICT_SPILL_CAPACITY,
                 work,
                 trigger,
                 alias,
@@ -164,7 +164,7 @@ int shadowspill_report_deadlock(
                 ) || total > program->devices[device].capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY,
+                    SHADOWSPILL_STATUS_FETCH_DEVICE_CAPACITY,
                     work,
                     transfer->trigger_task,
                     alias,
@@ -187,7 +187,7 @@ int shadowspill_report_deadlock(
                 ) || total > program->spill_capacity_bytes) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
+                    SHADOWSPILL_STATUS_EVICT_SPILL_CAPACITY,
                     work,
                     transfer->trigger_task,
                     alias,

@@ -45,9 +45,7 @@ def saved_value_footprint(
 
     root_by_id = {root.root_id: root for root in selected.roots}
     public_roots = {
-        view.root_id
-        for view in selected.output_views
-        if view.leaf_index < public_count
+        view.root_id for view in selected.output_views if view.leaf_index < public_count
     }
     saved_roots = {
         view.root_id

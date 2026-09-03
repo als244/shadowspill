@@ -97,12 +97,12 @@ def _schedule() -> MemorySchedule:
             MemoryAction(
                 "eviction_trigger",
                 "evicted_activation",
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             ),
             MemoryAction(
                 "fetch_trigger",
                 "fetched_activation",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
         ),
         final_residency=(
@@ -161,7 +161,7 @@ def test_without_a_reuse_certificate_the_fetch_waits_for_the_eviction() -> None:
     # The stall says the fetch waited; the shortfall says by how much it was
     # short, which is what a repair would need in order to act on it.
     (shortfall,) = result.capacity_violations
-    assert shortfall.reason == "prefetch-device-capacity"
+    assert shortfall.reason == "fetch-device-capacity"
     assert shortfall.alias_group_id == "fetched_activation"
     assert shortfall.excess_bytes > 0
     assert result.capacity_violation_count == 1

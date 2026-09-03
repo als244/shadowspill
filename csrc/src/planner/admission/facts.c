@@ -184,12 +184,12 @@ static int admission_counts(
     *dependency_count = problem->simulation->task_count;
     for (uint32_t action = 0U; action < schedule->action_count; ++action) {
         const uint8_t kind = schedule->action_kinds[action];
-        if (kind == SHADOWSPILL_MEMORY_PREFETCH) {
+        if (kind == SHADOWSPILL_MEMORY_FETCH) {
             if (checked_add(*lease_count, 1U, lease_count) != 0 ||
                 checked_add(*operation_count, 2U, operation_count) != 0) {
                 return -1;
             }
-        } else if (kind == SHADOWSPILL_MEMORY_OFFLOAD) {
+        } else if (kind == SHADOWSPILL_MEMORY_EVICT) {
             if (checked_add(*dependency_count, 1U, dependency_count) != 0 ||
                 checked_add(*operation_count, 2U, operation_count) != 0) {
                 return -1;

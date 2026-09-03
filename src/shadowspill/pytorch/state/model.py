@@ -52,9 +52,7 @@ def import_model_state[ModelT: nn.Module](
         pool=pool,
     )
     try:
-        imported, imported_storages = copy_model_with_runtime_storages(
-            model, storages
-        )
+        imported, imported_storages = copy_model_with_runtime_storages(model, storages)
         own_persistent_state(
             imported,
             runtime=runtime,

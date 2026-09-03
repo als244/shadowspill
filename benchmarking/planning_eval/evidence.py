@@ -40,9 +40,8 @@ def successful_point_evidence(
     )
     task_stall = sum(item.stall_ns for item in simulation.task_intervals)
     if simulation.task_intervals:
-        task_span = (
-            max(item.end_ns for item in simulation.task_intervals)
-            - min(item.start_ns for item in simulation.task_intervals)
+        task_span = max(item.end_ns for item in simulation.task_intervals) - min(
+            item.start_ns for item in simulation.task_intervals
         )
     else:
         task_span = 0
@@ -89,26 +88,20 @@ def successful_point_evidence(
             "attempt_elapsed_seconds": elapsed_seconds,
             "total_selection_wall_time_ns": plan.wall_time_ns,
             "pressurefit_wall_time_ns": plan.pressurefit_wall_time_ns,
-            "physical_admission_wall_time_ns": (
-                plan.physical_admission_wall_time_ns
-            ),
+            "physical_admission_wall_time_ns": (plan.physical_admission_wall_time_ns),
             "orchestration_wall_time_ns": plan.orchestration_wall_time_ns,
         },
         "result": {
             "annotated_plan": {
                 "directory": str(annotated_plan_directory),
-                "path": str(
-                    annotated_plan_directory / "annotated_program_plan.json"
-                ),
+                "path": str(annotated_plan_directory / "annotated_program_plan.json"),
                 "plan_digest": plan.digest,
                 "artifact_sha256": artifact["artifact_sha256"],
             },
             "throughput": {
                 "tokens_per_optimizer_step": tokens_per_optimizer_step,
                 "tokens_per_second": (
-                    tokens_per_optimizer_step
-                    * 1_000_000_000
-                    / simulation.makespan_ns
+                    tokens_per_optimizer_step * 1_000_000_000 / simulation.makespan_ns
                 ),
             },
             "simulation": {
@@ -168,9 +161,7 @@ def successful_point_evidence(
                 "fixed_slice_bytes": plan.fixed_layout.fixed_slice_bytes,
                 "dynamic_reserve_bytes": plan.fixed_layout.dynamic_reserve_bytes,
                 "scratch_reserve_bytes": plan.fixed_layout.scratch_reserve_bytes,
-                "reuse_dependency_count": len(
-                    plan.fixed_layout.reuse_dependencies
-                ),
+                "reuse_dependency_count": len(plan.fixed_layout.reuse_dependencies),
                 "attempts": [
                     {
                         "requested_object_capacity_bytes": (
@@ -182,9 +173,7 @@ def successful_point_evidence(
                         "required_bytes": item.required_bytes,
                         "pool_capacity_bytes": item.pool_capacity_bytes,
                         "accepted": item.accepted,
-                        "pressurefit_wall_time_ns": (
-                            item.pressurefit_wall_time_ns
-                        ),
+                        "pressurefit_wall_time_ns": (item.pressurefit_wall_time_ns),
                         "physical_admission_wall_time_ns": (
                             item.physical_admission_wall_time_ns
                         ),
