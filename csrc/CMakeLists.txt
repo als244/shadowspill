@@ -58,6 +58,7 @@ add_library(
   src/runtime/sync/completion_tracker.c
   src/runtime/sync/event_pool.c
   src/runtime/sync/idle_wakeup.c
+  src/runtime/sync/stream_interval.c
   src/runtime/tasks/task_boundaries.c
   src/runtime/tasks/task_scope.c
   src/runtime/tasks/task_table.c

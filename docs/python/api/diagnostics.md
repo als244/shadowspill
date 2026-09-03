@@ -65,38 +65,31 @@ metric leaves remain tensors; static leaves preserve their captured values.
 `DiagnosticsHandle` for a traced step. Resolving the handle returns
 `StepDiagnostics` and may wait for recorded events.
 
-Each execution has `ExecutionTiming`, whose `tasks` hold one
-`TaskExecutionTiming` apiece, and each of those carries exactly seven
-boundary timestamps:
+`StepDiagnostics` has six views. `StepTimingSummary` is the reconciliation:
+profiled task time against real task-event time, simulated against real
+waiting, the selected span, the simulator's makespan, and the call-level
+host totals; `PhaseTimingComparison` breaks the task time down by phase.
+`tasks` maps execution task ids to a `TaskRecord` each, and `transfers` is a
+`TransferRecords` pair of mappings, `fetch` and `evict`, from transfer id to
+`TransferRecord`. Every record places simulated beside measured -- start,
+end, duration, and their deltas after alignment -- with a host group for
+boundary entry and exit, dispatch costs, and the worker's queueing and
+completion observations, and each transfer names the tasks it sits between
+(`previous_access`, `next_access`) and the task whose result it carries
+(`modified_by`), all of them keys into `tasks`. `Timelines` is the order on
+three lanes sharing one device-clock zero: the execution task ids in
+compute-stream order, and for `fetch` and `evict` a `TransferLane` holding
+the transfer ids in FIFO order and a `LaneSummary`.
 
-- host `before_task` entry and exit;
-- host `after_task` entry and exit;
-- compute-stream timestamp before readiness waits;
-- compute-stream `before_task_compute`;
-- compute-stream `after_task_compute`.
-
-These distinguish host orchestration, stream readiness stalls, task compute,
-run-ahead, and inter-task dispatch gaps.
-
-`StepTimingSummary` aggregates profiled task time, real task-event time,
-simulated and real inter-task gaps, simulated and real selected-task span, and
-startup/cooldown evidence. `PhaseTimingComparison` summarizes differences by
-phase. `SimulatorTransferComparison` compares each real transfer with its
-simulated trigger, start, end, and duration.
-
-Allocator diagnostics separate zero-byte requests, fixed-layout core slots,
-dynamic scratch, caller-owned allocations, pending releases, waits, failures,
-and task-envelope usage. Transfer diagnostics retain object identity,
-direction, bytes, queue/wire timestamps, and completion.
+`AllocatorTrace` is the ordered allocation and free ledger with the pool's
+geometry before and after the step. `RuntimeTrace` is the runtime's
+counter deltas, terminal queue state, trace capacity and overflow flags, and
+the raw runtime event records.
 
 All public diagnostic records are immutable. `PlanDiagnostics.as_dict()` and
 `StepDiagnostics.as_dict()` return JSON-friendly nested dictionaries for
-artifact storage or analysis.
-
-The public summary/comparison values are `ExecutionTiming`,
-`StepTimingSummary`, `PhaseTimingComparison`, and
-`SimulatorTransferComparison`. Detailed task, allocator, runtime, and transfer
-records are reached through `StepDiagnostics`.
+artifact storage or analysis; the [StepResult diagnostics
+guide](../step-diagnostics.md) defines every field.
 
 ## Defaults and overhead
 

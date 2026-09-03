@@ -13,12 +13,11 @@ import torch
 from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.diagnostics.collection import collect_step_diagnostics
 from shadowspill.pytorch.diagnostics.execution import (
-    ExecutionTiming,
     StepDiagnostics,
-    TaskExecutionTiming,
 )
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming as _ArmedExecutionTiming,
@@ -80,7 +79,7 @@ class _TensorLayout:
 @dataclass(frozen=True, slots=True)
 class _ExposedOptimizerTensor:
     tensor: torch.Tensor
-    cuda_placeholder: torch.Tensor
+    device_placeholder: torch.Tensor
 
 
 @dataclass(slots=True)
@@ -112,6 +111,29 @@ class _ProcessedTaskOutputs:
     @property
     def replacement_aliases(self) -> frozenset[str]:
         return frozenset(item.alias_id for item in self.replacements)
+
+
+def _alias_accesses(
+    run: _PlanRun,
+) -> FrozenMapping[str, tuple[tuple[int, bool], ...]]:
+    """Each alias group's reads and writes by the selected tasks, in order."""
+
+    alias_of = {
+        item.object_id: item.alias_group_id for item in run.plan.program.objects
+    }
+    accesses: dict[str, list[tuple[int, bool]]] = {}
+    for record in run.execution:
+        task = record.task
+        for object_id in task.inputs:
+            accesses.setdefault(alias_of[object_id], []).append(
+                (record.execution_ordinal, False)
+            )
+        written = tuple(task.outputs) + tuple(item.object_id for item in task.mutations)
+        for object_id in written:
+            accesses.setdefault(alias_of[object_id], []).append(
+                (record.execution_ordinal, True)
+            )
+    return FrozenMapping({key: tuple(value) for key, value in accesses.items()})
 
 
 class TrainingExecutor(AnnotatedExecutor):
@@ -226,15 +248,15 @@ class TrainingExecutor(AnnotatedExecutor):
     ) -> _PlanRun:
         self._bridge.admit_fixed_layout(fixed_layout)
         initial_actions = tuple(
-            MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
-            for alias_id in run.initial_prefetches
+            MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
+            for alias_id in run.initial_fetches
         )
         self._bridge.admit_initial_actions(
             initial_actions,
             task_number=fixed_layout.initial_task_id,
             action_trace_labels=tuple(
                 f"shadowspill.fetch.initial.{alias_id}"
-                for alias_id in run.initial_prefetches
+                for alias_id in run.initial_fetches
             ),
         )
         labels = TransferLabelIndex(
@@ -366,7 +388,12 @@ class TrainingExecutor(AnnotatedExecutor):
         """Open the current invocation's runtime trace after prior work is idle."""
 
         timing.statistics_before = self._bridge.statistics()
-        self._bridge.begin_runtime_trace(step_id=self._invocations + 1)
+        # Transfers are measured on their lanes from the same origin event
+        # the compute-stream markers use, so every lane shares one timeline.
+        self._bridge.begin_runtime_trace(
+            step_id=self._invocations + 1,
+            origin_event_handle=int(timing.origin_event.cuda_event),
+        )
 
     def _submit_initial_placement(
         self,
@@ -379,8 +406,8 @@ class TrainingExecutor(AnnotatedExecutor):
                 raise AssertionError("run has no admitted initial-placement task")
             self._bridge.submit_initial_actions(
                 tuple(
-                    MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
-                    for alias_id in run.initial_prefetches
+                    MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
+                    for alias_id in run.initial_fetches
                 ),
                 task_number=run.initial_task_id,
             )
@@ -486,13 +513,14 @@ class TrainingExecutor(AnnotatedExecutor):
             tuple(record.task.task_id for record in run.execution),
             actions=(
                 tuple(
-                    MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
-                    for alias_id in run.initial_prefetches
+                    MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
+                    for alias_id in run.initial_fetches
                 )
                 + run.plan.schedule.actions
             ),
             simulation=run.simulation,
             trace_setup_ns=trace_setup_ns,
+            alias_accesses=_alias_accesses(run),
         )
         self._armed_execution_timing = armed
 
@@ -500,7 +528,7 @@ class TrainingExecutor(AnnotatedExecutor):
         """Arm a two-event selected-task span without detailed tracing.
 
         This qualification path does not enable runtime tracing, callbacks,
-        NVTX, per-task events, allocator snapshots, or Python component
+        profiler ranges, per-task events, allocator snapshots, or Python component
         timestamps. The reusable events are materialized before arming so the
         measured call follows the ordinary production path.
         """
@@ -810,7 +838,6 @@ class TrainingExecutor(AnnotatedExecutor):
             with self._profile_range(f"shadowspill.before_task.{record.trace_label}"):
                 stream = self._resolve_task_stream(record, timing)
                 self._mark_task_readiness(timing, stream)
-                rebind_started_ns = time.perf_counter_ns() if timing is not None else 0
                 with self._profile_range(
                     f"shadowspill.storage_rebind.{record.trace_label}"
                 ):
@@ -818,22 +845,13 @@ class TrainingExecutor(AnnotatedExecutor):
                     self._acquire_task_inputs(record, stream, input_tensors, timing)
                     runtime_scope_open = True
                     call = self._assemble_task_call(record, timing)
-                if timing is not None:
-                    timing.dispatch_rebind_ns = (
-                        time.perf_counter_ns() - rebind_started_ns
-                    )
                 self._record_task_inputs_ready(timing, stream)
-                reuse_started_ns = time.perf_counter_ns() if timing is not None else 0
                 with self._profile_range(
                     f"shadowspill.allocation_reuse.{record.trace_label}"
                 ):
                     self._bridge.wait_task_allocations(
                         record.task_handle,
                         self._state.device.index or 0,
-                    )
-                if timing is not None:
-                    timing.dispatch_allocation_reuse_ns = (
-                        time.perf_counter_ns() - reuse_started_ns
                     )
                 prepared = _PreparedTask(
                     run=run,
@@ -908,22 +926,15 @@ class TrainingExecutor(AnnotatedExecutor):
         record: _ExecutionTaskRecord,
         timing: _ArmedTaskTiming | None,
     ) -> torch.cuda.Stream | None:
-        started_ns = time.perf_counter_ns() if timing is not None else 0
         needs_python_stream = timing is not None or self._armed_span_timing is not None
-        stream = torch.cuda.current_stream() if needs_python_stream else None
-        if timing is not None:
-            timing.dispatch_stream_resolution_ns = time.perf_counter_ns() - started_ns
-        return stream
+        return torch.cuda.current_stream() if needs_python_stream else None
 
     def _mark_task_readiness(
         self,
         timing: _ArmedTaskTiming | None,
         stream: torch.cuda.Stream | None,
     ) -> None:
-        started_ns = time.perf_counter_ns() if timing is not None else 0
         self._record_task_readiness(timing, stream)
-        if timing is not None:
-            timing.dispatch_readiness_marker_ns = time.perf_counter_ns() - started_ns
 
     def _lookup_task_inputs(
         self,
@@ -1097,7 +1108,6 @@ class TrainingExecutor(AnnotatedExecutor):
         prepared: _PreparedTask,
         raw_outputs: object,
     ) -> tuple[_ProcessedTaskOutputs, tuple[torch.Tensor, ...]]:
-        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         annotation_id = (
             self._task_annotations.begin(
                 f"shadowspill.output_processing.{prepared.record.trace_label}"
@@ -1114,10 +1124,6 @@ class TrainingExecutor(AnnotatedExecutor):
         finally:
             if annotation_id:
                 self._task_annotations.end(annotation_id)
-        if prepared.timing is not None:
-            prepared.timing.dispatch_postprocess_ns = (
-                time.perf_counter_ns() - started_ns
-            )
         return processed, dematerialized
 
     def _publish_task_to_runtime(
@@ -1465,7 +1471,7 @@ class TrainingExecutor(AnnotatedExecutor):
                 )
                 self._bridge.read_spill_tensor(alias_id, owner)
                 owners[alias_id] = owner
-            cuda_placeholder = tensor.data
+            device_placeholder = tensor.data
             layout = _TensorLayout(
                 tuple(tensor.shape),
                 tuple(tensor.stride()),
@@ -1473,7 +1479,7 @@ class TrainingExecutor(AnnotatedExecutor):
                 tensor.dtype,
             )
             tensor.data = self._view(owner, layout)
-            exposed.append(_ExposedOptimizerTensor(tensor, cuda_placeholder))
+            exposed.append(_ExposedOptimizerTensor(tensor, device_placeholder))
         return tuple(exposed)
 
     def _restore_optimizer_spill_only(
@@ -1485,7 +1491,7 @@ class TrainingExecutor(AnnotatedExecutor):
         # no information and can exceed the execution pool for large AdamW
         # inventories even though every individual task is feasible.
         for item in exposed:
-            item.tensor.data = item.cuda_placeholder
+            item.tensor.data = item.device_placeholder
 
     @staticmethod
     def _view(owner: torch.Tensor, layout: _TensorLayout) -> torch.Tensor:
@@ -1536,4 +1542,4 @@ def _same_tensor_view(left: torch.Tensor, right: torch.Tensor) -> bool:
     )
 
 
-__all__ = ["ExecutionTiming", "TaskExecutionTiming", "TrainingExecutor"]
+__all__ = ["TrainingExecutor"]

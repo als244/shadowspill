@@ -59,8 +59,8 @@ from shadowspill.pytorch.runtime_adapter.trace import (
 
 _ACTION_KIND = {
     MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.OFFLOAD: 1,
-    MemoryActionKind.PREFETCH: 2,
+    MemoryActionKind.EVICT: 1,
+    MemoryActionKind.FETCH: 2,
 }
 
 
@@ -707,8 +707,14 @@ class RuntimeBridge:
             allocation_event_capacity=allocation_event_capacity,
         )
 
-    def begin_runtime_trace(self, *, step_id: int) -> None:
-        begin_runtime_trace(self.runtime._runtime_handle, step_id=step_id)
+    def begin_runtime_trace(
+        self, *, step_id: int, origin_event_handle: int | None = None
+    ) -> None:
+        begin_runtime_trace(
+            self.runtime._runtime_handle,
+            step_id=step_id,
+            origin_event_handle=origin_event_handle,
+        )
 
     def end_and_read_runtime_trace(self) -> CapturedRuntimeTrace:
         end_runtime_trace(self.runtime._runtime_handle)
