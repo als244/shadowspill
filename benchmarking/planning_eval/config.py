@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-_SCHEMA = "shadowspill.pressurefit_frontier_config/v1"
+from shadowspill.schema import artifact_schema
+
+_SCHEMA = artifact_schema("pressurefit_frontier_config")
 _SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)(B|KiB|MiB|GiB|TiB)$")
 _SIZE_MULTIPLIERS = {
     "B": 1,
@@ -156,9 +158,7 @@ class FrontierConfig:
             "program_role": self.program_role,
             "point_timeout_seconds": self.point_timeout_seconds,
             "max_point_attempts": self.max_point_attempts,
-            "max_worker_restarts_per_program": (
-                self.max_worker_restarts_per_program
-            ),
+            "max_worker_restarts_per_program": (self.max_worker_restarts_per_program),
             "pressurefit_cache_mode": self.pressurefit_cache_mode,
             "capacity_refinement_bytes": self.capacity_refinement_bytes,
             "max_repair_attempts": self.max_repair_attempts,
@@ -249,9 +249,7 @@ def load_frontier_config(path: Path) -> FrontierConfig:
         max_repair_attempts=(
             None
             if data.get("max_repair_attempts") is None
-            else _integer(
-                data.get("max_repair_attempts"), "config.max_repair_attempts"
-            )
+            else _integer(data.get("max_repair_attempts"), "config.max_repair_attempts")
         ),
     )
     from .matrix import expand_grid_axes

@@ -21,9 +21,10 @@ from shadowspill.planner.serialization import (
     _simulation_config_to_dict,
     _string,
 )
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
 
-_PRESSUREFIT_PROGRAM_SCHEMA = "shadowspill.pressurefit_program/v1"
+_PRESSUREFIT_PROGRAM_SCHEMA = artifact_schema("pressurefit_program")
 
 
 @dataclass(frozen=True, slots=True)

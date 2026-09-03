@@ -1,6 +1,7 @@
 #include "candidates_internal.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct Sha256 {
@@ -151,10 +152,10 @@ static const char *action_name(uint8_t kind) {
     switch (kind) {
         case SHADOWSPILL_MEMORY_RELEASE:
             return "release";
-        case SHADOWSPILL_MEMORY_OFFLOAD:
-            return "offload";
-        case SHADOWSPILL_MEMORY_PREFETCH:
-            return "prefetch";
+        case SHADOWSPILL_MEMORY_EVICT:
+            return "evict";
+        case SHADOWSPILL_MEMORY_FETCH:
+            return "fetch";
     }
     return "invalid";
 }
@@ -232,6 +233,13 @@ void shadowspill_schedule_digest(
         schedule->initial_locations,
         schedule->initial_count
     );
-    sha256_text(&hash, ",\"schema\":\"shadowspill.memory_schedule/v1\"}");
+    char schema[64];
+    (void)snprintf(
+        schema,
+        sizeof schema,
+        ",\"schema\":\"shadowspill.memory_schedule/v%u\"}",
+        (unsigned)SHADOWSPILL_ARTIFACT_VERSION
+    );
+    sha256_text(&hash, schema);
     sha256_finish(&hash, digest);
 }

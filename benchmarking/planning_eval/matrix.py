@@ -10,6 +10,7 @@ from shadowspill.planner.program import (
     PressureFitProgram,
     TransferBandwidths,
 )
+from shadowspill.schema import artifact_schema
 
 from .config import BandwidthScale, FrontierGrid, TransferBandwidthBaseline
 
@@ -53,7 +54,7 @@ class FrontierPointRequest:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema": "shadowspill.pressurefit_frontier_point_request/v1",
+            "schema": artifact_schema("pressurefit_frontier_point_request"),
             "grid_name": self.axes.grid_name,
             "point_id": self.point_id,
             "program_digest": self.program_digest,

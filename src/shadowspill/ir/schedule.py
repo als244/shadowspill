@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from shadowspill.schema import artifact_schema
+
 from .program import Program, RecomputationSelection, TaskSpec
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
@@ -19,7 +21,7 @@ from .validation import (
     require_tuple,
 )
 
-SCHEDULE_SCHEMA = "shadowspill.memory_schedule/v1"
+SCHEDULE_SCHEMA = artifact_schema("memory_schedule")
 
 
 class MemoryLocation(StrEnum):
@@ -31,8 +33,8 @@ class MemoryLocation(StrEnum):
 
 class MemoryActionKind(StrEnum):
     RELEASE = "release"
-    OFFLOAD = "offload"
-    PREFETCH = "prefetch"
+    EVICT = "evict"
+    FETCH = "fetch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,11 +305,11 @@ class MemorySchedule:
                     if not alias_by_id[alias_id].retain_spill_copy:
                         spill_resident.discard(alias_id)
                         spill_current.discard(alias_id)
-                elif action.kind is MemoryActionKind.OFFLOAD:
+                elif action.kind is MemoryActionKind.EVICT:
                     require(
                         alias_id in device_resident,
                         path,
-                        "offload requires device residency",
+                        "evict requires device residency",
                     )
                     spill_resident.add(alias_id)
                     spill_current.add(alias_id)
@@ -316,12 +318,12 @@ class MemorySchedule:
                     require(
                         alias_id in spill_resident and alias_id in spill_current,
                         path,
-                        "prefetch requires current host residency",
+                        "fetch requires current host residency",
                     )
                     require(
                         alias_id not in device_resident,
                         path,
-                        "prefetch requires absent device residency",
+                        "fetch requires absent device residency",
                     )
                     device_resident.add(alias_id)
                     if not alias_by_id[alias_id].retain_spill_copy:

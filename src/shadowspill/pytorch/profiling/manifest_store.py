@@ -18,8 +18,9 @@ from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.profiling.records import ProfileKey
 from shadowspill.pytorch.profiling.store import PlanningArtifactRecorder
+from shadowspill.schema import artifact_schema
 
-_SCHEMA = "shadowspill.compiled_task_manifest/v2"
+_SCHEMA = artifact_schema("compiled_task_manifest")
 
 
 class CompiledManifestStore:

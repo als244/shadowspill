@@ -16,6 +16,7 @@ import torch
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.profiling import PlanningArtifactRecorder
+from shadowspill.schema import artifact_schema
 
 from ..partition.artifacts import StageExample
 from .artifacts import TaskGraphPairs
@@ -28,7 +29,7 @@ from .serialization import (
     valid_cached_variant,
 )
 
-_GRAPH_PAIR_CACHE_SCHEMA = "shadowspill.aot_graph_pair/v7"
+_GRAPH_PAIR_CACHE_SCHEMA = artifact_schema("aot_graph_pair")
 
 
 class GraphPairStore:
@@ -135,9 +136,7 @@ class GraphPairStore:
         path = self._path(key)
         return None if path is None else path.with_name("manifest.json")
 
-    def _read(
-        self, key: tuple[str, tuple[int, ...], bool]
-    ) -> TaskGraphPairs | None:
+    def _read(self, key: tuple[str, tuple[int, ...], bool]) -> TaskGraphPairs | None:
         path = self._path(key)
         if path is None or not self._read_enabled:
             return None

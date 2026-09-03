@@ -17,11 +17,12 @@ from shadowspill.pytorch.profiling.inputs import (
     REPRESENTATIVE_VALUE_POLICY,
     RepresentativeInputSummary,
 )
+from shadowspill.schema import artifact_schema
 
 # Profile artifacts are strict snapshots of the current measurement contract.
 # Bump this identity whenever serialized measurement fields or their semantics
 # change; historical profile artifacts are not migrated.
-PROFILE_SCHEMA = "shadowspill.pytorch.profile/v26"
+PROFILE_SCHEMA = artifact_schema("pytorch.profile")
 
 _TASK_MEASUREMENT_FIELDS = frozenset(
     {
@@ -93,7 +94,7 @@ class ProfileEnvironment:
     """Implementation identity that can change executable task cost."""
 
     torch_version: str
-    cuda_version: str | None
+    provider_version: str | None
     device_name: str
     compute_capability: tuple[int, int]
     compiler_id: str
@@ -103,7 +104,7 @@ class ProfileEnvironment:
     def identity(self) -> dict[str, object]:
         return {
             "torch_version": self.torch_version,
-            "cuda_version": self.cuda_version,
+            "provider_version": self.provider_version,
             "device_name": self.device_name,
             "compute_capability": self.compute_capability,
             "compiler_id": self.compiler_id,

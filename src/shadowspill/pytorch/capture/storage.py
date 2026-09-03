@@ -21,6 +21,7 @@ from shadowspill.pytorch.capture.live_storage import (
     live_storage_identity,
 )
 from shadowspill.pytorch.capture.schema import operator_alias_contract
+from shadowspill.schema import artifact_schema
 
 
 class StorageRootKind(StrEnum):
@@ -218,7 +219,7 @@ class TaskStorageContract:
         """Return the versioned JSON-compatible contract record."""
 
         return {
-            "schema": "shadowspill.task_storage_contract/v1",
+            "schema": artifact_schema("task_storage_contract"),
             "compatibility_digest": self.compatibility_digest,
             **self.identity(),
         }
@@ -239,7 +240,7 @@ class TaskStorageContract:
                 "task storage contract fields differ from schema: "
                 f"expected={sorted(expected_keys)}, actual={sorted(payload)}"
             )
-        if payload["schema"] != "shadowspill.task_storage_contract/v1":
+        if payload["schema"] != artifact_schema("task_storage_contract"):
             raise ValueError("unsupported task storage contract schema")
         roots = tuple(
             _storage_root_from_record(item) for item in _records(payload, "roots")

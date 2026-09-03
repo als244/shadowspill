@@ -6,6 +6,8 @@ from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import ClassVar
 
+from shadowspill.schema import artifact_schema
+
 from .candidates import CandidateDiagnostic
 from .counters import (
     PressureFitRepairDiagnostics,
@@ -29,7 +31,7 @@ from .selections import (
 class PressureFitDiagnostics:
     """Complete problem, policy-evaluation, and aggregate PressureFit evidence."""
 
-    SCHEMA: ClassVar[str] = "shadowspill.pressurefit_diagnostics/v2"
+    SCHEMA: ClassVar[str] = artifact_schema("pressurefit_diagnostics")
 
     selected_candidate_id: str
     selected_selection_id: str
