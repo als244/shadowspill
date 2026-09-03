@@ -10,6 +10,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 
 from shadowspill.errors import CaptureError
+from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 
@@ -68,7 +69,7 @@ def materialize_example_arguments(
 ) -> tuple[object, ...]:
     """Create concrete values while preserving every storage alias and view."""
 
-    cuda_device = torch.device("cuda", device_ordinal)
+    device = accelerator_device(device_ordinal)
     storages: dict[tuple[int, str], torch.Tensor] = {}
     results: list[object] = []
     with torch.no_grad():
@@ -82,7 +83,7 @@ def materialize_example_arguments(
                 )
             source_storage = argument.untyped_storage()
             target_device = (
-                cuda_device if argument.device.type == "cuda" else argument.device
+                device if is_accelerator(argument.device) else argument.device
             )
             key = (source_storage._cdata, str(target_device))
             storage = storages.get(key)

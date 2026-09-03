@@ -11,10 +11,11 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from torch.utils._pytree import tree_map
 
 from shadowspill.errors import CaptureError
+from shadowspill.pytorch.accelerator import accelerator_device
 from shadowspill.pytorch.contracts import TensorSpec
 
 
-def fake_cuda_model(
+def fake_device_model(
     model: nn.Module, mode: FakeTensorMode, *, device_index: int = 0
 ) -> nn.Module:
     """Copy module structure while preserving registered storage aliasing."""
@@ -34,7 +35,7 @@ def fake_cuda_model(
         )
 
     memo: dict[int, Any] = {}
-    device = torch.device("cuda", device_index)
+    device = accelerator_device(device_index)
     with mode:
         for (_address, storage_bytes), tensors in groups.items():
             storage_owner = torch.empty(storage_bytes, dtype=torch.uint8, device=device)
@@ -57,12 +58,12 @@ def fake_cuda_model(
             raise CaptureError("model structure cannot be copied for capture") from exc
 
 
-def fake_cuda_inputs(
+def fake_device_inputs(
     values: Any, mode: FakeTensorMode, *, device_index: int = 0
 ) -> Any:
     """Replace only tensor leaves with storage-free fixed CUDA geometry."""
 
-    device = torch.device("cuda", device_index)
+    device = accelerator_device(device_index)
     storage_owners: dict[tuple[str, int], torch.Tensor] = {}
 
     def convert(value: object) -> object:

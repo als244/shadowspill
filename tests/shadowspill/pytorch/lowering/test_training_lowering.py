@@ -12,7 +12,7 @@ from shadowspill.ir import RecomputationSelection
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.graph_pairs import (
     GraphPairVariant,
     TaskGraphPairs,
@@ -201,7 +201,7 @@ def _lowered(
     )
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     examples = (
         [torch.randn(4, 3), torch.randn(4, 2)],
         [torch.randn(5, 3), torch.randn(5, 2)],
@@ -209,7 +209,7 @@ def _lowered(
     with mode:
         captures = tuple(
             partition_training_capture(
-                capture_training(model, _objective, fake_cuda_inputs(values, mode)),
+                capture_training(model, _objective, fake_device_inputs(values, mode)),
                 accumulating=position > 0,
             )
             for position, values in enumerate(examples)
@@ -356,14 +356,14 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     )
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     with mode:
         captures = tuple(
             partition_training_capture(
                 capture_training(
                     model,
                     _objective,
-                    fake_cuda_inputs(
+                    fake_device_inputs(
                         [torch.randn(rows, 3), torch.randn(rows, 2)], mode
                     ),
                 ),
@@ -425,14 +425,14 @@ def test_preinitialized_optimizer_uses_one_recurrent_state_flow() -> None:
     assert optimizer_capture.preinitialized_state_names
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     with mode:
         captures = (
             partition_training_capture(
                 capture_training(
                     model,
                     _objective,
-                    fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+                    fake_device_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
                 )
             ),
         )
@@ -491,13 +491,13 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
     )
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     with mode:
         capture = partition_training_capture(
             capture_training(
                 model,
                 _objective,
-                fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+                fake_device_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
             )
         )
     artifacts = (
@@ -574,13 +574,13 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
         dict(real_model.named_parameters()), optimizer
     )
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     with mode:
         capture = partition_training_capture(
             capture_training(
                 model,
                 _objective,
-                fake_cuda_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
+                fake_device_inputs([torch.randn(4, 3), torch.randn(4, 2)], mode),
             )
         )
     artifacts = (
@@ -622,13 +622,13 @@ def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
         dict(real_model.named_parameters()), optimizer
     )
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     with mode:
         capture = partition_training_capture(
             capture_training(
                 model,
                 _auxiliary_objective,
-                fake_cuda_inputs(
+                fake_device_inputs(
                     [torch.randn(2, 4), torch.randn(2, 4), torch.randn(())], mode
                 ),
             )
@@ -681,13 +681,13 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
         dict(real_model.named_parameters()), optimizer
     )
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
+    model = fake_device_model(real_model, mode)
     with mode:
         capture = partition_training_capture(
             capture_training(
                 model,
                 _stateful_objective,
-                fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode),
+                fake_device_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode),
             )
         )
     artifacts = (

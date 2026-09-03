@@ -13,6 +13,7 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError, ProfilingError
+from shadowspill.pytorch.accelerator import accelerator_device
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -91,7 +92,7 @@ class _AllocationPathProbe:
     workspace: TaskWorkspaceProfile
 
 
-class CudaTaskProfiler:
+class TaskProfiler:
     """Warm and measure compiled tasks through an installed ShadowSpill slab."""
 
     def __init__(
@@ -728,7 +729,7 @@ class CudaTaskProfiler:
         if self._device_conditioned:
             return
         shape = (2048, 2048)
-        device = torch.device("cuda", self._device_ordinal)
+        device = accelerator_device(self._device_ordinal)
         left = torch.randn(shape, dtype=torch.bfloat16, device=device)
         right = torch.randn(shape, dtype=torch.bfloat16, device=device)
         output = torch.empty(shape, dtype=torch.bfloat16, device=device)
@@ -755,18 +756,14 @@ class CudaTaskProfiler:
     def _open_allocation_scope(self) -> int:
         scope_id = self._next_scope_id
         self._next_scope_id += 1
-        status = int(
-            self._library.shadowspill_pytorch_allocation_scope_begin(scope_id)
-        )
+        status = int(self._library.shadowspill_pytorch_allocation_scope_begin(scope_id))
         if status != 0:
             raise CaptureError(
                 f"profiling allocation scope begin failed with status {status}"
             )
         return scope_id
 
-    def _close_allocation_scope(
-        self, scope_id: int, stream: torch.cuda.Stream
-    ) -> None:
+    def _close_allocation_scope(self, scope_id: int, stream: torch.cuda.Stream) -> None:
         status = int(
             self._library.shadowspill_pytorch_allocation_scope_end(
                 scope_id, stream.cuda_stream
@@ -1135,9 +1132,7 @@ class CudaTaskProfiler:
     def _allocation_events_overflowed(self) -> bool:
         """Whether the last measurement filled the event record."""
 
-        return bool(
-            self._allocator_statistics().runtime.allocation_event_overflow
-        )
+        return bool(self._allocator_statistics().runtime.allocation_event_overflow)
 
     def _measure_workspace_once(
         self, executable: Callable[[], object], stream: torch.cuda.Stream
@@ -1157,8 +1152,7 @@ class CudaTaskProfiler:
             )
             if status != 0:
                 raise CaptureError(
-                    "profiling allocation scope begin failed with status "
-                    f"{status}"
+                    f"profiling allocation scope begin failed with status {status}"
                 )
             task_open = True
             output = executable()
@@ -1183,8 +1177,7 @@ class CudaTaskProfiler:
             task_open = False
             if status != 0:
                 raise CaptureError(
-                    "profiling allocation scope end failed with status "
-                    f"{status}"
+                    f"profiling allocation scope end failed with status {status}"
                 )
             stream.synchronize()
             self._diagnose_allocator_idle(problem="workspace measurement")
@@ -1408,7 +1401,7 @@ def _task_measurement(
         workspace_extent_bytes=workspace.peak_extent_bytes,
         samples_ns=timing.samples,
         provenance=(
-            f"cuda-events+shadowspill-allocation-telemetry+{execution_provider}"
+            f"backend-events+shadowspill-allocation-telemetry+{execution_provider}"
             + ("+bounded-retention-audit" if fixed_extents else "")
         ),
         allocation_trace=workspace.allocation_trace,

@@ -9,7 +9,7 @@ from torch.export.graph_signature import InputKind
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch import ObjectiveResult
 from shadowspill.pytorch.capture.aot import TrainingCapture, capture_training
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from tests.integration.pytorch.training_oracle import ObjectivePairExecutor
 
 
@@ -36,8 +36,8 @@ def _objective(
 
 def _capture(model: nn.Module, values: list[torch.Tensor]) -> TrainingCapture:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    fake_model = fake_cuda_model(model, mode)
-    fake_values = fake_cuda_inputs(values, mode)
+    fake_model = fake_device_model(model, mode)
+    fake_values = fake_device_inputs(values, mode)
     with mode:
         return capture_training(fake_model, _objective, fake_values)
 

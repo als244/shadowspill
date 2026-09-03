@@ -50,5 +50,15 @@ provider spelling required by the framework hook.
 - strategy names in public types when selection is an internal implementation
   detail.
 
-Canonical serialized IR action kinds are `prefetch` and `offload`; public
+Canonical serialized IR action kinds are `fetch` and `evict`; public
 explanations and runtime labels use fetch and evict.
+
+## Backend and device, never a provider name
+
+A provider's platform name belongs to that provider's backend directory under
+`csrc/backends/` and to the few PyTorch attributes that carry it (`torch.<provider>.*`,
+`<provider>_stream`, `<provider>_event`, `is_<provider>`). The one place the
+PyTorch layer names the accelerator's device type is
+`shadowspill.pytorch.accelerator`. Everything else says *backend* for streams,
+events, allocators, the provider library, and its statistics and capabilities,
+and *device* for tensors, placements, and ordinals.

@@ -21,7 +21,7 @@ from shadowspill.pytorch.profiling import (
     ResolvedTaskManifests,
     TaskMeasurement,
 )
-from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
 from shadowspill.simulator import SimulationConfig
 
@@ -60,7 +60,7 @@ class ForwardCaptureArtifacts:
 class ForwardProfileArtifacts:
     """Compiled manifests, measurements, and executable structural tasks."""
 
-    profiler: CudaTaskProfiler
+    profiler: TaskProfiler
     manifests: ResolvedTaskManifests
     profiles: ProfilingResult
     compiled_tasks: CompiledTaskSet
@@ -112,7 +112,7 @@ class TrainingProfileArtifacts:
     profile_keys: tuple[tuple[str, str | None], ...]
     profile_tasks: tuple[OptimizerTaskArtifact, ...]
     profile_metadata_digests: tuple[str | None, ...]
-    profiler: CudaTaskProfiler
+    profiler: TaskProfiler
     manifests: ResolvedTaskManifests
     profiles: ProfilingResult
 

@@ -24,7 +24,7 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
     TaskInputRole,
 )
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 
 
 class _Network(nn.Module):
@@ -50,8 +50,8 @@ def test_fake_export_and_aot_emit_save_and_recompute_graph_pairs() -> None:
     model = _Network()
     inputs = [torch.randn(4, 8), torch.randn(4, 8), 2]
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    fake_inputs = fake_cuda_inputs(inputs, mode)
+    replica = fake_device_model(model, mode)
+    fake_inputs = fake_device_inputs(inputs, mode)
     with mode:
         capture = capture_training(replica, _objective, fake_inputs)
     assert capture.objective_schema.tensor_metric_positions == (0,)
@@ -72,8 +72,8 @@ def test_objective_export_does_not_construct_a_whole_model_vjp(
 ) -> None:
     model = _Network()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
     monkeypatch.setattr(
         "shadowspill.pytorch.capture.aot._capture_pair",
         lambda *arguments, **options: pytest.fail(
@@ -89,9 +89,9 @@ def test_objective_export_does_not_construct_a_whole_model_vjp(
 def test_objective_schema_preserves_position_specific_static_metrics() -> None:
     model = _Network()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    first_inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
-    second_inputs = fake_cuda_inputs([torch.randn(4, 8), torch.randn(4, 8), 3], mode)
+    replica = fake_device_model(model, mode)
+    first_inputs = fake_device_inputs([torch.randn(4, 8), torch.randn(4, 8), 2], mode)
+    second_inputs = fake_device_inputs([torch.randn(4, 8), torch.randn(4, 8), 3], mode)
     with mode:
         first = capture_training_objective(replica, _objective, first_inputs)
         second = capture_training_objective(replica, _objective, second_inputs)
@@ -126,8 +126,8 @@ def test_training_objective_probe_wraps_dynamic_output_shape() -> None:
 def test_forward_export_accepts_static_metadata_and_has_stable_identity() -> None:
     model = _Network().eval()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8), 3], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8), 3], mode)
     with mode, torch.no_grad():
         first = inference_artifact(capture_forward(replica, inputs))
         second = inference_artifact(capture_forward(replica, inputs))
@@ -295,8 +295,8 @@ class _SavedOperationModule(nn.Module):
 
 def test_unrelated_registered_custom_operation_exports_as_opaque() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(_CustomOperationModule(), mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 3)], mode)
+    model = fake_device_model(_CustomOperationModule(), mode)
+    inputs = fake_device_inputs([torch.randn(2, 3)], mode)
     with mode, torch.no_grad():
         artifact = inference_artifact(capture_forward(model, inputs))
     assert any(
@@ -306,8 +306,8 @@ def test_unrelated_registered_custom_operation_exports_as_opaque() -> None:
 
 def test_save_and_recompute_capture_isolates_custom_autograd_graphs() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(_SavedOperationModule(), mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 3)], mode)
+    model = fake_device_model(_SavedOperationModule(), mode)
+    inputs = fake_device_inputs([torch.randn(2, 3)], mode)
 
     with mode:
         capture = capture_training(
@@ -323,8 +323,8 @@ def test_save_and_recompute_capture_isolates_custom_autograd_graphs() -> None:
 def test_objective_schema_reconstructs_metrics_and_rejects_count_change() -> None:
     model = _Network()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8), 2], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8), torch.randn(2, 8), 2], mode)
     with mode:
         capture = capture_training(replica, _objective, inputs)
         metric = torch.ones((), device="cuda")
@@ -349,7 +349,7 @@ def test_invalid_objectives_fail_during_capture(
 ) -> None:
     model = _Network()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, pytest.raises(ObjectiveError, match=message):
         capture_training(replica, objective, inputs)  # type: ignore[arg-type]

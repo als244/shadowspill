@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import torch
 
 from shadowspill.errors import CaptureError
+from shadowspill.pytorch.accelerator import DEVICE_TYPE, accelerator_device
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
@@ -220,8 +221,8 @@ def _representative_device(
         raise CaptureError("one task input alias group spans multiple devices")
     device_type = next(iter(device_types))
     return (
-        torch.device("cuda", device_ordinal)
-        if device_type == "cuda"
+        accelerator_device(device_ordinal)
+        if device_type == DEVICE_TYPE
         else torch.device(device_type)
     )
 
@@ -360,5 +361,3 @@ def _seed(structural_contract_key: str, position: int, probe_index: int) -> int:
     return int.from_bytes(hashlib.sha256(encoded).digest()[:8], "little") & (
         (1 << 63) - 1
     )
-
-

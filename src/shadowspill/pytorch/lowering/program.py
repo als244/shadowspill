@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from shadowspill.ir import DeviceSpec, Program, RecomputationGroup, TaskSpec
+from shadowspill.pytorch.accelerator import DEVICE_TYPE
 
 from .catalog import ObjectCatalog
 from .profiles import TaskProfileCatalog
@@ -11,7 +12,7 @@ from .profiles import TaskProfileCatalog
 def execution_device_id(device_ordinal: int) -> str:
     """Return the canonical IR identity for the selected execution device."""
 
-    return f"cuda_{device_ordinal}"
+    return f"{DEVICE_TYPE}_{device_ordinal}"
 
 
 def publish_program(
@@ -26,7 +27,7 @@ def publish_program(
 
     device_id = execution_device_id(device_ordinal)
     return Program(
-        devices=(DeviceSpec(device_id, "process_0", "cuda", device_ordinal),),
+        devices=(DeviceSpec(device_id, "process_0", DEVICE_TYPE, device_ordinal),),
         alias_groups=catalog.alias_groups(),
         objects=catalog.objects(),
         profiles=profiles.profiles,
@@ -44,7 +45,7 @@ def publish_storage_program(
 
     device_id = execution_device_id(device_ordinal)
     return Program(
-        devices=(DeviceSpec(device_id, "process_0", "cuda", device_ordinal),),
+        devices=(DeviceSpec(device_id, "process_0", DEVICE_TYPE, device_ordinal),),
         alias_groups=catalog.alias_groups(),
         objects=catalog.objects(),
         profiles=(),

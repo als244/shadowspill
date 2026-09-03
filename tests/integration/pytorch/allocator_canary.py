@@ -51,8 +51,7 @@ def _bind_plan_object(library: object, plan: int, object_id: int) -> None:
     handle = ctypes.c_size_t()
     status = int(
         runtime_library().shadowspill_object_handle_acquire(
-            _runtime_handle(library),
-            object_id, ctypes.byref(handle)
+            _runtime_handle(library), object_id, ctypes.byref(handle)
         )
     )
     if status != 0 or handle.value == 0:
@@ -118,9 +117,7 @@ def _submit_actions(
     if status != 0 or handle.value == 0:
         raise AssertionError(f"action admission failed with status {status}")
     status = int(
-        library.shadowspill_pytorch_submit_action_batch_handle(
-            handle.value, stream
-        )
+        library.shadowspill_pytorch_submit_action_batch_handle(handle.value, stream)
     )
     if status != 0:
         raise AssertionError(f"action submission failed with status {status}")
@@ -243,7 +240,7 @@ def main() -> int:
         raise AssertionError("record-stream callback was not installed")
     if statistics.pointer_lookup_failures != 0 or statistics.callback_failures != 0:
         raise AssertionError("a PyTorch callback missed the runtime allocation table")
-    if statistics.cuda.device_allocations != 1:
+    if statistics.backend.device_allocations != 1:
         raise AssertionError("CUDA backend did not use exactly one device slab")
 
     same_stream = torch.full((1024, 1024), 6.0, device="cuda")
@@ -286,15 +283,13 @@ def main() -> int:
 
     compute_stream = torch.cuda.current_stream().cuda_stream
     torch.cuda._sleep(100_000_000)
-    offload = (RuntimeAction * 1)(
-        RuntimeAction(object_id=binding.object_id, kind=1)
-    )
-    _submit_actions(library, plan, 100, compute_stream, tuple(offload))
+    evict = (RuntimeAction * 1)(RuntimeAction(object_id=binding.object_id, kind=1))
+    _submit_actions(library, plan, 100, compute_stream, tuple(evict))
     torch.ops.shadowspill._dematerialize_storages([parameter])
     if parameter.data_ptr() != 0 or view.data_ptr() != 0:
         raise AssertionError("alias storage was not dematerialized together")
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
-        raise AssertionError("offload did not complete")
+        raise AssertionError("evict did not complete")
     snapshot = ObjectSnapshot()
     if (
         int(
@@ -307,18 +302,14 @@ def main() -> int:
         != 0
         or snapshot.residency != 0
     ):
-        raise AssertionError("offload did not leave a host-only object")
+        raise AssertionError("evict did not leave a host-only object")
 
     blocker = torch.empty(2 << 20, dtype=torch.float32, device="cuda")
     if blocker.data_ptr() != address:
         raise AssertionError("canary failed to occupy the object's former slab range")
-    prefetch = (RuntimeAction * 1)(
-        RuntimeAction(object_id=binding.object_id, kind=2)
-    )
-    _submit_actions(library, plan, 101, compute_stream, tuple(prefetch))
-    release = (RuntimeAction * 1)(
-        RuntimeAction(object_id=binding.object_id, kind=0)
-    )
+    fetch = (RuntimeAction * 1)(RuntimeAction(object_id=binding.object_id, kind=2))
+    _submit_actions(library, plan, 101, compute_stream, tuple(fetch))
+    release = (RuntimeAction * 1)(RuntimeAction(object_id=binding.object_id, kind=0))
     consumer = _admit_task(
         library,
         plan,
@@ -334,9 +325,9 @@ def main() -> int:
         expected_bindings=1,
     )
     if rebound[0].pointer in (None, 0, address, blocker.data_ptr()):
-        raise AssertionError("prefetch did not lease a different slab range")
+        raise AssertionError("fetch did not lease a different slab range")
     if rebound[0].generation == binding.generation:
-        raise AssertionError("prefetch did not advance the allocation generation")
+        raise AssertionError("fetch did not advance the allocation generation")
     torch.ops.shadowspill._acquire_storages([parameter], [rebound[0].pointer])
     if id(parameter) != parameter_identity:
         raise AssertionError("Parameter identity changed during storage rebinding")
@@ -348,9 +339,7 @@ def main() -> int:
 
     torch.cuda._sleep(100_000_000)
     status = int(
-        library.shadowspill_pytorch_after_task_handle(
-            consumer, compute_stream
-        )
+        library.shadowspill_pytorch_after_task_handle(consumer, compute_stream)
     )
     if status != 0:
         raise AssertionError(f"release submission failed with status {status}")
@@ -376,7 +365,7 @@ def main() -> int:
     if final_statistics.runtime.fetch_transfers != 1:
         raise AssertionError("canary did not execute exactly one FETCH transfer")
     if final_statistics.runtime.wait_events_inserted != 1:
-        raise AssertionError("prefetched input did not insert exactly one stream wait")
+        raise AssertionError("fetched input did not insert exactly one stream wait")
     if (
         final_statistics.pointer_lookup_failures != 0
         or final_statistics.callback_failures != 0
@@ -396,19 +385,15 @@ def main() -> int:
     if status != 0:
         raise AssertionError(f"direct host registration failed with status {status}")
     spill_tensor = torch.empty_like(spill_source, device="cuda")
-    _publish_initial(
-        library, plan, spill_tensor, 3001, already_registered=True
-    )
+    _publish_initial(library, plan, spill_tensor, 3001, already_registered=True)
     spill_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
     _submit_actions(library, plan, 300, compute_stream, tuple(spill_release))
     torch.ops.shadowspill._dematerialize_storages([spill_tensor])
     if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
         raise AssertionError("host placeholder release did not drain")
-    spill_prefetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
-    _submit_actions(library, plan, 301, compute_stream, tuple(spill_prefetch))
-    spill_consumer = _admit_task(
-        library, plan, 302, (3001,), tuple(spill_release)
-    )
+    spill_fetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
+    _submit_actions(library, plan, 301, compute_stream, tuple(spill_fetch))
+    spill_consumer = _admit_task(library, plan, 302, (3001,), tuple(spill_release))
     spill_rebound = begin_task(
         library,
         spill_consumer,
@@ -416,9 +401,7 @@ def main() -> int:
         compute_stream,
         expected_bindings=1,
     )
-    torch.ops.shadowspill._acquire_storages(
-        [spill_tensor], [spill_rebound[0].pointer]
-    )
+    torch.ops.shadowspill._acquire_storages([spill_tensor], [spill_rebound[0].pointer])
     torch.testing.assert_close(spill_tensor.cpu(), spill_source)
     if (
         int(

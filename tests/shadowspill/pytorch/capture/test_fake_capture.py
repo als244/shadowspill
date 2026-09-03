@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
 
 from shadowspill.pytorch import TensorSpec
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 
 
 class _AliasedModule(nn.Module):
@@ -21,7 +21,7 @@ class _AliasedModule(nn.Module):
 def test_fake_model_preserves_registration_and_storage_aliases() -> None:
     model = _AliasedModule()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
+    replica = fake_device_model(model, mode)
     assert isinstance(replica.left, FakeTensor)
     assert replica.left.device.type == "cuda"
     assert replica.left is replica.tied
@@ -34,7 +34,7 @@ def test_fake_model_preserves_registration_and_storage_aliases() -> None:
 def test_fake_inputs_retain_nested_static_values_and_exact_strides() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     values = [TensorSpec((3, 2), torch.bfloat16, stride=(1, 3)), {"length": 3}]
-    converted = fake_cuda_inputs(values, mode)
+    converted = fake_device_inputs(values, mode)
     assert isinstance(converted[0], FakeTensor)
     assert tuple(converted[0].stride()) == (1, 3)
     assert converted[1] == {"length": 3}
@@ -43,7 +43,7 @@ def test_fake_inputs_retain_nested_static_values_and_exact_strides() -> None:
 def test_fake_inputs_preserve_representative_view_aliases() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     base = torch.arange(16, dtype=torch.float32)
-    converted = fake_cuda_inputs([base[:8], base[2:10]], mode)
+    converted = fake_device_inputs([base[:8], base[2:10]], mode)
     assert (
         converted[0].untyped_storage()._cdata == converted[1].untyped_storage()._cdata
     )

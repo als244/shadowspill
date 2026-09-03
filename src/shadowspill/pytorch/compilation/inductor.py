@@ -40,6 +40,7 @@ from torch.fx.experimental.symbolic_shapes import ShapeEnv
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.errors import CaptureError, CompilationError
+from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.storage import (
     MutationBinding,
     OutputView,
@@ -856,7 +857,7 @@ def _make_manifest(
         "storage_contract_digest": executable_contract.compatibility_digest,
         "root_allocations": [item.identity() for item in root_allocations],
         "torch": torch.__version__,
-        "cuda": torch.version.cuda,
+        "provider": provider_version(),
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return ExecutableTaskManifest(
