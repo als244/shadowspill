@@ -105,7 +105,7 @@ Before AOT capture, ShadowSpill computes the stage structural contract from:
 - input roles and provenance;
 - alias and storage contracts.
 
-`GraphPairRepository` keys one task's graph pairs by:
+`GraphPairStore` keys one task's graph pairs by:
 
 ```text
 (structural_contract, differentiable_root_positions, specialize_unit_tangents)

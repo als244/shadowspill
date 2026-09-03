@@ -30,7 +30,7 @@ before_task boundary                     # the frontend's, start to finish
     shadowspill_before_task_handle(...)  # the neutral call, returns bindings
     check each binding against the storage that will receive it
     point each storage at the address the runtime returned
-    shadowspill_wait_task_allocations(...)  # ranges this task will allocate into
+    shadowspill_wait_task_allocations_handle(...)  # ranges this task will allocate into
 
     ... the task's kernels run ...
 
@@ -156,7 +156,7 @@ scope that will never be left.
 
 What abort deliberately does **not** do is publish. A task that did not finish
 did not produce its outputs, so its mutations must not bump object versions and
-its actions must not be instantiated - a prefetch triggered by a task that
+its actions must not be instantiated - a fetch triggered by a task that
 never ran would fetch into a lease the plan expected that task to fill.
 
 Abort is not a way to recover from a *runtime* failure. A latched failure is
@@ -166,7 +166,7 @@ closes a scope the frontend opened and cannot close normally.
 ### `shadowspill_submit_action_batch_handle`
 
 An action batch is a task with no compute: a record whose actions are the point.
-It enters a task scope and runs the same `after_task` body, so prefetches and
+It enters a task scope and runs the same `after_task` body, so fetches and
 evictions can be issued without a kernel between them.
 
 ## What is asynchronous, from the dispatching thread
@@ -176,7 +176,7 @@ This is the part worth being exact about.
 | Work | When the dispatcher returns from `after_task` |
 |---|---|
 | The task's kernels | Enqueued on the compute stream, not finished |
-| Prefetches this task triggers | **Issued** on the transfer lane, not landed |
+| Fetches this task triggers | **Issued** on the transfer lane, not landed |
 | Evictions this task triggers | May not be issued yet |
 | Releases this task triggers | May not be issued yet |
 | Retirement of leases freed in the task | Queued against the completion event |
@@ -268,7 +268,7 @@ each. Those actions are not executed at `before_task`; they are instantiated at
 the `after_task` of their trigger task, against object state as it is then.
 
 An action's destination lease is reserved before the batch is published, so a
-prefetch that cannot fit is reported at the boundary that triggered it rather
+fetch that cannot fit is reported at the boundary that triggered it rather
 than somewhere inside the worker. That reservation is why `after_task` can
 return `NO_PROGRESS`: the trigger's fetch had nowhere to land and nothing was
 left to release for it. Coming up short is not fatal here — the fetch waits

@@ -16,7 +16,7 @@ Four levels, each fixing something the level below varies:
 |---|---|---|---|
 | plan | 1 | program, admission topology, simulation config, pool capacity, alignment | which resolved program |
 | **resolved program** | a handful | the executing task set, its runtimes and object accesses | which candidate policy |
-| candidate | tens per resolved program | residency strategy, prefetch rule, coalescing | the target capacity |
+| candidate | tens per resolved program | residency strategy, fetch rule, coalescing | the target capacity |
 | probe | a few per candidate | — | the repaired schedule |
 
 A **resolved program** is the Program with every alternative fixed, leaving one
@@ -133,7 +133,7 @@ schedule, not reading the operation's index.
 | `TASK_OUTPUT` | a fresh output a task produces |
 | `MUTATION_REPLACEMENT` | the generation an in-place mutation supersedes |
 | `RELEASE` | retired by a scheduled release action |
-| `EVICTION` | retired by an offload, once the copy lands |
+| `EVICTION` | retired by an eviction, once the copy lands |
 | `FETCH_DESTINATION` | the destination a fetch reserves at its trigger |
 | `TERMINAL_COMPLETION` | the completion of an eviction's retirement |
 
