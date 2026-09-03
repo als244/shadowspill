@@ -62,6 +62,7 @@ class PlanningStores:
         )
         return digest
 
+
 def open_planning_stores(store: ArtifactStore) -> PlanningStores:
     """Open the stores one artifact-store policy implies."""
 

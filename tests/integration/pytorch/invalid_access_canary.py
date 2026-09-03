@@ -40,10 +40,13 @@ def main() -> int:
         message = str(error).lower()
         if "illegal memory access" not in message:
             raise AssertionError(f"unexpected CUDA error: {error}") from error
-        if read_allocator_failure(
-            installed.library,
-            "execute intentionally invalid CUDA kernel",
-        ) is not None:
+        if (
+            read_allocator_failure(
+                installed.library,
+                "execute intentionally invalid CUDA kernel",
+            )
+            is not None
+        ):
             raise AssertionError(
                 "bad CUDA kernel was mislabeled as allocator OOM"
             ) from error

@@ -11,13 +11,13 @@ _STATUS_KIND: dict[int, str] = {
     Status.INITIAL_SPILL_CAPACITY: "initial-spill-capacity",
     Status.TASK_INPUT_DEADLOCK: "task-input-deadlock",
     Status.TASK_DEVICE_CAPACITY: "task-device-capacity",
-    Status.PREFETCH_DEVICE_CAPACITY: "prefetch-device-capacity",
-    Status.OFFLOAD_SPILL_CAPACITY: "offload-spill-capacity",
+    Status.FETCH_DEVICE_CAPACITY: "fetch-device-capacity",
+    Status.EVICT_SPILL_CAPACITY: "evict-spill-capacity",
     Status.TRANSFER_DEADLOCK: "transfer-deadlock",
     Status.INVALID_RELEASE: "invalid-release",
     Status.RELEASE_TRANSFER_CONFLICT: "release-transfer-conflict",
-    Status.INVALID_OFFLOAD: "invalid-offload",
-    Status.INVALID_PREFETCH: "invalid-prefetch",
+    Status.INVALID_EVICT: "invalid-evict",
+    Status.INVALID_FETCH: "invalid-fetch",
     Status.FINAL_RESIDENCY: "final-residency",
     Status.SIMULATION_INTERNAL_ERROR: "internal-error",
 }
@@ -28,18 +28,14 @@ _STATUS_MESSAGE: dict[int, str] = {
     Status.INITIAL_DEVICE_CAPACITY: "initial device capacity exceeded",
     Status.INITIAL_SPILL_CAPACITY: "initial host capacity exceeded",
     Status.TASK_INPUT_DEADLOCK: "task input cannot become resident",
-    Status.TASK_DEVICE_CAPACITY: (
-        "task output and workspace exceed device capacity"
-    ),
-    Status.PREFETCH_DEVICE_CAPACITY: "prefetch cannot reserve device capacity",
-    Status.OFFLOAD_SPILL_CAPACITY: "offload cannot reserve host capacity",
+    Status.TASK_DEVICE_CAPACITY: ("task output and workspace exceed device capacity"),
+    Status.FETCH_DEVICE_CAPACITY: "fetch cannot reserve device capacity",
+    Status.EVICT_SPILL_CAPACITY: "evict cannot reserve host capacity",
     Status.TRANSFER_DEADLOCK: "transfer has no progress source",
     Status.INVALID_RELEASE: "release has no ready device copy",
     Status.RELEASE_TRANSFER_CONFLICT: "release conflicts with a transfer",
-    Status.INVALID_OFFLOAD: "offload has no ready device source",
-    Status.INVALID_PREFETCH: (
-        "prefetch has no host source or duplicates a device copy"
-    ),
+    Status.INVALID_EVICT: "evict has no ready device source",
+    Status.INVALID_FETCH: ("fetch has no host source or duplicates a device copy"),
     Status.FINAL_RESIDENCY: "required final residency was not reached",
     Status.SIMULATION_INTERNAL_ERROR: "internal simulator invariant failed",
 }
@@ -49,8 +45,8 @@ _CAPACITY_STATUSES: frozenset[int] = frozenset(
         Status.INITIAL_DEVICE_CAPACITY,
         Status.INITIAL_SPILL_CAPACITY,
         Status.TASK_DEVICE_CAPACITY,
-        Status.PREFETCH_DEVICE_CAPACITY,
-        Status.OFFLOAD_SPILL_CAPACITY,
+        Status.FETCH_DEVICE_CAPACITY,
+        Status.EVICT_SPILL_CAPACITY,
     )
 )
 
@@ -76,11 +72,7 @@ def simulation_failure_detail(
 
     if status not in _CAPACITY_STATUSES:
         return _STATUS_MESSAGE.get(status, f"simulator status {status}")
-    location = (
-        "host"
-        if error_location == 1
-        else f"device:{device_ids[error_device]}"
-    )
+    location = "host" if error_location == 1 else f"device:{device_ids[error_device]}"
     return (
         f"{simulation_status_kind(status)} at {time_ns} ns: "
         f"{used_bytes} used + {requested_bytes} requested exceeds "

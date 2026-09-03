@@ -191,7 +191,7 @@ static void defer_action(
 /*
  * Bring one scheduled action into the simulation.
  *
- * `deferred` reports the runtime's own answer to a prefetch that has nowhere
+ * `deferred` reports the runtime's own answer to a fetch that has nowhere
  * to land: wait and try again, rather than fail. The action stays unsubmitted
  * and no state is touched, so the next time anything frees memory the caller
  * retries it. A plan that can never make room deadlocks instead, which the
@@ -227,7 +227,7 @@ static int submit_action(
         int64_t default_physical_delta = 0;
         if (kind == SHADOWSPILL_MEMORY_RELEASE) {
             default_physical_delta = -(int64_t)size;
-        } else if (kind == SHADOWSPILL_MEMORY_PREFETCH &&
+        } else if (kind == SHADOWSPILL_MEMORY_FETCH &&
             state->device_allocated == 0U) {
             default_physical_delta = (int64_t)size;
         }
@@ -256,7 +256,7 @@ static int submit_action(
                 work,
                 result,
                 action,
-                SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                SHADOWSPILL_CAPACITY_FETCH_DEVICE,
                 SHADOWSPILL_MEMORY_DEVICE,
                 SHADOWSPILL_STALL_DEVICE_CAPACITY,
                 task,
@@ -326,11 +326,11 @@ static int submit_action(
     if ((transfer->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
         transfer->ready_ns = work->now_ns;
     }
-    if (kind == SHADOWSPILL_MEMORY_OFFLOAD) {
+    if (kind == SHADOWSPILL_MEMORY_EVICT) {
         if (state->device_allocated == 0U || state->device_ready == 0U) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_STATUS_INVALID_OFFLOAD,
+                SHADOWSPILL_STATUS_INVALID_EVICT,
                 work,
                 task,
                 alias,
@@ -349,7 +349,7 @@ static int submit_action(
                 )) {
                 shadowspill_set_capacity_error(
                     result,
-                    SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY,
+                    SHADOWSPILL_STATUS_EVICT_SPILL_CAPACITY,
                     work,
                     task,
                     alias,
@@ -370,7 +370,7 @@ static int submit_action(
                     work,
                     result,
                     action,
-                    SHADOWSPILL_CAPACITY_OFFLOAD_SPILL,
+                    SHADOWSPILL_CAPACITY_EVICT_SPILL,
                     SHADOWSPILL_MEMORY_SPILL,
                     SHADOWSPILL_STALL_SPILL_CAPACITY,
                     task,
@@ -397,7 +397,7 @@ static int submit_action(
             (state->spill_ready == 0U && state->evict_pending == 0U)) {
             shadowspill_set_error(
                 result,
-                SHADOWSPILL_STATUS_INVALID_PREFETCH,
+                SHADOWSPILL_STATUS_INVALID_FETCH,
                 work,
                 task,
                 alias,
@@ -418,7 +418,7 @@ static int submit_action(
                     work,
                     result,
                     action,
-                    SHADOWSPILL_CAPACITY_PREFETCH_DEVICE,
+                    SHADOWSPILL_CAPACITY_FETCH_DEVICE,
                     SHADOWSPILL_MEMORY_DEVICE,
                     SHADOWSPILL_STALL_DEVICE_CAPACITY,
                     task,
@@ -482,7 +482,7 @@ int shadowspill_submit_ready_actions(
             return 0;
         }
         if (deferred != 0) {
-            /* Actions are submitted in order, so a waiting prefetch holds the
+            /* Actions are submitted in order, so a waiting fetch holds the
              * ones behind it. Whatever frees memory wakes the whole queue. */
             break;
         }

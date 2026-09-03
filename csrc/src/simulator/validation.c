@@ -150,7 +150,7 @@ int shadowspill_validate_program(
     for (uint32_t index = 0; index < program->action_count; ++index) {
         if (program->action_trigger_tasks[index] >= program->task_count ||
             program->action_aliases[index] >= program->alias_count ||
-            program->action_kinds[index] > SHADOWSPILL_MEMORY_PREFETCH) {
+            program->action_kinds[index] > SHADOWSPILL_MEMORY_FETCH) {
             return 0;
         }
     }
@@ -172,7 +172,7 @@ int shadowspill_validate_program(
         uint32_t successor_action = program->reuse_successor_actions[index];
         if (predecessor >= program->action_count ||
             program->action_kinds[predecessor] !=
-                SHADOWSPILL_MEMORY_OFFLOAD ||
+                SHADOWSPILL_MEMORY_EVICT ||
             ((successor_task == SHADOWSPILL_SIMULATOR_NO_INDEX) ==
                 (successor_action == SHADOWSPILL_SIMULATOR_NO_INDEX)) ||
             (successor_task != SHADOWSPILL_SIMULATOR_NO_INDEX &&

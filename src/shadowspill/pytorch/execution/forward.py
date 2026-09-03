@@ -249,7 +249,7 @@ class _ExecutingStage(nn.Module):
         for action in self._actions:
             if action.kind not in {
                 MemoryActionKind.RELEASE,
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             }:
                 continue
             alias_id = action.alias_group_id
@@ -333,14 +333,13 @@ class ForwardExecutor(AnnotatedExecutor):
         self._task_annotations = TaskBoundaryAnnotations(bridge)
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
-        self._initial_prefetches = tuple(
+        self._initial_fetches = tuple(
             alias_group_id
             for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
             if bridge.requires_storage(alias_group_id)
         )
         initial_actions = tuple(
-            self._initial_prefetch_action(alias_id)
-            for alias_id in self._initial_prefetches
+            self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
         )
         # Materialization uses a short-lived action batch. It is idle now and
         # must not become part of the immutable execution plan.
@@ -351,7 +350,7 @@ class ForwardExecutor(AnnotatedExecutor):
             task_number=fixed_layout.initial_task_id,
             action_trace_labels=tuple(
                 f"shadowspill.fetch.initial.{alias_id}"
-                for alias_id in self._initial_prefetches
+                for alias_id in self._initial_fetches
             ),
         )
         trace_labels = {
@@ -441,8 +440,7 @@ class ForwardExecutor(AnnotatedExecutor):
             self._release_closed_shared_output_generations()
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
-            self._initial_prefetch_action(alias_id)
-            for alias_id in self._initial_prefetches
+            self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
         )
         self._bridge.submit_initial_actions(
             initial_actions,
@@ -551,8 +549,8 @@ class ForwardExecutor(AnnotatedExecutor):
         self._active_shared_outputs.clear()
 
     @staticmethod
-    def _initial_prefetch_action(alias_id: str) -> MemoryAction:
-        return MemoryAction("task_000000", alias_id, MemoryActionKind.PREFETCH)
+    def _initial_fetch_action(alias_id: str) -> MemoryAction:
+        return MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
 
 
 __all__ = ["ForwardExecutor"]

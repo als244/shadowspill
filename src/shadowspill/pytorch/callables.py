@@ -124,9 +124,7 @@ class PlannedForward:
         try:
             return self._executor(prepared_inputs)
         except BaseException as error:
-            self._close_after_failure(
-                error, operation="execute planned forward"
-            )
+            self._close_after_failure(error, operation="execute planned forward")
             raise
 
     def _require_no_pending_invocation(self) -> None:
@@ -166,9 +164,7 @@ class PlannedForward:
             return
         self._close(primary_error=None)
 
-    def _close_after_failure(
-        self, error: BaseException, *, operation: str
-    ) -> None:
+    def _close_after_failure(self, error: BaseException, *, operation: str) -> None:
         self._runtime._prepare_failure_cleanup(
             error,
             operation=operation,
@@ -370,9 +366,7 @@ class PlannedTrainStep:
                         "Failed to cancel execution timing during fault cleanup: "
                         f"{timing_error}"
                     )
-            self._close_after_failure(
-                error, operation="execute planned training step"
-            )
+            self._close_after_failure(error, operation="execute planned training step")
             raise
         self._step += 1
         diagnostics = (
@@ -447,9 +441,7 @@ class PlannedTrainStep:
             return
         self._close(primary_error=None)
 
-    def _close_after_failure(
-        self, error: BaseException, *, operation: str
-    ) -> None:
+    def _close_after_failure(self, error: BaseException, *, operation: str) -> None:
         self._runtime._prepare_failure_cleanup(
             error,
             operation=operation,

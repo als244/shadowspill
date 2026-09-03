@@ -123,9 +123,7 @@ class TaskGraphPairs:
         in the store and is rebound per occurrence like everything else.
         """
 
-        return tuple(
-            item for item in self.variants if item.accumulates == accumulates
-        )
+        return tuple(item for item in self.variants if item.accumulates == accumulates)
 
 
 def parameter_gradient_leaves(pair: AotGraphPair) -> tuple[int, ...]:

@@ -60,13 +60,13 @@ def boundary_bytes(
     boundary: int,
     device_id: str,
     *,
-    prefetch_headroom: bool = False,
+    fetch_headroom: bool = False,
 ) -> int:
     def charged(alias: int) -> bool:
         for span in plan.spans[alias]:
             effective_start = span.start
             if (
-                prefetch_headroom
+                fetch_headroom
                 and span.start > -1
                 and span.start not in facts.production_boundaries[alias]
             ):
@@ -121,11 +121,11 @@ def _charged_span(
     alias: int,
     span: Span,
     *,
-    prefetch_headroom: bool,
+    fetch_headroom: bool,
 ) -> Span | None:
     start = span.start
     if (
-        prefetch_headroom
+        fetch_headroom
         and start > -1
         and start not in facts.production_boundaries[alias]
     ):
@@ -146,7 +146,7 @@ def _pressure_by_device(
     facts: PlanningFacts,
     plan: ResidencyPlan,
     *,
-    prefetch_headroom: bool = False,
+    fetch_headroom: bool = False,
 ) -> dict[str, tuple[int, ...]]:
     """Sweep all charged spans once instead of scanning aliases per boundary."""
 
@@ -163,7 +163,7 @@ def _pressure_by_device(
                 facts,
                 alias,
                 span,
-                prefetch_headroom=prefetch_headroom,
+                fetch_headroom=fetch_headroom,
             )
             if interval is not None:
                 charged_values.append(interval)
@@ -203,7 +203,7 @@ def _update_pressure_for_alias(
     alias: int,
     pressure: dict[str, list[int]],
     *,
-    prefetch_headroom: bool,
+    fetch_headroom: bool,
 ) -> None:
     """Update a pressure sweep after one alias's residency spans change."""
 
@@ -214,7 +214,7 @@ def _update_pressure_for_alias(
                 facts,
                 alias,
                 span,
-                prefetch_headroom=prefetch_headroom,
+                fetch_headroom=fetch_headroom,
             )
             if interval is not None:
                 values.append(interval)
@@ -500,13 +500,13 @@ def reduce_pressure(
     plan = seed
     additions = extra_pressure or {}
     score_kind = "min-transfer" if strategy.endswith("transfer") else "min-stall"
-    prefetch_headroom = strategy.startswith("headroom")
+    fetch_headroom = strategy.startswith("headroom")
     pressure = {
         device_id: list(values)
         for device_id, values in _pressure_by_device(
             facts,
             plan,
-            prefetch_headroom=prefetch_headroom,
+            fetch_headroom=fetch_headroom,
         ).items()
     }
     while True:
@@ -578,7 +578,7 @@ def reduce_pressure(
             plan,
             chosen.alias,
             pressure,
-            prefetch_headroom=prefetch_headroom,
+            fetch_headroom=fetch_headroom,
         )
 
 
@@ -630,8 +630,7 @@ def _required_floor_pressure(facts: PlanningFacts) -> dict[str, tuple[int, ...]]
 
     boundary_count = len(facts.tasks) + 1
     pressure = {
-        device_id: [0] * boundary_count
-        for device_id in facts.object_capacity_by_device
+        device_id: [0] * boundary_count for device_id in facts.object_capacity_by_device
     }
     charged_anchors: list[set[int]] = []
     for alias, anchors in enumerate(facts.anchors):
@@ -647,9 +646,9 @@ def _required_floor_pressure(facts: PlanningFacts) -> dict[str, tuple[int, ...]]
             )
             if contributes:
                 charged.add(boundary)
-                pressure[facts.alias_devices[alias]][boundary + 1] += (
-                    facts.alias_sizes[alias]
-                )
+                pressure[facts.alias_devices[alias]][boundary + 1] += facts.alias_sizes[
+                    alias
+                ]
         charged_anchors.append(charged)
 
     for task, reservations in enumerate(facts.output_reservations):

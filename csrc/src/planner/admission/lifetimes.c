@@ -97,7 +97,7 @@ static int index_intervals(
         if (kind == SHADOWSPILL_MEMORY_RELEASE) {
             continue;
         }
-        const uint8_t direction = kind == SHADOWSPILL_MEMORY_OFFLOAD
+        const uint8_t direction = kind == SHADOWSPILL_MEMORY_EVICT
             ? SHADOWSPILL_TRANSFER_EVICT
             : SHADOWSPILL_TRANSFER_FETCH;
         const uint32_t wanted = sequence[direction]++;

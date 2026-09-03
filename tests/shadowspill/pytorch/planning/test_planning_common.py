@@ -130,9 +130,7 @@ def test_pressurefit_search_exhaustion_is_not_reported_as_infeasibility() -> Non
                 selection_id="selection_0",
                 status="exhausted",
                 failure_kind="repair_budget_exhausted",
-                repairs=PressureFitRepairDiagnostics(
-                    unclassified_attempts=25
-                ),
+                repairs=PressureFitRepairDiagnostics(unclassified_attempts=25),
             ),
         ),
     )

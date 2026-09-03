@@ -123,9 +123,7 @@ def main() -> int:
                 raise AssertionError(
                     f"direct contract failure omitted {expected_text!r}: {message}"
                 ) from cause
-        status = int(
-            library.shadowspill_pytorch_abort_task_handle(task_handle)
-        )
+        status = int(library.shadowspill_pytorch_abort_task_handle(task_handle))
         if status != 0:
             raise AssertionError(
                 f"failed to abort allocation-contract task: status={status}"

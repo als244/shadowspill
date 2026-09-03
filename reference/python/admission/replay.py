@@ -349,7 +349,7 @@ class _AdmissionScriptBuilder:
                         action_index=action_index,
                     ),
                 )
-            elif action.kind is MemoryActionKind.OFFLOAD:
+            elif action.kind is MemoryActionKind.EVICT:
                 lease_id = self._remove_active_alias(task_id, alias_id, action)
                 dependency_id = self._new_dependency_id()
                 self._append(

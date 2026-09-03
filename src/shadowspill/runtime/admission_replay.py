@@ -52,9 +52,7 @@ class AdmissionReplayOperation:
 
     def __post_init__(self) -> None:
         if self.sequence < 0 or self.lease_id < 0:
-            raise ValueError(
-                "admission sequence and lease ID must be non-negative"
-            )
+            raise ValueError("admission sequence and lease ID must be non-negative")
         if self.bytes < 0 or self.alignment < 0:
             raise ValueError("admission geometry must be non-negative")
         if self.dependency_id is not None and self.dependency_id < 0:
@@ -189,9 +187,7 @@ def run_admission_replay(
             ),
         )
     if status != 0:
-        description = library.shadowspill_status_string(
-            status
-        ).decode()
+        description = library.shadowspill_status_string(status).decode()
         raise ValueError(
             f"MemoryPool replay failed at operation "
             f"{int(result.error_operation_index)} with {description}"

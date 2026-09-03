@@ -111,9 +111,7 @@ def test_task_trace_label_is_owned_by_the_admitted_description() -> None:
         "execution_000000.forward.stage_0000",
     )
 
-    assert buffers.description.trace_label == (
-        b"execution_000000.forward.stage_0000"
-    )
+    assert buffers.description.trace_label == (b"execution_000000.forward.stage_0000")
 
 
 def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:

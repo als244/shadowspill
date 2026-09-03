@@ -24,20 +24,20 @@ const char *shadowspill_status_string(ShadowSpillStatus status) {
             return "task input deadlock";
         case SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY:
             return "task exceeds device capacity";
-        case SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY:
-            return "prefetch exceeds device capacity";
-        case SHADOWSPILL_STATUS_OFFLOAD_SPILL_CAPACITY:
-            return "offload exceeds spill capacity";
+        case SHADOWSPILL_STATUS_FETCH_DEVICE_CAPACITY:
+            return "fetch exceeds device capacity";
+        case SHADOWSPILL_STATUS_EVICT_SPILL_CAPACITY:
+            return "evict exceeds spill capacity";
         case SHADOWSPILL_STATUS_TRANSFER_DEADLOCK:
             return "transfer deadlock";
         case SHADOWSPILL_STATUS_INVALID_RELEASE:
             return "invalid release";
         case SHADOWSPILL_STATUS_RELEASE_TRANSFER_CONFLICT:
             return "release conflicts with a transfer";
-        case SHADOWSPILL_STATUS_INVALID_OFFLOAD:
-            return "invalid offload";
-        case SHADOWSPILL_STATUS_INVALID_PREFETCH:
-            return "invalid prefetch";
+        case SHADOWSPILL_STATUS_INVALID_EVICT:
+            return "invalid evict";
+        case SHADOWSPILL_STATUS_INVALID_FETCH:
+            return "invalid fetch";
         case SHADOWSPILL_STATUS_FINAL_RESIDENCY:
             return "final residency unsatisfied";
         case SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR:

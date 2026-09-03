@@ -156,7 +156,7 @@ def _latest_safe_triggers(
 
     ``Reload.latest_trigger`` is the final *legal enqueue boundary*, normally
     the task immediately before the first consumer.  Enqueuing there is a
-    demand fetch, not a latest-safe prefetch.  A latest-safe trigger instead
+    demand fetch, not a latest-safe fetch.  A latest-safe trigger instead
     backs the transfer duration out of the consumer's ideal start time and
     chooses the latest available task boundary at or before that time.
 
@@ -183,13 +183,13 @@ def _fit_clamped_triggers(
     plan: ResidencyPlan,
     selected: dict[Reload, int],
     *,
-    prefetch_headroom: bool,
+    fetch_headroom: bool,
 ) -> dict[Reload, int]:
     result = dict(selected)
     base_pressure = _pressure_by_device(
         facts,
         plan,
-        prefetch_headroom=prefetch_headroom,
+        fetch_headroom=fetch_headroom,
     )
     active_by_device = {
         device_id: [dict[Reload, None]() for _ in range(len(facts.tasks))]
@@ -264,14 +264,14 @@ def _fit_clamped_triggers(
             return result
 
 
-def choose_prefetch_triggers(
+def choose_fetch_triggers(
     facts: PlanningFacts,
     config: SimulationConfig,
     plan: ResidencyPlan,
     reloads: tuple[Reload, ...],
     rule: str,
     *,
-    prefetch_headroom: bool,
+    fetch_headroom: bool,
 ) -> dict[Reload, int]:
     if rule == "demand":
         return {item: item.latest_trigger for item in reloads}
@@ -283,7 +283,7 @@ def choose_prefetch_triggers(
             facts,
             plan,
             selected,
-            prefetch_headroom=prefetch_headroom,
+            fetch_headroom=fetch_headroom,
         )
     return selected
 
@@ -306,10 +306,10 @@ def emit_schedule(
     facts: PlanningFacts,
     config: SimulationConfig,
     plan: ResidencyPlan,
-    prefetch_rule: str,
+    fetch_rule: str,
     *,
     coalesced: bool,
-    prefetch_headroom: bool = False,
+    fetch_headroom: bool = False,
 ) -> MemorySchedule:
     """Emit one immutable schedule without changing any task boundary."""
 
@@ -341,9 +341,9 @@ def emit_schedule(
                         earliest = previous_departure.trigger
                 if latest < earliest:
                     raise PressureFitInfeasibleError(
-                        f"alias {facts.alias_ids[alias]!r} has no legal prefetch "
+                        f"alias {facts.alias_ids[alias]!r} has no legal fetch "
                         f"boundary between tasks {earliest} and {latest}",
-                        kind="prefetch_window",
+                        kind="fetch_window",
                         device_id=facts.alias_devices[alias],
                     )
                 reloads.append(Reload(alias, earliest, latest, span.start))
@@ -357,7 +357,7 @@ def emit_schedule(
                 ):
                     kind = MemoryActionKind.RELEASE
                 else:
-                    kind = MemoryActionKind.OFFLOAD
+                    kind = MemoryActionKind.EVICT
                     spill_refreshed = span.end
                 previous_departure = Departure(alias, departure_task, kind)
                 departures.append(previous_departure)
@@ -369,7 +369,7 @@ def emit_schedule(
                 ):
                     kind = MemoryActionKind.RELEASE
                 else:
-                    kind = MemoryActionKind.OFFLOAD
+                    kind = MemoryActionKind.EVICT
                 previous_departure = Departure(alias, departure_task, kind)
                 departures.append(previous_departure)
             else:
@@ -378,13 +378,13 @@ def emit_schedule(
                 )
                 departures.append(previous_departure)
 
-    triggers = choose_prefetch_triggers(
+    triggers = choose_fetch_triggers(
         facts,
         config,
         plan,
         tuple(reloads),
-        prefetch_rule,
-        prefetch_headroom=prefetch_headroom,
+        fetch_rule,
+        fetch_headroom=fetch_headroom,
     )
     actions_by_task: dict[int, list[tuple[int, MemoryActionKind]]] = {}
     for departure in departures:
@@ -393,12 +393,12 @@ def emit_schedule(
         )
     for reload in reloads:
         actions_by_task.setdefault(triggers[reload], []).append(
-            (reload.alias, MemoryActionKind.PREFETCH)
+            (reload.alias, MemoryActionKind.FETCH)
         )
     kind_order = {
         MemoryActionKind.RELEASE: 0,
-        MemoryActionKind.OFFLOAD: 1,
-        MemoryActionKind.PREFETCH: 2,
+        MemoryActionKind.EVICT: 1,
+        MemoryActionKind.FETCH: 2,
     }
     actions = tuple(
         MemoryAction(
@@ -417,12 +417,12 @@ def emit_schedule(
             for action in actions
             if action.kind is MemoryActionKind.RELEASE
         }
-        prefetch_keys = {
+        fetch_keys = {
             (action.trigger_task_id, action.alias_group_id)
             for action in actions
-            if action.kind is MemoryActionKind.PREFETCH
+            if action.kind is MemoryActionKind.FETCH
         }
-        coalesced_keys = release_keys & prefetch_keys
+        coalesced_keys = release_keys & fetch_keys
         actions = tuple(
             action
             for action in actions

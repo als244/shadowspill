@@ -1,4 +1,4 @@
-"""Isolated regression for trigger-time prefetch destination reservation."""
+"""Isolated regression for trigger-time fetch destination reservation."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _program() -> Program:
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("resident_model_state", "cuda_0", 20),
-            AliasGroupSpec("earlier_prefetch", "cuda_0", 40),
+            AliasGroupSpec("earlier_fetch", "cuda_0", 40),
             AliasGroupSpec("future_optimizer_state", "cuda_0", 40),
             AliasGroupSpec("head_gradient", "cuda_0", 30),
         ),
@@ -48,7 +48,7 @@ def _program() -> Program:
             ),
             ObjectSpec(
                 "earlier_state",
-                "earlier_prefetch",
+                "earlier_fetch",
                 0,
                 40,
                 ObjectRole.OPTIMIZER_STATE,
@@ -81,7 +81,7 @@ def _program() -> Program:
                 inputs=("resident_parameter",),
             ),
             TaskSpec(
-                "future_optimizer_prefetch_trigger",
+                "future_optimizer_fetch_trigger",
                 compute,
                 "trigger_profile",
                 dependencies=("earlier_transfer_trigger",),
@@ -91,7 +91,7 @@ def _program() -> Program:
                 "current_head_computation",
                 compute,
                 "head_profile",
-                dependencies=("future_optimizer_prefetch_trigger",),
+                dependencies=("future_optimizer_fetch_trigger",),
                 inputs=("resident_parameter",),
                 outputs=("gradient_output",),
             ),
@@ -110,19 +110,19 @@ def _schedule() -> MemorySchedule:
     return MemorySchedule(
         initial_residency=(
             ResidencySpec("resident_model_state", MemoryLocation.DEVICE),
-            ResidencySpec("earlier_prefetch", MemoryLocation.SPILL),
+            ResidencySpec("earlier_fetch", MemoryLocation.SPILL),
             ResidencySpec("future_optimizer_state", MemoryLocation.SPILL),
         ),
         actions=(
             MemoryAction(
                 "earlier_transfer_trigger",
-                "earlier_prefetch",
-                MemoryActionKind.PREFETCH,
+                "earlier_fetch",
+                MemoryActionKind.FETCH,
             ),
             MemoryAction(
-                "future_optimizer_prefetch_trigger",
+                "future_optimizer_fetch_trigger",
                 "future_optimizer_state",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
             MemoryAction(
                 "current_head_computation",

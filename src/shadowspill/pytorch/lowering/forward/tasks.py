@@ -74,8 +74,7 @@ class _ForwardTaskEmitter:
             tuple(self.entrypoints),
             frozenset(self.produced_aliases),
             tuple(
-                self.public_outputs[index]
-                for index in range(len(self.public_outputs))
+                self.public_outputs[index] for index in range(len(self.public_outputs))
             ),
         )
 

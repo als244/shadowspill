@@ -61,13 +61,10 @@ def resolve_shared_inputs(
         reference = value.reference
         reference.object._require_open()
         if not reference.object._belongs_to(runtime):
-            raise PlanningError(
-                f"shared input leaf {index} belongs to another Runtime"
-            )
+            raise PlanningError(f"shared input leaf {index} belongs to another Runtime")
         if value.require_in not in available:
             raise PlanningError(
-                f"shared input leaf {index} requires unknown pool "
-                f"{value.require_in!r}"
+                f"shared input leaf {index} requires unknown pool {value.require_in!r}"
             )
         if value.require_in not in reference.retained_pools:
             raise PlanningError(
@@ -127,9 +124,7 @@ def _populate_shared_representative(
                 f"shared input leaf {leaf_index} has control dtype "
                 f"{destination.dtype}; provide profiling_value"
             )
-        generator = torch.Generator(device="cpu").manual_seed(
-            0x5348_0000 + leaf_index
-        )
+        generator = torch.Generator(device="cpu").manual_seed(0x5348_0000 + leaf_index)
         if destination.is_floating_point():
             destination.copy_(
                 torch.randn(

@@ -53,9 +53,9 @@ occurrence-level assignments are selected.
 ## Memory schedule
 
 A `MemorySchedule` combines initial `ResidencySpec` values with ordered
-`MemoryAction` values. Canonical serialized action kinds are `prefetch`,
+`MemoryAction` values. Canonical serialized action kinds are `fetch`,
 `release`, and
-`offload`. Explanatory documentation and runtime names use **fetch** for
+`evict`. Explanatory documentation and runtime names use **fetch** for
 spill-to-execution movement and **evict** for execution-to-spill movement.
 
 An action trigger is a task boundary. Triggering a fetch reserves destination

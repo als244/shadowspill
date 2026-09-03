@@ -249,8 +249,8 @@ def export_tensors(
         for item in state.storages:
             _require_status(
                 runtime_library().shadowspill_unregister_object(
-                runtime._runtime_handle, item.current_object_id
-            ),
+                    runtime._runtime_handle, item.current_object_id
+                ),
                 f"release persistent object {item.current_object_id}",
             )
         registry.remove(target)

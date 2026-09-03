@@ -55,8 +55,8 @@ _LOCATION_CODE = {
 }
 _ACTION_CODE = {
     MemoryActionKind.RELEASE: 0,
-    MemoryActionKind.OFFLOAD: 1,
-    MemoryActionKind.PREFETCH: 2,
+    MemoryActionKind.EVICT: 1,
+    MemoryActionKind.FETCH: 2,
 }
 _STALL_REASONS = (
     (1 << 0, "input-residency"),
@@ -68,8 +68,8 @@ _STALL_REASONS = (
 _VIOLATION_REASONS = (
     "initial-device-capacity",
     "initial-spill-capacity",
-    "prefetch-device-capacity",
-    "offload-spill-capacity",
+    "fetch-device-capacity",
+    "evict-spill-capacity",
     "task-device-capacity",
 )
 _VIOLATION_LOCATIONS = ("device", "spill")
@@ -507,9 +507,9 @@ def _bind_schedule(
                 raise ValueError(
                     f"memory-reuse predecessor action is unknown: {predecessor}"
                 )
-            if schedule.actions[predecessor].kind is not MemoryActionKind.OFFLOAD:
+            if schedule.actions[predecessor].kind is not MemoryActionKind.EVICT:
                 raise ValueError(
-                    f"memory-reuse predecessor must be an OFFLOAD action: {predecessor}"
+                    f"memory-reuse predecessor must be an EVICT action: {predecessor}"
                 )
             predecessor_actions.append(predecessor)
             if dependency.successor_task_id is None:
@@ -637,10 +637,11 @@ def _raise_error(
         alias_group_ids=(() if alias is None else (alias,)),
         location=(
             None
-            if int(result.error_device) == NO_INDEX and status
+            if int(result.error_device) == NO_INDEX
+            and status
             not in (
                 Status.INITIAL_SPILL_CAPACITY,
-                Status.OFFLOAD_SPILL_CAPACITY,
+                Status.EVICT_SPILL_CAPACITY,
                 Status.FINAL_RESIDENCY,
             )
             else (

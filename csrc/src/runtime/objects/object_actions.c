@@ -29,7 +29,7 @@ static ShadowSpillProjectedObjectState projected_state_locked(
         .version = object->authoritative_version,
         .execution_current =
             (object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY ||
-             object->residency == SHADOWSPILL_OBJECT_PREFETCHING) &&
+             object->residency == SHADOWSPILL_OBJECT_FETCHING) &&
             execution->lease != NULL &&
             execution->version == object->authoritative_version,
         .spill_current = spill->lease != NULL && spill->current &&
@@ -70,7 +70,7 @@ ShadowSpillStatus shadowspill_object_schedule_action_locked(
     action->produces_current_spill = 0U;
 
     switch (action->kind) {
-        case SHADOWSPILL_RUNTIME_PREFETCH:
+        case SHADOWSPILL_RUNTIME_FETCH:
             if (!before.spill_current || before.execution_current) {
                 return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }
@@ -84,7 +84,7 @@ ShadowSpillStatus shadowspill_object_schedule_action_locked(
             }
             action->produces_current_spill = before.spill_current;
             break;
-        case SHADOWSPILL_RUNTIME_OFFLOAD:
+        case SHADOWSPILL_RUNTIME_EVICT:
             if (!before.execution_current) {
                 return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }

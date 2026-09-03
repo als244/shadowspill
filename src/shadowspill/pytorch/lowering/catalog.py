@@ -460,17 +460,14 @@ class ObjectCatalog:
         """Downgrade proven non-writing shared roots to read-only residency."""
 
         written_aliases = {
-            self._record(object_id).alias_group_id
-            for object_id in written_object_ids
+            self._record(object_id).alias_group_id for object_id in written_object_ids
         }
         for alias_id, policy in tuple(self._shared_residency.items()):
             if alias_id in written_aliases or (
                 policy is SharedResidencyPolicy.SHARED_READ_ONLY
             ):
                 continue
-            self._shared_residency[alias_id] = (
-                SharedResidencyPolicy.SHARED_READ_ONLY
-            )
+            self._shared_residency[alias_id] = SharedResidencyPolicy.SHARED_READ_ONLY
 
     def _record(self, object_id: str) -> _ObjectRecord:
         index = int(object_id.removeprefix("object_"))
