@@ -46,7 +46,7 @@ _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 #: 3254.9, 2897.5 and 12807.8. The whole rise (+5.2%, +4.5%, +8.6%) is
 #: first-use ordering of the initial placement batch: the opening restore
 #: no longer strands a first-task input at the end of the FIFO fetch
-#: queue. See docs/investigations/step-prologue-and-terminal-tail.md.
+#: queue. See docs/internal/investigations/step-prologue-and-terminal-tail.md.
 _REGRESSION_TOKENS_PER_SECOND = {
     "mlops_llama3": 3_423.5,
     "mlops_qwen35": 3_026.6,

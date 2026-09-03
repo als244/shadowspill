@@ -183,5 +183,5 @@ model = export_model_state(
 runtime.close()
 ```
 
-Both `Runtime` and planned callables are problem managers. Explicit lifecycle
+Both `Runtime` and planned callables are context managers. Explicit lifecycle
 calls make ownership and failure handling easiest to audit.

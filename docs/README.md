@@ -2,9 +2,13 @@
 
 This directory describes the current ShadowSpill implementation. The
 documentation is split by contract so readers do not have to infer whether a
-statement applies to Python, C, or the framework-neutral design.
+statement applies to Python, C, or the framework-neutral design. Every page
+is linked from this one, under the component it describes, with a line on
+what it covers.
 
 ## Start here
+
+Pick the entry that matches what you came to do; each path stands on its own.
 
 - To use ShadowSpill from PyTorch, read the [Python quickstart](python/quickstart.md)
   and then the [Python API](python/README.md).
@@ -23,11 +27,14 @@ statement applies to Python, C, or the framework-neutral design.
 
 ## Architecture
 
-The pages stay in one directory because they form one ordered system pipeline.
-The groups below are conceptual reading boundaries, not separate ownership
-trees.
+The design: framework-neutral where the code is, PyTorch-specific where it
+must be. The pages form one ordered reading path that follows a step from
+capture to execution; the groups below are reading boundaries, not separate
+ownership trees.
 
 ### Foundations
+
+What ShadowSpill is for, and the vocabulary every later page uses.
 
 1. [Architecture overview](architecture/overview.md) — vocabulary, artifacts,
    ownership, invariants, and supported scope.
@@ -35,6 +42,9 @@ trees.
    recomputation, schedules, and execution plans.
 
 ### PyTorch lowering
+
+How a PyTorch model becomes a framework-neutral program: what is captured,
+what is profiled, and what the planner is handed.
 
 3. [PyTorch capture and lowering](architecture/lowering.md) — semantic roots,
    executable storage, profiling, and canonical objects.
@@ -44,45 +54,68 @@ trees.
 
 ### Planning
 
+How a program becomes an executable plan: which tasks run, where every object
+lives at each boundary, and what address every allocation gets.
+
 5. [Recomputation selection](architecture/recomputation-selection.md) — bounded
    complete selections across occurrence-level graph-pair options.
 6. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
    inputs/outputs, bounded policy search, repair, and pseudocode.
 7. [Physical admission and offset handling](architecture/physical-admission.md)
    — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
-   Two pages go under it: [from a resolved program to
-   leases](architecture/admission-leases.md), which derives what a schedule
-   allocates and when each lease is live, and [fixed-offset
-   placement](architecture/fixed-placement.md), which assigns the addresses and
-   explains what the cost of doing so depends on.
-8. [Planning orchestration](architecture/planning.md) — reusable artifacts,
-   transfer inputs, callable publication, and PlanReport.
+8. [From a resolved program to leases](architecture/admission-leases.md) —
+   what a schedule allocates and when each lease is live.
+9. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
+   given addresses and what the cost of doing so depends on.
+10. [Planning orchestration](architecture/planning.md) — reusable artifacts,
+    transfer inputs, callable publication, and PlanReport.
 
 ### Execution
 
-9. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
-   causal-dependency replay.
-10. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
+How a plan is predicted, run, and measured: the simulator, the runtime and
+its boundaries, the backend underneath, and the clocks a step is read on.
+
+11. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
+    causal-dependency replay.
+12. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
     failure, and tracing.
-11. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+13. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-12. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+14. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening
     restore, and what step time means.
+15. [Backends](architecture/backends.md) — the one component that knows a
+    platform, the driver-level table it implements, and how a new provider
+    plugs in.
+16. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
+    device and pinned host, as ShadowSpill objects built on the backend.
+17. [Transfers](architecture/transfers.md) — routes, the lane each owns,
+    dispatch order, and calibration on those lanes.
+18. [Events](architecture/events.md) — event leases and pools, sealing,
+    completion tracking, and the timing pool behind traced intervals.
+19. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
+    made of, what it requires of a backend, and what it exposes upward.
+20. [Timelines](architecture/timelines.md) — the two clocks a traced step
+    is measured on, the origin they share, and what an untraced step pays.
 
-## Examples
+## Python
 
-- [Training loop](examples/training-lifecycle.md)
-- [Forward-only execution](examples/forward-only.md)
-- [Concurrent planned callables](examples/concurrent-callables.md)
-- [Reusable planning and budget sweeps](examples/reusable-planning.md)
-- [Diagnosing a plan and real step](examples/diagnostics.md)
-- [Custom stage partitioning](examples/custom-partitioning.md)
+The `shadowspill` package: model-state import, capture and lowering, reusable
+planning artifacts, PressureFit, diagnostics, and callable execution. The
+[Python guide](python/README.md) indexes this section.
 
-## Diagnostics, failures, and artifacts
+### Guides
 
+Task-oriented pages: how to do something, and how to read what comes back.
+
+- [Python quickstart](python/quickstart.md) — constructing the runtime,
+  importing model state, planning a step, and the callable lifecycle.
+- [Artifact store](python/artifact-store.md) — the content-addressed store
+  through which planning artifacts are shared and reused.
+- [PyTorch allocator integration](python/allocator.md) — how the ShadowSpill
+  allocator sits under PyTorch and what it accounts for.
 - [Interpreting a PlanReport](python/plan-report.md) — planning time, task and
   graph-pair selection, profiles, PressureFit, caches, and physical admission.
 - [Interpreting StepResult diagnostics](python/step-diagnostics.md) — seven task
@@ -93,13 +126,93 @@ trees.
 - [Errors, failures, and cleanup](python/failures.md) — exception taxonomy,
   structured runtime evidence, rollback, and teardown.
 
-## Historical evidence
+### API reference
 
-[Engineering investigations](investigations/README.md) preserve root-cause
-evidence for bugs and performance work. They describe the revision under
-investigation and are not normative specifications. When an investigation and
-an architecture or API page differ, the architecture or API page is the
-current contract.
+One page per public surface, listing every exported name with its signature
+and the contract behind it.
+
+- [Frontend and lifecycle API](python/api/frontend.md) — `shadowspill.memory`
+  and `shadowspill.pytorch`: the runtime, planning calls, planned callables,
+  and state lifecycle.
+- [Reusable planning artifacts](python/api/artifacts.md) — the immutable,
+  content-addressed values planning is composed from.
+- [Diagnostics API](python/api/diagnostics.md) — the planning and step
+  diagnostics classes and how they are requested.
+- [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.ir`,
+  `shadowspill.planner`, `shadowspill.simulator`, and `shadowspill.runtime`,
+  for tooling and independent planning.
+
+## C
+
+The C library `libshadowspill` (simulator, planner, and runtime) and the two
+pieces compiled separately: the backends and the PyTorch adapter. The
+[C API guide](c/README.md) indexes this section and covers ABI use, ownership
+rules, and platforms.
+
+- [Runtime C API](c/runtime.md) — pools, objects, admitting a plan, task
+  boundaries, telemetry, and admission replay.
+- [Backend contract](c/backends.md) — the driver-level table a provider
+  implements, and what the runtime builds on top of it.
+- [Planner C API](c/planner.md) — the PressureFit problem, options, results,
+  and fixed placement.
+- [Simulator C API](c/simulator.md) — deterministic replay of a program under
+  a plan, and the diagnostics it returns.
+- [PyTorch adapter C API](c/pytorch-adapter.md) — the allocator, storage, and
+  profiler bridge between PyTorch and the runtime.
+- [The C tree](../csrc/README.md) — source layout and build dependencies.
+
+## Examples
+
+Complete, runnable workflows built from the public API, one per page. The
+[examples index](examples/README.md) says what each assumes.
+
+- [Training loop](examples/training-lifecycle.md) — create a runtime, import
+  model state, train, checkpoint, and clean up.
+- [Forward-only execution](examples/forward-only.md) — plan and run a forward
+  pass without an optimizer.
+- [Concurrent planned callables](examples/concurrent-callables.md) — dispatch
+  distinct callables before either result is resolved.
+- [Reusable planning and budget sweeps](examples/reusable-planning.md) — plan
+  once, then re-plan across budgets from the same artifacts.
+- [Diagnosing a plan and real step](examples/diagnostics.md) — join planning
+  diagnostics to a traced step.
+- [Custom stage partitioning](examples/custom-partitioning.md) — override the
+  automatic partition when the module structure does not repeat.
+
+## Development
+
+How the repository is laid out, validated, and named, for anyone changing it.
+
+- [Development guide](development/README.md) — where product code, tooling,
+  and internal notes belong.
+- [Repository structure and validation](development/repository.md) — the
+  Python and C trees, the tests, the gates, and the tooling that runs them.
+- [Naming conventions](development/naming.md) — identifier and vocabulary
+  rules, including what stays generic outside a backend.
+
+## Benchmarking and qualification
+
+The trees that measure ShadowSpill: the planning benchmark over a program
+corpus, and the release gates that check numerics and full-model throughput.
+These pages live beside the code they describe, outside `docs/`.
+
+- [Benchmarking](../benchmarking/README.md) — the self-contained,
+  reproducible planning benchmark tree.
+- [Quickstart script](../benchmarking/quickstart.md) — one model end to end:
+  geometry search over execution budgets, figures, and a run of the winning
+  plan.
+- [Program collection](../benchmarking/program_collection/README.md) —
+  building a corpus of pre-PressureFit step programs.
+- [Planning evaluation](../benchmarking/planning_eval/README.md) —
+  PressureFit, simulation, and physical admission over that corpus.
+- [Qualification](../qualification/README.md) — the release-acceptance
+  protocols and their launchers.
+- [Numerical qualification](../qualification/numerical/README.md) — planned
+  steps checked against the eager reference.
+- [Full-model performance qualification](../qualification/performance/README.md)
+  — throughput floors and simulator error on the large models.
+- [Workloads](../workloads/README.md) — the model and data definitions the
+  benchmarks and gates consume.
 
 ## Documentation policy
 

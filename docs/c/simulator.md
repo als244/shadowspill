@@ -30,7 +30,7 @@ Task and transfer intervals include readiness, start, end, and stall masks.
 Stall masks distinguish input residency, device capacity, source readiness,
 spill capacity, and physical memory reuse.
 
-A prefetch or task launch that does not fit waits for room and is retried,
+A fetch or task launch that does not fit waits for room and is retried,
 rather than ending the simulation; only a plan that can never make room
 fails, as a deadlock. Each shortfall is reported once, at its first refusal,
 as a `ShadowSpillCapacityViolation` carrying the time, device, task, alias,
