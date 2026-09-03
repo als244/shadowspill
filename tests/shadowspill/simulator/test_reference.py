@@ -55,7 +55,7 @@ def test_quick_turnaround_waits_for_evict_then_fetch() -> None:
     assert result.transfer_intervals[1].stall_ns == 128
 
 
-def test_prefetch_overlaps_unrelated_compute() -> None:
+def test_fetch_overlaps_unrelated_compute() -> None:
     result = simulate(
         overlap_program(),
         overlap_schedule(),
@@ -83,7 +83,7 @@ def test_overlap_case_matches_frozen_external_oracle_artifact() -> None:
     )
     root = Path(__file__).resolve().parents[3]
     artifact = json.loads(
-        (root / "tests/fixtures/simulator/reference_v1.json").read_text()
+        (root / "tests/fixtures/simulator/reference.json").read_text()
     )
 
     assert artifact["makespan_ns"] == result.makespan_ns

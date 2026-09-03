@@ -23,8 +23,9 @@ from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     StepProgram,
 )
+from shadowspill.schema import artifact_schema
 
-_SELECTION_SCHEMA = "shadowspill.planning_corpus.selection/v1"
+_SELECTION_SCHEMA = artifact_schema("planning_corpus.selection")
 
 
 def save_annotated_plan(

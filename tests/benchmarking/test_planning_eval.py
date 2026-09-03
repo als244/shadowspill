@@ -46,6 +46,7 @@ from benchmarking.program_collection.corpus import (
     ProgramCaseIdentity,
     save_step_program,
 )
+from shadowspill.schema import artifact_schema
 from tests.benchmarking._fixtures import _fixture
 
 _REPOSITORY = Path(__file__).resolve().parents[2]
@@ -348,7 +349,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
     (directory / "point.json").write_text(
         json.dumps(
             {
-                "schema": "shadowspill.pressurefit_frontier_point/v1",
+                "schema": artifact_schema("pressurefit_frontier_point"),
                 "request_digest": request.digest,
                 "point_id": request.point_id,
                 "status": "error",

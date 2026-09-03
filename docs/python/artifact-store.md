@@ -6,23 +6,36 @@
 
 ```text
 artifact_store_dir/
-├── pytorch/
-│   ├── exports/          normalized Export archives and manifests
-│   └── inductor/         PyTorch Inductor and Triton caches
-├── graphpairs/           structural graph-pair graph pairs
-├── profiling/
-│   ├── compiled_manifests/
-│   └── measurements/
-├── pressurefit/
-│   ├── programs/         canonical PressureFit inputs
-│   ├── selections/       selected schedules
-│   └── requests/         budget/bandwidth request indexes
-└── plans/                readable request-to-artifact manifests
+└── v1/                   one tree per store format version
+    ├── layout.json
+    ├── README.md
+    ├── pytorch/
+    │   ├── exports/      normalized Export archives and manifests
+    │   └── inductor/     PyTorch Inductor and Triton caches
+    ├── graphpairs/       structural AOT graph pairs
+    ├── profiling/
+    │   ├── compiled_manifests/
+    │   └── measurements/
+    ├── pressurefit/
+    │   ├── programs/     canonical PressureFit inputs
+    │   ├── selections/   selected schedules
+    │   └── requests/     budget/bandwidth request indexes
+    └── plans/            readable request-to-artifact manifests
 ```
 
-Schema-specific leaf directories may appear beneath these stable categories.
-Callers should use manifests and artifact diagnostics rather than constructing
-leaf paths.
+There is exactly one version for the store and everything in it:
+`shadowspill.schema.ARTIFACT_VERSION`. It names the version directory, and
+every stored file, and every structure embedded in one (programs, schedules,
+plans, graph pairs, compiled manifests, profiles, selections, requests,
+manifests), carries it in its schema string as `shadowspill.<kind>/v<N>`. It is
+bumped whenever any stored structure changes, so one `artifact_store_dir` can
+be kept across ShadowSpill updates: an update writes a fresh `v<N>` tree beside
+the old one and replans, and nothing inside one tree is ever read as a stale
+version. A file whose schema does not match inside a tree is corruption and
+raises. Documents that live outside the store, such as step and plan
+diagnostics, qualification results, and fixtures, version themselves. Callers
+should use manifests and artifact diagnostics rather than constructing leaf
+paths.
 
 ## Identity
 

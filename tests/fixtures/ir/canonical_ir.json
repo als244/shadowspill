@@ -1,9 +1,8 @@
 {
-  "schema": "shadowspill.ir_golden/v5",
-  "program_digest": "92715980542a689ee6c3cdfd64705309d90fb8779e27fb81855fa66b0a13f4b4",
-  "schedule_digest": "332f8ada15b358d303efc2f3589c6646acb7e841093e421cde3d885740410bae",
-  "execution_plan_digest": "686925825bb8d673fe253e46b6e63cba4ad6f6c0728cea474746a3f802ebacfd",
-  "scheduling_digest": "793bf7e25ec14e46744c053fb5ee1949cb4b7ff5fbd9dc4b54a556aeeac322b8",
+  "program_digest": "d3b4506f2f3cff32ce3b3b8d0595933d1576513777809d44ec54a784a366dcff",
+  "schedule_digest": "5e94f75d47a0a63185daedd3c50cce122be9568e090dc8d910f8ea5313c0003e",
+  "execution_plan_digest": "0233a1da2a69a65164f113f63022c4eb0ae2a13d8fa1e836120a399697b8a873",
+  "scheduling_digest": "b611b858736cf667ce9edb4dea8eb12ad6865869015b1239bacee5179bec991e",
   "device_ids": [
     "cuda_0"
   ],

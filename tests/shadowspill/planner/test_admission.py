@@ -36,6 +36,7 @@ from shadowspill.planner.admission.indexed import (
 from shadowspill.pytorch.planning.admission import (
     simulation_admission_from_replay,
 )
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.indexed import index_simulation_template
 from tests.shadowspill.planner._examples import (
@@ -170,7 +171,7 @@ def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
         ),
         actions=(
             MemoryAction("boundary", "released", MemoryActionKind.RELEASE),
-            MemoryAction("boundary", "fetched", MemoryActionKind.PREFETCH),
+            MemoryAction("boundary", "fetched", MemoryActionKind.FETCH),
         ),
         final_residency=(ResidencySpec("fetched", MemoryLocation.DEVICE),),
     )
@@ -525,10 +526,10 @@ def test_admission_facts_use_only_the_current_physical_schema() -> None:
     facts = _causal_facts()
     payload = facts.to_dict()
 
-    assert payload["schema"] == "shadowspill.admission_facts/v3"
+    assert payload["schema"] == artifact_schema("admission_facts")
     assert AdmissionFacts.from_json(facts.to_json()) == facts
 
-    payload["schema"] = "shadowspill.admission_facts/v2"
+    payload["schema"] = "shadowspill.admission_facts/v0"
     with pytest.raises(ValueError, match="unsupported schema"):
         AdmissionFacts.from_dict(payload)
 
@@ -613,7 +614,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
             admission=facts,
             options=PressureFitOptions(
                 residency_strategies=("tight-stall",),
-                prefetch_rules=("latest-safe",),
+                fetch_rules=("latest-safe",),
                 evaluate_coalesced=False,
                 max_repair_attempts=1,
                 workers=1,
@@ -633,7 +634,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         admission=facts,
         options=PressureFitOptions(
             residency_strategies=("tight-stall",),
-            prefetch_rules=("latest-safe",),
+            fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
             workers=1,
         ),
@@ -641,7 +642,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
 
     diagnostic = result.diagnostics.recomputation_problems[0].candidate_evaluations[0]
     assert diagnostic.repairs.total_attempts == 2
-    assert diagnostic.repairs.admission_prefetch_delay_attempts == 1
+    assert diagnostic.repairs.admission_fetch_delay_attempts == 1
     assert diagnostic.repairs.admission_pressure_boundary_attempts == 1
     assert diagnostic.work.admission_calls == 3
     assert diagnostic.work.simulation_calls == 1
@@ -652,5 +653,5 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         if action.trigger_task_id == "before_d"
     ) == (
         ("before_d", "c", MemoryActionKind.RELEASE),
-        ("before_d", "d", MemoryActionKind.PREFETCH),
+        ("before_d", "d", MemoryActionKind.FETCH),
     )

@@ -25,22 +25,19 @@ from shadowspill.planner.serialization import (
     _options_from_value,
     _options_to_dict,
     _pressurefit_diagnostics_from_value,
+    _resident_slice_from_value,
     _simulation_admission_from_value,
     _simulation_result_from_value,
     _string,
 )
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationAdmission, SimulationResult
 
 if TYPE_CHECKING:
     from .admission.layout.model import FixedPhysicalLayout
     from .admission.refinement import FixedLayoutAttempt
 
-_ANNOTATED_PROGRAM_PLAN_SCHEMA = "shadowspill.annotated_program_plan/v3"
-#: v2 wrote `selection.cache_hit` for what v3 calls `selection.from_store`.
-#: Only the name changed, so v2 payloads are still read.
-_READABLE_SCHEMAS = frozenset(
-    {_ANNOTATED_PROGRAM_PLAN_SCHEMA, "shadowspill.annotated_program_plan/v2"}
-)
+_ANNOTATED_PROGRAM_PLAN_SCHEMA = artifact_schema("annotated_program_plan")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +61,7 @@ class AnnotatedProgramPlan:
     #: tens of megabytes -- and four callers want the same answer, so it is
     #: worth keeping rather than paying for repeatedly. A one-slot box,
     #: because the plan itself is frozen.
-    _digest_cache: list[str] = field(
-        default_factory=list, repr=False, compare=False
-    )
+    _digest_cache: list[str] = field(default_factory=list, repr=False, compare=False)
 
     @property
     def digest(self) -> str:
@@ -80,12 +75,9 @@ class AnnotatedProgramPlan:
         value = self.to_dict()
         selection = dict(_mapping(value["selection"], "selection"))
         selection.pop("from_store", None)
-        selection.pop("cache_hit", None)
         selection.pop("diagnostics")
         value["selection"] = selection
-        physical = dict(
-            _mapping(value["physical_admission"], "physical_admission")
-        )
+        physical = dict(_mapping(value["physical_admission"], "physical_admission"))
         physical["attempts"] = [
             {
                 key: item
@@ -133,6 +125,7 @@ class AnnotatedProgramPlan:
                     item.to_dict() for item in self.result.initial_residency
                 ],
                 "options": _options_to_dict(self.result.options),
+                "resident_slice": self.result.resident_slice.to_dict(),
                 "schedule": self.result.schedule.to_dict(),
                 "selections": [item.to_dict() for item in self.result.selections],
             },
@@ -192,7 +185,7 @@ class AnnotatedProgramPlan:
         from .admission.refinement import FixedLayoutAttempt
 
         data = _mapping(value, "annotated_program_plan")
-        if data.get("schema") not in _READABLE_SCHEMAS:
+        if data.get("schema") != _ANNOTATED_PROGRAM_PLAN_SCHEMA:
             raise ValueError("annotated_program_plan.schema: unsupported schema")
         program = PressureFitProgram.from_value(
             data.get("source_program"), "annotated_program_plan.source_program"
@@ -213,8 +206,7 @@ class AnnotatedProgramPlan:
         timing_attempts = tuple(
             _mapping(
                 item,
-                "annotated_program_plan.timing."
-                f"refinement_attempts[{index}]",
+                f"annotated_program_plan.timing.refinement_attempts[{index}]",
             )
             for index, item in enumerate(
                 _list(
@@ -322,6 +314,10 @@ class AnnotatedProgramPlan:
             selections=selections,
             simulation=simulation,
             diagnostics=diagnostics,
+            resident_slice=_resident_slice_from_value(
+                selection.get("resident_slice"),
+                "annotated_program_plan.selection.resident_slice",
+            ),
             admission_facts=facts,
         )
         attempts_value = _list(
@@ -331,11 +327,14 @@ class AnnotatedProgramPlan:
         if len(timing_attempts) != len(attempts_value):
             raise ValueError("annotated timing/refinement-attempt counts differ")
         for index, item in enumerate(timing_attempts):
-            if _integer(
-                item.get("attempt_index"),
-                "annotated_program_plan.timing."
-                f"refinement_attempts[{index}].attempt_index",
-            ) != index:
+            if (
+                _integer(
+                    item.get("attempt_index"),
+                    "annotated_program_plan.timing."
+                    f"refinement_attempts[{index}].attempt_index",
+                )
+                != index
+            ):
                 raise ValueError("annotated refinement-attempt timing order differs")
         attempts = tuple(
             FixedLayoutAttempt(
@@ -439,8 +438,7 @@ class AnnotatedProgramPlan:
             simulation=simulation,
             attempts=attempts,
             plan_from_store=_boolean(
-                # v2 spelled this `cache_hit`.
-                selection.get("from_store", selection.get("cache_hit")),
+                selection.get("from_store"),
                 "annotated_program_plan.selection.from_store",
             ),
             wall_time_ns=total_wall_time_ns,

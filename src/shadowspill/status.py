@@ -16,7 +16,7 @@ from typing import Final
 #: Everything in libshadowspill ships together and versions together; see
 #: `<shadowspill/shadowspill.h>`. Backends and the PyTorch adapter are
 #: compiled separately and keep their own.
-ABI_VERSION: Final = 62
+ABI_VERSION: Final = 1
 
 
 class Status(IntEnum):
@@ -38,13 +38,13 @@ class Status(IntEnum):
     INITIAL_SPILL_CAPACITY = 21
     TASK_INPUT_DEADLOCK = 22
     TASK_DEVICE_CAPACITY = 23
-    PREFETCH_DEVICE_CAPACITY = 24
-    OFFLOAD_SPILL_CAPACITY = 25
+    FETCH_DEVICE_CAPACITY = 24
+    EVICT_SPILL_CAPACITY = 25
     TRANSFER_DEADLOCK = 26
     INVALID_RELEASE = 27
     RELEASE_TRANSFER_CONFLICT = 28
-    INVALID_OFFLOAD = 29
-    INVALID_PREFETCH = 30
+    INVALID_EVICT = 29
+    INVALID_FETCH = 30
     FINAL_RESIDENCY = 31
     SIMULATION_INTERNAL_ERROR = 32
 

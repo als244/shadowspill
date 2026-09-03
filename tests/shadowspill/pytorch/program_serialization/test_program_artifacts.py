@@ -46,9 +46,7 @@ from shadowspill.simulator import SimulationConfig
 def _pressurefit_program() -> PressureFitProgram:
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
-        alias_groups=(
-            AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),
-        ),
+        alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
         objects=(ObjectSpec("state_object", "state", 0, 64),),
         profiles=(TaskProfile("profile", 10, 0, "abi"),),
         tasks=(
@@ -87,7 +85,7 @@ def _pressurefit_program() -> PressureFitProgram:
         dynamic_scratch_reserve_bytes=0,
         options=PressureFitOptions(
             residency_strategies=("tight-stall",),
-            prefetch_rules=("demand",),
+            fetch_rules=("demand",),
             evaluate_coalesced=False,
             workers=1,
         ),
@@ -160,7 +158,7 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
         AnnotatedProgramPlan.from_dict(old_timing)
 
     old_schema = dict(encoded)
-    old_schema["schema"] = "shadowspill.annotated_program_plan/v1"
+    old_schema["schema"] = "shadowspill.annotated_program_plan/v0"
     with pytest.raises(ValueError, match="unsupported schema"):
         AnnotatedProgramPlan.from_dict(old_schema)
 

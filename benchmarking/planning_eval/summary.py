@@ -8,6 +8,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from shadowspill.schema import artifact_schema
+
 from .matrix import FrontierPointRequest
 from .storage import BaselinePaths, atomic_json, atomic_text, read_object, utc_now
 
@@ -98,9 +100,7 @@ def write_frontier_summary(
     )
     rows = tuple(
         _csv_row(path, point, request)
-        for path, point, request in zip(
-            point_paths, points, requests, strict=True
-        )
+        for path, point, request in zip(point_paths, points, requests, strict=True)
     )
     atomic_text(
         paths.jsonl_path,
@@ -116,7 +116,7 @@ def write_frontier_summary(
     )
     expected_points = expected_programs * expected_points_per_program
     summary: dict[str, object] = {
-        "schema": "shadowspill.pressurefit_frontier_summary/v1",
+        "schema": artifact_schema("pressurefit_frontier_summary"),
         "baseline_id": paths.directory.name,
         "updated_at": utc_now(),
         "expected_programs": expected_programs,
@@ -211,9 +211,7 @@ def _csv_row(
         "compute_idle_ns": simulation.get("compute_idle_within_selected_span_ns"),
         "fetch_bytes": fetch.get("bytes"),
         "evict_bytes": evict.get("bytes"),
-        "device_peak_bytes": _mapping(simulation.get("device_peak")).get(
-            "total_bytes"
-        ),
+        "device_peak_bytes": _mapping(simulation.get("device_peak")).get("total_bytes"),
         "spill_peak_bytes": simulation.get("spill_peak_bytes"),
         "recomputation_problem_count": pressurefit_summary.get(
             "recomputation_problem_count"
@@ -221,9 +219,7 @@ def _csv_row(
         "valid_recomputation_problem_count": pressurefit_summary.get(
             "valid_recomputation_problem_count"
         ),
-        "candidate_policy_count": pressurefit_summary.get(
-            "candidate_policy_count"
-        ),
+        "candidate_policy_count": pressurefit_summary.get("candidate_policy_count"),
         "candidate_evaluation_count": pressurefit_summary.get(
             "candidate_evaluation_count"
         ),
