@@ -6,6 +6,7 @@ planning, execution, diagnostics, serialization, or model state.
 
 ```text
 qualification/
+├── gates.py         suite, numerical, and performance in one run
 ├── numerical/
 │   ├── README.md
 │   ├── run.py       one reference/planned correctness cell
@@ -15,6 +16,54 @@ qualification/
     ├── run.py       one full-model throughput cell
     └── matrix.py    the retained full-model matrix
 ```
+
+## Running the gates
+
+The three gates answer different questions and are usually wanted together,
+so one command runs them in order and reports what each found:
+
+```bash
+python -m qualification.gates
+```
+
+They always run unit suite, then numerical matrix, then performance matrix,
+whatever order the command line names them in; each finishes before the next
+begins, because the measured ones are timed and overlapping them would
+corrupt both. Name a subset to run only those:
+
+```bash
+python -m qualification.gates suite numerical
+```
+
+Each gate's output streams to the terminal as it runs and is saved under
+`qualification/results/gates_<run>/`. `--run NAME` names this run, which also
+names the matrices' own output directories, `numerical_<run>` and
+`performance_<run>`. It defaults to the commit being measured and the time,
+`<revision>_<mmdd>_<hhmm>`, with `_dirty` inserted when the tree carries
+uncommitted changes: a cell's saved numbers do not record which revision produced them, so
+the directory name is what makes a result readable later as a reference, and a
+revision alone does not identify a tree that was modified.
+
+Both matrices write their usual artifacts into those directories -- per-cell
+JSON and log, plan report, PressureFit fixture, `summary.json`, and the run's
+artifact store -- so a gate run leaves exactly what a matrix run by hand
+leaves, under a name that says what produced it.
+A failing gate stops the ones that would follow unless `--continue-after-failure`
+is given, and `--keep-going` lets a matrix finish its remaining cells after
+one cell fails.
+
+The closing summary reports each gate's verdict and wall time, then what it
+found: the suite's test counts and the name of every test that failed or
+errored, which correctness cells agreed with their reference and which did
+not, and for the performance matrix a table of real and simulated step time
+and throughput per cell with the simulator's error, planning time, and where
+that planning time went by phase.
+
+Of the suite's counts, the deselected ones are the `fresh_process` tests,
+which need a process where nothing has touched the device yet and so are run
+one per process by CTest rather than in the shared pytest process. The skip
+is `test_command_line_flags`, which has nothing to check when a module
+declares no long options.
 
 The launchers delegate to `src/tools/qualification/`, which in turn uses the
 public `src/shadowspill/` APIs and workload definitions under `workloads/`.
