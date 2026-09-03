@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from shadowspill.schema import artifact_schema
 from workloads.numerical import DEFAULT_DEVICE_BUDGETS
 
 from .matrix_logging import MatrixConsole, format_bytes, utc_now
@@ -207,7 +208,7 @@ def _run_case(
     if return_code == 0 and artifact.is_file():
         payload = json.loads(artifact.read_text())
         passed = bool(
-            payload.get("schema") == "shadowspill.numerical_qualification/v5"
+            payload.get("schema") == artifact_schema("numerical_qualification")
             and payload.get("passed") is True
         )
         if not passed:
@@ -285,8 +286,7 @@ def main() -> int:
         choices=("stage_interleaved", "tail"),
         default="stage_interleaved",
         help=(
-            "group optimizer updates by stage and place them at their gradient "
-            "frontier"
+            "group optimizer updates by stage and place them at their gradient frontier"
         ),
     )
     parser.add_argument(
@@ -454,7 +454,7 @@ def main() -> int:
                 break
 
         summary = {
-            "schema": "shadowspill.model_correctness_matrix/v1",
+            "schema": artifact_schema("model_correctness_matrix"),
             "passed": len(results) == len(selected_cases)
             and all(item.passed for item in results),
             "cold": arguments.cold,
