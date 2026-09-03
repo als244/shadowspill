@@ -310,6 +310,14 @@ and `PlanSummary`, the bound-skipped geometries with reasons, and derived
 winners per budget. Running a winner afterward is one warm `plan_step()`
 call at the chosen geometry.
 
+Failures are outcomes rather than errors. A point that proves infeasible or
+exhausts its search budget carries that status while the search continues.
+Because profiling runs a task's real kernels, the largest geometries can
+exhaust the device before any plan exists; such a geometry reports every one
+of its budgets `infeasible`, with the exhaustion as the point's error, and
+contributes no build to the report because it produced no program. Any other
+build failure is raised.
+
 <!-- source-signature: src/shadowspill/pytorch/step_search.py:plan_step_search -->
 ```text
 plan_step_search(
