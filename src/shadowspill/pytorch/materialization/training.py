@@ -13,6 +13,7 @@ from torch.export.graph_signature import InputKind
 
 from shadowspill.errors import PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
+from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
@@ -62,7 +63,7 @@ class TrainingMaterializedState(MaterializedState):
         self.captures = captures
         self.bridge = bridge
         self.runtime = runtime
-        self.device = torch.device("cuda", device_ordinal)
+        self.device = accelerator_device(device_ordinal)
         self.object_store: dict[str, torch.Tensor] = {}
         self.object_tensors: dict[str, torch.Tensor] = {}
         self._closed = False
@@ -104,7 +105,7 @@ class TrainingMaterializedState(MaterializedState):
             )
         self._model_on_cpu = True
 
-    def restore_cuda_placeholders_after_optimizer_capture(self) -> None:
+    def restore_device_placeholders_after_optimizer_capture(self) -> None:
         """Return registered model tensors to host-only CUDA placeholders."""
 
         if self._closed or not self._model_on_cpu:
@@ -124,7 +125,7 @@ class TrainingMaterializedState(MaterializedState):
             for item in items:
                 if id(item.tensor) in assigned:
                     continue
-                view = self._cuda_view(owner, item.tensor)
+                view = self._device_view(owner, item.tensor)
                 item.tensor.data = view
                 representative = item.tensor
                 assigned.add(id(item.tensor))
@@ -174,7 +175,7 @@ class TrainingMaterializedState(MaterializedState):
                 dtype=torch.uint8,
                 device=self.device,
             )
-            tensor = self._cuda_view(owner, source)
+            tensor = self._device_view(owner, source)
             binding = bridge.publish_initial_tensor(alias_id, owner)
             self.object_store[alias_id] = tensor
             self.object_tensors[fixed.object_id] = tensor
@@ -237,7 +238,7 @@ class TrainingMaterializedState(MaterializedState):
             assigned: set[int] = set()
             for object_id, tensor in values:
                 if id(tensor) not in assigned:
-                    tensor.data = self._cuda_view(owner, tensor)
+                    tensor.data = self._device_view(owner, tensor)
                     assigned.add(id(tensor))
                 self.object_tensors[object_id] = tensor
                 representative = tensor
@@ -266,7 +267,7 @@ class TrainingMaterializedState(MaterializedState):
                 tensor = flat[index]
                 if not isinstance(tensor, torch.Tensor):
                     raise RuntimeError("captured tensor input became static")
-                if tensor.device.type == "cuda":
+                if is_accelerator(tensor.device):
                     tensor = tensor.detach().cpu()
                 if alias_id not in written:
                     self.bridge.write_spill_tensor(alias_id, tensor)
@@ -451,7 +452,7 @@ class TrainingMaterializedState(MaterializedState):
         views: dict[int, torch.Tensor] = {}
         representative: torch.Tensor = owner
         for source_tensor, root_position in values:
-            view = self._initial_cuda_view(
+            view = self._initial_device_view(
                 owner,
                 source_tensor,
                 registrations,
@@ -484,7 +485,7 @@ class TrainingMaterializedState(MaterializedState):
         owner.set_(source.untyped_storage())
         self._planning_cpu_owners[alias_id] = owner
 
-    def _initial_cuda_view(
+    def _initial_device_view(
         self,
         owner: torch.Tensor,
         source: torch.Tensor,
@@ -494,7 +495,7 @@ class TrainingMaterializedState(MaterializedState):
         existing = views.get(id(source))
         if existing is not None:
             return existing
-        view = self._cuda_view(owner, source)
+        view = self._device_view(owner, source)
         if id(source) in registrations:
             source.data = view
             view = source
@@ -532,9 +533,7 @@ class TrainingMaterializedState(MaterializedState):
         self, alias_id: str, tensor: torch.Tensor, generation: int, ordinal: int
     ) -> None:
         task_number = (1 << 61) + ordinal
-        actions = (
-            MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),
-        )
+        actions = (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),)
         self.bridge.admit_initial_actions(actions, task_number=task_number)
         self.bridge.dematerialize(tensor, alias_id, generation)
         self.bridge.submit_initial_actions(
@@ -569,7 +568,7 @@ class TrainingMaterializedState(MaterializedState):
         )
 
     @staticmethod
-    def _cuda_view(owner: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
+    def _device_view(owner: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
         view = torch.empty(0, dtype=source.dtype, device=owner.device)
         view.set_(
             owner.untyped_storage(),
@@ -579,6 +578,7 @@ class TrainingMaterializedState(MaterializedState):
         )
         view.requires_grad_(source.requires_grad)
         return view
+
 
 def _flat_training_arguments(
     capture: TrainingObjectiveCapture,

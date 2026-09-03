@@ -8,7 +8,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture import aot as aot_module
 from shadowspill.pytorch.capture.aot import capture_training
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairStore,
@@ -43,8 +43,8 @@ class _Block(nn.Module):
 def _capture() -> tuple[FakeTensorMode, PartitionedExport]:
     model = _RepeatedNetwork()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
 
     def objective(
         current: nn.Module, value: torch.Tensor, target: torch.Tensor
@@ -155,8 +155,9 @@ def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:
         stages = capture_training_stages(partitioned)
 
     assert all(
-        saved_value_footprint(stage.graph_pairs.variant("recompute").pair)
-        .internal_minimum_bytes
+        saved_value_footprint(
+            stage.graph_pairs.variant("recompute").pair
+        ).internal_minimum_bytes
         == 0
         for stage in stages
     )

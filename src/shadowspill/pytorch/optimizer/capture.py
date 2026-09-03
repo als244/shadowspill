@@ -14,6 +14,7 @@ from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx import GraphModule
 
 from shadowspill.errors import CaptureError
+from shadowspill.pytorch.accelerator import DEVICE_TYPE, accelerator_device
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
@@ -107,13 +108,10 @@ def capture_optimizer(
     if isinstance(discovery, OptimizerCapture):
         return discovery
     preinitialized_state_names: tuple[str, ...] = ()
-    if (
-        discovery.created_state_names
-        and initialize_lazy_optimizer_state(
-            inventory.canonical_parameters,
-            optimizer,
-            discovery.created_state_names,
-        )
+    if discovery.created_state_names and initialize_lazy_optimizer_state(
+        inventory.canonical_parameters,
+        optimizer,
+        discovery.created_state_names,
     ):
         preinitialized_state_names = discovery.created_state_names
         discovery = _discover_optimizer_state(inventory, optimizer)
@@ -383,7 +381,7 @@ def _recover_failed_discovery(
         _complete_failed_state_discovery(sandbox, names, baseline.parameters)
         state = sandbox.state_dict()
         representative = _representative_optimizer_values(sandbox, names)
-        fake_sandbox, fake_names = _fake_cuda_optimizer(sandbox, names)
+        fake_sandbox, fake_names = _fake_device_optimizer(sandbox, names)
         return fake_sandbox, fake_names, state, representative
     except BaseException as fake_failure:
         return _empty_opaque_capture(
@@ -524,7 +522,7 @@ def _prepare_recurrent_sandbox(
         discovery.representative_values.update(
             _representative_optimizer_values(sandbox, names)
         )
-        sandbox, names = _fake_cuda_optimizer(sandbox, names)
+        sandbox, names = _fake_device_optimizer(sandbox, names)
         discovery.sandbox = sandbox
         discovery.name_by_sandbox_id = names
     return None
@@ -794,7 +792,7 @@ def _optimizer_parameters(
     return tuple(result)
 
 
-def _fake_cuda_optimizer(
+def _fake_device_optimizer(
     optimizer: torch.optim.Optimizer,
     name_by_id: Mapping[int, str],
 ) -> tuple[torch.optim.Optimizer, dict[int, str]]:
@@ -826,7 +824,7 @@ def _fake_cuda_optimizer(
                 tuple(value.shape),
                 tuple(value.stride()),
                 dtype=value.dtype,
-                device="cuda",
+                device=DEVICE_TYPE,
             )
             result: torch.Tensor
             if parameter:
@@ -962,7 +960,7 @@ def materialize_opaque_optimizer(
     if len(parameters) != len(source_parameters):
         raise CaptureError("copied opaque optimizer changed its parameter inventory")
     replacements: dict[int, torch.Tensor] = {}
-    device = torch.device("cuda", device_ordinal)
+    device = accelerator_device(device_ordinal)
 
     def real_tensor(
         value: torch.Tensor,
@@ -1078,7 +1076,7 @@ def opaque_optimizer_outputs(
         )
     }
     outputs: list[OptimizerTensorBinding] = []
-    target = torch.device("cuda", device_ordinal)
+    target = accelerator_device(device_ordinal)
     for name in artifact.profile_output_names:
         binding = by_name.get(name)
         if binding is None:
@@ -1087,9 +1085,7 @@ def opaque_optimizer_outputs(
             )
         tensor = binding.tensor
         if not binding.spillable:
-            raise CaptureError(
-                f"opaque optimizer output {name!r} is not spillable"
-            )
+            raise CaptureError(f"opaque optimizer output {name!r} is not spillable")
         if tensor.device.type == "cpu":
             owner = torch.empty(
                 tensor.untyped_storage().nbytes(),

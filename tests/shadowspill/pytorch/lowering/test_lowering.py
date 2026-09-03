@@ -15,7 +15,7 @@ from shadowspill.ir import (
 from shadowspill.planner import pressurefit
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.lowering.catalog import ObjectCatalog
 from shadowspill.pytorch.lowering.forward import (
     lower_partitioned_forward_program,
@@ -43,8 +43,8 @@ class _ForwardNetwork(nn.Module):
 
 def _lowered() -> object:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(_ForwardNetwork(), mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    model = fake_device_model(_ForwardNetwork(), mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
         artifacts = capture_forward_stage_artifacts(partitioned)
@@ -123,8 +123,8 @@ def test_forward_lowering_is_indexed_alias_aware_and_plannable() -> None:
 
 def test_forward_lowering_rejects_incomplete_profile_scatter() -> None:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(_ForwardNetwork(), mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    model = fake_device_model(_ForwardNetwork(), mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
         artifacts = capture_forward_stage_artifacts(partitioned)
@@ -143,8 +143,8 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
             return self.running[2:] * 0.5
 
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(Stateful(), mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    model = fake_device_model(Stateful(), mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(
             capture_forward(model, inputs), model, partition="whole"
@@ -205,12 +205,9 @@ def test_shared_residency_is_read_only_unless_emitted_tasks_write_it() -> None:
     catalog.finalize_shared_writes((second,))
 
     policies = {
-        item.alias_group_id: item.shared_residency
-        for item in catalog.alias_groups()
+        item.alias_group_id: item.shared_residency for item in catalog.alias_groups()
     }
-    assert policies[catalog.alias_id(first)] is (
-        SharedResidencyPolicy.SHARED_READ_ONLY
-    )
+    assert policies[catalog.alias_id(first)] is (SharedResidencyPolicy.SHARED_READ_ONLY)
     assert policies[catalog.alias_id(second)] is (
         SharedResidencyPolicy.SHARED_WRITABLE_UNORDERED
     )

@@ -108,7 +108,7 @@ def test_step_hooks_do_not_prevent_side_effect_free_state_initialization() -> No
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
 
-def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
+def test_device_only_registered_optimizer_uses_fake_contract() -> None:
     mlops = pytest.importorskip("mlops")
     parameter = torch.nn.Parameter(torch.ones(8))
     parameter.grad = torch.ones_like(parameter)
@@ -130,7 +130,7 @@ def test_cuda_only_registered_optimizer_uses_fake_contract() -> None:
     assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
 
 
-def test_cuda_only_discovery_inventories_every_parameter() -> None:
+def test_device_only_discovery_inventories_every_parameter() -> None:
     mlops = pytest.importorskip("mlops")
     first = torch.nn.Parameter(torch.ones(8))
     second = torch.nn.Parameter(torch.full((4,), 2.0))
@@ -426,7 +426,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
         del arguments
         raise RuntimeError("fake inventory disabled")
 
-    monkeypatch.setattr(optimizer_module, "_fake_cuda_optimizer", fail_fake)
+    monkeypatch.setattr(optimizer_module, "_fake_device_optimizer", fail_fake)
     failed_fake = capture_optimizer(
         {"parameter": parameter}, _FailingAfterStateOptimizer([parameter])
     )

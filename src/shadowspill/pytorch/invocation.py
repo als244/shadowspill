@@ -8,6 +8,8 @@ from typing import Any
 
 import torch
 
+from shadowspill.pytorch.accelerator import is_accelerator
+
 
 class InvocationResult[T]:
     """One dispatched callable result with an explicit synchronization point."""
@@ -83,7 +85,7 @@ class ReusableCompletionEvent:
     __slots__ = ("_device", "_event")
 
     def __init__(self, device: torch.device) -> None:
-        if device.type != "cuda":
+        if not is_accelerator(device):
             raise ValueError("callable completion requires a CUDA execution device")
         self._device = device
         event_factory: Any = torch.cuda.Event

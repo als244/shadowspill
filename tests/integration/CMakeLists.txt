@@ -75,5 +75,5 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_profiles_bounded_opaque_optimizer 300
 )
 shadowspill_add_public_api_test(
-  test_01_public_training.py test_public_training_partitions_cuda_only_optimizer_and_replays 300
+  test_01_public_training.py test_public_training_partitions_device_only_optimizer_and_replays 300
 )

@@ -146,9 +146,7 @@ def _submit_actions(
     )
     _require_ok(
         int(
-            library.shadowspill_pytorch_submit_action_batch_handle(
-                handle.value, stream
-            )
+            library.shadowspill_pytorch_submit_action_batch_handle(handle.value, stream)
         ),
         "action submission",
     )
@@ -241,20 +239,20 @@ def main() -> int:
                 1,
                 "shadowspill.runtime.transfer.evict.second_tensor."
                 "role_activation.bytes_67108864.from_output."
-                "execution_000200.initial_offload",
+                "execution_000200.initial_evict",
             ),
             _action(
                 third_binding.object_id,
                 1,
                 "shadowspill.runtime.transfer.evict.third_tensor."
                 "role_activation.bytes_67108864.from_output."
-                "execution_000200.initial_offload",
+                "execution_000200.initial_evict",
             ),
         ),
     )
     _require_ok(
         int(library.shadowspill_pytorch_allocator_wait_idle()),
-        "initial offload drain",
+        "initial evict drain",
     )
     baseline = AdapterStatistics()
     _require_ok(
@@ -342,7 +340,10 @@ def main() -> int:
         int(library.shadowspill_pytorch_allocator_statistics(ctypes.byref(overlap))),
         "overlap statistics",
     )
-    if overlap.cuda.stream_synchronizations != baseline.cuda.stream_synchronizations:
+    if (
+        overlap.backend.stream_synchronizations
+        != baseline.backend.stream_synchronizations
+    ):
         raise AssertionError("steady task actions synchronized a transfer stream")
     inserted_waits = (
         overlap.runtime.wait_events_inserted - baseline.runtime.wait_events_inserted
@@ -363,11 +364,7 @@ def main() -> int:
     torch.testing.assert_close(third[-1024:].cpu(), torch.full((1024,), 3.0))
     torch.ops.shadowspill._dematerialize_storages([second, third])
     _require_ok(
-        int(
-            library.shadowspill_pytorch_after_task_handle(
-                consumer, stream_address
-            )
-        ),
+        int(library.shadowspill_pytorch_after_task_handle(consumer, stream_address)),
         "consumer publication",
     )
     _require_ok(

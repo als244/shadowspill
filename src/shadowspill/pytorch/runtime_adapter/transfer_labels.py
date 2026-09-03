@@ -18,7 +18,7 @@ def _component(value: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class TransferLabelIndex:
-    """Precompute graph relationships used by worker-thread NVTX labels."""
+    """Precompute graph relationships used by worker-thread profiler labels."""
 
     program: Program
     task_labels: Mapping[str, str]
@@ -51,7 +51,7 @@ class TransferLabelIndex:
             f"{_component(alias)}.role_{_component(roles)}."
             f"bytes_{sizes[alias]}"
         )
-        if action.kind is MemoryActionKind.PREFETCH:
+        if action.kind is MemoryActionKind.FETCH:
             consumer = self._next_consumer(
                 alias,
                 trigger_position,
@@ -62,7 +62,7 @@ class TransferLabelIndex:
                 if consumer is not None
                 else "for_input.no_later_consumer"
             )
-        elif action.kind is MemoryActionKind.OFFLOAD:
+        elif action.kind is MemoryActionKind.EVICT:
             relation, producer = self._latest_source(
                 alias,
                 trigger_position,
@@ -114,9 +114,9 @@ class TransferLabelIndex:
 
     @staticmethod
     def _operation(kind: MemoryActionKind) -> str:
-        if kind is MemoryActionKind.PREFETCH:
+        if kind is MemoryActionKind.FETCH:
             return "fetch"
-        if kind is MemoryActionKind.OFFLOAD:
+        if kind is MemoryActionKind.EVICT:
             return "evict"
         return "release"
 

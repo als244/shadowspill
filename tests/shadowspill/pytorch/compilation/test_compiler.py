@@ -38,7 +38,7 @@ from shadowspill.pytorch.profiling import profiler as profiler_module
 from shadowspill.pytorch.profiling.inputs import (
     materialize_representative_inputs,
 )
-from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.pytorch.runtime_adapter.abi import Allocation
 from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
 
@@ -218,7 +218,7 @@ def test_explicit_inductor_path_matches_outer_aot_for_inference(
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_manifest_hydration_restores_arguments_before_measurement() -> None:
     artifact = _artifact()
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         _TaskLibrary(),
         runtime_handle=0,
         device_ordinal=0,
@@ -300,11 +300,11 @@ def test_explicit_optimizer_preserves_outer_aot_mutation_contract() -> None:
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_cuda_measurement_uses_events_and_reports_workspace(
+def test_device_measurement_uses_events_and_reports_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     library = _TaskLibrary()
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         library,
         runtime_handle=0,
         device_ordinal=0,
@@ -327,7 +327,7 @@ def test_cuda_measurement_uses_events_and_reports_workspace(
     assert measurement.runtime_ns >= 0
     assert len(measurement.samples_ns) == 2
     assert measurement.workspace_charged_bytes == 256
-    assert measurement.provenance.startswith("cuda-events")
+    assert measurement.provenance.startswith("backend-events")
     assert "+torch-inductor" in measurement.provenance
 
     environment = profile_environment(device_ordinal=0, provider_id="test")
@@ -340,9 +340,7 @@ class _TaskLibrary:
         self.before_status = before_status
         self.aborted = False
 
-    def shadowspill_pytorch_allocation_scope_begin(
-        self, *arguments: object
-    ) -> int:
+    def shadowspill_pytorch_allocation_scope_begin(self, *arguments: object) -> int:
         del arguments
         return self.before_status
 
@@ -400,7 +398,7 @@ def test_workspace_boundary_always_stops_telemetry(
         lambda events, **options: sentinel,
     )
     library = _TaskLibrary()
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         library,
         runtime_handle=0,
         device_ordinal=0,
@@ -415,7 +413,7 @@ def test_workspace_boundary_always_stops_telemetry(
     assert calls == [f"start:{profiler._telemetry_capacity}", "stop"]
 
     failing_library = _TaskLibrary(before_status=5)
-    failing = CudaTaskProfiler(
+    failing = TaskProfiler(
         failing_library,
         runtime_handle=0,
         device_ordinal=0,
@@ -439,9 +437,7 @@ def test_workspace_releases_disposable_results_before_scope_end(
             calls.append("release-result")
 
     class Library(_TaskLibrary):
-        def shadowspill_pytorch_allocation_scope_end(
-            self, *arguments: object
-        ) -> int:
+        def shadowspill_pytorch_allocation_scope_end(self, *arguments: object) -> int:
             del arguments
             calls.append("end-scope")
             return 0
@@ -460,7 +456,7 @@ def test_workspace_releases_disposable_results_before_scope_end(
         "summarize_task_workspace",
         lambda events, **options: object(),
     )
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         Library(),
         runtime_handle=0,
         device_ordinal=0,
@@ -488,7 +484,7 @@ def test_output_allocation_lookup_is_exact() -> None:
             allocation.charged_bytes = 16
             return 0
 
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         _Lookup(),
         runtime_handle=0,
         device_ordinal=0,
@@ -507,7 +503,7 @@ def test_output_allocation_lookup_is_exact() -> None:
             del arguments
             return 5
 
-    missing = CudaTaskProfiler(
+    missing = TaskProfiler(
         _Missing(),
         runtime_handle=0,
         device_ordinal=0,
@@ -532,13 +528,13 @@ def test_profiler_rejects_empty_calibration(
     options: dict[str, int], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        CudaTaskProfiler(object(), runtime_handle=0, device_ordinal=0, **options)
+        TaskProfiler(object(), runtime_handle=0, device_ordinal=0, **options)
 
 
 def test_retention_audit_accepts_a_stable_live_byte_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         object(),
         runtime_handle=0,
         device_ordinal=0,
@@ -567,7 +563,7 @@ def test_retention_audit_accepts_a_stable_live_byte_baseline(
 def test_retention_audit_rejects_unbounded_growth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         object(),
         runtime_handle=0,
         device_ordinal=0,
@@ -597,7 +593,7 @@ def test_profiler_rejects_unknown_artifact_protocol() -> None:
     class _Unknown:
         compatibility_digest = "unknown"
 
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         object(),
         runtime_handle=0,
         device_ordinal=0,
@@ -624,7 +620,7 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
 
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_once)
     library = _TaskLibrary()
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         library,
         runtime_handle=0,
         device_ordinal=0,
@@ -651,7 +647,7 @@ def test_compiler_failure_has_structural_problem_and_preserves_cause(
         raise RuntimeError("compiler exploded")
 
     monkeypatch.setattr(compiler_module, "compile_artifact", fail_compile)
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         object(),
         runtime_handle=0,
         device_ordinal=0,
@@ -683,7 +679,7 @@ def test_profile_failure_has_structural_problem_and_preserves_cause(
             arguments,
         ),
     )
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         object(),
         runtime_handle=0,
         device_ordinal=0,
@@ -707,7 +703,7 @@ def test_profile_failure_has_structural_problem_and_preserves_cause(
     assert isinstance(captured.value.__cause__, RuntimeError)
 
 
-def test_measurement_releases_cuda_examples_between_structural_contracts(
+def test_measurement_releases_device_examples_between_structural_contracts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from shadowspill.pytorch.profiling import TaskMeasurement
@@ -728,7 +724,7 @@ def test_measurement_releases_cuda_examples_between_structural_contracts(
 
     measurement = TaskMeasurement(1, 0, 0, (), (1,), "test")
     monkeypatch.setattr(compiler_module, "compile_artifact", compile_with_large_example)
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         object(),
         runtime_handle=0,
         device_ordinal=0,

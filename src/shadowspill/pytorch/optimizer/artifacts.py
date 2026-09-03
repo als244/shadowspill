@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 
+from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
 
@@ -119,7 +120,7 @@ class OpaqueOptimizerArtifact:
                 for group in optimizer.param_groups
             ],
             "torch": torch.__version__,
-            "cuda": torch.version.cuda,
+            "provider": provider_version(),
         }
         encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return cls(

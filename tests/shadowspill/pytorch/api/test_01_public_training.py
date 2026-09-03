@@ -358,7 +358,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_partitions_cuda_only_optimizer_and_replays(
+def test_public_training_partitions_device_only_optimizer_and_replays(
     tmp_path: object,
 ) -> None:
     mlops = pytest.importorskip("mlops")
