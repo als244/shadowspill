@@ -38,9 +38,36 @@ install(
   DESTINATION shadowspill/include/shadowspill
 )
 
-option(SHADOWSPILL_BUILD_CUDA "Build the CUDA slab backend" ON)
-if(SHADOWSPILL_BUILD_CUDA)
+# Which provider backends to build. "auto" builds every provider whose
+# toolchain is installed; a semicolon list names them explicitly, for example
+# -DSHADOWSPILL_BACKENDS=cuda or, through pip,
+# --config-settings=cmake.define.SHADOWSPILL_BACKENDS=cuda. The mock backend
+# is always built. A named provider whose toolchain is missing fails the
+# configure step instead of silently disappearing.
+set(SHADOWSPILL_BACKENDS "auto" CACHE STRING "Provider backends to build: auto, or a list such as cuda")
+
+set(shadowspill_known_backends cuda)
+if(SHADOWSPILL_BACKENDS STREQUAL "auto")
+  set(shadowspill_requested_backends "")
   find_package(CUDAToolkit QUIET)
+  if(CUDAToolkit_FOUND)
+    list(APPEND shadowspill_requested_backends cuda)
+  endif()
+  if(NOT shadowspill_requested_backends)
+    message(STATUS "No provider toolchain found; building the mock backend only")
+  endif()
+else()
+  set(shadowspill_requested_backends ${SHADOWSPILL_BACKENDS})
+  foreach(backend IN LISTS shadowspill_requested_backends)
+    if(NOT backend IN_LIST shadowspill_known_backends)
+      message(FATAL_ERROR "Unknown backend '${backend}'; known: ${shadowspill_known_backends}")
+    endif()
+  endforeach()
+endif()
+message(STATUS "ShadowSpill backends: mock ${shadowspill_requested_backends}")
+
+if("cuda" IN_LIST shadowspill_requested_backends)
+  find_package(CUDAToolkit REQUIRED)
   if(CUDAToolkit_FOUND)
     find_library(
       SHADOWSPILL_NVML_LIBRARY
@@ -57,7 +84,6 @@ if(SHADOWSPILL_BUILD_CUDA)
       shadowspill_backend_cuda
       PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cuda/include>
         $<INSTALL_INTERFACE:shadowspill/include>
     )
     target_compile_definitions(
@@ -84,11 +110,5 @@ if(SHADOWSPILL_BUILD_CUDA)
       LIBRARY DESTINATION shadowspill/lib
       RUNTIME DESTINATION shadowspill/lib
     )
-    install(
-      FILES cuda/include/shadowspill/backend_cuda.h
-      DESTINATION shadowspill/include/shadowspill
-    )
-  else()
-    message(STATUS "CUDA Toolkit not found; skipping CUDA backend")
   endif()
 endif()

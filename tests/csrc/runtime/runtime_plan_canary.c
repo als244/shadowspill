@@ -160,17 +160,14 @@ static int same_task_handle_rejects_overlap(
 }
 
 static int runtime_accepts_generic_and_sparse_topologies(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
 
     ShadowSpillMockRuntimeTopology single_pool;
-    shadowspill_mock_runtime_topology(
-        mock, 4096U, 4096U, 16U, 1000U, &single_pool
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &single_pool
     );
     single_pool.runtime.pool_count = 1U;
     single_pool.runtime.routes = NULL;
@@ -184,36 +181,37 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
     ShadowSpillMemoryPoolDescription pools[3] = {
         {
             .pool_id = 0U,
+            .kind = SHADOWSPILL_POOL_DEVICE,
             .capacity_bytes = 4096U,
             .minimum_alignment = 16U,
-            .backend = shadowspill_mock_execution_pool_backend(mock),
         },
         {
             .pool_id = 1U,
+            .kind = SHADOWSPILL_POOL_PINNED_HOST,
             .capacity_bytes = 4096U,
             .minimum_alignment = 16U,
-            .backend = shadowspill_mock_spill_pool_backend(mock),
         },
         {
             .pool_id = 2U,
+            .kind = SHADOWSPILL_POOL_PINNED_HOST,
             .capacity_bytes = 4096U,
             .minimum_alignment = 16U,
-            .backend = shadowspill_mock_spill_pool_backend(mock),
         },
     };
     const ShadowSpillTransferRouteDescription route = {
         .route_id = 0U,
         .name = "sparse_fetch",
-        .route = shadowspill_mock_fetch_route(mock, 2U, 0U),
+        .source_pool_id = 2U,
+        .destination_pool_id = 0U,
     };
     const ShadowSpillRuntimeConfig sparse = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
+        .backend = &mock,
         .pools = pools,
         .pool_count = 3U,
         .routes = &route,
         .route_count = 1U,
         .worker_poll_nanoseconds = 1000U,
-        .synchronization = shadowspill_mock_synchronization_backend(mock),
     };
     ShadowSpillPlan *plan = NULL;
     const ShadowSpillPlanDescription invalid_plan = {
@@ -226,7 +224,7 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
     ShadowSpillAllocation allocation = {0};
     failed = failed || shadowspill_runtime_create(&sparse, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        mock.create_stream(mock.state, &compute) != 0 ||
         shadowspill_memory_pool_allocate(
             runtime, 2U, 64U, 16U, compute, &allocation
         ) != SHADOWSPILL_STATUS_OK ||
@@ -239,23 +237,21 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
             SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
         plan != NULL;
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int shared_runtime_accepts_overlapping_plan_tasks(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *first = NULL;
     ShadowSpillPlan *second = NULL;
@@ -295,8 +291,8 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
         shadowspill_task_id(second_handle) != 7U ||
         strcmp(shadowspill_task_trace_label(first_handle), first_label) != 0 ||
         strcmp(shadowspill_task_trace_label(second_handle), second_label) != 0 ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
-        shadowspill_mock_create_compute_stream(mock, &second_compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0 ||
+        mock.create_stream(mock.state, &second_compute) != 0;
     first_label[0] = 'x';
     second_label[0] = 'y';
     if (!failed) {
@@ -332,27 +328,26 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
         shadowspill_plan_destroy(second);
     }
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
     if (second_compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, second_compute);
+        (void)mock.destroy_stream(mock.state, second_compute);
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int plan_idle_wait_ignores_other_plan_actions(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = UINT64_C(200000000),
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *idle_plan = NULL;
     ShadowSpillPlan *busy_plan = NULL;
@@ -372,7 +367,7 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = 1U,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillActionBatchHandle *batch = NULL;
     ShadowSpillRuntimeStatistics statistics = {0};
@@ -393,7 +388,7 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
         shadowspill_plan_admit_action_batch(
             busy_plan, 0U, &fetch, 1U, &batch
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, batch, compute
@@ -416,71 +411,73 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int plan_selects_nondefault_pool_pair(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMemoryPoolDescription pools[3] = {
         {
             .pool_id = 0U,
+            .kind = SHADOWSPILL_POOL_DEVICE,
             .capacity_bytes = 4096U,
             .minimum_alignment = 16U,
-            .backend = shadowspill_mock_execution_pool_backend(mock),
         },
         {
             .pool_id = 1U,
+            .kind = SHADOWSPILL_POOL_PINNED_HOST,
             .capacity_bytes = 4096U,
             .minimum_alignment = 16U,
-            .backend = shadowspill_mock_spill_pool_backend(mock),
         },
         {
             .pool_id = 2U,
+            .kind = SHADOWSPILL_POOL_PINNED_HOST,
             .capacity_bytes = 4096U,
             .minimum_alignment = 16U,
-            .backend = shadowspill_mock_spill_pool_backend(mock),
         },
     };
     ShadowSpillTransferRouteDescription routes[4] = {
         {
             .route_id = 0U,
             .name = "default_fetch",
-            .route = shadowspill_mock_fetch_route(mock, 1U, 0U),
+            .source_pool_id = 1U,
+            .destination_pool_id = 0U,
         },
         {
             .route_id = 1U,
             .name = "default_evict",
-            .route = shadowspill_mock_evict_route(mock, 0U, 1U),
+            .source_pool_id = 0U,
+            .destination_pool_id = 1U,
         },
         {
             .route_id = 2U,
             .name = "alternate_fetch",
-            .route = shadowspill_mock_fetch_route(mock, 2U, 0U),
+            .source_pool_id = 2U,
+            .destination_pool_id = 0U,
         },
         {
             .route_id = 3U,
             .name = "alternate_evict",
-            .route = shadowspill_mock_evict_route(mock, 0U, 2U),
+            .source_pool_id = 0U,
+            .destination_pool_id = 2U,
         },
     };
     const ShadowSpillRuntimeConfig config = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
+        .backend = &mock,
         .pools = pools,
         .pool_count = 3U,
         .routes = routes,
         .route_count = 4U,
         .worker_poll_nanoseconds = 1000U,
-        .synchronization = shadowspill_mock_synchronization_backend(mock),
     };
     const ShadowSpillPlanDescription alternate = {
         .execution_pool_id = 0U,
@@ -512,11 +509,11 @@ static int plan_selects_nondefault_pool_pair(void) {
     }
     const ShadowSpillRuntimeAction fetch = {
         .object_id = 9U,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillRuntimeAction evict = {
         .object_id = 9U,
-        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
     };
     const ShadowSpillActionBatchHandle *initial_actions = NULL;
     const uint64_t input = 9U;
@@ -553,7 +550,7 @@ static int plan_selects_nondefault_pool_pair(void) {
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(plan, &task, &task_handle) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, initial_actions, compute
@@ -591,23 +588,21 @@ static int plan_selects_nondefault_pool_pair(void) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *first = NULL;
     ShadowSpillPlan *second = NULL;
@@ -674,20 +669,18 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
     shadowspill_plan_destroy(first);
     shadowspill_plan_destroy(second);
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int task_publications_resolve_plan_local_objects_once(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *first = NULL;
     ShadowSpillPlan *second = NULL;
@@ -752,7 +745,7 @@ static int task_publications_resolve_plan_local_objects_once(void) {
         shadowspill_plan_admit_task(second, &task, &second_task) !=
             SHADOWSPILL_STATUS_OK ||
         first_task == NULL || second_task == NULL || first_task == second_task ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
         failed = canary_before_task(
                 runtime, first_task, compute, NULL, 0U
@@ -809,23 +802,21 @@ static int task_publications_resolve_plan_local_objects_once(void) {
         (void)shadowspill_unregister_object(runtime, second_object.object_id);
     }
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int runtime_objects_survive_until_their_final_owner_closes(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *first = NULL;
     ShadowSpillPlan *second = NULL;
@@ -913,20 +904,18 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
     shadowspill_plan_destroy(first);
     shadowspill_plan_destroy(second);
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
-    ShadowSpillMockBackend *mock = NULL;
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 4096U, 4096U, 16U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *plan = NULL;
     ShadowSpillObjectHandle *object_handle = NULL;
@@ -945,7 +934,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = 9U,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const uint64_t requested_objects[2] = {9U, 9U};
     const ShadowSpillActionBatchHandle *batch = NULL;
@@ -972,7 +961,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
             plan, requested_objects, 2U, &acquisition
         ) != SHADOWSPILL_STATUS_OK ||
         acquisition == NULL ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     if (!failed) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, batch, compute
@@ -1029,10 +1018,10 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 

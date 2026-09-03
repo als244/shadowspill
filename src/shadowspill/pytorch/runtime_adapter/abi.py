@@ -8,13 +8,13 @@ from typing import Any, Final
 
 from shadowspill.libraries import load_shadowspill_library
 
-ADAPTER_ABI_VERSION: Final = 56
+ADAPTER_ABI_VERSION: Final = 1
 
 
 class PoolConfig(ctypes.Structure):
     _fields_ = [
         ("pool_id", ctypes.c_uint32),
-        ("backend_kind", ctypes.c_uint8),
+        ("kind", ctypes.c_uint8),
         ("capacity_bytes", ctypes.c_uint64),
     ]
 
@@ -40,6 +40,7 @@ class AdapterConfig(ctypes.Structure):
         ("routes", ctypes.POINTER(RouteConfig)),
         ("route_count", ctypes.c_uint32),
         ("worker_poll_nanoseconds", ctypes.c_uint64),
+        ("backend_library", ctypes.c_char_p),
     ]
 
 
@@ -61,7 +62,6 @@ class PhysicalAdmission(ctypes.Structure):
 
 class PhysicalMemory(ctypes.Structure):
     _fields_ = [
-        ("abi_version", ctypes.c_uint32),
         ("process_bytes", ctypes.c_uint64),
         ("device_used_bytes", ctypes.c_uint64),
         ("device_total_bytes", ctypes.c_uint64),
@@ -132,6 +132,12 @@ class RuntimeStatistics(ctypes.Structure):
         ("event_lease_in_use", ctypes.c_uint64),
         ("event_lease_peak_in_use", ctypes.c_uint64),
         ("event_lease_growth_rejections", ctypes.c_uint64),
+        ("event_lease_driver_creates", ctypes.c_uint64),
+        ("event_lease_sealed", ctypes.c_uint64),
+        ("timing_event_capacity", ctypes.c_uint64),
+        ("timing_event_in_use", ctypes.c_uint64),
+        ("timing_event_peak_in_use", ctypes.c_uint64),
+        ("timing_event_driver_creates", ctypes.c_uint64),
         ("retirement_record_capacity", ctypes.c_uint64),
         ("retirement_record_in_use", ctypes.c_uint64),
         ("retirement_record_peak_in_use", ctypes.c_uint64),
@@ -214,6 +220,12 @@ class TransferProfile(ctypes.Structure):
     ]
 
 
+class BackendEvent(ctypes.Structure):
+    """An opaque backend event token, passed by value across the ABI."""
+
+    _fields_ = [("words", ctypes.c_size_t * 2)]
+
+
 class TraceEvent(ctypes.Structure):
     _fields_ = [
         ("sequence", ctypes.c_uint64),
@@ -225,6 +237,8 @@ class TraceEvent(ctypes.Structure):
         ("bytes", ctypes.c_uint64),
         ("detail_0", ctypes.c_uint64),
         ("detail_1", ctypes.c_uint64),
+        ("stream_start_ns", ctypes.c_uint64),
+        ("stream_end_ns", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
     ]
 
@@ -256,30 +270,30 @@ class Allocation(ctypes.Structure):
     ]
 
 
-class CudaStatistics(ctypes.Structure):
+class BackendStatistics(ctypes.Structure):
     _fields_ = [
         ("device_allocations", ctypes.c_uint64),
         ("device_frees", ctypes.c_uint64),
-        ("pinned_host_allocations", ctypes.c_uint64),
-        ("pinned_host_frees", ctypes.c_uint64),
+        ("bytes_device_allocated", ctypes.c_uint64),
+        ("bytes_device_freed", ctypes.c_uint64),
+        ("pinned_host_registrations", ctypes.c_uint64),
+        ("pinned_host_unregistrations", ctypes.c_uint64),
+        ("bytes_pinned_host_registered", ctypes.c_uint64),
+        ("bytes_pinned_host_unregistered", ctypes.c_uint64),
         ("streams_created", ctypes.c_uint64),
         ("streams_destroyed", ctypes.c_uint64),
         ("events_created", ctypes.c_uint64),
         ("events_destroyed", ctypes.c_uint64),
-        ("fetch_copies", ctypes.c_uint64),
-        ("evict_copies", ctypes.c_uint64),
-        ("bytes_fetched", ctypes.c_uint64),
-        ("bytes_evicted", ctypes.c_uint64),
+        ("copies_host_to_device", ctypes.c_uint64),
+        ("copies_device_to_host", ctypes.c_uint64),
+        ("copies_device_to_device", ctypes.c_uint64),
+        ("bytes_host_to_device", ctypes.c_uint64),
+        ("bytes_device_to_host", ctypes.c_uint64),
+        ("bytes_device_to_device", ctypes.c_uint64),
         ("event_queries", ctypes.c_uint64),
         ("stream_waits", ctypes.c_uint64),
         ("stream_synchronizations", ctypes.c_uint64),
-        ("problem_activations", ctypes.c_uint64),
-        ("event_pool_capacity", ctypes.c_uint64),
-        ("event_pool_in_use", ctypes.c_uint64),
-        ("event_pool_peak_in_use", ctypes.c_uint64),
-        ("event_pool_driver_creates", ctypes.c_uint64),
-        ("event_pool_growth_rejections", ctypes.c_uint64),
-        ("event_pool_sealed", ctypes.c_uint8),
+        ("provider_activations", ctypes.c_uint64),
     ]
 
 
@@ -337,7 +351,7 @@ class AdapterStatistics(ctypes.Structure):
         ("observed_external_high_water_bytes", ctypes.c_uint64),
         ("physical_budget_sealed", ctypes.c_uint64),
         ("runtime", RuntimeStatistics),
-        ("cuda", CudaStatistics),
+        ("backend", BackendStatistics),
     ]
 
 
@@ -574,7 +588,7 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     ),
     (
         "shadowspill_trace_begin",
-        [ctypes.c_size_t, ctypes.c_uint64],
+        [ctypes.c_size_t, ctypes.c_uint64, BackendEvent],
         ctypes.c_uint32,
     ),
     (

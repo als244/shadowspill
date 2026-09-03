@@ -12,7 +12,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     Allocation,
     AllocationEvent,
-    CudaStatistics,
+    BackendStatistics,
     FixedDependencyDescription,
     FixedLayoutDescription,
     FixedPlacementDescription,
@@ -99,15 +99,15 @@ class _Library:
 
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
-    assert ctypes.sizeof(AdapterConfig) == 72
+    assert ctypes.sizeof(AdapterConfig) == 80
     assert ctypes.sizeof(AdapterCapabilities) == 20
-    assert ctypes.sizeof(RuntimeStatistics) == 46 * 8
+    assert ctypes.sizeof(RuntimeStatistics) == 52 * 8
     assert ctypes.sizeof(AllocationEvent) == 80
     assert ctypes.sizeof(Allocation) == 48
-    assert ctypes.sizeof(CudaStatistics) == 22 * 8
+    assert ctypes.sizeof(BackendStatistics) == 22 * 8
     assert ctypes.sizeof(RuntimeFailure) == 192
     assert ctypes.sizeof(AdapterFailure) == 216
-    assert ctypes.sizeof(AdapterStatistics) == 624
+    assert ctypes.sizeof(AdapterStatistics) == 672
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 24
@@ -117,10 +117,10 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectSnapshot) == 96
     assert ctypes.sizeof(ObjectLocationSnapshot) == 64
     assert ctypes.sizeof(PhysicalAdmission) == 72
-    assert ctypes.sizeof(PhysicalMemory) == 32
+    assert ctypes.sizeof(PhysicalMemory) == 24
     assert ctypes.sizeof(TaskDispatchTiming) == 88
     assert ctypes.sizeof(TraceConfig) == 24
-    assert ctypes.sizeof(TraceEvent) == 80
+    assert ctypes.sizeof(TraceEvent) == 96
     assert ctypes.sizeof(TraceSummary) == 72
     assert ctypes.sizeof(TransferCalibrationConfig) == 40
     assert ctypes.sizeof(TransferProfile) == 112

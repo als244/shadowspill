@@ -9,6 +9,8 @@ from typing import Any
 
 import torch
 
+from shadowspill.libraries import library_candidates, resolve_library
+from shadowspill.pytorch.accelerator import accelerator_device
 from shadowspill.pytorch.runtime_adapter.abi import (
     ADAPTER_ABI_VERSION,
     AdapterCapabilities,
@@ -67,7 +69,7 @@ class PoolBootstrap:
     """One pool entry passed to the runtime constructor."""
 
     pool_id: int
-    backend_kind: int
+    kind: int
     capacity_bytes: int
 
 
@@ -108,8 +110,14 @@ def install_allocator(
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int = 1_000,
+    backend: str | None = None,
 ) -> InstalledAllocator:
-    """Install the process-global CUDA allocator before PyTorch CUDA init.
+    """Install the process-global allocator before PyTorch initializes the accelerator.
+
+    ``backend`` selects the backend shared object the adapter loads: ``None``
+    is the one accelerator backend installed beside the libraries, a name
+    resolves to ``libshadowspill_backend_<name>.so`` there, and a path is used
+    as given.
 
     This is an internal frontend primitive. Public planning computes physical
     admission before invoking it. Installation is intentionally irreversible
@@ -127,15 +135,16 @@ def install_allocator(
         worker_poll_nanoseconds,
     )
     path = _adapter_path(library_path)
-    cuda = _available_cuda_frontend()
+    backend_library = _backend_path(backend)
+    frontend = _accelerator_frontend()
     library = _load_adapter(path)
-    allocator = _create_allocator(cuda, path)
+    allocator = _create_allocator(frontend, path)
     _configure_record_stream(library, allocator)
     pool_values = (PoolConfig * len(pools))(
         *(
             PoolConfig(
                 pool_id=item.pool_id,
-                backend_kind=item.backend_kind,
+                kind=item.kind,
                 capacity_bytes=item.capacity_bytes,
             )
             for item in pools
@@ -164,6 +173,7 @@ def install_allocator(
         routes=route_values,
         route_count=len(routes),
         worker_poll_nanoseconds=worker_poll_nanoseconds,
+        backend_library=str(backend_library).encode("utf-8"),
     )
     _bootstrap_allocator(library, config)
     admission = _read_physical_admission(
@@ -172,7 +182,7 @@ def install_allocator(
         provider_headroom_bytes=provider_headroom_bytes,
     )
     _validate_physical_usage(library, device_budget_bytes)
-    cuda.memory.change_current_allocator(allocator)
+    frontend.memory.change_current_allocator(allocator)
     fixed_execution_bytes = _initialize_provider_state(
         library,
         admission,
@@ -238,7 +248,7 @@ def _initialize_provider_state(
     # slab and prevent a large fixed-layout arena from being reserved despite
     # ample aggregate capacity.  Exercise the provider now, while the pool is
     # empty, so its retained state has deterministic low-address placement.
-    device = torch.device("cuda", device_ordinal)
+    device = accelerator_device(device_ordinal)
     shape = (2048, 2048)
     left = torch.empty(shape, dtype=torch.bfloat16, device=device)
     right = torch.empty(shape, dtype=torch.bfloat16, device=device)
@@ -373,6 +383,52 @@ def _validate_install_request(
         raise AllocatorInstallError("ShadowSpill's allocator is already installed")
 
 
+def _backend_path(backend: str | None) -> Path:
+    """Resolve the backend shared object the adapter will load.
+
+    ``None`` selects the one accelerator backend installed beside the
+    ShadowSpill libraries; a name selects ``libshadowspill_backend_<name>.so``
+    there; a path is used as given.
+    """
+
+    if backend is None:
+        found = {
+            candidate.name.removeprefix("libshadowspill_backend_").removesuffix(
+                ".so"
+            ): candidate
+            for directory in {
+                item.parent for item in library_candidates("libshadowspill.so")
+            }
+            if directory.is_dir()
+            for candidate in sorted(directory.glob("libshadowspill_backend_*.so"))
+        }
+        found.pop("mock", None)
+        if len(found) != 1:
+            names = ", ".join(sorted(found)) or "none"
+            raise AllocatorInstallError(
+                "backend=None needs exactly one accelerator backend beside the"
+                f" ShadowSpill libraries; installed: {names}"
+            )
+        return next(iter(found.values())).resolve()
+    if not isinstance(backend, str) or not backend:
+        raise AllocatorInstallError(
+            "backend must be a backend name, a library path, or None"
+        )
+    if "/" in backend or backend.endswith(".so"):
+        path = Path(backend).expanduser().resolve()
+    else:
+        resolved = resolve_library(f"libshadowspill_backend_{backend}.so")
+        if resolved is None:
+            raise AllocatorInstallError(
+                f"backend {backend!r} is not installed: no"
+                f" libshadowspill_backend_{backend}.so beside the ShadowSpill libraries"
+            )
+        path = resolved
+    if not path.is_file():
+        raise AllocatorInstallError(f"backend library does not exist: {path}")
+    return path
+
+
 def _adapter_path(library_path: str | Path) -> Path:
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
@@ -380,15 +436,15 @@ def _adapter_path(library_path: str | Path) -> Path:
     return path
 
 
-def _available_cuda_frontend() -> Any:
+def _accelerator_frontend() -> Any:
     if torch.version.cuda is None:
         raise AllocatorInstallError("a CUDA-enabled PyTorch build is required")
-    cuda: Any = torch.cuda
-    if cuda.is_initialized():
+    frontend: Any = torch.cuda
+    if frontend.is_initialized():
         raise AllocatorInstallError(
             "PyTorch CUDA was initialized before ShadowSpill allocator installation"
         )
-    return cuda
+    return frontend
 
 
 def _load_adapter(path: Path) -> Any:
@@ -419,17 +475,17 @@ def _load_adapter(path: Path) -> Any:
     return library
 
 
-def _create_allocator(cuda: Any, path: Path) -> Any:
-    return cuda.memory.CUDAPluggableAllocator(
+def _create_allocator(frontend: Any, path: Path) -> Any:
+    return frontend.memory.CUDAPluggableAllocator(
         str(path),
-        "shadowspill_pytorch_cuda_malloc",
-        "shadowspill_pytorch_cuda_free",
+        "shadowspill_pytorch_backend_malloc",
+        "shadowspill_pytorch_backend_free",
     )
 
 
 def _configure_record_stream(library: Any, allocator: Any) -> None:
     record_stream_pointer = _function_pointer(
-        library, "shadowspill_pytorch_cuda_record_stream"
+        library, "shadowspill_pytorch_backend_record_stream"
     )
     torch_allocator = allocator.allocator()
     set_record_stream = getattr(torch_allocator, "set_record_stream_fn", None)

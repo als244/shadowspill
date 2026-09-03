@@ -30,8 +30,7 @@ struct ShadowSpillRuntime {
     _Atomic uint32_t failure_status;
     uint64_t worker_poll_nanoseconds;
 
-    ShadowSpillSynchronizationBackend synchronization;
-    ShadowSpillProfiler profiler;
+    ShadowSpillBackend backend;
     ShadowSpillRouteState *routes;
     uint32_t route_count;
 
@@ -48,6 +47,7 @@ struct ShadowSpillRuntime {
     ShadowSpillPlan *plans;
     uint8_t plans_lock_initialized;
     ShadowSpillEventPool events;
+    ShadowSpillEventPool timing_events;
     ShadowSpillCompletionTracker completions;
     uint8_t completions_initialized;
     ShadowSpillRetirementQueue retirements;
@@ -84,6 +84,10 @@ struct ShadowSpillRuntime {
     _Atomic uint8_t trace_prepared;
     _Atomic uint8_t trace_active;
     _Atomic uint8_t trace_event_overflow;
+    /* The caller's timing event that transfer intervals are measured from;
+     * meaningful only while a trace is active. */
+    ShadowSpillBackendEvent trace_origin_event;
+    uint8_t trace_origin_present;
     ShadowSpillRuntimeFailure failure;
 };
 
@@ -97,9 +101,19 @@ static inline void shadowspill_cpu_relax(void) {
 #endif
 }
 
-int shadowspill_transfer_route_is_valid(
-    const ShadowSpillTransferRoute *route
-);
+/* The TRANSFER_COMPLETED append: the same gate, plus the stream interval. */
+#define shadowspill_append_stamped_trace_event_locked(runtime_, ...)          \
+    do {                                                                       \
+        ShadowSpillRuntime *const shadowspill_trace_runtime__ = (runtime_);    \
+        if (atomic_load_explicit(                                              \
+                &shadowspill_trace_runtime__->trace_active,                    \
+                memory_order_acquire                                           \
+            ) != 0U) {                                                         \
+            shadowspill_trace_append_stamped_enabled(                         \
+                shadowspill_trace_runtime__, __VA_ARGS__                       \
+            );                                                                 \
+        }                                                                      \
+    } while (0)
 
 #define shadowspill_append_trace_event_locked(runtime_, ...)                  \
     do {                                                                       \
@@ -113,14 +127,6 @@ int shadowspill_transfer_route_is_valid(
             );                                                                 \
         }                                                                      \
     } while (0)
-int shadowspill_memory_pool_backend_is_valid(
-    const ShadowSpillMemoryPoolBackend *backend
-);
-
-int shadowspill_synchronization_backend_is_valid(
-    const ShadowSpillSynchronizationBackend *backend
-);
-
 void *shadowspill_worker_main(void *pointer);
 
 void shadowspill_notify_worker(ShadowSpillRuntime *runtime);

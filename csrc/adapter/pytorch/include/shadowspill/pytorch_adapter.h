@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <shadowspill/backend_cuda.h>
+#include <shadowspill/backend.h>
 #include <shadowspill/runtime.h>
 
 #if defined(_WIN32)
@@ -21,16 +21,12 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 56U
-
-typedef enum ShadowSpillPytorchPoolBackendKind {
-    SHADOWSPILL_PYTORCH_POOL_DEVICE = 0,
-    SHADOWSPILL_PYTORCH_POOL_PINNED_HOST = 1,
-} ShadowSpillPytorchPoolBackendKind;
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
 
 typedef struct ShadowSpillPytorchPoolConfig {
     uint32_t pool_id;
-    uint8_t backend_kind;
+    /* A ShadowSpillPoolKind value. */
+    uint8_t kind;
     uint64_t capacity_bytes;
 } ShadowSpillPytorchPoolConfig;
 
@@ -52,6 +48,9 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     const ShadowSpillPytorchRouteConfig *routes;
     uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
+    /* Path of the backend shared object to load: the library exporting
+       shadowspill_backend_create() and shadowspill_backend_destroy(). */
+    const char *backend_library;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {
@@ -82,7 +81,7 @@ typedef struct ShadowSpillPytorchAdapterCapabilities {
 /*
  * Optional task-boundary dispatch timestamps. The four fields use
  * CLOCK_MONOTONIC. The six compute-stream compatibility fields are reserved
- * and zero; the PyTorch frontend records non-invasive preallocated CUDA events
+ * and zero; the PyTorch frontend records non-invasive preallocated backend events
  * for those boundaries instead of executing dispatch callbacks on the compute
  * stream.
  */
@@ -112,7 +111,7 @@ typedef struct ShadowSpillPytorchAdapterStatistics {
     uint64_t observed_external_high_water_bytes;
     uint64_t physical_budget_sealed;
     ShadowSpillRuntimeStatistics runtime;
-    ShadowSpillCudaBackendStatistics cuda;
+    ShadowSpillBackendStatistics backend;
 } ShadowSpillPytorchAdapterStatistics;
 
 typedef struct ShadowSpillPytorchAdapterFailure {
@@ -124,8 +123,9 @@ typedef struct ShadowSpillPytorchAdapterFailure {
 } ShadowSpillPytorchAdapterFailure;
 
 /*
- * Creates and permanently binds one process-global CUDA slab runtime. Call
- * before installing the callbacks and before PyTorch initializes CUDA. The
+ * Creates and permanently binds one process-global slab runtime on the backend
+ * the config names. Call before installing the callbacks and before PyTorch
+ * initializes the accelerator. The
  * connector owns the runtime/backend for process lifetime because PyTorch's
  * selected allocator cannot safely be replaced after initialization.
  */
@@ -171,7 +171,7 @@ shadowspill_pytorch_physical_admission(
 
 /* Queries current per-process physical use for seal/diagnostic boundaries. */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_physical_memory(ShadowSpillCudaPhysicalMemory *memory);
+shadowspill_pytorch_physical_memory(ShadowSpillBackendPhysicalMemory *memory);
 
 /*
  * Confirms the profiled provider reserve fits the bootstrap reservation and
@@ -342,7 +342,7 @@ shadowspill_pytorch_allocation_scope_end(
 SHADOWSPILL_PYTORCH_API void
 shadowspill_pytorch_allocation_scope_abort(void);
 
-/* Closes a task NVTX range when frontend execution raises before after_task. */
+/* Closes a task profiler range when frontend execution raises before after_task. */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_abort_task_handle(
     uintptr_t task_handle
@@ -356,20 +356,20 @@ shadowspill_pytorch_abort_task_handle(
  * not validate a null pointer before constructing a DataPtr. OOM statuses use
  * PyTorch's typed OutOfMemoryError; contract failures use RuntimeError.
  */
-SHADOWSPILL_PYTORCH_API void *shadowspill_pytorch_cuda_malloc(
+SHADOWSPILL_PYTORCH_API void *shadowspill_pytorch_backend_malloc(
     ptrdiff_t bytes,
     int32_t device_ordinal,
     void *stream
 );
 
-SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_cuda_free(
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_backend_free(
     void *address,
     size_t bytes,
     int32_t device_ordinal,
     void *stream
 );
 
-SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_cuda_record_stream(
+SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_backend_record_stream(
     void *address,
     void *stream
 );

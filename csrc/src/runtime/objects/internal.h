@@ -95,6 +95,8 @@ struct ShadowSpillQueuedAction {
     ShadowSpillEventLease *trigger_event;
     ShadowSpillEventLease *completion_event;
     ShadowSpillEventLease *dependency_event;
+    /* The copy's interval on its lane, open only while a trace measures it. */
+    ShadowSpillStreamInterval stream_interval;
     const char *trace_label;
     uint8_t owns_trace_label;
     uint8_t has_completion_event;

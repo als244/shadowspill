@@ -8,14 +8,31 @@ boundaries, and validates PyTorch storage views.
 
 It deliberately does not restate the neutral runtime. Anything reachable with a
 handle the neutral runtime already owns is called there directly, so this
-header carries only what needs PyTorch or the provider.
+header carries only what needs PyTorch.
+
+## What the adapter exposes
+
+The sections below, in order: bootstrap and physical admission; the allocator
+hooks PyTorch calls; object and storage operations; execution boundaries;
+profiling and tracing; failure and lifecycle. Every symbol is prefixed
+`shadowspill_pytorch_`.
+
+## What the adapter requires of a backend
+
+The [backend contract](backends.md) and nothing else. `ShadowSpillPytorchAdapterConfig.backend_library`
+names the shared object to load; bootstrap opens it with `dlopen()`, resolves
+`shadowspill_backend_create()` and `shadowspill_backend_destroy()`, validates
+the table with `shadowspill_backend_is_valid()`, and keeps it for the life of
+the runtime. The adapter links no provider library and includes no provider
+header; see [backends](../architecture/backends.md).
 
 ## Bootstrap and capabilities
 
 - `shadowspill_pytorch_allocator_bootstrap()` installs the allocator and
   process-owned runtime from explicit pool and directed-route registries.
 - `shadowspill_pytorch_allocator_close()` permanently closes the installed
-  runtime, joins its worker, and releases its routes, pools, and backend. The
+  runtime, joins its worker, releases its routes, pools, and backend, and
+  closes the backend library. The
   PyTorch allocator shim remains installed and rejects future allocations.
 - `shadowspill_pytorch_adapter_capabilities()` reports the adapter contract.
 - `shadowspill_pytorch_physical_memory()`,
@@ -29,15 +46,14 @@ header carries only what needs PyTorch or the provider.
 
 ## Allocator callbacks
 
-- `shadowspill_pytorch_cuda_malloc()`
-- `shadowspill_pytorch_cuda_free()`
-- `shadowspill_pytorch_cuda_record_stream()`
+- `shadowspill_pytorch_backend_malloc()`
+- `shadowspill_pytorch_backend_free()`
+- `shadowspill_pytorch_backend_record_stream()`
 - `shadowspill_pytorch_allocation_for_pointer()`
 
-The provider-specific spelling on these callback symbols matches PyTorch's
-allocator hook. The neutral runtime and pool API do not use provider names. A
-nonzero allocation failure is surfaced as a typed frontend exception before
-compiled code can use an invalid address.
+These are the symbols PyTorch's pluggable allocator is pointed at. A nonzero
+allocation failure is surfaced as a typed frontend exception before compiled
+code can use an invalid address.
 
 ## Objects and storage
 

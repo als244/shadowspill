@@ -1,7 +1,7 @@
 #ifndef SHADOWSPILL_PYTORCH_PROFILER_H
 #define SHADOWSPILL_PYTORCH_PROFILER_H
 
-#include <shadowspill/profiler.h>
+#include <shadowspill/backend.h>
 
 #ifdef __cplusplus
 extern "C" {

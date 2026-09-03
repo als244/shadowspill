@@ -1,65 +1,43 @@
 #define _GNU_SOURCE
-
 #include "internal.h"
 #include "../../common/platform.h"
 
 #include <pthread.h>
 #include <stdint.h>
 
-int shadowspill_profiler_is_valid(const ShadowSpillProfiler *profiler) {
-    if (profiler == NULL || profiler->abi_version == 0U) {
-        return 1;
-    }
-    return profiler->abi_version == SHADOWSPILL_PROFILER_ABI_VERSION &&
-        profiler->name_current_thread != NULL &&
-        profiler->name_stream != NULL && profiler->set_enabled != NULL &&
-        profiler->range_begin != NULL && profiler->range_end != NULL;
-}
-
-void shadowspill_profiler_set_enabled(
-    const ShadowSpillProfiler *profiler, uint8_t enabled
-) {
-    if (profiler != NULL && profiler->abi_version != 0U &&
-        profiler->set_enabled != NULL) {
-        profiler->set_enabled(profiler->state, enabled != 0U);
-    }
-}
+/* The backend's profiler entries are optional: a NULL entry is a no-op. */
 
 void shadowspill_profiler_name_current_thread(
-    const ShadowSpillProfiler *profiler, const char *name
+    const ShadowSpillBackend *backend, const char *name
 ) {
     shadowspill_name_current_thread(name);
-    if (profiler != NULL && profiler->abi_version != 0U &&
-        profiler->name_current_thread != NULL) {
-        profiler->name_current_thread(profiler->state, name);
+    if (backend != NULL && backend->name_thread != NULL) {
+        backend->name_thread(backend->state, name);
     }
 }
 
 void shadowspill_profiler_name_stream(
-    const ShadowSpillProfiler *profiler,
+    const ShadowSpillBackend *backend,
     ShadowSpillBackendStream stream,
     const char *name
 ) {
-    if (profiler != NULL && profiler->abi_version != 0U &&
-        profiler->name_stream != NULL) {
-        profiler->name_stream(profiler->state, stream, name);
+    if (backend != NULL && backend->name_stream != NULL) {
+        backend->name_stream(backend->state, stream, name);
     }
 }
 
 ShadowSpillProfilerRange shadowspill_profiler_range_begin(
-    const ShadowSpillProfiler *profiler, const char *name
+    const ShadowSpillBackend *backend, const char *name
 ) {
-    return profiler != NULL && profiler->abi_version != 0U &&
-        profiler->range_begin != NULL
-        ? profiler->range_begin(profiler->state, name)
+    return backend != NULL && backend->range_begin != NULL
+        ? backend->range_begin(backend->state, name)
         : 0U;
 }
 
 void shadowspill_profiler_range_end(
-    const ShadowSpillProfiler *profiler, ShadowSpillProfilerRange range
+    const ShadowSpillBackend *backend, ShadowSpillProfilerRange range
 ) {
-    if (profiler != NULL && profiler->abi_version != 0U &&
-        profiler->range_end != NULL) {
-        profiler->range_end(profiler->state, range);
+    if (backend != NULL && backend->range_end != NULL) {
+        backend->range_end(backend->state, range);
     }
 }

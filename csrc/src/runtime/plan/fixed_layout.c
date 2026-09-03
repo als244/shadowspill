@@ -363,8 +363,8 @@ static int visit_successor_dependencies(
             return ready;
         }
         if (event != NULL && stream != NULL) {
-            const int wait_status = runtime->synchronization.wait_event(
-                runtime->synchronization.state, *stream, event->event
+            const int wait_status = runtime->backend.wait_event(
+                runtime->backend.state, *stream, event->event
             );
             (void)shadowspill_event_lease_release(runtime, event);
             if (wait_status != 0) {
@@ -674,7 +674,7 @@ static ShadowSpillStatus validate_resolved_placement(
     }
     const ShadowSpillTaskAction *action =
         &record->actions[placement->ordinal];
-    return action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
+    return action->kind == SHADOWSPILL_RUNTIME_FETCH &&
         action->plan_object_id == placement->object_id &&
         action->object->size_bytes == placement->bytes
         ? SHADOWSPILL_STATUS_OK : SHADOWSPILL_STATUS_PLAN_VIOLATION;
@@ -726,7 +726,7 @@ static ShadowSpillStatus validate_layout_coverage(
         }
         for (uint32_t index = 0U; index < record->action_count; ++index) {
             const ShadowSpillTaskAction *action = &record->actions[index];
-            if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+            if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
                 int policy_count = 0;
                 if (shadowspill_fixed_layout_find_placement(
                         plan,
@@ -768,7 +768,7 @@ static ShadowSpillStatus resolve_dependency(
     if (predecessor == NULL ||
         item->predecessor_action_ordinal >= predecessor->action_count ||
         predecessor->actions[item->predecessor_action_ordinal].kind !=
-            SHADOWSPILL_RUNTIME_OFFLOAD) {
+            SHADOWSPILL_RUNTIME_EVICT) {
         return SHADOWSPILL_STATUS_PLAN_VIOLATION;
     }
     dependency->predecessor_action =

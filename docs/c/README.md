@@ -14,7 +14,6 @@ the inventory and the reference index.
 | Runtime | [`runtime.h`](../../csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) |
 | Admission replay | [`admission_replay.h`](../../csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) |
 | Backend | [`backend.h`](../../csrc/include/shadowspill/backend.h) | [Backends](backends.md) |
-| Profiler | [`profiler.h`](../../csrc/include/shadowspill/profiler.h) | [Backends](backends.md#profiler) |
 | Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) |
 | Simulator | [`simulator.h`](../../csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) |
 | PyTorch adapter | [`pytorch_adapter.h`](../../csrc/adapter/pytorch/include/shadowspill/pytorch_adapter.h) | [PyTorch adapter](pytorch-adapter.md) |
@@ -33,8 +32,8 @@ if (shadowspill_abi_version() != SHADOWSPILL_ABI_VERSION) {
 }
 ```
 
-What versions separately is what is compiled separately: the three backend
-contracts in `<shadowspill/backend.h>`, the profiler struct a backend supplies,
+What versions separately is what is compiled separately: the backend
+contract in `<shadowspill/backend.h>`, including the profiler a backend supplies,
 and the PyTorch adapter. Check those against the plugin you loaded. Do not
 hardcode a numeric ABI value.
 
@@ -43,8 +42,7 @@ explicitly `void` or it is an accessor, constructor, or query whose return
 value is the answer itself - `shadowspill_abi_version`,
 `shadowspill_status_string`, `shadowspill_failure_reason_string`,
 `shadowspill_task_id`, `shadowspill_task_trace_label`,
-`shadowspill_best_placed_create`, `shadowspill_best_placed_admits`, and
-`shadowspill_planner_struct_size`. One vocabulary covers the whole library: the three codes
+`shadowspill_best_placed_create`, and `shadowspill_planner_struct_size`. One vocabulary covers the whole library: the three codes
 every component agrees on sit at 0-2, and each component owns a band after
 that, so a status decodes to exactly one meaning without knowing which
 component produced it. `shadowspill_status_string()` maps any of them to a

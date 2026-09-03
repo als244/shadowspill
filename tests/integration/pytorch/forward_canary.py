@@ -65,11 +65,14 @@ def _statistics() -> AdapterStatistics:
 
 def _object_exists(runtime: Runtime, object_id: int) -> bool:
     snapshot = ObjectSnapshot()
-    return int(
-        runtime_library().shadowspill_object_snapshot(
-            runtime._runtime_handle, object_id, ctypes.byref(snapshot)
+    return (
+        int(
+            runtime_library().shadowspill_object_snapshot(
+                runtime._runtime_handle, object_id, ctypes.byref(snapshot)
+            )
         )
-    ) == 0
+        == 0
+    )
 
 
 def main() -> int:
@@ -202,9 +205,9 @@ def main() -> int:
         before_close = _statistics()
         if before_close.runtime.fetch_transfers == 0:
             raise AssertionError("public forward performed no real FETCH transfer")
-        if before_close.cuda.device_allocations != 1:
+        if before_close.backend.device_allocations != 1:
             raise AssertionError("steady execution grew the conventional CUDA slab")
-        if before_close.cuda.pinned_host_allocations != 1:
+        if before_close.backend.pinned_host_registrations != 1:
             raise AssertionError("steady execution grew pinned host memory")
 
         planned.close()
@@ -245,9 +248,7 @@ def main() -> int:
 
         consumer = plan_forward(
             consumer_model,
-            example_inputs=[
-                shared_input(second_reference, require_in="execution")
-            ],
+            example_inputs=[shared_input(second_reference, require_in="execution")],
             runtime=runtime,
             execution="execution",
             spill="spill",
@@ -256,9 +257,7 @@ def main() -> int:
         )
         peer_consumer = plan_forward(
             consumer_model,
-            example_inputs=[
-                shared_input(second_reference, require_in="execution")
-            ],
+            example_inputs=[shared_input(second_reference, require_in="execution")],
             runtime=runtime,
             execution="execution",
             spill="spill",

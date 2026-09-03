@@ -121,7 +121,7 @@ def seal_physical_budget(
         for item in execution_plan.schedule.initial_residency
     )
     scheduled_transfers = sum(
-        item.kind in {MemoryActionKind.OFFLOAD, MemoryActionKind.PREFETCH}
+        item.kind in {MemoryActionKind.EVICT, MemoryActionKind.FETCH}
         for item in execution_plan.schedule.actions
     )
     # The host dispatcher may publish a complete step before CUDA retires its
@@ -137,7 +137,7 @@ def seal_physical_budget(
         ),
         initial_transfer_count=initial_transfers,
         scheduled_transfer_count=scheduled_transfers,
-        event_pool_peak_in_use=int(statistics.cuda.event_pool_peak_in_use),
+        event_pool_peak_in_use=int(statistics.runtime.event_lease_peak_in_use),
         fixed_lifetime_count=len(fixed_layout.placements),
         dynamic_lifetime_count=len(fixed_layout.dynamic_lifetimes),
     )

@@ -1,11 +1,4 @@
-if(NOT TARGET shadowspill_backend_cuda)
-  return()
-endif()
 
-# Imported CMake targets are directory scoped.  The CUDA backend owns its own
-# discovery, and this sibling adapter independently declares the driver API it
-# includes and links.
-find_package(CUDAToolkit REQUIRED)
 
 add_library(
   shadowspill_pytorch
@@ -18,15 +11,13 @@ target_include_directories(
   PRIVATE
     include
     ${PROJECT_SOURCE_DIR}/csrc/include
-    ${PROJECT_SOURCE_DIR}/csrc/backends/cuda/include
 )
 target_compile_definitions(shadowspill_pytorch PRIVATE SHADOWSPILL_PYTORCH_BUILDING)
 target_link_libraries(
   shadowspill_pytorch
   PRIVATE
     shadowspill
-    shadowspill_backend_cuda
-    CUDA::cuda_driver
+    ${CMAKE_DL_LIBS}
     Threads::Threads
     shadowspill_build_options
 )

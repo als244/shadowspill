@@ -31,7 +31,7 @@ static uint32_t profile_index(
     return source_pool_id * runtime->pool_count + destination_pool_id;
 }
 
-ShadowSpillTransferRoute *shadowspill_transfer_route(
+static ShadowSpillRouteState *route_between(
     ShadowSpillRuntime *runtime,
     uint32_t source_pool_id,
     uint32_t destination_pool_id
@@ -40,7 +40,7 @@ ShadowSpillTransferRoute *shadowspill_transfer_route(
         return NULL;
     }
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
-        ShadowSpillTransferRoute *route = &runtime->routes[route_id].route;
+        ShadowSpillRouteState *route = &runtime->routes[route_id];
         if (route->source_pool_id == source_pool_id &&
             route->destination_pool_id == destination_pool_id) {
             return route;
@@ -49,28 +49,37 @@ ShadowSpillTransferRoute *shadowspill_transfer_route(
     return NULL;
 }
 
-ShadowSpillBackendStream *shadowspill_transfer_route_lane(
+int shadowspill_route_copy_async(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillTransferRoute *route
+    const ShadowSpillRouteState *route,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    const ShadowSpillBackend *backend = &runtime->backend;
+    return route->to_device
+        ? backend->copy_host_to_device(
+              backend->state, destination, source, bytes, stream
+          )
+        : backend->copy_device_to_host(
+              backend->state, destination, source, bytes, stream
+          );
+}
+
+static ShadowSpillBackendStream *lane_of(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillRouteState *route
 ) {
     if (runtime == NULL || route == NULL) {
         return NULL;
     }
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
-        if (route == &runtime->routes[route_id].route) {
+        if (route == &runtime->routes[route_id]) {
             return &runtime->routes[route_id].lane;
         }
     }
     return NULL;
-}
-
-ShadowSpillRouteState *shadowspill_runtime_route(
-    ShadowSpillRuntime *runtime,
-    uint32_t route_id
-) {
-    return runtime == NULL || route_id >= runtime->route_count
-        ? NULL
-        : &runtime->routes[route_id];
 }
 
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime) {
@@ -106,7 +115,7 @@ int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime) {
                     ? UINT64_MAX
                     : 0U,
                 .available = source == destination ||
-                    shadowspill_transfer_route(
+                    route_between(
                         runtime, source, destination
                     ) != NULL,
                 .calibrated = source == destination,
@@ -213,7 +222,8 @@ static void release_probe_ranges(
 }
 
 static int measure_copy(
-    const ShadowSpillTransferRoute *route,
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillRouteState *route,
     ShadowSpillBackendStream lane,
     void *destination,
     const void *source,
@@ -224,9 +234,9 @@ static int measure_copy(
     uint64_t total = 0U;
     for (uint32_t copy = 0U; copy < copies; ++copy) {
         const uint64_t begin = shadowspill_monotonic_ns();
-        if (begin == 0U || route->copy_async(
-                route->state, destination, source, bytes, lane
-            ) != 0 || route->synchronize_lane(route->state, lane) != 0) {
+        if (begin == 0U || shadowspill_route_copy_async(
+                runtime, route, destination, source, bytes, lane
+            ) != 0 || runtime->backend.synchronize_stream(runtime->backend.state, lane) != 0) {
             return -1;
         }
         const uint64_t end = shadowspill_monotonic_ns();
@@ -240,7 +250,8 @@ static int measure_copy(
 }
 
 static int measure_copy_batch(
-    const ShadowSpillTransferRoute *route,
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillRouteState *route,
     ShadowSpillBackendStream lane,
     void *destination,
     const void *source,
@@ -253,13 +264,13 @@ static int measure_copy_batch(
         return -1;
     }
     for (uint32_t copy = 0U; copy < copies; ++copy) {
-        if (route->copy_async(
-                route->state, destination, source, bytes, lane
+        if (shadowspill_route_copy_async(
+                runtime, route, destination, source, bytes, lane
             ) != 0) {
             return -1;
         }
     }
-    if (route->synchronize_lane(route->state, lane) != 0) {
+    if (runtime->backend.synchronize_stream(runtime->backend.state, lane) != 0) {
         return -1;
     }
     const uint64_t end = shadowspill_monotonic_ns();
@@ -287,7 +298,7 @@ static uint64_t measured_bandwidth(
 
 static int calibrate_route(
     ShadowSpillRuntime *runtime,
-    ShadowSpillTransferRoute *route,
+    ShadowSpillRouteState *route,
     const ShadowSpillTransferCalibrationConfig *config,
     ShadowSpillTransferProfile *profile
 ) {
@@ -297,7 +308,7 @@ static int calibrate_route(
     ShadowSpillMemoryPool *destination = shadowspill_runtime_pool(
         runtime, route->destination_pool_id
     );
-    ShadowSpillBackendStream *lane = shadowspill_transfer_route_lane(
+    ShadowSpillBackendStream *lane = lane_of(
         runtime, route
     );
     uint64_t source_offset = 0U;
@@ -320,13 +331,9 @@ static int calibrate_route(
     );
     int status = 0;
     for (uint32_t warmup = 0U; warmup < config->warmup_copies; ++warmup) {
-        if (route->copy_async(
-                route->state,
-                destination_pointer,
-                source_pointer,
-                config->large_copy_bytes,
-                *lane
-            ) != 0 || route->synchronize_lane(route->state, *lane) != 0) {
+        if (shadowspill_route_copy_async(
+                runtime, route, destination_pointer, source_pointer, config->large_copy_bytes, *lane
+            ) != 0 || runtime->backend.synchronize_stream(runtime->backend.state, *lane) != 0) {
             status = -1;
             break;
         }
@@ -334,6 +341,7 @@ static int calibrate_route(
     uint64_t small_nanoseconds = 0U;
     uint64_t large_measurements[SHADOWSPILL_CALIBRATION_BATCH_SAMPLES] = {0};
     if (status == 0 && measure_copy(
+            runtime,
             route,
             *lane,
             destination_pointer,
@@ -348,6 +356,7 @@ static int calibrate_route(
          status == 0 && sample < SHADOWSPILL_CALIBRATION_BATCH_SAMPLES;
          ++sample) {
         if (measure_copy_batch(
+                runtime,
                 route,
                 *lane,
                 destination_pointer,
@@ -406,7 +415,7 @@ static int calibrate_route(
 }
 
 typedef struct ShadowSpillCalibrationProbe {
-    ShadowSpillTransferRoute *route;
+    ShadowSpillRouteState *route;
     ShadowSpillBackendStream lane;
     ShadowSpillMemoryPool *source_pool;
     ShadowSpillMemoryPool *destination_pool;
@@ -419,7 +428,7 @@ typedef struct ShadowSpillCalibrationProbe {
 
 static int prepare_probe(
     ShadowSpillRuntime *runtime,
-    ShadowSpillTransferRoute *route,
+    ShadowSpillRouteState *route,
     uint64_t bytes,
     ShadowSpillCalibrationProbe *probe
 ) {
@@ -429,7 +438,7 @@ static int prepare_probe(
     ShadowSpillMemoryPool *destination = shadowspill_runtime_pool(
         runtime, route->destination_pool_id
     );
-    ShadowSpillBackendStream *lane = shadowspill_transfer_route_lane(
+    ShadowSpillBackendStream *lane = lane_of(
         runtime, route
     );
     if (source == NULL || destination == NULL || lane == NULL) {
@@ -480,6 +489,7 @@ typedef struct ShadowSpillCalibrationGate {
 } ShadowSpillCalibrationGate;
 
 typedef struct ShadowSpillCalibrationJob {
+    ShadowSpillRuntime *runtime;
     ShadowSpillCalibrationProbe *probe;
     ShadowSpillCalibrationGate *gate;
     uint32_t copies;
@@ -494,6 +504,7 @@ static void *run_calibration_job(void *state) {
         shadowspill_thread_yield();
     }
     job->status = measure_copy_batch(
+        job->runtime,
         job->probe->route,
         job->probe->lane,
         job->probe->destination_pointer,
@@ -506,6 +517,7 @@ static void *run_calibration_job(void *state) {
 }
 
 static int measure_concurrent_pair(
+    ShadowSpillRuntime *runtime,
     ShadowSpillCalibrationProbe *first,
     ShadowSpillCalibrationProbe *second,
     uint32_t copies,
@@ -514,8 +526,8 @@ static int measure_concurrent_pair(
 ) {
     ShadowSpillCalibrationGate gate = {0};
     ShadowSpillCalibrationJob jobs[2] = {
-        {.probe = first, .gate = &gate, .copies = copies, .status = -1},
-        {.probe = second, .gate = &gate, .copies = copies, .status = -1},
+        {.runtime = runtime, .probe = first, .gate = &gate, .copies = copies, .status = -1},
+        {.runtime = runtime, .probe = second, .gate = &gate, .copies = copies, .status = -1},
     };
     pthread_t threads[2];
     if (pthread_create(&threads[0], NULL, run_calibration_job, &jobs[0]) != 0) {
@@ -543,8 +555,8 @@ static int measure_concurrent_pair(
 
 static int calibrate_reverse_pair(
     ShadowSpillRuntime *runtime,
-    ShadowSpillTransferRoute *first_route,
-    ShadowSpillTransferRoute *second_route,
+    ShadowSpillRouteState *first_route,
+    ShadowSpillRouteState *second_route,
     const ShadowSpillTransferCalibrationConfig *config,
     ShadowSpillTransferProfile *first_profile,
     ShadowSpillTransferProfile *second_profile
@@ -566,6 +578,7 @@ static int calibrate_reverse_pair(
     uint64_t second_nanoseconds = 0U;
     int status = 0;
     if (config->warmup_copies != 0U && measure_concurrent_pair(
+            runtime,
             &first,
             &second,
             config->warmup_copies,
@@ -580,6 +593,7 @@ static int calibrate_reverse_pair(
          status == 0 && sample < SHADOWSPILL_CALIBRATION_BATCH_SAMPLES;
          ++sample) {
         if (measure_concurrent_pair(
+                runtime,
                 &first,
                 &second,
                 config->measured_copies,
@@ -653,7 +667,7 @@ ShadowSpillStatus shadowspill_runtime_calibrate_transfer_capabilities(
         if (routes[index].source_pool_id >= runtime->pool_count ||
             routes[index].destination_pool_id >= runtime->pool_count ||
             routes[index].source_pool_id == routes[index].destination_pool_id ||
-            shadowspill_transfer_route(
+            route_between(
                 runtime,
                 routes[index].source_pool_id,
                 routes[index].destination_pool_id
@@ -686,7 +700,7 @@ ShadowSpillStatus shadowspill_runtime_calibrate_transfer_capabilities(
                 )) {
                 continue;
             }
-            ShadowSpillTransferRoute *route = shadowspill_transfer_route(
+            ShadowSpillRouteState *route = route_between(
                 runtime, source, destination
             );
             if (route == NULL || calibrate_route(
@@ -710,10 +724,10 @@ ShadowSpillStatus shadowspill_runtime_calibrate_transfer_capabilities(
                 )) {
                 continue;
             }
-            ShadowSpillTransferRoute *forward = shadowspill_transfer_route(
+            ShadowSpillRouteState *forward = route_between(
                 runtime, source, destination
             );
-            ShadowSpillTransferRoute *reverse = shadowspill_transfer_route(
+            ShadowSpillRouteState *reverse = route_between(
                 runtime, destination, source
             );
             if (forward != NULL && reverse != NULL && calibrate_reverse_pair(

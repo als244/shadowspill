@@ -10,13 +10,6 @@
  * two dependencies are intentionally tiny because the test does not create a
  * backend arena or submit an event; it exercises only pool-owned transitions.
  */
-int shadowspill_memory_pool_backend_is_valid(
-    const ShadowSpillMemoryPoolBackend *backend
-) {
-    (void)backend;
-    return 1;
-}
-
 void shadowspill_event_lease_retain(ShadowSpillEventLease *lease) {
     if (lease != NULL) {
         (void)atomic_fetch_add_explicit(

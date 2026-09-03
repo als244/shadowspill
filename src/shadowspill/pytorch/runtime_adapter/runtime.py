@@ -24,6 +24,8 @@ from shadowspill.memory import (
 from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
 )
+from shadowspill.planner.quantization import GIBIBYTE, floored
+from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.runtime_adapter.abi import (
     PlanDescription,
     TransferCalibrationConfig,
@@ -106,6 +108,7 @@ class Runtime:
         library_path: str | Path | None = None,
         calibrate: bool = True,
         worker_poll_nanoseconds: int = 1_000,
+        backend: str | None = None,
     ) -> None:
         normalized, normalized_routes = _validate_topology(pools, routes)
         device_name, device_config = next(
@@ -120,7 +123,7 @@ class Runtime:
         pool_bootstrap = tuple(
             PoolBootstrap(
                 pool_id=pool_ids[name],
-                backend_kind=0 if isinstance(config, DevicePool) else 1,
+                kind=0 if isinstance(config, DevicePool) else 1,
                 capacity_bytes=(
                     0 if isinstance(config, DevicePool) else config.capacity
                 ),
@@ -152,6 +155,7 @@ class Runtime:
                 pools=pool_bootstrap,
                 routes=route_bootstrap,
                 worker_poll_nanoseconds=worker_poll_nanoseconds,
+                backend=backend,
             )
             self._installed = installed
             # The neutral runtime this process bound. Holding it here is what
@@ -294,9 +298,7 @@ class Runtime:
                     "cannot close Runtime while public object references remain; "
                     "close every TensorRef or StateRef first"
                 )
-            status = int(
-                self._installed.library.shadowspill_pytorch_allocator_close()
-            )
+            status = int(self._installed.library.shadowspill_pytorch_allocator_close())
             if status == _RUNTIME_INVALID_STATE:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while caller-owned device outputs "
@@ -359,8 +361,7 @@ class Runtime:
             )
             if status != 0 or handle.value == 0:
                 raise RuntimeExecutionError(
-                    "failed to retain runtime object "
-                    f"{object_id}: status={status}"
+                    f"failed to retain runtime object {object_id}: status={status}"
                 )
             try:
                 reference = ObjectRef(
@@ -370,9 +371,7 @@ class Runtime:
                     handle=int(handle.value),
                 )
             except BaseException:
-                runtime_library().shadowspill_object_handle_release(
-                    handle.value
-                )
+                runtime_library().shadowspill_object_handle_release(handle.value)
                 raise
             self._active_object_references += 1
             return reference
@@ -511,10 +510,12 @@ class Runtime:
             resolved_device = _resolve_execution_device(
                 execution_device, execution_pool
             )
-            resolved_execution = _resolve_execution_budget(
-                execution_budget, execution_pool
+            resolved_execution = floored(
+                _resolve_execution_budget(execution_budget, execution_pool), GIBIBYTE
             )
-            resolved_spill = _resolve_budget(spill_budget, spill_pool, "spill_budget")
+            resolved_spill = floored(
+                _resolve_budget(spill_budget, spill_pool, "spill_budget"), GIBIBYTE
+            )
             resolved_scratch = _resolve_dynamic_scratch_reserve(
                 dynamic_scratch_reserve_bytes,
                 execution_budget=resolved_execution,
@@ -623,9 +624,7 @@ class Runtime:
                 self._planning_plan_handle = None
 
     def _close_and_destroy_plan(self, plan_handle: int) -> None:
-        status = int(
-            runtime_library().shadowspill_plan_close(plan_handle)
-        )
+        status = int(runtime_library().shadowspill_plan_close(plan_handle))
         if status != 0:
             raise RuntimeConfigurationError(
                 f"handle plan close failed with status {status}"
@@ -975,7 +974,7 @@ def _resolve_execution_device(value: object | None, pool: MemoryPool) -> int:
                 "execution_device must be an accelerator device, ordinal, or None"
             )
         if isinstance(value, int):
-            resolved_device = torch.device("cuda", value)
+            resolved_device = accelerator_device(value)
         else:
             if not isinstance(value, (str, torch.device)):
                 raise TypeError(
@@ -987,7 +986,7 @@ def _resolve_execution_device(value: object | None, pool: MemoryPool) -> int:
                 raise TypeError(
                     "execution_device must be an accelerator device, ordinal, or None"
                 ) from exc
-        if resolved_device.type != "cuda":
+        if not is_accelerator(resolved_device):
             raise RuntimeConfigurationError(
                 "the installed PyTorch adapter currently requires an accelerator "
                 "execution device"

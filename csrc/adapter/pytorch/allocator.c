@@ -3,7 +3,9 @@
 
 #include "internal.h"
 
-#include <cuda.h>
+#include <shadowspill/backend.h>
+
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -16,9 +18,10 @@
 
 typedef struct ShadowSpillPytorchAdapterState {
     pthread_mutex_t mutex;
-    ShadowSpillCudaBackend *cuda;
+    ShadowSpillBackend backend;
+    ShadowSpillBackendDestroy backend_destroy;
+    void *backend_library;
     ShadowSpillRuntime *runtime;
-    ShadowSpillProfiler profiler;
     int32_t device_ordinal;
     uint32_t allocator_pool_id;
     uint64_t allocation_callbacks;
@@ -82,14 +85,14 @@ ShadowSpillProfilerRange shadowspill_pytorch_profile_range_begin(
 ) {
     return atomic_load_explicit(
                &adapter.profiler_annotations_enabled, memory_order_relaxed
-           ) == 0U || adapter.profiler.range_begin == NULL
+           ) == 0U || adapter.backend.range_begin == NULL
         ? 0U
-        : adapter.profiler.range_begin(adapter.profiler.state, name);
+        : adapter.backend.range_begin(adapter.backend.state, name);
 }
 
 void shadowspill_pytorch_profile_range_end(ShadowSpillProfilerRange range) {
-    if (range != 0U && adapter.profiler.range_end != NULL) {
-        adapter.profiler.range_end(adapter.profiler.state, range);
+    if (range != 0U && adapter.backend.range_end != NULL) {
+        adapter.backend.range_end(adapter.backend.state, range);
     }
 }
 
@@ -98,14 +101,13 @@ ShadowSpillStatus shadowspill_pytorch_profiler_annotations_set(
 ) {
     pthread_mutex_lock(&adapter.mutex);
     const int available = adapter.runtime != NULL &&
-        adapter.profiler.abi_version != 0U &&
-        adapter.profiler.set_enabled != NULL;
-    ShadowSpillProfiler profiler = adapter.profiler;
+        adapter.backend.profiler_enable != NULL;
+    const ShadowSpillBackend backend = adapter.backend;
     pthread_mutex_unlock(&adapter.mutex);
     if (!available) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
-    profiler.set_enabled(profiler.state, enabled != 0U);
+    backend.profiler_enable(backend.state, enabled != 0U);
     atomic_store_explicit(
         &adapter.profiler_annotations_enabled,
         enabled != 0U,
@@ -257,6 +259,13 @@ static void release_allocator_callback_runtime(void) {
     );
 }
 
+/* The framework's stream handle as the token the backend's vtables accept. The
+ * bundle is written once at bootstrap and cleared only after the runtime it
+ * served is gone, so reading it here needs no lock. */
+static ShadowSpillBackendStream adapter_stream(uint64_t framework_stream_handle) {
+    return adapter.backend.wrap_stream(adapter.backend.state, framework_stream_handle);
+}
+
 static ShadowSpillStatus close_adapter_runtime(
     int require_no_caller_allocations
 ) {
@@ -272,7 +281,9 @@ static ShadowSpillStatus close_adapter_runtime(
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     ShadowSpillRuntime *runtime = adapter.runtime;
-    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    ShadowSpillBackend backend = adapter.backend;
+    const ShadowSpillBackendDestroy backend_destroy = adapter.backend_destroy;
+    void *const backend_library = adapter.backend_library;
     if (runtime == NULL) {
         pthread_mutex_unlock(&adapter.mutex);
         return SHADOWSPILL_STATUS_CLOSED;
@@ -318,8 +329,9 @@ static ShadowSpillStatus close_adapter_runtime(
         &adapter.published_allocator_pool_id, UINT32_MAX, memory_order_relaxed
     );
     adapter.runtime = NULL;
-    adapter.cuda = NULL;
-    adapter.profiler = (ShadowSpillProfiler){0};
+    adapter.backend = (ShadowSpillBackend){0};
+    adapter.backend_destroy = NULL;
+    adapter.backend_library = NULL;
     atomic_store_explicit(
         &adapter.profiler_annotations_enabled, 0U, memory_order_release
     );
@@ -328,12 +340,17 @@ static ShadowSpillStatus close_adapter_runtime(
 
     /*
      * runtime_destroy stops and joins the worker before releasing anything it
-     * can observe. Keep the CUDA backend alive until all lanes, events, pinned
+     * can observe. Keep the backend alive until all lanes, events, pinned
      * registrations, and pool arenas have been explicitly closed.
      */
     const ShadowSpillStatus status = shadowspill_runtime_close(runtime);
     shadowspill_runtime_destroy(runtime);
-    shadowspill_cuda_backend_destroy(cuda);
+    if (backend_destroy != NULL) {
+        backend_destroy(&backend);
+    }
+    if (backend_library != NULL) {
+        (void)dlclose(backend_library);
+    }
     return status;
 }
 
@@ -346,6 +363,7 @@ static int bootstrap_config_is_valid(
 ) {
     if (config == NULL ||
         config->abi_version != SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION ||
+        config->backend_library == NULL || config->backend_library[0] == '\0' ||
         config->device_ordinal < 0 || config->device_budget_bytes == 0U ||
         config->provider_headroom_bytes >= config->device_budget_bytes ||
         config->pools == NULL || config->pool_count == 0U ||
@@ -357,10 +375,10 @@ static int bootstrap_config_is_valid(
     for (uint32_t index = 0U; index < config->pool_count; ++index) {
         const ShadowSpillPytorchPoolConfig *pool = &config->pools[index];
         if (pool->pool_id != index ||
-            pool->backend_kind > SHADOWSPILL_PYTORCH_POOL_PINNED_HOST) {
+            pool->kind > SHADOWSPILL_POOL_PINNED_HOST) {
             return 0;
         }
-        if (pool->backend_kind == SHADOWSPILL_PYTORCH_POOL_DEVICE) {
+        if (pool->kind == SHADOWSPILL_POOL_DEVICE) {
             ++device_pool_count;
             if (index != config->allocator_pool_id) {
                 return 0;
@@ -381,9 +399,9 @@ static int bootstrap_config_is_valid(
             return 0;
         }
         const uint8_t source_kind =
-            config->pools[route->source_pool_id].backend_kind;
+            config->pools[route->source_pool_id].kind;
         const uint8_t destination_kind =
-            config->pools[route->destination_pool_id].backend_kind;
+            config->pools[route->destination_pool_id].kind;
         if (source_kind == destination_kind) {
             return 0;
         }
@@ -393,8 +411,8 @@ static int bootstrap_config_is_valid(
 
 static ShadowSpillStatus build_runtime_topology(
     const ShadowSpillPytorchAdapterConfig *config,
-    ShadowSpillCudaBackend *cuda,
-    const ShadowSpillCudaBackendCapabilities *capabilities,
+    const ShadowSpillBackend *backend,
+    const ShadowSpillBackendCapabilities *capabilities,
     uint64_t allocator_pool_bytes,
     ShadowSpillRuntime **runtime
 ) {
@@ -410,48 +428,33 @@ static ShadowSpillStatus build_runtime_topology(
     }
     for (uint32_t index = 0U; index < config->pool_count; ++index) {
         const ShadowSpillPytorchPoolConfig *source = &config->pools[index];
-        const int is_device =
-            source->backend_kind == SHADOWSPILL_PYTORCH_POOL_DEVICE;
+        const int is_device = source->kind == SHADOWSPILL_POOL_DEVICE;
         pools[index] = (ShadowSpillMemoryPoolDescription){
             .pool_id = index,
+            .kind = source->kind,
             .capacity_bytes = is_device
                 ? allocator_pool_bytes : source->capacity_bytes,
             .minimum_alignment = is_device
-                ? capabilities->recommended_minimum_alignment : 1U,
-            .backend = is_device
-                ? shadowspill_cuda_device_pool_backend(cuda)
-                : shadowspill_cuda_pinned_pool_backend(cuda),
+                ? capabilities->minimum_alignment : 1U,
         };
     }
     for (uint32_t index = 0U; index < config->route_count; ++index) {
         const ShadowSpillPytorchRouteConfig *source = &config->routes[index];
-        const uint8_t source_kind =
-            config->pools[source->source_pool_id].backend_kind;
         routes[index] = (ShadowSpillTransferRouteDescription){
             .route_id = index,
             .name = source->name,
-            .route = source_kind == SHADOWSPILL_PYTORCH_POOL_PINNED_HOST
-                ? shadowspill_cuda_fetch_route(
-                      cuda,
-                      source->source_pool_id,
-                      source->destination_pool_id
-                  )
-                : shadowspill_cuda_evict_route(
-                      cuda,
-                      source->source_pool_id,
-                      source->destination_pool_id
-                  ),
+            .source_pool_id = source->source_pool_id,
+            .destination_pool_id = source->destination_pool_id,
         };
     }
     const ShadowSpillRuntimeConfig runtime_config = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
+        .backend = backend,
         .pools = pools,
         .pool_count = config->pool_count,
         .routes = routes,
         .route_count = config->route_count,
         .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
-        .synchronization = shadowspill_cuda_synchronization_backend(cuda),
-        .profiler = shadowspill_cuda_backend_profiler(cuda),
     };
     const ShadowSpillStatus status = shadowspill_runtime_create(
         &runtime_config, runtime
@@ -474,29 +477,54 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
     }
     pthread_mutex_unlock(&adapter.mutex);
 
-    const ShadowSpillCudaBackendConfig cuda_config = {
-        .abi_version = SHADOWSPILL_CUDA_BACKEND_ABI_VERSION,
+    void *const library = dlopen(config->backend_library, RTLD_NOW | RTLD_LOCAL);
+    if (library == NULL) {
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+    }
+    union {
+        void *object;
+        ShadowSpillBackendCreate create;
+        ShadowSpillBackendDestroy destroy;
+    } create_symbol = {.object = dlsym(library, SHADOWSPILL_BACKEND_CREATE_SYMBOL)};
+    union {
+        void *object;
+        ShadowSpillBackendDestroy destroy;
+    } destroy_symbol = {.object = dlsym(library, SHADOWSPILL_BACKEND_DESTROY_SYMBOL)};
+    if (create_symbol.object == NULL || destroy_symbol.object == NULL) {
+        (void)dlclose(library);
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+    }
+    const ShadowSpillBackendConfig backend_config = {
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
         .device_ordinal = config->device_ordinal,
     };
-    ShadowSpillCudaBackend *cuda = NULL;
-    if (shadowspill_cuda_backend_create(&cuda_config, &cuda) != 0) {
+    ShadowSpillBackend backend = {0};
+    if (create_symbol.create(&backend_config, &backend) != 0 ||
+        !shadowspill_backend_is_valid(&backend)) {
+        if (backend.state != NULL) {
+            destroy_symbol.destroy(&backend);
+        }
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    ShadowSpillCudaBackendCapabilities capabilities = {0};
-    if (shadowspill_cuda_backend_capabilities(cuda, &capabilities) != 0) {
-        shadowspill_cuda_backend_destroy(cuda);
+    ShadowSpillBackendCapabilities capabilities = {0};
+    if (backend.capabilities(backend.state, &capabilities) != 0) {
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    ShadowSpillCudaPhysicalMemory physical = {0};
-    if (shadowspill_cuda_physical_memory(cuda, &physical) != 0) {
-        shadowspill_cuda_backend_destroy(cuda);
+    ShadowSpillBackendPhysicalMemory physical = {0};
+    if (backend.physical_memory(backend.state, &physical) != 0) {
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     const uint64_t physical_granularity = 2U << 20U;
     if (config->device_budget_bytes > physical.device_total_bytes ||
         physical.process_bytes >
             config->device_budget_bytes - config->provider_headroom_bytes) {
-        shadowspill_cuda_backend_destroy(cuda);
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     uint64_t available = config->device_budget_bytes -
@@ -504,46 +532,52 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
     const uint64_t allocator_pool_bytes =
         available - available % physical_granularity;
     if (allocator_pool_bytes == 0U) {
-        shadowspill_cuda_backend_destroy(cuda);
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillStatus status = build_runtime_topology(
         config,
-        cuda,
+        &backend,
         &capabilities,
         allocator_pool_bytes,
         &runtime
     );
     if (status != SHADOWSPILL_STATUS_OK) {
-        shadowspill_cuda_backend_destroy(cuda);
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return status;
     }
-    ShadowSpillCudaPhysicalMemory bootstrap_memory = {0};
-    if (shadowspill_cuda_physical_memory(cuda, &bootstrap_memory) != 0 ||
+    ShadowSpillBackendPhysicalMemory bootstrap_memory = {0};
+    if (backend.physical_memory(backend.state, &bootstrap_memory) != 0 ||
         bootstrap_memory.process_bytes > config->device_budget_bytes) {
         shadowspill_runtime_destroy(runtime);
-        shadowspill_cuda_backend_destroy(cuda);
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime != NULL) {
         pthread_mutex_unlock(&adapter.mutex);
         shadowspill_runtime_destroy(runtime);
-        shadowspill_cuda_backend_destroy(cuda);
+        destroy_symbol.destroy(&backend);
+        (void)dlclose(library);
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (!process_exit_registered) {
         if (atexit(shadowspill_pytorch_process_exit) != 0) {
             pthread_mutex_unlock(&adapter.mutex);
             shadowspill_runtime_destroy(runtime);
-            shadowspill_cuda_backend_destroy(cuda);
+            destroy_symbol.destroy(&backend);
+            (void)dlclose(library);
             return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         process_exit_registered = 1U;
     }
-    adapter.cuda = cuda;
-    adapter.profiler = shadowspill_cuda_backend_profiler(cuda);
+    adapter.backend = backend;
+    adapter.backend_destroy = destroy_symbol.destroy;
+    adapter.backend_library = library;
     adapter.runtime = runtime;
     adapter.bootstrapped = 1U;
     adapter.closed = 0U;
@@ -616,32 +650,32 @@ ShadowSpillStatus shadowspill_pytorch_physical_admission(
 }
 
 ShadowSpillStatus shadowspill_pytorch_physical_memory(
-    ShadowSpillCudaPhysicalMemory *memory
+    ShadowSpillBackendPhysicalMemory *memory
 ) {
     if (memory == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
-    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    const ShadowSpillBackend backend = adapter.backend;
     pthread_mutex_unlock(&adapter.mutex);
-    if (cuda == NULL) {
+    if (backend.state == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
-    return shadowspill_cuda_physical_memory(cuda, memory) == 0
+    return backend.physical_memory(backend.state, memory) == 0
         ? SHADOWSPILL_STATUS_OK
         : SHADOWSPILL_STATUS_BACKEND_FAILURE;
 }
 
 ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
-    ShadowSpillCudaPhysicalMemory memory = {0};
+    ShadowSpillBackendPhysicalMemory memory = {0};
     pthread_mutex_lock(&adapter.mutex);
-    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    const ShadowSpillBackend backend = adapter.backend;
     ShadowSpillPytorchPhysicalAdmission admission = adapter.admission;
     pthread_mutex_unlock(&adapter.mutex);
-    if (cuda == NULL) {
+    if (backend.state == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
-    if (shadowspill_cuda_physical_memory(cuda, &memory) != 0) {
+    if (backend.physical_memory(backend.state, &memory) != 0) {
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     uint64_t base = admission.baseline_bytes + admission.allocator_pool_bytes;
@@ -681,10 +715,10 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
     uint64_t runtime_record_reserve
 ) {
     pthread_mutex_lock(&adapter.mutex);
-    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    const ShadowSpillBackend backend = adapter.backend;
     ShadowSpillRuntime *runtime = adapter.runtime;
     pthread_mutex_unlock(&adapter.mutex);
-    if (cuda == NULL || runtime == NULL) {
+    if (backend.state == NULL || runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
     ShadowSpillStatus reserve_status =
@@ -707,10 +741,6 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
         if (reserve_status != SHADOWSPILL_STATUS_OK) {
             return reserve_status;
         }
-    }
-    if (shadowspill_cuda_backend_seal_event_pool(
-            cuda, runtime_record_reserve) != 0) {
-        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
     ShadowSpillStatus status =
         shadowspill_pytorch_check_physical_budget();
@@ -746,7 +776,7 @@ ShadowSpillStatus shadowspill_pytorch_adapter_capabilities(
     *capabilities = (ShadowSpillPytorchAdapterCapabilities){
         .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
         .runtime_abi_version = SHADOWSPILL_ABI_VERSION,
-        .backend_abi_version = SHADOWSPILL_CUDA_BACKEND_ABI_VERSION,
+        .backend_abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
         .slab_memory_strategy = 1U,
         .record_stream_callback = 1U,
 #ifdef SHADOWSPILL_PYTORCH_STORAGE_ADAPTER
@@ -768,7 +798,7 @@ ShadowSpillStatus shadowspill_pytorch_allocator_statistics(
     }
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillRuntime *runtime = adapter.runtime;
-    ShadowSpillCudaBackend *cuda = adapter.cuda;
+    const ShadowSpillBackend backend = adapter.backend;
     *statistics = (ShadowSpillPytorchAdapterStatistics){
         .allocation_callbacks = adapter.allocation_callbacks,
         .zero_size_allocation_callbacks =
@@ -784,13 +814,13 @@ ShadowSpillStatus shadowspill_pytorch_allocator_statistics(
         .physical_budget_sealed = adapter.physical_budget_sealed,
     };
     pthread_mutex_unlock(&adapter.mutex);
-    if (runtime == NULL || cuda == NULL) {
+    if (runtime == NULL || backend.state == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
     ShadowSpillStatus status = shadowspill_runtime_statistics(
         runtime, &statistics->runtime
     );
-    shadowspill_cuda_backend_statistics(cuda, &statistics->cuda);
+    backend.statistics(backend.state, &statistics->backend);
     return status;
 }
 
@@ -973,7 +1003,7 @@ static const char *allocation_operation_name(uint8_t operation) {
     return "unknown";
 }
 
-ShadowSpillStatus shadowspill_pytorch_cuda_malloc_failure_message(
+ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
     char *destination,
     size_t destination_bytes
 ) {
@@ -1308,7 +1338,7 @@ ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
               runtime,
               bound_allocator_pool_id(),
               allocation_id,
-              shadowspill_cuda_wrap_stream(stream)
+              adapter_stream(stream)
           );
 }
 
@@ -1358,7 +1388,7 @@ ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
         shadowspill_submit_action_batch_handle(
             runtime,
             (const ShadowSpillActionBatchHandle *)action_batch_handle,
-            shadowspill_cuda_wrap_stream(trigger_stream_address)
+            adapter_stream(trigger_stream_address)
         );
     shadowspill_pytorch_profile_range_end(range);
     return status;
@@ -1381,7 +1411,7 @@ ShadowSpillStatus shadowspill_pytorch_acquire_objects_handle(
         : shadowspill_acquire_objects_handle(
             runtime,
             (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
-            shadowspill_cuda_wrap_stream(consumer_stream_address),
+            adapter_stream(consumer_stream_address),
             bindings,
             binding_capacity
         );
@@ -1406,7 +1436,7 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
               runtime,
               (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
               object_ordinal,
-              shadowspill_cuda_wrap_stream(consumer_stream),
+              adapter_stream(consumer_stream),
               (const void *)(uintptr_t)expected_address,
               expected_generation,
               expected_allocation_id,
@@ -1446,7 +1476,7 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
         : shadowspill_before_task_handle(
             runtime,
             handle,
-            shadowspill_cuda_wrap_stream(compute_stream_address),
+            adapter_stream(compute_stream_address),
             bindings,
             binding_count
         );
@@ -1470,7 +1500,7 @@ ShadowSpillStatus shadowspill_pytorch_wait_task_allocations(
         : shadowspill_wait_task_allocations_handle(
             runtime,
             handle,
-            shadowspill_cuda_wrap_stream(compute_stream_address)
+            adapter_stream(compute_stream_address)
         );
 }
 
@@ -1489,7 +1519,7 @@ ShadowSpillStatus shadowspill_pytorch_after_task_handle(
         : shadowspill_after_task_handle(
             runtime,
             handle,
-            shadowspill_cuda_wrap_stream(compute_stream_address)
+            adapter_stream(compute_stream_address)
         );
     end_task_range();
     return status;
@@ -1539,7 +1569,7 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_end(
         : shadowspill_allocation_scope_end(
               runtime,
               scope_id,
-              shadowspill_cuda_wrap_stream(compute_stream_address)
+              adapter_stream(compute_stream_address)
           );
     end_task_range();
     return status;
@@ -1599,7 +1629,7 @@ ShadowSpillStatus shadowspill_pytorch_abort_task_handle(
     return status;
 }
 
-void *shadowspill_pytorch_cuda_malloc_impl(
+void *shadowspill_pytorch_backend_malloc_impl(
     ptrdiff_t bytes,
     int32_t device_ordinal,
     void *stream
@@ -1645,7 +1675,7 @@ void *shadowspill_pytorch_cuda_malloc_impl(
         bound_allocator_pool_id(),
         (uint64_t)bytes,
         256U,
-        shadowspill_cuda_wrap_stream((uintptr_t)stream),
+        adapter_stream((uintptr_t)stream),
         &allocation
     );
     if (status != SHADOWSPILL_STATUS_OK) {
@@ -1659,7 +1689,7 @@ void *shadowspill_pytorch_cuda_malloc_impl(
     return allocation.pointer;
 }
 
-void shadowspill_pytorch_cuda_free(
+void shadowspill_pytorch_backend_free(
     void *address,
     size_t bytes,
     int32_t device_ordinal,
@@ -1705,7 +1735,7 @@ void shadowspill_pytorch_cuda_free(
         runtime,
         bound_allocator_pool_id(),
         allocation.allocation_id,
-        shadowspill_cuda_wrap_stream((uintptr_t)stream)
+        adapter_stream((uintptr_t)stream)
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         latch_failure(status, device_ordinal, address, (uint64_t)bytes);
@@ -1713,7 +1743,7 @@ void shadowspill_pytorch_cuda_free(
     release_allocator_callback_runtime();
 }
 
-void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
+void shadowspill_pytorch_backend_record_stream(void *address, void *stream) {
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.record_stream_callbacks;
     pthread_mutex_unlock(&adapter.mutex);
@@ -1744,7 +1774,7 @@ void shadowspill_pytorch_cuda_record_stream(void *address, void *stream) {
         runtime,
         bound_allocator_pool_id(),
         allocation.allocation_id,
-        shadowspill_cuda_wrap_stream((uintptr_t)stream)
+        adapter_stream((uintptr_t)stream)
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         latch_failure(status, device_ordinal, address, 0U);
