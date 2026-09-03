@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from shadowspill.planner.plan_store import PlanStore
 from ._examples import config, exact_capacity_program, exact_capacity_residency
 
 FEW_CANDIDATES = PressureFitOptions(
+    minimum_object_bytes_evict_eligible=0,
     residency_strategies=("relaxed-stall",),
     fetch_rules=("latest-safe",),
     evaluate_coalesced=False,
@@ -32,16 +34,22 @@ def test_plan_store_preserves_the_complete_selection(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=PressureFitOptions(
-            residency_strategies=FEW_CANDIDATES.residency_strategies,
-            fetch_rules=FEW_CANDIDATES.fetch_rules,
-            evaluate_coalesced=False,
-            workers=8,
-        ),
+        options=FEW_CANDIDATES,
+    )
+    # Every option is part of a planned program's identity, so a search
+    # configured differently in any respect is a different question and
+    # reads no cached answer.
+    varied = cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=replace(FEW_CANDIDATES, workers=8),
     )
 
     assert not first.from_store
     assert second.from_store
+    assert not varied.from_store
     assert second.result.schedule == first.result.schedule
     assert second.result.selections == first.result.selections
     assert second.result.simulation == first.result.simulation

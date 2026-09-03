@@ -9,7 +9,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.errors import CaptureError
 from shadowspill.ir import RecomputationSelection
-from shadowspill.planner import pressurefit
+from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
@@ -337,6 +337,7 @@ def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
         initial_residency=lowered.initial_residency,
         final_residency=lowered.final_residency,
         config=config,
+        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
     )
     assert len(planned.selections) == 2
     assert planned.simulation.makespan_ns > 0

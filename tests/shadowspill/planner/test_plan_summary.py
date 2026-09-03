@@ -43,7 +43,7 @@ def _result() -> PressureFitResult:
     )
     return PressureFitResult(
         program=program,
-        options=PressureFitOptions(workers=1),
+        options=PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
         initial_residency=plan.schedule.initial_residency,
         final_residency=plan.schedule.final_residency,
         simulation_config=config,

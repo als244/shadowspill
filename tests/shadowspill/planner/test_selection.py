@@ -22,7 +22,12 @@ def test_compiled_selector_matches_python_policy_ordering() -> None:
     program = training_chain_program(2)
     initial = training_chain_initial(2)
     config = training_chain_config(224)
-    faster = pressurefit(program, initial_residency=initial, config=config)
+    faster = pressurefit(
+        program,
+        initial_residency=initial,
+        config=config,
+        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+    )
     slower = pressurefit(
         program,
         initial_residency=initial,
@@ -31,6 +36,7 @@ def test_compiled_selector_matches_python_policy_ordering() -> None:
             residency_strategies=("tight-stall",),
             fetch_rules=("demand",),
             evaluate_coalesced=False,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 

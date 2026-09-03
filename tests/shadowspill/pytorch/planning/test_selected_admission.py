@@ -53,6 +53,7 @@ def _selected():  # type: ignore[no-untyped-def]
             residency_strategies=("relaxed-stall",),
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 

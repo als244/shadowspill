@@ -100,9 +100,10 @@ under [Trajectories](#trajectories). It changes nothing about the search.
 smaller than it is never cut, so it is never evicted and fetched mid-step.
 Every lease of such an object gets a static home in the
 [resident slice](fixed-placement.md#the-resident-slice), whose size is known
-at preparation and taken out of the capacity given to the reducer; the
-library default of zero exempts nothing, and the PyTorch entrypoints set
-1 MiB.
+at preparation and taken out of the capacity given to the reducer. The
+default is 1 MiB, the size below which a copy is latency-bound and its bytes
+hardly relieve a boundary; zero exempts nothing, which is what a caller
+planning byte-sized objects wants.
 
 Candidates place layouts and publish what they place to a shared record, so
 which plans are worth measuring depends on what has already been placed. That

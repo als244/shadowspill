@@ -37,7 +37,7 @@ def _selection(
     return PlanLookup(
         PressureFitResult(
             program,
-            PressureFitOptions(workers=1),
+            PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
             (),
             (),
             config,

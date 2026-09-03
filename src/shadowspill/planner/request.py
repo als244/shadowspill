@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
+from enum import Enum, StrEnum
+from typing import Any
 
 
 class InitialPlacement(StrEnum):
@@ -21,9 +19,21 @@ class InitialPlacement(StrEnum):
 class PressureFitOptions:
     """Bounded heuristic candidate configuration.
 
-    Worker count changes only evaluation concurrency. It never enters candidate
-    identity or tie-breaking. Zero selects all available logical CPUs; one
-    forces serial evaluation.
+    Every field here is part of a planned program's identity, worker count
+    included. Worker count enters no candidate's identity and breaks no tie
+    between two candidates, but candidates measure a layout only when the
+    shared best-placed record says it could win, so which worker places
+    first decides which candidates are ever measured, and two searches over
+    the same problem at different worker counts can answer with different
+    plans. Zero selects all available logical CPUs; one forces serial
+    evaluation.
+
+    ``deterministic`` is how a search reproduces without giving up its
+    workers: the placement gate consults only the candidate's own placed
+    plans instead of the shared record, so every outcome is a pure function
+    of that candidate's inputs and any worker count answers the same. It
+    costs wall time, because the shared bound is what lets a candidate skip
+    measuring a plan that cannot win.
     """
 
     initial_placement: InitialPlacement = InitialPlacement.GREEDY
@@ -79,12 +89,55 @@ class PressureFitOptions:
     #: mid-step: they stay resident from their first to their last access,
     #: and the planner charges them at every boundary in between. Their
     #: boundary contract is untouched -- an opening fetch, a release after
-    #: the last access, a terminal writeback when modified. Zero, the
-    #: library default, makes every object eligible; the PyTorch frontend
-    #: sets 1 MiB unless told otherwise, because a copy under that size is
-    #: latency-bound and its bytes hardly relieve a boundary, while every
-    #: such object is a cut candidate, a dispatch, and an event.
-    minimum_object_bytes_evict_eligible: int = 0
+    #: the last access, a terminal writeback when modified. The default is
+    #: 1 MiB, because a copy under that size is latency-bound and its bytes
+    #: hardly relieve a boundary, while every such object is a cut
+    #: candidate, a dispatch, and an event. Zero makes every object
+    #: eligible, which is what a caller planning byte-sized objects wants.
+    minimum_object_bytes_evict_eligible: int = 1 << 20
+
+    def to_dict(self) -> dict[str, Any]:
+        """Every option, in declaration order, as JSON-compatible values.
+
+        Derived from the dataclass rather than a written-out list, so an
+        option added later is carried by this and by everything built on
+        it without a second edit.
+        """
+
+        record: dict[str, Any] = {}
+        for option in fields(self):
+            value = getattr(self, option.name)
+            if isinstance(value, Enum):
+                value = value.value
+            elif isinstance(value, tuple):
+                value = list(value)
+            record[option.name] = value
+        return record
+
+    @classmethod
+    def from_dict(cls, record: Mapping[str, Any]) -> PressureFitOptions:
+        """Rebuild what :meth:`to_dict` wrote. Every option must be present.
+
+        A record missing an option is a record from a different version of
+        this type, and reading it as though the absent options held their
+        current defaults is how a replay silently plans a different
+        problem than the run it replays.
+        """
+
+        missing = sorted(
+            option.name for option in fields(cls) if option.name not in record
+        )
+        if missing:
+            raise ValueError(f"options omit {', '.join(missing)}")
+        values: dict[str, Any] = {}
+        for option in fields(cls):
+            value = record[option.name]
+            if isinstance(option.default, Enum):
+                value = type(option.default)(value)
+            elif isinstance(option.default, tuple):
+                value = tuple(value)
+            values[option.name] = value
+        return cls(**values)
 
     def __post_init__(self) -> None:
         if self.capacity_refinement_bytes < 0:
