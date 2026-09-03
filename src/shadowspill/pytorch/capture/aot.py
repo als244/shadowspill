@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 import torch
@@ -145,6 +145,17 @@ class _ObjectiveModule(nn.Module):
         return (loss, *tensor_metrics)
 
 
+def _flatten_inputs(
+    exported: torch.export.ExportedProgram, inputs: Sequence[Any]
+) -> tuple[object, ...]:
+    flatten = getattr(exported, "_graph_module_flat_inputs", None)
+    if not callable(flatten):
+        raise CaptureError(
+            "PyTorch 2.13 ExportedProgram flat-input adapter is unavailable"
+        )
+    return tuple(flatten(tuple(inputs), {}))
+
+
 def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
     try:
         with quiet_leaf_spec_deprecation():
@@ -152,12 +163,7 @@ def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
             exported = exported.run_decompositions({})
     except BaseException as exc:
         raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
-    flatten = getattr(exported, "_graph_module_flat_inputs", None)
-    if not callable(flatten):
-        raise CaptureError(
-            "PyTorch 2.13 ExportedProgram flat-input adapter is unavailable"
-        )
-    flat_inputs = tuple(flatten(tuple(inputs), {}))
+    flat_inputs = _flatten_inputs(exported, inputs)
     user_outputs = tuple(
         index
         for index, spec in enumerate(exported.graph_signature.output_specs)
@@ -268,6 +274,22 @@ def capture_training_objective(
         capture_module=capture_module,
         objective_schema=schema,
     )
+
+
+def rebind_training_objective(
+    capture: TrainingObjectiveCapture, microbatch: Sequence[Any]
+) -> TrainingObjectiveCapture:
+    """The same exported objective bound to another position's example inputs.
+
+    Positions with one input structure share the export; only the flattened
+    example arguments differ, and those are cheap.
+    """
+
+    exported = replace(
+        capture.exported,
+        flat_inputs=_flatten_inputs(capture.exported.exported_program, microbatch),
+    )
+    return replace(capture, exported=exported)
 
 
 def inference_artifact(capture: ExportCapture) -> GraphArtifact:
@@ -790,10 +812,7 @@ def accumulate_gradient_outputs(
         explicit_mutations=tuple(mutations),
         input_provenance=(
             *backward.input_provenance,
-            *(
-                TaskInputProvenance(role=TaskInputRole.GRADIENT)
-                for _ in leaf_indices
-            ),
+            *(TaskInputProvenance(role=TaskInputRole.GRADIENT) for _ in leaf_indices),
         ),
     )
 
