@@ -40,3 +40,6 @@ compile_commands.json
 /benchmarking/planning_eval/results
 *.nsys-rep
 *.sqlite
+/benchmarking/quickstart_store/
+/benchmarking/quickstart_plots/
+/benchmarking/quickstart_reports/
