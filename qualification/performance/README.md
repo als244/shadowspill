@@ -33,6 +33,10 @@ copy, and the resulting artifact records that checkpoint qualification was
 skipped. A single-cell `run` invocation still checkpoints and restores by
 default; checkpoint/replay release coverage lives in the numerical matrix.
 
+`--plan-only` plans every cell and writes its PressureFit fixture without
+running a step, which is how placement-bearing fixtures are produced for
+replay.
+
 `--spill-budget-gib` changes the configured runtime spill-pool capacity.
 `--planning-spill-budget-gib` may set a smaller budget for PressureFit without
 shrinking that physical pool. The planning budget is rejected immediately if

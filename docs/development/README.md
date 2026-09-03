@@ -11,5 +11,5 @@ and release qualification consume product APIs and do not contain alternate
 implementations.
 
 Public documentation is normative and describes only shipped behavior.
-Root-cause narratives belong under `docs/investigations/`; active engineering
-plans and logs belong under the ignored internal documentation tree.
+Root-cause narratives, engineering plans, and logs belong under the ignored
+internal documentation tree, `docs/internal/`.
