@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationAdmission, SimulationResult
 
 from ..admission_replay import AdmissionReplayPurpose
@@ -112,6 +113,9 @@ class FixedPhysicalLayout:
     facts_digest: str
     pool_capacity_bytes: int
     fixed_slice_bytes: int
+    #: The packed slice at the end of the fixed slice holding the objects the
+    #: planner kept resident; zero when it kept none.
+    resident_slice_bytes: int
     dynamic_reserve_bytes: int
     scratch_reserve_bytes: int
     required_bytes: int
@@ -148,16 +152,15 @@ class FixedPhysicalLayout:
             "placements": [item.to_dict() for item in self.placements],
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "fixed_slice_bytes": self.fixed_slice_bytes,
+            "resident_slice_bytes": self.resident_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
             "scratch_reserve_bytes": self.scratch_reserve_bytes,
-            "dynamic_lifetimes": [
-                item.to_dict() for item in self.dynamic_lifetimes
-            ],
+            "dynamic_lifetimes": [item.to_dict() for item in self.dynamic_lifetimes],
             "program_digest": self.program_digest,
             "required_bytes": self.required_bytes,
             "reuse_dependencies": [item.to_dict() for item in self.reuse_dependencies],
             "schedule_digest": self.schedule_digest,
-            "schema": "shadowspill.fixed_physical_layout/v3",
+            "schema": artifact_schema("fixed_physical_layout"),
             "task_allocation_leases": [
                 {
                     "allocation_ordinal": ordinal,

@@ -3,13 +3,16 @@
 ShadowSpill exposes content-addressed JSON artifacts at distinct planning
 boundaries. They are canonical, schema-tagged, validated on load, and designed
 for corpus collection, budget sweeps, inspection, and reproducible planning.
+Every schema below carries the one artifact version
+(`shadowspill.schema.ARTIFACT_VERSION`, see `artifact-store.md`), so a change
+to any stored structure moves them all together.
 
 | Python value | Schema | Boundary |
 |---|---|---|
-| `Program` | `shadowspill.program/v3` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
+| `Program` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
 | `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, admission topology, and search options. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
-| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v3` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
+| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
 
 The ordinary reusable workflow is:
 
@@ -54,7 +57,7 @@ An abridged `Program` has this shape:
 
 ```json
 {
-  "schema": "shadowspill.program/v3",
+  "schema": "shadowspill.program/v1",
   "devices": [
     {"device_id": "device_0", "process_id": "process_0", "kind": "accelerator", "index": 0}
   ],
@@ -153,7 +156,7 @@ shadowspill.pressurefit_program/v1
 ├── role
 ├── program
 │   ├── digest
-│   └── value                 complete shadowspill.program/v3
+│   └── value                 complete shadowspill.program/v1
 ├── residency
 │   ├── initial
 │   └── final
@@ -170,7 +173,7 @@ shadowspill.pressurefit_program/v1
 | `residency.initial`, `residency.final` | Required alias-group location/version at the phase boundaries. |
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
 | `simulation_config` | Logical device object capacity, spill capacity, directional bandwidth, and latency. |
-| `admission_facts` | Current-schema (`shadowspill.admission_facts/v3`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
+| `admission_facts` | Current-schema (`shadowspill.admission_facts/v1`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
 | `pressurefit_options` | Bounded search controls and repair limits. |
 
 Residency entries identify `alias_group_id` and `location` (`device` or `host`,
@@ -233,12 +236,10 @@ runtime calibration matrix captured during Program construction.
 
 ## AnnotatedProgramPlan format
 
-An annotated plan is one admitted planning point. `from_json()` also reads
-`shadowspill.annotated_program_plan/v2`, which differs only in spelling
-`selection.from_store` as `selection.cache_hit`:
+An annotated plan is one admitted planning point:
 
 ```text
-shadowspill.annotated_program_plan/v3
+shadowspill.annotated_program_plan/v1
 ├── source_program
 ├── memory_budgets
 ├── transfer_bandwidths
@@ -272,16 +273,17 @@ shadowspill.annotated_program_plan/v3
 
 | Key | Meaning |
 |---|---|
-| `from_store` | Whether the selected plan was read back from the plan store rather than planned during this call. v2 spelled this `cache_hit`; both are read. |
+| `from_store` | Whether the selected plan was read back from the plan store rather than planned during this call. |
 | `diagnostics` | Full recomputation-problem and candidate-policy search evidence. |
 | `initial_residency`, `final_residency` | Selected boundary state. |
 | `options` | Effective `PressureFitOptions`. |
+| `resident_slice` | The slice reserved for the objects `minimum_object_bytes_evict_eligible` kept resident: its `bytes`, the sum of the static homes their leases take, and the `aliases` it holds; empty when it kept none. |
 | `schedule` | `shadowspill.memory_schedule/v1` with ordered actions. |
 | `selections` | One chosen option per recomputation group. |
 
 The schedule contains `initial_residency`, ordered `actions`, and
-`final_residency`. An action records its kind (`release`, `offload`, or
-`prefetch`), trigger task, and alias group. Array order is the directive order
+`final_residency`. An action records its kind (`release`, `evict`, or
+`fetch`), trigger task, and alias group. Array order is the directive order
 at equal or increasing trigger boundaries; the alias group identifies its
 device through the Program.
 
@@ -311,6 +313,7 @@ did, alongside its makespan:
 | `placements_attempted` | Layouts measured. Only a plan that could still win is measured, so this counts plans that were worth the cost. |
 | `placements_admitted` | Measured layouts that fit the pool. The candidate answers with the best of these. |
 | `capacity_refinements` | Times the candidate gave capacity back because its layout did not fit, and planned again. |
+| `repairs_at_best` | Repairs spent when the plan the candidate answers with was placed; `null` when it placed none. |
 
 A candidate whose status is `infeasible` with failure kind `unplaceable`
 reached no plan that fit, so it has no answer regardless of what it
@@ -392,7 +395,7 @@ trigger/completion deltas, and cross-lane memory-reuse dependencies.
 | Key | Meaning |
 |---|---|
 | `effective_facts` | Capacity-adjusted topology used by the accepted attempt. |
-| `fixed_layout` | Complete `shadowspill.fixed_physical_layout/v3` certificate. |
+| `fixed_layout` | Complete `shadowspill.fixed_physical_layout/v1` certificate. |
 | `fixed_layout_digest` | Integrity identity of that certificate. |
 | `attempts` | Ordered capacity-refinement trials and optional PressureFit diagnostics. |
 

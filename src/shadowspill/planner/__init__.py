@@ -28,6 +28,7 @@ from .result import (
     PressureFitInfeasibleError,
     PressureFitResult,
     PressureFitSearchExhaustedError,
+    ResidentSlice,
 )
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "RecomputationChoiceDiagnostic",
     "RecomputationProblemDiagnostics",
     "ReductionStep",
+    "ResidentSlice",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

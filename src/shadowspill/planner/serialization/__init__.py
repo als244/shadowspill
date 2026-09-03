@@ -20,6 +20,7 @@ from .pressurefit import (
     _options_from_value,
     _options_to_dict,
     _pressurefit_diagnostics_from_value,
+    _resident_slice_from_value,
 )
 from .simulation_admission import _simulation_admission_from_value
 from .simulation_config import (
@@ -41,6 +42,7 @@ __all__ = [
     "_options_to_dict",
     "_pair",
     "_pressurefit_diagnostics_from_value",
+    "_resident_slice_from_value",
     "_simulation_admission_from_value",
     "_simulation_config_from_value",
     "_simulation_config_to_dict",

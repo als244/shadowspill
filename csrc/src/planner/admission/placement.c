@@ -417,6 +417,88 @@ static void placer_destroy(Placer *placer)
     memset(placer, 0, sizeof(*placer));
 }
 
+/* One region: every lease placed from offset zero, offsets in input order. */
+static ShadowSpillStatus place_region(
+    const ShadowSpillLeaseLifetime *lifetimes,
+    uint32_t count,
+    uint64_t *offsets,
+    uint64_t *required_bytes
+)
+{
+    *required_bytes = 0U;
+    if (count == 0U) {
+        return SHADOWSPILL_STATUS_OK;
+    }
+    const ShadowSpillPlacementProblem problem = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .lifetime_count = count,
+        .lifetimes = lifetimes,
+    };
+    Placer placer;
+    memset(&placer, 0, sizeof(placer));
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    if (time_axis_build(&problem, &placer.axis) != 0 ||
+        occupancy_index_create(&placer.index, placer.axis.time_count) != 0) {
+        goto done;
+    }
+    placer.order = placing_order(&problem, &placer.axis);
+    if (placer.order == NULL) {
+        goto done;
+    }
+
+    const uint32_t length = placer.index.length;
+    for (uint32_t position = 0U; position < count; ++position) {
+        const uint32_t lifetime = placer.order[position].lifetime;
+        const uint32_t start = placer.axis.start_rank[lifetime];
+        const uint32_t end = placer.axis.end_rank[lifetime];
+        const ShadowSpillLeaseLifetime record = lifetimes[lifetime];
+
+        placer.found.count = 0U;
+        if (occupancy_index_collect(
+                &placer.index, 1U, 0U, length, start, end, &placer.found) != 0 ||
+            occupancy_reserve(&placer.scratch, placer.found.count) != 0) {
+            goto done;
+        }
+        sort_by_address(placer.found.data, placer.found.count, placer.scratch.data);
+
+        const uint64_t offset = lowest_fit(
+            placer.found.data, placer.found.count, record.bytes, record.alignment
+        );
+        offsets[lifetime] = offset;
+        if (offset + record.bytes > *required_bytes) {
+            *required_bytes = offset + record.bytes;
+        }
+        if (occupancy_index_insert(
+                &placer.index, 1U, 0U, length, start, end, offset, record.bytes
+            ) != 0) {
+            goto done;
+        }
+    }
+    status = SHADOWSPILL_STATUS_OK;
+
+done:
+    placer_destroy(&placer);
+    return status;
+}
+
+/* The leases placement is asked for, copied out contiguously so the region
+ * placer can run on them, with where each came from. */
+static uint32_t gather(
+    const ShadowSpillPlacementProblem *problem,
+    ShadowSpillLeaseLifetime *records,
+    uint32_t *sources
+)
+{
+    uint32_t count = 0U;
+    for (uint32_t index = 0U; index < problem->lifetime_count; ++index) {
+        if (problem->excluded[index] == 0U) {
+            records[count] = problem->lifetimes[index];
+            sources[count++] = index;
+        }
+    }
+    return count;
+}
+
 ShadowSpillStatus shadowspill_place_lifetimes(
     const ShadowSpillPlacementProblem *problem,
     ShadowSpillPlacementResult *result
@@ -434,50 +516,32 @@ ShadowSpillStatus shadowspill_place_lifetimes(
     if (problem->lifetimes == NULL || result->offsets == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-
-    Placer placer;
-    memset(&placer, 0, sizeof(placer));
-    ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    if (time_axis_build(problem, &placer.axis) != 0 ||
-        occupancy_index_create(&placer.index, placer.axis.time_count) != 0) {
-        goto done;
-    }
-    placer.order = placing_order(problem, &placer.axis);
-    if (placer.order == NULL) {
-        goto done;
-    }
-
-    const uint32_t length = placer.index.length;
-    for (uint32_t position = 0U; position < count; ++position) {
-        const uint32_t lifetime = placer.order[position].lifetime;
-        const uint32_t start = placer.axis.start_rank[lifetime];
-        const uint32_t end = placer.axis.end_rank[lifetime];
-        const ShadowSpillLeaseLifetime record = problem->lifetimes[lifetime];
-
-        placer.found.count = 0U;
-        if (occupancy_index_collect(
-                &placer.index, 1U, 0U, length, start, end, &placer.found) != 0 ||
-            occupancy_reserve(&placer.scratch, placer.found.count) != 0) {
-            goto done;
-        }
-        sort_by_address(placer.found.data, placer.found.count, placer.scratch.data);
-
-        const uint64_t offset = lowest_fit(
-            placer.found.data, placer.found.count, record.bytes, record.alignment
+    if (problem->excluded == NULL) {
+        return place_region(
+            problem->lifetimes, count, result->offsets, &result->required_bytes
         );
-        result->offsets[lifetime] = offset;
-        if (offset + record.bytes > result->required_bytes) {
-            result->required_bytes = offset + record.bytes;
-        }
-        if (occupancy_index_insert(
-                &placer.index, 1U, 0U, length, start, end, offset, record.bytes
-            ) != 0) {
-            goto done;
+    }
+
+    /* Placement of the leases not left out, written back where they came
+     * from; an excluded lease's offset is not touched. */
+    ShadowSpillLeaseLifetime *records = malloc((size_t)count * sizeof(*records));
+    uint32_t *sources = malloc((size_t)count * sizeof(*sources));
+    uint64_t *offsets = malloc((size_t)count * sizeof(*offsets));
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    if (records == NULL || sources == NULL || offsets == NULL) {
+        goto done;
+    }
+    const uint32_t placed = gather(problem, records, sources);
+    status = place_region(records, placed, offsets, &result->required_bytes);
+    if (status == SHADOWSPILL_STATUS_OK) {
+        for (uint32_t index = 0U; index < placed; ++index) {
+            result->offsets[sources[index]] = offsets[index];
         }
     }
-    status = SHADOWSPILL_STATUS_OK;
 
 done:
-    placer_destroy(&placer);
+    free(records);
+    free(sources);
+    free(offsets);
     return status;
 }

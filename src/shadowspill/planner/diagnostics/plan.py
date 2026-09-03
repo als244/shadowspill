@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from shadowspill.ir import (
@@ -17,6 +17,7 @@ from shadowspill.ir import (
 from shadowspill.planner.diagnostics import PressureFitDiagnostics
 from shadowspill.planner.result import PressureFitResult
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
+from shadowspill.schema import artifact_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,6 +610,7 @@ class PlanPhysicalLayout:
     effective_object_capacity_bytes: int
     object_capacity_reduction_bytes: int
     fixed_slice_bytes: int
+    resident_slice_bytes: int
     dynamic_reserve_bytes: int
     scratch_reserve_bytes: int
     required_bytes: int
@@ -633,6 +635,7 @@ class PlanPhysicalLayout:
             "effective_object_capacity_bytes": self.effective_object_capacity_bytes,
             "object_capacity_reduction_bytes": (self.object_capacity_reduction_bytes),
             "fixed_slice_bytes": self.fixed_slice_bytes,
+            "resident_slice_bytes": self.resident_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
             "scratch_reserve_bytes": self.scratch_reserve_bytes,
             "required_bytes": self.required_bytes,
@@ -669,8 +672,8 @@ class PlanDiagnostics:
     aot_unique_stage_contracts: int
     aot_graph_pair_cache_hits: int
     aot_graph_pair_cache_misses: int
-    recomputation_cache_hits: int
-    recomputation_cache_misses: int
+    planned_program_cache_hits: int
+    planned_program_cache_misses: int
     task_stage_map: tuple[PlanTaskStage, ...] = ()
     unique_stages: tuple[PlanUniqueStage, ...] = ()
     compiler_phase_timings_ns: tuple[tuple[str, int], ...] = ()
@@ -688,7 +691,7 @@ class PlanDiagnostics:
     def as_dict(self) -> dict[str, object]:
         selected_tasks = self.tasks
         return {
-            "schema": "shadowspill.plan_diagnostics/v1",
+            "schema": artifact_schema("plan_diagnostics"),
             "phases": [item.as_dict() for item in self.phases],
             "measured_wall_time_ns": self.measured_wall_time_ns,
             "unattributed_overhead_ns": self.unattributed_overhead_ns,
@@ -723,8 +726,8 @@ class PlanDiagnostics:
                 "aot_graph_pair_cache_misses": self.aot_graph_pair_cache_misses,
             },
             "recomputation": {
-                "cache_hits": self.recomputation_cache_hits,
-                "cache_misses": self.recomputation_cache_misses,
+                "cache_hits": self.planned_program_cache_hits,
+                "cache_misses": self.planned_program_cache_misses,
             },
             "pressurefit": [
                 {
@@ -774,6 +777,147 @@ class PlanDiagnostics:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanSummary:
+    """What the selected plan promises, in one place.
+
+    Only quantities that exist nowhere else on the report live here;
+    budgets, transfer totals, and calibration stay on their canonical
+    fields and profiles. The four time parts identify exactly:
+    ``simulated_step_seconds == unconstrained_step_seconds +
+    recomputation_overhead_seconds + idle_seconds +
+    terminal_writeback_seconds``. The unconstrained step charges every
+    recomputation group its cheapest option and no waiting at all — the
+    compute floor the geometry admits. A group counts as a recomputation
+    selection when the option the search chose costs strictly more compute
+    than that group's cheapest, whatever the options are named.
+    """
+
+    simulated_step_seconds: float
+    unconstrained_step_seconds: float
+    recomputation_overhead_seconds: float
+    idle_seconds: float
+    terminal_writeback_seconds: float
+    recompute_selection_count: int
+    selection_count: int
+    #: Scheduled transfer traffic, summed from the simulation's transfer
+    #: intervals, and the per-direction bandwidths the simulator planned
+    #: against, from the result's simulation config. Solo calibration lives
+    #: on the report's transfer profiles; a result does not know it.
+    transfer_bytes_fetched: int = 0
+    transfer_bytes_evicted: int = 0
+    fetch_bandwidth_bytes_per_second: int = 0
+    evict_bandwidth_bytes_per_second: int = 0
+    #: Wall time each frontend planning phase spent, in seconds, in phase
+    #: order. A view over the report's ``phase_timings_ns``, which stays the
+    #: stored record.
+    planning_phase_seconds: Mapping[str, float] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    #: The candidate whose plan was selected: its residency strategy,
+    #: fetch rule, coalescing, and the repairs it had spent when it
+    #: placed that plan (``repairs_at_best``).
+    selected_candidate: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    @property
+    def recompute_selection_fraction(self) -> float:
+        if self.selection_count == 0:
+            return 0.0
+        return self.recompute_selection_count / self.selection_count
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "simulated_step_seconds": self.simulated_step_seconds,
+            "unconstrained_step_seconds": self.unconstrained_step_seconds,
+            "recomputation_overhead_seconds": self.recomputation_overhead_seconds,
+            "idle_seconds": self.idle_seconds,
+            "terminal_writeback_seconds": self.terminal_writeback_seconds,
+            "recompute_selection_count": self.recompute_selection_count,
+            "selection_count": self.selection_count,
+            "recompute_selection_fraction": self.recompute_selection_fraction,
+            "transfer_bytes_fetched": self.transfer_bytes_fetched,
+            "transfer_bytes_evicted": self.transfer_bytes_evicted,
+            "fetch_bandwidth_bytes_per_second": (self.fetch_bandwidth_bytes_per_second),
+            "evict_bandwidth_bytes_per_second": (self.evict_bandwidth_bytes_per_second),
+            "planning_phase_seconds": dict(self.planning_phase_seconds),
+            "selected_candidate": dict(self.selected_candidate),
+        }
+
+
+def summarize_selected_plan(
+    result: PressureFitResult,
+    *,
+    phase_timings_ns: tuple[tuple[str, int], ...] = (),
+) -> PlanSummary:
+    """Derive one selected plan's :class:`PlanSummary` from its result."""
+
+    program = result.program
+    runtime_ns = {item.profile_id: item.runtime_ns for item in program.profiles}
+    task_ns = {item.task_id: runtime_ns[item.profile_id] for item in program.tasks}
+    selected_option = {item.group_id: item.option_id for item in result.selections}
+    variant_tasks: set[str] = set()
+    floor_ns = 0
+    recompute_selections = 0
+    for group in program.recomputation_groups:
+        costs: dict[str, int] = {}
+        for option in group.options:
+            variant_tasks.update(option.active_task_ids)
+            costs[option.option_id] = sum(
+                task_ns[task_id] for task_id in option.active_task_ids
+            )
+        cheapest = min(costs.values())
+        floor_ns += cheapest
+        if costs[selected_option[group.group_id]] > cheapest:
+            recompute_selections += 1
+    floor_ns += sum(
+        task_ns[item.task_id]
+        for item in program.tasks
+        if item.task_id not in variant_tasks
+    )
+    selected_ns = sum(
+        task_ns[item.task_id] for item in program.selected_tasks(result.selections)
+    )
+    span_ns = max(item.end_ns for item in result.simulation.task_intervals)
+    makespan_ns = result.simulation.makespan_ns
+    fetched = 0
+    evicted = 0
+    for interval in result.simulation.transfer_intervals:
+        if interval.direction.value == "fetch":
+            fetched += interval.bytes
+        else:
+            evicted += interval.bytes
+    device = result.simulation_config.devices[0]
+    selected: dict[str, object] = {}
+    for problem in result.diagnostics.recomputation_problems:
+        for candidate in problem.candidate_evaluations:
+            if candidate.candidate_id == result.diagnostics.selected_candidate_id:
+                selected = {
+                    "residency_strategy": candidate.residency_strategy,
+                    "fetch_rule": candidate.fetch_rule,
+                    "coalesced": candidate.coalesced,
+                    "repairs_at_best": candidate.repairs_at_best,
+                }
+    return PlanSummary(
+        simulated_step_seconds=makespan_ns / 1e9,
+        unconstrained_step_seconds=floor_ns / 1e9,
+        recomputation_overhead_seconds=(selected_ns - floor_ns) / 1e9,
+        idle_seconds=(span_ns - selected_ns) / 1e9,
+        terminal_writeback_seconds=(makespan_ns - span_ns) / 1e9,
+        recompute_selection_count=recompute_selections,
+        selection_count=len(result.selections),
+        transfer_bytes_fetched=fetched,
+        transfer_bytes_evicted=evicted,
+        fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,
+        evict_bandwidth_bytes_per_second=device.evict_bandwidth_bytes_per_second,
+        planning_phase_seconds=MappingProxyType(
+            {name: duration / 1e9 for name, duration in phase_timings_ns}
+        ),
+        selected_candidate=MappingProxyType(selected),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class PlanReport:
     """Immutable planning, profiling, schedule, and physical-admission evidence."""
 
@@ -801,8 +945,8 @@ class PlanReport:
     transfer_capabilities: TransferCapabilities
     optimizer_ordering: str | None = None
     initial_execution_plan: ExecutionPlan | None = None
-    recomputation_cache_hits: int = 0
-    recomputation_cache_misses: int = 0
+    planned_program_cache_hits: int = 0
+    planned_program_cache_misses: int = 0
     fixed_slab_bytes: int = 0
     captured_stage_count: int = 0
     aot_unique_stage_contracts: int = 0
@@ -858,6 +1002,14 @@ class PlanReport:
     @property
     def predicted_makespan_ns(self) -> int:
         return self.execution_plan.prediction.makespan_ns
+
+    @property
+    def summary(self) -> PlanSummary:
+        """The selected recurrent plan's promise as one derived object."""
+
+        return summarize_selected_plan(
+            self.pressurefit_result, phase_timings_ns=self.phase_timings_ns
+        )
 
     @property
     def shared_aliases(self) -> tuple[AliasGroupSpec, ...]:

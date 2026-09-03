@@ -206,6 +206,7 @@ def plan_program(
             tuple(result for _problem, result in valid),
             admission,
             shared,
+            placement=placement,
         )
     finally:
         if owned is not None:
@@ -312,7 +313,6 @@ def pressurefit_program(
     model- and runtime-independent and may be repeated for a budget/bandwidth
     frontier without capture, compilation, or profiling.
     """
-
 
     from .selection import select_program
 

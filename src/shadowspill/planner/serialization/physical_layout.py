@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from shadowspill.schema import artifact_schema
+
 from .common import (
     _integer,
     _list,
@@ -28,7 +30,7 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
     )
 
     data = _mapping(value, path)
-    if data.get("schema") != "shadowspill.fixed_physical_layout/v3":
+    if data.get("schema") != artifact_schema("fixed_physical_layout"):
         raise ValueError(f"{path}.schema: unsupported schema")
     placements = _list(data.get("placements"), f"{path}.placements")
     dependencies = _list(data.get("reuse_dependencies"), f"{path}.reuse_dependencies")
@@ -78,6 +80,9 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
         ),
         fixed_slice_bytes=_integer(
             data.get("fixed_slice_bytes"), f"{path}.fixed_slice_bytes"
+        ),
+        resident_slice_bytes=_integer(
+            data.get("resident_slice_bytes"), f"{path}.resident_slice_bytes"
         ),
         dynamic_reserve_bytes=_integer(
             data.get("dynamic_reserve_bytes"), f"{path}.dynamic_reserve_bytes"

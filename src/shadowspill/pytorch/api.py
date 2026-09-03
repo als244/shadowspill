@@ -100,6 +100,7 @@ def plan_forward(
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
+    minimum_object_bytes_evict_eligible: int = 1 << 20,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     verbose: bool = True,
@@ -138,6 +139,12 @@ def plan_forward(
     ``dynamic_scratch_reserve_bytes`` optionally raises the physical reserve
     for bounded allocation-path insertions above the automatically profiled
     requirement. It never reduces the measured reserve.
+
+    ``minimum_object_bytes_evict_eligible`` keeps every object smaller than
+    it resident from its first to its last access instead of letting the
+    planner evict and fetch it mid-step; its opening fetch, release, and
+    terminal writeback are unchanged. The default is 1 MiB; zero makes every
+    object eligible.
 
     ``allocation_probe_seeds`` controls independent randomized activation
     probes per structural contract. ``allocation_probe_repetitions`` repeats each
@@ -188,6 +195,9 @@ def plan_forward(
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
                 shared_outputs=shared_outputs,
+                minimum_object_bytes_evict_eligible=(
+                    minimum_object_bytes_evict_eligible
+                ),
             )
     except BaseException as error:
         _surface_failed_plan(
@@ -210,6 +220,7 @@ def plan_step(
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
+    minimum_object_bytes_evict_eligible: int = 1 << 20,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
@@ -241,8 +252,9 @@ def plan_step(
     planning. A later graph-pair phase independently shares differentiation
     graph pairs across structurally equivalent stage occurrences.
 
-    ``dynamic_scratch_reserve_bytes`` has the same minimum-reserve semantics
-    as :func:`plan_forward`.
+    ``dynamic_scratch_reserve_bytes`` and
+    ``minimum_object_bytes_evict_eligible`` have the same semantics and
+    defaults as :func:`plan_forward`.
 
     Allocation-path probe settings have the same semantics and defaults as
     :func:`plan_forward`.
@@ -287,6 +299,9 @@ def plan_step(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                minimum_object_bytes_evict_eligible=(
+                    minimum_object_bytes_evict_eligible
+                ),
             )
     except BaseException as error:
         _surface_failed_plan(

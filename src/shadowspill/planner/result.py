@@ -69,6 +69,32 @@ class PressureFitSearchExhaustedError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class ResidentSlice:
+    """The slice reserved for the objects the planner kept resident.
+
+    Objects under `minimum_object_bytes_evict_eligible` are never cut, so
+    every lease of theirs gets a static home in a slice at the end of the
+    fixed layout rather than a place among the leases that come and go.
+    `bytes` is what the planner reserved for it -- the sum of those homes,
+    sized before the search and taken out of the capacity the search plans
+    against -- and `aliases` names the alias groups whose leases it holds.
+    An empty slice has no bytes and no aliases.
+    """
+
+    bytes: int
+    aliases: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.bytes < 0:
+            raise ValueError("resident slice bytes must be non-negative")
+        if self.aliases != tuple(sorted(set(self.aliases))):
+            raise ValueError("resident slice aliases must be sorted and distinct")
+
+    def to_dict(self) -> dict[str, object]:
+        return {"bytes": self.bytes, "aliases": list(self.aliases)}
+
+
+@dataclass(frozen=True, slots=True)
 class PressureFitResult:
     """Selected logical schedule plus exact simulator evidence."""
 
@@ -81,7 +107,9 @@ class PressureFitResult:
     selections: tuple[RecomputationSelection, ...]
     simulation: SimulationResult
     diagnostics: PressureFitDiagnostics
+    resident_slice: ResidentSlice = ResidentSlice(0, ())
     admission_facts: AdmissionFacts | None = None
+    placement_facts: AdmissionFacts | None = None
 
     def to_execution_plan(
         self,
@@ -145,4 +173,5 @@ __all__ = [
     "PressureFitInfeasibleError",
     "PressureFitResult",
     "PressureFitSearchExhaustedError",
+    "ResidentSlice",
 ]
