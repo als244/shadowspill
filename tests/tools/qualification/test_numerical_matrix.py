@@ -58,9 +58,10 @@ def test_default_gate_is_five_cells_with_olmoe_under_pressure() -> None:
 
 
 def test_default_gate_reads_the_repo_local_reference_set() -> None:
-    assert Path(
-        "qualification/results/references/approximately_1b"
-    ) == DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY
+    assert (
+        Path("qualification/results/references/approximately_1b")
+        == DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY
+    )
 
 
 def test_budget_override_rejects_unknown_family() -> None:
@@ -87,11 +88,14 @@ def test_case_identity_covers_model_and_data_configuration() -> None:
 def test_canonical_reference_path_is_grouped_by_model_and_provider(
     tmp_path: Path,
 ) -> None:
-    assert canonical_reference_path(
-        tmp_path,
-        model_name="qwen35",
-        implementation="mlops",
-    ) == tmp_path / "qwen35" / "mlops" / "reference.pt"
+    assert (
+        canonical_reference_path(
+            tmp_path,
+            model_name="qwen35",
+            implementation="mlops",
+        )
+        == tmp_path / "qwen35" / "mlops" / "reference.pt"
+    )
 
 
 def test_reference_artifact_requires_state_and_exact_inputs(tmp_path: Path) -> None:

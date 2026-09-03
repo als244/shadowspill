@@ -11,6 +11,7 @@ from shadowspill.planner import (
     PressureFitResult,
     pressurefit,
 )
+from shadowspill.schema import artifact_schema
 from tests.shadowspill.planner._examples import (
     config,
     exact_capacity_program,
@@ -42,7 +43,7 @@ def _result() -> PressureFitResult:
         config=config(),
         options=PressureFitOptions(
             residency_strategies=("relaxed-stall",),
-            prefetch_rules=("latest-safe",),
+            fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
         ),
     )
@@ -54,7 +55,7 @@ def test_fixture_contains_complete_request_and_expected_result() -> None:
     fixture = pressurefit_fixture(result, role="recurrent")
 
     assert fixture["request"]["program"] == result.program.to_dict()  # type: ignore[index]
-    assert fixture["request"]["options"]["prefetch_rules"] == (  # type: ignore[index]
+    assert fixture["request"]["options"]["fetch_rules"] == (  # type: ignore[index]
         "latest-safe",
     )
     assert fixture["expected"]["schedule"] == result.schedule.to_dict()  # type: ignore[index]
@@ -76,7 +77,7 @@ def test_fixture_replays_the_physical_pressurefit_call_boundary(
         config=simulation,
         options=PressureFitOptions(
             residency_strategies=("tight-stall",),
-            prefetch_rules=("latest-safe",),
+            fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
             workers=1,
         ),
@@ -85,8 +86,9 @@ def test_fixture_replays_the_physical_pressurefit_call_boundary(
 
     fixture = pressurefit_fixture(result, role="recurrent")
 
-    assert fixture["schema"] == "shadowspill.pressurefit_fixture/v3"
+    assert fixture["schema"] == artifact_schema("pressurefit_fixture")
     assert fixture["request"]["admission"] == admission.to_dict()  # type: ignore[index]
+    assert fixture["request"]["placement"] is None  # type: ignore[index]
     write_pressurefit_fixtures(results=(result,), directory=tmp_path)
     replay = _run_suite((tmp_path / "recurrent.json",), repeats=1)
     assert replay["outputs_match"] is True

@@ -23,6 +23,8 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
+from shadowspill.pytorch.accelerator import DEVICE_TYPE
+from shadowspill.schema import artifact_schema
 from tools.qualification.model_state import import_case_model, release_case_model
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
@@ -39,7 +41,6 @@ from .pressurefit_fixtures import write_pressurefit_fixtures
 from .references import (
     DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
     REFERENCE_SCHEMA,
-    SUPPORTED_REFERENCE_SCHEMAS,
     canonical_reference_path,
     reference_artifact_exists,
     reference_inputs_path,
@@ -170,9 +171,12 @@ def _optimizer_steps(checkpoint: object) -> dict[str, int]:
     return result
 
 
-def _cuda_microbatches(values: list[list[Any]]) -> list[list[Any]]:
+def _device_microbatches(values: list[list[Any]]) -> list[list[Any]]:
     return [
-        [item.cuda() if isinstance(item, torch.Tensor) else item for item in microbatch]
+        [
+            item.to(DEVICE_TYPE) if isinstance(item, torch.Tensor) else item
+            for item in microbatch
+        ]
         for microbatch in values
     ]
 
@@ -324,8 +328,8 @@ def _reference_worker(
         case_factory=case_factory,
         case_options=case_options,
     )
-    model = case.model.cuda()
-    microbatches = _cuda_microbatches(case.microbatches)
+    model = case.model.to(DEVICE_TYPE)
+    microbatches = _device_microbatches(case.microbatches)
     optimizer = case.optimizer(model.parameters())
 
     def reference_objective(*microbatch: Any) -> torch.Tensor:
@@ -562,7 +566,6 @@ def _planned_worker(
         losses: list[list[float]] = []
         timings: list[float] = []
         compute_timings: list[float] = []
-        execution_timings: list[dict[str, object]] = []
         step_diagnostics: list[dict[str, object]] = []
         step_summaries: list[dict[str, object]] = []
         checkpoint: Mapping[str, object] | None = None
@@ -573,13 +576,9 @@ def _planned_worker(
             if step_result.diagnostics is None:
                 raise AssertionError("runtime_trace=True omitted execution diagnostics")
             diagnostics = step_result.diagnostics.result()
-            execution_timing = diagnostics.timing
             physical_statuses.append(check_physical_budget())
             timings.append(time.perf_counter() - started)
-            compute_timings.append(execution_timing.compute_seconds)
-            execution_timings.append(
-                execution_timing.as_dict(include_tasks=detailed_artifacts)
-            )
+            compute_timings.append(diagnostics.summary.real_selected_span_seconds)
             step_summaries.append(diagnostics.summary.as_dict())
             if detailed_artifacts:
                 step_diagnostics.append(diagnostics.as_dict())
@@ -633,7 +632,7 @@ def _planned_worker(
 
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)
     if (
-        reference.get("schema") not in SUPPORTED_REFERENCE_SCHEMAS
+        reference.get("schema") != REFERENCE_SCHEMA
         or reference.get("reference_execution") != _REFERENCE_EXECUTION
         or reference.get("family") != family
         or reference.get("model_implementation") != model_implementation
@@ -690,7 +689,7 @@ def _planned_worker(
         name: nanoseconds / 1e9 for name, nanoseconds in report.phase_timings_ns
     }
     qualification_result = {
-        "schema": "shadowspill.numerical_qualification/v5",
+        "schema": artifact_schema("numerical_qualification"),
         "reference_execution": _REFERENCE_EXECUTION,
         "family": family,
         "model_implementation": model_implementation,
@@ -743,7 +742,6 @@ def _planned_worker(
         "pressurefit_seconds": phase_seconds.get("pressurefit_simulation", 0.0),
         "planned_step_seconds": timings,
         "planned_compute_seconds": compute_timings,
-        "planned_execution_timings": execution_timings,
         "planned_step_summaries": step_summaries,
         "reference_step_seconds": reference["step_seconds"],
         "reference_compute_seconds": reference.get("compute_step_seconds", []),
@@ -856,28 +854,32 @@ def _planned_worker(
         "lease_use_record_growth_rejections": int(
             runtime_statistics.runtime.lease_use_record_growth_rejections
         ),
-        "cuda_device_allocations": int(runtime_statistics.cuda.device_allocations),
-        "steady_state_cuda_device_allocations": int(
-            runtime_statistics.cuda.device_allocations
-            - execution_baseline.cuda.device_allocations
+        "backend_device_allocations": int(
+            runtime_statistics.backend.device_allocations
         ),
-        "steady_state_pinned_host_allocations": int(
-            runtime_statistics.cuda.pinned_host_allocations
-            - execution_baseline.cuda.pinned_host_allocations
+        "steady_state_backend_device_allocations": int(
+            runtime_statistics.backend.device_allocations
+            - execution_baseline.backend.device_allocations
         ),
-        "event_pool_capacity": int(runtime_statistics.cuda.event_pool_capacity),
-        "event_pool_peak_in_use": int(runtime_statistics.cuda.event_pool_peak_in_use),
+        "steady_state_pinned_host_registrations": int(
+            runtime_statistics.backend.pinned_host_registrations
+            - execution_baseline.backend.pinned_host_registrations
+        ),
+        "event_pool_capacity": int(runtime_statistics.runtime.event_lease_capacity),
+        "event_pool_peak_in_use": int(
+            runtime_statistics.runtime.event_lease_peak_in_use
+        ),
         "event_pool_driver_creates": int(
-            runtime_statistics.cuda.event_pool_driver_creates
+            runtime_statistics.runtime.event_lease_driver_creates
         ),
         "steady_state_event_pool_driver_creates": int(
-            runtime_statistics.cuda.event_pool_driver_creates
-            - execution_baseline.cuda.event_pool_driver_creates
+            runtime_statistics.runtime.event_lease_driver_creates
+            - execution_baseline.runtime.event_lease_driver_creates
         ),
         "event_pool_growth_rejections": int(
-            runtime_statistics.cuda.event_pool_growth_rejections
+            runtime_statistics.runtime.event_lease_growth_rejections
         ),
-        "event_pool_sealed": bool(runtime_statistics.cuda.event_pool_sealed),
+        "event_pool_sealed": bool(runtime_statistics.runtime.event_lease_sealed),
         "profile_cache_hits": report.profile_cache_hits,
         "profile_cache_misses": report.profile_cache_misses,
         "profile_unique_keys": report.profile_unique_keys,
@@ -885,8 +887,8 @@ def _planned_worker(
         "aot_unique_stage_contracts": report.aot_unique_stage_contracts,
         "aot_graph_pair_cache_hits": report.aot_graph_pair_cache_hits,
         "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
-        "recomputation_cache_hits": report.recomputation_cache_hits,
-        "recomputation_cache_misses": report.recomputation_cache_misses,
+        "planned_program_cache_hits": report.planned_program_cache_hits,
+        "planned_program_cache_misses": report.planned_program_cache_misses,
         "cold_cache_requested": force_fresh,
         "pressurefit_fixtures": pressurefit_fixtures,
         "plan_report_artifact": plan_report_artifact,
@@ -910,7 +912,7 @@ def _planned_worker(
             qualification_result["profile_cache_hits"] == 0
             and qualification_result["aot_graph_pair_cache_misses"]
             == qualification_result["aot_unique_stage_contracts"]
-            and qualification_result["recomputation_cache_hits"] == 0
+            and qualification_result["planned_program_cache_hits"] == 0
         )
     )
     qualification_result["recomputation_selection_required"] = False
@@ -939,9 +941,9 @@ def _planned_worker(
         and qualification_result["callback_failures"] == 0
         and qualification_result["pointer_lookup_failures"] == 0
         and not qualification_result["allocation_event_overflow"]
-        and qualification_result["cuda_device_allocations"] == 1
-        and qualification_result["steady_state_cuda_device_allocations"] == 0
-        and qualification_result["steady_state_pinned_host_allocations"] == 0
+        and qualification_result["backend_device_allocations"] == 1
+        and qualification_result["steady_state_backend_device_allocations"] == 0
+        and qualification_result["steady_state_pinned_host_registrations"] == 0
         and qualification_result["steady_state_event_pool_driver_creates"] == 0
         and qualification_result["event_pool_growth_rejections"] == 0
         and qualification_result["event_pool_sealed"]

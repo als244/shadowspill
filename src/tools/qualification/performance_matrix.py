@@ -18,6 +18,7 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+from shadowspill.schema import artifact_schema
 from workloads.full_model import FullModelManifest, manifests
 
 from .matrix_logging import MatrixConsole, format_bytes, utc_now
@@ -85,7 +86,7 @@ def _write_parent_failure(
         if match is not None
     ]
     failure: dict[str, object] = {
-        "schema": "shadowspill.full_model_subprocess_failure/v1",
+        "schema": artifact_schema("full_model_subprocess_failure"),
         "identity": manifest_identity,
         "error_type": "SubprocessTermination",
         "error": message,
@@ -117,9 +118,7 @@ def _parse_cell_planning_budgets(
                 f"planning-spill-budget-gib names unknown cell {identity!r}"
             )
         if identity in budgets:
-            raise ValueError(
-                f"planning-spill-budget-gib repeats cell {identity!r}"
-            )
+            raise ValueError(f"planning-spill-budget-gib repeats cell {identity!r}")
         gib = int(gib_text)
         if gib <= 0:
             raise ValueError(
@@ -154,8 +153,7 @@ def _cell_start_details(
         f"  SEQUENCES PER MICROBATCH: {manifest.sequences_per_microbatch}",
         f"  GRADIENT ACCUMULATION ROUNDS: {manifest.accumulation_count}",
         f"  TOKENS PER OPTIMIZER STEP: {manifest.tokens_per_step}",
-        "EXECUTION BUDGET: "
-        + format_bytes(manifest.device_physical_capacity_bytes),
+        "EXECUTION BUDGET: " + format_bytes(manifest.device_physical_capacity_bytes),
         f"SPILL BUDGET: {format_bytes(manifest.spill_budget_bytes)}",
     ]
     if planning_budget_gib is not None:
@@ -453,13 +451,11 @@ def main() -> int:
                 if not arguments.keep_going:
                     break
         summary = {
-            "schema": "shadowspill.full_model_matrix/v1",
+            "schema": artifact_schema("full_model_matrix"),
             "plan_only": arguments.plan_only,
             "measure_only": arguments.measure_only,
             "cells": rows,
-            "passed": bool(rows)
-            and not failed
-            and all(row["passed"] for row in rows),
+            "passed": bool(rows) and not failed and all(row["passed"] for row in rows),
         }
         (output / "summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n"
