@@ -16,11 +16,10 @@ from shadowspill.planner import (
 
 def _diagnostics() -> PressureFitDiagnostics:
     repairs = PressureFitRepairDiagnostics(
-        admission_prefetch_advance_attempts=1,
+        admission_fetch_advance_attempts=1,
         simulation_pressure_boundary_attempts=2,
     )
     candidate_work = PressureFitWorkDiagnostics(
-        residency_cache_misses=1,
         schedule_emissions=1,
         simulation_calls=3,
         admission_calls=2,
@@ -67,7 +66,6 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_makespan_ns=1_000,
         candidate_evaluations=(candidate,),
         work=PressureFitWorkDiagnostics(
-            residency_cache_misses=1,
             schedule_emissions=1,
             simulation_calls=3,
             admission_calls=2,
@@ -88,7 +86,6 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_makespan_ns=1_000,
         recomputation_problems=(problem,),
         work=PressureFitWorkDiagnostics(
-            residency_cache_misses=1,
             schedule_emissions=1,
             simulation_calls=4,
             admission_calls=3,
@@ -118,7 +115,7 @@ def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
     assert restored.repairs.pressure_boundary_attempts == 2
     candidate = restored.recomputation_problems[0].candidate_evaluations[0]
     assert candidate.residency_strategy == "tight-transfer"
-    assert candidate.prefetch_rule == "latest-safe"
+    assert candidate.fetch_rule == "latest-safe"
     assert candidate.coalesced
     assert candidate.steps[0].cut_aliases == (3, 7)
     assert candidate.steps[0].answer

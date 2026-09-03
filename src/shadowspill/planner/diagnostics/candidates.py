@@ -34,7 +34,7 @@ class CandidateDiagnostic:
     """One candidate policy evaluated in one recomputation problem.
 
     ``candidate_id`` identifies only the reusable policy: residency strategy,
-    prefetch rule, and coalescing mode.  ``selection_id`` is the parent-problem
+    fetch rule, and coalescing mode.  ``selection_id`` is the parent-problem
     reference and is deliberately not part of candidate-policy identity.
     """
 
@@ -50,6 +50,9 @@ class CandidateDiagnostic:
     placements_attempted: int = 0
     placements_admitted: int = 0
     capacity_refinements: int = 0
+    #: Repairs spent when the plan the candidate answers with was placed;
+    #: ``None`` when it placed none.
+    repairs_at_best: int | None = None
     #: When this candidate ran, in nanoseconds from the start of the call that
     #: evaluated it. ``work.sections`` is work done; these are wall clock, so
     #: two candidates ran at the same time exactly when their spans overlap.
@@ -66,13 +69,13 @@ class CandidateDiagnostic:
     #: unless the caller asked for a trajectory.
     steps: tuple[ReductionStep, ...] = ()
     residency_strategy: str = field(init=False)
-    prefetch_rule: str = field(init=False)
+    fetch_rule: str = field(init=False)
     coalesced: bool = field(init=False)
 
     def __post_init__(self) -> None:
         strategy, rule, coalesced = _parse_candidate_id(self.candidate_id)
         object.__setattr__(self, "residency_strategy", strategy)
-        object.__setattr__(self, "prefetch_rule", rule)
+        object.__setattr__(self, "fetch_rule", rule)
         object.__setattr__(self, "coalesced", coalesced)
 
     def to_dict(self) -> dict[str, object]:
@@ -80,7 +83,7 @@ class CandidateDiagnostic:
             "candidate_policy": {
                 "candidate_id": self.candidate_id,
                 "residency_strategy": self.residency_strategy,
-                "prefetch_rule": self.prefetch_rule,
+                "fetch_rule": self.fetch_rule,
                 "coalesced": self.coalesced,
             },
             "outcome": {
@@ -90,6 +93,7 @@ class CandidateDiagnostic:
                 "placements_attempted": self.placements_attempted,
                 "placements_admitted": self.placements_admitted,
                 "capacity_refinements": self.capacity_refinements,
+                "repairs_at_best": self.repairs_at_best,
                 "schedule_digest": self.schedule_digest,
                 "failure_kind": self.failure_kind,
                 "failure_detail": self.failure_detail,
@@ -144,6 +148,10 @@ class CandidateDiagnostic:
                 f"{path}.outcome.capacity_refinements",
             )
             or 0,
+            repairs_at_best=_optional_integer(
+                outcome.get("repairs_at_best"),
+                f"{path}.outcome.repairs_at_best",
+            ),
             schedule_digest=_optional_string(
                 outcome.get("schedule_digest"),
                 f"{path}.outcome.schedule_digest",
@@ -169,9 +177,9 @@ class CandidateDiagnostic:
                 policy.get("residency_strategy"),
                 f"{path}.candidate_policy.residency_strategy",
             ),
-            "prefetch_rule": _string(
-                policy.get("prefetch_rule"),
-                f"{path}.candidate_policy.prefetch_rule",
+            "fetch_rule": _string(
+                policy.get("fetch_rule"),
+                f"{path}.candidate_policy.fetch_rule",
             ),
             "coalesced": _boolean(
                 policy.get("coalesced"), f"{path}.candidate_policy.coalesced"
@@ -179,7 +187,7 @@ class CandidateDiagnostic:
         }
         expected_policy = {
             "residency_strategy": result.residency_strategy,
-            "prefetch_rule": result.prefetch_rule,
+            "fetch_rule": result.fetch_rule,
             "coalesced": result.coalesced,
         }
         if declared_policy != expected_policy:
