@@ -45,11 +45,33 @@ typedef struct ShadowSpillResidencyProblem {
     /* Maximum task-object pressure at each [device][boundary] cell. */
     const uint64_t *boundary_capacity_bytes;
     const uint32_t *device_priority;
+    /* The anchors of each alias as a sorted list: anchor_offsets[alias] ..
+       anchor_offsets[alias + 1] index anchor_positions (boundary) and
+       anchor_tasks (that cell's latest_access_task). The sparse companion
+       of `anchors` and `latest_access_task`. */
+    const uint32_t *anchor_offsets;
+    const uint32_t *anchor_positions;
+    const uint32_t *anchor_tasks;
+    /* The boundaries each alias reserves for a produced output, as a sorted
+       list: reserved_offsets[alias] .. reserved_offsets[alias + 1] index
+       reserved_positions. The sparse companion of `output_reservations`. */
+    const uint32_t *reserved_offsets;
+    const uint32_t *reserved_positions;
+    /* Per alias, whether the reducer may cut its residency; NULL means every
+       alias may be cut. An alias that may not be cut stays resident from its
+       first to its last access and is charged in the required floor; the
+       emitter still produces its opening fetch, its release, and its
+       terminal writeback. */
+    const uint8_t *alias_evict_eligible;
+    /* Per alias the reducer may not cut and that starts the step in spill:
+       the task after which it is fetched, chosen once at preparation so the
+       resident slice is sized for it. UINT32_MAX elsewhere. */
+    const uint32_t *fixed_fetch_trigger;
 } ShadowSpillResidencyProblem;
 
 typedef struct ShadowSpillResidencyOptions {
     uint8_t minimize_transfer;
-    uint8_t prefetch_headroom;
+    uint8_t fetch_headroom;
     const uint8_t *seed_resident;
     const uint8_t *seed_breaks;
     const uint64_t *extra_pressure_bytes;
@@ -80,13 +102,13 @@ typedef enum ShadowSpillResidencyStrategy {
     SHADOWSPILL_RESIDENCY_RELAXED_STALL = 4,
 } ShadowSpillResidencyStrategy;
 
-typedef enum ShadowSpillPrefetchRule {
-    SHADOWSPILL_PREFETCH_PACKED_FIFO = 0,
-    SHADOWSPILL_PREFETCH_PACKED_FIT = 1,
-    SHADOWSPILL_PREFETCH_INTERVAL_ENTRY = 2,
-    SHADOWSPILL_PREFETCH_LATEST_SAFE = 3,
-    SHADOWSPILL_PREFETCH_DEMAND = 4,
-} ShadowSpillPrefetchRule;
+typedef enum ShadowSpillFetchRule {
+    SHADOWSPILL_FETCH_PACKED_FIFO = 0,
+    SHADOWSPILL_FETCH_PACKED_FIT = 1,
+    SHADOWSPILL_FETCH_INTERVAL_ENTRY = 2,
+    SHADOWSPILL_FETCH_LATEST_SAFE = 3,
+    SHADOWSPILL_FETCH_DEMAND = 4,
+} ShadowSpillFetchRule;
 
 typedef enum ShadowSpillInitialPlacement {
     SHADOWSPILL_INITIAL_PLACEMENT_REQUIRED = 0,
@@ -170,8 +192,8 @@ typedef struct ShadowSpillPressureFitProblem {
 typedef struct ShadowSpillPressureFitProblemOptions {
     const uint8_t *residency_strategies;
     uint32_t residency_strategy_count;
-    const uint8_t *prefetch_rules;
-    uint32_t prefetch_rule_count;
+    const uint8_t *fetch_rules;
+    uint32_t fetch_rule_count;
     /* Which coalescing modes to evaluate: 0 plain, 1 coalesced. A list like
        the two axes above, so a caller evaluates exactly the combinations it
        asks for; the product of the three counts is the candidate count. */
@@ -196,6 +218,15 @@ typedef struct ShadowSpillPressureFitProblemOptions {
        simulate, but it does change how many candidates the shared record
        lets a search skip, so per-candidate counters move with it. */
     uint32_t workers;
+    /* Nonzero makes every candidate's outcome a pure function of its
+       inputs: the placement gate consults only the candidate's own placed
+       plans, never the shared record, so parallel evaluation is
+       reproducible run to run. Costs additional placement measurements. */
+    uint8_t deterministic;
+    /* Aliases smaller than this many bytes are not eligible to be cut: they
+       stay resident from their first to their last access. Zero makes every
+       alias eligible. */
+    uint64_t minimum_object_bytes_evict_eligible;
 } ShadowSpillPressureFitProblemOptions;
 
 /*
@@ -226,6 +257,9 @@ typedef enum ShadowSpillPressureFitPreflightFailureKind {
     SHADOWSPILL_PREFLIGHT_WORKSPACE_CAPACITY = 1,
     SHADOWSPILL_PREFLIGHT_REQUIRED_CAPACITY = 2,
     SHADOWSPILL_PREFLIGHT_MISSING_INITIAL_RESIDENCY = 3,
+    /* The resident slice -- a static home for every lease of an alias the
+       reducer may not cut -- does not fit the device on its own. */
+    SHADOWSPILL_PREFLIGHT_RESIDENT_SLICE_CAPACITY = 4,
 } ShadowSpillPressureFitPreflightFailureKind;
 
 /* Structured semantic feasibility result produced before candidate search. */
@@ -254,10 +288,10 @@ typedef enum ShadowSpillCandidateStatus {
 
 /* Categorized monotonic repair operations for one candidate evaluation. */
 typedef struct ShadowSpillPressureFitRepairDiagnostics {
-    uint64_t admission_prefetch_advance_attempts;
-    uint64_t admission_prefetch_delay_attempts;
+    uint64_t admission_fetch_advance_attempts;
+    uint64_t admission_fetch_delay_attempts;
     uint64_t admission_pressure_boundary_attempts;
-    uint64_t simulation_prefetch_delay_attempts;
+    uint64_t simulation_fetch_delay_attempts;
     uint64_t simulation_pressure_boundary_attempts;
 } ShadowSpillPressureFitRepairDiagnostics;
 
@@ -361,8 +395,6 @@ enum ShadowSpillReductionStepFlags {
 };
 
 typedef struct ShadowSpillPressureFitWorkDiagnostics {
-    uint64_t residency_cache_hits;
-    uint64_t residency_cache_misses;
     uint64_t schedule_emissions;
     uint64_t schedule_cache_hits;
     uint64_t simulation_calls;
@@ -374,7 +406,7 @@ typedef struct ShadowSpillPressureFitWorkDiagnostics {
 typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint8_t status;
     uint8_t residency_strategy;
-    uint8_t prefetch_rule;
+    uint8_t fetch_rule;
     uint8_t coalesced;
     ShadowSpillPressureFitRepairDiagnostics repairs;
     ShadowSpillPressureFitWorkDiagnostics work;
@@ -401,6 +433,9 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint32_t placements_attempted;
     uint32_t placements_admitted;
     uint32_t capacity_refinements;
+    /* Repairs spent when the plan this candidate answers with was placed;
+       UINT32_MAX when it placed none. */
+    uint32_t repairs_at_best;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 
     /* When this candidate ran, in nanoseconds from the start of the call
@@ -438,6 +473,14 @@ typedef struct ShadowSpillPressureFitProblemResult {
        whatever task is next rather than finishing a problem first. */
     uint64_t started_ns;
     uint64_t finished_ns;
+    /* The aliases `minimum_object_bytes_evict_eligible` kept resident: how
+       many, their bytes, the resident slice reserved for them (bytes per
+       device), and which they are (zero where an alias may not be cut, by
+       alias index). Both arrays are owned by the result. */
+    uint32_t evict_ineligible_aliases;
+    uint64_t evict_ineligible_bytes;
+    uint64_t *resident_slice_bytes;
+    uint8_t *alias_evict_eligible;
 } ShadowSpillPressureFitProblemResult;
 
 /* Caller-owned output buffers for one selected schedule's exact admission. */
@@ -764,7 +807,7 @@ typedef struct ShadowSpillBestPlacedRecord {
        the plan was chosen on. */
     uint64_t capacity_given_back_bytes;
     uint8_t residency_strategy;
-    uint8_t prefetch_rule;
+    uint8_t fetch_rule;
     uint8_t coalesced;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 } ShadowSpillBestPlacedRecord;
@@ -772,12 +815,6 @@ typedef struct ShadowSpillBestPlacedRecord {
 SHADOWSPILL_API ShadowSpillBestPlaced *shadowspill_best_placed_create(void);
 SHADOWSPILL_API void shadowspill_best_placed_destroy(
     ShadowSpillBestPlaced *best
-);
-/* The hot path: whether a plan of this makespan is worth placing at all.
- * Reads only the makespan, so it never waits on a writer. */
-SHADOWSPILL_API int shadowspill_best_placed_admits(
-    const ShadowSpillBestPlaced *best,
-    uint64_t makespan_ns
 );
 /* Copies out what is held. `makespan_ns` is zero when nothing was placed. */
 SHADOWSPILL_API void shadowspill_best_placed_read(
@@ -790,6 +827,9 @@ typedef struct ShadowSpillPlacementProblem {
     uint32_t abi_version;
     uint32_t lifetime_count;
     const ShadowSpillLeaseLifetime *lifetimes;
+    /* Per lifetime, nonzero leaves the lease out: its offset is not written
+       and it is outside the span reported. NULL places every lease. */
+    const uint8_t *excluded;
 } ShadowSpillPlacementProblem;
 
 /* `offsets` is caller-owned and must hold `lifetime_count` entries, written in

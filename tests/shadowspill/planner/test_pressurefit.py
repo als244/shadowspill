@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
     EntrypointSpec,
     MemoryActionKind,
     MemoryLocation,
+    MutationSpec,
     ObjectSpec,
     Program,
     ResidencySpec,
@@ -19,6 +22,7 @@ from shadowspill.ir import (
 from shadowspill.planner import (
     InitialPlacement,
     PressureFitOptions,
+    ResidentSlice,
     pressurefit,
 )
 
@@ -32,7 +36,7 @@ from ._examples import (
 
 FEW_CANDIDATES = PressureFitOptions(
     residency_strategies=("relaxed-stall",),
-    prefetch_rules=("latest-safe",),
+    fetch_rules=("latest-safe",),
     evaluate_coalesced=False,
 )
 
@@ -58,9 +62,9 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
         (action.trigger_task_id, action.alias_group_id, action.kind)
         for action in result.schedule.actions
     ) == (
-        ("task0", "later", MemoryActionKind.OFFLOAD),
+        ("task0", "later", MemoryActionKind.EVICT),
         ("task1", "temporary", MemoryActionKind.RELEASE),
-        ("task1", "later", MemoryActionKind.PREFETCH),
+        ("task1", "later", MemoryActionKind.FETCH),
         ("task2", "later", MemoryActionKind.RELEASE),
     )
     assert result.simulation.makespan_ns == 5_000
@@ -68,7 +72,7 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
     assert result.simulation.spill_peak_bytes == 61
 
 
-def test_latest_safe_prefetch_accounts_for_transfer_duration() -> None:
+def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
     program = Program(
         devices=(DEVICE,),
         alias_groups=(
@@ -97,7 +101,7 @@ def test_latest_safe_prefetch_accounts_for_transfer_duration() -> None:
         options=PressureFitOptions(
             initial_placement=InitialPlacement.REQUIRED,
             residency_strategies=("relaxed-stall",),
-            prefetch_rules=("latest-safe",),
+            fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
         ),
     )
@@ -107,13 +111,13 @@ def test_latest_safe_prefetch_accounts_for_transfer_duration() -> None:
         for action in result.schedule.actions
     ) == (
         ("task0", "retained", MemoryActionKind.RELEASE),
-        ("task1", "later", MemoryActionKind.PREFETCH),
+        ("task1", "later", MemoryActionKind.FETCH),
         ("task3", "later", MemoryActionKind.RELEASE),
     )
     assert result.simulation.makespan_ns == 4_000
 
 
-def test_demand_prefetch_uses_final_legal_boundary() -> None:
+def test_demand_fetch_uses_final_legal_boundary() -> None:
     program = Program(
         devices=(DEVICE,),
         alias_groups=(
@@ -142,7 +146,7 @@ def test_demand_prefetch_uses_final_legal_boundary() -> None:
         options=PressureFitOptions(
             initial_placement=InitialPlacement.REQUIRED,
             residency_strategies=("relaxed-stall",),
-            prefetch_rules=("demand",),
+            fetch_rules=("demand",),
             evaluate_coalesced=False,
         ),
     )
@@ -152,7 +156,7 @@ def test_demand_prefetch_uses_final_legal_boundary() -> None:
         for action in result.schedule.actions
     ) == (
         ("task0", "retained", MemoryActionKind.RELEASE),
-        ("task2", "later", MemoryActionKind.PREFETCH),
+        ("task2", "later", MemoryActionKind.FETCH),
         ("task3", "later", MemoryActionKind.RELEASE),
     )
     assert result.simulation.makespan_ns == 5_000
@@ -203,13 +207,13 @@ def test_dirty_mutation_requires_writeback_before_reuse() -> None:
         if action.alias_group_id == "weight_storage"
     )
     assert weight_actions == (
-        MemoryActionKind.OFFLOAD,
-        MemoryActionKind.PREFETCH,
+        MemoryActionKind.EVICT,
+        MemoryActionKind.FETCH,
         MemoryActionKind.RELEASE,
     )
 
 
-def test_recomputation_competes_with_offload_among_the_same_candidates() -> None:
+def test_recomputation_competes_with_evict_among_the_same_candidates() -> None:
     result = pressurefit(
         recomputation_program(),
         initial_residency=(ResidencySpec("input_storage", MemoryLocation.DEVICE),),
@@ -255,3 +259,108 @@ def test_result_builds_the_canonical_execution_plan() -> None:
     assert plan.prediction.makespan_ns == result.simulation.makespan_ns
     assert plan.prediction.device_peak_bytes == 122
 
+
+def small_object_program(later_bytes: int) -> Program:
+    """The exact-capacity program with `later` shrunk to `later_bytes`."""
+
+    program = exact_capacity_program()
+    return replace(
+        program,
+        alias_groups=tuple(
+            replace(group, size_bytes=later_bytes)
+            if group.alias_group_id == "later"
+            else group
+            for group in program.alias_groups
+        ),
+        objects=tuple(
+            replace(item, size_bytes=later_bytes)
+            if item.alias_group_id == "later"
+            else item
+            for item in program.objects
+        ),
+    )
+
+
+def test_a_mutated_resident_object_reserves_a_home_per_generation() -> None:
+    # The task that mutates `small` in place holds both generations, so the
+    # slice reserves two homes for what is one object.
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(AliasGroupSpec("small", "cuda_0", 8),),
+        objects=(ObjectSpec("small_object", "small", 0, 8),),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(
+            TaskSpec(
+                "mutate",
+                COMPUTE,
+                "profile",
+                inputs=("small_object",),
+                mutations=(MutationSpec("small_object"),),
+            ),
+        ),
+    )
+    result = pressurefit(
+        program,
+        initial_residency=(ResidencySpec("small", MemoryLocation.DEVICE),),
+        final_residency=(ResidencySpec("small", MemoryLocation.DEVICE),),
+        config=config(64),
+        options=replace(FEW_CANDIDATES, minimum_object_bytes_evict_eligible=9),
+    )
+    assert result.resident_slice == ResidentSlice(bytes=16, aliases=("small",))
+
+
+def test_objects_under_the_eligibility_threshold_are_never_cut() -> None:
+    # retained (61) is held for the final residency, later (8) is read by the
+    # last task, temporary (61) is produced in between: one byte short of
+    # holding all three, the cheapest cut is the small object's round trip.
+    initial, final = exact_capacity_residency()
+    program = small_object_program(8)
+    unrestricted = pressurefit(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(129),
+        options=FEW_CANDIDATES,
+    )
+    moved = {
+        (action.alias_group_id, action.kind)
+        for action in unrestricted.schedule.actions
+        if action.kind != MemoryActionKind.RELEASE
+    }
+    assert ("later", MemoryActionKind.EVICT) in moved
+    assert ("later", MemoryActionKind.FETCH) in moved
+
+    restricted = pressurefit(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(129),
+        options=replace(FEW_CANDIDATES, minimum_object_bytes_evict_eligible=9),
+    )
+    # The small object keeps its boundary contract, a release after its last
+    # read, and nothing else; the cut moves to an eligible object.
+    later_actions = [
+        (action.trigger_task_id, action.kind)
+        for action in restricted.schedule.actions
+        if action.alias_group_id == "later"
+    ]
+    assert later_actions == [("task2", MemoryActionKind.RELEASE)]
+    assert ("retained", MemoryActionKind.EVICT) in {
+        (action.alias_group_id, action.kind) for action in restricted.schedule.actions
+    }
+    problem = restricted.diagnostics.recomputation_problems[0]
+    assert problem.evict_ineligible_aliases == 1
+    assert problem.evict_ineligible_bytes == 8
+    # Given a static home of its own, in a slice the main layout never sees.
+    assert restricted.resident_slice.bytes == 8
+    assert restricted.resident_slice.aliases == ("later",)
+    assert unrestricted.resident_slice.bytes == 0
+    assert (
+        unrestricted.diagnostics.recomputation_problems[0].evict_ineligible_aliases == 0
+    )
+
+
+def test_eligibility_threshold_is_validated() -> None:
+    assert PressureFitOptions().minimum_object_bytes_evict_eligible == 0
+    with pytest.raises(ValueError):
+        PressureFitOptions(minimum_object_bytes_evict_eligible=-1)

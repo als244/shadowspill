@@ -1,5 +1,6 @@
 #include "../common/platform.h"
 #include "internal.h"
+#include "residency_internal.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -16,6 +17,7 @@ typedef struct PreparedProblem {
     uint8_t *anchors;
     uint8_t *productions;
     uint32_t *latest_access_task;
+    ShadowSpillResidencySparseLists sparse;
     uint8_t *output_reservations;
     uint8_t *write_prefix;
     uint32_t *first_input_task;
@@ -32,6 +34,15 @@ typedef struct PreparedProblem {
     uint8_t *seen_input;
     uint8_t *charged_anchors;
     uint64_t *required_bytes;
+    /* Which aliases the reducer may cut; for the ones it may not, the
+       trigger of their one fetch, the resident slice reserved for them
+       (bytes per device), and what they add up to. The eligibility and the
+       slice move to the result once evaluation is done. */
+    uint8_t *evict_eligible;
+    uint32_t *fixed_fetch_trigger;
+    uint64_t *resident_slice_bytes;
+    uint32_t evict_ineligible_aliases;
+    uint64_t evict_ineligible_bytes;
 
     uint8_t failure_kind;
     uint32_t error_device;
@@ -167,6 +178,7 @@ static void prepared_problem_destroy(PreparedProblem *prepared) {
     free(prepared->anchors);
     free(prepared->productions);
     free(prepared->latest_access_task);
+    shadowspill_residency_sparse_lists_destroy(&prepared->sparse);
     free(prepared->output_reservations);
     free(prepared->write_prefix);
     free(prepared->first_input_task);
@@ -182,6 +194,9 @@ static void prepared_problem_destroy(PreparedProblem *prepared) {
     free(prepared->seen_input);
     free(prepared->charged_anchors);
     free(prepared->required_bytes);
+    free(prepared->evict_eligible);
+    free(prepared->fixed_fetch_trigger);
+    free(prepared->resident_slice_bytes);
     memset(prepared, 0, sizeof(*prepared));
 }
 
@@ -312,6 +327,14 @@ static int allocate_prepared_buffers(
         pressure_cells,
         sizeof(*prepared->required_bytes)
     );
+    prepared->evict_eligible = malloc(aliases * sizeof(*prepared->evict_eligible));
+    prepared->fixed_fetch_trigger = malloc(
+        aliases * sizeof(*prepared->fixed_fetch_trigger)
+    );
+    prepared->resident_slice_bytes = calloc(
+        program->device_count,
+        sizeof(*prepared->resident_slice_bytes)
+    );
     if (prepared->initial_location == NULL ||
         prepared->final_location == NULL || prepared->anchors == NULL ||
         prepared->productions == NULL ||
@@ -327,9 +350,14 @@ static int allocate_prepared_buffers(
         prepared->seed_resident == NULL || prepared->seed_breaks == NULL ||
         prepared->first_access_task == NULL || prepared->produced == NULL ||
         prepared->seen_input == NULL || prepared->charged_anchors == NULL ||
-        prepared->required_bytes == NULL) {
+        prepared->required_bytes == NULL || prepared->evict_eligible == NULL ||
+        prepared->fixed_fetch_trigger == NULL ||
+        prepared->resident_slice_bytes == NULL) {
         return -1;
     }
+    memset(prepared->evict_eligible, 1, program->alias_count);
+    memset(prepared->fixed_fetch_trigger, 0xff,
+           (size_t)program->alias_count * sizeof(*prepared->fixed_fetch_trigger));
     memset(prepared->initial_location, -1, program->alias_count);
     memset(prepared->final_location, -1, program->alias_count);
     memset(prepared->latest_access_task, 0xff,
@@ -407,6 +435,22 @@ static void record_access(
         task < prepared->first_access_task[alias]) {
         prepared->first_access_task[alias] = task;
     }
+}
+
+static ShadowSpillStatus build_sparse_lists(
+    const ShadowSpillSimulationProgram *program,
+    PreparedProblem *prepared
+) {
+    return shadowspill_residency_sparse_lists_build(
+               prepared->anchors,
+               prepared->latest_access_task,
+               prepared->output_reservations,
+               program->alias_count,
+               program->task_count + 1U,
+               &prepared->sparse
+           ) == 0
+        ? SHADOWSPILL_STATUS_OK
+        : SHADOWSPILL_STATUS_INTERNAL_FAILURE;
 }
 
 static ShadowSpillStatus derive_task_facts(
@@ -601,9 +645,14 @@ static ShadowSpillStatus validate_required_floor(
     PreparedProblem *prepared
 ) {
     uint32_t boundary_count = program->task_count + 1U;
+    /* The aliases the reducer may not cut live in the resident slice, which
+     * the capacity below already excludes, so they are not in the floor. */
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
         uint32_t device = program->alias_device[alias];
         uint64_t size = program->alias_size_bytes[alias];
+        if (prepared->evict_eligible[alias] == 0U) {
+            continue;
+        }
         for (uint32_t position = 0U; position < boundary_count; ++position) {
             size_t cell = (size_t)alias * boundary_count + position;
             if (prepared->anchors[cell] == 0U) {
@@ -626,6 +675,9 @@ static ShadowSpillStatus validate_required_floor(
     }
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
         uint32_t device = program->alias_device[alias];
+        if (prepared->evict_eligible[alias] == 0U) {
+            continue;
+        }
         for (uint32_t task = 0U; task < program->task_count; ++task) {
             size_t cell = (size_t)alias * boundary_count + task;
             if (prepared->output_reservations[cell] == 0U ||
@@ -666,6 +718,114 @@ static ShadowSpillStatus validate_required_floor(
     return SHADOWSPILL_STATUS_OK;
 }
 
+/*
+ * The resident slice: a static home for every lease of an alias the reducer
+ * may not cut.
+ *
+ * Below the threshold an object is not worth a round trip -- its copies are
+ * latency-bound and its bytes hardly relieve a boundary -- so it stays
+ * resident from first to last access. Such leases are small and long-lived,
+ * the worst shape for a layout whose other leases come and go, and too small
+ * for packing them, among the rest or on their own, to be worth what it
+ * costs in holes. So each gets a home of its own in a slice at the end of the
+ * fixed range: one lease per alias, plus one for every task that mutates it
+ * in place, since that task holds both generations. The slice is their sum,
+ * each rounded up to the alignment. The device capacity handed to the reducer
+ * loses the slice, so the search never charges these aliases again; every
+ * placement lays the slice out from the leases the plan actually has; and
+ * the emitter fetches each alias at the trigger chosen here, as late as the
+ * ideal timeline allows.
+ */
+static ShadowSpillStatus reserve_resident_slice(
+    const ShadowSpillPressureFitProgramProblem *source,
+    const ShadowSpillPressureFitProblemOptions *options,
+    PreparedProblem *prepared
+) {
+    const ShadowSpillSimulationProgram *program = source->simulation;
+    const uint32_t boundary_count = program->task_count + 1U;
+    const uint64_t threshold = options->minimum_object_bytes_evict_eligible;
+    uint64_t alignment = 1U;
+    if (source->placement != NULL && source->placement->minimum_alignment != 0U) {
+        alignment = source->placement->minimum_alignment;
+    } else if (source->admission != NULL &&
+               source->admission->minimum_alignment != 0U) {
+        alignment = source->admission->minimum_alignment;
+    }
+    const size_t aliases = program->alias_count == 0U ? 1U : program->alias_count;
+    uint32_t *generations = malloc(aliases * sizeof(*generations));
+    if (generations == NULL) {
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
+    for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
+        generations[alias] = 1U;
+    }
+    for (uint32_t index = 0U; index < program->mutation_count; ++index) {
+        ++generations[program->mutation_aliases[index]];
+    }
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
+    for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
+        const uint64_t size = program->alias_size_bytes[alias];
+        if (threshold == 0U || size == 0U || size >= threshold) {
+            continue;
+        }
+        const size_t row = (size_t)alias * boundary_count;
+        uint32_t first = 0U;
+        while (first < boundary_count && prepared->anchors[row + first] == 0U) {
+            ++first;
+        }
+        if (first == boundary_count) {
+            continue; /* never accessed, so never given a lease */
+        }
+        if (program->alias_device[alias] >= program->device_count) {
+            status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+            goto done;
+        }
+        prepared->evict_eligible[alias] = 0U;
+        ++prepared->evict_ineligible_aliases;
+        if (add_u64(prepared->evict_ineligible_bytes, size,
+                    &prepared->evict_ineligible_bytes) != 0) {
+            status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+            goto done;
+        }
+        if (prepared->initial_location[alias] != SHADOWSPILL_MEMORY_DEVICE &&
+            prepared->productions[row + first] == 0U && first > 0U) {
+            /* Consumed before it is produced, so fetched: as late as the
+             * ideal timeline allows, which is where the emitter puts it. */
+            const uint64_t ideal_start = prepared->task_ideal_end_ns[first - 1U];
+            const uint64_t transfer = prepared->fetch_runtime_ns[alias];
+            const uint64_t target =
+                ideal_start > transfer ? ideal_start - transfer : 0U;
+            prepared->fixed_fetch_trigger[alias] = shadowspill_latest_safe_trigger(
+                prepared->task_ideal_end_ns, 0U, first - 1U, target
+            );
+        }
+        uint64_t *slice =
+            &prepared->resident_slice_bytes[program->alias_device[alias]];
+        for (uint32_t held = 0U; held < generations[alias]; ++held) {
+            uint64_t home;
+            if (shadowspill_resident_home(slice, size, alignment, &home) != 0) {
+                status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+                goto done;
+            }
+        }
+    }
+    for (uint32_t device = 0U; device < program->device_count; ++device) {
+        const uint64_t slice = prepared->resident_slice_bytes[device];
+        if (slice > prepared->device_capacity_bytes[device]) {
+            prepared->failure_kind = SHADOWSPILL_PREFLIGHT_RESIDENT_SLICE_CAPACITY;
+            prepared->error_device = device;
+            prepared->failure_required_bytes = slice;
+            prepared->failure_capacity_bytes = prepared->device_capacity_bytes[device];
+            status = SHADOWSPILL_STATUS_ANALYTIC_INFEASIBLE;
+            goto done;
+        }
+        prepared->device_capacity_bytes[device] -= slice;
+    }
+done:
+    free(generations);
+    return status;
+}
+
 static void build_anchor_seed(
     const ShadowSpillSimulationProgram *program,
     PreparedProblem *prepared
@@ -700,7 +860,8 @@ static ShadowSpillStatus greedily_place_initial_aliases(
 ) {
     uint32_t cold_count = 0U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
-        if (prepared->initial_location[alias] == SHADOWSPILL_MEMORY_SPILL &&
+        if (prepared->evict_eligible[alias] != 0U &&
+            prepared->initial_location[alias] == SHADOWSPILL_MEMORY_SPILL &&
             prepared->first_access_task[alias] != UINT32_MAX &&
             prepared->first_access_task[alias] > 0U) {
             ++cold_count;
@@ -722,7 +883,8 @@ static ShadowSpillStatus greedily_place_initial_aliases(
     uint32_t next = 0U;
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
         uint32_t first_use = prepared->first_access_task[alias];
-        if (prepared->initial_location[alias] != SHADOWSPILL_MEMORY_SPILL ||
+        if (prepared->evict_eligible[alias] == 0U ||
+            prepared->initial_location[alias] != SHADOWSPILL_MEMORY_SPILL ||
             first_use == UINT32_MAX || first_use == 0U) {
             continue;
         }
@@ -837,6 +999,10 @@ static ShadowSpillStatus prepare_problem(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
+    status = build_sparse_lists(program, prepared);
+    if (status != SHADOWSPILL_STATUS_OK) {
+        return status;
+    }
     if (source->admission != NULL) {
         if (program->device_count != 1U ||
             source->admission->object_capacity_bytes == 0U ||
@@ -847,11 +1013,15 @@ static ShadowSpillStatus prepare_problem(
         prepared->device_capacity_bytes[0] =
             source->admission->object_capacity_bytes;
     }
-    status = finalize_boundary_capacities(program, prepared);
+    status = finalize_alias_facts(program, prepared);
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
-    status = finalize_alias_facts(program, prepared);
+    status = reserve_resident_slice(source, options, prepared);
+    if (status != SHADOWSPILL_STATUS_OK) {
+        return status;
+    }
+    status = finalize_boundary_capacities(program, prepared);
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
@@ -872,6 +1042,13 @@ static ShadowSpillStatus prepare_problem(
         .anchors = prepared->anchors,
         .productions = prepared->productions,
         .latest_access_task = prepared->latest_access_task,
+        .anchor_offsets = prepared->sparse.anchor_offsets,
+        .anchor_positions = prepared->sparse.anchor_positions,
+        .anchor_tasks = prepared->sparse.anchor_tasks,
+        .reserved_offsets = prepared->sparse.reserved_offsets,
+        .reserved_positions = prepared->sparse.reserved_positions,
+        .alias_evict_eligible = prepared->evict_eligible,
+        .fixed_fetch_trigger = prepared->fixed_fetch_trigger,
         .output_reservations = prepared->output_reservations,
         .write_prefix = prepared->write_prefix,
         .first_input_task = prepared->first_input_task,
@@ -953,6 +1130,18 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
         /* One Program that cannot be prepared is a fact about that Program;
          * the caller decides whether the rest still answer. */
         results[ready].status = status;
+    }
+    for (uint32_t index = 0U; index < ready; ++index) {
+        results[index].evict_ineligible_aliases =
+            prepared[index].evict_ineligible_aliases;
+        results[index].evict_ineligible_bytes =
+            prepared[index].evict_ineligible_bytes;
+        /* The slice and the eligibility outlive preparation: the result owns
+         * them now. */
+        results[index].resident_slice_bytes = prepared[index].resident_slice_bytes;
+        results[index].alias_evict_eligible = prepared[index].evict_eligible;
+        prepared[index].resident_slice_bytes = NULL;
+        prepared[index].evict_eligible = NULL;
     }
 
     const uint64_t teardown_started = shadowspill_monotonic_ns();

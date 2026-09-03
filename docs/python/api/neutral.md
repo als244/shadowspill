@@ -134,9 +134,24 @@ it costs an allocation per candidate that grows with the search, which is
 worth paying to attribute planner time or explain a plan, and not worth
 paying in a sweep.
 
+`PressureFitOptions.minimum_object_bytes_evict_eligible` keeps every object
+smaller than it resident from its first to its last access: the reducer never
+cuts it, so it is never evicted and fetched mid-step, while its boundary
+contract — an opening fetch, a release after the last access, a terminal
+writeback when modified — is emitted as for any object. Zero, the library
+default, makes every object eligible; the PyTorch entrypoints set 1 MiB
+unless told otherwise. Every lease of an object it holds gets a static home
+in the `ResidentSlice` the result carries — their sum, one home per lease,
+sized at problem preparation — and the capacity the reducer plans against is
+reduced by that slice, so they are never charged again. A slice a budget
+cannot hold is reported as infeasible
+rather than quietly relaxed, and each recomputation problem reports how many
+objects it held, their bytes, and their peak resident bytes.
+
 Configuration and results:
 
-- `PressureFitOptions`, `PressureFitResult`, `PressureFitDiagnostics`
+- `PressureFitOptions`, `PressureFitResult`, `PressureFitDiagnostics`,
+  `ResidentSlice`
 - `InitialPlacement`
 - `AdmissionFacts`, `StorageHandoff`, `TaskAdmissionSpec`
 - `TaskAllocationStep`, `TaskAllocationStepKind`
@@ -186,8 +201,9 @@ Configuration and results:
 - `MemorySnapshot`, `DeviceMemoryPeak`, `CapacityViolation`
 - `ActionPhysicalDelta`, `TaskPhysicalDelta`, `MemoryReuseDependency`
 
-A prefetch or task launch with nowhere to go waits for room rather than
-failing, so a plan that comes up short is slower rather than rejected. Each
+A fetch or task launch with nowhere to go waits for room rather than
+failing, as [simulation](../../architecture/simulation.md#trigger-time-capacity)
+specifies, so a plan that comes up short is slower rather than rejected. Each
 shortfall is reported as a `CapacityViolation` alongside the `device-capacity`
 stall that records the wait: the stall says when and for how long, the
 violation says by how much.

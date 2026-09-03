@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from shadowspill.ir import Program, RecomputationSelection, ResidencySpec
+from shadowspill.planner.result import ResidentSlice
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.indexed import (
     IndexedSimulationTemplate,
@@ -244,6 +245,8 @@ def finish_pressurefit(
     results: tuple[CProblemResult, ...],
     admission: AdmissionFacts | None,
     best: BestPlaced | None = None,
+    *,
+    placement: AdmissionFacts | None = None,
 ) -> PressureFitResult:
     """Decode the plan the search placed, and its diagnostics.
 
@@ -296,6 +299,8 @@ def finish_pressurefit(
                 work=result.work,
                 started_ns=result.started_ns,
                 finished_ns=result.finished_ns,
+                evict_ineligible_aliases=result.evict_ineligible_aliases,
+                evict_ineligible_bytes=result.evict_ineligible_bytes,
             )
         )
         if result.selected_candidate_index is None:
@@ -411,7 +416,17 @@ def finish_pressurefit(
         selections=problem.selections,
         simulation=simulation,
         diagnostics=diagnostics,
+        resident_slice=ResidentSlice(
+            bytes=result.resident_slice_bytes,
+            aliases=tuple(
+                sorted(
+                    problem.indexed_template.alias_ids[index]
+                    for index in result.resident_aliases
+                )
+            ),
+        ),
         admission_facts=admission,
+        placement_facts=placement,
     )
 
 

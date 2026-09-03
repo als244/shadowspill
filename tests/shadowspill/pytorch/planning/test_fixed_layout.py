@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from shadowspill.ir import (
     AliasGroupSpec,
     MemoryAction,
@@ -19,6 +21,7 @@ from shadowspill.planner import (
     PressureFitOptions,
     PressureFitResult,
     RecomputationProblemDiagnostics,
+    ResidentSlice,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
@@ -98,8 +101,8 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
     schedule = MemorySchedule(
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
         actions=(
-            MemoryAction("produce", "state", MemoryActionKind.OFFLOAD),
-            MemoryAction("trigger", "state", MemoryActionKind.PREFETCH),
+            MemoryAction("produce", "state", MemoryActionKind.EVICT),
+            MemoryAction("trigger", "state", MemoryActionKind.FETCH),
         ),
         final_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
     )
@@ -128,6 +131,70 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
     assert len(admitted.layout.reuse_dependencies) == 1
     assert len(admitted.simulator_input.reuse_dependencies) == 1
     assert admitted.simulation.makespan_ns == selected.simulation.makespan_ns
+
+
+def test_fixed_layout_gives_resident_leases_static_homes_after_the_assignment() -> None:
+    # `big` is placed; `small` was kept resident by the planner, so its lease
+    # takes the next aligned home past the assignment instead of a place in it.
+    program = Program(
+        devices=(DEVICE,),
+        alias_groups=(
+            AliasGroupSpec("big", "cuda_0", 64, retain_spill_copy=True),
+            AliasGroupSpec("small", "cuda_0", 8, retain_spill_copy=True),
+        ),
+        objects=(
+            ObjectSpec("big_object", "big", 0, 64),
+            ObjectSpec("small_object", "small", 0, 8),
+        ),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(
+            TaskSpec(
+                "consume",
+                COMPUTE,
+                "profile",
+                inputs=("big_object", "small_object"),
+            ),
+        ),
+    )
+    schedule = MemorySchedule(
+        initial_residency=(
+            ResidencySpec("big", MemoryLocation.DEVICE),
+            ResidencySpec("small", MemoryLocation.DEVICE),
+        ),
+        actions=(
+            MemoryAction("consume", "big", MemoryActionKind.RELEASE),
+            MemoryAction("consume", "small", MemoryActionKind.RELEASE),
+        ),
+        final_residency=(),
+    )
+    config = SimulationConfig.single_device(
+        "cuda_0",
+        device_capacity_bytes=80,
+        spill_capacity_bytes=128,
+        fetch_bandwidth_bytes_per_second=64_000_000_000,
+        evict_bandwidth_bytes_per_second=64_000_000_000,
+    )
+    facts = AdmissionFacts(
+        "cuda_0",
+        80,
+        80,
+        16,
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
+    )
+    selected = replace(
+        _selected(program, schedule, config),
+        resident_slice=ResidentSlice(bytes=16, aliases=("small",)),
+    )
+
+    admitted = build_fixed_layout_admission(selected, facts)
+
+    placements = {item.alias_group_id: item for item in admitted.layout.placements}
+    assert placements["big"].offset == 0
+    assert placements["small"].offset == 64
+    assert admitted.layout.fixed_slice_bytes == 72
+    assert admitted.layout.resident_slice_bytes == 8
+    assert admitted.layout.required_bytes == 72
+    assert admitted.layout.reuse_dependencies == ()
 
 
 def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
@@ -304,12 +371,12 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
             MemoryAction(
                 "task_000000",
                 "alias_000000",
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             ),
             MemoryAction(
                 "task_000001",
                 "alias_000000",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
         ),
         (ResidencySpec("alias_000000", MemoryLocation.DEVICE),),
@@ -424,12 +491,12 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
             MemoryAction(
                 "task_000000",
                 "alias_000000",
-                MemoryActionKind.OFFLOAD,
+                MemoryActionKind.EVICT,
             ),
             MemoryAction(
                 "task_000001",
                 "alias_000000",
-                MemoryActionKind.PREFETCH,
+                MemoryActionKind.FETCH,
             ),
         ),
         final_residency=(ResidencySpec("alias_000000", MemoryLocation.DEVICE),),
@@ -448,9 +515,7 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
         1,
         tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
-    admitted = build_fixed_layout_admission(
-        _selected(program, schedule, config), facts
-    )
+    admitted = build_fixed_layout_admission(_selected(program, schedule, config), facts)
 
     runtime = project_runtime_fixed_layout(
         admitted.layout,

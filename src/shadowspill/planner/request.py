@@ -37,7 +37,7 @@ class PressureFitOptions:
         "tight-stall",
         "tight-transfer",
     )
-    prefetch_rules: tuple[str, ...] = (
+    fetch_rules: tuple[str, ...] = (
         "packed-fifo",
         "packed-fit",
         "latest-safe",
@@ -68,20 +68,39 @@ class PressureFitOptions:
     #: explain a plan, and not worth paying in a sweep.
     record_reduction_steps: bool = False
     workers: int = 0
+    #: Make every candidate's outcome a pure function of its inputs, so
+    #: parallel planning reproduces exactly run to run. The placement gate
+    #: then consults only the candidate's own placed plans, never the shared
+    #: best-placed record, which costs additional placement measurements.
+    #: Off by default: the shared gate is faster, and the default search is
+    #: stable without being bit-reproducible.
+    deterministic: bool = False
+    #: Objects smaller than this many bytes are not eligible to be evicted
+    #: mid-step: they stay resident from their first to their last access,
+    #: and the planner charges them at every boundary in between. Their
+    #: boundary contract is untouched -- an opening fetch, a release after
+    #: the last access, a terminal writeback when modified. Zero, the
+    #: library default, makes every object eligible; the PyTorch frontend
+    #: sets 1 MiB unless told otherwise, because a copy under that size is
+    #: latency-bound and its bytes hardly relieve a boundary, while every
+    #: such object is a cut candidate, a dispatch, and an event.
+    minimum_object_bytes_evict_eligible: int = 0
 
     def __post_init__(self) -> None:
         if self.capacity_refinement_bytes < 0:
             raise ValueError("capacity_refinement_bytes is invalid")
+        if self.minimum_object_bytes_evict_eligible < 0:
+            raise ValueError("minimum_object_bytes_evict_eligible is invalid")
         if not isinstance(self.initial_placement, InitialPlacement):
             raise ValueError("initial_placement is invalid")
         if not self.residency_strategies:
             raise ValueError("residency_strategies must not be empty")
-        if not self.prefetch_rules:
-            raise ValueError("prefetch_rules must not be empty")
+        if not self.fetch_rules:
+            raise ValueError("fetch_rules must not be empty")
         if len(set(self.residency_strategies)) != len(self.residency_strategies):
             raise ValueError("residency_strategies contains duplicates")
-        if len(set(self.prefetch_rules)) != len(self.prefetch_rules):
-            raise ValueError("prefetch_rules contains duplicates")
+        if len(set(self.fetch_rules)) != len(self.fetch_rules):
+            raise ValueError("fetch_rules contains duplicates")
         known_strategies = {
             "headroom-stall",
             "headroom-transfer",
@@ -89,7 +108,7 @@ class PressureFitOptions:
             "tight-transfer",
             "relaxed-stall",
         }
-        known_prefetch = {
+        known_fetch = {
             "packed-fifo",
             "packed-fit",
             "interval-entry",
@@ -97,13 +116,13 @@ class PressureFitOptions:
             "demand",
         }
         unknown_strategies = set(self.residency_strategies) - known_strategies
-        unknown_prefetch = set(self.prefetch_rules) - known_prefetch
+        unknown_fetch = set(self.fetch_rules) - known_fetch
         if unknown_strategies:
             raise ValueError(
                 f"unknown residency strategies: {sorted(unknown_strategies)}"
             )
-        if unknown_prefetch:
-            raise ValueError(f"unknown prefetch rules: {sorted(unknown_prefetch)}")
+        if unknown_fetch:
+            raise ValueError(f"unknown fetch rules: {sorted(unknown_fetch)}")
         if (
             isinstance(self.max_repair_attempts, bool)
             or not isinstance(self.max_repair_attempts, int)

@@ -130,8 +130,11 @@ L + D + S \le P.
 
 `fixed_slice_bytes`, `dynamic_reserve_bytes`, `scratch_reserve_bytes`,
 `required_bytes`, and `slack_bytes` expose every term directly. The fixed
-slice is one parent range; $D$ and $S$ remain available in the rest of the
-execution pool for ordinary dynamic leases.
+slice is one parent range, and its tail is the resident slice
+(`resident_slice_bytes`) holding the objects the planner kept resident,
+described in [fixed-offset placement](fixed-placement.md#the-resident-slice);
+$D$ and $S$ remain available in the rest of the execution pool for ordinary
+dynamic leases.
 
 Spill admission is separate:
 
@@ -171,7 +174,7 @@ replacement without corresponding allocation steps fails before PressureFit.
 A hand-authored logical `Program` can still use PressureFit and the simulator
 without an `AdmissionFacts`. It becomes executable only after a frontend
 provides complete physical evidence. The serialized topology uses only the
-current `shadowspill.admission_facts/v3` schema; older synthetic forms are
+current `shadowspill.admission_facts/v1` schema; older synthetic forms are
 rejected rather than migrated.
 
 ## From a schedule to physical lifetimes
@@ -182,7 +185,7 @@ Two different things are ordered in causal order here, and keeping them apart
 matters when reading anything below.
 
 A **memory action** is a decision the *plan* makes about moving an object:
-`prefetch`, `offload`, or `release`, each triggered at a task boundary. Actions
+`fetch`, `evict`, or `release`, each triggered at a task boundary. Actions
 belong to the `MemorySchedule` and are what PressureFit chooses
 ([IR](ir.md#memory-schedule)).
 

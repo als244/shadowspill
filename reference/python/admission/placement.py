@@ -84,11 +84,23 @@ def _align_up(value: int, alignment: int) -> int:
 
 def place_lifetimes(
     items: Sequence[Lifetime],
+    excluded: Sequence[bool] | None = None,
 ) -> tuple[tuple[int, ...], int]:
-    """Return each lease's offset, in input order, and the bytes required."""
+    """Return each lease's offset, in input order, and the bytes required.
+
+    An excluded lease is placed elsewhere: it gets offset zero here and is
+    outside the bytes required.
+    """
 
     if not items:
         return (), 0
+    if excluded is not None and any(excluded):
+        kept = [source for source, skip in enumerate(excluded) if not skip]
+        placed, required = place_lifetimes([items[source] for source in kept])
+        offsets = [0] * len(items)
+        for position, source in enumerate(kept):
+            offsets[source] = placed[position]
+        return tuple(offsets), required
     sizes = [item.bytes for item in items]
     alignments = [item.alignment for item in items]
     starts = [item.predicted_start_ns for item in items]

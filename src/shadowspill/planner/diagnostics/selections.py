@@ -55,6 +55,10 @@ class RecomputationProblemDiagnostics:
     #: next rather than finishing one problem before starting another.
     started_ns: int = 0
     finished_ns: int = 0
+    #: The objects `minimum_object_bytes_evict_eligible` kept resident for
+    #: this problem: how many, and their bytes.
+    evict_ineligible_aliases: int = 0
+    evict_ineligible_bytes: int = 0
 
     def __post_init__(self) -> None:
         if any(
@@ -137,6 +141,10 @@ class RecomputationProblemDiagnostics:
                 "started_ns": self.started_ns,
                 "finished_ns": self.finished_ns,
             },
+            "evict_ineligible": {
+                "aliases": self.evict_ineligible_aliases,
+                "bytes": self.evict_ineligible_bytes,
+            },
             "repairs": self.repairs.to_dict(),
             "candidate_policy_evaluations": [
                 item.to_dict() for item in self.candidate_evaluations
@@ -199,6 +207,12 @@ class RecomputationProblemDiagnostics:
             ),
             started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),
             finished_ns=_span(data.get("span"), "finished_ns", f"{path}.span"),
+            evict_ineligible_aliases=_span(
+                data.get("evict_ineligible"), "aliases", f"{path}.evict_ineligible"
+            ),
+            evict_ineligible_bytes=_span(
+                data.get("evict_ineligible"), "bytes", f"{path}.evict_ineligible"
+            ),
         )
         expected_summary = {
             "candidate_policy_count": result.candidate_policy_count,

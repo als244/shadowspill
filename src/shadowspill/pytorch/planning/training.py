@@ -28,12 +28,14 @@ from shadowspill.planner import (
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.program import PressureFitProgram, StepProgram
+from shadowspill.planner.request import PressureFitOptions
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     capture_training_objective,
+    rebind_training_objective,
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.diagnostics.builders import training_stage_inventory
 from shadowspill.pytorch.materialization.training import (
@@ -60,7 +62,7 @@ from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     training_profiling_metadata,
 )
-from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import (
     InstalledAllocator,
     validate_dynamic_execution_reservation,
@@ -176,11 +178,12 @@ def capture_training_graphs(
         device_ordinal = memory.execution_device
     with timer.measure("capture_lowering"):
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-        fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
+        fake_model = fake_device_model(model, fake_mode, device_index=device_ordinal)
         captures = _capture_training_objectives(
             fake_model,
             objective,
             cpu_inputs,
+            signatures=signatures,
             fake_mode=fake_mode,
             device_ordinal=device_ordinal,
             stores=stores,
@@ -245,32 +248,45 @@ def _capture_training_objectives(
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     cpu_inputs: tuple[tuple[object, ...], ...],
     *,
+    signatures: tuple[InputSignature, ...],
     fake_mode: FakeTensorMode,
     device_ordinal: int,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> tuple[TrainingObjectiveCapture, ...]:
+    """Export the objective once per distinct input structure.
+
+    Positions that share an input signature share the exported program and
+    keep their own flattened example inputs, so every per-position
+    registration downstream is unchanged. Exporting per position would cost
+    one full export and one resident program per accumulation step.
+    """
+
+    templates: dict[str, TrainingObjectiveCapture] = {}
+    captures: list[TrainingObjectiveCapture] = []
     with fake_mode, timer.measure("objective_export"):
-        captures = tuple(
-            capture_training_objective(
-                fake_model,
-                objective,
-                fake_cuda_inputs(
-                    microbatch,
-                    fake_mode,
-                    device_index=device_ordinal,
-                ),
+        for microbatch, signature in zip(cpu_inputs, signatures, strict=True):
+            inputs = fake_device_inputs(
+                microbatch,
+                fake_mode,
+                device_index=device_ordinal,
             )
-            for microbatch in cpu_inputs
-        )
+            template = templates.get(signature.digest)
+            if template is None:
+                template = capture_training_objective(fake_model, objective, inputs)
+                templates[signature.digest] = template
+                captures.append(template)
+            else:
+                captures.append(rebind_training_objective(template, inputs))
     with timer.measure("export_archival"):
         for position, capture in enumerate(captures):
-            stores.archive_export(
-                capture.exported,
-                mode="training_objective",
-                position=position,
-            )
-    return captures
+            if any(capture is template for template in templates.values()):
+                stores.archive_export(
+                    capture.exported,
+                    mode="training_objective",
+                    position=position,
+                )
+    return tuple(captures)
 
 
 def _partition_training_graphs(
@@ -283,6 +299,14 @@ def _partition_training_graphs(
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> tuple[PartitionedTrainingCapture, ...]:
+    """Partition every position against its own example inputs.
+
+    Positions may share an exported program, but a partition binds stage
+    inputs to the example tensors it was built from, and the lowering
+    registers each position's input objects from those tensors. Sharing a
+    partition would make later positions read the first position's inputs.
+    """
+
     representative_roots = tuple(
         representative_training_arguments(capture, model, microbatch)
         for capture, microbatch in zip(captures, cpu_inputs, strict=True)
@@ -355,7 +379,7 @@ def materialize_training_state(
                 pool=memory.spill.name,
             )
         with timer.measure("model_placeholder_restoration"):
-            state.restore_cuda_placeholders_after_optimizer_capture()
+            state.restore_device_placeholders_after_optimizer_capture()
         if optimizer_capture.recurrent is None:
             raise PlanningError(
                 "the optimizer state/update cannot be bounded: "
@@ -393,7 +417,7 @@ def profile_training_tasks(
 ) -> TrainingProfileArtifacts:
     """Compile/profile each unique graph-pair and optimizer structural contract."""
 
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
         device_ordinal=captured.device_ordinal,
@@ -472,7 +496,7 @@ def _report_training_profile_inventory(
 
 def _resolve_training_manifests(
     inventory: _TrainingTaskInventory,
-    profiler: CudaTaskProfiler,
+    profiler: TaskProfiler,
     environment: ProfileEnvironment,
     stores: PlanningStores,
     timer: PlanningTimer,
@@ -496,7 +520,7 @@ def _resolve_training_manifests(
 
 def _profile_training_inventory(
     inventory: _TrainingTaskInventory,
-    profiler: CudaTaskProfiler,
+    profiler: TaskProfiler,
     environment: ProfileEnvironment,
     manifests: ResolvedTaskManifests,
     stores: PlanningStores,
@@ -681,6 +705,7 @@ def _report_training_program_inventory(
 def pressurefit_training_programs(
     programs: TrainingProgramArtifacts,
     *,
+    options: PressureFitOptions,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> TrainingSelections:
@@ -726,6 +751,7 @@ def pressurefit_training_programs(
                     initial_residency=programs.recurrent.initial_residency,
                     final_residency=programs.recurrent.final_residency,
                     config=config,
+                    options=options,
                     placement=placement_facts(
                         programs.recurrent_admission,
                         scratch_reserve_bytes=scratch_reserve,
@@ -740,12 +766,13 @@ def pressurefit_training_programs(
                     programs.simulation_config,
                     programs.initial_admission,
                     lambda config: resolve_plan(
-                    stores.store,
-                    stores.plans,
+                        stores.store,
+                        stores.plans,
                         programs.initial.program,
                         initial_residency=programs.initial.initial_residency,
                         final_residency=programs.initial.final_residency,
                         config=config,
+                        options=options,
                         placement=placement_facts(
                             programs.initial_admission,
                             scratch_reserve_bytes=scratch_reserve,
@@ -1065,8 +1092,8 @@ def _training_plan_report(
         tuple(timer.values),
         started,
         initial_execution_plan=initial_plan,
-        recomputation_cache_hits=hits,
-        recomputation_cache_misses=misses,
+        planned_program_cache_hits=hits,
+        planned_program_cache_misses=misses,
         captured_stage_count=sum(
             len(capture.stages) for capture in captured.partitioned
         ),
@@ -1436,6 +1463,7 @@ def build_training(
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    minimum_object_bytes_evict_eligible: int = 0,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries."""
 
@@ -1480,6 +1508,11 @@ def build_training(
         )
         selections = pressurefit_training_programs(
             programs,
+            options=PressureFitOptions(
+                minimum_object_bytes_evict_eligible=(
+                    minimum_object_bytes_evict_eligible
+                )
+            ),
             stores=artifacts,
             timer=timer,
         )

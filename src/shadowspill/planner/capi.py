@@ -72,13 +72,20 @@ class CResidencyProblem(ctypes.Structure):
         ("device_capacity_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("boundary_capacity_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
+        ("anchor_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("anchor_positions", ctypes.POINTER(ctypes.c_uint32)),
+        ("anchor_tasks", ctypes.POINTER(ctypes.c_uint32)),
+        ("reserved_offsets", ctypes.POINTER(ctypes.c_uint32)),
+        ("reserved_positions", ctypes.POINTER(ctypes.c_uint32)),
+        ("alias_evict_eligible", ctypes.POINTER(ctypes.c_uint8)),
+        ("fixed_fetch_trigger", ctypes.POINTER(ctypes.c_uint32)),
     ]
 
 
 class CResidencyOptions(ctypes.Structure):
     _fields_ = [
         ("minimize_transfer", ctypes.c_uint8),
-        ("prefetch_headroom", ctypes.c_uint8),
+        ("fetch_headroom", ctypes.c_uint8),
         ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
         ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
         ("extra_pressure_bytes", ctypes.POINTER(ctypes.c_uint64)),
@@ -224,6 +231,7 @@ class CPlacementProblem(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("lifetime_count", ctypes.c_uint32),
         ("lifetimes", ctypes.POINTER(CLeaseLifetime)),
+        ("excluded", ctypes.POINTER(ctypes.c_uint8)),
     ]
 
 
@@ -240,7 +248,7 @@ class CBestPlacedRecord(ctypes.Structure):
         ("object_capacity_bytes", ctypes.c_uint64),
         ("capacity_given_back_bytes", ctypes.c_uint64),
         ("residency_strategy", ctypes.c_uint8),
-        ("prefetch_rule", ctypes.c_uint8),
+        ("fetch_rule", ctypes.c_uint8),
         ("coalesced", ctypes.c_uint8),
         ("schedule_digest", ctypes.c_uint8 * 32),
     ]
@@ -250,8 +258,8 @@ class CPressureFitProblemOptions(ctypes.Structure):
     _fields_ = [
         ("residency_strategies", ctypes.POINTER(ctypes.c_uint8)),
         ("residency_strategy_count", ctypes.c_uint32),
-        ("prefetch_rules", ctypes.POINTER(ctypes.c_uint8)),
-        ("prefetch_rule_count", ctypes.c_uint32),
+        ("fetch_rules", ctypes.POINTER(ctypes.c_uint8)),
+        ("fetch_rule_count", ctypes.c_uint32),
         ("coalescing_modes", ctypes.POINTER(ctypes.c_uint8)),
         ("coalescing_mode_count", ctypes.c_uint32),
         ("max_repair_attempts", ctypes.c_uint32),
@@ -260,6 +268,8 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("record_reduction_steps", ctypes.c_uint8),
         ("best_placed", ctypes.c_void_p),
         ("workers", ctypes.c_uint32),
+        ("deterministic", ctypes.c_uint8),
+        ("minimum_object_bytes_evict_eligible", ctypes.c_uint64),
     ]
 
 
@@ -289,10 +299,10 @@ class CPressureFitPreflightResult(ctypes.Structure):
 
 class CPressureFitRepairDiagnostics(ctypes.Structure):
     _fields_ = [
-        ("admission_prefetch_advance_attempts", ctypes.c_uint64),
-        ("admission_prefetch_delay_attempts", ctypes.c_uint64),
+        ("admission_fetch_advance_attempts", ctypes.c_uint64),
+        ("admission_fetch_delay_attempts", ctypes.c_uint64),
         ("admission_pressure_boundary_attempts", ctypes.c_uint64),
-        ("simulation_prefetch_delay_attempts", ctypes.c_uint64),
+        ("simulation_fetch_delay_attempts", ctypes.c_uint64),
         ("simulation_pressure_boundary_attempts", ctypes.c_uint64),
     ]
 
@@ -331,8 +341,6 @@ class CPressureFitSectionTiming(ctypes.Structure):
 
 class CPressureFitWorkDiagnostics(ctypes.Structure):
     _fields_ = [
-        ("residency_cache_hits", ctypes.c_uint64),
-        ("residency_cache_misses", ctypes.c_uint64),
         ("schedule_emissions", ctypes.c_uint64),
         ("schedule_cache_hits", ctypes.c_uint64),
         ("simulation_calls", ctypes.c_uint64),
@@ -346,7 +354,7 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint8),
         ("residency_strategy", ctypes.c_uint8),
-        ("prefetch_rule", ctypes.c_uint8),
+        ("fetch_rule", ctypes.c_uint8),
         ("coalesced", ctypes.c_uint8),
         ("repairs", CPressureFitRepairDiagnostics),
         ("work", CPressureFitWorkDiagnostics),
@@ -362,6 +370,7 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("placements_attempted", ctypes.c_uint32),
         ("placements_admitted", ctypes.c_uint32),
         ("capacity_refinements", ctypes.c_uint32),
+        ("repairs_at_best", ctypes.c_uint32),
         ("schedule_digest", ctypes.c_uint8 * 32),
         ("started_ns", ctypes.c_uint64),
         ("finished_ns", ctypes.c_uint64),
@@ -390,6 +399,10 @@ class CPressureFitProblemResult(ctypes.Structure):
         ("work", CPressureFitWorkDiagnostics),
         ("started_ns", ctypes.c_uint64),
         ("finished_ns", ctypes.c_uint64),
+        ("evict_ineligible_aliases", ctypes.c_uint32),
+        ("evict_ineligible_bytes", ctypes.c_uint64),
+        ("resident_slice_bytes", ctypes.POINTER(ctypes.c_uint64)),
+        ("alias_evict_eligible", ctypes.POINTER(ctypes.c_uint8)),
     ]
 
 

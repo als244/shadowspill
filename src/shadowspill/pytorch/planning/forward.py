@@ -34,12 +34,13 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
+from shadowspill.planner.request import PressureFitOptions
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     capture_forward_stage_artifacts,
 )
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
 from shadowspill.pytorch.profiling import (
@@ -53,7 +54,7 @@ from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     canonicalize_profiling_metadata,
 )
-from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.pytorch.runtime_adapter.allocator import (
     validate_dynamic_execution_reservation,
 )
@@ -260,8 +261,8 @@ def _capture_partitioned_forward(
 ]:
     try:
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-        fake_model = fake_cuda_model(model, fake_mode, device_index=device_ordinal)
-        fake_inputs = fake_cuda_inputs(
+        fake_model = fake_device_model(model, fake_mode, device_index=device_ordinal)
+        fake_inputs = fake_device_inputs(
             cpu_inputs,
             fake_mode,
             device_index=device_ordinal,
@@ -314,7 +315,7 @@ def profile_forward_tasks(
 ) -> ForwardProfileArtifacts:
     """Compile and profile every unique structural task contract exactly once."""
 
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
         device_ordinal=captured.device_ordinal,
@@ -455,6 +456,7 @@ def build_forward_program(
 def pressurefit_forward_program(
     program: ForwardProgramArtifacts,
     *,
+    options: PressureFitOptions,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> FixedLayoutSelection:
@@ -489,6 +491,7 @@ def pressurefit_forward_program(
                     initial_residency=program.lowered.initial_residency,
                     final_residency=program.lowered.final_residency,
                     config=config,
+                    options=options,
                     placement=placement_facts(
                         program.admission,
                         scratch_reserve_bytes=scratch_reserve,
@@ -701,7 +704,7 @@ def _forward_plan_report(
         profiled.profiles,
         tuple(timer.values),
         started,
-        recomputation_cache_hit=selection.from_store,
+        planned_program_cache_hit=selection.from_store,
         pressurefit_results=(admitted_result,),
         captured_stage_count=len(captured.partitioned.stages),
         aot_unique_stage_contracts=profiled.profiles.unique_keys,
@@ -743,6 +746,7 @@ def build_forward(
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
     shared_outputs: Sequence[SharedOutput] = (),
+    minimum_object_bytes_evict_eligible: int = 0,
 ) -> PlannedForward:
     """Compose the independently callable forward-planning boundaries."""
 
@@ -769,6 +773,9 @@ def build_forward(
     program = build_forward_program(captured, profiled, memory=memory, timer=timer)
     selected = pressurefit_forward_program(
         program,
+        options=PressureFitOptions(
+            minimum_object_bytes_evict_eligible=minimum_object_bytes_evict_eligible
+        ),
         stores=artifacts,
         timer=timer,
     )

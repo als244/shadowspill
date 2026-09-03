@@ -26,6 +26,7 @@ from shadowspill.planner.admission.operations import (
     build_admission_operations,
 )
 from shadowspill.planner.admission.placement import place_records
+from shadowspill.planner.capi import NO_INDEX
 from shadowspill.planner.result import PressureFitResult
 from shadowspill.simulator import (
     ActionPhysicalDelta,
@@ -63,6 +64,7 @@ class FixedLayoutMeasurement:
     required_bytes: int
     pool_capacity_bytes: int
     fixed_slice_bytes: int
+    resident_slice_bytes: int
     dynamic_reserve_bytes: int
     scratch_reserve_bytes: int
     offsets: tuple[int, ...]
@@ -126,9 +128,29 @@ def measure_fixed_layout(
         operations, setup, selected.simulation, dynamic_alias_group_ids
     )
     _validate_dynamic_lifetimes(layout.dynamic_lifetimes)
-    offsets, fixed_slice_bytes = place_records(
-        layout.leases.lifetimes, layout.fixed_count
+    # The leases of the objects the planner kept resident stay out of the
+    # main assignment: each takes a static home in the resident slice, which
+    # follows the assignment, in lease order.
+    resident = frozenset(selected.resident_slice.aliases)
+    identities = layout.leases.identities
+    alias_ids = setup.template.alias_ids
+    excluded = tuple(
+        identities[index].alias != NO_INDEX
+        and alias_ids[identities[index].alias] in resident
+        for index in range(layout.fixed_count)
     )
+    placed, main_bytes = place_records(
+        layout.leases.lifetimes, layout.fixed_count, excluded
+    )
+    offsets = list(placed)
+    fixed_slice_bytes = main_bytes
+    for index, skip in enumerate(excluded):
+        if skip:
+            lifetime = layout.leases.lifetimes[index]
+            offsets[index] = -(-fixed_slice_bytes // lifetime.alignment) * (
+                lifetime.alignment
+            )
+            fixed_slice_bytes = offsets[index] + lifetime.bytes
     dynamic_reserve_bytes = sum(item.bytes for item in layout.dynamic_lifetimes)
     return FixedLayoutMeasurement(
         required_bytes=(
@@ -136,9 +158,10 @@ def measure_fixed_layout(
         ),
         pool_capacity_bytes=facts.pool_capacity_bytes,
         fixed_slice_bytes=fixed_slice_bytes,
+        resident_slice_bytes=fixed_slice_bytes - main_bytes,
         dynamic_reserve_bytes=dynamic_reserve_bytes,
         scratch_reserve_bytes=scratch_reserve_bytes,
-        offsets=offsets,
+        offsets=tuple(offsets),
         layout=layout,
         operations=operations,
         setup=setup,
@@ -171,6 +194,7 @@ def certify_fixed_layout(
         facts_digest=facts.digest,
         pool_capacity_bytes=measurement.pool_capacity_bytes,
         fixed_slice_bytes=measurement.fixed_slice_bytes,
+        resident_slice_bytes=measurement.resident_slice_bytes,
         dynamic_reserve_bytes=measurement.dynamic_reserve_bytes,
         scratch_reserve_bytes=measurement.scratch_reserve_bytes,
         required_bytes=measurement.required_bytes,

@@ -131,3 +131,28 @@ def test_placed_leases_never_overlap_in_both_time_and_address() -> None:
             )
             assert not (overlaps_in_time and overlaps_in_address)
         assert offsets[left] + item.bytes <= required
+
+
+def test_excluded_leases_are_left_out_of_the_layout() -> None:
+    items = _lifetimes(seed=5, count=120)
+    excluded = [index % 3 == 0 for index in range(len(items))]
+
+    compiled_offsets, compiled_required = place(items, excluded)
+    reference_offsets, reference_required = place_reference(items, excluded)
+    kept_offsets, kept_required = place(
+        [item for item, skip in zip(items, excluded, strict=True) if not skip]
+    )
+
+    assert compiled_offsets == reference_offsets
+    assert compiled_required == reference_required == kept_required
+    assert all(
+        compiled_offsets[index] == 0 for index, skip in enumerate(excluded) if skip
+    )
+    assert (
+        tuple(
+            offset
+            for offset, skip in zip(compiled_offsets, excluded, strict=True)
+            if not skip
+        )
+        == kept_offsets
+    )

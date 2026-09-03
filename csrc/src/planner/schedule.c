@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "candidates_internal.h"
+#include "residency_internal.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -337,14 +338,14 @@ static uint32_t collect_spans(
     uint32_t count = 0U;
     uint32_t index = 0U;
     while (index < boundary_count) {
-        if (resident[cell(alias, boundary_count, index)] == 0U) {
+        if (!shadowspill_cell_get(resident, cell(alias, boundary_count, index))) {
             ++index;
             continue;
         }
         uint32_t start = index;
         while (index + 1U < boundary_count &&
-               resident[cell(alias, boundary_count, index + 1U)] != 0U &&
-               breaks[cell(alias, boundary_count, index)] == 0U) {
+               shadowspill_cell_get(resident, cell(alias, boundary_count, index + 1U)) &&
+               !shadowspill_cell_get(breaks, cell(alias, boundary_count, index))) {
             ++index;
         }
         spans[count++] = (Span){.start = start, .end = index};
@@ -358,19 +359,9 @@ static int has_future_access(
     uint32_t alias,
     const Span *span
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
-    int32_t end_boundary = (int32_t)span->end - 1;
-    for (uint32_t index = span->start; index <= span->end; ++index) {
-        uint32_t task = problem->latest_access_task[cell(
-            alias,
-            facts->boundary_count,
-            index
-        )];
-        if (task != UINT32_MAX && (int32_t)task > end_boundary) {
-            return 1;
-        }
-    }
-    return 0;
+    return shadowspill_span_accessed_after(
+        facts->problem->residency, alias, span->start, span->end, (int32_t)span->end - 1
+    );
 }
 
 static void alias_contribution(
@@ -378,7 +369,7 @@ static void alias_contribution(
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t alias,
-    int prefetch_headroom,
+    int fetch_headroom,
     uint8_t *contribution,
     Span *spans
 ) {
@@ -393,7 +384,7 @@ static void alias_contribution(
     );
     for (uint32_t index = 0U; index < span_count; ++index) {
         uint32_t start = spans[index].start;
-        if (prefetch_headroom != 0 && start > 0U &&
+        if (fetch_headroom != 0 && start > 0U &&
             problem->productions[cell(alias, facts->boundary_count, start)] ==
                 0U) {
             --start;
@@ -425,7 +416,7 @@ static int build_pressure(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
-    int prefetch_headroom,
+    int fetch_headroom,
     uint64_t *pressure
 ) {
     size_t pressure_cells = 0U;
@@ -456,12 +447,17 @@ static int build_pressure(
     }
     const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
+        /* The resident slice holds the aliases the reducer may not cut, and
+         * the capacity measured against already excludes it. */
+        if (!shadowspill_alias_may_cut(problem, alias)) {
+            continue;
+        }
         alias_contribution(
             facts,
             resident,
             breaks,
             alias,
-            prefetch_headroom,
+            fetch_headroom,
             contribution,
             spans
         );
@@ -505,6 +501,9 @@ int shadowspill_extend_interval_entries(
     }
     const ShadowSpillResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
+        if (!shadowspill_alias_may_cut(problem, alias)) {
+            continue;
+        }
         uint32_t span_count = collect_spans(
             resident,
             breaks,
@@ -543,7 +542,7 @@ int shadowspill_extend_interval_entries(
                     )) {
                     break;
                 }
-                resident[cell(alias, facts->boundary_count, candidate_cell)] = 1U;
+                shadowspill_cell_set(resident, cell(alias, facts->boundary_count, candidate_cell), 1);
                 pressure[position] += added;
                 current->start = candidate_cell;
             }
@@ -579,13 +578,14 @@ static uint32_t event_max_task(
     const Span *span
 ) {
     const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const uint32_t last = problem->anchor_offsets[alias + 1U];
     uint32_t selected = UINT32_MAX;
-    for (uint32_t index = span->start; index <= span->end; ++index) {
-        uint32_t task = problem->latest_access_task[cell(
-            alias,
-            facts->boundary_count,
-            index
-        )];
+    for (uint32_t index = shadowspill_anchor_lower_bound(
+             problem->anchor_positions, problem->anchor_offsets[alias], last, span->start
+         );
+         index < last && problem->anchor_positions[index] <= span->end;
+         ++index) {
+        const uint32_t task = problem->anchor_tasks[index];
         if (task != UINT32_MAX && (selected == UINT32_MAX || task > selected)) {
             selected = task;
         }
@@ -683,20 +683,6 @@ static uint64_t ideal_trigger_time(
     return problem->task_ideal_end_ns[trigger];
 }
 
-static uint32_t latest_trigger_at_or_before(
-    const ShadowSpillResidencyProblem *problem,
-    uint32_t earliest,
-    uint32_t latest,
-    uint64_t target_ns
-) {
-    uint32_t insertion = earliest;
-    while (insertion <= latest &&
-           problem->task_ideal_end_ns[insertion] <= target_ns) {
-        ++insertion;
-    }
-    return insertion == earliest ? earliest : insertion - 1U;
-}
-
 static void choose_latest_safe_triggers(
     const ShadowSpillScheduleFacts *facts,
     Reload *reloads,
@@ -711,8 +697,8 @@ static void choose_latest_safe_triggers(
         );
         const uint64_t runtime = problem->fetch_runtime_ns[reload->alias];
         const uint64_t desired = deadline > runtime ? deadline - runtime : 0U;
-        reload->trigger = latest_trigger_at_or_before(
-            problem,
+        reload->trigger = shadowspill_latest_safe_trigger(
+            problem->task_ideal_end_ns,
             reload->earliest_trigger,
             reload->latest_trigger,
             desired
@@ -750,8 +736,8 @@ static void choose_packed_triggers(
             : deadline;
         uint64_t runtime = problem->fetch_runtime_ns[reload->alias];
         uint64_t desired = finish > runtime ? finish - runtime : 0U;
-        reload->trigger = latest_trigger_at_or_before(
-            problem,
+        reload->trigger = shadowspill_latest_safe_trigger(
+            problem->task_ideal_end_ns,
             reload->earliest_trigger,
             reload->latest_trigger,
             desired
@@ -800,7 +786,7 @@ static int clamp_create(
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t reload_count,
-    int prefetch_headroom,
+    int fetch_headroom,
     Clamp *clamp
 ) {
     memset(clamp, 0, sizeof(*clamp));
@@ -827,7 +813,7 @@ static int clamp_create(
     clamp->rank_by_reload = malloc(reload_slots * sizeof(*clamp->rank_by_reload));
     if (clamp->used == NULL || clamp->counts == NULL || clamp->active == NULL ||
         clamp->ranked == NULL || clamp->rank_by_reload == NULL ||
-        build_pressure(facts, resident, breaks, prefetch_headroom, clamp->used) != 0) {
+        build_pressure(facts, resident, breaks, fetch_headroom, clamp->used) != 0) {
         return -1;
     }
     return 0;
@@ -854,9 +840,10 @@ static void charge_fetch_windows(
         for (uint32_t boundary = reload->trigger;
              boundary < reload->entry_boundary;
              ++boundary) {
-            if (resident[cell(
-                    reload->alias, facts->boundary_count, boundary + 1U
-                )] != 0U) {
+            if (shadowspill_cell_get(
+                    resident,
+                    cell(reload->alias, facts->boundary_count, boundary + 1U)
+                )) {
                 continue;
             }
             const uint64_t position =
@@ -898,9 +885,10 @@ static void mark_movable_reloads(
         for (uint32_t boundary = reload->trigger;
              boundary < reload->entry_boundary;
              ++boundary) {
-            if (resident[cell(
-                    reload->alias, facts->boundary_count, boundary + 1U
-                )] == 0U) {
+            if (!shadowspill_cell_get(
+                    resident,
+                    cell(reload->alias, facts->boundary_count, boundary + 1U)
+                )) {
                 clamp->active[(uint64_t)boundary * clamp->word_count + word] |= mask;
             }
         }
@@ -934,9 +922,10 @@ static void delay_reload(
         );
     }
     for (uint32_t retired = old_trigger; retired < new_trigger; ++retired) {
-        if (resident[cell(
-                reload->alias, facts->boundary_count, retired + 1U
-            )] != 0U) {
+        if (shadowspill_cell_get(
+                resident,
+                cell(reload->alias, facts->boundary_count, retired + 1U)
+            )) {
             continue;
         }
         const uint64_t position =
@@ -989,11 +978,11 @@ static int clamp_triggers_to_fit(
     const uint8_t *breaks,
     Reload *reloads,
     uint32_t reload_count,
-    int prefetch_headroom
+    int fetch_headroom
 ) {
     Clamp clamp;
     if (clamp_create(
-            facts, resident, breaks, reload_count, prefetch_headroom, &clamp
+            facts, resident, breaks, reload_count, fetch_headroom, &clamp
         ) != 0) {
         clamp_destroy(&clamp);
         return -1;
@@ -1113,7 +1102,7 @@ static int copy_actions(
         for (uint32_t index = begin; index < end; ++index) {
             uint8_t kind = actions[index].kind;
             if (kind != SHADOWSPILL_MEMORY_RELEASE &&
-                kind != SHADOWSPILL_MEMORY_PREFETCH) {
+                kind != SHADOWSPILL_MEMORY_FETCH) {
                 continue;
             }
             uint32_t alias = actions[index].alias;
@@ -1125,7 +1114,7 @@ static int copy_actions(
         for (uint32_t index = begin; index < end; ++index) {
             uint8_t kind = actions[index].kind;
             if ((kind == SHADOWSPILL_MEMORY_RELEASE ||
-                 kind == SHADOWSPILL_MEMORY_PREFETCH) &&
+                 kind == SHADOWSPILL_MEMORY_FETCH) &&
                 masks[actions[index].alias] == 3U) {
                 continue;
             }
@@ -1145,14 +1134,14 @@ static int copy_actions(
     return 0;
 }
 
-int shadowspill_delay_indexed_prefetch(
+int shadowspill_delay_indexed_fetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,
     ShadowSpillScheduleStorage *storage,
-    ShadowSpillPrefetchTriggerConstraint *constraint
+    ShadowSpillFetchTriggerConstraint *constraint
 ) {
     if (facts == NULL || failure == NULL || storage == NULL ||
-        (failure->status != SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY &&
+        (failure->status != SHADOWSPILL_STATUS_FETCH_DEVICE_CAPACITY &&
          failure->status != SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY)) {
         return 0;
     }
@@ -1162,7 +1151,7 @@ int shadowspill_delay_indexed_prefetch(
     uint64_t selected_size = 0U;
     uint32_t selected_trigger = 0U;
     for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
-        if (storage->value.action_kinds[index] != SHADOWSPILL_MEMORY_PREFETCH) {
+        if (storage->value.action_kinds[index] != SHADOWSPILL_MEMORY_FETCH) {
             continue;
         }
         uint32_t alias = storage->value.action_aliases[index];
@@ -1171,7 +1160,7 @@ int shadowspill_delay_indexed_prefetch(
             alias != failure->error_alias) {
             continue;
         }
-        if (failure->status == SHADOWSPILL_STATUS_PREFETCH_DEVICE_CAPACITY &&
+        if (failure->status == SHADOWSPILL_STATUS_FETCH_DEVICE_CAPACITY &&
             failure->error_task != SHADOWSPILL_SIMULATOR_NO_INDEX &&
             trigger != failure->error_task) {
             continue;
@@ -1217,7 +1206,7 @@ int shadowspill_delay_indexed_prefetch(
     }
     storage->value.action_trigger_tasks[selected] = selected_target;
     if (constraint != NULL) {
-        *constraint = (ShadowSpillPrefetchTriggerConstraint){
+        *constraint = (ShadowSpillFetchTriggerConstraint){
             .alias = alias,
             .consumer_task = consumer,
             .minimum_trigger = selected_target,
@@ -1227,23 +1216,24 @@ int shadowspill_delay_indexed_prefetch(
     return sort_storage_actions(storage) == 0 ? 1 : -1;
 }
 
-int shadowspill_advance_indexed_prefetch_to_release(
+int shadowspill_advance_indexed_fetch_to_release(
     const ShadowSpillScheduleFacts *facts,
     uint32_t action_index,
     ShadowSpillScheduleStorage *storage,
-    ShadowSpillPrefetchTriggerConstraint *constraint
+    ShadowSpillFetchTriggerConstraint *constraint
 ) {
     if (facts == NULL || storage == NULL ||
         action_index >= storage->value.action_count ||
         storage->value.action_kinds[action_index] !=
-            SHADOWSPILL_MEMORY_PREFETCH) {
+            SHADOWSPILL_MEMORY_FETCH) {
         return 0;
     }
     const ShadowSpillSimulationProgram *program = facts->problem->simulation;
     const uint32_t alias = storage->value.action_aliases[action_index];
     const uint32_t current_trigger =
         storage->value.action_trigger_tasks[action_index];
-    if (alias >= facts->alias_count || current_trigger == 0U) {
+    if (alias >= facts->alias_count || current_trigger == 0U ||
+        !shadowspill_alias_may_cut(facts->problem->residency, alias)) {
         return 0;
     }
 
@@ -1278,12 +1268,12 @@ int shadowspill_advance_indexed_prefetch_to_release(
             continue;
         }
         const uint8_t kind = storage->value.action_kinds[index];
-        if (kind != SHADOWSPILL_MEMORY_OFFLOAD &&
+        if (kind != SHADOWSPILL_MEMORY_EVICT &&
             kind != SHADOWSPILL_MEMORY_RELEASE) {
             continue;
         }
         const uint32_t trigger = storage->value.action_trigger_tasks[index];
-        if (kind == SHADOWSPILL_MEMORY_OFFLOAD &&
+        if (kind == SHADOWSPILL_MEMORY_EVICT &&
             (latest_write == UINT32_MAX || trigger >= latest_write)) {
             authoritative_spill_copy = 1;
         }
@@ -1303,7 +1293,7 @@ int shadowspill_advance_indexed_prefetch_to_release(
     for (uint32_t index = 0U; index < storage->value.action_count; ++index) {
         const uint8_t kind = storage->value.action_kinds[index];
         if (kind != SHADOWSPILL_MEMORY_RELEASE &&
-            kind != SHADOWSPILL_MEMORY_OFFLOAD) {
+            kind != SHADOWSPILL_MEMORY_EVICT) {
             continue;
         }
         const uint32_t trigger = storage->value.action_trigger_tasks[index];
@@ -1331,7 +1321,7 @@ int shadowspill_advance_indexed_prefetch_to_release(
     }
     storage->value.action_trigger_tasks[action_index] = selected_trigger;
     if (constraint != NULL) {
-        *constraint = (ShadowSpillPrefetchTriggerConstraint){
+        *constraint = (ShadowSpillFetchTriggerConstraint){
             .alias = alias,
             .consumer_task = consumer,
             .minimum_trigger = 0U,
@@ -1341,9 +1331,9 @@ int shadowspill_advance_indexed_prefetch_to_release(
     return sort_storage_actions(storage) == 0 ? 1 : -1;
 }
 
-int shadowspill_apply_prefetch_trigger_constraints(
+int shadowspill_apply_fetch_trigger_constraints(
     const ShadowSpillScheduleFacts *facts,
-    const ShadowSpillPrefetchTriggerConstraint *constraints,
+    const ShadowSpillFetchTriggerConstraint *constraints,
     uint32_t constraint_count,
     ShadowSpillScheduleStorage *storage
 ) {
@@ -1357,7 +1347,7 @@ int shadowspill_apply_prefetch_trigger_constraints(
     int changed = 0;
     for (uint32_t action = 0U; action < storage->value.action_count; ++action) {
         if (storage->value.action_kinds[action] !=
-            SHADOWSPILL_MEMORY_PREFETCH) {
+            SHADOWSPILL_MEMORY_FETCH) {
             continue;
         }
         const uint32_t alias = storage->value.action_aliases[action];
@@ -1367,7 +1357,7 @@ int shadowspill_apply_prefetch_trigger_constraints(
             continue;
         }
         for (uint32_t index = 0U; index < constraint_count; ++index) {
-            const ShadowSpillPrefetchTriggerConstraint *constraint =
+            const ShadowSpillFetchTriggerConstraint *constraint =
                 &constraints[index];
             if (constraint->alias != alias ||
                 constraint->consumer_task != consumer) {
@@ -1523,7 +1513,7 @@ static int plan_span_reload(
         return 0;
     }
     const uint32_t first_task = event_min_task(facts, alias, &span);
-    const uint32_t latest = first_task == UINT32_MAX
+    uint32_t latest = first_task == UINT32_MAX
         ? facts->task_count - 1U
         : first_task - 1U;
     uint32_t earliest = 0U;
@@ -1533,6 +1523,14 @@ static int plan_span_reload(
             previous_departure.kind == SHADOWSPILL_MEMORY_RELEASE) {
             earliest = previous_departure.trigger;
         }
+    }
+    /* An alias the reducer may not cut is fetched at the trigger its resident
+     * slice was sized for, so no rule moves it. */
+    if (problem->fixed_fetch_trigger != NULL &&
+        problem->fixed_fetch_trigger[alias] != UINT32_MAX &&
+        problem->fixed_fetch_trigger[alias] <= latest) {
+        earliest = problem->fixed_fetch_trigger[alias];
+        latest = earliest;
     }
     if (latest < earliest ||
         reserve_reloads(
@@ -1590,7 +1588,7 @@ static int plan_span_departure(
             !has_write_since(facts, alias, *spill_refreshed, end_boundary)) {
             kind = SHADOWSPILL_MEMORY_RELEASE;
         } else {
-            kind = SHADOWSPILL_MEMORY_OFFLOAD;
+            kind = SHADOWSPILL_MEMORY_EVICT;
             *spill_refreshed = end_boundary;
         }
     }
@@ -1673,23 +1671,23 @@ static int choose_triggers(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
-    uint8_t prefetch_rule,
-    int prefetch_headroom,
+    uint8_t fetch_rule,
+    int fetch_headroom,
     Emission *emission
 ) {
-    if (prefetch_rule == SHADOWSPILL_PREFETCH_DEMAND) {
+    if (fetch_rule == SHADOWSPILL_FETCH_DEMAND) {
         for (uint32_t index = 0U; index < emission->reload_count; ++index) {
             emission->reloads[index].trigger =
                 emission->reloads[index].latest_trigger;
         }
         return 0;
     }
-    if (prefetch_rule == SHADOWSPILL_PREFETCH_LATEST_SAFE) {
+    if (fetch_rule == SHADOWSPILL_FETCH_LATEST_SAFE) {
         choose_latest_safe_triggers(facts, emission->reloads, emission->reload_count);
         return 0;
     }
     choose_packed_triggers(facts, emission->reloads, emission->reload_count);
-    if (prefetch_rule != SHADOWSPILL_PREFETCH_PACKED_FIT) {
+    if (fetch_rule != SHADOWSPILL_FETCH_PACKED_FIT) {
         return 0;
     }
     return clamp_triggers_to_fit(
@@ -1698,7 +1696,7 @@ static int choose_triggers(
         breaks,
         emission->reloads,
         emission->reload_count,
-        prefetch_headroom
+        fetch_headroom
     );
 }
 
@@ -1735,7 +1733,7 @@ static int build_actions(Emission *emission) {
                 &emission->action_count,
                 emission->reloads[index].trigger,
                 emission->reloads[index].alias,
-                SHADOWSPILL_MEMORY_PREFETCH
+                SHADOWSPILL_MEMORY_FETCH
             ) != 0) {
             return -1;
         }
@@ -1765,7 +1763,7 @@ static void emit_boundary_residency(
             const uint32_t output = storage->value.initial_count++;
             storage->value.initial_aliases[output] = alias;
             storage->value.initial_locations[output] =
-                resident[cell(alias, facts->boundary_count, 0U)] != 0U
+                shadowspill_cell_get(resident, cell(alias, facts->boundary_count, 0U))
                 ? SHADOWSPILL_MEMORY_DEVICE
                 : SHADOWSPILL_MEMORY_SPILL;
         }
@@ -1782,13 +1780,13 @@ int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
-    uint8_t prefetch_rule,
+    uint8_t fetch_rule,
     int coalesced,
-    int prefetch_headroom,
+    int fetch_headroom,
     ShadowSpillScheduleStorage *storage
 ) {
     if (facts == NULL || resident == NULL || breaks == NULL || storage == NULL ||
-        prefetch_rule > SHADOWSPILL_PREFETCH_DEMAND) {
+        fetch_rule > SHADOWSPILL_FETCH_DEMAND) {
         return -1;
     }
     shadowspill_schedule_storage_clear(storage);
@@ -1813,7 +1811,7 @@ int shadowspill_emit_indexed_schedule(
     }
 
     if (choose_triggers(
-            facts, resident, breaks, prefetch_rule, prefetch_headroom, &emission
+            facts, resident, breaks, fetch_rule, fetch_headroom, &emission
         ) != 0 ||
         build_actions(&emission) != 0 ||
         copy_actions(

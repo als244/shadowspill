@@ -19,6 +19,7 @@ from shadowspill.ir import (
     ResidencySpec,
 )
 from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig, simulate
 from shadowspill.simulator.indexed import (
     index_simulation_template,
@@ -36,8 +37,9 @@ from .diagnostics.json import without_measurements
 from .plan import pressurefit
 from .request import PressureFitOptions
 from .result import PressureFitResult
+from .serialization import _resident_slice_from_value
 
-_SCHEMA = "shadowspill.pressurefit_selection/v7"
+_SCHEMA = artifact_schema("pressurefit_selection")
 
 
 class _ArtifactRecorder(Protocol):
@@ -104,7 +106,7 @@ class PlanStore:
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> PlanLookup:
-        """Return a validated cached selection or run unmodified PressureFit."""
+        """Return the stored planned program when it still matches, or plan."""
 
         selected_options = options or PressureFitOptions()
         key = _key(
@@ -160,13 +162,13 @@ class PlanStore:
         except FileNotFoundError:
             return None
         except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"PressureFit cache entry {path} cannot be read") from exc
+            raise ValueError(f"planned program {path} cannot be read") from exc
         if not isinstance(value, dict) or value.get("schema") != _SCHEMA:
-            raise ValueError(f"PressureFit cache entry {path} has an invalid schema")
+            raise ValueError(f"planned program {path} has an invalid schema")
         if value.get("key_digest") != key:
-            raise ValueError(f"PressureFit cache entry {path} has the wrong identity")
+            raise ValueError(f"planned program {path} has the wrong identity")
         if value.get("program_digest") != program.digest:
-            raise ValueError(f"PressureFit cache entry {path} has the wrong Program")
+            raise ValueError(f"planned program {path} has the wrong Program")
         expected_boundary = {
             "initial_residency": [item.to_dict() for item in initial_residency],
             "final_residency": [item.to_dict() for item in final_residency],
@@ -182,13 +184,11 @@ class PlanStore:
         )
         for field, expected in normalized_boundary.items():
             if value.get(field) != expected:
-                raise ValueError(
-                    f"PressureFit cache entry {path} has stale {field} evidence"
-                )
+                raise ValueError(f"planned program {path} has stale {field} evidence")
         schedule = MemorySchedule.from_dict(value.get("schedule"))
         raw_selections = value.get("selections")
         if not isinstance(raw_selections, list):
-            raise ValueError(f"PressureFit cache entry {path} has invalid selections")
+            raise ValueError(f"planned program {path} has invalid selections")
         selections = tuple(
             RecomputationSelection.from_value(item, f"cache.selections[{index}]")
             for index, item in enumerate(raw_selections)
@@ -216,9 +216,7 @@ class PlanStore:
             )
         diagnostics = _diagnostics_from_value(value.get("diagnostics"), path)
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
-            raise ValueError(
-                f"PressureFit cache entry {path} has stale simulator evidence"
-            )
+            raise ValueError(f"planned program {path} has stale simulator evidence")
         result = PressureFitResult(
             program=program,
             options=options,
@@ -229,6 +227,9 @@ class PlanStore:
             selections=selections,
             simulation=simulation,
             diagnostics=diagnostics,
+            resident_slice=_resident_slice_from_value(
+                value.get("resident_slice"), f"{path}.resident_slice"
+            ),
             admission_facts=admission,
         )
         self._record(key, program.digest, path, "read")
@@ -259,24 +260,21 @@ class PlanStore:
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
             "diagnostics": result.diagnostics.to_dict(),
+            "resident_slice": result.resident_slice.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         if path.exists() and not self.overwrite:
             try:
                 existing = path.read_text()
             except OSError as exc:
-                raise ValueError(
-                    f"PressureFit cache entry {path} cannot be read"
-                ) from exc
+                raise ValueError(f"planned program {path} cannot be read") from exc
             try:
                 existing_payload = json.loads(existing)
             except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"PressureFit cache entry {path} cannot be read"
-                ) from exc
+                raise ValueError(f"planned program {path} cannot be read") from exc
             if without_measurements(existing_payload) != without_measurements(payload):
                 raise ValueError(
-                    "fresh PressureFit output differs from an existing cache entry; "
+                    "fresh PressureFit output differs from the stored planned program; "
                     "use overwrite_plan=True or a new implementation_revision: "
                     f"{path}"
                 )
@@ -348,8 +346,11 @@ def _key(
 def _options_identity(options: PressureFitOptions) -> dict[str, object]:
     return {
         "initial_placement": options.initial_placement.value,
+        "minimum_object_bytes_evict_eligible": (
+            options.minimum_object_bytes_evict_eligible
+        ),
         "residency_strategies": options.residency_strategies,
-        "prefetch_rules": options.prefetch_rules,
+        "fetch_rules": options.fetch_rules,
         "evaluate_coalesced": options.evaluate_coalesced,
         "max_repair_attempts": options.max_repair_attempts,
     }
@@ -359,9 +360,7 @@ def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics
     try:
         return PressureFitDiagnostics.from_value(value, "cache.diagnostics")
     except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"PressureFit cache entry {path} has invalid diagnostics"
-        ) from exc
+        raise ValueError(f"planned program {path} has invalid diagnostics") from exc
 
 
 __all__ = ["PlanLookup", "PlanStore"]
@@ -380,8 +379,8 @@ def open_plan_store(artifact_store: ArtifactStore) -> PlanStore:
 
 
 def resolve_plan(
-artifact_store: ArtifactStore,
-plans: PlanStore,
+    artifact_store: ArtifactStore,
+    plans: PlanStore,
     program: Program,
     *,
     initial_residency: tuple[ResidencySpec, ...],
@@ -402,11 +401,9 @@ plans: PlanStore,
     selected_options = options or PressureFitOptions()
     artifact_store.archive_pressurefit_request(
         {
-            "schema": "shadowspill.pressurefit_request/v1",
+            "schema": artifact_schema("pressurefit_request"),
             "program_digest": program.digest,
-            "initial_residency": [
-                item.to_dict() for item in initial_residency
-            ],
+            "initial_residency": [item.to_dict() for item in initial_residency],
             "final_residency": [item.to_dict() for item in final_residency],
             "simulation": {
                 "devices": [asdict(item) for item in config.devices],
@@ -414,13 +411,12 @@ plans: PlanStore,
             },
             "options": {
                 "initial_placement": selected_options.initial_placement.value,
-                "residency_strategies": list(
-                    selected_options.residency_strategies
-                ),
-                "prefetch_rules": list(selected_options.prefetch_rules),
+                "residency_strategies": list(selected_options.residency_strategies),
+                "fetch_rules": list(selected_options.fetch_rules),
                 "evaluate_coalesced": selected_options.evaluate_coalesced,
                 "max_repair_attempts": selected_options.max_repair_attempts,
                 "workers": selected_options.workers,
+                "deterministic": selected_options.deterministic,
             },
             "admission": None if admission is None else admission.to_dict(),
         }

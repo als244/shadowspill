@@ -14,7 +14,9 @@ are separate frontend/planner concerns. Exact range placement is documented in
 ## Data model
 
 `ShadowSpillResidencyProblem` contains indexed aliases, boundaries, initial and
-final locations, task access, transfer cost, and per-boundary capacity.
+final locations, task access, transfer cost, per-boundary capacity, and, for
+the aliases the reducer may not cut, `alias_evict_eligible` and the
+`fixed_fetch_trigger` their one fetch is issued at.
 `ShadowSpillAdmissionFacts` adds exact task allocation/free steps, the
 anonymous live-set multiset flattened per task from those steps, fresh outputs,
 replacements, handoffs, and task-allocation slots. Executable admission never
@@ -40,8 +42,13 @@ repair limit, initial placement, how much capacity a plan gives back at a time
 when its layout does not fit (`capacity_refinement_bytes`, zero for the whole
 shortfall), whether each candidate records its reduction trajectory
 (`record_reduction_steps`), how many threads the call searches on
-(`workers`, zero for one per logical CPU and one for the calling thread), and
-the shared best-placed record to measure against. The three policy axes are
+(`workers`, zero for one per logical CPU and one for the calling thread), the
+shared best-placed record to measure against, and which objects are too small
+to be worth cutting (`minimum_object_bytes_evict_eligible`, zero for none):
+those stay resident from first to last access, take static homes in a
+resident slice whose size is reserved at preparation out of the capacity
+handed to the reducer, and are fetched at a trigger chosen once. The three
+policy axes are
 supplied as explicit arrays with counts, so a caller evaluates exactly the
 combinations it asks for; their product is the candidate count per problem.
 
@@ -52,8 +59,11 @@ answers with the best plan it found, not the first that ran.
 
 Results contain the selected indexed schedule, every candidate status, exact
 repair counters, per-candidate placement counters, work counters, the
-sections its time went to, when it ran (`started_ns`/`finished_ns`), and
-failure boundary. A candidate
+sections its time went to, when it ran (`started_ns`/`finished_ns`), the
+objects kept resident (`evict_ineligible_aliases`, their bytes, the
+resident slice reserved for them as `resident_slice_bytes` per device, and
+which they are as `alias_evict_eligible` per alias, both owned by the
+result), and failure boundary. A candidate
 reports `SHADOWSPILL_CANDIDATE_UNPLACEABLE` when every plan it reached needed
 more contiguous pool than the pool has.
 
@@ -130,7 +140,8 @@ order they arrive in.
   that tie. Each result owns its storage afterwards, including when the call
   reports a failure, since problems that completed still hold theirs.
 - `shadowspill_validate_pressurefit_program_problem()` returns the structured
-  workspace, required-capacity, or missing-initial-residency preflight result
+  workspace, required-capacity, resident-slice, or missing-initial-residency
+  preflight result
   without evaluating candidate policies.
 - `shadowspill_evaluate_schedule_admission()` checks one selected schedule
   against the exact admission topology.
@@ -158,13 +169,16 @@ order they arrive in.
   one execution-pool slice and reports the bytes required. Leases are placed
   largest first, longest-lived first among equals, and each takes the lowest
   aligned offset clearing every lease it overlaps in time; lifetimes are
-  half-open, so leases that merely touch may share an offset. Where no two
+  half-open, so leases that merely touch may share an offset. A lease marked
+  `excluded` is left out, unplaced and outside the span, which is how the
+  leases given static homes in the resident slice stay out of the main
+  assignment. Where no two
   records tie, the layout depends on the records alone and not on the order
   they were listed in. The assignment and the structure behind it are
   specified in [fixed-offset placement](../architecture/fixed-placement.md).
-- `shadowspill_best_placed_create()`, `shadowspill_best_placed_destroy()`,
-  `shadowspill_best_placed_admits()` and `shadowspill_best_placed_read()`
-  share the best plan any caller has actually placed. The record carries the
+- `shadowspill_best_placed_create()`, `shadowspill_best_placed_destroy()`
+  and `shadowspill_best_placed_read()` share the best plan any caller has
+  actually placed; candidates offer their placed plans into it internally. The record carries the
   makespan, the object capacity that plan was built against, how much
   capacity it gave back, the caller's selection index, the candidate policy
   and the schedule digest; the object also keeps its own copy of the plan,
@@ -199,10 +213,11 @@ and diagnostics for this boundary as for every other; see the
 ## Diagnostics
 
 `ShadowSpillPressureFitWorkDiagnostics` counts the work one evaluation did:
-residency cache hits/misses, schedule emissions/cache hits, simulation calls
+schedule emissions/cache hits, simulation calls
 and cache hits, and admission calls. What placing cost and bought —
 `placements_attempted`, `placements_admitted`, `capacity_refinements` — is
-per candidate, on the candidate diagnostic.
+per candidate, on the candidate diagnostic, as is `repairs_at_best`, the
+repairs spent when the plan the candidate answers with was placed.
 
 Time is reported separately, as `ShadowSpillPressureFitSectionTiming`. Its
 fields are **disjoint sections** rather than overlapping totals: each names
