@@ -1,179 +1,361 @@
-"""Immutable timing, allocator, transfer, and runtime evidence for one step."""
+"""Immutable evidence for one traced step: summary, timelines, allocator, runtime.
+
+Every time here is seconds. Two clocks appear, and every field says which:
+
+- the device timeline, read from timing events measured against the step's
+  origin event on the compute stream. Task markers and transfer intervals
+  live here, so compute, fetch, and evict share one zero;
+- the host clock, `CLOCK_MONOTONIC`, counted from the runtime trace's
+  beginning, which the runtime records at the same point the origin event is
+  recorded. Boundary entry and exit, dispatch costs, and the worker's
+  queueing and completion observations live here.
+
+Simulated times come from the simulator's own clock, shifted so that the
+first selected task starts at zero; `Timelines.first_task_start_seconds` is
+where that instant sits on the device timeline, and every delta is taken
+after that shift, so a delta reads as drift within the step rather than as
+the step's opening cost.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from shadowspill.ir import MemoryAction
 from shadowspill.pytorch.runtime_adapter.telemetry import CapturedAllocationEvent
 from shadowspill.pytorch.runtime_adapter.trace import RuntimeTraceEvent
+from shadowspill.schema import artifact_schema
 
 
 @dataclass(frozen=True, slots=True)
-class TaskExecutionTiming:
-    """Qualification timing for one selected task invocation."""
+class TaskRecord:
+    """One selected task, simulated beside measured."""
 
+    #: Identity. `execution_task_id` is the chronological join key shared
+    #: with `PlanReport.diagnostics.tasks`; `task_id` names the Program task.
+    execution_task_id: str
     task_id: str
     execution_ordinal: int
-    execution_task_id: str
     semantic_name: str
     phase: str
     microbatch: int | None
+    #: Simulated, from the shifted simulator clock: when the task's inputs
+    #: were ready, when it started, when it ended, and how long it ran, which
+    #: is the isolated profile the plan was built from.
+    simulated_ready_seconds: float
+    simulated_start_seconds: float
+    simulated_end_seconds: float
     expected_profile_seconds: float
-    before_task_enter_timestamp_ns: int
-    before_task_exit_timestamp_ns: int
-    after_task_enter_timestamp_ns: int
-    after_task_exit_timestamp_ns: int
-    compute_duration_seconds: float
+    #: Device timeline: when the compute stream reached the task's readiness
+    #: marker, when its kernels started after the waits, when they finished,
+    #: and how long they ran.
     compute_reached_seconds: float
     compute_started_seconds: float
     compute_finished_seconds: float
+    compute_duration_seconds: float
+    #: The two waits between reaching the task and starting it: inputs still
+    #: being fetched, then ranges its allocations reuse still owned by a
+    #: transfer. Both leave the stream idle; the boundary owns both.
     input_readiness_wait_seconds: float
     allocation_reuse_wait_seconds: float
-    compute_reached_sequence: int
-    compute_started_sequence: int
-    compute_finished_sequence: int
-    runtime_before_task_enter_seconds: float | None
-    runtime_before_task_exit_seconds: float | None
-    runtime_after_task_enter_seconds: float | None
-    runtime_after_task_exit_seconds: float | None
-    #: How long after the frontend handed this task off the compute stream
-    #: arrived at it. Positive means the frontend was that far ahead; at zero
-    #: the stream has caught up and the next thing it waits on is the frontend
-    #: itself. Measured to the stream reaching the task, so a task that then
-    #: waits for its inputs still counts as having been handed off in time.
+    #: Device minus simulated, after alignment. A start delta that grows along
+    #: the lane is drift the simulator did not price; a duration delta is the
+    #: profile's error for this task.
+    start_delta_seconds: float
+    end_delta_seconds: float
+    duration_delta_seconds: float
+    #: Host clock, from the trace's beginning: the frontend's entry and exit
+    #: of the task's two boundaries, which bracket everything it does between
+    #: this task's kernels and the next's.
+    before_task_enter_seconds: float | None
+    before_task_exit_seconds: float | None
+    after_task_enter_seconds: float | None
+    after_task_exit_seconds: float | None
+    #: How long after the frontend handed the task off the stream reached it:
+    #: positive is the frontend's lead, zero means the stream caught up.
     frontend_lead_seconds: float | None
+    #: Host cost of the boundaries: the complete `before_task` wall time, the
+    #: callable's own dispatch, and the complete `after_task` wall time.
     dispatch_before_task_seconds: float
-    dispatch_stream_resolution_seconds: float
-    dispatch_readiness_marker_seconds: float
+    dispatch_invoke_seconds: float
+    dispatch_after_task_seconds: float
+    #: The work inside `before_task`, each a disjoint part of it.
     dispatch_input_lookup_seconds: float
     dispatch_storage_rebind_seconds: float
     dispatch_argument_assembly_seconds: float
-    dispatch_rebind_seconds: float
-    dispatch_invoke_seconds: float
+    #: The work inside `after_task`, each a disjoint part of it.
     dispatch_output_flatten_seconds: float
     dispatch_output_classification_seconds: float
     dispatch_output_adoption_seconds: float
     dispatch_output_state_publish_seconds: float
     dispatch_output_publish_seconds: float
     dispatch_dematerialize_seconds: float
-    dispatch_postprocess_seconds: float
     dispatch_cleanup_seconds: float
-    dispatch_after_task_seconds: float
-    dispatch_total_seconds: float
 
     def as_dict(self) -> dict[str, object]:
         return {
+            "execution_task_id": self.execution_task_id,
             "task_id": self.task_id,
             "execution_ordinal": self.execution_ordinal,
-            "execution_task_id": self.execution_task_id,
             "semantic_name": self.semantic_name,
             "phase": self.phase,
             "microbatch": self.microbatch,
-            "expected_profile_seconds": self.expected_profile_seconds,
-            "boundary_timestamps": {
-                "unit": "nanoseconds",
-                "host": {
-                    "clock": "CLOCK_MONOTONIC",
-                    "before_task": {
-                        "enter": self.before_task_enter_timestamp_ns,
-                        "exit": self.before_task_exit_timestamp_ns,
-                    },
-                    "after_task": {
-                        "enter": self.after_task_enter_timestamp_ns,
-                        "exit": self.after_task_exit_timestamp_ns,
-                    },
-                },
-                "compute_stream": {
-                    "clock": "cuda_event_elapsed_from_step_origin",
-                    "compute_reached": int(self.compute_reached_seconds * 1e9),
-                    "compute_started": int(self.compute_started_seconds * 1e9),
-                    "compute_finished": int(self.compute_finished_seconds * 1e9),
-                },
+            "simulated": {
+                "ready_seconds": self.simulated_ready_seconds,
+                "start_seconds": self.simulated_start_seconds,
+                "end_seconds": self.simulated_end_seconds,
+                "duration_seconds": self.expected_profile_seconds,
             },
-            "compute_duration_seconds": self.compute_duration_seconds,
-            "compute_reached_seconds": self.compute_reached_seconds,
-            "compute_started_seconds": self.compute_started_seconds,
-            "compute_finished_seconds": (
-                self.compute_finished_seconds
-            ),
-            "input_readiness_wait_seconds": self.input_readiness_wait_seconds,
-            "allocation_reuse_wait_seconds": self.allocation_reuse_wait_seconds,
-            "compute_reached_sequence": (self.compute_reached_sequence),
-            "compute_started_sequence": self.compute_started_sequence,
-            "compute_finished_sequence": self.compute_finished_sequence,
-            "runtime_before_task_enter_seconds": (
-                self.runtime_before_task_enter_seconds
-            ),
-            "runtime_before_task_exit_seconds": (
-                self.runtime_before_task_exit_seconds
-            ),
-            "runtime_after_task_enter_seconds": (
-                self.runtime_after_task_enter_seconds
-            ),
-            "runtime_after_task_exit_seconds": (
-                self.runtime_after_task_exit_seconds
-            ),
-            "frontend_lead_seconds": self.frontend_lead_seconds,
-            "dispatch_before_task_seconds": self.dispatch_before_task_seconds,
-            "dispatch_stream_resolution_seconds": (
-                self.dispatch_stream_resolution_seconds
-            ),
-            "dispatch_readiness_marker_seconds": self.dispatch_readiness_marker_seconds,
-            "dispatch_input_lookup_seconds": self.dispatch_input_lookup_seconds,
-            "dispatch_storage_rebind_seconds": self.dispatch_storage_rebind_seconds,
-            "dispatch_argument_assembly_seconds": (
-                self.dispatch_argument_assembly_seconds
-            ),
-            "dispatch_rebind_seconds": self.dispatch_rebind_seconds,
-            "dispatch_invoke_seconds": self.dispatch_invoke_seconds,
-            "dispatch_output_flatten_seconds": self.dispatch_output_flatten_seconds,
-            "dispatch_output_classification_seconds": (
-                self.dispatch_output_classification_seconds
-            ),
-            "dispatch_output_adoption_seconds": self.dispatch_output_adoption_seconds,
-            "dispatch_output_state_publish_seconds": (
-                self.dispatch_output_state_publish_seconds
-            ),
-            "dispatch_output_publish_seconds": self.dispatch_output_publish_seconds,
-            "dispatch_dematerialize_seconds": self.dispatch_dematerialize_seconds,
-            "dispatch_postprocess_seconds": self.dispatch_postprocess_seconds,
-            "dispatch_cleanup_seconds": self.dispatch_cleanup_seconds,
-            "dispatch_after_task_seconds": self.dispatch_after_task_seconds,
-            "dispatch_total_seconds": self.dispatch_total_seconds,
+            "stream": {
+                "reached_seconds": self.compute_reached_seconds,
+                "started_seconds": self.compute_started_seconds,
+                "finished_seconds": self.compute_finished_seconds,
+                "duration_seconds": self.compute_duration_seconds,
+                "input_readiness_wait_seconds": self.input_readiness_wait_seconds,
+                "allocation_reuse_wait_seconds": self.allocation_reuse_wait_seconds,
+            },
+            "delta": {
+                "start_seconds": self.start_delta_seconds,
+                "end_seconds": self.end_delta_seconds,
+                "duration_seconds": self.duration_delta_seconds,
+            },
+            "host": {
+                "before_task_enter_seconds": self.before_task_enter_seconds,
+                "before_task_exit_seconds": self.before_task_exit_seconds,
+                "after_task_enter_seconds": self.after_task_enter_seconds,
+                "after_task_exit_seconds": self.after_task_exit_seconds,
+                "frontend_lead_seconds": self.frontend_lead_seconds,
+                "dispatch_before_task_seconds": self.dispatch_before_task_seconds,
+                "dispatch_invoke_seconds": self.dispatch_invoke_seconds,
+                "dispatch_after_task_seconds": self.dispatch_after_task_seconds,
+                "dispatch_input_lookup_seconds": self.dispatch_input_lookup_seconds,
+                "dispatch_storage_rebind_seconds": (
+                    self.dispatch_storage_rebind_seconds
+                ),
+                "dispatch_argument_assembly_seconds": (
+                    self.dispatch_argument_assembly_seconds
+                ),
+                "dispatch_output_flatten_seconds": (
+                    self.dispatch_output_flatten_seconds
+                ),
+                "dispatch_output_classification_seconds": (
+                    self.dispatch_output_classification_seconds
+                ),
+                "dispatch_output_adoption_seconds": (
+                    self.dispatch_output_adoption_seconds
+                ),
+                "dispatch_output_state_publish_seconds": (
+                    self.dispatch_output_state_publish_seconds
+                ),
+                "dispatch_output_publish_seconds": (
+                    self.dispatch_output_publish_seconds
+                ),
+                "dispatch_dematerialize_seconds": self.dispatch_dematerialize_seconds,
+                "dispatch_cleanup_seconds": self.dispatch_cleanup_seconds,
+            },
         }
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionTiming:
-    """Qualification-only decomposition of one accumulated training call."""
+class TransferRecord:
+    """One scheduled transfer on its lane, simulated beside measured."""
 
-    compute_seconds: float
-    optimizer_seconds: float
-    dispatch_call_seconds: float
-    dispatch_startup_wait_seconds: float
-    dispatch_initial_actions_seconds: float
-    trace_setup_seconds: float
-    phase_gpu_seconds: tuple[tuple[str, float], ...]
-    tasks: Mapping[str, TaskExecutionTiming]
+    #: Identity. A scheduled transfer's `transfer_id` is
+    #: `<direction>_<sequence>`, with `sequence` its FIFO position among the
+    #: plan's transfers on the lane; an opening transfer's is
+    #: `<direction>_opening_<index>`. `triggered_by` is what released the
+    #: transfer: the execution task id of the task whose completion did, a
+    #: key into `tasks`, or `init` for the opening placement batch the
+    #: runtime issues before the first task.
+    transfer_id: str
+    direction: str
+    sequence: int
+    triggered_by: str
+    alias_group_id: str
+    bytes: int
+    #: The object's place in the step, by execution task id. `previous_access`
+    #: is the last selected task, up to and including the trigger, that read
+    #: or wrote the object, and `next_access` the first later task that does;
+    #: `modified_by` is the last one, up to the trigger, that created or
+    #: mutated it. `init` stands for no such task before the transfer, so the
+    #: bytes are what the step was given; `persistent` for none after it
+    #: within this call, so the object outlives the step. A fetch exists for
+    #: its next access; an eviction saves what its modifier produced.
+    previous_access: str
+    next_access: str
+    modified_by: str
+    #: Simulated, from the shifted simulator clock: when the transfer could
+    #: start, when the lane started it, when it ended, and its priced
+    #: duration at the assumed lane bandwidth. `None` for an opening
+    #: transfer, which the simulator does not model.
+    simulated_ready_seconds: float | None
+    simulated_start_seconds: float | None
+    simulated_end_seconds: float | None
+    simulated_duration_seconds: float | None
+    #: Device timeline: the copy's interval on the lane, bracketed by timing
+    #: events the worker recorded around it. `None` when the trace could not
+    #: measure this transfer.
+    stream_start_seconds: float | None
+    stream_end_seconds: float | None
+    stream_duration_seconds: float | None
+    #: Device minus simulated, after alignment; `None` without a stream
+    #: interval or without a simulation.
+    start_delta_seconds: float | None
+    end_delta_seconds: float | None
+    duration_delta_seconds: float | None
+    #: Host clock, from the trace's beginning: when the action was queued,
+    #: when its destination was reserved, when the worker dispatched the copy
+    #: to the lane, and when the worker observed its completion.
+    queued_seconds: float | None
+    reserved_seconds: float | None
+    dispatched_seconds: float
+    completion_observed_seconds: float
 
-    def as_dict(self, *, include_tasks: bool = True) -> dict[str, object]:
-        result: dict[str, object] = {
-            "compute_seconds": self.compute_seconds,
-            "optimizer_seconds": self.optimizer_seconds,
-            "dispatch_call_seconds": self.dispatch_call_seconds,
-            "dispatch_startup_wait_seconds": self.dispatch_startup_wait_seconds,
-            "dispatch_initial_actions_seconds": self.dispatch_initial_actions_seconds,
-            "trace_setup_seconds": self.trace_setup_seconds,
-            "phase_gpu_seconds": dict(self.phase_gpu_seconds),
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "transfer_id": self.transfer_id,
+            "direction": self.direction,
+            "sequence": self.sequence,
+            "triggered_by": self.triggered_by,
+            "alias_group_id": self.alias_group_id,
+            "bytes": self.bytes,
+            "previous_access": self.previous_access,
+            "next_access": self.next_access,
+            "modified_by": self.modified_by,
+            "simulated": {
+                "ready_seconds": self.simulated_ready_seconds,
+                "start_seconds": self.simulated_start_seconds,
+                "end_seconds": self.simulated_end_seconds,
+                "duration_seconds": self.simulated_duration_seconds,
+            },
+            "stream": {
+                "start_seconds": self.stream_start_seconds,
+                "end_seconds": self.stream_end_seconds,
+                "duration_seconds": self.stream_duration_seconds,
+            },
+            "delta": {
+                "start_seconds": self.start_delta_seconds,
+                "end_seconds": self.end_delta_seconds,
+                "duration_seconds": self.duration_delta_seconds,
+            },
+            "host": {
+                "queued_seconds": self.queued_seconds,
+                "reserved_seconds": self.reserved_seconds,
+                "dispatched_seconds": self.dispatched_seconds,
+                "completion_observed_seconds": self.completion_observed_seconds,
+            },
         }
-        if include_tasks:
-            result["tasks"] = {
-                execution_task_id: item.as_dict()
-                for execution_task_id, item in self.tasks.items()
-            }
-        return result
+
+
+@dataclass(frozen=True, slots=True)
+class LaneSummary:
+    """What one transfer lane did over the step, simulated beside measured."""
+
+    direction: str
+    transfers: int
+    bytes: int
+    #: Lane time the simulator priced for the scheduled transfers.
+    simulated_busy_seconds: float
+    #: How many transfers carry a stream interval, and the lane time those
+    #: intervals add up to. The effective bandwidth is their bytes over that
+    #: time; compare it with the bandwidth the plan assumed, which the plan
+    #: summary states.
+    measured_transfers: int
+    stream_busy_seconds: float
+    effective_bandwidth_bytes_per_second: float | None
+    #: The largest start delta on the lane, signed, and the transfer that
+    #: reached it: where the lane had drifted furthest from the simulation.
+    largest_start_delta_seconds: float | None
+    largest_start_delta_transfer_id: str | None
+    #: The opening placement batch on this lane: transfers the runtime issued
+    #: before the first task to restore the step's initial objects, which
+    #: precede the span and carry no simulation. They are records too,
+    #: `triggered_by` `init`, and lead the lane's order.
+    opening_transfers: int
+    opening_bytes: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "direction": self.direction,
+            "transfers": self.transfers,
+            "bytes": self.bytes,
+            "simulated_busy_seconds": self.simulated_busy_seconds,
+            "measured_transfers": self.measured_transfers,
+            "stream_busy_seconds": self.stream_busy_seconds,
+            "effective_bandwidth_bytes_per_second": (
+                self.effective_bandwidth_bytes_per_second
+            ),
+            "largest_start_delta_seconds": self.largest_start_delta_seconds,
+            "largest_start_delta_transfer_id": self.largest_start_delta_transfer_id,
+            "opening_transfers": self.opening_transfers,
+            "opening_bytes": self.opening_bytes,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TransferRecords:
+    """Every scheduled transfer, by transfer id, grouped by direction."""
+
+    fetch: Mapping[str, TransferRecord]
+    evict: Mapping[str, TransferRecord]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "fetch": {key: item.as_dict() for key, item in self.fetch.items()},
+            "evict": {key: item.as_dict() for key, item in self.evict.items()},
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TransferLane:
+    """One direction's transfers in FIFO order, with the lane's summary.
+
+    `order` holds transfer ids into the lane's group of
+    `StepDiagnostics.transfers`; an id's position is the transfer's
+    `sequence` on the lane.
+    """
+
+    order: tuple[str, ...]
+    summary: LaneSummary
+
+    def as_dict(self) -> dict[str, object]:
+        return {"summary": self.summary.as_dict(), "order": list(self.order)}
+
+
+@dataclass(frozen=True, slots=True)
+class Timelines:
+    """The step on three lanes, each in its stream's order, sharing one zero.
+
+    The lanes hold references: `compute` is every selected task's execution
+    task id in compute-stream order, keys into `StepDiagnostics.tasks`;
+    `fetch` and `evict` list transfer ids in each lane's FIFO order, keys
+    into the same-named group of `StepDiagnostics.transfers`. Device times
+    in those records count from the origin event; simulated times count from
+    the first selected task's simulated start. `first_task_start_seconds` is
+    when that task's kernels actually started on the device: the step's
+    prologue, which every invocation pays and the simulator does not model --
+    the opening restore of the first task's inputs, input staging, and the
+    first dispatch. Every delta is taken after shifting the simulation to it,
+    so a delta is drift within the step and the prologue is read here, once.
+    """
+
+    first_task_start_seconds: float
+    compute: tuple[str, ...]
+    fetch: TransferLane
+    evict: TransferLane
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "clocks": {
+                "stream": "seconds from the step origin event on the device",
+                "simulated": ("seconds from the first selected task's simulated start"),
+                "host": "seconds from the runtime trace's beginning",
+                "first_task_start_seconds": self.first_task_start_seconds,
+            },
+            "compute": list(self.compute),
+            "fetch": self.fetch.as_dict(),
+            "evict": self.evict.as_dict(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,39 +408,8 @@ class AllocatorTrace:
 
 
 @dataclass(frozen=True, slots=True)
-class TransferTrace:
-    """Annotated actions and completed-transfer counter deltas."""
-
-    actions: tuple[MemoryAction, ...]
-    fetch_transfers: int
-    evict_transfers: int
-    bytes_fetched: int
-    bytes_evicted: int
-    initial_fetch_transfers: int
-    initial_bytes_fetched: int
-    events: tuple[RuntimeTraceEvent, ...]
-    simulator_comparison: Mapping[str, SimulatorTransferComparison]
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "actions": [item.to_dict() for item in self.actions],
-            "fetch_transfers": self.fetch_transfers,
-            "evict_transfers": self.evict_transfers,
-            "bytes_fetched": self.bytes_fetched,
-            "bytes_evicted": self.bytes_evicted,
-            "initial_fetch_transfers": self.initial_fetch_transfers,
-            "initial_bytes_fetched": self.initial_bytes_fetched,
-            "events": [item.as_dict() for item in self.events],
-            "simulator_comparison": {
-                transfer_id: item.as_dict()
-                for transfer_id, item in self.simulator_comparison.items()
-            },
-        }
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeTrace:
-    """Runtime counter changes and terminal queue state for the traced call."""
+    """Runtime counter changes, terminal queue state, and the raw trace."""
 
     wait_events_inserted: int
     allocation_requests: int
@@ -299,96 +450,6 @@ class RuntimeTrace:
             "event_overflow": self.event_overflow,
             "allocation_event_overflow": self.allocation_event_overflow,
             "events": [item.as_dict() for item in self.events],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class SimulatorTaskComparison:
-    execution_task_id: str
-    task_id: str
-    simulated_start_ns: int
-    simulated_end_ns: int
-    simulated_start_seconds: float
-    real_start_seconds: float
-    start_delta_seconds: float
-    simulated_end_seconds: float
-    real_end_seconds: float
-    end_delta_seconds: float
-    expected_profile_seconds: float
-    observed_gpu_seconds: float
-    duration_delta_seconds: float
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "execution_task_id": self.execution_task_id,
-            "task_id": self.task_id,
-            "simulated_start_ns": self.simulated_start_ns,
-            "simulated_end_ns": self.simulated_end_ns,
-            "simulated_start_seconds": self.simulated_start_seconds,
-            "real_start_seconds": self.real_start_seconds,
-            "start_delta_seconds": self.start_delta_seconds,
-            "simulated_end_seconds": self.simulated_end_seconds,
-            "real_end_seconds": self.real_end_seconds,
-            "end_delta_seconds": self.end_delta_seconds,
-            "expected_profile_seconds": self.expected_profile_seconds,
-            "observed_gpu_seconds": self.observed_gpu_seconds,
-            "duration_delta_seconds": self.duration_delta_seconds,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class SimulatorTransferComparison:
-    """Simulator interval versus the worker-observed real transfer frontier."""
-
-    transfer_id: str
-    direction: str
-    sequence: int
-    trigger_task_id: str
-    execution_task_id: str
-    alias_group_id: str
-    bytes: int
-    simulated_ready_seconds: float
-    simulated_start_seconds: float
-    simulated_end_seconds: float
-    simulated_duration_seconds: float
-    real_queued_seconds: float | None
-    real_reserved_seconds: float | None
-    real_dispatch_timestamp_ns: int
-    real_completion_timestamp_ns: int
-    real_dispatch_seconds: float
-    real_completion_seconds: float
-    real_frontier_duration_seconds: float
-    start_delta_seconds: float
-    end_delta_seconds: float
-    duration_delta_seconds: float
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "transfer_id": self.transfer_id,
-            "direction": self.direction,
-            "sequence": self.sequence,
-            "trigger_task_id": self.trigger_task_id,
-            "execution_task_id": self.execution_task_id,
-            "alias_group_id": self.alias_group_id,
-            "bytes": self.bytes,
-            "timing_basis": (
-                "simulator_lane_interval_vs_dispatch_worker_frontier; "
-                "aligned_to_first_scheduled_transfer"
-            ),
-            "simulated_ready_seconds": self.simulated_ready_seconds,
-            "simulated_start_seconds": self.simulated_start_seconds,
-            "simulated_end_seconds": self.simulated_end_seconds,
-            "simulated_duration_seconds": self.simulated_duration_seconds,
-            "real_queued_seconds": self.real_queued_seconds,
-            "real_reserved_seconds": self.real_reserved_seconds,
-            "real_dispatch_timestamp_ns": self.real_dispatch_timestamp_ns,
-            "real_completion_timestamp_ns": self.real_completion_timestamp_ns,
-            "real_dispatch_seconds": self.real_dispatch_seconds,
-            "real_completion_seconds": self.real_completion_seconds,
-            "real_frontier_duration_seconds": self.real_frontier_duration_seconds,
-            "start_delta_seconds": self.start_delta_seconds,
-            "end_delta_seconds": self.end_delta_seconds,
-            "duration_delta_seconds": self.duration_delta_seconds,
         }
 
 
@@ -446,6 +507,17 @@ class StepTimingSummary:
     selected_span_delta_seconds: float
     simulator_makespan_seconds: float
     simulator_terminal_tail_seconds: float
+    #: The step as the caller saw it, on the host clock: the whole planned
+    #: call, the wait for the previous invocation to drain at its start, the
+    #: submission of the opening placement batch, and the trace's one-time
+    #: setup, which only the first traced call pays.
+    call_seconds: float
+    startup_wait_seconds: float
+    initial_actions_seconds: float
+    trace_setup_seconds: float
+    #: First optimizer task's start through the last one's end, on the
+    #: device timeline.
+    optimizer_span_seconds: float
     phase_comparisons: tuple[PhaseTimingComparison, ...]
     trace_complete: bool
 
@@ -479,6 +551,11 @@ class StepTimingSummary:
             "selected_span_delta_seconds": self.selected_span_delta_seconds,
             "simulator_makespan_seconds": self.simulator_makespan_seconds,
             "simulator_terminal_tail_seconds": self.simulator_terminal_tail_seconds,
+            "call_seconds": self.call_seconds,
+            "startup_wait_seconds": self.startup_wait_seconds,
+            "initial_actions_seconds": self.initial_actions_seconds,
+            "trace_setup_seconds": self.trace_setup_seconds,
+            "optimizer_span_seconds": self.optimizer_span_seconds,
             "phase_comparisons": {
                 item.phase: item.as_dict() for item in self.phase_comparisons
             },
@@ -495,42 +572,37 @@ class StepDiagnostics:
     completed before they can be copied safely.
     """
 
-    timing: ExecutionTiming
-    tasks: Mapping[str, TaskExecutionTiming]
-    allocator: AllocatorTrace
-    transfers: TransferTrace
-    runtime: RuntimeTrace
-    simulator_comparison: Mapping[str, SimulatorTaskComparison]
     summary: StepTimingSummary
+    #: Every selected task by execution task id, and every scheduled transfer
+    #: by transfer id grouped by direction; the timelines refer into both.
+    tasks: Mapping[str, TaskRecord]
+    transfers: TransferRecords
+    timelines: Timelines
+    allocator: AllocatorTrace
+    runtime: RuntimeTrace
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema": "shadowspill.step_diagnostics/v4",
-            "timing": self.timing.as_dict(include_tasks=False),
-            "tasks": {
-                execution_task_id: item.as_dict()
-                for execution_task_id, item in self.tasks.items()
-            },
-            "allocator": self.allocator.as_dict(),
-            "transfers": self.transfers.as_dict(),
-            "runtime": self.runtime.as_dict(),
+            "schema": artifact_schema("step_diagnostics"),
             "summary": self.summary.as_dict(),
-            "simulator_comparison": {
-                execution_task_id: item.as_dict()
-                for execution_task_id, item in self.simulator_comparison.items()
-            },
+            "tasks": {key: item.as_dict() for key, item in self.tasks.items()},
+            "transfers": self.transfers.as_dict(),
+            "timelines": self.timelines.as_dict(),
+            "allocator": self.allocator.as_dict(),
+            "runtime": self.runtime.as_dict(),
         }
 
 
 __all__ = [
     "AllocatorTrace",
-    "ExecutionTiming",
+    "LaneSummary",
     "PhaseTimingComparison",
     "RuntimeTrace",
-    "SimulatorTaskComparison",
-    "SimulatorTransferComparison",
     "StepDiagnostics",
     "StepTimingSummary",
-    "TaskExecutionTiming",
-    "TransferTrace",
+    "TaskRecord",
+    "Timelines",
+    "TransferLane",
+    "TransferRecord",
+    "TransferRecords",
 ]

@@ -13,7 +13,7 @@ from dataclasses import fields
 import pytest
 
 from shadowspill.pytorch.diagnostics.collection import _idle_composition
-from shadowspill.pytorch.diagnostics.execution import TaskExecutionTiming
+from shadowspill.pytorch.diagnostics.execution import TaskRecord
 
 
 def _task(
@@ -23,12 +23,12 @@ def _task(
     started: float,
     finished: float,
     reuse: float = 0.0,
-) -> TaskExecutionTiming:
-    """One task placed on the compute-stream timeline by its three markers.
+) -> TaskRecord:
+    """One task placed on the compute lane by its three stream markers.
 
     Only the markers matter here, so everything else is filled from the
-    dataclass itself rather than listed -- a new dispatch field should not
-    need a line in this file to keep the composition tested.
+    dataclass itself rather than listed -- a new host field should not need
+    a line in this file to keep the composition tested.
     """
 
     stated: dict[str, object] = {
@@ -39,23 +39,15 @@ def _task(
         "phase": "forward",
         "microbatch": 0,
         "expected_profile_seconds": finished - started,
-        "gpu_start_seconds": started,
-        "gpu_end_seconds": finished,
         "compute_duration_seconds": finished - started,
         "compute_reached_seconds": reached,
         "compute_started_seconds": started,
         "compute_finished_seconds": finished,
         "input_readiness_wait_seconds": (started - reached) - reuse,
         "allocation_reuse_wait_seconds": reuse,
-        "compute_reached_sequence": ordinal * 3 + 1,
-        "compute_started_sequence": ordinal * 3 + 2,
-        "compute_finished_sequence": ordinal * 3 + 3,
     }
-    return TaskExecutionTiming(
-        **{
-            field.name: stated.get(field.name, 0.0)
-            for field in fields(TaskExecutionTiming)
-        }  # type: ignore[arg-type]
+    return TaskRecord(
+        **{field.name: stated.get(field.name, 0.0) for field in fields(TaskRecord)}  # type: ignore[arg-type]
     )
 
 
@@ -71,11 +63,9 @@ def test_idle_is_exactly_waiting_plus_not_yet_reached() -> None:
         _task(2, reached=4.8, started=4.8, finished=5.8),
     )
     readiness, dispatch, initial = _idle_composition(tasks)
-
     assert readiness == pytest.approx(0.25)
     assert dispatch == pytest.approx(0.5 + 0.05)
     assert initial == pytest.approx(2.0)
-
     span = tasks[-1].compute_finished_seconds - tasks[0].compute_started_seconds
     busy = sum(item.compute_duration_seconds for item in tasks)
     assert readiness + dispatch == pytest.approx(span - busy)
@@ -89,7 +79,6 @@ def test_the_first_wait_is_reported_apart_from_the_span() -> None:
         _task(1, reached=10.0, started=10.0, finished=11.0),
     )
     readiness, dispatch, initial = _idle_composition(tasks)
-
     assert initial == pytest.approx(9.0)
     assert readiness == pytest.approx(0.0)
     assert dispatch == pytest.approx(0.0)
@@ -109,11 +98,9 @@ def test_waiting_holds_both_the_inputs_and_the_ranges() -> None:
         _task(1, reached=2.0, started=2.4, finished=3.4, reuse=0.3),
     )
     readiness, dispatch, initial = _idle_composition(tasks)
-
     assert readiness == pytest.approx(0.4)
     assert dispatch == pytest.approx(0.0)
     assert initial == pytest.approx(1.0)
-
     span = tasks[-1].compute_finished_seconds - tasks[0].compute_started_seconds
     busy = sum(item.compute_duration_seconds for item in tasks)
     assert readiness + dispatch == pytest.approx(span - busy)

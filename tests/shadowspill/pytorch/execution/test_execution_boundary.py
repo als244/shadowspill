@@ -18,9 +18,7 @@ class _AfterTaskHarness(TrainingExecutor):
     def __init__(self) -> None:
         self.released: weakref.ReferenceType[_RawOutputs] | None = None
         self.publication_observed_release = False
-        self._task_annotations = TaskBoundaryAnnotations(
-            cast(Any, _AnnotationBridge())
-        )
+        self._task_annotations = TaskBoundaryAnnotations(cast(Any, _AnnotationBridge()))
 
     @staticmethod
     def _before_task(run: object, record: object) -> object:
@@ -54,9 +52,7 @@ class _AfterTaskHarness(TrainingExecutor):
         return ()
 
     @staticmethod
-    def _publish_frontend_bindings(
-        _prepared: object, _processed: object
-    ) -> None:
+    def _publish_frontend_bindings(_prepared: object, _processed: object) -> None:
         return None
 
     @staticmethod
@@ -79,9 +75,7 @@ def test_after_task_releases_unadopted_outputs_before_runtime_actions() -> None:
         released_ephemeral=(),
         task=SimpleNamespace(task_id="task"),
     )
-    run = SimpleNamespace(
-        lowered=SimpleNamespace(optimizer_task_id="optimizer")
-    )
+    run = SimpleNamespace(lowered=SimpleNamespace(optimizer_task_id="optimizer"))
     # Exercise the complete orchestration path: a local in _execute_task would
     # keep the result alive even if _after_task dropped its own parameter.
     TrainingExecutor._execute_task(harness, run, record)  # type: ignore[arg-type]
@@ -120,9 +114,7 @@ class _TimedAfterTaskHarness(_AfterTaskHarness):
         self.calls.append("runtime_after_task")
         return ()
 
-    def _publish_frontend_bindings(
-        self, _prepared: object, _processed: object
-    ) -> None:
+    def _publish_frontend_bindings(self, _prepared: object, _processed: object) -> None:
         self.calls.append("publish_frontend")
 
     def _finish_task_cleanup(self, _prepared: object) -> None:
@@ -135,9 +127,7 @@ class _TimedAfterTaskHarness(_AfterTaskHarness):
 def test_after_task_annotation_and_timing_cover_the_complete_boundary() -> None:
     harness = _TimedAfterTaskHarness()
     prepared = SimpleNamespace(
-        run=SimpleNamespace(
-            lowered=SimpleNamespace(optimizer_task_id="optimizer")
-        ),
+        run=SimpleNamespace(lowered=SimpleNamespace(optimizer_task_id="optimizer")),
         record=SimpleNamespace(
             trace_label="test",
             released_ephemeral=("temporary",),
@@ -205,7 +195,9 @@ class _TraceBoundaryBridge:
         self.calls.append("statistics")
         return self.statistics_value
 
-    def begin_runtime_trace(self, *, step_id: int) -> None:
+    def begin_runtime_trace(
+        self, *, step_id: int, origin_event_handle: int | None = None
+    ) -> None:
         self.calls.append(("begin_runtime_trace", step_id))
 
 
@@ -227,7 +219,9 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle() -> None:
     timing = SimpleNamespace(
         dispatch_call_started_ns=0,
         dispatch_startup_wait_ns=0,
-        origin_event=SimpleNamespace(record=lambda _stream: calls.append("origin")),
+        origin_event=SimpleNamespace(
+            record=lambda _stream: calls.append("origin"), cuda_event=0
+        ),
         statistics_before=None,
     )
 

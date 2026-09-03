@@ -8,6 +8,7 @@ from enum import IntEnum
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     AllocationEvent,
+    BackendEvent,
     TraceConfig,
     TraceEvent,
     TraceSummary,
@@ -37,13 +38,24 @@ class RuntimeTraceEventKind(IntEnum):
     FAILURE_LATCHED = 12
 
 
-_ACTION_NAMES = {0: "release", 1: "offload", 2: "prefetch"}
+_ACTION_NAMES = {0: "release", 1: "evict", 2: "fetch"}
 _DIRECTION_NAMES = {0: "fetch", 1: "evict"}
+
+
+#: A stream time the runtime could not measure.
+NO_STREAM_TIME = (1 << 64) - 1
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeTraceEvent:
-    """One host-clock event emitted by the framework-neutral runtime."""
+    """One event emitted by the framework-neutral runtime.
+
+    ``timestamp_ns`` is the runtime's host clock. A TRANSFER_COMPLETED event
+    also carries the copy's interval on its lane, ``stream_start_ns`` and
+    ``stream_end_ns``, measured on the device from the origin event the trace
+    was begun with; both are ``None`` when the trace had no origin or the
+    interval could not be measured, and on every other kind.
+    """
 
     sequence: int
     timestamp_ns: int
@@ -55,6 +67,8 @@ class RuntimeTraceEvent:
     kind: RuntimeTraceEventKind
     detail_0: int
     detail_1: int
+    stream_start_ns: int | None
+    stream_end_ns: int | None
 
     def details(self) -> dict[str, object]:
         if self.kind is RuntimeTraceEventKind.BEFORE_TASK:
@@ -114,6 +128,8 @@ class RuntimeTraceEvent:
             "bytes": self.bytes,
             "kind": self.kind.name.lower(),
             "details": self.details(),
+            "stream_start_ns": self.stream_start_ns,
+            "stream_end_ns": self.stream_end_ns,
         }
 
 
@@ -142,16 +158,31 @@ def prepare_runtime_trace(
         event_capacity=event_capacity,
         allocation_event_capacity=allocation_event_capacity,
     )
-    status = int(runtime_library().shadowspill_trace_prepare(
+    status = int(
+        runtime_library().shadowspill_trace_prepare(
             runtime_handle, ctypes.byref(config)
-        ))
+        )
+    )
     if status != 0:
         raise RuntimeError(f"runtime trace preparation failed with status {status}")
 
 
 def begin_runtime_trace(
-    runtime_handle: int, *, step_id: int) -> None:
-    status = int(runtime_library().shadowspill_trace_begin(runtime_handle, step_id))
+    runtime_handle: int, *, step_id: int, origin_event_handle: int | None = None
+) -> None:
+    """Begin the prepared trace, measuring transfers from ``origin_event_handle``.
+
+    The handle is the caller's timing event, already recorded on the compute
+    stream, as the backend knows it (a ``torch.cuda.Event.cuda_event``). It
+    must outlive the trace. ``None`` records no stream intervals.
+    """
+
+    origin = BackendEvent()
+    origin.words[0] = int(origin_event_handle or 0)
+    origin.words[1] = 0
+    status = int(
+        runtime_library().shadowspill_trace_begin(runtime_handle, step_id, origin)
+    )
     if status != 0:
         raise RuntimeError(f"runtime trace begin failed with status {status}")
 
@@ -215,6 +246,16 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
                 kind=kind,
                 detail_0=int(event.detail_0),
                 detail_1=int(event.detail_1),
+                stream_start_ns=(
+                    None
+                    if int(event.stream_start_ns) == NO_STREAM_TIME
+                    else int(event.stream_start_ns)
+                ),
+                stream_end_ns=(
+                    None
+                    if int(event.stream_end_ns) == NO_STREAM_TIME
+                    else int(event.stream_end_ns)
+                ),
             )
         )
     return CapturedRuntimeTrace(

@@ -9,9 +9,7 @@ from typing import Any
 import torch
 
 from .execution import (
-    ExecutionTiming,
     PhaseTimingComparison,
-    SimulatorTransferComparison,
     StepDiagnostics,
     StepTimingSummary,
 )
@@ -50,9 +48,7 @@ class DiagnosticsHandle:
 
 __all__ = [
     "DiagnosticsHandle",
-    "ExecutionTiming",
     "PhaseTimingComparison",
-    "SimulatorTransferComparison",
     "StepDiagnostics",
     "StepResult",
     "StepTimingSummary",
