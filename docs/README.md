@@ -206,7 +206,8 @@ These pages live beside the code they describe, outside `docs/`.
 - [Planning evaluation](../benchmarking/planning_eval/README.md) —
   PressureFit, simulation, and physical admission over that corpus.
 - [Qualification](../qualification/README.md) — the release-acceptance
-  protocols and their launchers.
+  protocols and their launchers, including the one command that runs every
+  gate in order and reports what each found.
 - [Numerical qualification](../qualification/numerical/README.md) — planned
   steps checked against the eager reference.
 - [Full-model performance qualification](../qualification/performance/README.md)
