@@ -35,6 +35,7 @@ from ._examples import (
 )
 
 FEW_CANDIDATES = PressureFitOptions(
+    minimum_object_bytes_evict_eligible=0,
     residency_strategies=("relaxed-stall",),
     fetch_rules=("latest-safe",),
     evaluate_coalesced=False,
@@ -103,6 +104,7 @@ def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
             residency_strategies=("relaxed-stall",),
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 
@@ -148,6 +150,7 @@ def test_demand_fetch_uses_final_legal_boundary() -> None:
             residency_strategies=("relaxed-stall",),
             fetch_rules=("demand",),
             evaluate_coalesced=False,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 
@@ -361,6 +364,6 @@ def test_objects_under_the_eligibility_threshold_are_never_cut() -> None:
 
 
 def test_eligibility_threshold_is_validated() -> None:
-    assert PressureFitOptions().minimum_object_bytes_evict_eligible == 0
+    assert PressureFitOptions().minimum_object_bytes_evict_eligible == 1 << 20
     with pytest.raises(ValueError):
         PressureFitOptions(minimum_object_bytes_evict_eligible=-1)

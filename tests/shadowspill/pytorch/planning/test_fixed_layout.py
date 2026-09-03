@@ -44,7 +44,7 @@ def _selected(
     simulation = simulate(program, schedule, config=config)
     return PressureFitResult(
         program=program,
-        options=PressureFitOptions(workers=1),
+        options=PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
         initial_residency=schedule.initial_residency,
         final_residency=schedule.final_residency,
         simulation_config=config,

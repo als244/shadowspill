@@ -12,7 +12,7 @@ from shadowspill.ir import (
     Persistence,
     SharedResidencyPolicy,
 )
-from shadowspill.planner import pressurefit
+from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
@@ -117,6 +117,7 @@ def test_forward_lowering_is_indexed_alias_aware_and_plannable() -> None:
         initial_residency=lowered.initial_residency,
         final_residency=lowered.final_residency,
         config=config,
+        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
     )
     assert planned.simulation.makespan_ns >= 3_000
 

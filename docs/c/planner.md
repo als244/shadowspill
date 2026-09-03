@@ -44,7 +44,8 @@ shortfall), whether each candidate records its reduction trajectory
 (`record_reduction_steps`), how many threads the call searches on
 (`workers`, zero for one per logical CPU and one for the calling thread), the
 shared best-placed record to measure against, and which objects are too small
-to be worth cutting (`minimum_object_bytes_evict_eligible`, zero for none):
+to be worth cutting (`minimum_object_bytes_evict_eligible`, 1 MiB by default
+through the Python request, zero for none):
 those stay resident from first to last access, take static homes in a
 resident slice whose size is reserved at preparation out of the capacity
 handed to the reducer, and are fetched at a trigger chosen once. The three

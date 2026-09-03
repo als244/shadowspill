@@ -254,7 +254,7 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
         initial_residency=training_chain_initial(2),
         config=training_chain_config(224),
         admission=facts,
-        options=PressureFitOptions(workers=1),
+        options=PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
     )
 
     assert result.simulation.device_peak("cuda_0").total_bytes > 224
@@ -618,6 +618,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
                 evaluate_coalesced=False,
                 max_repair_attempts=1,
                 workers=1,
+                minimum_object_bytes_evict_eligible=0,
             ),
         )
     exhausted_candidates = tuple(
@@ -637,6 +638,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
             workers=1,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 

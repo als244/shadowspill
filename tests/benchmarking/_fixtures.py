@@ -71,6 +71,7 @@ def _fixture() -> StepProgram:
             fetch_rules=("demand",),
             evaluate_coalesced=False,
             workers=1,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
     return StepProgram(

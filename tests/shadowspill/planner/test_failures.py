@@ -16,6 +16,7 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     PressureFitInfeasibleError,
+    PressureFitOptions,
     pressurefit,
     validate_schedule_feasibility,
 )
@@ -34,7 +35,12 @@ def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
     )
 
     with pytest.raises(ValueError, match="has no initial residency"):
-        pressurefit(program, initial_residency=(), config=config(122))
+        pressurefit(
+            program,
+            initial_residency=(),
+            config=config(122),
+            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        )
 
 
 def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
@@ -89,6 +95,7 @@ def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
             program,
             initial_residency=initial_residency,
             config=simulation_config,
+            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
         )
     assert pressurefit_failure.value.kind == error.kind
     assert pressurefit_failure.value.required_bytes == error.required_bytes
@@ -111,7 +118,12 @@ def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
     )
 
     with pytest.raises(PressureFitInfeasibleError) as caught:
-        pressurefit(program, initial_residency=(), config=config(122))
+        pressurefit(
+            program,
+            initial_residency=(),
+            config=config(122),
+            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        )
 
     assert caught.value.kind == "workspace_capacity"
     assert caught.value.boundary_task_id == "workspace"
@@ -150,6 +162,7 @@ def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
         program,
         initial_residency=initial,
         config=selected_config,
+        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
     )
 
     assert result.simulation.device_peaks[0].total_bytes <= 100

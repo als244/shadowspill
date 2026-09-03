@@ -74,6 +74,7 @@ def test_pressurefit_never_creates_actions_for_shared_aliases() -> None:
             residency_strategies=("relaxed-stall",),
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 

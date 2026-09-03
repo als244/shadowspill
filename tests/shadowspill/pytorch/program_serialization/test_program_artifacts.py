@@ -88,6 +88,7 @@ def _pressurefit_program() -> PressureFitProgram:
             fetch_rules=("demand",),
             evaluate_coalesced=False,
             workers=1,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
 
