@@ -111,8 +111,7 @@ class LeaseLayout:
         for index in range(self.leases.count):
             identity = self.leases.identities[index]
             if (
-                _PURPOSES[identity.purpose]
-                is AdmissionReplayPurpose.FETCH_DESTINATION
+                _PURPOSES[identity.purpose] is AdmissionReplayPurpose.FETCH_DESTINATION
                 and identity.action != _NO_INDEX
             ):
                 found[identity.action] = identity.lease_id
@@ -145,9 +144,7 @@ class LeaseLayout:
 
         identity = self.leases.identities[index]
         return (
-            None
-            if identity.task == _NO_INDEX
-            else self.setup.task_ids[identity.task],
+            None if identity.task == _NO_INDEX else self.setup.task_ids[identity.task],
             None
             if identity.alias == _NO_INDEX
             else self.setup.alias_ids[identity.alias],
@@ -221,9 +218,7 @@ def resolve_lease_lifetimes(
         # The only caller error the library cannot describe is a terminal alias
         # that never reached a final lease. Resolve without them to name it.
         layout = LeaseLayout(
-            leases=build_lease_lifetimes(
-                operations, setup.indexed_facts, simulation
-            ),
+            leases=build_lease_lifetimes(operations, setup.indexed_facts, simulation),
             setup=setup,
         )
         missing = sorted(dynamic_alias_group_ids - layout.active_aliases.keys())

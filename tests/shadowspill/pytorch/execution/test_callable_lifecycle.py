@@ -55,9 +55,7 @@ class _Runtime:
         assert plan_handle == 77
         self.adopted = True
 
-    def _prepare_failure_cleanup(
-        self, error: BaseException, **kwargs: object
-    ) -> None:
+    def _prepare_failure_cleanup(self, error: BaseException, **kwargs: object) -> None:
         del kwargs
         self.prepared_error = error
 

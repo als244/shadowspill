@@ -525,7 +525,7 @@ static int apply_release_action(
 
 /* An eviction has to finish copying before the memory can be reused, so it
  * takes a dependency of its own rather than the task's. */
-static int apply_offload_action(
+static int apply_evict_action(
     OperationBuild *build, uint32_t action, uint32_t alias
 ) {
     ShadowSpillCandidateAdmissionWorkspace *workspace = build->workspace;
@@ -558,7 +558,7 @@ static int apply_offload_action(
 }
 
 /* A fetch needs somewhere to land before the copy starts. */
-static int apply_prefetch_action(
+static int apply_fetch_action(
     OperationBuild *build, uint32_t action, uint32_t alias
 ) {
     if (build->program->alias_size_bytes[alias] == 0U) {
@@ -599,11 +599,11 @@ static int apply_task_actions(
             applied =
                 apply_release_action(build, task, action, alias, task_dependency);
             break;
-        case SHADOWSPILL_MEMORY_OFFLOAD:
-            applied = apply_offload_action(build, action, alias);
+        case SHADOWSPILL_MEMORY_EVICT:
+            applied = apply_evict_action(build, action, alias);
             break;
-        case SHADOWSPILL_MEMORY_PREFETCH:
-            applied = apply_prefetch_action(build, action, alias);
+        case SHADOWSPILL_MEMORY_FETCH:
+            applied = apply_fetch_action(build, action, alias);
             break;
         default:
             return -1;

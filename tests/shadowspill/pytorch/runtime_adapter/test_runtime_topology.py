@@ -19,9 +19,7 @@ def test_topology_accepts_three_pools_and_sparse_routes() -> None:
         {
             "fetch": transfer_route(source="spill", destination="execution"),
             "evict": transfer_route(source="execution", destination="spill"),
-            "archive_fetch": transfer_route(
-                source="archive", destination="execution"
-            ),
+            "archive_fetch": transfer_route(source="archive", destination="execution"),
         },
     )
 

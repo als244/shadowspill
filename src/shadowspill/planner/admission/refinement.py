@@ -57,10 +57,7 @@ class FixedLayoutSelection:
 
     @property
     def capacity_reduction_bytes(self) -> int:
-        return (
-            self.original_object_capacity_bytes
-            - self.facts.object_capacity_bytes
-        )
+        return self.original_object_capacity_bytes - self.facts.object_capacity_bytes
 
     @property
     def pressurefit_wall_time_ns(self) -> int:
@@ -90,9 +87,7 @@ def placement_facts(
 
     return replace(
         facts,
-        pool_capacity_bytes=max(
-            0, facts.pool_capacity_bytes - scratch_reserve_bytes
-        ),
+        pool_capacity_bytes=max(0, facts.pool_capacity_bytes - scratch_reserve_bytes),
     )
 
 

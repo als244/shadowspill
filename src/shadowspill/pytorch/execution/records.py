@@ -100,7 +100,7 @@ class PlanRun:
     simulation: SimulationResult
     expected_task_seconds: Mapping[str, float]
     execution: tuple[ExecutionTaskRecord, ...]
-    initial_prefetches: tuple[str, ...]
+    initial_fetches: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
     initial_task_id: int | None = None
     caller_acquisition_handle: int = 0
@@ -155,7 +155,7 @@ def build_plan_run(
             for task_id, task in tasks.items()
         },
         execution=execution,
-        initial_prefetches=tuple(
+        initial_fetches=tuple(
             alias_group_id
             for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
             if bridge.requires_storage(alias_group_id)
@@ -228,7 +228,7 @@ def _build_task_record(
         dematerialize_aliases=tuple(
             item.alias_group_id
             for item in actions
-            if item.kind in {MemoryActionKind.RELEASE, MemoryActionKind.OFFLOAD}
+            if item.kind in {MemoryActionKind.RELEASE, MemoryActionKind.EVICT}
             and item.alias_group_id not in handoff_aliases
         ),
         released_ephemeral=tuple(

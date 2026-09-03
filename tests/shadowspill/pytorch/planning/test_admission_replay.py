@@ -280,7 +280,7 @@ def test_after_task_fetch_reserves_task_released_range_causally() -> None:
         ),
         (
             MemoryAction("boundary", "released", MemoryActionKind.RELEASE),
-            MemoryAction("boundary", "fetched", MemoryActionKind.PREFETCH),
+            MemoryAction("boundary", "fetched", MemoryActionKind.FETCH),
         ),
         (ResidencySpec("fetched", MemoryLocation.DEVICE),),
     )
@@ -327,8 +327,8 @@ def test_admission_replay_emits_causal_eviction_to_fetch_dependency() -> None:
     schedule = MemorySchedule(
         (ResidencySpec("state", MemoryLocation.DEVICE),),
         (
-            MemoryAction("produce", "state", MemoryActionKind.OFFLOAD),
-            MemoryAction("trigger", "state", MemoryActionKind.PREFETCH),
+            MemoryAction("produce", "state", MemoryActionKind.EVICT),
+            MemoryAction("trigger", "state", MemoryActionKind.FETCH),
         ),
         (ResidencySpec("state", MemoryLocation.DEVICE),),
     )

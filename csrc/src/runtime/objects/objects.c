@@ -68,8 +68,8 @@ static ShadowSpillStatus release_object_residency(
     if ((validate_generation && object->generation != expected_generation) ||
         object->action_head != NULL || object->action_tail != NULL ||
         shadowspill_object_has_unpublished_fetch_locked(object) ||
-        object->residency == SHADOWSPILL_OBJECT_PREFETCHING ||
-        object->residency == SHADOWSPILL_OBJECT_OFFLOADING) {
+        object->residency == SHADOWSPILL_OBJECT_FETCHING ||
+        object->residency == SHADOWSPILL_OBJECT_EVICTING) {
         pthread_mutex_unlock(&object->lock);
         pthread_mutex_unlock(&runtime->mutex);
         return SHADOWSPILL_STATUS_INVALID_STATE;
@@ -625,7 +625,7 @@ ShadowSpillStatus shadowspill_object_bind_allocation(
          handoff_action == NULL || handoff_action->active ||
          handoff_action->handoff_lease != NULL ||
          (previous_owner->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-          previous_owner->residency != SHADOWSPILL_OBJECT_PREFETCHING))) {
+          previous_owner->residency != SHADOWSPILL_OBJECT_FETCHING))) {
         status = SHADOWSPILL_STATUS_PLAN_VIOLATION;
         goto done;
     }
@@ -729,7 +729,7 @@ ShadowSpillStatus shadowspill_object_replace_allocation(
         goto done;
     }
     if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-         object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
+         object->residency != SHADOWSPILL_OBJECT_FETCHING) ||
         prior == NULL || prior->pointer == NULL || prior->logical_freed ||
         prior->allocation_id != object->allocation_id ||
         prior->generation != object->generation || replacement == NULL ||
@@ -921,7 +921,7 @@ ShadowSpillStatus shadowspill_object_transfer_to_caller(
         shadowspill_object_location(object, execution_pool->pool_id);
     const int execution_available =
         object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY ||
-        (object->residency == SHADOWSPILL_OBJECT_PREFETCHING &&
+        (object->residency == SHADOWSPILL_OBJECT_FETCHING &&
          object->has_readiness_event);
     if (status == SHADOWSPILL_STATUS_OK &&
         (!execution_available || initial_execution == NULL ||
@@ -963,9 +963,9 @@ ShadowSpillStatus shadowspill_object_transfer_to_caller(
     ShadowSpillQueuedAction *settling_fetch = NULL;
     if (object->action_head != NULL &&
         object->action_head == object->action_tail &&
-        object->action_head->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
+        object->action_head->kind == SHADOWSPILL_RUNTIME_FETCH &&
         object->action_head->state == SHADOWSPILL_ACTION_IN_FLIGHT &&
-        ((object->residency == SHADOWSPILL_OBJECT_PREFETCHING &&
+        ((object->residency == SHADOWSPILL_OBJECT_FETCHING &&
           object->has_readiness_event &&
           object->action_head->completion_event == object->readiness_event) ||
          (object->residency == SHADOWSPILL_OBJECT_EXECUTION_READY &&

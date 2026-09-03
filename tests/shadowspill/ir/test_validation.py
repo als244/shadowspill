@@ -265,11 +265,11 @@ def test_schedule_rejects_unknown_and_out_of_order_actions() -> None:
             "schedule.actions[0]",
         ),
         (
-            MemoryAction("forward_save", "weight_storage", MemoryActionKind.PREFETCH),
+            MemoryAction("forward_save", "weight_storage", MemoryActionKind.FETCH),
             "schedule.actions[0]",
         ),
         (
-            MemoryAction("forward_save", "output_storage", MemoryActionKind.OFFLOAD),
+            MemoryAction("forward_save", "output_storage", MemoryActionKind.EVICT),
             "schedule.actions[0]",
         ),
     ],
@@ -320,9 +320,7 @@ def test_zero_size_alias_requires_no_residency_but_rejects_memory_actions() -> N
             for item in original.alias_groups
         ),
         objects=tuple(
-            replace(item, size_bytes=0)
-            if item.object_id == "weight"
-            else item
+            replace(item, size_bytes=0) if item.object_id == "weight" else item
             for item in original.objects
         ),
     )
@@ -335,9 +333,7 @@ def test_zero_size_alias_requires_no_residency_but_rejects_memory_actions() -> N
     invalid = replace(
         schedule,
         actions=(
-            MemoryAction(
-                "forward_save", "weight_storage", MemoryActionKind.RELEASE
-            ),
+            MemoryAction("forward_save", "weight_storage", MemoryActionKind.RELEASE),
         ),
     )
     assert_invalid(

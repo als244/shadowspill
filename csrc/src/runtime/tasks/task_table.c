@@ -26,9 +26,9 @@ char *shadowspill_copy_action_trace_label(
         memcpy(copy, action->trace_label, length + 1U);
         return copy;
     }
-    const char *operation = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+    const char *operation = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? "fetch"
-        : action->kind == SHADOWSPILL_RUNTIME_OFFLOAD ? "evict" : "release";
+        : action->kind == SHADOWSPILL_RUNTIME_EVICT ? "evict" : "release";
     char fallback[256];
     const int written = snprintf(
         fallback,
@@ -523,7 +523,7 @@ static ShadowSpillTaskRecord *create_record(
         };
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        if (description->actions[index].kind > SHADOWSPILL_RUNTIME_PREFETCH) {
+        if (description->actions[index].kind > SHADOWSPILL_RUNTIME_FETCH) {
             destroy_record(record);
             return NULL;
         }
@@ -566,7 +566,7 @@ static ShadowSpillTaskRecord *create_record(
                     SHADOWSPILL_RUNTIME_RELEASE
                 ? NULL
                 : description->actions[index].kind ==
-                        SHADOWSPILL_RUNTIME_PREFETCH
+                        SHADOWSPILL_RUNTIME_FETCH
                     ? plan->fetch_route
                     : plan->evict_route,
             .trace_label = trace_label,

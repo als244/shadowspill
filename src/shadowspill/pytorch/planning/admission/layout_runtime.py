@@ -128,7 +128,7 @@ def _initial_placements(
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
     # The batch pairs action N with ACTION_DESTINATION ordinal N, so the
     # ordinals here must follow the same first-use order the executors
-    # submit the prefetches in.
+    # submit the fetches in.
     aliases = tuple(
         alias_group_id
         for alias_group_id in first_use_initial_order(program, schedule)

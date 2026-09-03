@@ -75,9 +75,7 @@ def test_state_reference_is_immutable_mapping() -> None:
 
 def test_tensor_reference_close_releases_its_runtime_root_once() -> None:
     owner = _Owner()
-    object_reference = ObjectRef(
-        owner, object_id=9, size_bytes=16, handle=13
-    )
+    object_reference = ObjectRef(owner, object_id=9, size_bytes=16, handle=13)
     tensor = TensorRef(
         object=object_reference,
         dtype=torch.float32,
@@ -94,9 +92,7 @@ def test_tensor_reference_close_releases_its_runtime_root_once() -> None:
 
 def test_state_reference_closes_aliased_storage_once() -> None:
     owner = _Owner()
-    object_reference = ObjectRef(
-        owner, object_id=9, size_bytes=16, handle=13
-    )
+    object_reference = ObjectRef(owner, object_id=9, size_bytes=16, handle=13)
     first = TensorRef(
         object=object_reference,
         dtype=torch.float32,

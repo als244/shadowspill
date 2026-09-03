@@ -58,8 +58,7 @@ def _snapshot(runtime: Runtime, object_id: int) -> ObjectSnapshot:
     result = ObjectSnapshot()
     status = int(
         runtime_library().shadowspill_object_snapshot(
-            runtime._runtime_handle,
-            object_id, ctypes.byref(result)
+            runtime._runtime_handle, object_id, ctypes.byref(result)
         )
     )
     if status != 0:

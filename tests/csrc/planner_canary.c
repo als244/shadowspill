@@ -275,7 +275,7 @@ int main(void) {
         .task_json_names = problem_task_names,
     };
     const uint8_t problem_strategies[] = {SHADOWSPILL_RESIDENCY_TIGHT_STALL};
-    const uint8_t problem_rules[] = {SHADOWSPILL_PREFETCH_LATEST_SAFE};
+    const uint8_t problem_rules[] = {SHADOWSPILL_FETCH_LATEST_SAFE};
     /* Plain emission only. All three axes are lists, and the candidate count
      * is their product, so leaving this one empty asks for no candidates. */
     const uint8_t problem_modes[] = {0U};
@@ -284,8 +284,8 @@ int main(void) {
         .coalescing_mode_count = 1U,
         .residency_strategies = problem_strategies,
         .residency_strategy_count = 1U,
-        .prefetch_rules = problem_rules,
-        .prefetch_rule_count = 1U,
+        .fetch_rules = problem_rules,
+        .fetch_rule_count = 1U,
         .max_repair_attempts = 1U,
     };
     ShadowSpillPressureFitProblemResult problem_result = {0};

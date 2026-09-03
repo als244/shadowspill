@@ -284,7 +284,7 @@ def reduce_residency(
     output_breaks = (ctypes.c_uint8 * max(1, cell_count))()
     options = CResidencyOptions(
         minimize_transfer=int(strategy.endswith("transfer")),
-        prefetch_headroom=int(strategy.startswith("headroom")),
+        fetch_headroom=int(strategy.startswith("headroom")),
         seed_resident=template.seed_resident,
         seed_breaks=template.seed_breaks,
         extra_pressure_bytes=extra_buffer,

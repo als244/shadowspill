@@ -248,7 +248,7 @@ def _transfer_intervals_by_action(
     for index, action in enumerate(schedule.actions):
         if action.kind is MemoryActionKind.RELEASE:
             continue
-        direction = "evict" if action.kind is MemoryActionKind.OFFLOAD else "fetch"
+        direction = "evict" if action.kind is MemoryActionKind.EVICT else "fetch"
         sequence = sequences[direction]
         sequences[direction] += 1
         interval = by_sequence[(direction, sequence)]

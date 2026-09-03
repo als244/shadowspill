@@ -252,9 +252,11 @@ def start_allocation_telemetry(runtime_handle: int, *, capacity: int) -> None:
 
     if capacity <= 0:
         raise ValueError("telemetry capacity must be positive")
-    status = int(runtime_library().shadowspill_allocation_telemetry_start(
+    status = int(
+        runtime_library().shadowspill_allocation_telemetry_start(
             runtime_handle, capacity
-        ))
+        )
+    )
     if status != 0:
         raise AllocationTelemetryError(
             f"allocation telemetry start failed with status {status}"
@@ -281,8 +283,7 @@ def read_allocation_telemetry(
     count = ctypes.c_uint64()
     status = int(
         runtime_library().shadowspill_allocation_telemetry_read(
-            runtime_handle,
-            None, 0, ctypes.byref(count)
+            runtime_handle, None, 0, ctypes.byref(count)
         )
     )
     if status != 0:
@@ -295,8 +296,7 @@ def read_allocation_telemetry(
     copied = ctypes.c_uint64()
     status = int(
         runtime_library().shadowspill_allocation_telemetry_read(
-            runtime_handle,
-            buffer, count.value, ctypes.byref(copied)
+            runtime_handle, buffer, count.value, ctypes.byref(copied)
         )
     )
     if status != 0 or copied.value != count.value:

@@ -59,10 +59,7 @@ class TaskProfileCatalog:
         storage_contracts: Mapping[str, TaskStorageContract] | None = None,
         root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
         | None = None,
-        compatibility_digests: Mapping[
-            tuple[str, str | None], str
-        ]
-        | None = None,
+        compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
         metadata_enabled: bool = False,
         layout_cache: CompiledLayoutIndex | None = None,
     ) -> None:

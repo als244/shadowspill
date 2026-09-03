@@ -24,9 +24,8 @@ def register_forward_objects(
     partitioned: PartitionedExport,
     *,
     device_id: str,
-    shared_residency_by_root: Mapping[
-        int, tuple[SharedResidencyPolicy, bool]
-    ] | None = None,
+    shared_residency_by_root: Mapping[int, tuple[SharedResidencyPolicy, bool]]
+    | None = None,
 ) -> ForwardObjects:
     catalog = ObjectCatalog(device_id=device_id)
     registrations, _parameter_objects = register_model_state(model, catalog)

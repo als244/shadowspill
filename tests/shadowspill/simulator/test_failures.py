@@ -97,7 +97,7 @@ def test_initial_spill_capacity_failure_is_structured() -> None:
     assert caught.value.used_bytes == 128
 
 
-def test_pending_offload_reports_spill_capacity_root_cause() -> None:
+def test_pending_evict_reports_spill_capacity_root_cause() -> None:
     with pytest.raises(SimulationInfeasibleError) as caught:
         simulate(
             overlap_program(),
@@ -109,13 +109,13 @@ def test_pending_offload_reports_spill_capacity_root_cause() -> None:
         )
 
     error = caught.value
-    assert error.kind == "offload-spill-capacity"
+    assert error.kind == "evict-spill-capacity"
     assert error.alias_group_ids == ("activation_storage",)
     assert error.capacity_bytes == 127
     assert error.requested_bytes == 128
 
 
-def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
+def test_pending_fetch_reports_device_capacity_root_cause() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
@@ -142,7 +142,7 @@ def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
             ResidencySpec("resident_storage", MemoryLocation.DEVICE),
             ResidencySpec("spill_storage", MemoryLocation.SPILL),
         ),
-        actions=(MemoryAction("trigger", "spill_storage", MemoryActionKind.PREFETCH),),
+        actions=(MemoryAction("trigger", "spill_storage", MemoryActionKind.FETCH),),
         final_residency=(ResidencySpec("spill_storage", MemoryLocation.DEVICE),),
     )
 
@@ -154,12 +154,12 @@ def test_pending_prefetch_reports_device_capacity_root_cause() -> None:
         )
 
     error = caught.value
-    assert error.kind == "prefetch-device-capacity"
+    assert error.kind == "fetch-device-capacity"
     assert error.used_bytes == 64
     assert error.requested_bytes == 128
 
 
-def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
+def test_fetch_reserves_capacity_at_trigger_before_lane_head() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
@@ -198,10 +198,10 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
         ),
         actions=(
             MemoryAction(
-                "first_trigger", "first_spill_storage", MemoryActionKind.PREFETCH
+                "first_trigger", "first_spill_storage", MemoryActionKind.FETCH
             ),
             MemoryAction(
-                "second_trigger", "second_spill_storage", MemoryActionKind.PREFETCH
+                "second_trigger", "second_spill_storage", MemoryActionKind.FETCH
             ),
         ),
     )
@@ -214,8 +214,8 @@ def test_prefetch_reserves_capacity_at_trigger_before_lane_head() -> None:
         )
 
     error = caught.value
-    assert error.kind == "prefetch-device-capacity"
-    # The prefetch waits rather than failing, so this is the instant nothing
+    assert error.kind == "fetch-device-capacity"
+    # The fetch waits rather than failing, so this is the instant nothing
     # further can happen, not the instant the capacity test first failed.
     assert error.time_ns == 74
     assert error.task_id == "second_trigger"

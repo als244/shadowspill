@@ -29,9 +29,7 @@ from shadowspill.simulator import SimulationConfig
 def _fixture() -> StepProgram:
     program = Program(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
-        alias_groups=(
-            AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),
-        ),
+        alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
         objects=(ObjectSpec("state_object", "state", 0, 64),),
         profiles=(TaskProfile("profile", 10, 0, "abi"),),
         tasks=(
@@ -70,7 +68,7 @@ def _fixture() -> StepProgram:
         dynamic_scratch_reserve_bytes=0,
         options=PressureFitOptions(
             residency_strategies=("tight-stall",),
-            prefetch_rules=("demand",),
+            fetch_rules=("demand",),
             evaluate_coalesced=False,
             workers=1,
         ),

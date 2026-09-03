@@ -45,9 +45,11 @@ def restore_optimizer_checkpoint_structure(
         raise RuntimeError("optimizer state_dict keys differ")
     saved_state = checkpoint["state"]
     saved_groups = checkpoint["param_groups"]
-    if not isinstance(saved_state, Mapping) or not isinstance(
-        saved_groups, Sequence
-    ) or isinstance(saved_groups, str | bytes):
+    if (
+        not isinstance(saved_state, Mapping)
+        or not isinstance(saved_groups, Sequence)
+        or isinstance(saved_groups, str | bytes)
+    ):
         raise TypeError("optimizer state and param_groups must be containers")
     groups: tuple[object, ...] = tuple(saved_groups)
     if len(groups) != len(optimizer.param_groups):

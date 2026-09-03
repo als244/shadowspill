@@ -28,12 +28,8 @@ _STATUS_NAMES: dict[int, str] = {
     Status.BACKEND_FAILURE: "backend_failure",
     Status.WORKER_FAILURE: "worker_failure",
     Status.CLOSED: "closed",
-    Status.TASK_ALLOCATION_ENVELOPE_EXCEEDED: (
-        "task_allocation_envelope_exceeded"
-    ),
-    Status.TASK_ALLOCATION_CONTRACT_MISMATCH: (
-        "task_allocation_contract_mismatch"
-    ),
+    Status.TASK_ALLOCATION_ENVELOPE_EXCEEDED: ("task_allocation_envelope_exceeded"),
+    Status.TASK_ALLOCATION_CONTRACT_MISMATCH: ("task_allocation_contract_mismatch"),
 }
 
 
@@ -306,8 +302,7 @@ def allocator_oom_error(
             f"device: {diagnostics.device_ordinal}",
             f"requested: {format_bytes(diagnostics.requested_bytes)}",
             f"pool free: {format_bytes(diagnostics.free_bytes)}",
-            "largest free range: "
-            f"{format_bytes(diagnostics.largest_free_range_bytes)}",
+            f"largest free range: {format_bytes(diagnostics.largest_free_range_bytes)}",
         )
     )
     if diagnostics.object_id is not None:
@@ -405,11 +400,14 @@ def wait_allocator_idle(library: Any, *, problem: str) -> str | None:
     detail = f"status={status}"
     if hasattr(library, "shadowspill_pytorch_allocator_statistics"):
         statistics = AdapterStatistics()
-        if int(
-            library.shadowspill_pytorch_allocator_statistics(
-                ctypes.byref(statistics)
+        if (
+            int(
+                library.shadowspill_pytorch_allocator_statistics(
+                    ctypes.byref(statistics)
+                )
             )
-        ) == 0:
+            == 0
+        ):
             runtime = statistics.runtime
             detail = (
                 f"{detail} pending={runtime.pending_retirements} "

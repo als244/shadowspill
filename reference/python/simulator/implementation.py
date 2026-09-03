@@ -219,9 +219,7 @@ class _Simulator:
             raise ValueError(f"admission contains unknown tasks {unknown_tasks}")
         action_count = len(self.schedule.actions)
         unknown_actions = sorted(
-            index
-            for index in self.action_physical_deltas
-            if index >= action_count
+            index for index in self.action_physical_deltas if index >= action_count
         )
         if unknown_actions:
             raise ValueError(
@@ -233,7 +231,7 @@ class _Simulator:
                 raise ValueError(
                     f"memory-reuse predecessor action {predecessor} is unknown"
                 )
-            if self.schedule.actions[predecessor].kind is not MemoryActionKind.OFFLOAD:
+            if self.schedule.actions[predecessor].kind is not MemoryActionKind.EVICT:
                 raise ValueError(
                     f"memory-reuse predecessor action {predecessor} is not an eviction"
                 )
@@ -565,13 +563,11 @@ class _Simulator:
             device_id = state.device_id
             if action.kind is MemoryActionKind.RELEASE:
                 default_delta = -state.size_bytes
-            elif action.kind is MemoryActionKind.PREFETCH:
+            elif action.kind is MemoryActionKind.FETCH:
                 default_delta = 0 if state.device_allocated else state.size_bytes
             else:
                 default_delta = 0
-            physical_delta = self._action_trigger_delta(
-                action_index, default_delta
-            )
+            physical_delta = self._action_trigger_delta(action_index, default_delta)
             requested = max(physical_delta, 0)
             capacity = self.device_config[device_id].capacity_bytes
             if self.device_physical_bytes[device_id] + requested > capacity:
@@ -581,7 +577,7 @@ class _Simulator:
                     self.deferred_ready_ns[action_index] = self.now_ns
                     self.capacity_violations.append(
                         CapacityViolation(
-                            reason="prefetch-device-capacity",
+                            reason="fetch-device-capacity",
                             location="device",
                             time_ns=self.now_ns,
                             capacity_bytes=capacity,
@@ -595,11 +591,11 @@ class _Simulator:
                 return
             if action.kind is MemoryActionKind.RELEASE:
                 self._release(action)
-            elif action.kind is MemoryActionKind.OFFLOAD:
+            elif action.kind is MemoryActionKind.EVICT:
                 if not state.device_allocated or not state.device_ready:
                     raise SimulationInfeasibleError(
-                        f"offload of {action.alias_group_id!r} lacks a device source",
-                        kind="invalid-offload",
+                        f"evict of {action.alias_group_id!r} lacks a device source",
+                        kind="invalid-evict",
                         time_ns=self.now_ns,
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
@@ -615,7 +611,7 @@ class _Simulator:
                             self.deferred_ready_ns[action_index] = self.now_ns
                             self.capacity_violations.append(
                                 CapacityViolation(
-                                    reason="offload-spill-capacity",
+                                    reason="evict-spill-capacity",
                                     location="spill",
                                     time_ns=self.now_ns,
                                     capacity_bytes=self.config.spill_capacity_bytes,
@@ -638,17 +634,16 @@ class _Simulator:
             else:
                 if state.device_allocated and not state.evict_pending:
                     raise SimulationInfeasibleError(
-                        f"prefetch of {action.alias_group_id!r} already has a "
-                        "device copy",
-                        kind="invalid-prefetch",
+                        f"fetch of {action.alias_group_id!r} already has a device copy",
+                        kind="invalid-fetch",
                         time_ns=self.now_ns,
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
                 if not state.spill_ready and not state.evict_pending:
                     raise SimulationInfeasibleError(
-                        f"prefetch of {action.alias_group_id!r} lacks a spill source",
-                        kind="invalid-prefetch",
+                        f"fetch of {action.alias_group_id!r} lacks a spill source",
+                        kind="invalid-fetch",
                         time_ns=self.now_ns,
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
@@ -783,9 +778,7 @@ class _Simulator:
                 default_physical_delta = -state.size_bytes
         self._apply_physical_delta(
             device_id,
-            self._action_completion_delta(
-                pending.action_index, default_physical_delta
-            ),
+            self._action_completion_delta(pending.action_index, default_physical_delta),
         )
         self.completed_transfer_actions.add(pending.action_index)
         self.transfer_intervals.append(
@@ -836,9 +829,9 @@ class _Simulator:
             if action.trigger_task_id in self.completed:
                 state = self.alias_state[action.alias_group_id]
                 device_id = state.device_id
-                if action.kind is MemoryActionKind.PREFETCH:
+                if action.kind is MemoryActionKind.FETCH:
                     self._raise_capacity(
-                        kind="prefetch-device-capacity",
+                        kind="fetch-device-capacity",
                         location=f"device:{device_id}",
                         capacity=self.device_config[device_id].capacity_bytes,
                         used=self.device_physical_bytes[device_id],
@@ -846,9 +839,9 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         aliases=(action.alias_group_id,),
                     )
-                if action.kind is MemoryActionKind.OFFLOAD:
+                if action.kind is MemoryActionKind.EVICT:
                     self._raise_capacity(
-                        kind="offload-spill-capacity",
+                        kind="evict-spill-capacity",
                         location="host",
                         capacity=self.config.spill_capacity_bytes,
                         used=self.spill_bytes,
@@ -873,7 +866,7 @@ class _Simulator:
                         and used + state.size_bytes > capacity
                     ):
                         self._raise_capacity(
-                            kind="prefetch-device-capacity",
+                            kind="fetch-device-capacity",
                             location=f"device:{device_id}",
                             capacity=capacity,
                             used=used,
@@ -886,7 +879,7 @@ class _Simulator:
                     > self.config.spill_capacity_bytes
                 ):
                     self._raise_capacity(
-                        kind="offload-spill-capacity",
+                        kind="evict-spill-capacity",
                         location="host",
                         capacity=self.config.spill_capacity_bytes,
                         used=self.spill_bytes,
