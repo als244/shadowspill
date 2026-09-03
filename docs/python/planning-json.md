@@ -174,7 +174,7 @@ shadowspill.pressurefit_program/v1
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
 | `simulation_config` | Logical device object capacity, spill capacity, directional bandwidth, and latency. |
 | `admission_facts` | Current-schema (`shadowspill.admission_facts/v1`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
-| `pressurefit_options` | Bounded search controls and repair limits. |
+| `pressurefit_options` | Every field of `PressureFitOptions`, written from the dataclass and read back the same way, so a record carries the whole search configuration and one missing field is an error rather than a silent default. |
 
 Residency entries identify `alias_group_id` and `location` (`device` or `host`,
 the schema-v1 spelling of the spill pool
@@ -276,7 +276,7 @@ shadowspill.annotated_program_plan/v1
 | `from_store` | Whether the selected plan was read back from the plan store rather than planned during this call. |
 | `diagnostics` | Full recomputation-problem and candidate-policy search evidence. |
 | `initial_residency`, `final_residency` | Selected boundary state. |
-| `options` | Effective `PressureFitOptions`. |
+| `options` | Effective `PressureFitOptions`, every field of it. |
 | `resident_slice` | The slice reserved for the objects `minimum_object_bytes_evict_eligible` kept resident: its `bytes`, the sum of the static homes their leases take, and the `aliases` it holds; empty when it kept none. |
 | `schedule` | `shadowspill.memory_schedule/v1` with ordered actions. |
 | `selections` | One chosen option per recomputation group. |
