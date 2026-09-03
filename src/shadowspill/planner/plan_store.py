@@ -176,7 +176,7 @@ class PlanStore:
                 "devices": [asdict(item) for item in config.devices],
                 "spill_capacity_bytes": config.spill_capacity_bytes,
             },
-            "options": _options_identity(options),
+            "options": options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
         }
         normalized_boundary = json.loads(
@@ -255,7 +255,7 @@ class PlanStore:
                 "devices": [asdict(item) for item in result.simulation_config.devices],
                 "spill_capacity_bytes": result.simulation_config.spill_capacity_bytes,
             },
-            "options": _options_identity(result.options),
+            "options": result.options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
@@ -332,7 +332,7 @@ def _key(
             "devices": [asdict(device) for device in config.devices],
             "spill_capacity_bytes": config.spill_capacity_bytes,
         },
-        "options": _options_identity(options),
+        "options": options.to_dict(),
         "admission_digest": admission.digest if admission is not None else None,
         # Part of the identity: the search measures layouts against this
         # topology, so the same program under a different pool is a
@@ -341,19 +341,6 @@ def _key(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def _options_identity(options: PressureFitOptions) -> dict[str, object]:
-    return {
-        "initial_placement": options.initial_placement.value,
-        "minimum_object_bytes_evict_eligible": (
-            options.minimum_object_bytes_evict_eligible
-        ),
-        "residency_strategies": options.residency_strategies,
-        "fetch_rules": options.fetch_rules,
-        "evaluate_coalesced": options.evaluate_coalesced,
-        "max_repair_attempts": options.max_repair_attempts,
-    }
 
 
 def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics:
