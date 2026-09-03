@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowspill.planner import PressureFitResult
+from shadowspill.schema import artifact_schema
 
 
 def _canonical(value: object) -> str:
@@ -40,9 +41,10 @@ def pressurefit_fixture(
         "simulation_config": asdict(result.simulation_config),
         "options": asdict(result.options),
         "admission": (
-            None
-            if result.admission_facts is None
-            else result.admission_facts.to_dict()
+            None if result.admission_facts is None else result.admission_facts.to_dict()
+        ),
+        "placement": (
+            None if result.placement_facts is None else result.placement_facts.to_dict()
         ),
     }
     expected = {
@@ -54,7 +56,7 @@ def pressurefit_fixture(
     stable_expected = dict(expected)
     stable_expected["diagnostics"] = result.diagnostics.stable_dict()
     return {
-        "schema": "shadowspill.pressurefit_fixture/v3",
+        "schema": artifact_schema("pressurefit_fixture"),
         "role": role,
         "request_digest": _digest(request),
         "expected_digest": _digest(stable_expected),

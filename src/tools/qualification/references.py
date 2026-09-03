@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-REFERENCE_SCHEMA = "shadowspill.compiled_reference/v2"
+from shadowspill.schema import artifact_schema
+
+REFERENCE_SCHEMA = artifact_schema("compiled_reference")
 DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY = Path(
     "qualification/results/references/approximately_1b"
-)
-SUPPORTED_REFERENCE_SCHEMAS = (
-    "shadowspill.compiled_reference/v1",
-    REFERENCE_SCHEMA,
 )
 
 
@@ -40,7 +38,6 @@ def reference_artifact_exists(reference: Path) -> bool:
 __all__ = [
     "DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY",
     "REFERENCE_SCHEMA",
-    "SUPPORTED_REFERENCE_SCHEMAS",
     "canonical_reference_path",
     "reference_artifact_exists",
     "reference_inputs_path",

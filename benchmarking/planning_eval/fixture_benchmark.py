@@ -19,6 +19,7 @@ from shadowspill.planner import (
     PressureFitResult,
     pressurefit,
 )
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import DeviceSimulationConfig, SimulationConfig
 
 
@@ -50,6 +51,7 @@ class ReplayRequest:
     config: SimulationConfig
     options: PressureFitOptions
     admission: AdmissionFacts | None
+    placement: AdmissionFacts | None
 
 
 def _request(value: dict[str, Any]) -> ReplayRequest:
@@ -74,18 +76,21 @@ def _request(value: dict[str, Any]) -> ReplayRequest:
     options = PressureFitOptions(
         initial_placement=InitialPlacement(options_value["initial_placement"]),
         residency_strategies=tuple(options_value["residency_strategies"]),
-        prefetch_rules=tuple(options_value["prefetch_rules"]),
+        fetch_rules=tuple(options_value["fetch_rules"]),
         evaluate_coalesced=options_value["evaluate_coalesced"],
         max_repair_attempts=options_value["max_repair_attempts"],
         workers=options_value["workers"],
+        deterministic=options_value.get("deterministic", False),
     )
     admission_value = request.get("admission")
     admission = (
-        None
-        if admission_value is None
-        else AdmissionFacts.from_dict(admission_value)
+        None if admission_value is None else AdmissionFacts.from_dict(admission_value)
     )
-    return ReplayRequest(program, initial, final, config, options, admission)
+    placement_value = request.get("placement")
+    placement = (
+        None if placement_value is None else AdmissionFacts.from_dict(placement_value)
+    )
+    return ReplayRequest(program, initial, final, config, options, admission, placement)
 
 
 def _expected_value(result: PressureFitResult) -> dict[str, Any]:
@@ -100,11 +105,7 @@ def _expected_value(result: PressureFitResult) -> dict[str, Any]:
 def _run_suite(paths: tuple[Path, ...], repeats: int) -> dict[str, Any]:
     fixtures = [json.loads(path.read_text()) for path in paths]
     for path, fixture in zip(paths, fixtures, strict=True):
-        if fixture.get("schema") not in {
-            "shadowspill.pressurefit_fixture/v1",
-            "shadowspill.pressurefit_fixture/v2",
-            "shadowspill.pressurefit_fixture/v3",
-        }:
+        if fixture.get("schema") != artifact_schema("pressurefit_fixture"):
             raise ValueError(f"unsupported PressureFit fixture: {path}")
     requests = [_request(value) for value in fixtures]
     request_digests = [value["request_digest"] for value in fixtures]
@@ -120,6 +121,7 @@ def _run_suite(paths: tuple[Path, ...], repeats: int) -> dict[str, Any]:
                 config=request.config,
                 options=request.options,
                 admission=request.admission,
+                placement=request.placement,
             )
             actual = _digest(_expected_value(result))
             if actual != fixture["expected_digest"]:
@@ -164,7 +166,7 @@ def main() -> int:
         baseline_value = json.loads(
             arguments.baseline.expanduser().resolve().read_text()
         )
-        if baseline_value.get("schema") != "shadowspill.pressurefit_benchmark/v1":
+        if baseline_value.get("schema") != artifact_schema("pressurefit_benchmark"):
             parser.error("--baseline has an unsupported schema")
         baseline_by_digest = {
             value["suite_digest"]: int(value["median_ns"])
@@ -177,7 +179,7 @@ def main() -> int:
             None if baseline_ns is None else baseline_ns / suite["median_ns"]
         )
     result = {
-        "schema": "shadowspill.pressurefit_benchmark/v1",
+        "schema": artifact_schema("pressurefit_benchmark"),
         "implementation": "shadowspill.planner.pressurefit",
         "suites": suites,
     }
