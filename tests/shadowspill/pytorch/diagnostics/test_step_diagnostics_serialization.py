@@ -1,3 +1,5 @@
+"""Step diagnostics survive torch serialization and export their schema."""
+
 from __future__ import annotations
 
 import io
@@ -7,25 +9,37 @@ import torch
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.execution import (
     AllocatorTrace,
-    ExecutionTiming,
+    LaneSummary,
     RuntimeTrace,
     StepDiagnostics,
     StepTimingSummary,
-    TransferTrace,
+    Timelines,
+    TransferLane,
+    TransferRecords,
 )
+from shadowspill.schema import artifact_schema
+
+
+def _lane(direction: str) -> TransferLane:
+    return TransferLane(
+        order=(),
+        summary=LaneSummary(
+            direction=direction,
+            transfers=0,
+            bytes=0,
+            simulated_busy_seconds=0.0,
+            measured_transfers=0,
+            stream_busy_seconds=0.0,
+            effective_bandwidth_bytes_per_second=None,
+            largest_start_delta_seconds=None,
+            largest_start_delta_transfer_id=None,
+            opening_transfers=0,
+            opening_bytes=0,
+        ),
+    )
 
 
 def _diagnostics() -> StepDiagnostics:
-    timing = ExecutionTiming(
-        compute_seconds=1.0,
-        optimizer_seconds=0.1,
-        dispatch_call_seconds=1.1,
-        dispatch_startup_wait_seconds=0.0,
-        dispatch_initial_actions_seconds=0.0,
-        trace_setup_seconds=0.0,
-        phase_gpu_seconds=(("forward", 1.0),),
-        tasks=FrozenMapping({}),
-    )
     allocator = AllocatorTrace(
         events=(),
         live_allocations_before=0,
@@ -39,17 +53,6 @@ def _diagnostics() -> StepDiagnostics:
         external_fragmentation_bytes_after=0,
         blocked_allocators_after=0,
         overflow=False,
-    )
-    transfers = TransferTrace(
-        actions=(),
-        fetch_transfers=0,
-        evict_transfers=0,
-        bytes_fetched=0,
-        bytes_evicted=0,
-        initial_fetch_transfers=0,
-        initial_bytes_fetched=0,
-        events=(),
-        simulator_comparison=FrozenMapping({}),
     )
     runtime = RuntimeTrace(
         wait_events_inserted=0,
@@ -88,30 +91,57 @@ def _diagnostics() -> StepDiagnostics:
         selected_span_delta_seconds=0.0,
         simulator_makespan_seconds=1.0,
         simulator_terminal_tail_seconds=0.0,
+        call_seconds=1.1,
+        startup_wait_seconds=0.0,
+        initial_actions_seconds=0.0,
+        trace_setup_seconds=0.0,
+        optimizer_span_seconds=0.1,
         phase_comparisons=(),
         trace_complete=True,
     )
     return StepDiagnostics(
-        timing=timing,
-        tasks=FrozenMapping({}),
-        allocator=allocator,
-        transfers=transfers,
-        runtime=runtime,
-        simulator_comparison=FrozenMapping({}),
         summary=summary,
+        tasks=FrozenMapping({}),
+        transfers=TransferRecords(fetch=FrozenMapping({}), evict=FrozenMapping({})),
+        timelines=Timelines(
+            first_task_start_seconds=0.25,
+            compute=(),
+            fetch=_lane("fetch"),
+            evict=_lane("evict"),
+        ),
+        allocator=allocator,
+        runtime=runtime,
     )
 
 
-def test_step_diagnostics_torch_serialization_preserves_immutable_mappings() -> None:
+def payload_transfers(diagnostics: StepDiagnostics) -> dict[str, object]:
+    value = diagnostics.as_dict()["transfers"]
+    assert isinstance(value, dict)
+    return value
+
+
+def test_step_diagnostics_torch_serialization_round_trips() -> None:
     buffer = io.BytesIO()
     torch.save(_diagnostics(), buffer)
     buffer.seek(0)
-
     restored = torch.load(buffer, weights_only=False)
-
     assert isinstance(restored, StepDiagnostics)
+    assert restored.timelines.first_task_start_seconds == 0.25
+    assert restored.timelines.fetch.summary.direction == "fetch"
     assert isinstance(restored.tasks, FrozenMapping)
-    assert isinstance(restored.timing.tasks, FrozenMapping)
-    assert isinstance(restored.transfers.simulator_comparison, FrozenMapping)
-    assert isinstance(restored.simulator_comparison, FrozenMapping)
-    assert restored.as_dict()["schema"] == "shadowspill.step_diagnostics/v4"
+    assert isinstance(restored.transfers.fetch, FrozenMapping)
+    assert set(payload_transfers(restored)) == {"fetch", "evict"}
+    payload = restored.as_dict()
+    assert payload["schema"] == artifact_schema("step_diagnostics")
+    assert set(payload) == {
+        "schema",
+        "summary",
+        "tasks",
+        "transfers",
+        "timelines",
+        "allocator",
+        "runtime",
+    }
+    timelines = payload["timelines"]
+    assert isinstance(timelines, dict)
+    assert set(timelines) == {"clocks", "compute", "fetch", "evict"}

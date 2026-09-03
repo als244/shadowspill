@@ -1,9 +1,10 @@
 # Diagnosing a plan and real step
 
 The stable join key between planning and execution is
-`execution_XXXXXX`. This recipe finds the tasks contributing the most real
-selected-span time, shows their selected graph-pair variant, and separates
-task-duration error from inter-task-gap error.
+`execution_XXXXXX`. This recipe reads the traced step's summary, finds the
+tasks contributing the most real selected-span time beside their selected
+graph-pair variant, and reads the transfer lanes to separate task-duration
+error from transfer drift.
 
 ```python
 result = train_step(inputs, runtime_trace=True)
@@ -22,22 +23,32 @@ print("real selected span", summary.real_selected_span_seconds)
 
 largest = sorted(
     step.tasks.values(),
-    key=lambda item: item.compute_duration_seconds or 0.0,
+    key=lambda record: record.compute_duration_seconds,
     reverse=True,
 )
-
-for timing in largest[:10]:
-    planned = report.diagnostics.task(timing.execution_task_id)
-    comparison = step.simulator_comparison[timing.execution_task_id]
+for record in largest[:10]:
+    planned = report.diagnostics.task(record.execution_task_id)
     print(
-        timing.execution_task_id,
+        record.execution_task_id,
         planned.semantic_name,
         planned.chosen_graph_pair_variant,
-        comparison.expected_profile_seconds,
-        comparison.observed_gpu_seconds,
-        comparison.duration_delta_seconds,
-        timing.dispatch_before_task_seconds,
-        timing.dispatch_after_task_seconds,
+        record.expected_profile_seconds,
+        record.compute_duration_seconds,
+        record.duration_delta_seconds,
+        record.dispatch_before_task_seconds,
+        record.dispatch_after_task_seconds,
+    )
+
+timelines = step.timelines
+assumed = report.summary.fetch_bandwidth_bytes_per_second
+for lane in (timelines.fetch, timelines.evict):
+    print(
+        lane.summary.direction,
+        "effective", lane.summary.effective_bandwidth_bytes_per_second,
+        "assumed", assumed if lane.summary.direction == "fetch"
+        else report.summary.evict_bandwidth_bytes_per_second,
+        "largest drift", lane.summary.largest_start_delta_seconds,
+        "at", lane.summary.largest_start_delta_transfer_id,
     )
 ```
 
@@ -45,10 +56,11 @@ Interpret the first-level result before inspecting raw events:
 
 | Observation | Next evidence |
 |---|---|
-| Real task-event sum is high | Sort `SimulatorTaskComparison.duration_delta_seconds`, then inspect task allocator events. |
-| Real inter-task gaps are high | Sort complete host `before_task` + `after_task` costs and inspect readiness waits. |
-| Transfer timing diverges | Compare transfer identity/bytes first, then queue, reservation, dispatch, and completion times. |
-| Physical memory differs | Check charged allocator events, peak bytes, pending retirements, largest free range, and fragmentation. |
+| Real task-event sum is high | Sort `step.tasks` by `duration_delta_seconds`, then inspect that task's allocator events. |
+| Real inter-task gaps are high | Sort `step.tasks` by `dispatch_before_task_seconds` plus `dispatch_after_task_seconds`, and read each record's waits and `frontend_lead_seconds`. |
+| Simulated waiting exceeds real waiting | Compare each lane's effective bandwidth with the bandwidth the plan summary assumed. |
+| Transfer timing diverges | Walk the lane's `order` through `step.transfers.fetch` or `.evict`: read the record's simulated start against its stream start, then its host queued, reserved, and dispatched times and the records before it. |
+| Physical memory differs | Check charged allocator events, peak bytes, pending retirements, largest free range, fragmentation, and each transfer's `next_access`. |
 | Evidence appears incomplete | Require `summary.trace_complete` and both overflow flags to be clean. |
 
 The [PlanReport](../python/plan-report.md) and [StepResult

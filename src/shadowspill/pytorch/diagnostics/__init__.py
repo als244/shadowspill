@@ -25,19 +25,28 @@ from shadowspill.planner.diagnostics.plan import (
     PlanUniqueStage,
 )
 
+from .execution import (
+    AllocatorTrace,
+    LaneSummary,
+    RuntimeTrace,
+    TaskRecord,
+    Timelines,
+    TransferLane,
+    TransferRecord,
+    TransferRecords,
+)
 from .step import (
     DiagnosticsHandle,
-    ExecutionTiming,
     PhaseTimingComparison,
-    SimulatorTransferComparison,
     StepDiagnostics,
     StepResult,
     StepTimingSummary,
 )
 
 __all__ = [
+    "AllocatorTrace",
     "DiagnosticsHandle",
-    "ExecutionTiming",
+    "LaneSummary",
     "PhaseTimingComparison",
     "PlanAllocationABIStep",
     "PlanAllocationEvent",
@@ -61,8 +70,13 @@ __all__ = [
     "PlanTaskMemoryEnvelope",
     "PlanTaskStage",
     "PlanUniqueStage",
-    "SimulatorTransferComparison",
+    "RuntimeTrace",
     "StepDiagnostics",
     "StepResult",
     "StepTimingSummary",
+    "TaskRecord",
+    "Timelines",
+    "TransferLane",
+    "TransferRecord",
+    "TransferRecords",
 ]
