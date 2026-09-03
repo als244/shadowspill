@@ -62,10 +62,23 @@ closing cells as MEASURED rather than PASS, which is the mode to run on a
 machine the floors did not come from.
 
 Framework-free PressureFit benchmarking belongs in
-`benchmarking/planning_eval/fixture_benchmark.py`. Step inspection belongs in
-`src/tools/diagnostics/`.
+`benchmarking/planning_eval/fixture_benchmark.py`. Step inspection reads the
+saved step diagnostics (`docs/python/step-diagnostics.md`), and the gap report
+below summarizes them across a matrix.
 
-`--profiler-annotations` on the performance launcher emits NVTX ranges around
+`--profiler-annotations` on the performance launcher emits profiler ranges around
 task boundaries and compiled calls, so an external profiler can attribute time
 to the task that spent it. It is off by default because the ranges cost
 something to emit and a gate run should not pay for them.
+
+The real-versus-simulated gap report reads the traced warm steps a
+performance matrix saved and prints, per model, where the step's time went
+against the simulation: span, task-duration, and idle deltas; task-duration
+error by phase; task start drift along the compute lane; each transfer lane's
+assumed versus effective bandwidth; and every measured transfer's achieved
+rate classified by its overlap with the opposite lane and bucketed by size.
+It is the acceptance experiment for simulator changes:
+
+```bash
+python -m tools.qualification.gap_report qualification/results/full_model
+```
