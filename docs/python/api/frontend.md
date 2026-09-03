@@ -29,6 +29,7 @@ Runtime(
     library_path: str | Path | None = None,
     calibrate: bool = True,
     worker_poll_nanoseconds: int = 1_000,
+    backend: str | None = None,
 )
 ```
 
@@ -56,9 +57,9 @@ may coordinate several processes and invoke calibration concurrently to
 measure contended links.
 
 `Runtime.close()` verifies that no planning, callable, persistent imported
-state, public object reference, or caller-owned device output remains; stops
-and joins the runtime worker; and closes every route and pool backend. Release
-or copy ordinary device outputs before this call. PyTorch's process-global
+state, public object reference, or caller-owned device output remains, then
+tears the runtime down as [memory runtime](../../architecture/memory-runtime.md#failure-and-teardown)
+describes. Release or copy ordinary device outputs before this call. PyTorch's process-global
 allocator shim cannot be uninstalled, so it remains in a permanently closed
 state and rejects subsequent device allocations.
 
@@ -131,6 +132,7 @@ plan_forward(
     execution_budget=None,
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
+    minimum_object_bytes_evict_eligible=1 << 20,
     execution_device=None,
     partition="auto",
     verbose=True,
@@ -216,6 +218,7 @@ plan_step(
     execution_budget=None,
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
+    minimum_object_bytes_evict_eligible=1 << 20,
     execution_device=None,
     partition="auto",
     optimizer_ordering="stage_interleaved",
@@ -240,8 +243,9 @@ Shared planning arguments have these meanings:
 |---|---|
 | `runtime` | Open runtime that owns the imported model. |
 | `execution`, `spill` | Keys in `runtime.pools`. |
-| `execution_budget`, `spill_budget` | Optional byte budgets no larger than configured pool limits. |
+| `execution_budget`, `spill_budget` | Optional byte budgets no larger than configured pool limits; `None` means the pool's capacity. Budgets of at least one GiB plan at whole-GiB granularity (rounded down), so a budget that follows a pool's measured capacity gives the same plan identity in every process; calibrated bandwidths and latencies are rounded the same way, as [the plan report](../plan-report.md) describes. |
 | `dynamic_scratch_reserve_bytes` | Optional lower bound for bounded dynamic scratch; cannot reduce the measured requirement. |
+| `minimum_object_bytes_evict_eligible` | Objects smaller than this stay resident from their first to their last access instead of being evicted and fetched mid-step; their opening fetch, release after the last access, and terminal writeback are unchanged. Default 1 MiB, the size under which a copy is latency-bound; zero makes every object eligible. Part of the plan identity. |
 | `execution_device` | Accelerator ordinal or `torch.device`; `None` uses the current PyTorch device. |
 | `partition` | `"auto"`, `"whole"`, or `PartitionPolicy`. |
 | `artifact_store_dir` | Shared content-addressed artifact root. |
@@ -293,8 +297,59 @@ Budgets default to the selected runtime pool capacities and cannot exceed
 them. `execution_device=None` uses PyTorch's current accelerator; an explicit
 device must match the execution pool.
 
-`verbose=True` prints phase progress. Planning diagnostics remain present when
-verbose output is disabled.
+Planning diagnostics remain present when verbose output is disabled.
+
+`plan_step_search()` plans every admitted split of one step's sequence total
+into microbatches and accumulation rounds, under every requested budget
+pair, and executes nothing. Each distinct geometry pays capture, profiling,
+and lowering once — the artifact store deduplicates by structural digest —
+and every geometry-budget point then runs the PressureFit search. The
+returned `StepSearchReport` carries per-geometry build phase timings, one
+`StepSearchPoint` per geometry and budget with its status, simulated makespan,
+and `PlanSummary`, the bound-skipped geometries with reasons, and derived
+winners per budget. Running a winner afterward is one warm `plan_step()`
+call at the chosen geometry.
+
+<!-- source-signature: src/shadowspill/pytorch/step_search.py:plan_step_search -->
+```text
+plan_step_search(
+    model,
+    *,
+    objective,
+    opt,
+    example_microbatches,
+    total_sequences_per_step,
+    sequence_length,
+    budgets,
+    runtime,
+    execution,
+    spill,
+    transfer_bandwidths=None,
+    min_tokens_per_microbatch=None,
+    max_tokens_per_microbatch=None,
+    options=None,
+    minimum_object_bytes_evict_eligible=1 << 20,
+    optimizer_ordering="stage_interleaved",
+    artifact_store_dir=None,
+    verbose=False,
+    progress=None,
+    force_fresh=False,
+    implementation_revision=None,
+) -> StepSearchReport
+```
+
+`example_microbatches(sequences, accumulation)` supplies example inputs for
+one geometry; structure matters, values do not. `transfer_bandwidths`
+overrides the calibration each step program embeds from the runtime.
+`verbose=True` forwards each planning call's phase progress, and `progress`
+receives one line per geometry and point boundary so a caller can tee a live
+log.
+Infeasible or search-exhausted points are reported outcomes, not raised
+errors. `search_geometries()` is the underlying enumeration — every divisor
+pair of the sequence total, largest microbatch first, with the bounds'
+skips and reasons — and each `StepSearchGeometryBuild` records the shared
+capture/profile/lowering wall behind one geometry with its per-phase
+seconds.
 
 ## Inputs, objectives, and partitioning
 
@@ -367,7 +422,7 @@ PlannedTrainStep.submit(
 ```
 
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
-`state_dict()`, `load_state_dict()`, `close()`, and problem manager support.
+`state_dict()`, `load_state_dict()`, `close()`, and context manager support.
 
 `submit()` performs the normal host dispatch and returns an
 `InvocationResult` backed by one cold-created, timing-disabled completion

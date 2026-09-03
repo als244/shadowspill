@@ -62,13 +62,14 @@ _STRATEGY_NAME = {code: name for name, code in _STRATEGY_CODE.items()}
 _RULE_NAME = {code: name for name, code in _RULE_CODE.items()}
 _ACTION_KIND = {
     0: MemoryActionKind.RELEASE,
-    1: MemoryActionKind.OFFLOAD,
-    2: MemoryActionKind.PREFETCH,
+    1: MemoryActionKind.EVICT,
+    2: MemoryActionKind.FETCH,
 }
 _LOCATION = {0: MemoryLocation.DEVICE, 1: MemoryLocation.SPILL}
 _INITIAL_PLACEMENT = {"required": 0, "greedy": 1}
 _PREFLIGHT_WORKSPACE_CAPACITY = 1
 _PREFLIGHT_REQUIRED_CAPACITY = 2
+_PREFLIGHT_RESIDENT_SLICE_CAPACITY = 4
 _PREFLIGHT_MISSING_INITIAL_RESIDENCY = 3
 
 
@@ -88,6 +89,9 @@ class CCandidateDiagnostic:
     placements_attempted: int
     placements_admitted: int
     capacity_refinements: int
+    #: Repairs spent when the plan the candidate answers with was placed;
+    #: ``None`` when it placed none.
+    repairs_at_best: int | None
     #: When this candidate ran, in nanoseconds from the start of the call that
     #: evaluated it. ``work.sections`` is work done; these are wall clock, so
     #: two candidates ran at once exactly when their spans overlap. Both are
@@ -151,6 +155,13 @@ class CProblemResult:
     #: is next rather than finishing a problem first.
     started_ns: int
     finished_ns: int
+    #: The objects `minimum_object_bytes_evict_eligible` kept resident: how
+    #: many, their bytes, the resident slice reserved for them, and which
+    #: they are, by alias index.
+    evict_ineligible_aliases: int
+    evict_ineligible_bytes: int
+    resident_slice_bytes: int
+    resident_aliases: tuple[int, ...]
 
     def __post_init__(self) -> None:
         repairs = PressureFitRepairDiagnostics()
@@ -234,6 +245,7 @@ def _decode_candidate_status(
             placements_attempted=value.placements_attempted,
             placements_admitted=value.placements_admitted,
             capacity_refinements=value.capacity_refinements,
+            repairs_at_best=value.repairs_at_best,
             schedule_digest=value.schedule_digest,
             repairs=value.repairs,
             work=value.work,
@@ -363,16 +375,12 @@ def _decode_repairs(
     value: CPressureFitRepairDiagnostics,
 ) -> PressureFitRepairDiagnostics:
     return PressureFitRepairDiagnostics(
-        admission_prefetch_advance_attempts=int(
-            value.admission_prefetch_advance_attempts
-        ),
-        admission_prefetch_delay_attempts=int(value.admission_prefetch_delay_attempts),
+        admission_fetch_advance_attempts=int(value.admission_fetch_advance_attempts),
+        admission_fetch_delay_attempts=int(value.admission_fetch_delay_attempts),
         admission_pressure_boundary_attempts=int(
             value.admission_pressure_boundary_attempts
         ),
-        simulation_prefetch_delay_attempts=int(
-            value.simulation_prefetch_delay_attempts
-        ),
+        simulation_fetch_delay_attempts=int(value.simulation_fetch_delay_attempts),
         simulation_pressure_boundary_attempts=int(
             value.simulation_pressure_boundary_attempts
         ),
@@ -393,8 +401,6 @@ def _decode_sections(
 
 def _decode_work(value: CPressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
     return PressureFitWorkDiagnostics(
-        residency_cache_hits=int(value.residency_cache_hits),
-        residency_cache_misses=int(value.residency_cache_misses),
         schedule_emissions=int(value.schedule_emissions),
         schedule_cache_hits=int(value.schedule_cache_hits),
         simulation_calls=int(value.simulation_calls),
@@ -490,7 +496,7 @@ def _problem_options(
     best_placed: int = 0,
 ) -> tuple[CPressureFitProblemOptions, tuple[object, ...]]:
     strategy_names = tuple(options.residency_strategies)
-    rule_names = tuple(options.prefetch_rules)
+    rule_names = tuple(options.fetch_rules)
     strategies = (ctypes.c_uint8 * len(strategy_names))(
         *(_STRATEGY_CODE[value] for value in strategy_names)
     )
@@ -504,8 +510,8 @@ def _problem_options(
     compiled = CPressureFitProblemOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
-        prefetch_rules=rules,
-        prefetch_rule_count=len(rule_names),
+        fetch_rules=rules,
+        fetch_rule_count=len(rule_names),
         coalescing_modes=modes,
         coalescing_mode_count=len(mode_values),
         max_repair_attempts=options.max_repair_attempts,
@@ -513,6 +519,8 @@ def _problem_options(
         capacity_refinement_bytes=options.capacity_refinement_bytes,
         record_reduction_steps=int(options.record_reduction_steps),
         best_placed=best_placed or None,
+        deterministic=int(options.deterministic),
+        minimum_object_bytes_evict_eligible=options.minimum_object_bytes_evict_eligible,
     )
     return compiled, (strategies, rules, modes)
 
@@ -542,6 +550,7 @@ def validate_program_problem(
         _PREFLIGHT_WORKSPACE_CAPACITY,
         _PREFLIGHT_REQUIRED_CAPACITY,
         _PREFLIGHT_MISSING_INITIAL_RESIDENCY,
+        _PREFLIGHT_RESIDENT_SLICE_CAPACITY,
     }:
         encoded = library.shadowspill_status_string(status)
         message = encoded.decode("utf-8") if encoded else f"planner status {status}"
@@ -550,6 +559,7 @@ def validate_program_problem(
         _PREFLIGHT_WORKSPACE_CAPACITY: "workspace_capacity",
         _PREFLIGHT_REQUIRED_CAPACITY: "required_capacity",
         _PREFLIGHT_MISSING_INITIAL_RESIDENCY: "missing_initial_residency",
+        _PREFLIGHT_RESIDENT_SLICE_CAPACITY: "resident_slice_capacity",
     }
     return CPreflightResult(
         failure_kind=failure_names[failure_kind],
@@ -665,7 +675,7 @@ def _decode_problem_result(
         for index in range(int(problem_result.candidate_count)):
             value = problem_result.candidates[index]
             strategy = _STRATEGY_NAME[int(value.residency_strategy)]
-            rule = _RULE_NAME[int(value.prefetch_rule)]
+            rule = _RULE_NAME[int(value.fetch_rule)]
             digest = (
                 bytes(value.schedule_digest).hex() if int(value.status) == 0 else None
             )
@@ -683,6 +693,11 @@ def _decode_problem_result(
                     placements_attempted=int(value.placements_attempted),
                     placements_admitted=int(value.placements_admitted),
                     capacity_refinements=int(value.capacity_refinements),
+                    repairs_at_best=(
+                        None
+                        if value.repairs_at_best == 0xFFFFFFFF
+                        else int(value.repairs_at_best)
+                    ),
                     started_ns=int(value.started_ns),
                     finished_ns=int(value.finished_ns),
                     steps=_decode_steps(value),
@@ -715,6 +730,22 @@ def _decode_problem_result(
             work=_decode_work(problem_result.work),
             started_ns=int(problem_result.started_ns),
             finished_ns=int(problem_result.finished_ns),
+            evict_ineligible_aliases=int(problem_result.evict_ineligible_aliases),
+            evict_ineligible_bytes=int(problem_result.evict_ineligible_bytes),
+            resident_slice_bytes=(
+                int(problem_result.resident_slice_bytes[0])
+                if problem_result.resident_slice_bytes
+                else 0
+            ),
+            resident_aliases=(
+                tuple(
+                    index
+                    for index in range(len(simulation.alias_ids))
+                    if problem_result.alias_evict_eligible[index] == 0
+                )
+                if problem_result.alias_evict_eligible
+                else ()
+            ),
         )
     finally:
         library.shadowspill_pressurefit_problem_result_destroy(

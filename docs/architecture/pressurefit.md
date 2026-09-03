@@ -96,6 +96,14 @@ the same call — and it is described in
 `record_reduction_steps` turns on the per-candidate trajectory described
 under [Trajectories](#trajectories). It changes nothing about the search.
 
+`minimum_object_bytes_evict_eligible` takes objects out of the search: one
+smaller than it is never cut, so it is never evicted and fetched mid-step.
+Every lease of such an object gets a static home in the
+[resident slice](fixed-placement.md#the-resident-slice), whose size is known
+at preparation and taken out of the capacity given to the reducer; the
+library default of zero exempts nothing, and the PyTorch entrypoints set
+1 MiB.
+
 Candidates place layouts and publish what they place to a shared record, so
 which plans are worth measuring depends on what has already been placed. That
 makes the search order-dependent by default. Scoping a record per search does
@@ -150,7 +158,7 @@ decision:
   refinements, and — when asked for — each candidate's reduction trajectory;
 - the original `admission_facts`, when supplied.
 
-The Python API uses `prefetch`/`offload` as serialized action names. In
+The Python API uses `fetch`/`evict` as serialized action names. In
 explanatory text, these are fetch and evict, respectively.
 
 ## Mathematical formulation
@@ -367,6 +375,20 @@ deterministically by first-use time, estimated fetch-deadline miss, transfer
 cost, size, and alias order, and preplaces each one that fits initial
 capacity.
 
+The objects under `minimum_object_bytes_evict_eligible` are settled here as
+well. Each holds one lease, from the trigger of its fetch (chosen as late as
+the ideal timeline allows) or the start, to the boundary after its last
+access or the end; packing those leases on their own gives the resident
+slice, at least their high-water mark and never their total. The device
+capacity the reducer sees loses the slice, the floor and the pressure never
+count these objects, the cut index has no entries for them, greedy placement
+skips them, and the emitter issues each one's fetch at the trigger the slice
+was sized for. Placement leaves their leases out of the main assignment and
+adds the slice to every extent it measures; the final layout places them at
+the end of the fixed range at the offsets they were packed at, as
+[fixed-offset placement](fixed-placement.md#the-resident-slice) describes. A
+slice the device cannot hold is a preflight failure of its own.
+
 ### Setup — schedule facts and the candidate workspace
 
 Deriving the facts every candidate shares — access windows, transfer costs,
@@ -397,13 +419,19 @@ The transfer score omits this first term. Both then prefer no required
 write-back, removable greedy initial placement, later first use, larger
 objects, longer removable spans, and stable alias/boundary identity.
 
-Every fetch rule and coalescing mode built on a strategy starts from the same
-*base* reduction, so a worker memoizes it: the first candidate on a strategy
-pays for it and the rest read it back. The memo belongs to the worker, so
-workers that draw the same strategy each pay once, which is cheaper than
-coordinating over it. Either way the cost lands in `reduce_ns` on the
-candidate that paid it. Reductions a repair forces later are charged to the
-repair that forced them, because that is what they cost.
+Reductions are not cached. A repair trajectory cuts aliases monotonically,
+so a candidate never returns to a residency it has already reduced; every
+candidate pays its own reductions, the cost lands in `reduce_ns`, and
+reductions a repair forces later are charged to the repair that forced
+them, because that is what they cost. A reduction's fingerprint — a
+128-bit hash of the packed residency — is what the later stages key on.
+
+What a worker keeps is small and bounded. The last sixteen emitted
+schedules are held in a ring keyed by residency fingerprint, fetch rule,
+coalescing mode, and headroom; re-emission is recency-local, and an evicted
+schedule is emitted again. Simulated outcomes are kept by the schedule's
+digest with only their scalar results, so a schedule that recurs across
+candidates is not simulated twice.
 
 ### Emit — turning residency gaps into an ordered schedule
 
@@ -432,8 +460,9 @@ dependencies it emits are what the simulation consumes. Because admission
 runs as part of simulating, `admit_ns` is reported inside `simulate_ns` and
 excluded from the disjoint sum.
 
-A prefetch or task launch with nowhere to go waits for room rather than
-ending the simulation. A plan that comes up short is therefore slower, not
+A fetch or task launch with nowhere to go waits for room rather than
+ending the simulation, as [simulation](simulation.md#trigger-time-capacity)
+specifies. A plan that comes up short is therefore slower, not
 rejected, and it reaches the rest of the cycle with a real makespan and a
 `device-capacity` stall recording what it waited for. What still fails is a
 plan over budget before it starts, an offload with no room in the spill pool,
@@ -565,7 +594,7 @@ PressureFit(program, initial, final, machine, options, admission):
         for strategy in options.residency_strategies:
             reduce:  base = reduce_until_analytic_pressure_fits(seed, strategy)
 
-            for fetch_rule in options.prefetch_rules:
+            for fetch_rule in options.fetch_rules:
                 for coalesced in enabled_coalescing_modes:
                     residency = base
                     capacity  = machine.object_capacity

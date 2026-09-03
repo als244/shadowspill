@@ -20,6 +20,31 @@ from the portable `StepProgram`, `PressureFitProgram`, and
 `AnnotatedProgramPlan` JSON artifacts described in [Program and annotated-plan
 JSON](planning-json.md).
 
+## Structure
+
+A `PlanReport` has five groups of fields, listed in the table below: the
+plan's identity, the selected plans and their prediction, the capacities
+and transfer assumptions planning worked under, the profiling and selection
+evidence, and the detailed `diagnostics`. Its `summary` is a derived
+`PlanSummary`, the plan's promise in a dozen numbers:
+
+| `PlanSummary` field | Meaning |
+|---|---|
+| `simulated_step_seconds` | The simulated step, terminal writeback included. |
+| `unconstrained_step_seconds` | The compute floor: every recomputation group priced at its cheapest option, with no waiting. |
+| `recomputation_overhead_seconds` | Compute the selection added over that floor by recomputing rather than holding memory. |
+| `idle_seconds` | Time the simulated step waits on data or capacity rather than computing. |
+| `terminal_writeback_seconds` | Transfers that return spill-final objects after the last task. |
+| `recompute_selection_count`, `selection_count`, `recompute_selection_fraction` | How many recomputation groups chose to recompute, out of how many. |
+| `transfer_bytes_fetched`, `transfer_bytes_evicted` | Bytes the simulated schedule moves in each direction. |
+| `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The lane bandwidths the simulator planned under: the calibrated transfer capabilities rounded to the nearest GB/s (latencies to the nearest microsecond), so slightly different calibrations reuse one stored plan. The raw calibration is in the runtime's transfer capabilities. |
+| `planning_phase_seconds` | Wall time by frontend planning phase. |
+| `selected_candidate` | The winning PressureFit candidate: residency strategy, fetch rule, whether coalesced, and the repairs it made to reach its best plan. |
+
+The four numbers above the selection line are related: the simulated step
+is the floor plus the recomputation overhead plus the idle plus the
+terminal writeback.
+
 ## Read the report from the outside in
 
 The most useful inspection order is:
@@ -40,10 +65,11 @@ The top-level fields are grouped below.
 | Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
 | Selected plan | `execution_plan`, `initial_execution_plan` | Recurrent/forward plan and optional first-step plan for lazy state. |
 | Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_spill_peak_bytes` | Simulator result after physical admission. |
+| Promise | `summary` | One derived `PlanSummary`: the simulated step against its cheapest-graphs floor, split into recomputation overhead, waiting inside the span, and the terminal writeback, with the recomputation selection count and fraction, plus the scheduled fetch/evict traffic, the per-direction bandwidths the simulator planned against, per-phase planning seconds as an ordered mapping, and `selected_candidate` — the chosen candidate's residency strategy, fetch rule, coalescing, and `repairs_at_best`, the repairs it had spent when it placed the selected plan. The parts identify: floor + overhead + idle + writeback equals the simulated step. |
 | Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
 | Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
 | Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |
-| Selection | `pressurefit_result`, `initial_pressurefit_result` | PressureFit winner, schedule, selections, and search evidence. |
+| Selection | `pressurefit_result`, `initial_pressurefit_result` | PressureFit winner, schedule, selections, and search evidence, plus the simulated timeline: `pressurefit_result.simulation.task_intervals` (ready, start, and end per task) and `transfer_intervals` (ready, start, end, and bytes per transfer). |
 | Detailed evidence | `diagnostics` | Phase, cache, stage, graph-pair, profile, search, and layout records. |
 
 For training, `report.program` and `report.pressurefit_result` refer to the
@@ -111,8 +137,8 @@ The other planning-cost views are:
 | `profile_unique_keys` | Number of structural profiles needed by the call. |
 | `profile_cache_hits`, `profile_cache_misses` | Measurement reuse versus fresh profiling. |
 | `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Reuse versus construction of differentiated graph pairs. |
-| `recomputation_cache_hits`, `recomputation_cache_misses` | Reuse of recomputation-selection artifacts. |
-| `cache_directories` | Cache roots used for this call. |
+| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each planned program -- the complete PressureFit result for a request, its recomputation selection and memory schedule -- was read from the artifact store instead of searched: one count per plan, recurrent and optional initial. |
+| `store_directories` | The artifact store roots used for this call, by store name. |
 | `cache_artifacts` | Every managed, matched, read, or written artifact and its dependencies. |
 
 An artifact with `access="matched"` agreed with a freshly produced in-memory
@@ -231,6 +257,8 @@ then inspect:
   status categories;
 - `repairs` to see whether admission or simulation repeatedly moved fetches or
   pressure boundaries;
+- `evict_ineligible` for what `minimum_object_bytes_evict_eligible` held
+  resident in this problem: how many `aliases`, and their `bytes`;
 - `work.simulation` and `work.admission` to count compiled calls and cache
   reuse;
 - `work.sections` to see where the time went;
@@ -267,7 +295,8 @@ Each `PlanPhysicalLayout` describes one admitted role.
 | `original_object_capacity_bytes` | Initial logical object capacity sent to PressureFit. |
 | `effective_object_capacity_bytes` | Object capacity the accepted plan was certified at. |
 | `object_capacity_reduction_bytes` | Capacity ceded to make physical placement feasible. |
-| `fixed_slice_bytes` | Reusable fixed range required by admitted lifetimes. |
+| `fixed_slice_bytes` | Reusable fixed range required by admitted lifetimes, the resident slice included. |
+| `resident_slice_bytes` | The slice at the end of the fixed range where every lease of an object `minimum_object_bytes_evict_eligible` kept resident has a static home; zero when it kept none. |
 | `dynamic_reserve_bytes` | Terminal outputs that may outlive the reusable slice. |
 | `scratch_reserve_bytes` | Bounded optional dynamic task allocations. |
 | `required_bytes`, `slack_bytes` | Total admitted bytes and remaining pool capacity. |

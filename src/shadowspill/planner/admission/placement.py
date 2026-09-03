@@ -46,18 +46,29 @@ class Lifetime(Protocol):
 def place_records(
     records: ctypes.Array[CLeaseLifetime],
     count: int,
+    excluded: Sequence[bool] | None = None,
 ) -> tuple[tuple[int, ...], int]:
     """Place the first `count` records of an array the library already holds.
 
     This is the path a measurement takes: the lifetime pass leaves the fixed
     leases in a contiguous prefix, so placement runs on them where they lie.
+    `excluded` marks records to leave out -- their offsets come back as zero
+    and they are outside the bytes required -- for leases placed elsewhere.
     """
 
     if count == 0:
         return (), 0
     offsets = (ctypes.c_uint64 * count)()
+    mask = (
+        None
+        if excluded is None
+        else (ctypes.c_uint8 * count)(*(int(bool(item)) for item in excluded))
+    )
     problem = CPlacementProblem(
-        abi_version=ABI_VERSION, lifetime_count=count, lifetimes=records
+        abi_version=ABI_VERSION,
+        lifetime_count=count,
+        lifetimes=records,
+        excluded=mask,
     )
     result = CPlacementResult(required_bytes=0, offsets=offsets)
     _check(
@@ -70,6 +81,7 @@ def place_records(
 
 def place_lifetimes(
     lifetimes: Sequence[Lifetime],
+    excluded: Sequence[bool] | None = None,
 ) -> tuple[tuple[int, ...], int]:
     """Place anything carrying the four numbers, copying it across first.
 
@@ -96,7 +108,7 @@ def place_lifetimes(
             )
         ],
     )
-    return place_records((CLeaseLifetime * count).from_buffer(buffer), count)
+    return place_records((CLeaseLifetime * count).from_buffer(buffer), count, excluded)
 
 
 def _check(status: int) -> None:

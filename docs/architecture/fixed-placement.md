@@ -65,6 +65,32 @@ every key still get a defined order.
 **Offset:** walk the addresses already taken, in address order, and take the
 first aligned gap wide enough; if none, take the address just past them all.
 
+## The resident slice
+
+Objects under `minimum_object_bytes_evict_eligible` are never cut, so their
+leases run from their first access to their last: long-lived and small, the
+worst shape for a placer whose other leases come and go. Placing them among
+the rest would leave holes the size of nothing useful across the whole layout,
+and they are too small for packing them on their own to be worth the
+machinery. So every lease of such an object gets a static home instead: a
+range of its own in the resident slice, which follows the main assignment at
+the end of the fixed range. The leases left out of the assignment above are
+walked in lease order, each taking the next offset that satisfies its
+alignment — 256 bytes, like every lease — and the fixed range ends past the
+last of them. Nothing in the slice is ever reused, so nothing in it needs a
+completion dependency, and the certificate's `fixed_slice_bytes` is the main
+assignment's extent plus `resident_slice_bytes`.
+
+The slice's size is known before the search. At problem preparation the
+planner sums the homes such an object will need — one, plus one for every task
+that mutates it in place, since that task holds both generations — each
+rounded up to the alignment, and hands the reducer the device's capacity
+minus that sum, so these objects are never charged per boundary again. Every
+plan the search measures lays its slice out from the leases the plan actually
+has, exactly as the final layout does. The emitter fetches each such object
+at a trigger chosen once, as late as the ideal timeline allows, so no fetch
+rule moves a lifetime the slice was sized without.
+
 ## The occupancy index
 
 Choosing an offset needs the addresses in use by leases live at the same time.
@@ -204,23 +230,25 @@ range someone still holds.
 
 ## Judging the result
 
-Two numbers, both cheap and both worth reporting. Neither is implemented;
-the metrics the code does compute are `predicted_fragmentation_bytes`,
-`peak_fragmentation_bytes`, and `external_fragmentation_bytes`, which
-measure different quantities:
+Four numbers describe a layout, each computed where the information exists:
 
-- `fragmentation_bytes` = slice size − peak live bytes, and
-  `fragmentation_ratio` = slice size ÷ peak live bytes. **1.00 means the
-  assignment is perfect** and the only way to shrink is to keep less resident.
-  Measured range on this corpus: 1.00 for every layout that fit, 1.04 to 1.25
-  for layouts that missed.
-- The reuse edges the assignment creates, and how much slack each has. Sharing
-  an address is what saves the bytes, and it is not free: the successor cannot
-  start until the predecessor releases. Those edges cost nothing in simulation
-  — placement only shares an address between lifetimes already disjoint in the
-  predicted timeline — but they are what a real run has to honour, so their
-  slack is the layout's exposure to timing drift. Measured, 13 to 24% of edges
-  have exactly zero slack.
+- `slack_bytes` on the fixed layout (`FixedLayout.slack_bytes`,
+  `src/shadowspill/planner/admission/layout/model.py`) is the pool capacity
+  minus the bytes the assignment requires: how much of the pool the layout
+  leaves untouched.
+- `predicted_fragmentation_bytes` in the execution plan's admission block is
+  the planner's estimate of slab bytes that lifetimes will leave unusable; it
+  can never exceed the slab.
+- `peak_fragmentation_bytes` from admission replay
+  (`<shadowspill/admission_replay.h>`) is the largest gap the replayed
+  allocator actually left between live ranges while honouring the layout.
+- `external_fragmentation_bytes` in the runtime statistics is the same
+  quantity observed on the real pool: free bytes that no single request can
+  use because they are not contiguous.
 
-The two move in opposite directions: packing tighter reduces the first and
-increases the second, and the assignment currently prices only the first.
+The first two are predictions the layout is built against; the last two are
+what the allocator, replayed or real, made of it. When the replayed peak is
+larger than the prediction, the lifetimes were wrong, not the assignment:
+sharing an address is only ever granted between lifetimes already disjoint
+in the predicted timeline, so a bad prediction costs bytes and a successor's
+wait, never correctness.
