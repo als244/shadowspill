@@ -12,7 +12,7 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputRole,
     capture_forward_stage_artifacts,
 )
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.partition import (
     partition_export,
 )
@@ -99,8 +99,8 @@ class _ProducedControlNetwork(nn.Module):
 def test_custom_partition_policy_is_normalized_and_shared_by_forward() -> None:
     model = _NestedRepeatedNetwork()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         exported = capture_forward(replica, inputs)
         partitioned = partition_export(
@@ -143,8 +143,8 @@ def test_custom_partition_policy_rejects_incomplete_or_noncontiguous_labels() ->
 
     model = _NestedRepeatedNetwork()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         exported = capture_forward(replica, inputs)
         with pytest.raises(CaptureError, match="coverage"):
@@ -156,8 +156,8 @@ def test_custom_partition_policy_rejects_incomplete_or_noncontiguous_labels() ->
 def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
     model = _NestedRepeatedNetwork()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         exported = capture_forward(replica, inputs)
         partitioned = partition_export(exported, replica)
@@ -172,8 +172,8 @@ def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
 def test_auto_partition_isolates_prologue_blocks_and_epilogue() -> None:
     model = _RepeatedNetworkWithBoundaries()
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         exported = capture_forward(replica, inputs)
         partitioned = partition_export(exported, replica)
@@ -259,8 +259,8 @@ def test_partition_accepts_explicit_caller_control_value() -> None:
 def test_whole_partition_is_one_stage() -> None:
     model = nn.Sequential(nn.Linear(4, 4), nn.ReLU())
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    replica = fake_cuda_model(model, mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 4)], mode)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(2, 4)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(
             capture_forward(replica, inputs), replica, partition="whole"

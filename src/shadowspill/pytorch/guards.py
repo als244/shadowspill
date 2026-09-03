@@ -13,6 +13,7 @@ import torch
 from torch.utils._pytree import TreeSpec, tree_flatten, treespec_dumps
 
 from shadowspill.errors import InputGuardError, PlanningError
+from shadowspill.pytorch.accelerator import DEVICE_TYPE
 
 from .contracts import TensorSpec
 
@@ -58,7 +59,7 @@ class TensorGuard:
                 f"layout={actual[3]}, requires_grad={actual[4]}, "
                 f"storage_offset={actual[5]}, storage_nbytes={actual[6]}"
             )
-        if value.device.type not in {"cpu", "cuda"}:
+        if value.device.type not in {"cpu", DEVICE_TYPE}:
             raise InputGuardError(f"{path} must be a CPU or CUDA tensor")
 
     def identity(self) -> dict[str, object]:

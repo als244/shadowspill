@@ -14,6 +14,7 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from shadowspill.errors import InputGuardError, PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
+from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
 from shadowspill.pytorch.contracts import TensorSpec
@@ -165,7 +166,7 @@ class MaterializedForwardState(MaterializedState):
         self.bridge = bridge
         self.runtime = runtime
         self._shared_inputs = tuple(shared_inputs)
-        self.device = torch.device("cuda", device_ordinal)
+        self.device = accelerator_device(device_ordinal)
         self.root_arguments = flat_runtime_arguments(capture, model, example_inputs)
         self.object_store: dict[str, torch.Tensor] = {}
         self._closed = False
@@ -257,7 +258,7 @@ class MaterializedForwardState(MaterializedState):
             value = actual[position]
             if not isinstance(value, torch.Tensor):
                 raise RuntimeError("captured tensor input became static")
-            if value.device.type == "cuda":
+            if is_accelerator(value.device):
                 value = value.detach().cpu()
             if alias_id not in written:
                 self.bridge.write_spill_tensor(alias_id, value)
@@ -507,9 +508,7 @@ class MaterializedForwardState(MaterializedState):
         binding = self.bridge.publish_initial_tensor(alias_id, owner)
         self.object_store[alias_id] = representative
         task_number = (1 << 61) + ordinal
-        actions = (
-            MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),
-        )
+        actions = (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),)
         self.bridge.admit_initial_actions(actions, task_number=task_number)
         self.bridge.dematerialize(representative, alias_id, binding.generation)
         self.bridge.submit_initial_actions(

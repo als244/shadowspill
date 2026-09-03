@@ -73,7 +73,7 @@ def _workspace_oom_cpu(value: torch.Tensor) -> torch.Tensor:
 
 
 @torch.library.impl(_BROKEN_OP, "workspace_oom", "CUDA")
-def _workspace_oom_cuda(value: torch.Tensor) -> torch.Tensor:
+def _workspace_oom_device(value: torch.Tensor) -> torch.Tensor:
     workspace = torch.empty(2 << 30, dtype=torch.uint8, device=value.device)
     del workspace
     # CUDAPluggableAllocator does not turn a null callback result into an
@@ -95,7 +95,7 @@ def _unsupported_compile_cpu(value: torch.Tensor) -> torch.Tensor:
 
 
 @torch.library.impl(_BROKEN_OP, "unsupported_compile", "CUDA")
-def _unsupported_compile_cuda(value: torch.Tensor) -> torch.Tensor:
+def _unsupported_compile_device(value: torch.Tensor) -> torch.Tensor:
     return value.sin()
 
 
@@ -106,7 +106,7 @@ def _unsupported_compile_fake(value: torch.Tensor) -> torch.Tensor:
     return torch.empty_like(value)
 
 
-class _MissingCudaImplementation(nn.Module):
+class _MissingBackendImplementation(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.scale = nn.Parameter(torch.ones(()))
@@ -263,7 +263,7 @@ def main() -> int:
         finally:
             _release(runtime, unsupported)
 
-        broken = _imported(runtime, _MissingCudaImplementation())
+        broken = _imported(runtime, _MissingBackendImplementation())
         try:
             error = _expect(
                 ProfilingError,

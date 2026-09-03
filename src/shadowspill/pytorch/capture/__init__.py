@@ -23,7 +23,7 @@ from .artifacts import (
     capture_objective_schema,
     normalize_objective_result,
 )
-from .fake import fake_cuda_inputs, fake_cuda_model
+from .fake import fake_device_inputs, fake_device_model
 from .storage import (
     ExplicitMutation,
     MutationBinding,
@@ -59,8 +59,8 @@ __all__ = [
     "capture_training",
     "capture_training_objective",
     "export_capture_digest",
-    "fake_cuda_inputs",
-    "fake_cuda_model",
+    "fake_device_inputs",
+    "fake_device_model",
     "inference_artifact",
     "normalize_objective_result",
 ]

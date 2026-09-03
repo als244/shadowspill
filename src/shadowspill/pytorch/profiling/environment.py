@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import torch
 
+from shadowspill.pytorch.accelerator import provider_version
+
 from .records import ProfileEnvironment
 
 
@@ -18,7 +20,7 @@ def profile_environment(
     properties = torch.cuda.get_device_properties(device_ordinal)
     return ProfileEnvironment(
         torch_version=torch.__version__,
-        cuda_version=torch.version.cuda,
+        provider_version=provider_version(),
         device_name=properties.name,
         compute_capability=(properties.major, properties.minor),
         compiler_id="shadowspill-explicit-task-compiler/v3:torch-inductor",

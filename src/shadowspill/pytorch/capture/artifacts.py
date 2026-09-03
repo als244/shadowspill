@@ -16,6 +16,7 @@ from torch.fx.node import Node, map_arg
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 from shadowspill.errors import CaptureError, ObjectiveError
+from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.live_storage import live_storage_identity
 from shadowspill.pytorch.capture.storage import (
     ExplicitMutation,
@@ -178,7 +179,7 @@ class GraphArtifact:
                 for item in explicit_mutations
             ],
             "torch": torch.__version__,
-            "cuda": torch.version.cuda,
+            "provider": provider_version(),
         }
         encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()
@@ -391,7 +392,7 @@ def _artifact_digest(
         "storage_contract": storage_contract.identity(),
         "storage_contract_digest": storage_contract.compatibility_digest,
         "torch": torch.__version__,
-        "cuda": torch.version.cuda,
+        "provider": provider_version(),
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

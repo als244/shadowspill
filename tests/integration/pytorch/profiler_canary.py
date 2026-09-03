@@ -13,7 +13,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.materialization import flat_runtime_arguments
 from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
@@ -21,7 +21,7 @@ from shadowspill.pytorch.profiling import (
     profile_environment,
     profile_unique_artifacts,
 )
-from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
@@ -52,8 +52,8 @@ def main() -> int:
     real_model = _Repeated()
     real_inputs = (torch.randn(16, 512),)
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(real_model, mode)
-    inputs = fake_cuda_inputs(real_inputs, mode)
+    model = fake_device_model(real_model, mode)
+    inputs = fake_device_inputs(real_inputs, mode)
     with mode, torch.no_grad():
         capture = capture_forward(model, inputs)
         representative_roots = tuple(
@@ -70,7 +70,7 @@ def main() -> int:
     if len(artifacts) != 2:
         raise AssertionError("canary did not produce two task positions")
 
-    profiler = CudaTaskProfiler(
+    profiler = TaskProfiler(
         installed.library,
         runtime_handle=installed.runtime_handle,
         device_ordinal=0,
@@ -111,11 +111,14 @@ def main() -> int:
         if warm.cache_hits != 1 or warm.cache_misses != 0:
             raise AssertionError("warm profiling did not use the content cache")
     statistics = AdapterStatistics()
-    if int(
-        installed.library.shadowspill_pytorch_allocator_statistics(
-            ctypes.byref(statistics)
+    if (
+        int(
+            installed.library.shadowspill_pytorch_allocator_statistics(
+                ctypes.byref(statistics)
+            )
         )
-    ) != 0:
+        != 0
+    ):
         raise AssertionError("allocator statistics failed after profiling")
     runtime = statistics.runtime
     if int(runtime.allocated_bytes) > installed.fixed_execution_bytes:

@@ -15,7 +15,7 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputRole,
     capture_forward_stage_artifacts,
 )
-from shadowspill.pytorch.capture.fake import fake_cuda_inputs, fake_cuda_model
+from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
 from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
     ProfileEnvironment,
@@ -75,8 +75,8 @@ class _Repeated(nn.Module):
 
 def _artifacts() -> tuple[GraphArtifact, ...]:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_cuda_model(_Repeated(), mode)
-    inputs = fake_cuda_inputs([torch.randn(2, 8)], mode)
+    model = fake_device_model(_Repeated(), mode)
+    inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
         return capture_forward_stage_artifacts(partitioned)
@@ -85,7 +85,7 @@ def _artifacts() -> tuple[GraphArtifact, ...]:
 def _environment() -> ProfileEnvironment:
     return ProfileEnvironment(
         torch_version="2.13.0",
-        cuda_version="13.0",
+        provider_version="13.0",
         device_name="test-device",
         compute_capability=(12, 0),
         compiler_id="inductor",
@@ -171,7 +171,7 @@ def test_profile_environment_changes_cache_identity(tmp_path: Path) -> None:
     )
     changed = ProfileEnvironment(
         torch_version="2.13.0",
-        cuda_version="13.0",
+        provider_version="13.0",
         device_name="test-device",
         compute_capability=(12, 0),
         compiler_id="inductor",
