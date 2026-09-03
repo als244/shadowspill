@@ -43,7 +43,7 @@ def test_candidate_parallelism_preserves_the_complete_result(workers: int) -> No
 
     assert (
         result.schedule.digest
-        == "39a5428ad479d2a19a6a74e6b4f13472d62c25805c6bd91b8ff62ad45d0d055e"
+        == "c530d01e90dab80c7396fcc61e679341df07b746310c95f8e885d94ffd512e30"
     )
     assert result.diagnostics.selected_makespan_ns == 5_000
     assert result.diagnostics.candidate_evaluation_count == 32
@@ -74,9 +74,9 @@ def test_names_do_not_affect_schedule_geometry_or_makespan() -> None:
     assert original.simulation.makespan_ns == other.simulation.makespan_ns
 
 
-@pytest.mark.parametrize("prefetch_headroom", [False, True])
+@pytest.mark.parametrize("fetch_headroom", [False, True])
 def test_pressure_sweep_matches_scalar_boundaries(
-    prefetch_headroom: bool,
+    fetch_headroom: bool,
 ) -> None:
     program = training_chain_program(10)
     initial = training_chain_initial(10)
@@ -88,7 +88,7 @@ def test_pressure_sweep_matches_scalar_boundaries(
     swept = _pressure_by_device(
         facts,
         plan,
-        prefetch_headroom=prefetch_headroom,
+        fetch_headroom=fetch_headroom,
     )
     for device_id in facts.object_capacity_by_device:
         assert swept[device_id] == tuple(
@@ -97,7 +97,7 @@ def test_pressure_sweep_matches_scalar_boundaries(
                 plan,
                 boundary,
                 device_id,
-                prefetch_headroom=prefetch_headroom,
+                fetch_headroom=fetch_headroom,
             )
             for boundary in range(-1, facts.last_boundary + 1)
         )
@@ -160,7 +160,7 @@ def test_interval_extension_matches_scalar_admission() -> None:
         (
             1,
             224,
-            "bb1c105fac1dbe146b417bfc5dc862b0f35e9324d35480bef9d79b5708699e61",
+            "9f604b7bd5be7b026dcfb7cecf1ac4053f0c4d5951b8eacc8b17352d12a45dea",
             56_000,
             "tight-stall/packed-fit",
             13,
@@ -168,7 +168,7 @@ def test_interval_extension_matches_scalar_admission() -> None:
         (
             2,
             224,
-            "69553a599141e41c6b655ba23fa941bedd61f44a4bfc4ffc3dc0cd5d17f52af9",
+            "45c58b17c637fa33f978d09e7f14cd94bbecf52456b92f3731c8b77b92da6724",
             110_000,
             "tight-stall/packed-fit",
             24,
@@ -176,7 +176,7 @@ def test_interval_extension_matches_scalar_admission() -> None:
         (
             5,
             800,
-            "2714536a200d65afb2840223fb03563ec93c912338e8b19cffb8481708a8e362",
+            "0ea05b8eeba4125a5a86e7d54df85165979e838d8ed8963a46db301e215e774f",
             152_000,
             "headroom-stall/packed-fifo",
             32,
@@ -184,7 +184,7 @@ def test_interval_extension_matches_scalar_admission() -> None:
         (
             10,
             500,
-            "35a9a4d89bc78a897a6b304efd0da4dcf9465b43adb369ad3519aab10b933a6d",
+            "995bd7dba563fcb7c1e402c524afdca25f105fdfce46f9a2e2bae4d32b0aec44",
             302_000,
             "headroom-stall/packed-fifo",
             98,

@@ -67,13 +67,6 @@ class _SelectionProblem:
         compare=False,
         repr=False,
     )
-    residency_plans: dict[
-        tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
-    ] = field(
-        default_factory=dict,
-        compare=False,
-        repr=False,
-    )
     interval_plans: dict[
         tuple[str, tuple[tuple[str, int, int], ...]], ResidencyPlan
     ] = field(
@@ -135,13 +128,13 @@ class _CandidateSpec:
     ordinal: int
     problem: _SelectionProblem
     strategy: str
-    prefetch_rule: str
+    fetch_rule: str
     coalesced: bool
 
     @property
     def candidate_id(self) -> str:
         suffix = "-coalesced" if self.coalesced else ""
-        return f"{self.strategy}/{self.prefetch_rule}{suffix}"
+        return f"{self.strategy}/{self.fetch_rule}{suffix}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,7 +219,7 @@ def _repair_pressure(
 ) -> tuple[tuple[str, int], int] | None:
     if error.kind not in {
         "initial-device-capacity",
-        "prefetch-device-capacity",
+        "fetch-device-capacity",
         "task-device-capacity",
     }:
         return None
@@ -250,12 +243,12 @@ def _repair_pressure(
     return (device_id, boundary), excess
 
 
-def _delay_prefetch(
+def _delay_fetch(
     facts: PlanningFacts,
     schedule: MemorySchedule,
     error: SimulationInfeasibleError,
 ) -> MemorySchedule | None:
-    if error.kind not in {"prefetch-device-capacity", "task-device-capacity"}:
+    if error.kind not in {"fetch-device-capacity", "task-device-capacity"}:
         return None
     failing_task = (
         facts.task_index.get(error.task_id) if error.task_id is not None else None
@@ -263,12 +256,12 @@ def _delay_prefetch(
     requested_alias = error.alias_group_ids[0] if error.alias_group_ids else None
     candidates: list[tuple[int, int, int, int]] = []
     for action_index, action in enumerate(schedule.actions):
-        if action.kind.value != "prefetch":
+        if action.kind.value != "fetch":
             continue
         if requested_alias is not None and action.alias_group_id != requested_alias:
             continue
         if (
-            error.kind == "prefetch-device-capacity"
+            error.kind == "fetch-device-capacity"
             and error.task_id is not None
             and action.trigger_task_id != error.task_id
         ):
@@ -305,7 +298,7 @@ def _delay_prefetch(
         actions[selected_index],
         trigger_task_id=facts.tasks[target].task_id,
     )
-    kind_order = {"release": 0, "offload": 1, "prefetch": 2}
+    kind_order = {"release": 0, "evict": 1, "fetch": 2}
     actions.sort(
         key=lambda action: (
             facts.task_index[action.trigger_task_id],
@@ -367,8 +360,6 @@ def _evaluate_candidate(
     seed = spec.problem.seed
     extra_pressure: dict[tuple[str, int], int] = {}
     candidate_started = time.perf_counter_ns()
-    residency_cache_hits = 0
-    residency_cache_misses = 0
     schedule_emissions = 0
     schedule_cache_hits = 0
     simulation_calls = 0
@@ -377,12 +368,12 @@ def _evaluate_candidate(
     emit_ns = 0
     simulate_ns = 0
     digest_ns = 0
-    simulation_prefetch_delay_attempts = 0
+    simulation_fetch_delay_attempts = 0
     simulation_pressure_boundary_attempts = 0
 
     def repairs_value() -> PressureFitRepairDiagnostics:
         return PressureFitRepairDiagnostics(
-            simulation_prefetch_delay_attempts=(simulation_prefetch_delay_attempts),
+            simulation_fetch_delay_attempts=(simulation_fetch_delay_attempts),
             simulation_pressure_boundary_attempts=(
                 simulation_pressure_boundary_attempts
             ),
@@ -392,8 +383,6 @@ def _evaluate_candidate(
         total_ns = time.perf_counter_ns() - candidate_started
         named_ns = reduce_ns + emit_ns + simulate_ns + digest_ns
         return PressureFitWorkDiagnostics(
-            residency_cache_hits=residency_cache_hits,
-            residency_cache_misses=residency_cache_misses,
             schedule_emissions=schedule_emissions,
             schedule_cache_hits=schedule_cache_hits,
             simulation_calls=simulation_calls,
@@ -417,34 +406,28 @@ def _evaluate_candidate(
                 )
             )
             residency_key = (spec.strategy, pressure_key)
-            residency = spec.problem.residency_plans.get(residency_key)
-            if residency is None:
-                residency_cache_misses += 1
-                residency_started = time.perf_counter_ns()
-                residency = reduce_pressure(
-                    facts,
-                    config,
-                    seed,
-                    spec.strategy,
-                    extra_pressure=extra_pressure,
-                    score_cache=spec.problem.cut_scores,
-                )
-                reduce_ns += time.perf_counter_ns() - residency_started
-                spec.problem.residency_plans[residency_key] = residency
-            else:
-                residency_cache_hits += 1
-            if spec.prefetch_rule == "interval-entry":
+            residency_started = time.perf_counter_ns()
+            residency = reduce_pressure(
+                facts,
+                config,
+                seed,
+                spec.strategy,
+                extra_pressure=extra_pressure,
+                score_cache=spec.problem.cut_scores,
+            )
+            reduce_ns += time.perf_counter_ns() - residency_started
+            if spec.fetch_rule == "interval-entry":
                 extended = spec.problem.interval_plans.get(residency_key)
                 if extended is None:
                     extended = extend_interval_entries(facts, residency)
                     spec.problem.interval_plans[residency_key] = extended
                 residency = extended
-            prefetch_headroom = spec.strategy.startswith("headroom")
+            fetch_headroom = spec.strategy.startswith("headroom")
             schedule_key = (
                 residency,
-                spec.prefetch_rule,
+                spec.fetch_rule,
                 spec.coalesced,
-                prefetch_headroom,
+                fetch_headroom,
             )
             schedule = spec.problem.schedule_cache.get(schedule_key)
             if schedule is None:
@@ -453,9 +436,9 @@ def _evaluate_candidate(
                     facts,
                     config,
                     residency,
-                    spec.prefetch_rule,
+                    spec.fetch_rule,
                     coalesced=spec.coalesced,
-                    prefetch_headroom=prefetch_headroom,
+                    fetch_headroom=fetch_headroom,
                 )
                 emit_ns += time.perf_counter_ns() - schedule_started
                 schedule_emissions += 1
@@ -517,10 +500,10 @@ def _evaluate_candidate(
                 simulation = cached_simulation
             except SimulationInfeasibleError as error:
                 if repairs_value().total_attempts < options.max_repair_attempts:
-                    delayed = _delay_prefetch(facts, schedule, error)
+                    delayed = _delay_fetch(facts, schedule, error)
                     if delayed is not None and delayed != schedule:
                         schedule = delayed
-                        simulation_prefetch_delay_attempts += 1
+                        simulation_fetch_delay_attempts += 1
                         continue
                     repair = _repair_pressure(facts, error)
                     if repair is not None:
@@ -529,7 +512,7 @@ def _evaluate_candidate(
                         # previously recorded at this boundary.  A new
                         # simulator failure therefore describes additional,
                         # not replacement, overlap pressure (normally an
-                        # admitted prefetch destination).  Accumulate it so a
+                        # admitted fetch destination).  Accumulate it so a
                         # restarted reduction cannot reproduce the same plan
                         # forever.
                         extra_pressure[boundary] = (
@@ -539,7 +522,7 @@ def _evaluate_candidate(
                         restart_reduction = True
                         break
                 elif (
-                    _delay_prefetch(facts, schedule, error) is not None
+                    _delay_fetch(facts, schedule, error) is not None
                     or _repair_pressure(facts, error) is not None
                 ):
                     return _CandidateOutcome(
@@ -649,7 +632,7 @@ def _candidate_specs(
     coalescing = (False, True) if options.evaluate_coalesced else (False,)
     for problem in problems:
         for strategy in options.residency_strategies:
-            for rule in options.prefetch_rules:
+            for rule in options.fetch_rules:
                 for coalesced in coalescing:
                     specs.append(
                         _CandidateSpec(
@@ -764,7 +747,7 @@ def _pressurefit_once(
                     f"{index // per_problem}/{len(problems)}: "
                     f"valid={sum(item.schedule is not None for item in batch)}, "
                     "repairs="
-                    f"{sum(item.diagnostic.repair_attempts for item in batch)}, "
+                    f"{sum(item.diagnostic.repairs.total_attempts for item in batch)}, "
                     "elapsed="
                     f"{(time.perf_counter_ns() - candidates_started) / 1e9:.3f}s"
                 )
