@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from shadowspill.ir import Program
+from shadowspill.schema import artifact_schema
 
-_SCHEMA = "shadowspill.admission_facts/v3"
+_SCHEMA = artifact_schema("admission_facts")
 
 
 class TaskAllocationStepKind(StrEnum):

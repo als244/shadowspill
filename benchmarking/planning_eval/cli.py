@@ -9,6 +9,8 @@ import shlex
 import sys
 from pathlib import Path
 
+from shadowspill.schema import artifact_schema
+
 from .config import load_frontier_config
 from .controller import ControllerOptions, run_frontier_collection
 from .provenance import (
@@ -136,8 +138,7 @@ def main() -> int:
     failures = summary.get("case_failures")
     status_counts = summary.get("status_counts")
     has_errors = (
-        isinstance(status_counts, dict)
-        and int(status_counts.get("error", 0)) > 0
+        isinstance(status_counts, dict) and int(status_counts.get("error", 0)) > 0
     )
     return 1 if failures or has_errors else 0
 
@@ -182,18 +183,13 @@ def _select_cases(
         case
         for case in cases
         if not patterns
-        or any(
-            fnmatch.fnmatchcase(case.case_id, item)
-            for item in patterns
-        )
+        or any(fnmatch.fnmatchcase(case.case_id, item) for item in patterns)
     )
     if patterns and not selected:
         raise ValueError("--case patterns selected no Program cases")
     if start_at is not None:
         matches = tuple(
-            index
-            for index, case in enumerate(selected)
-            if case.case_id == start_at
+            index for index, case in enumerate(selected) if case.case_id == start_at
         )
         if len(matches) != 1:
             raise ValueError(f"--start-at case {start_at!r} was not selected")
@@ -294,7 +290,7 @@ def _record_resume(
         ]
     )
     record = {
-        "schema": "shadowspill.pressurefit_frontier_resume/v1",
+        "schema": artifact_schema("pressurefit_frontier_resume"),
         "started_at": utc_now(),
         "baseline_id": paths.directory.name,
         "repository": provenance.to_dict(),

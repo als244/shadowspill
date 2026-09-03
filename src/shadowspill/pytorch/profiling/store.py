@@ -49,7 +49,7 @@ class ProfileStore:
         self.compiled_manifest_root = (
             Path(compiled_manifest_root).expanduser()
             if compiled_manifest_root is not None
-            else self.root / "compiled_manifests" / "v2"
+            else self.root / "compiled_manifests"
         )
         self.read_enabled = read_enabled
         self.write_enabled = write_enabled

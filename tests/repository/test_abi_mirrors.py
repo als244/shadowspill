@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from shadowspill.pytorch.runtime_adapter import abi
+from shadowspill.schema import ARTIFACT_VERSION
 from shadowspill.status import ABI_VERSION, Status
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,3 +122,10 @@ def test_the_abi_version_is_one_number() -> None:
     declared = re.search(r"#define SHADOWSPILL_ABI_VERSION (\d+)U", header)
     assert declared is not None
     assert int(declared.group(1)) == ABI_VERSION
+
+
+def test_the_artifact_version_is_one_number() -> None:
+    header = (_HEADERS / "shadowspill.h").read_text()
+    declared = re.search(r"#define SHADOWSPILL_ARTIFACT_VERSION (\d+)U", header)
+    assert declared is not None
+    assert int(declared.group(1)) == ARTIFACT_VERSION

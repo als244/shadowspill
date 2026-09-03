@@ -18,12 +18,13 @@ from typing import Any
 
 from shadowspill.ir import ExecutionPlan, Program
 from shadowspill.ir.program import PROGRAM_SCHEMA
+from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 
 _PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
 _CACHE_ENVIRONMENT_LOCK = threading.RLock()
-_LAYOUT_SCHEMA = "shadowspill.artifact_store/v1"
-_EXPORT_SCHEMA = "shadowspill.pytorch.export/v1"
-_PLAN_MANIFEST_SCHEMA = "shadowspill.plan_manifest/v1"
+_LAYOUT_SCHEMA = artifact_schema("artifact_store")
+_EXPORT_SCHEMA = artifact_schema("pytorch.export")
+_PLAN_MANIFEST_SCHEMA = artifact_schema("plan_manifest")
 _ACCESS_KINDS = {"managed", "matched", "read", "write"}
 
 
@@ -127,6 +128,7 @@ class ArtifactStore:
                 raise TypeError("artifact_store_dir must be path-like") from exc
             if root.exists() and not root.is_dir():
                 raise ValueError("artifact_store_dir must name a directory")
+            root = root / f"v{ARTIFACT_VERSION}"
             return cls(
                 root,
                 root / "pytorch",
@@ -141,6 +143,7 @@ class ArtifactStore:
             )
 
         root = (Path.home() / ".cache" / "shadowspill").resolve()
+        root = root / f"v{ARTIFACT_VERSION}"
         return cls(
             root,
             root / "pytorch",
@@ -156,7 +159,7 @@ class ArtifactStore:
 
     @property
     def exports(self) -> Path:
-        return self.pytorch / "exports" / "v1"
+        return self.pytorch / "exports"
 
     @property
     def inductor(self) -> Path:
@@ -166,23 +169,23 @@ class ArtifactStore:
 
     @property
     def profile_measurements(self) -> Path:
-        return self.profiling / "measurements" / "v17"
+        return self.profiling / "measurements"
 
     @property
     def compiled_manifests(self) -> Path:
-        return self.profiling / "compiled_manifests" / "v2"
+        return self.profiling / "compiled_manifests"
 
     @property
     def pressurefit_programs(self) -> Path:
-        return self.pressurefit / "programs" / "v1"
+        return self.pressurefit / "programs"
 
     @property
     def pressurefit_selections(self) -> Path:
-        return self.pressurefit / "selections" / "v3"
+        return self.pressurefit / "selections"
 
     @property
     def pressurefit_requests(self) -> Path:
-        return self.pressurefit / "requests" / "v1"
+        return self.pressurefit / "requests"
 
     @property
     def read_enabled(self) -> bool:
@@ -494,7 +497,7 @@ class ArtifactStore:
             digest=digest,
             path=path,
             access=operation,
-            schema="shadowspill.pressurefit_request/v1",
+            schema=artifact_schema("pressurefit_request"),
             dependencies=(str(value["program_digest"]),),
         )
         return digest, path
@@ -526,7 +529,7 @@ class ArtifactStore:
             digest=execution_plan.digest,
             path=plan_path,
             access="write",
-            schema="shadowspill.execution_plan/v2",
+            schema=artifact_schema("execution_plan"),
             dependencies=(execution_plan.program.digest,),
         )
         initial_path: Path | None = None
@@ -539,7 +542,7 @@ class ArtifactStore:
                 digest=initial_execution_plan.digest,
                 path=initial_path,
                 access="write",
-                schema="shadowspill.execution_plan/v2",
+                schema=artifact_schema("execution_plan"),
                 dependencies=(initial_execution_plan.program.digest,),
             )
         manifest_path = directory / "manifest.json"
@@ -701,6 +704,9 @@ _CACHE_README = """# ShadowSpill planning cache
 
 This directory is both a content-addressed cache and a planning evidence store.
 Digests determine identity; readable model names under `plans/` are indexes only.
+Its name is the artifact version every file in it carries: a ShadowSpill
+update that changes any stored structure writes a fresh `v<N>` tree beside
+this one and replans.
 
 - `pytorch/exports/`: normalized Export archives and manifests.
 - `pytorch/inductor/`: files managed internally by PyTorch Inductor.

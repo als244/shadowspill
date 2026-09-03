@@ -15,8 +15,9 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.schema import artifact_schema
 
-_TASK_ALLOCATION_CONTRACT_SCHEMA = "shadowspill.task_allocation_contract/v1"
+_TASK_ALLOCATION_CONTRACT_SCHEMA = artifact_schema("task_allocation_contract")
 
 
 class TaskAllocationOperation(StrEnum):

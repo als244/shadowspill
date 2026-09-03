@@ -24,6 +24,7 @@ from shadowspill.planner.program import (
     PressureFitProgram,
     StepProgram,
 )
+from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
 
 from .config import FrontierConfig, load_frontier_config
@@ -106,7 +107,7 @@ def evaluate_case(
     atomic_json(
         case_run_directory / "case.json",
         {
-            "schema": "shadowspill.pressurefit_frontier_case/v1",
+            "schema": artifact_schema("pressurefit_frontier_case"),
             "case": case.to_dict(),
             "program_role": program.role,
             "pressurefit_program_digest": program.digest,
@@ -143,7 +144,7 @@ def evaluate_case(
         counts[status] = counts.get(status, 0) + 1
     write_active_point(case_run_directory, None)
     result = {
-        "schema": "shadowspill.pressurefit_frontier_worker_result/v1",
+        "schema": artifact_schema("pressurefit_frontier_worker_result"),
         "passed": counts.get("error", 0) == 0,
         "case_id": case.case_id,
         "case": case.to_dict(),
@@ -370,22 +371,13 @@ def _print_point_start(
     print(f"    SEQUENCE LENGTH: {geometry.sequence_length} tokens")
     print(f"    TOKENS PER MICROBATCH: {geometry.tokens_per_microbatch}")
     print(f"    SEQUENCES PER MICROBATCH: {geometry.sequences_per_microbatch}")
-    print(
-        "    GRADIENT ACCUMULATION ROUNDS: "
-        f"{geometry.accumulation_rounds}"
-    )
-    print(
-        "    TOKENS PER OPTIMIZER STEP: "
-        f"{geometry.tokens_per_optimizer_step}"
-    )
+    print(f"    GRADIENT ACCUMULATION ROUNDS: {geometry.accumulation_rounds}")
+    print(f"    TOKENS PER OPTIMIZER STEP: {geometry.tokens_per_optimizer_step}")
     print(
         "  EXECUTION BUDGET: "
         f"{execution_budget / (1 << 30):.3f} GiB ({execution_budget} bytes)"
     )
-    print(
-        f"  SPILL BUDGET: {spill_budget / (1 << 30):.3f} GiB "
-        f"({spill_budget} bytes)"
-    )
+    print(f"  SPILL BUDGET: {spill_budget / (1 << 30):.3f} GiB ({spill_budget} bytes)")
     print(
         "  FETCH BANDWIDTH: "
         f"{transfers.fetch_bytes_per_second / 1e9:.6f} GB/s "

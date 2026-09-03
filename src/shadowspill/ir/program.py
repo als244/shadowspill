@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
+from shadowspill.schema import artifact_schema
+
 from .serialization import (
     JsonValue,
     canonical_json,
@@ -29,7 +31,7 @@ from .validation import (
     require_tuple,
 )
 
-PROGRAM_SCHEMA = "shadowspill.program/v3"
+PROGRAM_SCHEMA = artifact_schema("program")
 
 
 class ObjectRole(StrEnum):

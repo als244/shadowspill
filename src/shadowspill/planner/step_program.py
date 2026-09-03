@@ -20,8 +20,9 @@ from shadowspill.planner.serialization import (
     _pair,
     _string,
 )
+from shadowspill.schema import artifact_schema
 
-_STEP_PROGRAM_SCHEMA = "shadowspill.step_program/v1"
+_STEP_PROGRAM_SCHEMA = artifact_schema("step_program")
 
 
 @dataclass(frozen=True, slots=True)

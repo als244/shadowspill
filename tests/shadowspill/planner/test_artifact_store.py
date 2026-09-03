@@ -13,6 +13,7 @@ from shadowspill.pytorch.profiling.metadata import (
     canonicalize_profiling_metadata,
     training_profiling_metadata,
 )
+from shadowspill.schema import ARTIFACT_VERSION
 
 
 def test_profiling_metadata_is_canonical_and_position_aligned() -> None:
@@ -46,24 +47,18 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     )
     cache.initialize()
 
-    assert cache.pytorch == tmp_path / "pytorch"
-    assert cache.graphpairs == tmp_path / "graphpairs"
-    assert cache.profiling == tmp_path / "profiling"
-    assert cache.pressurefit == tmp_path / "pressurefit"
-    assert cache.plans == tmp_path / "plans"
-    assert cache.profile_measurements.parts[-3:] == (
-        "profiling",
-        "measurements",
-        "v17",
-    )
-    assert cache.pressurefit_selections.parts[-3:] == (
-        "pressurefit",
-        "selections",
-        "v3",
-    )
+    root = tmp_path / f"v{ARTIFACT_VERSION}"
+    assert cache.root == root
+    assert cache.pytorch == root / "pytorch"
+    assert cache.graphpairs == root / "graphpairs"
+    assert cache.profiling == root / "profiling"
+    assert cache.pressurefit == root / "pressurefit"
+    assert cache.plans == root / "plans"
+    assert cache.profile_measurements == root / "profiling" / "measurements"
+    assert cache.pressurefit_selections == root / "pressurefit" / "selections"
     assert "mlops-build-17" in cache.inductor.name
-    assert (tmp_path / "layout.json").is_file()
-    assert (tmp_path / "README.md").is_file()
+    assert (root / "layout.json").is_file()
+    assert (root / "README.md").is_file()
 
     digest = "a" * 64
     cache.record(
@@ -115,9 +110,7 @@ def test_force_fresh_publishes_a_write_enabled_isolated_pytorch_cache(
         marker.parent.mkdir(parents=True)
         marker.write_text("indexed")
 
-    assert (cache.inductor / "fxgraph" / "test" / "artifact").read_text() == (
-        "indexed"
-    )
+    assert (cache.inductor / "fxgraph" / "test" / "artifact").read_text() == ("indexed")
     assert os.environ.get("TORCHINDUCTOR_CACHE_DIR") == previous
     assert any(
         artifact.kind == "inductor_cache" and artifact.path == cache.inductor

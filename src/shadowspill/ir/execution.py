@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from shadowspill.schema import artifact_schema
+
 from .program import Program, RecomputationSelection
 from .schedule import MemorySchedule
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
@@ -20,7 +22,7 @@ from .validation import (
     require_tuple,
 )
 
-EXECUTION_PLAN_SCHEMA = "shadowspill.execution_plan/v2"
+EXECUTION_PLAN_SCHEMA = artifact_schema("execution_plan")
 
 
 @dataclass(frozen=True, slots=True)

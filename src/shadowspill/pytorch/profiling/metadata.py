@@ -8,7 +8,9 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-_SCHEMA = "shadowspill.profiling_metadata/v1"
+from shadowspill.schema import artifact_schema
+
+_SCHEMA = artifact_schema("profiling_metadata")
 
 
 @dataclass(frozen=True, slots=True)

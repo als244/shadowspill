@@ -26,6 +26,7 @@ from shadowspill.pytorch.profiling.records import (
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+from shadowspill.schema import artifact_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +168,7 @@ class CompiledTaskLayout:
 
         return json.dumps(
             {
-                "schema": "shadowspill.compiled_task_layout/v1",
+                "schema": artifact_schema("compiled_task_layout"),
                 "compatibility_digest": self.compatibility_digest,
                 **self.identity(),
             },

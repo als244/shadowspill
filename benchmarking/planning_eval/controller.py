@@ -10,6 +10,8 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 
+from shadowspill.schema import artifact_schema
+
 from .config import FrontierConfig
 from .matrix import FrontierPointRequest
 from .process import WorkerProcessOutcome, execute_case_worker
@@ -83,12 +85,9 @@ def run_frontier_collection(
         )
         completed_programs = 0
         global_ordinals = {
-            item.case_id: index
-            for index, item in enumerate(all_cases, 1)
+            item.case_id: index for index, item in enumerate(all_cases, 1)
         }
-        global_point_count = (
-            len(all_cases) * config.expected_points_per_program
-        )
+        global_point_count = len(all_cases) * config.expected_points_per_program
         for case in selected_cases:
             program_ordinal = global_ordinals[case.case_id]
             prefix = f"[{program_ordinal}/{len(all_cases)}] {case.case_id}"
@@ -106,8 +105,7 @@ def run_frontier_collection(
                     prefix=prefix,
                     console_prefix=f"[{program_ordinal}/{len(all_cases)}]",
                     global_point_base=(
-                        (program_ordinal - 1)
-                        * config.expected_points_per_program
+                        (program_ordinal - 1) * config.expected_points_per_program
                     ),
                     global_point_count=global_point_count,
                 )
@@ -370,7 +368,7 @@ def _record_worker_attempt(
         value = read_object(path)
     else:
         value = {
-            "schema": "shadowspill.pressurefit_frontier_worker_attempts/v1",
+            "schema": artifact_schema("pressurefit_frontier_worker_attempts"),
             "attempts": [],
         }
     attempts = value.get("attempts")
@@ -422,11 +420,7 @@ def _load_case_failures(paths: BaselinePaths) -> dict[str, dict[str, object]]:
     if not path.exists():
         return {}
     value = read_object(path)
-    return {
-        key: item
-        for key, item in value.items()
-        if isinstance(item, dict)
-    }
+    return {key: item for key, item in value.items() if isinstance(item, dict)}
 
 
 def _log(paths: BaselinePaths, message: str) -> None:

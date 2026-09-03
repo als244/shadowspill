@@ -14,8 +14,9 @@ import torch
 from torch._inductor.runtime.cache_dir_utils import cache_dir
 
 from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 
-_SCHEMA = "shadowspill.inductor_task_manifest/v2"
+_SCHEMA = artifact_schema("inductor_task_manifest")
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +132,7 @@ def _manifest_path(
         Path(cache_dir())
         / "shadowspill"
         / "task_manifests"
-        / "v2"
+        / f"v{ARTIFACT_VERSION}"
         / identity[:2]
         / f"{identity}.json"
     )
