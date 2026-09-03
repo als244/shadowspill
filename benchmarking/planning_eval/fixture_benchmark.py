@@ -14,7 +14,6 @@ from typing import Any
 from shadowspill.ir import Program, ResidencySpec
 from shadowspill.planner import (
     AdmissionFacts,
-    InitialPlacement,
     PressureFitOptions,
     PressureFitResult,
     pressurefit,
@@ -72,16 +71,7 @@ def _request(value: dict[str, Any]) -> ReplayRequest:
         ),
         spill_capacity_bytes=simulation["spill_capacity_bytes"],
     )
-    options_value = request["options"]
-    options = PressureFitOptions(
-        initial_placement=InitialPlacement(options_value["initial_placement"]),
-        residency_strategies=tuple(options_value["residency_strategies"]),
-        fetch_rules=tuple(options_value["fetch_rules"]),
-        evaluate_coalesced=options_value["evaluate_coalesced"],
-        max_repair_attempts=options_value["max_repair_attempts"],
-        workers=options_value["workers"],
-        deterministic=options_value.get("deterministic", False),
-    )
+    options = PressureFitOptions.from_dict(request["options"])
     admission_value = request.get("admission")
     admission = (
         None if admission_value is None else AdmissionFacts.from_dict(admission_value)
