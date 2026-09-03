@@ -6,33 +6,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-int shadowspill_memory_pool_backend_is_valid(
-    const ShadowSpillMemoryPoolBackend *backend
-) {
+int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
     return backend != NULL &&
-        backend->abi_version == SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION &&
-        backend->allocate_arena != NULL && backend->close != NULL;
-}
-
-int shadowspill_transfer_route_is_valid(
-    const ShadowSpillTransferRoute *route
-) {
-    return route != NULL &&
-        route->abi_version == SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION &&
-        route->source_pool_id != route->destination_pool_id &&
-        route->create_lane != NULL && route->destroy_lane != NULL &&
-        route->copy_async != NULL && route->synchronize_lane != NULL;
-}
-
-int shadowspill_synchronization_backend_is_valid(
-    const ShadowSpillSynchronizationBackend *backend
-) {
-    return backend != NULL &&
-        backend->abi_version ==
-            SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION &&
+        backend->abi_version == SHADOWSPILL_BACKEND_ABI_VERSION &&
+        backend->state != NULL && backend->allocate_device != NULL &&
+        backend->free_device != NULL && backend->register_host_memory != NULL &&
+        backend->unregister_host_memory != NULL &&
+        backend->create_stream != NULL && backend->destroy_stream != NULL &&
+        backend->synchronize_stream != NULL && backend->wrap_stream != NULL &&
+        backend->copy_host_to_device != NULL &&
+        backend->copy_device_to_host != NULL &&
+        backend->copy_device_to_device != NULL &&
         backend->create_event != NULL && backend->destroy_event != NULL &&
         backend->record_event != NULL && backend->query_event != NULL &&
-        backend->wait_event != NULL;
+        backend->wait_event != NULL && backend->elapsed_nanoseconds != NULL &&
+        backend->capabilities != NULL && backend->physical_memory != NULL &&
+        backend->statistics != NULL;
 }
 
 static void destroy_allocations(ShadowSpillRuntime *runtime) {
@@ -109,7 +98,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
                 action->destination_lease = NULL;
             } else {
                 pthread_mutex_lock(&pool->lock);
-                if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
                     shadowspill_cancel_execution_reservation_locked(
                         runtime, lease
                     );
@@ -181,8 +170,8 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     for (uint32_t route_id = runtime->route_count; route_id != 0U;) {
         ShadowSpillRouteState *route = &runtime->routes[--route_id];
         if (route->lane_created) {
-            (void)route->route.destroy_lane(
-                route->route.state, route->lane
+            (void)runtime->backend.destroy_stream(
+                runtime->backend.state, route->lane
             );
             route->lane_created = 0U;
         }
@@ -199,6 +188,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     runtime->pool_count = 0U;
     shadowspill_transfer_profiles_destroy(runtime);
     shadowspill_event_pool_destroy(runtime, &runtime->events);
+    shadowspill_event_pool_destroy(runtime, &runtime->timing_events);
 }
 
 static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
@@ -206,15 +196,13 @@ static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
         config->abi_version != SHADOWSPILL_ABI_VERSION ||
         config->pools == NULL || config->pool_count == 0U ||
         (config->routes == NULL && config->route_count != 0U) ||
-        !shadowspill_synchronization_backend_is_valid(
-            &config->synchronization
-        ) || !shadowspill_profiler_is_valid(&config->profiler)) {
+        !shadowspill_backend_is_valid(config->backend)) {
         return 0;
     }
     for (uint32_t pool_id = 0U; pool_id < config->pool_count; ++pool_id) {
         const ShadowSpillMemoryPoolDescription *pool = &config->pools[pool_id];
         if (pool->pool_id != pool_id || pool->minimum_alignment == 0U ||
-            !shadowspill_memory_pool_backend_is_valid(&pool->backend)) {
+            pool->kind > SHADOWSPILL_POOL_PINNED_HOST) {
             return 0;
         }
     }
@@ -222,17 +210,18 @@ static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
         const ShadowSpillTransferRouteDescription *route =
             &config->routes[route_id];
         if (route->route_id != route_id || route->name == NULL ||
-            !shadowspill_transfer_route_is_valid(&route->route) ||
-            route->route.source_pool_id >= config->pool_count ||
-            route->route.destination_pool_id >= config->pool_count) {
+            route->source_pool_id >= config->pool_count ||
+            route->destination_pool_id >= config->pool_count ||
+            route->source_pool_id == route->destination_pool_id ||
+            config->pools[route->source_pool_id].kind ==
+                config->pools[route->destination_pool_id].kind) {
             return 0;
         }
         for (uint32_t previous = 0U; previous < route_id; ++previous) {
-            const ShadowSpillTransferRoute *candidate =
-                &config->routes[previous].route;
-            if (candidate->source_pool_id == route->route.source_pool_id &&
-                candidate->destination_pool_id ==
-                    route->route.destination_pool_id) {
+            const ShadowSpillTransferRouteDescription *candidate =
+                &config->routes[previous];
+            if (candidate->source_pool_id == route->source_pool_id &&
+                candidate->destination_pool_id == route->destination_pool_id) {
                 return 0;
             }
         }
@@ -267,10 +256,13 @@ ShadowSpillStatus shadowspill_runtime_create(
     }
     runtime->pool_count = config->pool_count;
     runtime->route_count = config->route_count;
-    runtime->synchronization = config->synchronization;
-    runtime->profiler = config->profiler;
+    runtime->backend = *config->backend;
     for (uint32_t route_id = 0U; route_id < config->route_count; ++route_id) {
-        runtime->routes[route_id].route = config->routes[route_id].route;
+        const ShadowSpillTransferRouteDescription *route = &config->routes[route_id];
+        runtime->routes[route_id].source_pool_id = route->source_pool_id;
+        runtime->routes[route_id].destination_pool_id = route->destination_pool_id;
+        runtime->routes[route_id].to_device =
+            config->pools[route->source_pool_id].kind == SHADOWSPILL_POOL_PINNED_HOST;
     }
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
     atomic_init(&runtime->next_allocation_id, 1U);
@@ -311,7 +303,8 @@ ShadowSpillStatus shadowspill_runtime_create(
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     runtime->plans_lock_initialized = 1U;
-    if (shadowspill_event_pool_initialize(&runtime->events) != 0 ||
+    if (shadowspill_event_pool_initialize(&runtime->events, 0U) != 0 ||
+        shadowspill_event_pool_initialize(&runtime->timing_events, 1U) != 0 ||
         shadowspill_object_table_initialize(
             &runtime->objects, object_index_bucket_count
         ) != 0 || shadowspill_completion_tracker_initialize(
@@ -319,6 +312,7 @@ ShadowSpillStatus shadowspill_runtime_create(
         ) != 0) {
         shadowspill_object_table_destroy(&runtime->objects);
         shadowspill_event_pool_destroy(runtime, &runtime->events);
+    shadowspill_event_pool_destroy(runtime, &runtime->timing_events);
         pthread_mutex_destroy(&runtime->plans_lock);
         runtime->plans_lock_initialized = 0U;
         free(runtime->routes);
@@ -383,7 +377,8 @@ ShadowSpillStatus shadowspill_runtime_create(
         if (shadowspill_memory_pool_initialize(
                 &runtime->pools[pool_id],
                 pool_id,
-                &pool->backend,
+                &runtime->backend,
+                pool->kind,
                 pool->capacity_bytes,
                 pool->minimum_alignment
             ) != 0) {
@@ -400,14 +395,14 @@ ShadowSpillStatus shadowspill_runtime_create(
             status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
             goto fail;
         }
-        if (route->route.create_lane(
-                route->route.state, &route->lane
+        if (runtime->backend.create_stream(
+                runtime->backend.state, &route->lane
             ) != 0) {
             goto fail;
         }
         route->lane_created = 1U;
         shadowspill_profiler_name_stream(
-            &runtime->profiler, route->lane, config->routes[route_id].name
+            &runtime->backend, route->lane, config->routes[route_id].name
         );
     }
     if (pthread_create(
@@ -448,7 +443,7 @@ ShadowSpillStatus shadowspill_runtime_reserve_event_leases(
         return status;
     }
     return shadowspill_event_pool_reserve(
-        &runtime->events, minimum_free_leases
+        runtime, &runtime->events, minimum_free_leases
     );
 }
 
@@ -549,9 +544,7 @@ ShadowSpillStatus shadowspill_memory_pool_grow(
     }
 
     void *replacement = NULL;
-    if (pool->backend.allocate_arena(
-            pool->backend.state, capacity_bytes, &replacement
-        ) != 0) {
+    if (shadowspill_memory_pool_arena_allocate(pool, capacity_bytes, &replacement) != 0) {
         status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
         goto done;
     }
@@ -564,25 +557,20 @@ ShadowSpillStatus shadowspill_memory_pool_grow(
             capacity_bytes,
             &ranges
         ) != 0) {
-        (void)pool->backend.close(
-            pool->backend.state, replacement
-        );
+        (void)shadowspill_memory_pool_arena_release(pool, replacement, capacity_bytes);
         status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         goto done;
     }
-    if (pool->base != NULL && pool->backend.close(
-            pool->backend.state, pool->base
-        ) != 0) {
+    if (pool->base != NULL && shadowspill_memory_pool_arena_release(pool, pool->base, pool->arena_bytes) != 0) {
         shadowspill_range_destroy(&ranges);
-        (void)pool->backend.close(
-            pool->backend.state, replacement
-        );
+        (void)shadowspill_memory_pool_arena_release(pool, replacement, capacity_bytes);
         status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
         goto done;
     }
     shadowspill_memory_pool_rebase_locked(
         pool, replacement
     );
+    pool->arena_bytes = capacity_bytes;
     shadowspill_range_destroy(&pool->ranges);
     pool->ranges = ranges;
     shadowspill_publish_pool_geometry_locked(pool);
@@ -619,8 +607,8 @@ ShadowSpillStatus shadowspill_runtime_close(
     int synchronization_failed = 0;
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
-        if (route->lane_created && route->route.synchronize_lane(
-                route->route.state, route->lane
+        if (route->lane_created && runtime->backend.synchronize_stream(
+                runtime->backend.state, route->lane
             ) != 0) {
             synchronization_failed = 1;
         }
@@ -777,6 +765,12 @@ ShadowSpillStatus shadowspill_runtime_statistics(
         .event_lease_in_use = runtime->events.in_use,
         .event_lease_peak_in_use = runtime->events.peak_in_use,
         .event_lease_growth_rejections = runtime->events.growth_rejections,
+        .event_lease_driver_creates = runtime->events.driver_creates,
+        .event_lease_sealed = runtime->events.sealed,
+        .timing_event_capacity = runtime->timing_events.capacity,
+        .timing_event_in_use = runtime->timing_events.in_use,
+        .timing_event_peak_in_use = runtime->timing_events.peak_in_use,
+        .timing_event_driver_creates = runtime->timing_events.driver_creates,
         .retirement_record_capacity = runtime->retirements.capacity,
         .retirement_record_in_use = runtime->retirements.in_use,
         .retirement_record_peak_in_use = runtime->retirements.peak_in_use,

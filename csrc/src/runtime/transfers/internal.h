@@ -33,26 +33,23 @@ enum {
 };
 
 struct ShadowSpillRouteState {
-    ShadowSpillTransferRoute route;
+    uint32_t source_pool_id;
+    uint32_t destination_pool_id;
+    /* Copy direction, derived from the two pools' kinds at create. */
+    uint8_t to_device;
     ShadowSpillTransferLane transfers;
     ShadowSpillBackendStream lane;
     uint8_t lane_created;
 };
 
-ShadowSpillTransferRoute *shadowspill_transfer_route(
+/* One asynchronous copy along a route, on the backend's copy for its direction. */
+int shadowspill_route_copy_async(
     ShadowSpillRuntime *runtime,
-    uint32_t source_pool_id,
-    uint32_t destination_pool_id
-);
-
-ShadowSpillBackendStream *shadowspill_transfer_route_lane(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillTransferRoute *route
-);
-
-ShadowSpillRouteState *shadowspill_runtime_route(
-    ShadowSpillRuntime *runtime,
-    uint32_t route_id
+    const ShadowSpillRouteState *route,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    ShadowSpillBackendStream stream
 );
 
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime);

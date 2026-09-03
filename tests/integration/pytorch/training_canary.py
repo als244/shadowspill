@@ -252,9 +252,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     "runtime_trace=True omitted StepResult diagnostics"
                 )
             diagnostics = actual.diagnostics.result()
-            execution_timing = diagnostics.timing
+            summary = diagnostics.summary
+            timelines = diagnostics.timelines
             if step == 0:
-                if execution_timing.trace_setup_seconds <= 0.0:
+                if summary.trace_setup_seconds <= 0.0:
                     raise AssertionError("first trace omitted lazy setup time")
                 if (
                     not diagnostics.runtime.events
@@ -265,9 +266,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     or diagnostics.runtime.allocation_event_overflow
                 ):
                     raise AssertionError("runtime trace is incomplete")
-                kinds = {
-                    item.kind.name.lower() for item in diagnostics.runtime.events
-                }
+                kinds = {item.kind.name.lower() for item in diagnostics.runtime.events}
                 if not {
                     "session_begin",
                     "session_end",
@@ -285,111 +284,127 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     diagnostics.allocator.live_allocations_after < 0
                 ):
                     raise AssertionError("live-allocation accounting is invalid")
-                if execution_timing.compute_seconds <= 0.0:
+                if summary.real_selected_span_seconds <= 0.0:
                     raise AssertionError(
                         "compute-only qualification timing is not positive"
                     )
-                if execution_timing.optimizer_seconds <= 0.0:
+                if summary.optimizer_span_seconds <= 0.0:
                     raise AssertionError("optimizer timing is not positive")
-                phases = dict(execution_timing.phase_gpu_seconds)
-                if set(phases) != {"forward", "backward", "optimizer"}:
-                    raise AssertionError("execution timing omitted a task phase")
-                if len(execution_timing.tasks) != len(active):
-                    raise AssertionError("execution timing omitted a selected task")
+                phases = {item.phase for item in summary.phase_comparisons}
+                if phases != {"forward", "backward", "optimizer"}:
+                    raise AssertionError("step summary omitted a task phase")
+                if len(timelines.compute) != len(active) or (
+                    set(timelines.compute) != set(diagnostics.tasks)
+                ):
+                    raise AssertionError("compute lane omitted a selected task")
                 if (
-                    not diagnostics.summary.trace_complete
-                    or diagnostics.summary.profiled_task_seconds <= 0.0
-                    or diagnostics.summary.real_task_event_seconds <= 0.0
-                    or diagnostics.summary.real_selected_span_seconds <= 0.0
+                    not summary.trace_complete
+                    or summary.profiled_task_seconds <= 0.0
+                    or summary.real_task_event_seconds <= 0.0
                 ):
                     raise AssertionError("step timing reconciliation is incomplete")
-                if set(diagnostics.simulator_comparison) != set(execution_timing.tasks):
-                    raise AssertionError("task simulator comparison is incomplete")
                 expected_transfers = (
                     planned.plan_report.pressurefit_result.simulation.transfer_intervals
                 )
-                if len(diagnostics.transfers.simulator_comparison) != len(
-                    expected_transfers
+                scheduled = [
+                    transfer
+                    for group in (
+                        diagnostics.transfers.fetch,
+                        diagnostics.transfers.evict,
+                    )
+                    for transfer in group.values()
+                    if transfer.triggered_by != "init"
+                ]
+                if len(scheduled) != len(expected_transfers) or (
+                    set(timelines.fetch.order) != set(diagnostics.transfers.fetch)
+                    or set(timelines.evict.order) != set(diagnostics.transfers.evict)
                 ):
-                    raise AssertionError("transfer simulator comparison is incomplete")
-                for transfer in diagnostics.transfers.simulator_comparison.values():
-                    if (
-                        transfer.real_completion_timestamp_ns
-                        < transfer.real_dispatch_timestamp_ns
-                        or transfer.bytes <= 0
-                    ):
-                        raise AssertionError("transfer timing comparison is invalid")
-                for execution_ordinal, task_timing in enumerate(
-                    execution_timing.tasks.values()
+                    raise AssertionError("transfer lanes omitted a scheduled transfer")
+                for lane in (timelines.fetch, timelines.evict):
+                    group = getattr(diagnostics.transfers, lane.summary.direction)
+                    opening = lane.summary.opening_transfers
+                    for position, key in enumerate(lane.order):
+                        transfer = group[key]
+                        expected_sequence = (
+                            position if position < opening else position - opening
+                        )
+                        expected_trigger_kind = "init" if position < opening else "task"
+                        if (
+                            transfer.sequence != expected_sequence
+                            or (transfer.triggered_by == "init")
+                            != (expected_trigger_kind == "init")
+                            or transfer.direction != lane.summary.direction
+                            or transfer.completion_observed_seconds
+                            < transfer.dispatched_seconds
+                            or transfer.bytes <= 0
+                        ):
+                            raise AssertionError("transfer lane record is invalid")
+                        if transfer.triggered_by != "init" and (
+                            transfer.triggered_by not in diagnostics.tasks
+                            or transfer.simulated_start_seconds is None
+                        ):
+                            raise AssertionError(
+                                "scheduled transfer lacks its trigger or simulation"
+                            )
+                        if transfer.stream_start_seconds is None or (
+                            transfer.stream_end_seconds is None
+                            or transfer.stream_end_seconds
+                            < transfer.stream_start_seconds
+                        ):
+                            raise AssertionError(
+                                "transfer lane record lacks its stream interval"
+                            )
+                    if lane.summary.measured_transfers != len(lane.order):
+                        raise AssertionError(
+                            "lane summary miscounts measured transfers"
+                        )
+                for execution_ordinal, execution_task_id in enumerate(
+                    timelines.compute
                 ):
-                    execution_task_id = f"execution_{execution_ordinal:06d}"
+                    record = diagnostics.tasks[execution_task_id]
                     if (
-                        task_timing.execution_ordinal != execution_ordinal
-                        or task_timing.execution_task_id != execution_task_id
-                        or not task_timing.semantic_name
+                        record.execution_ordinal != execution_ordinal
+                        or record.execution_task_id
+                        != f"execution_{execution_ordinal:06d}"
+                        or not record.semantic_name
                     ):
                         raise AssertionError(
                             "step trace has no chronological task identity"
                         )
-                    if diagnostics.tasks[execution_task_id] is not task_timing:
-                        raise AssertionError("step task lookup is not canonical")
                     planned_task = plan_diagnostics.task(execution_task_id)
                     if (
-                        planned_task.task_id != task_timing.task_id
-                        or planned_task.execution_ordinal
-                        != task_timing.execution_ordinal
-                        or planned_task.semantic_name != task_timing.semantic_name
+                        planned_task.task_id != record.task_id
+                        or planned_task.execution_ordinal != record.execution_ordinal
+                        or planned_task.semantic_name != record.semantic_name
                     ):
                         raise AssertionError(
                             "plan and step task identities do not agree"
                         )
-                    if task_timing.expected_profile_seconds <= 0.0:
+                    if record.expected_profile_seconds <= 0.0:
                         raise AssertionError("task omitted expected profile time")
-                    comparison = diagnostics.simulator_comparison[execution_task_id]
                     if (
-                        comparison.task_id != task_timing.task_id
-                        or comparison.simulated_end_ns < comparison.simulated_start_ns
-                        or comparison.real_end_seconds < comparison.real_start_seconds
+                        record.simulated_end_seconds < record.simulated_start_seconds
+                        or record.compute_finished_seconds
+                        < record.compute_started_seconds
+                        or record.compute_started_seconds
+                        < record.compute_reached_seconds
                     ):
-                        raise AssertionError("task simulator timing is invalid")
+                        raise AssertionError("compute lane record is out of order")
                     if any(
-                        timestamp <= 0
-                        for timestamp in (
-                            task_timing.before_task_enter_timestamp_ns,
-                            task_timing.before_task_exit_timestamp_ns,
-                            task_timing.after_task_enter_timestamp_ns,
-                            task_timing.after_task_exit_timestamp_ns,
-                            task_timing.compute_reached_seconds,
-                            task_timing.compute_started_seconds,
-                            task_timing.compute_finished_seconds,
+                        value is None
+                        for value in (
+                            record.before_task_enter_seconds,
+                            record.before_task_exit_seconds,
+                            record.after_task_enter_seconds,
+                            record.after_task_exit_seconds,
+                            record.frontend_lead_seconds,
                         )
                     ):
-                        raise AssertionError("task omitted one of seven timestamps")
-                    if (
-                        task_timing.compute_reached_seconds is None
-                        or task_timing.compute_started_seconds is None
-                        or task_timing.compute_finished_seconds is None
-                        or task_timing.input_readiness_wait_seconds is None
-                        or task_timing.allocation_reuse_wait_seconds is None
-                        or task_timing.compute_duration_seconds is None
-                        or task_timing.runtime_before_task_enter_seconds is None
-                        or task_timing.runtime_before_task_exit_seconds is None
-                        or task_timing.runtime_after_task_enter_seconds is None
-                        or task_timing.runtime_after_task_exit_seconds is None
+                        raise AssertionError("host boundary timing omitted a boundary")
+                    if record.compute_reached_seconds <= 0.0 or (
+                        record.compute_duration_seconds <= 0.0
                     ):
-                        raise AssertionError("host callback timing omitted a boundary")
-                    if (
-                        not task_timing.compute_reached_sequence
-                        < task_timing.compute_started_sequence
-                        < task_timing.compute_finished_sequence
-                    ):
-                        raise AssertionError(
-                            "host callback boundary order is invalid for "
-                            f"{task_timing.task_id}: "
-                            f"{task_timing.compute_reached_sequence}, "
-                            f"{task_timing.compute_started_sequence}, "
-                            f"{task_timing.compute_finished_sequence}"
-                        )
+                        raise AssertionError("compute lane record lacks stream markers")
             if actual.step_number != step + 1 or len(actual.objectives) != 2:
                 raise AssertionError("StepResult has the wrong logical step")
             for loss, expected in zip(actual.objectives, reference_losses, strict=True):
@@ -460,9 +475,9 @@ def main(arguments: Iterable[str] | None = None) -> int:
         statistics = _statistics()
         if statistics.callback_failures != 0 or statistics.pointer_lookup_failures != 0:
             raise AssertionError("training produced allocator callback failures")
-        if statistics.cuda.device_allocations != 1:
+        if statistics.backend.device_allocations != 1:
             raise AssertionError("training grew the CUDA slab")
-        if statistics.cuda.pinned_host_allocations != 1:
+        if statistics.backend.pinned_host_registrations != 1:
             raise AssertionError("training grew the configured spill pool")
 
         warm_model = _Model()

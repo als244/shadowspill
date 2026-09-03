@@ -14,10 +14,10 @@ static int description_is_valid(
         description->evict_route_id >= runtime->route_count) {
         return 0;
     }
-    const ShadowSpillTransferRoute *fetch =
-        &runtime->routes[description->fetch_route_id].route;
-    const ShadowSpillTransferRoute *evict =
-        &runtime->routes[description->evict_route_id].route;
+    const ShadowSpillRouteState *fetch =
+        &runtime->routes[description->fetch_route_id];
+    const ShadowSpillRouteState *evict =
+        &runtime->routes[description->evict_route_id];
     return fetch->source_pool_id == description->spill_pool_id &&
         fetch->destination_pool_id == description->execution_pool_id &&
         evict->source_pool_id == description->execution_pool_id &&

@@ -68,9 +68,9 @@ enum {
 };
 
 /*
- * Owns one bounded arena and its suballocation geometry. A pool does not know
- * whether its storage is local, remote, accelerator, host, or persistent.
- * Concrete backends attach that meaning when they instantiate the pool.
+ * Owns one bounded arena and its suballocation geometry. A device pool's
+ * arena is backend memory; a pinned-host pool's arena is host memory the pool
+ * allocates and the backend registers.
  */
 typedef struct ShadowSpillMemoryPool {
     pthread_mutex_t lock;
@@ -94,8 +94,11 @@ typedef struct ShadowSpillMemoryPool {
     /* Cold-reserved workspace for prospective causal-release queries. */
     struct ShadowSpillMemoryLease **release_frontier_workspace;
     ShadowSpillRange *release_range_workspace;
-    ShadowSpillMemoryPoolBackend backend;
+    const ShadowSpillBackend *backend;
+    uint8_t kind;
     void *base;
+    /* The arena's mapping length, what its release must unmap. */
+    uint64_t arena_bytes;
     uint32_t pool_id;
     uint64_t minimum_alignment;
     uint64_t next_request_sequence;
@@ -351,12 +354,22 @@ uint64_t shadowspill_range_largest_free(
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
     uint32_t pool_id,
-    const ShadowSpillMemoryPoolBackend *backend,
+    const ShadowSpillBackend *backend,
+    uint8_t kind,
     uint64_t capacity,
     uint64_t minimum_alignment
 );
 
 void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
+
+/* A fresh arena of the pool's kind, and the release of one; used when a pool
+   grows and replaces its arena. */
+int shadowspill_memory_pool_arena_allocate(
+    const ShadowSpillMemoryPool *pool, uint64_t bytes, void **base
+);
+int shadowspill_memory_pool_arena_release(
+    const ShadowSpillMemoryPool *pool, void *base, uint64_t capacity
+);
 
 ShadowSpillStatus shadowspill_memory_pool_reserve_lease_records(
     ShadowSpillMemoryPool *pool,

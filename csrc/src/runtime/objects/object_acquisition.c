@@ -164,7 +164,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
         ShadowSpillMemoryLease *lease =
             shadowspill_plan_execution_location(plan, object)->lease;
         if ((object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-             object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
+             object->residency != SHADOWSPILL_OBJECT_FETCHING) ||
             lease == NULL || lease->pointer == NULL ||
             lease->allocation_id != allocation_id ||
             lease->generation != object->generation ||
@@ -182,7 +182,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
             return SHADOWSPILL_STATUS_PLAN_VIOLATION;
         }
         ShadowSpillEventLease *readiness_event = NULL;
-        if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+        if (object->residency == SHADOWSPILL_OBJECT_FETCHING) {
             if (!object->has_readiness_event) {
                 pthread_mutex_unlock(&object->lock);
                 shadowspill_latch_failure_locked(
@@ -209,8 +209,8 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
         pthread_mutex_unlock(&object->lock);
 
         if (readiness_event != NULL) {
-            if (runtime->synchronization.wait_event(
-                    runtime->synchronization.state,
+            if (runtime->backend.wait_event(
+                    runtime->backend.state,
                     consumer_stream,
                     readiness_event->event
                 ) != 0) {

@@ -13,7 +13,7 @@ namespace {
 [[noreturn]] void throw_allocator_failure() {
     char message[4096] = {0};
     const ShadowSpillStatus status =
-        shadowspill_pytorch_cuda_malloc_failure_message(
+        shadowspill_pytorch_backend_malloc_failure_message(
             message, sizeof(message)
         );
 #ifdef SHADOWSPILL_PYTORCH_STORAGE_ADAPTER
@@ -30,12 +30,12 @@ namespace {
 
 }  // namespace
 
-void *shadowspill_pytorch_cuda_malloc(
+void *shadowspill_pytorch_backend_malloc(
     ptrdiff_t bytes,
     int32_t device_ordinal,
     void *stream
 ) {
-    void *const address = shadowspill_pytorch_cuda_malloc_impl(
+    void *const address = shadowspill_pytorch_backend_malloc_impl(
         bytes, device_ordinal, stream
     );
     if (address == nullptr && bytes > 0) {

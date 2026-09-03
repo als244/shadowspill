@@ -8,24 +8,63 @@
 static int submit_transfer_copy(
     ShadowSpillRuntime *runtime,
     const ShadowSpillQueuedAction *action,
-    const ShadowSpillTransferRoute *route,
+    const ShadowSpillRouteState *route,
     void *destination,
     const void *source,
     uint64_t bytes,
     ShadowSpillBackendStream stream
 ) {
-    const char *fallback = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+    const char *fallback = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? "shadowspill.runtime.transfer.fetch.unlabeled"
         : "shadowspill.runtime.transfer.evict.unlabeled";
     const ShadowSpillProfilerRange range = shadowspill_profiler_range_begin(
-        &runtime->profiler,
+        &runtime->backend,
         action->trace_label == NULL ? fallback : action->trace_label
     );
-    const int status = route->copy_async(
-        route->state, destination, source, bytes, stream
+    const int status = shadowspill_route_copy_async(
+        runtime, route, destination, source, bytes, stream
     );
-    shadowspill_profiler_range_end(&runtime->profiler, range);
+    shadowspill_profiler_range_end(&runtime->backend, range);
     return status;
+}
+
+/*
+ * A traced transfer is measured on its lane by the worker that dispatches
+ * it: the interval opens just before the copy and closes just after it,
+ * ahead of the completion event, so observing the completion guarantees the
+ * interval is readable. An untraced step pays the acquire load and nothing
+ * else. An interval that cannot be measured is a gap in the trace, never a
+ * transfer failure.
+ */
+static int submit_traced_copy(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillQueuedAction *action,
+    const ShadowSpillRouteState *route,
+    void *source,
+    void *destination,
+    uint64_t bytes,
+    ShadowSpillBackendStream lane
+) {
+    const int traced =
+        atomic_load_explicit(&runtime->trace_active, memory_order_acquire) != 0U &&
+        runtime->trace_origin_present;
+    if (traced) {
+        (void)shadowspill_stream_interval_open(
+            runtime, &action->stream_interval, lane
+        );
+    }
+    if (submit_transfer_copy(
+            runtime, action, route, source, destination, bytes, lane
+        ) != 0) {
+        shadowspill_stream_interval_discard(runtime, &action->stream_interval);
+        return -1;
+    }
+    if (traced) {
+        (void)shadowspill_stream_interval_close(
+            runtime, &action->stream_interval, lane
+        );
+    }
+    return 0;
 }
 
 static ShadowSpillRouteState *route_for_action(
@@ -115,6 +154,7 @@ static void complete_action(
     action->completion_event = NULL;
     action->dependency_event = NULL;
     action->has_completion_event = 0U;
+    shadowspill_stream_interval_discard(runtime, &action->stream_interval);
     const uint64_t task_id = action->task_id;
     const uint64_t object_id = object->object_id;
     const uint64_t allocation_id = object->allocation_id;
@@ -129,7 +169,7 @@ static void complete_action(
     unlink_action_locked(runtime, action);
     pthread_mutex_unlock(&runtime->actions.lock);
     if (kind == SHADOWSPILL_RUNTIME_RELEASE ||
-        kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+        kind == SHADOWSPILL_RUNTIME_EVICT) {
         (void)atomic_fetch_sub_explicit(
             &runtime->pending_capacity_actions, 1U, memory_order_release
         );
@@ -264,7 +304,7 @@ static int acquire_reserved_destination(
     ShadowSpillMemoryPool *pool = lease->pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillEventLease *dependency_event = NULL;
-    const int status = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+    const int status = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? shadowspill_acquire_reserved_execution_lease_locked(
             runtime, lease, &dependency_event
         )
@@ -281,8 +321,8 @@ static int acquire_reserved_destination(
     }
     if (dependency_event != NULL) {
         ShadowSpillRouteState *route = route_for_action(action);
-        if (route == NULL || runtime->synchronization.wait_event(
-                runtime->synchronization.state,
+        if (route == NULL || runtime->backend.wait_event(
+                runtime->backend.state,
                 route->lane,
                 dependency_event->event
             ) != 0) {
@@ -294,12 +334,12 @@ static int acquire_reserved_destination(
     return status;
 }
 
-static int dispatch_offload_locked(
+static int dispatch_evict_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
     ShadowSpillObject *object = action->object;
-    if (object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+    if (object->residency == SHADOWSPILL_OBJECT_FETCHING) {
         return 0;
     }
     ShadowSpillObjectLocation *execution = shadowspill_plan_execution_location(
@@ -382,23 +422,23 @@ static int dispatch_offload_locked(
         runtime, &completion_event
     );
     int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
-    if (!backend_failed && runtime->synchronization.wait_event(
-            runtime->synchronization.state,
+    if (!backend_failed && runtime->backend.wait_event(
+            runtime->backend.state,
             route->lane,
             trigger_event->event
         ) != 0) {
         backend_failed = 1;
     }
-    if (!backend_failed && (submit_transfer_copy(
+    if (!backend_failed && (submit_traced_copy(
             runtime,
             action,
-            &route->route,
+            route,
             spill_lease->pointer,
             execution_pointer,
             bytes,
             route->lane
-        ) != 0 || runtime->synchronization.record_event(
-                runtime->synchronization.state,
+        ) != 0 || runtime->backend.record_event(
+                runtime->backend.state,
                 completion_event->event,
                 route->lane
             ) != 0 || shadowspill_completion_submit(
@@ -451,7 +491,7 @@ static int dispatch_offload_locked(
     action->completion_event = completion_event;
     action->has_completion_event = 1U;
     action->state = SHADOWSPILL_ACTION_IN_FLIGHT;
-    object->residency = SHADOWSPILL_OBJECT_OFFLOADING;
+    object->residency = SHADOWSPILL_OBJECT_EVICTING;
     (void)atomic_fetch_add_explicit(
         &runtime->evict_transfers, 1U, memory_order_acq_rel
     );
@@ -471,7 +511,9 @@ static int dispatch_offload_locked(
     return 1;
 }
 
-static int dispatch_prefetch_locked(
+
+
+static int dispatch_fetch_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillQueuedAction *action
 ) {
@@ -537,23 +579,23 @@ static int dispatch_prefetch_locked(
         runtime, &completion_event
     );
     int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
-    if (!backend_failed && runtime->synchronization.wait_event(
-            runtime->synchronization.state,
+    if (!backend_failed && runtime->backend.wait_event(
+            runtime->backend.state,
             route->lane,
             trigger_event->event
         ) != 0) {
         backend_failed = 1;
     }
-    if (!backend_failed && (submit_transfer_copy(
+    if (!backend_failed && (submit_traced_copy(
             runtime,
             action,
-            &route->route,
+            route,
             allocation->pointer,
             spill->lease->pointer,
             bytes,
             route->lane
-        ) != 0 || runtime->synchronization.record_event(
-                runtime->synchronization.state,
+        ) != 0 || runtime->backend.record_event(
+                runtime->backend.state,
                 completion_event->event,
                 route->lane
             ) != 0 || shadowspill_completion_submit(
@@ -585,7 +627,7 @@ static int dispatch_prefetch_locked(
         if (completion_event != NULL) {
             (void)shadowspill_event_lease_release(runtime, completion_event);
         }
-        /* Retain the activated range until failure teardown; see offload. */
+        /* Retain the activated range until failure teardown; see evict. */
         latch_action_failure(
             runtime,
             action,
@@ -609,7 +651,7 @@ static int dispatch_prefetch_locked(
     object->readiness_event = completion_event;
     shadowspill_event_lease_retain(object->readiness_event);
     object->has_readiness_event = 1U;
-    object->residency = SHADOWSPILL_OBJECT_PREFETCHING;
+    object->residency = SHADOWSPILL_OBJECT_FETCHING;
     if (shadowspill_object_note_fetch_published_locked(object) != 0) {
         latch_action_failure(
             runtime,
@@ -790,9 +832,9 @@ static int handle_action(
                     shadowspill_plan_spill_location(
                         action->plan_owner, object
                     );
-                if ((action->kind == SHADOWSPILL_RUNTIME_PREFETCH &&
+                if ((action->kind == SHADOWSPILL_RUNTIME_FETCH &&
                      action->destination_lease == NULL) ||
-                    (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
+                    (action->kind == SHADOWSPILL_RUNTIME_EVICT &&
                      spill->lease == NULL &&
                      action->destination_lease == NULL)) {
                     latch_action_failure(
@@ -807,8 +849,8 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
-                if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
-                    object->residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+                if (action->kind == SHADOWSPILL_RUNTIME_EVICT &&
+                    object->residency == SHADOWSPILL_OBJECT_FETCHING) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }
@@ -827,7 +869,7 @@ static int handle_action(
                     return -1;
                 }
                 const int trigger_complete =
-                    action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
+                    action->kind == SHADOWSPILL_RUNTIME_FETCH ||
                     shadowspill_event_lease_is_complete(action->trigger_event);
                 if (!trigger_complete) {
                     pthread_mutex_unlock(&object->lock);
@@ -850,7 +892,7 @@ static int handle_action(
                  */
                 const ShadowSpillStatus dependency_wait_status =
                     dependency_ready > 0 &&
-                        action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+                        action->kind == SHADOWSPILL_RUNTIME_FETCH
                     ? shadowspill_fixed_layout_insert_dependency_waits(
                           action->plan_owner,
                           SHADOWSPILL_FIXED_ACTION_DESTINATION,
@@ -896,7 +938,7 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }
-                if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+                if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
                     ShadowSpillObjectLocation *spill =
                         shadowspill_plan_spill_location(
                             action->plan_owner, object
@@ -924,9 +966,9 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }
-                int dispatched = action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
-                    ? dispatch_offload_locked(runtime, action)
-                    : dispatch_prefetch_locked(runtime, action);
+                int dispatched = action->kind == SHADOWSPILL_RUNTIME_EVICT
+                    ? dispatch_evict_locked(runtime, action)
+                    : dispatch_fetch_locked(runtime, action);
                 if (dispatched < 0) {
                     pthread_mutex_unlock(&object->lock);
                     return -1;
@@ -978,7 +1020,7 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
-                if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+                if (action->kind == SHADOWSPILL_RUNTIME_EVICT) {
                     release_pool = action->plan_owner->execution_pool;
                 } else if (caller_handoff || !object->retain_spill_copy) {
                     release_pool = action->plan_owner->spill_pool;
@@ -990,7 +1032,7 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }
-                if (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+                if (action->kind == SHADOWSPILL_RUNTIME_EVICT) {
                     ShadowSpillMemoryLease *allocation =
                         shadowspill_find_execution_lease(
                             action->plan_owner->execution_pool,
@@ -1047,7 +1089,7 @@ static int handle_action(
                      * The compute stream may already have waited on this
                      * transfer and launched a task.  In that case
                      * after_task has advanced execution_version while the
-                     * worker still observes PREFETCHING. The fetch
+                     * worker still observes FETCHING. The fetch
                      * completion only changes readiness; it must not roll
                      * the execution version back to the copied spill version.
                      */
@@ -1088,7 +1130,20 @@ static int handle_action(
                         spill->current = 0U;
                     }
                 }
-                shadowspill_append_trace_event_locked(
+                uint64_t stream_start_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                uint64_t stream_end_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                if (shadowspill_stream_interval_read(
+                        runtime, &action->stream_interval,
+                        runtime->trace_origin_event,
+                        &stream_start_ns, &stream_end_ns
+                    ) != 0) {
+                    stream_start_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                    stream_end_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                }
+                shadowspill_stream_interval_discard(
+                    runtime, &action->stream_interval
+                );
+                shadowspill_append_stamped_trace_event_locked(
                     runtime,
                     SHADOWSPILL_TRACE_TRANSFER_COMPLETED,
                     action->task_id,
@@ -1097,12 +1152,14 @@ static int handle_action(
                         ? action->caller_handoff_lease->allocation_id
                         : object->allocation_id,
                     object->size_bytes,
-                    action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
+                    action->kind == SHADOWSPILL_RUNTIME_EVICT
                         ? SHADOWSPILL_TRANSFER_EVICT
                         : SHADOWSPILL_TRANSFER_FETCH,
                     atomic_load_explicit(
                         &runtime->actions.count, memory_order_acquire
-                    )
+                    ),
+                    stream_start_ns,
+                    stream_end_ns
                 );
                 pthread_mutex_unlock(&object->lock);
                 if (readiness_to_release != NULL &&
@@ -1229,7 +1286,7 @@ static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
     int fetches_published = 1;
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         ShadowSpillQueuedAction *action = &record->queued_actions[index];
-        if (action->kind != SHADOWSPILL_RUNTIME_PREFETCH) {
+        if (action->kind != SHADOWSPILL_RUNTIME_FETCH) {
             continue;
         }
         ShadowSpillObject *object = action->object;
@@ -1270,7 +1327,7 @@ static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
 void *shadowspill_worker_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     shadowspill_profiler_name_current_thread(
-        &runtime->profiler, "shadowspill_worker"
+        &runtime->backend, "shadowspill_worker"
     );
     while (atomic_load_explicit(
         &runtime->worker_stop, memory_order_acquire

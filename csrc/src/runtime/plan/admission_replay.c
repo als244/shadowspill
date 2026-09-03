@@ -110,7 +110,8 @@ static int reset_state(
         return -1;
     }
     state->pool.range_leases = NULL;
-    state->pool.backend = (ShadowSpillMemoryPoolBackend){0};
+    state->pool.backend = NULL;
+    state->pool.kind = SHADOWSPILL_POOL_DEVICE;
     state->pool.base = NULL;
     state->pool.pool_id = 0U;
     state->pool.minimum_alignment = program->minimum_alignment;

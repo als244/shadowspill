@@ -351,7 +351,7 @@ static inline void shadowspill_test_destroy_runtime(ShadowSpillRuntime *runtime)
 }
 
 static inline ShadowSpillStatus shadowspill_test_create_runtime(
-    ShadowSpillMockBackend *backend,
+    const ShadowSpillBackend *backend,
     uint64_t execution_pool_bytes,
     uint64_t spill_pool_bytes,
     uint64_t minimum_alignment,

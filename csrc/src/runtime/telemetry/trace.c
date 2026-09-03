@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-void shadowspill_trace_append_enabled(
+void shadowspill_trace_append_stamped_enabled(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceEventKind kind,
     uint64_t task_id,
@@ -14,7 +14,9 @@ void shadowspill_trace_append_enabled(
     uint64_t allocation_id,
     uint64_t bytes,
     uint64_t detail_0,
-    uint64_t detail_1
+    uint64_t detail_1,
+    uint64_t stream_start_ns,
+    uint64_t stream_end_ns
 ) {
     if (atomic_load_explicit(&runtime->trace_active, memory_order_acquire) == 0U ||
         atomic_load_explicit(
@@ -52,12 +54,57 @@ void shadowspill_trace_append_enabled(
             .bytes = bytes,
             .detail_0 = detail_0,
             .detail_1 = detail_1,
+            .stream_start_ns = stream_start_ns,
+            .stream_end_ns = stream_end_ns,
             .kind = (uint8_t)kind,
         };
     if (kind == SHADOWSPILL_TRACE_SESSION_BEGIN) {
         runtime->trace_begin_timestamp_ns = timestamp;
     } else if (kind == SHADOWSPILL_TRACE_SESSION_END) {
         runtime->trace_end_timestamp_ns = timestamp;
+    }
+}
+
+void shadowspill_trace_append_enabled(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTraceEventKind kind,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t bytes,
+    uint64_t detail_0,
+    uint64_t detail_1
+) {
+    shadowspill_trace_append_stamped_enabled(
+        runtime,
+        kind,
+        task_id,
+        object_id,
+        allocation_id,
+        bytes,
+        detail_0,
+        detail_1,
+        SHADOWSPILL_TRACE_NO_STREAM_TIME,
+        SHADOWSPILL_TRACE_NO_STREAM_TIME
+    );
+}
+
+/*
+ * Timing events a trace will bracket transfers with, created now so that a
+ * traced step creates none. Each in-flight transfer holds two; a lane
+ * rarely has more than a handful in flight, so this reserve covers a trace
+ * without growth, and a pool that runs out simply leaves later intervals
+ * unmeasured. Preparing a trace twice reserves nothing new.
+ */
+#define SHADOWSPILL_TIMING_EVENTS_PER_LANE 128U
+
+static void reserve_timing_events(ShadowSpillRuntime *runtime) {
+    const uint64_t count =
+        SHADOWSPILL_TIMING_EVENTS_PER_LANE * (uint64_t)runtime->route_count;
+    if (count != 0U) {
+        (void)shadowspill_event_pool_reserve(
+            runtime, &runtime->timing_events, count
+        );
     }
 }
 
@@ -132,12 +179,16 @@ ShadowSpillStatus shadowspill_trace_prepare(
     pthread_mutex_unlock(&runtime->mutex);
     free(events);
     free(execution_leases);
+    if (status == SHADOWSPILL_STATUS_OK) {
+        reserve_timing_events(runtime);
+    }
     return status;
 }
 
 ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
-    uint64_t step_id
+    uint64_t step_id,
+    ShadowSpillBackendEvent origin_event
 ) {
     if (runtime == NULL || step_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -159,6 +210,9 @@ ShadowSpillStatus shadowspill_trace_begin(
         runtime->allocation_event_count = 0U;
         runtime->next_allocation_event_sequence = 0U;
         runtime->allocation_event_overflow = 0;
+        runtime->trace_origin_event = origin_event;
+        runtime->trace_origin_present =
+            origin_event.words[0] != 0U || origin_event.words[1] != 0U;
         runtime->allocation_telemetry_active = 1;
         runtime->trace_active = 1;
         shadowspill_append_trace_event_locked(

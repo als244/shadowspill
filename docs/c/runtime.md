@@ -6,11 +6,22 @@ worker, trace buffers, and first-failure state.
 
 ## Lifecycle and calibration
 
-- `shadowspill_runtime_create()` validates the backend/configuration, allocates
-  pool arenas, creates lanes, and starts the worker.
-- `shadowspill_runtime_reserve_event_leases()` grows and seals the neutral
-  event-record inventory at an idle cold-plan boundary. Repeated calls support
-  additional callables sharing the same runtime without racing existing work.
+- `shadowspill_backend_is_valid()` checks a backend table for the contract
+  version and every required entry; the runtime applies it at create and the
+  adapter after loading a backend library.
+- `shadowspill_runtime_create()` takes a `ShadowSpillRuntimeConfig`: the
+  backend table it copies, pools as `ShadowSpillMemoryPoolDescription`
+  (`pool_id`, `kind`, capacity, alignment), and routes as
+  `ShadowSpillTransferRouteDescription` (`route_id`, name, source and
+  destination pool ids, whose kinds must differ). It validates the table and
+  the topology, allocates or maps each pool's arena, creates one lane per
+  route, and starts the worker; see [memory pools](../architecture/memory-pools.md)
+  and [transfers](../architecture/transfers.md).
+- `shadowspill_runtime_reserve_event_leases()` grows and seals the event-lease
+  inventory at an idle cold-plan boundary, creating the backend events up
+  front so a steady-state step makes no driver calls; see
+  [events](../architecture/events.md). Repeated calls support additional
+  callables sharing the same runtime without racing existing work.
 - `shadowspill_runtime_reserve_retirement_records()` does the same for the
   immutable records queued between logical release and physical reclamation.
   A sealed inventory never falls back to `malloc` on the task or worker path.
@@ -196,9 +207,25 @@ Runtime tracing uses:
 - `shadowspill_trace_end()`
 - `shadowspill_trace_read()`
 
+`shadowspill_trace_begin()` takes the caller's origin event: a timing event
+the caller has already recorded on its compute stream and keeps alive for
+the trace. While the trace is active the worker brackets every copy it
+dispatches with two timing events from the runtime's timing pool on the lane,
+and the transfer's
+`SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries the copy's interval
+from that origin in `stream_start_ns` and `stream_end_ns`. Every other
+event kind, and a completion the backend could not measure, carries
+`SHADOWSPILL_TRACE_NO_STREAM_TIME` in both. A zero origin token records no
+intervals. `timestamp_ns` on every event is the host clock; the two stream
+fields are the only device-clock values in the trace.
+
 `shadowspill_runtime_statistics()` returns aggregate pool and action counters,
-including capacity, current/peak use, and rejected growth for neutral event
-leases, retirement records, memory-lease records, and lease-use records.
+including capacity, current/peak use, and rejected growth for event leases,
+retirement records, memory-lease records, and lease-use records. For event
+leases it adds `event_lease_driver_creates` and `event_lease_sealed`, and the
+timing pool's `timing_event_capacity`, `timing_event_in_use`,
+`timing_event_peak_in_use`, and `timing_event_driver_creates`; a create after
+sealing is a driver call the plan did not reserve for.
 `shadowspill_runtime_failure()` returns the first latched failure.
 `shadowspill_runtime_recover_no_progress()` performs the explicit recovery
 operation defined by the header; it does not hide an infeasible request.

@@ -19,9 +19,8 @@ enum {
 };
 
 int main(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 2000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
@@ -30,8 +29,7 @@ int main(void) {
 
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(
-        mock,
+    shadowspill_mock_runtime_topology(&mock,
         COMPLETION_COUNT * ALLOCATION_BYTES,
         0U,
         1U,
@@ -41,7 +39,7 @@ int main(void) {
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        mock.create_stream(mock.state, &compute) != 0 ||
         shadowspill_runtime_reserve_event_leases(runtime, 32U) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_reserve_event_leases(runtime, COMPLETION_COUNT) !=
@@ -68,7 +66,7 @@ int main(void) {
             return EXIT_FAILURE;
         }
     }
-    if (shadowspill_mock_enqueue_compute(mock, compute, 1000000U) != 0) {
+    if (shadowspill_mock_enqueue_compute(&mock, compute, 1000000U) != 0) {
         return EXIT_FAILURE;
     }
     for (uint64_t index = 0U; index < COMPLETION_COUNT; ++index) {
@@ -80,8 +78,8 @@ int main(void) {
     if (shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
-    ShadowSpillMockBackendStatistics batch_statistics = {0};
-    shadowspill_mock_backend_statistics(mock, &batch_statistics);
+    ShadowSpillBackendStatistics batch_statistics = {0};
+    mock.statistics(mock.state, &batch_statistics);
     if (batch_statistics.event_queries >
             COMPLETION_COUNT + MAX_HEAD_POLL_QUERIES) {
         return EXIT_FAILURE;
@@ -107,9 +105,9 @@ int main(void) {
         }
     }
 
-    ShadowSpillMockBackendStatistics backend_statistics = {0};
+    ShadowSpillBackendStatistics backend_statistics = {0};
     ShadowSpillRuntimeStatistics runtime_statistics = {0};
-    shadowspill_mock_backend_statistics(mock, &backend_statistics);
+    mock.statistics(mock.state, &backend_statistics);
     (void)printf(
         "completion_count=%u event_queries=%llu queries_per_completion=%.3f\n",
         COMPLETION_COUNT + WAIT_IDLE_ROUNDS,
@@ -119,10 +117,13 @@ int main(void) {
     );
     if (shadowspill_runtime_statistics(runtime, &runtime_statistics) !=
             SHADOWSPILL_STATUS_OK ||
+        /* Leases keep their backend events, so the driver saw one create per
+         * lease record and no destroy until the pool goes away. */
         backend_statistics.events_created !=
+            runtime_statistics.event_lease_driver_creates ||
+        backend_statistics.events_created >
             COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
-        backend_statistics.events_destroyed !=
-            COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
+        backend_statistics.events_destroyed != 0U ||
         runtime_statistics.pending_retirements != 0U ||
         runtime_statistics.live_allocations != 0U ||
         runtime_statistics.event_lease_capacity != COMPLETION_COUNT ||
@@ -151,10 +152,14 @@ int main(void) {
     }
 
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_destroy_compute_stream(mock, compute) != 0) {
+        mock.destroy_stream(mock.state, compute) != 0) {
         return EXIT_FAILURE;
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    mock.statistics(mock.state, &backend_statistics);
+    if (backend_statistics.events_created != backend_statistics.events_destroyed) {
+        return EXIT_FAILURE;
+    }
+    shadowspill_backend_destroy(&mock);
     return EXIT_SUCCESS;
 }

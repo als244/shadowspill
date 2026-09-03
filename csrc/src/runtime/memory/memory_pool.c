@@ -1,8 +1,10 @@
+#define _DEFAULT_SOURCE
 #include "../internal.h"
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 #include <string.h>
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
@@ -104,33 +106,82 @@ static void cpu_relax(void) {
 #endif
 }
 
+/* A pinned-host arena is an anonymous private mapping, so the pool owns
+ * page-aligned memory the C allocator never touches, and the backend pins it
+ * in place. Device arenas are the backend's to allocate. */
+static int arena_allocate(
+    const ShadowSpillBackend *backend, uint8_t kind, uint64_t capacity, void **base
+) {
+    if (kind == SHADOWSPILL_POOL_DEVICE) {
+        return backend->allocate_device(backend->state, capacity, base);
+    }
+    if (capacity == 0U || capacity > SIZE_MAX) {
+        return -1;
+    }
+    void *host = mmap(
+        NULL, (size_t)capacity, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    if (host == MAP_FAILED) {
+        return -1;
+    }
+    if (backend->register_host_memory(backend->state, host, capacity) != 0) {
+        (void)munmap(host, (size_t)capacity);
+        return -1;
+    }
+    *base = host;
+    return 0;
+}
+
+static int arena_release(
+    const ShadowSpillBackend *backend, uint8_t kind, void *base, uint64_t capacity
+) {
+    if (kind == SHADOWSPILL_POOL_DEVICE) {
+        return backend->free_device(backend->state, base, capacity);
+    }
+    const int status = backend->unregister_host_memory(backend->state, base, capacity);
+    (void)munmap(base, (size_t)capacity);
+    return status;
+}
+
+int shadowspill_memory_pool_arena_allocate(
+    const ShadowSpillMemoryPool *pool, uint64_t bytes, void **base
+) {
+    return arena_allocate(pool->backend, pool->kind, bytes, base);
+}
+
+int shadowspill_memory_pool_arena_release(
+    const ShadowSpillMemoryPool *pool, void *base, uint64_t capacity
+) {
+    return arena_release(pool->backend, pool->kind, base, capacity);
+}
+
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
     uint32_t pool_id,
-    const ShadowSpillMemoryPoolBackend *backend,
+    const ShadowSpillBackend *backend,
+    uint8_t kind,
     uint64_t capacity,
     uint64_t minimum_alignment
 ) {
-    if (pool == NULL || minimum_alignment == 0U ||
-        !shadowspill_memory_pool_backend_is_valid(backend)) {
+    if (pool == NULL || minimum_alignment == 0U || backend == NULL ||
+        kind > SHADOWSPILL_POOL_PINNED_HOST) {
         return -1;
     }
     void *base = NULL;
-    if (capacity != 0U && backend->allocate_arena(
-            backend->state, capacity, &base
-        ) != 0) {
+    if (capacity != 0U && arena_allocate(backend, kind, capacity, &base) != 0) {
         return -1;
     }
     if (pthread_mutex_init(&pool->lock, NULL) != 0) {
         if (base != NULL) {
-            (void)backend->close(backend->state, base);
+            (void)arena_release(backend, kind, base, capacity);
         }
         return -1;
     }
     if (shadowspill_range_initialize(&pool->ranges, capacity) != 0) {
         pthread_mutex_destroy(&pool->lock);
         if (base != NULL) {
-            (void)backend->close(backend->state, base);
+            (void)arena_release(backend, kind, base, capacity);
         }
         return -1;
     }
@@ -156,12 +207,14 @@ int shadowspill_memory_pool_initialize(
         shadowspill_range_destroy(&pool->ranges);
         pthread_mutex_destroy(&pool->lock);
         if (base != NULL) {
-            (void)backend->close(backend->state, base);
+            (void)arena_release(backend, kind, base, capacity);
         }
         *pool = (ShadowSpillMemoryPool){0};
         return -1;
     }
-    pool->backend = *backend;
+    pool->backend = backend;
+    pool->kind = kind;
+    pool->arena_bytes = capacity;
     pool->base = base;
     pool->pool_id = pool_id;
     pool->minimum_alignment = minimum_alignment;
@@ -195,7 +248,7 @@ void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool) {
         use = next;
     }
     if (pool->base != NULL) {
-        (void)pool->backend.close(pool->backend.state, pool->base);
+        (void)arena_release(pool->backend, pool->kind, pool->base, pool->arena_bytes);
     }
     pthread_mutex_destroy(&pool->lock);
     *pool = (ShadowSpillMemoryPool){0};

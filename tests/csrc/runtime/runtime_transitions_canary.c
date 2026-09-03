@@ -12,14 +12,13 @@
 #include "runtime_test.h"
 
 typedef struct Fixture {
-    ShadowSpillMockBackend *mock;
+    ShadowSpillBackend mock;
     ShadowSpillRuntime *runtime;
     ShadowSpillBackendStream compute;
 } Fixture;
 
 static int fixture_create(Fixture *fixture) {
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 1000U,
         .evict_delay_nanoseconds = 1000U,
     };
@@ -29,10 +28,9 @@ static int fixture_create(Fixture *fixture) {
         return -1;
     }
     if (shadowspill_test_create_runtime(
-            fixture->mock, 128U, 256U, 1U, 1000U, &fixture->runtime
+            &fixture->mock, 128U, 256U, 1U, 1000U, &fixture->runtime
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(
-            fixture->mock, &fixture->compute
+        fixture->mock.create_stream(fixture->mock.state, &fixture->compute
         ) != 0) {
         return -1;
     }
@@ -42,11 +40,10 @@ static int fixture_create(Fixture *fixture) {
 static void fixture_destroy(Fixture *fixture) {
     shadowspill_test_destroy_runtime(fixture->runtime);
     if (fixture->compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(
-            fixture->mock, fixture->compute
+        (void)fixture->mock.destroy_stream(fixture->mock.state, fixture->compute
         );
     }
-    shadowspill_mock_backend_destroy(fixture->mock);
+    shadowspill_backend_destroy(&fixture->mock);
 }
 
 static void sleep_milliseconds(uint64_t milliseconds) {
@@ -84,7 +81,7 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
     ShadowSpillRuntimeStatistics after_statistics = {0};
     const ShadowSpillRuntimeAction fetch = {
         .object_id = plan_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     int failed = shadowspill_register_object(fixture.runtime, &description) !=
             SHADOWSPILL_STATUS_OK || shadowspill_write_object(
@@ -126,25 +123,23 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
     return failed ? -1 : 0;
 }
 
-static int prefetch_window_is_submitted_without_wire_blocking(void) {
-    ShadowSpillMockBackend *mock = NULL;
+static int fetch_window_is_submitted_without_wire_blocking(void) {
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 100000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 100000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
     const ShadowSpillObjectDescription objects[] = {
@@ -162,8 +157,8 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
         },
     };
     const ShadowSpillRuntimeAction actions[] = {
-        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
-        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_FETCH},
     };
     int failed = shadowspill_register_object(runtime, &objects[0]) !=
             SHADOWSPILL_STATUS_OK ||
@@ -218,37 +213,35 @@ static int prefetch_window_is_submitted_without_wire_blocking(void) {
     if (failed) {
         fprintf(
             stderr,
-            "prefetch window mismatch: live=%llu, allocated=%llu, fetches=%llu\n",
+            "fetch window mismatch: live=%llu, allocated=%llu, fetches=%llu\n",
             (unsigned long long)statistics.live_allocations,
             (unsigned long long)statistics.allocated_bytes,
             (unsigned long long)statistics.fetch_transfers
         );
     }
     shadowspill_test_destroy_runtime(runtime);
-    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
-    shadowspill_mock_backend_destroy(mock);
+    (void)mock.destroy_stream(mock.state, compute);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
-static int inflight_prefetch_transfers_to_caller(void) {
-    ShadowSpillMockBackend *mock = NULL;
+static int inflight_fetch_transfers_to_caller(void) {
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 100000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 100000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
     const ShadowSpillObjectDescription object = {
@@ -259,7 +252,7 @@ static int inflight_prefetch_transfers_to_caller(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     ShadowSpillObjectBinding binding = {0};
     ShadowSpillAllocation caller = {0};
@@ -308,30 +301,28 @@ static int inflight_prefetch_transfers_to_caller(void) {
         statistics.fetch_transfers != 1U ||
         statistics.live_allocations != 0U;
     shadowspill_test_destroy_runtime(runtime);
-    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
-    shadowspill_mock_backend_destroy(mock);
+    (void)mock.destroy_stream(mock.state, compute);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
-static int offload_window_is_enqueued_without_dispatch_serialization(void) {
-    ShadowSpillMockBackend *mock = NULL;
+static int evict_window_is_enqueued_without_dispatch_serialization(void) {
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .evict_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 100000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 100000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
     const ShadowSpillObjectDescription objects[] = {
@@ -340,8 +331,8 @@ static int offload_window_is_enqueued_without_dispatch_serialization(void) {
     };
     ShadowSpillAllocation allocations[2] = {{0}};
     const ShadowSpillRuntimeAction actions[] = {
-        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_OFFLOAD},
-        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_OFFLOAD},
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_EVICT},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_EVICT},
     };
     int failed = 0;
     for (uint32_t index = 0U; index < 2U; ++index) {
@@ -383,8 +374,8 @@ static int offload_window_is_enqueued_without_dispatch_serialization(void) {
         );
     }
     shadowspill_test_destroy_runtime(runtime);
-    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
-    shadowspill_mock_backend_destroy(mock);
+    (void)mock.destroy_stream(mock.state, compute);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
@@ -408,8 +399,8 @@ static int trigger_reservation_failure_reports_no_progress(void) {
         },
     };
     const ShadowSpillRuntimeAction actions[] = {
-        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
-        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+        {.object_id = 2U, .kind = SHADOWSPILL_RUNTIME_FETCH},
     };
     int failed = shadowspill_register_object(fixture.runtime, &objects[0]) !=
             SHADOWSPILL_STATUS_OK ||
@@ -520,7 +511,7 @@ static int duplicate_action(void) {
     ShadowSpillAllocation allocation = {0};
     const ShadowSpillRuntimeAction actions[] = {
         {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_RELEASE},
-        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_OFFLOAD},
+        {.object_id = 1U, .kind = SHADOWSPILL_RUNTIME_EVICT},
     };
     const ShadowSpillStatus register_status = shadowspill_register_object(
         fixture.runtime, &object
@@ -711,11 +702,10 @@ static int output_handoff_requires_admitted_release(void) {
 }
 
 static int chained_output_allocation_handoff(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         /* Keep the first release pending while the dispatcher submits the
          * second zero-copy handoff on the same ordered compute stream. */
         .event_delay_nanoseconds = 50000000U,
@@ -723,13 +713,12 @@ static int chained_output_allocation_handoff(void) {
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
 
@@ -825,9 +814,9 @@ static int chained_output_allocation_handoff(void) {
 
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
@@ -925,12 +914,12 @@ static int valid_transition_paths(void) {
         result = -1;
         goto done;
     }
-    const ShadowSpillRuntimeAction prefetch = {
+    const ShadowSpillRuntimeAction fetch = {
         .object_id = temporary_spill.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     if (shadowspill_test_submit_actions(
-            fixture.runtime, 2U, fixture.compute, &prefetch, 1U
+            fixture.runtime, 2U, fixture.compute, &fetch, 1U
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(fixture.runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_object_snapshot(
@@ -1035,11 +1024,11 @@ static int caller_handoff_preserves_recurrent_object_identity(void) {
     };
     const ShadowSpillRuntimeAction evict = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillTaskDescription evict_task = {
         .task_id = 18U,
@@ -1121,11 +1110,11 @@ static int shared_task_completion_event_survives_action_reuse(void) {
         };
         evictions[index] = (ShadowSpillRuntimeAction){
             .object_id = object_id,
-            .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+            .kind = SHADOWSPILL_RUNTIME_EVICT,
         };
         fetches[index] = (ShadowSpillRuntimeAction){
             .object_id = object_id,
-            .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+            .kind = SHADOWSPILL_RUNTIME_FETCH,
         };
         failed = failed || shadowspill_register_object(
                 fixture.runtime, &objects[index]
@@ -1681,7 +1670,7 @@ static int admitted_task_reconciles_ordered_scratch_and_omissions(void) {
     return failed ? -1 : 0;
 }
 
-static int admitted_prefetch_reserves_dynamic_capacity(void) {
+static int admitted_fetch_reserves_dynamic_capacity(void) {
     Fixture fixture = {0};
     if (fixture_create(&fixture) != 0) {
         return -1;
@@ -1692,16 +1681,16 @@ static int admitted_prefetch_reserves_dynamic_capacity(void) {
         .initial_pool_id = 1U,
         .initially_resident = 1U,
     };
-    const ShadowSpillRuntimeAction prefetch = {
+    const ShadowSpillRuntimeAction fetch = {
         .object_id = description.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     ShadowSpillObjectSnapshot snapshot = {0};
     ShadowSpillAllocation following = {0};
     int failed = shadowspill_register_object(
             fixture.runtime, &description
         ) != SHADOWSPILL_STATUS_OK || shadowspill_test_submit_actions(
-            fixture.runtime, 52U, fixture.compute, &prefetch, 1U
+            fixture.runtime, 52U, fixture.compute, &fetch, 1U
         ) != SHADOWSPILL_STATUS_OK || shadowspill_runtime_wait_idle(
             fixture.runtime
         ) != SHADOWSPILL_STATUS_OK || shadowspill_object_snapshot(
@@ -1814,8 +1803,7 @@ static int functional_mutation_replaces_lease_without_copy(void) {
         statistics.pending_retirements != 1U || shadowspill_memory_pool_allocate(fixture.runtime, 0U, description.size_bytes, 1U, fixture.compute, &probe
         ) != SHADOWSPILL_STATUS_OK || probe.pointer == prior.pointer ||
         probe.pointer == replacement.pointer || shadowspill_memory_pool_free(fixture.runtime, 0U, probe.allocation_id, fixture.compute
-        ) != SHADOWSPILL_STATUS_OK || shadowspill_mock_enqueue_compute(
-            fixture.mock, fixture.compute, 100000U
+        ) != SHADOWSPILL_STATUS_OK || shadowspill_mock_enqueue_compute(&fixture.mock, fixture.compute, 100000U
         ) != 0 || shadowspill_test_after_task(
             fixture.runtime, execution.task_id, fixture.compute
         ) != SHADOWSPILL_STATUS_OK || shadowspill_runtime_wait_idle(
@@ -1836,26 +1824,23 @@ static int functional_mutation_replaces_lease_without_copy(void) {
     return failed ? -1 : 0;
 }
 
-static int functional_mutation_supersedes_inflight_prefetch(void) {
-    ShadowSpillMockBackend *mock = NULL;
+static int functional_mutation_supersedes_inflight_fetch(void) {
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 96U, 96U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 96U, 96U, 1U, 1000U, &runtime
         ) !=
-            SHADOWSPILL_STATUS_OK || shadowspill_mock_create_compute_stream(
-            mock, &compute
+            SHADOWSPILL_STATUS_OK || mock.create_stream(mock.state, &compute
         ) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
 
@@ -1869,7 +1854,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = description.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const uint64_t input = description.object_id;
     const ShadowSpillObjectUpdate update = {
@@ -1907,7 +1892,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
     failed = failed || shadowspill_object_snapshot(
             runtime, description.object_id, &during_fetch
         ) != SHADOWSPILL_STATUS_OK ||
-        during_fetch.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
+        during_fetch.residency != SHADOWSPILL_OBJECT_FETCHING ||
         shadowspill_test_admit_task(runtime, &execution) !=
             SHADOWSPILL_STATUS_OK || shadowspill_test_before_task(
             runtime, execution.task_id, compute, &acquired, 1U
@@ -1918,8 +1903,7 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
             0U,
             replacement.pointer,
             &replaced
-        ) != SHADOWSPILL_STATUS_OK || shadowspill_mock_enqueue_compute(
-            mock, compute, 1000000U
+        ) != SHADOWSPILL_STATUS_OK || shadowspill_mock_enqueue_compute(&mock, compute, 1000000U
         ) != 0 || shadowspill_test_after_task(
             runtime, execution.task_id, compute
         ) != SHADOWSPILL_STATUS_OK || shadowspill_runtime_wait_idle(runtime) !=
@@ -1937,31 +1921,29 @@ static int functional_mutation_supersedes_inflight_prefetch(void) {
 
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int queued_release_causally_precedes_fetch(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 50000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
 
@@ -1979,7 +1961,7 @@ static int queued_release_causally_precedes_fetch(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = description.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const uint64_t input = description.object_id;
     const ShadowSpillTaskDescription consumer = {
@@ -2000,7 +1982,7 @@ static int queued_release_causally_precedes_fetch(void) {
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_admit_task(runtime, &consumer) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_enqueue_compute(mock, compute, 100000000U) != 0 ||
+        shadowspill_mock_enqueue_compute(&mock, compute, 100000000U) != 0 ||
         shadowspill_test_submit_actions(
             runtime, 1U, compute, &release, 1U
         ) != SHADOWSPILL_STATUS_OK || shadowspill_test_submit_actions(
@@ -2044,18 +2026,17 @@ static int queued_release_causally_precedes_fetch(void) {
 
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
-static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
-    ShadowSpillMockBackend *mock = NULL;
+static int nonretained_fetch_then_evict_reserves_fresh_spill(void) {
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .evict_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 10000000U,
@@ -2063,13 +2044,12 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
 
@@ -2083,11 +2063,11 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = description.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
-    const ShadowSpillRuntimeAction offload = {
+    const ShadowSpillRuntimeAction evict = {
         .object_id = description.object_id,
-        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
     };
     const ShadowSpillObjectUpdate update = {
         .object_id = description.object_id,
@@ -2100,7 +2080,7 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         .input_count = 1U,
         .updates = &update,
         .update_count = 1U,
-        .actions = &offload,
+        .actions = &evict,
         .action_count = 1U,
     };
     ShadowSpillObjectBinding binding = {0};
@@ -2116,17 +2096,17 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
         failed = shadowspill_object_snapshot(
             runtime, description.object_id, &snapshot
         ) != SHADOWSPILL_STATUS_OK;
-        if (!failed && snapshot.residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+        if (!failed && snapshot.residency == SHADOWSPILL_OBJECT_FETCHING) {
             break;
         }
         sleep_milliseconds(1U);
     }
-    failed = failed || snapshot.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
+    failed = failed || snapshot.residency != SHADOWSPILL_OBJECT_FETCHING ||
         shadowspill_test_admit_task(runtime, &task) !=
             SHADOWSPILL_STATUS_OK || shadowspill_test_before_task(
             runtime, task.task_id, compute, &binding, 1U
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_enqueue_compute(mock, compute, 1000000U) != 0 ||
+        shadowspill_mock_enqueue_compute(&mock, compute, 1000000U) != 0 ||
         shadowspill_test_after_task(
             runtime, task.task_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
@@ -2147,7 +2127,7 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     if (failed) {
         fprintf(
             stderr,
-            "nonretained fetch/offload mismatch: residency=%u spill=%u "
+            "nonretained fetch/evict mismatch: residency=%u spill=%u "
             "lease=%u version=%llu fetches=%llu evicts=%llu "
             "execution_bytes=%llu spill_bytes=%llu\n",
             (unsigned)snapshot.residency,
@@ -2162,31 +2142,29 @@ static int nonretained_fetch_then_offload_reserves_fresh_spill(void) {
     }
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
-static int completed_offload_preserves_later_submitted_fetch(void) {
-    ShadowSpillMockBackend *mock = NULL;
+static int completed_evict_preserves_later_submitted_fetch(void) {
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .evict_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 10000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
 
@@ -2196,13 +2174,13 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
         .initial_version = 1U,
         .retain_spill_copy = 1U,
     };
-    const ShadowSpillRuntimeAction target_offload = {
+    const ShadowSpillRuntimeAction target_evict = {
         .object_id = target.object_id,
-        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
     };
     const ShadowSpillRuntimeAction target_fetch = {
         .object_id = target.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     ShadowSpillAllocation target_allocation = {0};
     int failed = shadowspill_register_object(runtime, &target) !=
@@ -2213,7 +2191,7 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
             runtime, target.object_id, target_allocation.pointer, NULL
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_submit_actions(
-            runtime, 1U, compute, &target_offload, 1U
+            runtime, 1U, compute, &target_evict, 1U
         ) != SHADOWSPILL_STATUS_OK || shadowspill_test_submit_actions(
             runtime, 2U, compute, &target_fetch, 1U
         ) != SHADOWSPILL_STATUS_OK;
@@ -2224,7 +2202,7 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
     failed = failed || shadowspill_object_snapshot(
             runtime, target.object_id, &submitted
         ) != SHADOWSPILL_STATUS_OK ||
-        (submitted.residency != SHADOWSPILL_OBJECT_PREFETCHING &&
+        (submitted.residency != SHADOWSPILL_OBJECT_FETCHING &&
          submitted.residency != SHADOWSPILL_OBJECT_EXECUTION_READY) ||
         submitted.execution_pointer == NULL ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
@@ -2249,31 +2227,29 @@ static int completed_offload_preserves_later_submitted_fetch(void) {
 
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int consumer_waits_for_latest_queued_fetch_generation(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     const ShadowSpillMockBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 50000000U,
         .event_delay_nanoseconds = 1000000U,
     };
     if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+        mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_test_destroy_runtime(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return -1;
     }
 
@@ -2287,7 +2263,7 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
     };
     const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillRuntimeAction release = {
         .object_id = object.object_id,
@@ -2316,13 +2292,13 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
             runtime, object.object_id, &first_fetch
         ) != SHADOWSPILL_STATUS_OK;
         if (!failed &&
-            first_fetch.residency == SHADOWSPILL_OBJECT_PREFETCHING) {
+            first_fetch.residency == SHADOWSPILL_OBJECT_FETCHING) {
             break;
         }
         sleep_milliseconds(1U);
     }
     failed = failed ||
-        first_fetch.residency != SHADOWSPILL_OBJECT_PREFETCHING ||
+        first_fetch.residency != SHADOWSPILL_OBJECT_FETCHING ||
         shadowspill_test_submit_actions(
             runtime, 71U, compute, &release, 1U
         ) != SHADOWSPILL_STATUS_OK || shadowspill_test_submit_actions(
@@ -2358,9 +2334,9 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
     }
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
@@ -2374,9 +2350,9 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
 
 int main(void) {
     REQUIRE_CANARY(spill_object_rekey_preserves_authoritative_lease());
-    REQUIRE_CANARY(invalid_action(0U, SHADOWSPILL_RUNTIME_PREFETCH));
+    REQUIRE_CANARY(invalid_action(0U, SHADOWSPILL_RUNTIME_FETCH));
     REQUIRE_CANARY(invalid_action(1U, SHADOWSPILL_RUNTIME_RELEASE));
-    REQUIRE_CANARY(invalid_action(1U, SHADOWSPILL_RUNTIME_OFFLOAD));
+    REQUIRE_CANARY(invalid_action(1U, SHADOWSPILL_RUNTIME_EVICT));
     REQUIRE_CANARY(invalid_before_task(0U));
     REQUIRE_CANARY(invalid_before_task(1U));
     REQUIRE_CANARY(duplicate_action());
@@ -2384,9 +2360,9 @@ int main(void) {
     REQUIRE_CANARY(output_handoff_requires_admitted_release());
     REQUIRE_CANARY(chained_output_allocation_handoff());
     REQUIRE_CANARY(valid_transition_paths());
-    REQUIRE_CANARY(prefetch_window_is_submitted_without_wire_blocking());
-    REQUIRE_CANARY(inflight_prefetch_transfers_to_caller());
-    REQUIRE_CANARY(offload_window_is_enqueued_without_dispatch_serialization());
+    REQUIRE_CANARY(fetch_window_is_submitted_without_wire_blocking());
+    REQUIRE_CANARY(inflight_fetch_transfers_to_caller());
+    REQUIRE_CANARY(evict_window_is_enqueued_without_dispatch_serialization());
     REQUIRE_CANARY(trigger_reservation_failure_reports_no_progress());
     REQUIRE_CANARY(immutable_execution_admission());
     REQUIRE_CANARY(caller_handoff_preserves_recurrent_object_identity());
@@ -2401,13 +2377,13 @@ int main(void) {
     REQUIRE_CANARY(admitted_task_rejects_allocation_contract_geometry_mismatch());
     REQUIRE_CANARY(admitted_task_rejects_incomplete_allocation_contract());
     REQUIRE_CANARY(admitted_task_reconciles_ordered_scratch_and_omissions());
-    REQUIRE_CANARY(admitted_prefetch_reserves_dynamic_capacity());
+    REQUIRE_CANARY(admitted_fetch_reserves_dynamic_capacity());
     REQUIRE_CANARY(execution_plan_lifecycle());
     REQUIRE_CANARY(functional_mutation_replaces_lease_without_copy());
-    REQUIRE_CANARY(functional_mutation_supersedes_inflight_prefetch());
+    REQUIRE_CANARY(functional_mutation_supersedes_inflight_fetch());
     REQUIRE_CANARY(queued_release_causally_precedes_fetch());
-    REQUIRE_CANARY(nonretained_fetch_then_offload_reserves_fresh_spill());
-    REQUIRE_CANARY(completed_offload_preserves_later_submitted_fetch());
+    REQUIRE_CANARY(nonretained_fetch_then_evict_reserves_fresh_spill());
+    REQUIRE_CANARY(completed_evict_preserves_later_submitted_fetch());
     REQUIRE_CANARY(consumer_waits_for_latest_queued_fetch_generation());
     return EXIT_SUCCESS;
 }
