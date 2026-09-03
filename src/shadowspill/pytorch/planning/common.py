@@ -19,11 +19,17 @@ from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitSearchExhaustedError,
 )
+from shadowspill.planner.quantization import (
+    GIGABYTE_PER_SECOND,
+    MICROSECOND_NS,
+    nearest,
+)
+from shadowspill.pytorch.lowering.program import execution_device_id
 from shadowspill.pytorch.profiling import (
     ProfilingResult,
     TaskMeasurement,
 )
-from shadowspill.pytorch.profiling.profiler import CudaTaskProfiler
+from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.simulator import SimulationConfig
 
@@ -58,7 +64,7 @@ class PlanningTimer:
 
     def attribute_compilation_and_profiling(
         self,
-        profiler: CudaTaskProfiler,
+        profiler: TaskProfiler,
     ) -> None:
         """Replace compiler/profile intervals with disjoint work classes."""
 
@@ -258,10 +264,17 @@ def build_simulation_config(
     workspace_reserve_bytes_: int,
     profiles: ProfilingResult,
 ) -> SimulationConfig:
-    """Build the exact framework-neutral simulator input for one Program."""
+    """Build the framework-neutral simulator input for one Program.
 
+    Calibrated rates enter at whole GB/s and latencies at whole microseconds,
+    so slightly different calibrations reuse one stored plan; the raw
+    calibration stays in the runtime's transfer capabilities.
+    """
+
+    fetch = memory.transfers.route(memory.spill.name, memory.execution.name)
+    evict = memory.transfers.route(memory.execution.name, memory.spill.name)
     return SimulationConfig.single_device(
-        "cuda_0",
+        execution_device_id(memory.execution_device),
         device_capacity_bytes=simulation_capacity(
             memory.execution_budget,
             workspace_reserve_bytes_,
@@ -269,22 +282,14 @@ def build_simulation_config(
             fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         ),
         spill_capacity_bytes=memory.spill_budget,
-        fetch_bandwidth_bytes_per_second=memory.transfers.route(
-            memory.spill.name,
-            memory.execution.name,
-        ).bandwidth_bytes_per_second,
-        evict_bandwidth_bytes_per_second=memory.transfers.route(
-            memory.execution.name,
-            memory.spill.name,
-        ).bandwidth_bytes_per_second,
-        fetch_latency_ns=memory.transfers.route(
-            memory.spill.name,
-            memory.execution.name,
-        ).latency_nanoseconds,
-        evict_latency_ns=memory.transfers.route(
-            memory.execution.name,
-            memory.spill.name,
-        ).latency_nanoseconds,
+        fetch_bandwidth_bytes_per_second=nearest(
+            fetch.bandwidth_bytes_per_second, GIGABYTE_PER_SECOND
+        ),
+        evict_bandwidth_bytes_per_second=nearest(
+            evict.bandwidth_bytes_per_second, GIGABYTE_PER_SECOND
+        ),
+        fetch_latency_ns=nearest(fetch.latency_nanoseconds, MICROSECOND_NS),
+        evict_latency_ns=nearest(evict.latency_nanoseconds, MICROSECOND_NS),
     )
 
 
@@ -321,9 +326,7 @@ def public_search_exhausted_error(
 ) -> PlanSearchExhaustedError:
     """Distinguish an evaluation ceiling from proof of plan infeasibility."""
 
-    exhausted = tuple(
-        item for item in error.diagnostics if item.status == "exhausted"
-    )
+    exhausted = tuple(item for item in error.diagnostics if item.status == "exhausted")
     largest_repairs = max(
         (item.repairs.total_attempts for item in exhausted),
         default=0,

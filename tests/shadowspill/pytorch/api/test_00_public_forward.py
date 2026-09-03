@@ -7,6 +7,7 @@ import torch.nn as nn
 from shadowspill.errors import (
     InputGuardError,
 )
+from shadowspill.planner.quantization import GIBIBYTE
 from shadowspill.pytorch import (
     export_model_state,
     import_model_state,
@@ -70,8 +71,15 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         + admission.provider_headroom_bytes
         + admission.slab_bytes
     )
+    # The default execution budget is the pool's capacity at whole-GiB
+    # granularity, so the plan leaves less than one GiB of the device budget
+    # unused.
     assert (
-        planned.plan_report.predicted_device_peak_bytes == admission.device_budget_bytes
+        planned.plan_report.predicted_device_peak_bytes <= admission.device_budget_bytes
+    )
+    assert (
+        admission.device_budget_bytes - planned.plan_report.predicted_device_peak_bytes
+        < GIBIBYTE
     )
     assert planned.plan_report.capture_identity
     assert planned.plan_report.program is planned.plan_report.execution_plan.program
