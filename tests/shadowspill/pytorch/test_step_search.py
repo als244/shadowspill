@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from torch import OutOfMemoryError
 
 from shadowspill.pytorch import StepSearchPoint, StepSearchReport, search_geometries
 from shadowspill.schema import artifact_schema
@@ -109,3 +110,68 @@ def test_the_winner_is_the_fastest_succeeded_point_per_budget() -> None:
     assert winner is not None and winner.sequences_per_microbatch == 3
     assert report.winner(2, 1) is None
     assert [item.execution_budget_bytes for item in report.winners] == [1]
+
+
+def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.errors import ProfilingError
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    def exhaust(*args: object, **kwargs: object) -> object:
+        cause = OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 GiB")
+        raise ProfilingError(
+            f"ShadowSpill failed to profile structural contract abc123: {cause}"
+        ) from cause
+
+    monkeypatch.setattr(module, "make_step_program", exhaust)
+    lines: list[str] = []
+    report = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        opt=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=2,
+        sequence_length=1,
+        budgets=[(12 << 30, 1 << 30), (16 << 30, 1 << 30)],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+        progress=lines.append,
+    )
+
+    assert report.geometries == ()
+    assert [point.status for point in report.points] == ["infeasible"] * 4
+    assert all("out of memory" in (point.error or "") for point in report.points)
+    assert report.winner(12 << 30, 1 << 30) is None
+    assert sum("exhausted the device" in line for line in lines) == 2
+    assert [line for line in lines if line.startswith("point 1/4")] == [
+        "point 1/4: 2 x 1 @ 12 GiB -> infeasible"
+    ]
+
+
+def test_a_build_failure_that_is_not_exhaustion_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.errors import ProfilingError
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise ProfilingError("an operator has no meta implementation")
+
+    monkeypatch.setattr(module, "make_step_program", fail)
+    with pytest.raises(ProfilingError, match="meta implementation"):
+        plan_step_search(
+            object(),  # type: ignore[arg-type]
+            objective=None,
+            opt=None,
+            example_microbatches=lambda sequences, accumulation: (),
+            total_sequences_per_step=1,
+            sequence_length=1,
+            budgets=[(12 << 30, 1 << 30)],
+            runtime=None,  # type: ignore[arg-type]
+            execution="execution",
+            spill="spill",
+        )

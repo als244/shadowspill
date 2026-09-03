@@ -23,7 +23,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
-from torch import nn
+from torch import OutOfMemoryError, nn
 
 from shadowspill.errors import (
     PlanInfeasibleError,
@@ -51,6 +51,24 @@ _INFEASIBLE = (
     SimulationInfeasibleError,
 )
 _EXHAUSTED = (PressureFitSearchExhaustedError, PlanSearchExhaustedError)
+
+
+def _device_exhausted(error: BaseException) -> bool:
+    """Whether a build failed because the device ran out of memory.
+
+    Profiling runs a task's real kernels, so the largest geometries can
+    exhaust the device before any plan exists. The frontend wraps what a
+    phase raised, chaining the original, so the exhaustion is found by
+    walking the chain rather than by matching the outermost type.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OutOfMemoryError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def search_geometries(
@@ -270,9 +288,14 @@ def plan_step_search(
     meaning and default as :func:`plan_step`. Failures are outcomes, not
     errors: a geometry-budget point that
     proves infeasible or exhausts its search budget is reported with that
-    status while the search continues. ``progress`` is called with a short
-    line at every geometry and point boundary; ``verbose`` additionally
-    forwards each planning call's own phase reporting.
+    status while the search continues. A geometry whose build exhausts the
+    device -- profiling runs real kernels, so the largest microbatch can --
+    reports every one of its budgets ``infeasible`` with the exhaustion as
+    the point's error, and the search moves to the next geometry; that
+    geometry contributes no build to the report, because it produced no
+    program. ``progress`` is called with a short line at every geometry and
+    point boundary; ``verbose`` additionally forwards each planning call's
+    own phase reporting.
     """
 
     def announce(message: str) -> None:
@@ -300,23 +323,54 @@ def plan_step_search(
             f"geometry {geometry_index}/{len(geometries)}: building"
             f" {sequences} x {accumulation}"
         )
-        examples = example_microbatches(sequences, accumulation)
         build_started = time.perf_counter()
-        step = make_step_program(
-            model,
-            objective=objective,
-            opt=opt,
-            example_inputs=examples,
-            runtime=runtime,
-            execution=execution,
-            spill=spill,
-            optimizer_ordering=optimizer_ordering,
-            verbose=verbose,
-            artifact_store_dir=artifact_store_dir,
-            save_plan=True,
-            force_fresh=force_fresh,
-            implementation_revision=implementation_revision,
-        )
+        try:
+            examples = example_microbatches(sequences, accumulation)
+            step = make_step_program(
+                model,
+                objective=objective,
+                opt=opt,
+                example_inputs=examples,
+                runtime=runtime,
+                execution=execution,
+                spill=spill,
+                optimizer_ordering=optimizer_ordering,
+                verbose=verbose,
+                artifact_store_dir=artifact_store_dir,
+                save_plan=True,
+                force_fresh=force_fresh,
+                implementation_revision=implementation_revision,
+            )
+        except Exception as error:
+            if not _device_exhausted(error):
+                raise
+            announce(
+                f"geometry {geometry_index}/{len(geometries)}: {sequences} x"
+                f" {accumulation} exhausted the device after"
+                f" {time.perf_counter() - build_started:.1f} s;"
+                " every budget is infeasible"
+            )
+            for execution_budget, spill_budget in budgets:
+                point_index += 1
+                announce(
+                    f"point {point_index}/{point_total}: {sequences} x"
+                    f" {accumulation} @ {execution_budget >> 30} GiB ->"
+                    " infeasible"
+                )
+                points.append(
+                    StepSearchPoint(
+                        sequences_per_microbatch=sequences,
+                        accumulation_count=accumulation,
+                        execution_budget_bytes=execution_budget,
+                        spill_budget_bytes=spill_budget,
+                        status="infeasible",
+                        makespan_seconds=None,
+                        summary=None,
+                        error=str(error),
+                        search_seconds=0.0,
+                    )
+                )
+            continue
         announce(
             f"geometry {geometry_index}/{len(geometries)}: built"
             f" {sequences} x {accumulation} in"
