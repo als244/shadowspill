@@ -1,6 +1,5 @@
 """Public PyTorch values and planning entrypoints for ShadowSpill."""
 
-
 from .api import make_step_program, plan_forward, plan_step
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
@@ -9,7 +8,7 @@ from .contracts import (
 )
 from .diagnostics import (
     DiagnosticsHandle,
-    ExecutionTiming,
+    LaneSummary,
     PhaseTimingComparison,
     PlanAllocationEvent,
     PlanCacheArtifact,
@@ -28,10 +27,14 @@ from .diagnostics import (
     PlanStorageRoot,
     PlanTaskStage,
     PlanUniqueStage,
-    SimulatorTransferComparison,
     StepDiagnostics,
     StepResult,
     StepTimingSummary,
+    TaskRecord,
+    Timelines,
+    TransferLane,
+    TransferRecord,
+    TransferRecords,
 )
 from .invocation import InvocationResult
 from .partition import PartitionPolicy, PartitionSpec
@@ -60,12 +63,19 @@ from .state import (
     import_optimizer_state,
     release_model_state,
 )
+from .step_search import (
+    StepSearchGeometryBuild,
+    StepSearchPoint,
+    StepSearchReport,
+    plan_step_search,
+    search_geometries,
+)
 
 __all__ = [
     "DiagnosticsHandle",
     "ExecutionTaskIdentity",
-    "ExecutionTiming",
     "InvocationResult",
+    "LaneSummary",
     "MemoryPool",
     "ObjectConsistency",
     "ObjectiveResult",
@@ -97,14 +107,21 @@ __all__ = [
     "RuntimeFailureDiagnostics",
     "SharedInput",
     "SharedOutput",
-    "SimulatorTransferComparison",
     "StepDiagnostics",
     "StepResult",
+    "StepSearchGeometryBuild",
+    "StepSearchPoint",
+    "StepSearchReport",
     "StepTimingSummary",
+    "TaskRecord",
     "TensorRef",
     "TensorSpec",
+    "Timelines",
     "TransferCapabilities",
+    "TransferLane",
     "TransferProfile",
+    "TransferRecord",
+    "TransferRecords",
     "export_model_state",
     "export_optimizer_state",
     "import_model_state",
@@ -112,7 +129,9 @@ __all__ = [
     "make_step_program",
     "plan_forward",
     "plan_step",
+    "plan_step_search",
     "release_model_state",
+    "search_geometries",
     "shared_input",
     "shared_output",
 ]
