@@ -7,8 +7,11 @@ from `qualification/`.
 ```text
 benchmarking/
 ├── data_geometry.py
+├── _serialization.py                   shared encode/decode helpers
 ├── datasets/
 │   └── input_programs/                 immutable pre-PressureFit datasets
+├── quickstart.py                       plan and run one model, story told
+├── quickstart.md                       its guide: flags, phases, terms
 ├── program_collection/
 │   ├── collect.py                      collection launcher
 │   ├── configs/                        versioned collection matrices
@@ -19,7 +22,6 @@ benchmarking/
     ├── planning_caches/                the frontier run's own artifact store
     ├── configs/                        versioned budget/bandwidth matrices
     ├── plan_artifacts.py               annotated-plan serialization
-    ├── _serialization.py               shared encode/decode helpers
     └── results/                        complete measured baselines
 ```
 

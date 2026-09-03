@@ -13,9 +13,9 @@ From a fresh checkout:
 ```
 
 The script creates `.venv`, installs the supported PyTorch and device-backend
-stack, builds the C planner, simulator, runtime, backend, and PyTorch adapter,
-installs the mlops operation library with its implementation providers, and
-verifies the installation. To use an existing virtual or Conda
+stack, builds the C planner, simulator, runtime, the backends whose toolchains
+are installed, and the PyTorch adapter, installs the mlops operation library
+with its implementation providers, and verifies the installation. To use an existing virtual or Conda
 environment:
 
 ```bash
@@ -71,9 +71,11 @@ print("loss", result.objectives[0])
 train_step.close()
 ```
 
-One call performs one optimizer update. See the
-[Python quickstart](docs/python/quickstart.md) for accumulation, checkpoints,
-tracing, forward-only planning, and complete state lifecycle handling.
+One call performs one optimizer update. The
+[Python quickstart](docs/python/quickstart.md) covers accumulation,
+checkpoints, tracing, forward-only planning, and state lifecycle; the
+[quickstart script](benchmarking/quickstart.md) runs one model end to end,
+and the [examples](docs/examples/README.md) are complete workflows.
 
 ## Project structure
 
@@ -106,4 +108,3 @@ tracing, forward-only planning, and complete state lifecycle handling.
 | Practical workflows | [Examples](docs/examples/README.md) |
 | Errors and cleanup | [Errors, failures, and cleanup](docs/python/failures.md) |
 | Repository development | [Development guide](docs/development/README.md) |
-| Root-cause records | [Engineering investigations](docs/investigations/README.md) |
