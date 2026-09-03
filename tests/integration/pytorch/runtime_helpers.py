@@ -17,8 +17,8 @@ def two_pool_topology(spill_bytes: int) -> dict[str, object]:
     return {
         "allocator_pool_id": 0,
         "pools": (
-            PoolBootstrap(pool_id=0, backend_kind=0, capacity_bytes=0),
-            PoolBootstrap(pool_id=1, backend_kind=1, capacity_bytes=spill_bytes),
+            PoolBootstrap(pool_id=0, kind=0, capacity_bytes=0),
+            PoolBootstrap(pool_id=1, kind=1, capacity_bytes=spill_bytes),
         ),
         "routes": (
             RouteBootstrap(

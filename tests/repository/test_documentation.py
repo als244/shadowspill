@@ -9,6 +9,8 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import unquote
 
+from shadowspill.schema import artifact_schema
+
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 PYTHON_API = DOCS / "python" / "api"
@@ -45,7 +47,6 @@ _PUBLIC_C_REFERENCES = {
     _PUBLIC_HEADERS / "runtime.h": DOCS / "c" / "runtime.md",
     _PUBLIC_HEADERS / "admission_replay.h": DOCS / "c" / "runtime.md",
     _PUBLIC_HEADERS / "backend.h": DOCS / "c" / "backends.md",
-    _PUBLIC_HEADERS / "profiler.h": DOCS / "c" / "backends.md",
     _PUBLIC_HEADERS / "planner.h": DOCS / "c" / "planner.md",
     _PUBLIC_HEADERS / "simulator.h": DOCS / "c" / "simulator.md",
     ROOT
@@ -59,6 +60,7 @@ _PUBLIC_C_REFERENCES = {
 
 _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/api.py:make_step_program",
+    "src/shadowspill/pytorch/step_search.py:plan_step_search",
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
     "src/shadowspill/planner/plan.py:pressurefit_program",
@@ -98,9 +100,7 @@ def _markdown_files() -> tuple[Path, ...]:
 
 def _normative_markdown_files() -> tuple[Path, ...]:
     return tuple(
-        path
-        for path in _markdown_files()
-        if not path.is_relative_to(DOCS / "investigations")
+        path for path in _markdown_files() if not path.is_relative_to(DOCS / "internal")
     )
 
 
@@ -336,7 +336,6 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "examples/concurrent-callables.md",
         "c/README.md",
         "development/README.md",
-        "investigations/README.md",
     ):
         assert f"]({target})" in index
 
@@ -395,7 +394,7 @@ def test_examples_cover_complete_public_workflows() -> None:
         ),
         "diagnostics.md": (
             "report.diagnostics.task(",
-            "step.simulator_comparison",
+            "step.transfers.fetch",
         ),
         "custom-partitioning.md": ("assign_stages(", "partition=EveryNNodes("),
         "concurrent-callables.md": (".submit(", ".close()"),
@@ -592,21 +591,21 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
         "## Interpreting a graph profile",
         "## PressureFit diagnostics",
         "## Physical-layout diagnostics",
-        "shadowspill.plan_diagnostics/v1",
+        artifact_schema("plan_diagnostics"),
         "chosen_graph_pair_variant",
     ):
         assert required in plan_report
 
     step_diagnostics = (DOCS / "python" / "step-diagnostics.md").read_text()
     for required in (
-        "## Start with the summary",
-        "## The seven task-boundary timestamps",
-        "## Host boundary breakdown",
-        "## Task-by-task simulator comparison",
-        "## Transfer diagnostics",
-        "## Allocator diagnostics",
-        "## Runtime counters and trace integrity",
-        "shadowspill.step_diagnostics/v4",
+        "## Structure",
+        "## Summary",
+        "## Tasks",
+        "## Transfers",
+        "## Timelines",
+        "## Allocator",
+        "## Runtime",
+        artifact_schema("step_diagnostics"),
     ):
         assert required in step_diagnostics
 
@@ -617,11 +616,11 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
         "## StepProgram format",
         "## AnnotatedProgramPlan format",
         "## Loading and validation",
-        "shadowspill.program/v3",
-        "shadowspill.pressurefit_program/v1",
-        "shadowspill.step_program/v1",
-        "shadowspill.annotated_program_plan/v2",
-        "shadowspill.fixed_physical_layout/v3",
+        artifact_schema("program"),
+        artifact_schema("pressurefit_program"),
+        artifact_schema("step_program"),
+        artifact_schema("annotated_program_plan"),
+        artifact_schema("fixed_physical_layout"),
     ):
         assert required in serialization
     for block in _JSON_FENCE.findall(serialization):
@@ -663,17 +662,6 @@ def test_current_contract_docs_are_backend_and_topology_neutral() -> None:
     )
 
 
-def test_investigations_are_marked_non_normative() -> None:
-    reports = tuple(
-        path
-        for path in (DOCS / "investigations").glob("*.md")
-        if path.name != "README.md"
-    )
-    assert reports
-    for report in reports:
-        assert "Historical, non-normative investigation" in report.read_text()
-
-
 def test_public_headers_avoid_historical_compatibility_labels() -> None:
     violations = [
         path.relative_to(ROOT).as_posix()
@@ -708,16 +696,19 @@ def test_every_timing_field_is_described_where_timings_are_explained() -> None:
     next reader draws the wrong conclusion from it.
     """
 
-    source = (
-        ROOT / "src/shadowspill/pytorch/diagnostics/execution.py"
-    ).read_text()
+    source = (ROOT / "src/shadowspill/pytorch/diagnostics/execution.py").read_text()
     guide = (ROOT / "docs/python/step-diagnostics.md").read_text()
     tree = ast.parse(source)
     undocumented: dict[str, list[str]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.ClassDef):
             continue
-        if node.name not in {"TaskExecutionTiming", "StepTimingSummary"}:
+        if node.name not in {
+            "TaskRecord",
+            "TransferRecord",
+            "LaneSummary",
+            "StepTimingSummary",
+        }:
             continue
         missing = [
             item.target.id

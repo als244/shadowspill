@@ -9,9 +9,8 @@
 #include "runtime_test.h"
 
 static int best_fit_preserves_largest_range(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         /* Keep all three frees pending while best-fit chooses a successor. */
         .event_delay_nanoseconds = 10000000U,
     };
@@ -19,12 +18,12 @@ static int best_fit_preserves_largest_range(void) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 256U, 0U, 1U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 256U, 0U, 1U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     ShadowSpillAllocation allocations[5] = {{0}};
     const uint64_t sizes[] = {64U, 32U, 96U, 32U};
     for (uint32_t index = 0U; !failed && index < 4U; ++index) {
@@ -58,30 +57,29 @@ static int best_fit_preserves_largest_range(void) {
     }
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
 static int same_stream_split_retires_cleanly(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(mock, 128U, 0U, 1U, 1000U, &topology);
+    shadowspill_mock_runtime_topology(&mock, 128U, 0U, 1U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     ShadowSpillAllocation original = {0};
     ShadowSpillAllocation split = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        mock.create_stream(mock.state, &compute) != 0 ||
         shadowspill_memory_pool_allocate(runtime, 0U, 128U, 1U, compute, &original) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_free(runtime, 0U, original.allocation_id, compute) !=
@@ -102,9 +100,9 @@ static int same_stream_split_retires_cleanly(void) {
         statistics.largest_free_range_bytes != 128U;
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
@@ -114,23 +112,21 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
         ITERATIONS = 128,
         SPLITS_PER_ITERATION = 8,
     };
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 100000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(
-        mock, POOL_BYTES, 0U, 16U, 1000U, &topology
+    shadowspill_mock_runtime_topology(&mock, POOL_BYTES, 0U, 16U, 1000U, &topology
     );
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     uint32_t pseudo_random = 0x6d2b79f5U;
     for (uint32_t iteration = 0U;
          !failed && iteration < ITERATIONS;
@@ -139,7 +135,7 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
         ShadowSpillAllocation splits[SPLITS_PER_ITERATION] = {{0}};
         failed = shadowspill_memory_pool_allocate(runtime, 0U, POOL_BYTES, 16U, compute, &whole
             ) != SHADOWSPILL_STATUS_OK ||
-            shadowspill_mock_enqueue_compute(mock, compute, 1000U) != 0 ||
+            shadowspill_mock_enqueue_compute(&mock, compute, 1000U) != 0 ||
             shadowspill_memory_pool_free(runtime, 0U, whole.allocation_id, compute) !=
                 SHADOWSPILL_STATUS_OK;
         uint64_t remaining = POOL_BYTES;
@@ -176,9 +172,9 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
     }
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
-        (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+        (void)mock.destroy_stream(mock.state, compute);
     }
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
 
@@ -195,9 +191,8 @@ int main(void) {
         fprintf(stderr, "runtime canary failed: repeated_nested_splits_reclaim_the_pool\n");
         return EXIT_FAILURE;
     }
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
         .evict_delay_nanoseconds = 100000000U,
     };
@@ -206,18 +201,17 @@ int main(void) {
     }
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(
-        mock, 256U, 256U, 1U, 10000U, &topology
+    shadowspill_mock_runtime_topology(&mock, 256U, 256U, 1U, 10000U, &topology
     );
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
         SHADOWSPILL_STATUS_OK) {
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return EXIT_FAILURE;
     }
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    if (shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
+    if (mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
-        shadowspill_mock_backend_destroy(mock);
+        shadowspill_backend_destroy(&mock);
         return EXIT_FAILURE;
     }
     ShadowSpillAllocation allocation = {0};
@@ -233,7 +227,7 @@ int main(void) {
     }
     if (shadowspill_memory_pool_record_stream(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
+        shadowspill_mock_enqueue_compute(&mock, compute, 100000U) != 0 ||
         shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
@@ -319,12 +313,12 @@ int main(void) {
         shadowspill_test_publish_initial(
             runtime, object.object_id, first_generation.pointer, NULL
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0) {
+        shadowspill_mock_enqueue_compute(&mock, compute, 100000U) != 0) {
         return EXIT_FAILURE;
     }
-    const ShadowSpillRuntimeAction offload = {
+    const ShadowSpillRuntimeAction evict = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_OFFLOAD,
+        .kind = SHADOWSPILL_RUNTIME_EVICT,
     };
     const ShadowSpillObjectUpdate update = {
         .object_id = object.object_id,
@@ -334,7 +328,7 @@ int main(void) {
         .task_id = 1U,
         .updates = &update,
         .update_count = 1U,
-        .actions = &offload,
+        .actions = &evict,
         .action_count = 1U,
     };
     if (shadowspill_test_admit_task(runtime, &first_task) !=
@@ -352,18 +346,18 @@ int main(void) {
         SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
-    const ShadowSpillRuntimeAction prefetch = {
+    const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     if (shadowspill_test_submit_actions(
-            runtime, 2U, compute, &prefetch, 1U
+            runtime, 2U, compute, &fetch, 1U
         ) !=
         SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
     }
     const uint64_t input_ids[] = {object.object_id, object.object_id};
-    const ShadowSpillObjectUpdate post_prefetch_update = {
+    const ShadowSpillObjectUpdate post_fetch_update = {
         .object_id = object.object_id,
         .version_delta = 1U,
     };
@@ -371,7 +365,7 @@ int main(void) {
         .task_id = 3U,
         .input_object_ids = input_ids,
         .input_count = 2U,
-        .updates = &post_prefetch_update,
+        .updates = &post_fetch_update,
         .update_count = 1U,
     };
     ShadowSpillObjectBinding bindings[2] = {{0}};
@@ -401,7 +395,7 @@ int main(void) {
         .object_id = object.object_id,
         .kind = SHADOWSPILL_RUNTIME_RELEASE,
     };
-    if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
+    if (shadowspill_mock_enqueue_compute(&mock, compute, 100000U) != 0 ||
         shadowspill_test_submit_actions(
             runtime, 6U, compute, &release, 1U
         ) !=
@@ -439,16 +433,16 @@ int main(void) {
             .initially_resident = 1U,
         },
     };
-    const ShadowSpillRuntimeAction pair_prefetch[] = {
-        {.object_id = 8U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
-        {.object_id = 9U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+    const ShadowSpillRuntimeAction pair_fetch[] = {
+        {.object_id = 8U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+        {.object_id = 9U, .kind = SHADOWSPILL_RUNTIME_FETCH},
     };
     if (shadowspill_register_object(runtime, &pair[0]) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &pair[1]) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_test_submit_actions(
-            runtime, 4U, compute, pair_prefetch, 2U
+            runtime, 4U, compute, pair_fetch, 2U
         ) !=
             SHADOWSPILL_STATUS_OK) {
         return EXIT_FAILURE;
@@ -473,7 +467,7 @@ int main(void) {
         pair_bindings[0].pointer == pair_bindings[1].pointer) {
         return EXIT_FAILURE;
     }
-    if (shadowspill_mock_enqueue_compute(mock, compute, 100000U) != 0 ||
+    if (shadowspill_mock_enqueue_compute(&mock, compute, 100000U) != 0 ||
         shadowspill_test_after_task(
             runtime, pair_consumer.task_id, compute
         ) !=
@@ -488,10 +482,10 @@ int main(void) {
     }
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_destroy_compute_stream(mock, compute) != 0) {
+        mock.destroy_stream(mock.state, compute) != 0) {
         return EXIT_FAILURE;
     }
     shadowspill_test_destroy_runtime(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return EXIT_SUCCESS;
 }

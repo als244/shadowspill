@@ -63,6 +63,24 @@ The planning side decides what is legal and predicts its cost. The execution
 side follows the admitted records; it does not rediscover graph semantics or
 rerun memory-policy search.
 
+## Libraries and responsibilities
+
+The compiled code is three kinds of shared object with one direction of
+dependency, and a Python package above them:
+
+| Library | Holds | Knows about |
+|---|---|---|
+| `libshadowspill.so` | the neutral C library: IR digests, PressureFit, simulator, physical admission, and the runtime with its [memory pools](memory-pools.md), [transfers](transfers.md), [events](events.md), task boundaries, and tracing | the backend contract only |
+| `libshadowspill_backend_<provider>.so` | one provider's implementation of the [backend contract](backends.md): device allocation, host registration, streams, copies, events, profiler | its driver and nothing of ShadowSpill's |
+| `libshadowspill_pytorch.so` | the [PyTorch adapter](adapter.md): the pluggable allocator, objects and storage views, task boundaries, tracing | PyTorch and the neutral runtime |
+| `shadowspill` (Python) | capture, lowering, profiling, planning orchestration, the planned callables, diagnostics | the adapter's C API and the neutral library |
+
+The runtime is handed a backend table at create and never links a provider;
+the adapter opens the backend library by name at bootstrap. Every object with
+a lifetime or a policy, pools and their arenas, routes and lanes, event pools,
+calibration, is the neutral library's, built from the table's driver-level
+calls, which is what lets a new provider plug in with no change above it.
+
 ## How planning responsibilities differ
 
 The planning components answer deliberately different questions:
@@ -178,8 +196,9 @@ retirements; unrelated plans continue independently.
 | Planner | Complete recomputation selections, residency strategies, memory actions, and candidate ranking | Graph construction or numerical execution |
 | Simulator | Deterministic compute, transfer, capacity, and dependency replay | Candidate generation or physical placement |
 | Physical admission | Allocation lifetimes, task-allocation contract, fixed placements, dynamic scratch, and causal reuse dependencies | Logical PressureFit policy |
-| Runtime | Pools, leases, objects, events, transfer lanes, task boundaries, failure state, and worker progress | Graph capture or model semantics |
-| Backend | Provider allocation, copy, stream, event, and profiler operations | Object or schedule policy |
+| Runtime | Pools and their arenas, leases, objects, routes and lanes, calibration, event and timing pools, task boundaries, failure state, and worker progress | Graph capture or model semantics |
+| Backend | The driver-level table: device allocation, host memory registration, streams, copies, events, facts, and profiler names and ranges | Any object lifetime or policy: pools, routes, lanes, event pooling |
+| PyTorch adapter | The pluggable allocator, object and storage views, task-boundary and tracing entry points, loading the backend by name | Provider headers or planning |
 
 The framework-neutral IR, planner, simulator, admission engine, and runtime do
 not import PyTorch, and a test asserts it rather than leaving it to
@@ -288,8 +307,20 @@ admission instead of selecting a heuristic semantic fallback.
 **Execution**
 
 8. [Simulation](simulation.md) defines deterministic timeline prediction.
-9. [Memory runtime](memory-runtime.md) defines pools, leases, task boundaries,
-   transfer lanes, completion, failure, and tracing.
+9. [Memory runtime](memory-runtime.md) defines leases, causal reuse, task
+   boundaries, the worker, failure, and tracing.
+10. [Task boundaries](task-boundaries.md) defines what `before_task` and
+    `after_task` do and what is still in flight when the dispatcher returns.
+11. [Step boundaries](step-boundaries.md) defines the recurrent invocation
+    cycle and what step time means.
+12. [Memory pools](memory-pools.md), [transfers](transfers.md), and
+    [events](events.md) define the runtime objects built on the backend:
+    arenas, routes and lanes with calibration, and event pools.
+13. [Backends](backends.md) defines the driver-level contract a provider
+    implements, and [PyTorch adapter](adapter.md) what sits between PyTorch
+    and the runtime.
+14. [Timelines](timelines.md) defines how a traced step is measured on the
+    device clock.
 
 The [Python guide](../python/README.md) and [C guide](../c/README.md) document
 the corresponding public interfaces. The [examples](../examples/README.md)

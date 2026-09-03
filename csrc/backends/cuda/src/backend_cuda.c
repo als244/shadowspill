@@ -1,55 +1,10 @@
-#include <shadowspill/backend_cuda.h>
+/* The CUDA backend: the driver-level table over the CUDA driver API and NVML. */
+#include "backend_cuda_internal.h"
 
-#include <cuda.h>
-#include <nvml.h>
-#include <pthread.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-
-typedef struct ShadowSpillCudaEventNode {
-    CUevent event;
-    struct ShadowSpillCudaEventNode *all_next;
-    struct ShadowSpillCudaEventNode *free_next;
-} ShadowSpillCudaEventNode;
-
-struct ShadowSpillCudaBackend {
-    pthread_mutex_t mutex;
-    CUdevice device;
-    CUcontext context;
-    CUcontext creator_previous_context;
-    nvmlDevice_t nvml_device;
-    uint8_t nvml_initialized;
-    pthread_t creator_thread;
-    ShadowSpillCudaBackendCapabilities capabilities;
-    ShadowSpillCudaBackendStatistics statistics;
-    ShadowSpillCudaEventNode *all_events;
-    ShadowSpillCudaEventNode *free_events;
-    _Atomic uint8_t profiler_enabled;
-    CUresult last_error;
-    nvmlReturn_t last_nvml_error;
-};
-
-void shadowspill_cuda_backend_profiler_enable(
-    ShadowSpillCudaBackend *backend, uint8_t enabled
-) {
-    if (backend != NULL) {
-        atomic_store_explicit(
-            &backend->profiler_enabled, enabled != 0U, memory_order_release
-        );
-    }
-}
-
-uint8_t shadowspill_cuda_backend_profiler_is_enabled(
-    const ShadowSpillCudaBackend *backend
-) {
-    return backend == NULL
-        ? 0U
-        : atomic_load_explicit(
-              &backend->profiler_enabled, memory_order_acquire
-          );
-}
 
 static _Thread_local ShadowSpillCudaBackend *attached_backend;
 
@@ -65,10 +20,7 @@ static int record_result(ShadowSpillCudaBackend *backend, CUresult result) {
     return -1;
 }
 
-static int record_nvml_result(
-    ShadowSpillCudaBackend *backend,
-    nvmlReturn_t result
-) {
+static int record_nvml_result(ShadowSpillCudaBackend *backend, nvmlReturn_t result) {
     if (result == NVML_SUCCESS) {
         return 0;
     }
@@ -80,6 +32,8 @@ static int record_nvml_result(
     return -1;
 }
 
+/* The provider's context must be current on the calling thread; the runtime
+ * worker and the framework's threads all come through here. */
 static int activate_context(ShadowSpillCudaBackend *backend) {
     if (attached_backend == backend) {
         return 0;
@@ -95,11 +49,17 @@ static int activate_context(ShadowSpillCudaBackend *backend) {
             return record_result(backend, result);
         }
         pthread_mutex_lock(&backend->mutex);
-        ++backend->statistics.context_activations;
+        ++backend->statistics.provider_activations;
         pthread_mutex_unlock(&backend->mutex);
     }
     attached_backend = backend;
     return 0;
+}
+
+static void count(ShadowSpillCudaBackend *backend, uint64_t *counter, uint64_t by) {
+    pthread_mutex_lock(&backend->mutex);
+    *counter += by;
+    pthread_mutex_unlock(&backend->mutex);
 }
 
 static CUstream stream_value(ShadowSpillBackendStream stream) {
@@ -110,199 +70,216 @@ static CUevent event_value(ShadowSpillBackendEvent event) {
     return (CUevent)event.words[0];
 }
 
-static ShadowSpillProfilerRange profile_begin(
-    ShadowSpillCudaBackend *backend, const char *name
-) {
-    ShadowSpillProfiler profiler = shadowspill_cuda_backend_profiler(backend);
-    return profiler.range_begin(profiler.state, name);
-}
+/* ---------------------------------------------------------------- memory */
 
-static void profile_end(
-    ShadowSpillCudaBackend *backend, ShadowSpillProfilerRange range
-) {
-    ShadowSpillProfiler profiler = shadowspill_cuda_backend_profiler(backend);
-    profiler.range_end(profiler.state, range);
-}
-
-static int allocate_execution(void *state, uint64_t bytes, void **pointer) {
+static int allocate_device(void *state, uint64_t bytes, void **address) {
     ShadowSpillCudaBackend *backend = state;
-    if (pointer == NULL || activate_context(backend) != 0) {
+    if (address == NULL || bytes > SIZE_MAX || activate_context(backend) != 0) {
         return -1;
     }
     CUdeviceptr allocation = 0U;
-    CUresult result = cuMemAlloc(&allocation, (size_t)bytes);
-    if (record_result(backend, result) != 0) {
+    if (record_result(backend, cuMemAlloc(&allocation, (size_t)bytes)) != 0) {
         return -1;
     }
-    *pointer = (void *)(uintptr_t)allocation;
+    *address = (void *)(uintptr_t)allocation;
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.device_allocations;
+    backend->statistics.bytes_device_allocated += bytes;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int free_execution(void *state, void *pointer) {
+static int free_device(void *state, void *address, uint64_t bytes) {
     ShadowSpillCudaBackend *backend = state;
-    if (activate_context(backend) != 0) {
-        return -1;
-    }
-    CUresult result = cuMemFree((CUdeviceptr)(uintptr_t)pointer);
-    if (record_result(backend, result) != 0) {
+    if (activate_context(backend) != 0 ||
+        record_result(backend, cuMemFree((CUdeviceptr)(uintptr_t)address)) != 0) {
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.device_frees;
+    backend->statistics.bytes_device_freed += bytes;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int allocate_spill(void *state, uint64_t bytes, void **pointer) {
+static int register_host_memory(void *state, void *address, uint64_t bytes) {
     ShadowSpillCudaBackend *backend = state;
-    if (pointer == NULL || bytes == 0U || bytes > SIZE_MAX ||
-        activate_context(backend) != 0) {
+    if (address == NULL || bytes == 0U || bytes > SIZE_MAX ||
+        activate_context(backend) != 0 ||
+        record_result(
+            backend,
+            cuMemHostRegister(address, (size_t)bytes, CU_MEMHOSTREGISTER_PORTABLE)
+        ) != 0) {
         return -1;
     }
-    void *allocation = malloc((size_t)bytes);
-    if (allocation == NULL) {
-        return -1;
-    }
-    CUresult result = cuMemHostRegister(
-        allocation, (size_t)bytes, CU_MEMHOSTREGISTER_PORTABLE
-    );
-    if (record_result(backend, result) != 0) {
-        free(allocation);
-        return -1;
-    }
-    *pointer = allocation;
     pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.pinned_host_allocations;
+    ++backend->statistics.pinned_host_registrations;
+    backend->statistics.bytes_pinned_host_registered += bytes;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int free_spill(void *state, void *pointer) {
+static int unregister_host_memory(void *state, void *address, uint64_t bytes) {
     ShadowSpillCudaBackend *backend = state;
-    if (pointer == NULL || activate_context(backend) != 0) {
+    if (address == NULL || activate_context(backend) != 0 ||
+        record_result(backend, cuMemHostUnregister(address)) != 0) {
         return -1;
     }
-    CUresult result = cuMemHostUnregister(pointer);
-    if (record_result(backend, result) != 0) {
-        return -1;
-    }
-    free(pointer);
     pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.pinned_host_frees;
+    ++backend->statistics.pinned_host_unregistrations;
+    backend->statistics.bytes_pinned_host_unregistered += bytes;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int create_stream(
-    void *state,
-    ShadowSpillBackendStream *stream
-) {
+/* --------------------------------------------------------------- streams */
+
+static int create_stream(void *state, ShadowSpillBackendStream *stream) {
     ShadowSpillCudaBackend *backend = state;
     if (stream == NULL || activate_context(backend) != 0) {
         return -1;
     }
     CUstream created = NULL;
-    CUresult result = cuStreamCreate(&created, CU_STREAM_NON_BLOCKING);
-    if (record_result(backend, result) != 0) {
+    if (record_result(backend, cuStreamCreate(&created, CU_STREAM_NON_BLOCKING)) != 0) {
         return -1;
     }
-    *stream = (ShadowSpillBackendStream){
-        .words = {(uintptr_t)created, 0U},
-    };
-    pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.streams_created;
-    pthread_mutex_unlock(&backend->mutex);
+    *stream = (ShadowSpillBackendStream){.words = {(uintptr_t)created, 0U}};
+    count(backend, &backend->statistics.streams_created, 1U);
     return 0;
 }
 
 static int destroy_stream(void *state, ShadowSpillBackendStream stream) {
     ShadowSpillCudaBackend *backend = state;
-    if (activate_context(backend) != 0) {
+    if (activate_context(backend) != 0 ||
+        record_result(backend, cuStreamDestroy(stream_value(stream))) != 0) {
         return -1;
     }
-    CUresult result = cuStreamDestroy(stream_value(stream));
-    if (record_result(backend, result) != 0) {
+    count(backend, &backend->statistics.streams_destroyed, 1U);
+    return 0;
+}
+
+static int synchronize_stream(void *state, ShadowSpillBackendStream stream) {
+    ShadowSpillCudaBackend *backend = state;
+    if (activate_context(backend) != 0 ||
+        record_result(backend, cuStreamSynchronize(stream_value(stream))) != 0) {
+        return -1;
+    }
+    count(backend, &backend->statistics.stream_synchronizations, 1U);
+    return 0;
+}
+
+static ShadowSpillBackendStream wrap_stream(
+    void *state, uint64_t framework_stream_handle
+) {
+    (void)state;
+    return (ShadowSpillBackendStream){
+        .words = {(uintptr_t)framework_stream_handle, 0U},
+    };
+}
+
+/* ---------------------------------------------------------------- copies */
+
+static int copy_host_to_device(
+    void *state, void *device, const void *host, uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    ShadowSpillCudaBackend *backend = state;
+    if ((bytes != 0U && (device == NULL || host == NULL)) || bytes > SIZE_MAX ||
+        activate_context(backend) != 0 ||
+        record_result(
+            backend,
+            cuMemcpyHtoDAsync(
+                (CUdeviceptr)(uintptr_t)device, host, (size_t)bytes,
+                stream_value(stream)
+            )
+        ) != 0) {
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.streams_destroyed;
+    ++backend->statistics.copies_host_to_device;
+    backend->statistics.bytes_host_to_device += bytes;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
 
-static int create_event(void *state, ShadowSpillBackendEvent *event) {
+static int copy_device_to_host(
+    void *state, void *host, const void *device, uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    ShadowSpillCudaBackend *backend = state;
+    if ((bytes != 0U && (device == NULL || host == NULL)) || bytes > SIZE_MAX ||
+        activate_context(backend) != 0 ||
+        record_result(
+            backend,
+            cuMemcpyDtoHAsync(
+                host, (CUdeviceptr)(uintptr_t)device, (size_t)bytes,
+                stream_value(stream)
+            )
+        ) != 0) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    ++backend->statistics.copies_device_to_host;
+    backend->statistics.bytes_device_to_host += bytes;
+    pthread_mutex_unlock(&backend->mutex);
+    return 0;
+}
+
+static int copy_device_to_device(
+    void *state, void *destination, const void *source, uint64_t bytes,
+    ShadowSpillBackendStream stream
+) {
+    ShadowSpillCudaBackend *backend = state;
+    if ((bytes != 0U && (destination == NULL || source == NULL)) ||
+        bytes > SIZE_MAX || activate_context(backend) != 0 ||
+        record_result(
+            backend,
+            cuMemcpyDtoDAsync(
+                (CUdeviceptr)(uintptr_t)destination,
+                (CUdeviceptr)(uintptr_t)source, (size_t)bytes,
+                stream_value(stream)
+            )
+        ) != 0) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    ++backend->statistics.copies_device_to_device;
+    backend->statistics.bytes_device_to_device += bytes;
+    pthread_mutex_unlock(&backend->mutex);
+    return 0;
+}
+
+/* ---------------------------------------------------------------- events */
+
+static int create_event(void *state, ShadowSpillBackendEvent *event, uint8_t timing) {
     ShadowSpillCudaBackend *backend = state;
     if (event == NULL || activate_context(backend) != 0) {
         return -1;
     }
-    pthread_mutex_lock(&backend->mutex);
-    ShadowSpillCudaEventNode *node = backend->free_events;
-    if (node != NULL) {
-        backend->free_events = node->free_next;
-        node->free_next = NULL;
-    } else if (backend->statistics.event_pool_sealed) {
-        ++backend->statistics.event_pool_growth_rejections;
-        pthread_mutex_unlock(&backend->mutex);
+    CUevent created = NULL;
+    if (record_result(
+            backend,
+            cuEventCreate(&created, timing ? CU_EVENT_DEFAULT : CU_EVENT_DISABLE_TIMING)
+        ) != 0) {
         return -1;
     }
-    pthread_mutex_unlock(&backend->mutex);
-    if (node == NULL) {
-        node = calloc(1U, sizeof(*node));
-        CUevent created = NULL;
-        if (node == NULL || record_result(
-                backend, cuEventCreate(&created, CU_EVENT_DISABLE_TIMING)
-            ) != 0) {
-            free(node);
-            return -1;
-        }
-        node->event = created;
-        pthread_mutex_lock(&backend->mutex);
-        node->all_next = backend->all_events;
-        backend->all_events = node;
-        ++backend->statistics.event_pool_capacity;
-        ++backend->statistics.event_pool_driver_creates;
-        pthread_mutex_unlock(&backend->mutex);
-    }
-    *event = (ShadowSpillBackendEvent){
-        .words = {(uintptr_t)node->event, (uintptr_t)node},
-    };
-    pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.events_created;
-    ++backend->statistics.event_pool_in_use;
-    if (backend->statistics.event_pool_in_use >
-        backend->statistics.event_pool_peak_in_use) {
-        backend->statistics.event_pool_peak_in_use =
-            backend->statistics.event_pool_in_use;
-    }
-    pthread_mutex_unlock(&backend->mutex);
+    *event = (ShadowSpillBackendEvent){.words = {(uintptr_t)created, 0U}};
+    count(backend, &backend->statistics.events_created, 1U);
     return 0;
 }
 
 static int destroy_event(void *state, ShadowSpillBackendEvent event) {
     ShadowSpillCudaBackend *backend = state;
-    if (activate_context(backend) != 0 || event.words[1] == 0U) {
+    if (activate_context(backend) != 0 ||
+        record_result(backend, cuEventDestroy(event_value(event))) != 0) {
         return -1;
     }
-    ShadowSpillCudaEventNode *node =
-        (ShadowSpillCudaEventNode *)event.words[1];
-    pthread_mutex_lock(&backend->mutex);
-    node->free_next = backend->free_events;
-    backend->free_events = node;
-    ++backend->statistics.events_destroyed;
-    if (backend->statistics.event_pool_in_use != 0U) {
-        --backend->statistics.event_pool_in_use;
-    }
-    pthread_mutex_unlock(&backend->mutex);
+    count(backend, &backend->statistics.events_destroyed, 1U);
     return 0;
 }
 
 static int record_event(
-    void *state,
-    ShadowSpillBackendEvent event,
-    ShadowSpillBackendStream stream
+    void *state, ShadowSpillBackendEvent event, ShadowSpillBackendStream stream
 ) {
     ShadowSpillCudaBackend *backend = state;
     if (activate_context(backend) != 0) {
@@ -313,19 +290,13 @@ static int record_event(
     );
 }
 
-static int query_event(
-    void *state,
-    ShadowSpillBackendEvent event,
-    int *complete
-) {
+static int query_event(void *state, ShadowSpillBackendEvent event, int *complete) {
     ShadowSpillCudaBackend *backend = state;
     if (complete == NULL || activate_context(backend) != 0) {
         return -1;
     }
-    CUresult result = cuEventQuery(event_value(event));
-    pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.event_queries;
-    pthread_mutex_unlock(&backend->mutex);
+    const CUresult result = cuEventQuery(event_value(event));
+    count(backend, &backend->statistics.event_queries, 1U);
     if (result == CUDA_SUCCESS) {
         *complete = 1;
         return 0;
@@ -338,127 +309,130 @@ static int query_event(
 }
 
 static int wait_event(
-    void *state,
-    ShadowSpillBackendStream stream,
-    ShadowSpillBackendEvent event
+    void *state, ShadowSpillBackendStream stream, ShadowSpillBackendEvent event
 ) {
     ShadowSpillCudaBackend *backend = state;
-    const ShadowSpillProfilerRange range = profile_begin(
-        backend, "shadowspill.runtime.wait_event"
+    const ShadowSpillProfilerRange range =
+        shadowspill_cuda_range_begin(backend, "shadowspill.runtime.wait_event");
+    if (activate_context(backend) != 0 ||
+        record_result(
+            backend, cuStreamWaitEvent(stream_value(stream), event_value(event), 0U)
+        ) != 0) {
+        shadowspill_cuda_range_end(backend, range);
+        return -1;
+    }
+    count(backend, &backend->statistics.stream_waits, 1U);
+    shadowspill_cuda_range_end(backend, range);
+    return 0;
+}
+
+static int elapsed_nanoseconds(
+    void *state, ShadowSpillBackendEvent from, ShadowSpillBackendEvent to,
+    uint64_t *nanoseconds
+) {
+    ShadowSpillCudaBackend *backend = state;
+    if (nanoseconds == NULL || activate_context(backend) != 0) {
+        return -1;
+    }
+    float milliseconds = 0.0f;
+    const CUresult result =
+        cuEventElapsedTime(&milliseconds, event_value(from), event_value(to));
+    if (result == CUDA_ERROR_NOT_READY) {
+        return 1;
+    }
+    if (result != CUDA_SUCCESS) {
+        return -1;
+    }
+    *nanoseconds = milliseconds <= 0.0f
+        ? 0U
+        : (uint64_t)((double)milliseconds * 1000000.0);
+    return 0;
+}
+
+/* ----------------------------------------------------------------- facts */
+
+static int capabilities(void *state, ShadowSpillBackendCapabilities *out) {
+    ShadowSpillCudaBackend *backend = state;
+    if (backend == NULL || out == NULL) {
+        return -1;
+    }
+    *out = (ShadowSpillBackendCapabilities){
+        .device_ordinal = backend->device_ordinal,
+        .minimum_alignment = 256U,
+        .provider = "cuda",
+    };
+    return 0;
+}
+
+static int physical_memory(void *state, ShadowSpillBackendPhysicalMemory *out) {
+    ShadowSpillCudaBackend *backend = state;
+    if (backend == NULL || out == NULL || !backend->nvml_initialized) {
+        return -1;
+    }
+    nvmlMemory_t device_memory = {0};
+    nvmlReturn_t result =
+        nvmlDeviceGetMemoryInfo(backend->nvml_device, &device_memory);
+    if (record_nvml_result(backend, result) != 0) {
+        return -1;
+    }
+    unsigned int process_count = 0U;
+    result = nvmlDeviceGetComputeRunningProcesses_v3(
+        backend->nvml_device, &process_count, NULL
     );
-    if (activate_context(backend) != 0 || record_result(
-            backend,
-            cuStreamWaitEvent(stream_value(stream), event_value(event), 0U)
-        ) != 0) {
-        profile_end(backend, range);
-        return -1;
+    if (result != NVML_SUCCESS && result != NVML_ERROR_INSUFFICIENT_SIZE) {
+        return record_nvml_result(backend, result);
     }
-    pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.stream_waits;
-    pthread_mutex_unlock(&backend->mutex);
-    profile_end(backend, range);
-    return 0;
-}
-
-static int copy_async(
-    void *state,
-    void *destination,
-    const void *source,
-    uint64_t bytes,
-    uint8_t fetch,
-    ShadowSpillBackendStream stream
-) {
-    ShadowSpillCudaBackend *backend = state;
-    if ((bytes != 0U && (destination == NULL || source == NULL)) ||
-        bytes > SIZE_MAX || activate_context(backend) != 0) {
-        return -1;
-    }
-    CUresult result;
-    if (fetch) {
-        result = cuMemcpyHtoDAsync(
-            (CUdeviceptr)(uintptr_t)destination,
-            source,
-            (size_t)bytes,
-            stream_value(stream)
+    nvmlProcessInfo_t *processes = NULL;
+    if (process_count != 0U) {
+        processes = calloc((size_t)process_count, sizeof(*processes));
+        if (processes == NULL) {
+            return -1;
+        }
+        result = nvmlDeviceGetComputeRunningProcesses_v3(
+            backend->nvml_device, &process_count, processes
         );
-    } else {
-        result = cuMemcpyDtoHAsync(
-            destination,
-            (CUdeviceptr)(uintptr_t)source,
-            (size_t)bytes,
-            stream_value(stream)
-        );
+        if (record_nvml_result(backend, result) != 0) {
+            free(processes);
+            return -1;
+        }
     }
-    if (record_result(backend, result) != 0) {
-        return -1;
+    uint64_t process_bytes = 0U;
+    const unsigned int process_id = (unsigned int)getpid();
+    for (unsigned int index = 0U; index < process_count; ++index) {
+        if (processes[index].pid == process_id &&
+            processes[index].usedGpuMemory !=
+                (unsigned long long)NVML_VALUE_NOT_AVAILABLE) {
+            process_bytes += (uint64_t)processes[index].usedGpuMemory;
+        }
     }
-    pthread_mutex_lock(&backend->mutex);
-    if (fetch) {
-        ++backend->statistics.fetch_copies;
-        backend->statistics.bytes_fetched += bytes;
-    } else {
-        ++backend->statistics.evict_copies;
-        backend->statistics.bytes_evicted += bytes;
-    }
-    pthread_mutex_unlock(&backend->mutex);
+    free(processes);
+    *out = (ShadowSpillBackendPhysicalMemory){
+        .process_bytes = process_bytes,
+        .device_used_bytes = (uint64_t)device_memory.used,
+        .device_total_bytes = (uint64_t)device_memory.total,
+    };
     return 0;
 }
 
-static int fetch_async(
-    void *state,
-    void *destination,
-    const void *source,
-    uint64_t bytes,
-    ShadowSpillBackendStream stream
-) {
-    return copy_async(state, destination, source, bytes, 1U, stream);
-}
-
-static int evict_async(
-    void *state,
-    void *destination,
-    const void *source,
-    uint64_t bytes,
-    ShadowSpillBackendStream stream
-) {
-    return copy_async(state, destination, source, bytes, 0U, stream);
-}
-
-static int synchronize_stream(
-    void *state,
-    ShadowSpillBackendStream stream
-) {
+static void statistics(void *state, ShadowSpillBackendStatistics *out) {
     ShadowSpillCudaBackend *backend = state;
-    if (activate_context(backend) != 0 || record_result(
-            backend, cuStreamSynchronize(stream_value(stream))
-        ) != 0) {
-        return -1;
+    if (backend == NULL || out == NULL) {
+        return;
     }
     pthread_mutex_lock(&backend->mutex);
-    ++backend->statistics.stream_synchronizations;
+    *out = backend->statistics;
     pthread_mutex_unlock(&backend->mutex);
-    return 0;
 }
 
-static int read_attribute(CUdevice device, CUdevice_attribute attribute) {
-    int value = 0;
-    if (cuDeviceGetAttribute(&value, attribute, device) != CUDA_SUCCESS) {
-        return 0;
-    }
-    return value;
-}
+/* -------------------------------------------------------------- lifetime */
 
-int shadowspill_cuda_backend_create(
-    const ShadowSpillCudaBackendConfig *config,
-    ShadowSpillCudaBackend **output
+SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
+    const ShadowSpillBackendConfig *config,
+    ShadowSpillBackend *table
 ) {
-    if (config == NULL || output == NULL ||
-        config->abi_version != SHADOWSPILL_CUDA_BACKEND_ABI_VERSION ||
-        config->device_ordinal < 0) {
-        return -1;
-    }
-    *output = NULL;
-    if (cuInit(0U) != CUDA_SUCCESS) {
+    if (config == NULL || table == NULL ||
+        config->abi_version != SHADOWSPILL_BACKEND_ABI_VERSION ||
+        config->device_ordinal < 0 || cuInit(0U) != CUDA_SUCCESS) {
         return -1;
     }
     ShadowSpillCudaBackend *backend = calloc(1U, sizeof(*backend));
@@ -470,11 +444,11 @@ int shadowspill_cuda_backend_create(
         return -1;
     }
     backend->creator_thread = pthread_self();
+    backend->device_ordinal = config->device_ordinal;
     CUresult result = CUDA_SUCCESS;
     nvmlReturn_t nvml_result = nvmlInit_v2();
     if (nvml_result != NVML_SUCCESS) {
         backend->last_nvml_error = nvml_result;
-        result = CUDA_ERROR_UNKNOWN;
         goto fail;
     }
     backend->nvml_initialized = 1U;
@@ -505,53 +479,45 @@ int shadowspill_cuda_backend_create(
     }
     attached_backend = backend;
     char pci_bus_id[32];
-    result = cuDeviceGetPCIBusId(
-        pci_bus_id, (int)sizeof(pci_bus_id), backend->device
-    );
+    result = cuDeviceGetPCIBusId(pci_bus_id, (int)sizeof(pci_bus_id), backend->device);
     if (result != CUDA_SUCCESS) {
         goto release_context;
     }
-    nvml_result = nvmlDeviceGetHandleByPciBusId_v2(
-        pci_bus_id, &backend->nvml_device
-    );
+    nvml_result = nvmlDeviceGetHandleByPciBusId_v2(pci_bus_id, &backend->nvml_device);
     if (nvml_result != NVML_SUCCESS) {
         backend->last_nvml_error = nvml_result;
-        result = CUDA_ERROR_UNKNOWN;
         goto release_context;
     }
-    size_t total_bytes = 0U;
-    int driver_version = 0;
-    if (cuDeviceTotalMem(&total_bytes, backend->device) != CUDA_SUCCESS ||
-        cuDriverGetVersion(&driver_version) != CUDA_SUCCESS) {
-        result = CUDA_ERROR_UNKNOWN;
-        goto release_context;
-    }
-    backend->capabilities = (ShadowSpillCudaBackendCapabilities){
-        .abi_version = SHADOWSPILL_CUDA_BACKEND_ABI_VERSION,
-        .driver_version = (uint32_t)driver_version,
-        .device_ordinal = config->device_ordinal,
-        .compute_major = read_attribute(
-            backend->device, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR
-        ),
-        .compute_minor = read_attribute(
-            backend->device, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR
-        ),
-        .asynchronous_engine_count = read_attribute(
-            backend->device, CU_DEVICE_ATTRIBUTE_ASYNC_ENGINE_COUNT
-        ),
-        .total_device_bytes = (uint64_t)total_bytes,
-        .recommended_minimum_alignment = 256U,
-        .concurrent_kernels = (uint8_t)read_attribute(
-            backend->device, CU_DEVICE_ATTRIBUTE_CONCURRENT_KERNELS
-        ),
-        .unified_addressing = (uint8_t)read_attribute(
-            backend->device, CU_DEVICE_ATTRIBUTE_UNIFIED_ADDRESSING
-        ),
-        .process_memory_accounting = 1U,
+    *table = (ShadowSpillBackend){
+        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
+        .state = backend,
+        .allocate_device = allocate_device,
+        .free_device = free_device,
+        .register_host_memory = register_host_memory,
+        .unregister_host_memory = unregister_host_memory,
+        .create_stream = create_stream,
+        .destroy_stream = destroy_stream,
+        .synchronize_stream = synchronize_stream,
+        .wrap_stream = wrap_stream,
+        .copy_host_to_device = copy_host_to_device,
+        .copy_device_to_host = copy_device_to_host,
+        .copy_device_to_device = copy_device_to_device,
+        .create_event = create_event,
+        .destroy_event = destroy_event,
+        .record_event = record_event,
+        .query_event = query_event,
+        .wait_event = wait_event,
+        .elapsed_nanoseconds = elapsed_nanoseconds,
+        .capabilities = capabilities,
+        .physical_memory = physical_memory,
+        .statistics = statistics,
+        .name_thread = shadowspill_cuda_name_thread,
+        .name_stream = shadowspill_cuda_name_stream,
+        .profiler_enable = shadowspill_cuda_profiler_enable,
+        .range_begin = shadowspill_cuda_range_begin,
+        .range_end = shadowspill_cuda_range_end,
     };
-    *output = backend;
     return 0;
-
 release_context:
     (void)cuCtxSetCurrent(backend->creator_previous_context);
     attached_backend = NULL;
@@ -567,22 +533,13 @@ fail:
     return -1;
 }
 
-void shadowspill_cuda_backend_destroy(ShadowSpillCudaBackend *backend) {
-    if (backend == NULL) {
+SHADOWSPILL_BACKEND_CUDA_API void shadowspill_backend_destroy(
+    ShadowSpillBackend *table
+) {
+    if (table == NULL || table->state == NULL) {
         return;
     }
-    if (backend->context != NULL) {
-        (void)cuCtxSetCurrent(backend->context);
-        ShadowSpillCudaEventNode *event = backend->all_events;
-        while (event != NULL) {
-            ShadowSpillCudaEventNode *next = event->all_next;
-            (void)cuEventDestroy(event->event);
-            free(event);
-            event = next;
-        }
-        backend->all_events = NULL;
-        backend->free_events = NULL;
-    }
+    ShadowSpillCudaBackend *backend = table->state;
     if (pthread_equal(pthread_self(), backend->creator_thread) != 0) {
         (void)cuCtxSetCurrent(backend->creator_previous_context);
     }
@@ -597,236 +554,5 @@ void shadowspill_cuda_backend_destroy(ShadowSpillCudaBackend *backend) {
     }
     pthread_mutex_destroy(&backend->mutex);
     free(backend);
-}
-
-ShadowSpillMemoryPoolBackend shadowspill_cuda_device_pool_backend(
-    ShadowSpillCudaBackend *backend
-) {
-    return (ShadowSpillMemoryPoolBackend){
-        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
-        .state = backend,
-        .allocate_arena = allocate_execution,
-        .close = free_execution,
-    };
-}
-
-ShadowSpillMemoryPoolBackend shadowspill_cuda_pinned_pool_backend(
-    ShadowSpillCudaBackend *backend
-) {
-    return (ShadowSpillMemoryPoolBackend){
-        .abi_version = SHADOWSPILL_MEMORY_POOL_BACKEND_ABI_VERSION,
-        .state = backend,
-        .allocate_arena = allocate_spill,
-        .close = free_spill,
-    };
-}
-
-static ShadowSpillTransferRoute cuda_route(
-    ShadowSpillCudaBackend *backend,
-    uint32_t source_pool_id,
-    uint32_t destination_pool_id,
-    int (*copy)(
-        void *, void *, const void *, uint64_t, ShadowSpillBackendStream
-    )
-) {
-    return (ShadowSpillTransferRoute){
-        .abi_version = SHADOWSPILL_TRANSFER_ROUTE_ABI_VERSION,
-        .source_pool_id = source_pool_id,
-        .destination_pool_id = destination_pool_id,
-        .state = backend,
-        .create_lane = create_stream,
-        .destroy_lane = destroy_stream,
-        .copy_async = copy,
-        .synchronize_lane = synchronize_stream,
-    };
-}
-
-ShadowSpillTransferRoute shadowspill_cuda_fetch_route(
-    ShadowSpillCudaBackend *backend,
-    uint32_t source_pool_id,
-    uint32_t destination_pool_id
-) {
-    return cuda_route(
-        backend, source_pool_id, destination_pool_id, fetch_async
-    );
-}
-
-ShadowSpillTransferRoute shadowspill_cuda_evict_route(
-    ShadowSpillCudaBackend *backend,
-    uint32_t source_pool_id,
-    uint32_t destination_pool_id
-) {
-    return cuda_route(
-        backend, source_pool_id, destination_pool_id, evict_async
-    );
-}
-
-ShadowSpillSynchronizationBackend shadowspill_cuda_synchronization_backend(
-    ShadowSpillCudaBackend *backend
-) {
-    return (ShadowSpillSynchronizationBackend){
-        .abi_version = SHADOWSPILL_SYNCHRONIZATION_BACKEND_ABI_VERSION,
-        .state = backend,
-        .create_event = create_event,
-        .destroy_event = destroy_event,
-        .record_event = record_event,
-        .query_event = query_event,
-        .wait_event = wait_event,
-    };
-}
-
-int shadowspill_cuda_backend_capabilities(
-    ShadowSpillCudaBackend *backend,
-    ShadowSpillCudaBackendCapabilities *capabilities
-) {
-    if (backend == NULL || capabilities == NULL) {
-        return -1;
-    }
-    *capabilities = backend->capabilities;
-    return 0;
-}
-
-void shadowspill_cuda_backend_statistics(
-    ShadowSpillCudaBackend *backend,
-    ShadowSpillCudaBackendStatistics *statistics
-) {
-    if (backend == NULL || statistics == NULL) {
-        return;
-    }
-    pthread_mutex_lock(&backend->mutex);
-    *statistics = backend->statistics;
-    pthread_mutex_unlock(&backend->mutex);
-}
-
-int shadowspill_cuda_backend_seal_event_pool(
-    ShadowSpillCudaBackend *backend,
-    uint64_t minimum_free_events
-) {
-    if (backend == NULL || activate_context(backend) != 0) {
-        return -1;
-    }
-    pthread_mutex_lock(&backend->mutex);
-    uint64_t free_count = backend->statistics.event_pool_capacity -
-        backend->statistics.event_pool_in_use;
-    pthread_mutex_unlock(&backend->mutex);
-    while (free_count < minimum_free_events) {
-        ShadowSpillCudaEventNode *node = calloc(1U, sizeof(*node));
-        CUevent created = NULL;
-        if (node == NULL || record_result(
-                backend, cuEventCreate(&created, CU_EVENT_DISABLE_TIMING)
-            ) != 0) {
-            free(node);
-            return -1;
-        }
-        node->event = created;
-        pthread_mutex_lock(&backend->mutex);
-        node->all_next = backend->all_events;
-        backend->all_events = node;
-        node->free_next = backend->free_events;
-        backend->free_events = node;
-        ++backend->statistics.event_pool_capacity;
-        ++backend->statistics.event_pool_driver_creates;
-        pthread_mutex_unlock(&backend->mutex);
-        ++free_count;
-    }
-    pthread_mutex_lock(&backend->mutex);
-    backend->statistics.event_pool_sealed = 1U;
-    pthread_mutex_unlock(&backend->mutex);
-    return 0;
-}
-
-int shadowspill_cuda_physical_memory(
-    ShadowSpillCudaBackend *backend,
-    ShadowSpillCudaPhysicalMemory *memory
-) {
-    if (backend == NULL || memory == NULL || !backend->nvml_initialized) {
-        return -1;
-    }
-    nvmlMemory_t device_memory = {0};
-    nvmlReturn_t result = nvmlDeviceGetMemoryInfo(
-        backend->nvml_device, &device_memory
-    );
-    if (record_nvml_result(backend, result) != 0) {
-        return -1;
-    }
-    unsigned int count = 0U;
-    result = nvmlDeviceGetComputeRunningProcesses_v3(
-        backend->nvml_device, &count, NULL
-    );
-    if (result != NVML_SUCCESS && result != NVML_ERROR_INSUFFICIENT_SIZE) {
-        return record_nvml_result(backend, result);
-    }
-    nvmlProcessInfo_t *processes = NULL;
-    if (count != 0U) {
-        processes = calloc((size_t)count, sizeof(*processes));
-        if (processes == NULL) {
-            return -1;
-        }
-        result = nvmlDeviceGetComputeRunningProcesses_v3(
-            backend->nvml_device, &count, processes
-        );
-        if (record_nvml_result(backend, result) != 0) {
-            free(processes);
-            return -1;
-        }
-    }
-    uint64_t process_bytes = 0U;
-    const unsigned int process_id = (unsigned int)getpid();
-    for (unsigned int index = 0U; index < count; ++index) {
-        if (processes[index].pid == process_id &&
-            processes[index].usedGpuMemory !=
-                (unsigned long long)NVML_VALUE_NOT_AVAILABLE) {
-            process_bytes += (uint64_t)processes[index].usedGpuMemory;
-        }
-    }
-    free(processes);
-    *memory = (ShadowSpillCudaPhysicalMemory){
-        .abi_version = SHADOWSPILL_CUDA_BACKEND_ABI_VERSION,
-        .process_bytes = process_bytes,
-        .device_used_bytes = (uint64_t)device_memory.used,
-        .device_total_bytes = (uint64_t)device_memory.total,
-    };
-    return 0;
-}
-
-uint32_t shadowspill_cuda_backend_last_error(ShadowSpillCudaBackend *backend) {
-    if (backend == NULL) {
-        return (uint32_t)CUDA_ERROR_INVALID_VALUE;
-    }
-    pthread_mutex_lock(&backend->mutex);
-    uint32_t result = (uint32_t)backend->last_error;
-    pthread_mutex_unlock(&backend->mutex);
-    return result;
-}
-
-uint32_t shadowspill_cuda_backend_last_nvml_error(
-    ShadowSpillCudaBackend *backend
-) {
-    if (backend == NULL) {
-        return (uint32_t)NVML_ERROR_INVALID_ARGUMENT;
-    }
-    pthread_mutex_lock(&backend->mutex);
-    uint32_t result = (uint32_t)backend->last_nvml_error;
-    pthread_mutex_unlock(&backend->mutex);
-    return result;
-}
-
-const char *shadowspill_cuda_error_name(uint32_t error_code) {
-    const char *name = "CUDA_ERROR_UNKNOWN";
-    (void)cuGetErrorName((CUresult)error_code, &name);
-    return name;
-}
-
-const char *shadowspill_cuda_error_string(uint32_t error_code) {
-    const char *description = "unknown CUDA driver error";
-    (void)cuGetErrorString((CUresult)error_code, &description);
-    return description;
-}
-
-ShadowSpillBackendStream shadowspill_cuda_wrap_stream(
-    uintptr_t stream_address
-) {
-    return (ShadowSpillBackendStream){
-        .words = {stream_address, 0U},
-    };
+    memset(table, 0, sizeof(*table));
 }

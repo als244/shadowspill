@@ -8,41 +8,38 @@
 #include "runtime_test.h"
 
 static int create_runtime(
-    ShadowSpillMockBackend **mock,
+    ShadowSpillBackend *mock,
     ShadowSpillRuntime **runtime,
     ShadowSpillBackendStream *compute
 ) {
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            *mock, 256U, 0U, 1U, 1000U, runtime
+    if (shadowspill_test_create_runtime(mock, 256U, 0U, 1U, 1000U, runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(*mock, compute) != 0) {
+        mock->create_stream(mock->state, compute) != 0) {
         shadowspill_test_destroy_runtime(*runtime);
-        shadowspill_mock_backend_destroy(*mock);
+        shadowspill_backend_destroy(mock);
         return -1;
     }
     return 0;
 }
 
 static void destroy_runtime(
-    ShadowSpillMockBackend *mock,
+    ShadowSpillBackend *mock,
     ShadowSpillRuntime *runtime,
     ShadowSpillBackendStream compute
 ) {
     (void)shadowspill_runtime_close(runtime);
-    (void)shadowspill_mock_destroy_compute_stream(mock, compute);
+    (void)mock->destroy_stream(mock->state, compute);
     shadowspill_test_destroy_runtime(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(mock);
 }
 
 static int ordered_task_capture(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (create_runtime(&mock, &runtime, &compute) != 0) {
@@ -140,12 +137,12 @@ static int ordered_task_capture(void) {
                 (unsigned int)events[index].category);
         }
     }
-    destroy_runtime(mock, runtime, compute);
+    destroy_runtime(&mock, runtime, compute);
     return failed ? -1 : 0;
 }
 
 static int same_stream_retirement_is_task_batched(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (create_runtime(&mock, &runtime, &compute) != 0) {
@@ -155,7 +152,7 @@ static int same_stream_retirement_is_task_batched(void) {
     ShadowSpillMockBackendStatistics during = {0};
     ShadowSpillMockBackendStatistics after = {0};
     const ShadowSpillTaskDescription task = {.task_id = 77U};
-    shadowspill_mock_backend_statistics(mock, &before);
+    shadowspill_mock_backend_statistics(&mock, &before);
     int failed = shadowspill_test_admit_task(runtime, &task) !=
             SHADOWSPILL_STATUS_OK || shadowspill_test_before_task(
             runtime, task.task_id, compute, NULL, 0U
@@ -167,7 +164,7 @@ static int same_stream_retirement_is_task_batched(void) {
         failed = failed || shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute
         ) != SHADOWSPILL_STATUS_OK;
     }
-    shadowspill_mock_backend_statistics(mock, &during);
+    shadowspill_mock_backend_statistics(&mock, &during);
     ShadowSpillRuntimeStatistics during_runtime = {0};
     failed = failed || shadowspill_runtime_statistics(
             runtime, &during_runtime
@@ -180,7 +177,7 @@ static int same_stream_retirement_is_task_batched(void) {
             runtime, task.task_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
-    shadowspill_mock_backend_statistics(mock, &after);
+    shadowspill_mock_backend_statistics(&mock, &after);
     ShadowSpillRuntimeStatistics runtime_statistics = {0};
     failed = failed || shadowspill_runtime_statistics(
             runtime, &runtime_statistics
@@ -205,14 +202,13 @@ static int same_stream_retirement_is_task_batched(void) {
             (unsigned long long)runtime_statistics.allocated_bytes
         );
     }
-    destroy_runtime(mock, runtime, compute);
+    destroy_runtime(&mock, runtime, compute);
     return failed ? -1 : 0;
 }
 
 static int queued_transfers_survive_retirement_only_task(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .fetch_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
@@ -220,11 +216,10 @@ static int queued_transfers_survive_retirement_only_task(void) {
     }
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    int failed = shadowspill_test_create_runtime(
-            mock, 256U, 128U, 1U, 1000U, &runtime
+    int failed = shadowspill_test_create_runtime(&mock, 256U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0;
+        mock.create_stream(mock.state, &compute) != 0;
     const ShadowSpillObjectDescription objects[] = {
         {
             .object_id = 20U,
@@ -246,12 +241,12 @@ static int queued_transfers_survive_retirement_only_task(void) {
         },
     };
     const ShadowSpillRuntimeAction initial[] = {
-        {.object_id = 20U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
-        {.object_id = 21U, .kind = SHADOWSPILL_RUNTIME_PREFETCH},
+        {.object_id = 20U, .kind = SHADOWSPILL_RUNTIME_FETCH},
+        {.object_id = 21U, .kind = SHADOWSPILL_RUNTIME_FETCH},
     };
     const ShadowSpillRuntimeAction appended = {
         .object_id = 22U,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillTaskDescription temporary_task = {.task_id = 81U};
     for (uint32_t index = 0U; !failed && index < 3U; ++index) {
@@ -287,14 +282,13 @@ static int queued_transfers_survive_retirement_only_task(void) {
     if (failed) {
         fprintf(stderr, "retirement-only task dropped a queued transfer\n");
     }
-    destroy_runtime(mock, runtime, compute);
+    destroy_runtime(&mock, runtime, compute);
     return failed ? -1 : 0;
 }
 
 static int all_completed_retirements_precede_action_admission(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 100000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
@@ -302,11 +296,10 @@ static int all_completed_retirements_precede_action_admission(void) {
     }
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    int failed = shadowspill_test_create_runtime(
-            mock, 128U, 128U, 1U, 1000U, &runtime
+    int failed = shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0 ||
+        mock.create_stream(mock.state, &compute) != 0 ||
         shadowspill_runtime_reserve_memory_lease_records(
             runtime, 0U, 8U
         ) != SHADOWSPILL_STATUS_OK;
@@ -336,12 +329,12 @@ static int all_completed_retirements_precede_action_admission(void) {
         shadowspill_test_after_task(
             runtime, allocator_task.task_id, compute
         ) != SHADOWSPILL_STATUS_OK;
-    const ShadowSpillRuntimeAction prefetch = {
+    const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     failed = failed || shadowspill_test_submit_actions(
-            runtime, 91U, compute, &prefetch, 1U
+            runtime, 91U, compute, &fetch, 1U
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
     ShadowSpillObjectSnapshot snapshot = {0};
@@ -353,7 +346,7 @@ static int all_completed_retirements_precede_action_admission(void) {
     if (failed) {
         fprintf(stderr, "causal reservation did not await completed retirements\n");
     }
-    destroy_runtime(mock, runtime, compute);
+    destroy_runtime(&mock, runtime, compute);
     return failed ? -1 : 0;
 }
 
@@ -365,7 +358,7 @@ static int all_completed_retirements_precede_action_admission(void) {
  * of whichever allocation took the last slot.
  */
 static int overflow_stops_recording_not_the_runtime(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
     if (create_runtime(&mock, &runtime, &compute) != 0) {
@@ -380,7 +373,7 @@ static int overflow_stops_recording_not_the_runtime(void) {
             SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_free(runtime, 0U, allocation.allocation_id, compute) !=
             SHADOWSPILL_STATUS_OK) {
-        destroy_runtime(mock, runtime, compute);
+        destroy_runtime(&mock, runtime, compute);
         return -1;
     }
     ShadowSpillRuntimeFailure failure = {0};
@@ -397,26 +390,23 @@ static int overflow_stops_recording_not_the_runtime(void) {
         /* ... so the runtime still serves allocations. */
         shadowspill_memory_pool_allocate(runtime, 0U, 8U, 1U, compute, &second) !=
             SHADOWSPILL_STATUS_OK;
-    destroy_runtime(mock, runtime, compute);
+    destroy_runtime(&mock, runtime, compute);
     return failed ? -1 : 0;
 }
 
 static int bounded_runtime_trace_is_opt_in(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillBackendStream compute = {{0U, 0U}};
-    const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
-    };
+    const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
     }
-    if (shadowspill_test_create_runtime(
-            mock, 256U, 128U, 1U, 1000U, &runtime
+    if (shadowspill_test_create_runtime(&mock, 256U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_create_compute_stream(mock, &compute) != 0) {
-        destroy_runtime(mock, runtime, compute);
+        mock.create_stream(mock.state, &compute) != 0) {
+        destroy_runtime(&mock, runtime, compute);
         return -1;
     }
     const ShadowSpillTraceConfig trace_config = {
@@ -431,9 +421,9 @@ static int bounded_runtime_trace_is_opt_in(void) {
         .initial_pool_id = 1U,
         .initially_resident = 1U,
     };
-    const ShadowSpillRuntimeAction prefetch = {
+    const ShadowSpillRuntimeAction fetch = {
         .object_id = object.object_id,
-        .kind = SHADOWSPILL_RUNTIME_PREFETCH,
+        .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillRuntimeAction release = {
         .object_id = object.object_id,
@@ -447,6 +437,9 @@ static int bounded_runtime_trace_is_opt_in(void) {
         .actions = &release,
         .action_count = 1U,
     };
+    /* Transfer intervals are measured from a caller-owned timing event on
+     * the compute stream, the way the frontend's step origin is. */
+    ShadowSpillBackendEvent origin = {0};
     int failed = shadowspill_trace_prepare(runtime, &trace_config) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_trace_read(
@@ -455,9 +448,11 @@ static int bounded_runtime_trace_is_opt_in(void) {
         summary.event_count != 0U || summary.active != 0U ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_trace_begin(runtime, 7U) != SHADOWSPILL_STATUS_OK ||
+        mock.create_event(mock.state, &origin, 1U) != 0 ||
+        mock.record_event(mock.state, origin, compute) != 0 ||
+        shadowspill_trace_begin(runtime, 7U, origin) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_submit_actions(
-            runtime, 100U, compute, &prefetch, 1U
+            runtime, 100U, compute, &fetch, 1U
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
     ShadowSpillObjectBinding binding = {0};
@@ -505,6 +500,21 @@ static int bounded_runtime_trace_is_opt_in(void) {
             events[index].kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED;
         saw_before |= events[index].kind == SHADOWSPILL_TRACE_BEFORE_TASK;
         saw_after |= events[index].kind == SHADOWSPILL_TRACE_AFTER_TASK;
+        /* Only a completed transfer carries a stream interval, and it must
+         * be a measured one: the trace was begun with an origin. */
+        if (events[index].kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED) {
+            failed = failed ||
+                events[index].stream_start_ns ==
+                    SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+                events[index].stream_end_ns <
+                    events[index].stream_start_ns;
+        } else {
+            failed = failed ||
+                events[index].stream_start_ns !=
+                    SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+                events[index].stream_end_ns !=
+                    SHADOWSPILL_TRACE_NO_STREAM_TIME;
+        }
     }
     failed = failed || events[0].kind != SHADOWSPILL_TRACE_SESSION_BEGIN ||
         events[summary.event_count - 1U].kind != SHADOWSPILL_TRACE_SESSION_END ||
@@ -512,6 +522,7 @@ static int bounded_runtime_trace_is_opt_in(void) {
         !saw_before || !saw_after ||
         shadowspill_unregister_object(runtime, object.object_id) !=
             SHADOWSPILL_STATUS_OK;
+    (void)mock.destroy_event(mock.state, origin);
     if (failed) {
         fprintf(
             stderr,
@@ -522,7 +533,7 @@ static int bounded_runtime_trace_is_opt_in(void) {
             (unsigned int)summary.allocation_event_overflow
         );
     }
-    destroy_runtime(mock, runtime, compute);
+    destroy_runtime(&mock, runtime, compute);
     return failed ? -1 : 0;
 }
 

@@ -1,24 +1,20 @@
 #define _GNU_SOURCE
+#include "backend_cuda_internal.h"
 
-#include <shadowspill/backend_cuda.h>
-
-#include <cuda.h>
 #include <nvtx3/nvToolsExt.h>
 #include <nvtx3/nvToolsExtCuda.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
-static void name_current_thread(void *state, const char *name) {
+void shadowspill_cuda_name_thread(void *state, const char *name) {
     (void)state;
-    if (name == NULL) {
-        return;
+    if (name != NULL) {
+        nvtxNameOsThreadA((uint32_t)syscall(SYS_gettid), name);
     }
-    nvtxNameOsThreadA((uint32_t)syscall(SYS_gettid), name);
 }
 
-static void name_stream(
+void shadowspill_cuda_name_stream(
     void *state,
     ShadowSpillBackendStream stream,
     const char *name
@@ -29,36 +25,26 @@ static void name_stream(
     }
 }
 
-static void set_enabled(void *state, uint8_t enabled) {
-    shadowspill_cuda_backend_profiler_enable(state, enabled);
+void shadowspill_cuda_profiler_enable(void *state, uint8_t enabled) {
+    ShadowSpillCudaBackend *backend = state;
+    if (backend != NULL) {
+        atomic_store_explicit(
+            &backend->profiler_enabled, enabled != 0U, memory_order_release
+        );
+    }
 }
 
-static ShadowSpillProfilerRange range_begin(
-    void *state, const char *name
-) {
-    return name == NULL ||
-            !shadowspill_cuda_backend_profiler_is_enabled(state)
+ShadowSpillProfilerRange shadowspill_cuda_range_begin(void *state, const char *name) {
+    const ShadowSpillCudaBackend *backend = state;
+    return name == NULL || backend == NULL ||
+            !atomic_load_explicit(&backend->profiler_enabled, memory_order_acquire)
         ? 0U
         : (ShadowSpillProfilerRange)nvtxRangeStartA(name);
 }
 
-static void range_end(void *state, ShadowSpillProfilerRange range) {
+void shadowspill_cuda_range_end(void *state, ShadowSpillProfilerRange range) {
     (void)state;
     if (range != 0U) {
         nvtxRangeEnd((nvtxRangeId_t)range);
     }
-}
-
-ShadowSpillProfiler shadowspill_cuda_backend_profiler(
-    ShadowSpillCudaBackend *backend
-) {
-    return (ShadowSpillProfiler){
-        .abi_version = SHADOWSPILL_PROFILER_ABI_VERSION,
-        .state = backend,
-        .name_current_thread = name_current_thread,
-        .name_stream = name_stream,
-        .set_enabled = set_enabled,
-        .range_begin = range_begin,
-        .range_end = range_end,
-    };
 }

@@ -2,7 +2,7 @@
 
 #include <stdlib.h>
 
-int shadowspill_event_pool_initialize(ShadowSpillEventPool *pool) {
+int shadowspill_event_pool_initialize(ShadowSpillEventPool *pool, uint8_t timing) {
     if (pool == NULL) {
         return -1;
     }
@@ -10,6 +10,7 @@ int shadowspill_event_pool_initialize(ShadowSpillEventPool *pool) {
     if (pthread_mutex_init(&pool->lock, NULL) != 0) {
         return -1;
     }
+    pool->timing = timing != 0U;
     pool->initialized = 1U;
     return 0;
 }
@@ -26,12 +27,11 @@ void shadowspill_event_pool_destroy(
         ShadowSpillEventPoolBlock *next = block->next;
         for (uint64_t index = 0U; index < block->count; ++index) {
             ShadowSpillEventLease *lease = &block->leases[index];
-            if (atomic_load_explicit(
-                    &lease->references, memory_order_acquire
-                ) != 0U) {
-                (void)runtime->synchronization.destroy_event(
-                    runtime->synchronization.state, lease->event
+            if (lease->has_event) {
+                (void)runtime->backend.destroy_event(
+                    runtime->backend.state, lease->event
                 );
+                lease->has_event = 0U;
             }
         }
         free(block->leases);
@@ -43,6 +43,7 @@ void shadowspill_event_pool_destroy(
 }
 
 ShadowSpillStatus shadowspill_event_pool_reserve(
+    ShadowSpillRuntime *runtime,
     ShadowSpillEventPool *pool,
     uint64_t minimum_free_leases
 ) {
@@ -68,26 +69,43 @@ ShadowSpillStatus shadowspill_event_pool_reserve(
     }
     block->leases = leases;
     block->count = additional;
-
+    /* The events are created here so admission pays the driver calls and
+       steady-state leases make none. */
+    for (uint64_t index = 0U; index < additional; ++index) {
+        if (runtime->backend.create_event(
+                runtime->backend.state, &leases[index].event, pool->timing
+            ) != 0) {
+            for (uint64_t created = 0U; created < index; ++created) {
+                (void)runtime->backend.destroy_event(
+                    runtime->backend.state, leases[created].event
+                );
+            }
+            free(leases);
+            free(block);
+            return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+        }
+        leases[index].has_event = 1U;
+    }
     pthread_mutex_lock(&pool->lock);
     block->next = pool->blocks;
     pool->blocks = block;
     for (uint64_t index = 0U; index < additional; ++index) {
         leases[index].pool_owned = 1U;
+        leases[index].pool = pool;
         leases[index].free_next = pool->free_head;
         pool->free_head = &leases[index];
     }
     pool->capacity += additional;
     pool->available += additional;
+    pool->driver_creates += additional;
     pool->sealed = 1U;
     pthread_mutex_unlock(&pool->lock);
     return SHADOWSPILL_STATUS_OK;
 }
 
 static ShadowSpillEventLease *acquire_event_record(
-    ShadowSpillRuntime *runtime
+    ShadowSpillEventPool *pool
 ) {
-    ShadowSpillEventPool *pool = &runtime->events;
     pthread_mutex_lock(&pool->lock);
     ShadowSpillEventLease *lease = pool->free_head;
     const uint8_t sealed = pool->sealed;
@@ -110,14 +128,13 @@ static ShadowSpillEventLease *acquire_event_record(
 }
 
 static void release_event_record(
-    ShadowSpillRuntime *runtime,
+    ShadowSpillEventPool *pool,
     ShadowSpillEventLease *lease
 ) {
     if (!lease->pool_owned) {
         free(lease);
         return;
     }
-    ShadowSpillEventPool *pool = &runtime->events;
     pthread_mutex_lock(&pool->lock);
     lease->free_next = pool->free_head;
     pool->free_head = lease;
@@ -128,24 +145,31 @@ static void release_event_record(
     pthread_mutex_unlock(&pool->lock);
 }
 
-ShadowSpillStatus shadowspill_event_lease_create_locked(
+ShadowSpillStatus shadowspill_event_lease_acquire(
     ShadowSpillRuntime *runtime,
+    ShadowSpillEventPool *pool,
     ShadowSpillEventLease **output
 ) {
-    if (runtime == NULL || output == NULL) {
+    if (runtime == NULL || pool == NULL || output == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    *output = NULL;
-    ShadowSpillEventLease *lease = acquire_event_record(runtime);
+    ShadowSpillEventLease *lease = acquire_event_record(pool);
     if (lease == NULL) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
-    if (runtime->synchronization.create_event(
-            runtime->synchronization.state, &lease->event
-        ) != 0) {
-        release_event_record(runtime, lease);
-        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+    if (!lease->has_event) {
+        if (runtime->backend.create_event(
+                runtime->backend.state, &lease->event, pool->timing
+            ) != 0) {
+            release_event_record(pool, lease);
+            return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+        }
+        lease->has_event = 1U;
+        pthread_mutex_lock(&pool->lock);
+        ++pool->driver_creates;
+        pthread_mutex_unlock(&pool->lock);
     }
+    lease->pool = pool;
     lease->generation = atomic_fetch_add_explicit(
         &runtime->next_event_generation, 1U, memory_order_relaxed
     );
@@ -162,6 +186,15 @@ ShadowSpillStatus shadowspill_event_lease_create_locked(
     atomic_init(&lease->backend_complete, 0U);
     *output = lease;
     return SHADOWSPILL_STATUS_OK;
+}
+
+ShadowSpillStatus shadowspill_event_lease_create_locked(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease **output
+) {
+    return runtime == NULL
+        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
+        : shadowspill_event_lease_acquire(runtime, &runtime->events, output);
 }
 
 void shadowspill_event_lease_retain(ShadowSpillEventLease *lease) {
@@ -187,20 +220,22 @@ int shadowspill_event_lease_release(
         ) != 1U) {
         return 0;
     }
-    const int status = runtime->synchronization.destroy_event(
-        runtime->synchronization.state, lease->event
-    );
-    if (status != 0 && lease->pool_owned) {
-        atomic_store_explicit(&lease->references, 1U, memory_order_release);
-        return status;
+    ShadowSpillEventPool *pool = lease->pool;
+    int status = 0;
+    if (!lease->pool_owned && lease->has_event) {
+        /* A record made outside the pool takes its event with it. */
+        status = runtime->backend.destroy_event(
+            runtime->backend.state, lease->event
+        );
+        lease->has_event = 0U;
+        lease->event = (ShadowSpillBackendEvent){0};
     }
-    lease->event = (ShadowSpillBackendEvent){0};
     lease->completion_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     lease->completion_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     lease->completion_next = NULL;
     lease->completion_linked = 0U;
     atomic_store_explicit(&lease->backend_complete, 0U, memory_order_relaxed);
-    release_event_record(runtime, lease);
+    release_event_record(pool, lease);
     return status;
 }
 
@@ -218,8 +253,8 @@ int shadowspill_event_lease_query(
         *complete = 1;
         return 0;
     }
-    if (runtime->synchronization.query_event(
-            runtime->synchronization.state, lease->event, complete
+    if (runtime->backend.query_event(
+            runtime->backend.state, lease->event, complete
         ) != 0) {
         return -1;
     }

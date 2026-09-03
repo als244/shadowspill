@@ -6,7 +6,6 @@
 #include <shadowspill/shadowspill.h>
 
 #include <shadowspill/backend.h>
-#include <shadowspill/profiler.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -87,15 +86,15 @@ typedef enum ShadowSpillFailureReason {
 typedef enum ShadowSpillObjectResidency {
     SHADOWSPILL_OBJECT_SPILL_ONLY = 0,
     SHADOWSPILL_OBJECT_EXECUTION_READY = 1,
-    SHADOWSPILL_OBJECT_PREFETCHING = 2,
-    SHADOWSPILL_OBJECT_OFFLOADING = 3,
+    SHADOWSPILL_OBJECT_FETCHING = 2,
+    SHADOWSPILL_OBJECT_EVICTING = 3,
     SHADOWSPILL_OBJECT_RELEASED = 4,
 } ShadowSpillObjectResidency;
 
 typedef enum ShadowSpillRuntimeActionKind {
     SHADOWSPILL_RUNTIME_RELEASE = 0,
-    SHADOWSPILL_RUNTIME_OFFLOAD = 1,
-    SHADOWSPILL_RUNTIME_PREFETCH = 2,
+    SHADOWSPILL_RUNTIME_EVICT = 1,
+    SHADOWSPILL_RUNTIME_FETCH = 2,
 } ShadowSpillRuntimeActionKind;
 
 typedef enum ShadowSpillAllocationEventKind {
@@ -135,28 +134,39 @@ typedef enum ShadowSpillTraceEventKind {
  * borrowed for the call that reads it.
  */
 
+/* Where a pool's arena lives: device memory the backend allocates, or host
+   memory the pool allocates and the backend registers. */
+typedef enum ShadowSpillPoolKind {
+    SHADOWSPILL_POOL_DEVICE = 0,
+    SHADOWSPILL_POOL_PINNED_HOST = 1
+} ShadowSpillPoolKind;
+
 typedef struct ShadowSpillMemoryPoolDescription {
     uint32_t pool_id;
+    uint8_t kind;
     uint64_t capacity_bytes;
     uint64_t minimum_alignment;
-    ShadowSpillMemoryPoolBackend backend;
 } ShadowSpillMemoryPoolDescription;
 
+/* A directed copy path between a pinned-host pool and the device pool. The
+   runtime derives the copy direction from the two pools' kinds and owns the
+   lane it dispatches on. */
 typedef struct ShadowSpillTransferRouteDescription {
     uint32_t route_id;
     const char *name;
-    ShadowSpillTransferRoute route;
+    uint32_t source_pool_id;
+    uint32_t destination_pool_id;
 } ShadowSpillTransferRouteDescription;
 
 typedef struct ShadowSpillRuntimeConfig {
     uint32_t abi_version;
+    /* The backend every pool, route, and event is built on; copied at create. */
+    const ShadowSpillBackend *backend;
     const ShadowSpillMemoryPoolDescription *pools;
     uint32_t pool_count;
     const ShadowSpillTransferRouteDescription *routes;
     uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
-    ShadowSpillSynchronizationBackend synchronization;
-    ShadowSpillProfiler profiler;
 } ShadowSpillRuntimeConfig;
 
 /*
@@ -426,10 +436,22 @@ typedef struct ShadowSpillTransferProfile {
     uint8_t concurrent_route_count;
 } ShadowSpillTransferProfile;
 
+/* A stream timestamp the trace could not measure. */
+#define SHADOWSPILL_TRACE_NO_STREAM_TIME UINT64_MAX
+
 /*
- * One host-clock observation emitted by the neutral runtime. ``detail_0`` and
+ * One observation emitted by the neutral runtime. ``timestamp_ns`` is the
+ * host clock at the moment the runtime recorded it. ``detail_0`` and
  * ``detail_1`` have event-specific meanings documented in runtime.md. IDs use
  * SHADOWSPILL_RUNTIME_NO_ID when they do not apply.
+ *
+ * A TRANSFER_COMPLETED event also carries the transfer's interval on the
+ * device: ``stream_start_ns`` and ``stream_end_ns`` are measured on the
+ * transfer lane from the origin event the trace was begun with, so they sit
+ * on the same timeline as any other event measured from that origin. Both
+ * hold SHADOWSPILL_TRACE_NO_STREAM_TIME when the trace has no origin or the
+ * backend could not measure the interval; every other kind carries that
+ * value always.
  */
 typedef struct ShadowSpillTraceEvent {
     uint64_t sequence;
@@ -441,6 +463,8 @@ typedef struct ShadowSpillTraceEvent {
     uint64_t bytes;
     uint64_t detail_0;
     uint64_t detail_1;
+    uint64_t stream_start_ns;
+    uint64_t stream_end_ns;
     uint8_t kind;
 } ShadowSpillTraceEvent;
 
@@ -492,6 +516,14 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t event_lease_in_use;
     uint64_t event_lease_peak_in_use;
     uint64_t event_lease_growth_rejections;
+    /* Backend events created for leases: every one after sealing is a
+       steady-state driver call the plan did not reserve for. */
+    uint64_t event_lease_driver_creates;
+    uint64_t event_lease_sealed;
+    uint64_t timing_event_capacity;
+    uint64_t timing_event_in_use;
+    uint64_t timing_event_peak_in_use;
+    uint64_t timing_event_driver_creates;
     uint64_t retirement_record_capacity;
     uint64_t retirement_record_in_use;
     uint64_t retirement_record_peak_in_use;
@@ -581,6 +613,10 @@ typedef struct ShadowSpillObjectLocationSnapshot {
  * Create a runtime, reserve the records it must never allocate on a
  * hot path, open and close plans, and tear it all down.
  */
+
+/* Whether a backend table carries the contract version and every required
+   entry (the profiler entries may be NULL). */
+SHADOWSPILL_API int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,
@@ -719,7 +755,7 @@ shadowspill_memory_pool_allocation_for_pointer(
  * stream may reuse the whole pending block by adding its retirement event as a
  * stream dependency. Global and background-transfer reuse waits for every
  * recorded stream to retire. Plan-owned allocations ignore framework logical
- * free until a plan action releases or offloads the owning object.
+ * free until a plan action releases or evicts the owning object.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_free(
     ShadowSpillRuntime *runtime,
@@ -1106,10 +1142,18 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_prepare(
     const ShadowSpillTraceConfig *config
 );
 
-/* Begins one prepared trace and its allocation-lifetime capture. */
+/*
+ * Begins one prepared trace and its allocation-lifetime capture.
+ *
+ * ``origin_event`` is a caller-owned timing event already recorded on the
+ * caller's compute stream; transfer intervals in the trace are measured from
+ * it, so they share the caller's timeline. It must outlive the trace and is
+ * never destroyed here. A zero token records no stream intervals.
+ */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
-    uint64_t step_id
+    uint64_t step_id,
+    ShadowSpillBackendEvent origin_event
 );
 
 /*

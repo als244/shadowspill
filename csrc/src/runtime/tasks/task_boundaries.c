@@ -17,7 +17,7 @@ static void release_reserved_destination(
     }
     action->destination_lease = NULL;
     ShadowSpillPlan *plan = action->plan_owner;
-    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+    if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
         shadowspill_memory_pool_lock_reservation(
             plan->execution_pool
         );
@@ -43,7 +43,7 @@ static ShadowSpillStatus try_reserve_action_destination_locked(
     ShadowSpillMemoryPool *pool
 ) {
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
-    if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+    if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
         const ShadowSpillFixedPlacementDescription *fixed =
             action->admitted
             ? shadowspill_fixed_layout_find_placement(
@@ -141,7 +141,7 @@ static ShadowSpillStatus try_reserve_action_destination_locked(
         status = SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (status == SHADOWSPILL_STATUS_OK &&
-        action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+        action->kind == SHADOWSPILL_RUNTIME_FETCH) {
         action->destination_lease->bound_object = action->object;
     }
     return status;
@@ -155,7 +155,7 @@ static ShadowSpillStatus reserve_action_destination(
     if (!destination_required) {
         return SHADOWSPILL_STATUS_OK;
     }
-    ShadowSpillMemoryPool *pool = action->kind == SHADOWSPILL_RUNTIME_PREFETCH
+    ShadowSpillMemoryPool *pool = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? action->plan_owner->execution_pool
         : action->plan_owner->spill_pool;
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
@@ -265,7 +265,7 @@ static ShadowSpillStatus publish_mutations_locked(
         pthread_mutex_lock(&object->lock);
         if (update->version_delta == 0U ||
             (object->residency != SHADOWSPILL_OBJECT_EXECUTION_READY &&
-             object->residency != SHADOWSPILL_OBJECT_PREFETCHING) ||
+             object->residency != SHADOWSPILL_OBJECT_FETCHING) ||
             update->version_delta >
                 UINT64_MAX - object->authoritative_version) {
             *failure_object_id = object->object_id;
@@ -329,8 +329,8 @@ static ShadowSpillStatus record_task_completion_event(
         runtime, &event
     );
     if (status != SHADOWSPILL_STATUS_OK ||
-        runtime->synchronization.record_event(
-            runtime->synchronization.state, event->event, compute_stream
+        runtime->backend.record_event(
+            runtime->backend.state, event->event, compute_stream
         ) != 0 || shadowspill_completion_submit(
             runtime,
             compute_stream,
@@ -359,7 +359,7 @@ static void discard_action_batch_locked(
         (void)shadowspill_object_remove_action_locked(
             action->object, action
         );
-        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+        if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
             (void)shadowspill_object_note_fetch_discarded_locked(
                 action->object
             );
@@ -456,8 +456,8 @@ static ShadowSpillStatus instantiate_actions_locked(
          * eviction.  Reserve the next spill generation at this trigger.
          */
         const int destination_required =
-            action->kind == SHADOWSPILL_RUNTIME_PREFETCH ||
-            (action->kind == SHADOWSPILL_RUNTIME_OFFLOAD &&
+            action->kind == SHADOWSPILL_RUNTIME_FETCH ||
+            (action->kind == SHADOWSPILL_RUNTIME_EVICT &&
              (shadowspill_plan_spill_location(
                   record->plan_owner, object
               )->lease == NULL ||
@@ -475,7 +475,7 @@ static ShadowSpillStatus instantiate_actions_locked(
             batch->tail->next = queued;
         }
         batch->tail = queued;
-        if (action->kind == SHADOWSPILL_RUNTIME_PREFETCH) {
+        if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
             shadowspill_object_note_fetch_queued_locked(object);
         } else {
             ShadowSpillMemoryLease *source =
@@ -500,7 +500,7 @@ static ShadowSpillStatus instantiate_actions_locked(
                         action->kind == SHADOWSPILL_RUNTIME_RELEASE
                             ? task_completion_event
                             : NULL,
-                        action->kind == SHADOWSPILL_RUNTIME_OFFLOAD
+                        action->kind == SHADOWSPILL_RUNTIME_EVICT
                     );
                 pthread_mutex_unlock(
                     &record->plan_owner->execution_pool->lock
@@ -587,7 +587,7 @@ static void publish_action_batch_locked(
          queued = queued->next) {
         /* Complete dispatcher bookkeeping before the worker can see it. */
         if (queued->kind == SHADOWSPILL_RUNTIME_RELEASE ||
-            queued->kind == SHADOWSPILL_RUNTIME_OFFLOAD) {
+            queued->kind == SHADOWSPILL_RUNTIME_EVICT) {
             (void)atomic_fetch_add_explicit(
                 &runtime->pending_capacity_actions, 1U, memory_order_release
             );

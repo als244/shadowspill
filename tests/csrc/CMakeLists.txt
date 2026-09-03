@@ -9,12 +9,24 @@ if(TARGET shadowspill_pytorch)
     PRIVATE
       ${PROJECT_SOURCE_DIR}/csrc/include
       ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include
-      ${PROJECT_SOURCE_DIR}/csrc/backends/cuda/include
   )
   target_link_libraries(
     shadowspill_abi_sizes_canary PRIVATE shadowspill_build_options
   )
 endif()
+
+add_executable(shadowspill_backend_contract_canary backend_contract_canary.c)
+target_include_directories(
+  shadowspill_backend_contract_canary PRIVATE ${PROJECT_SOURCE_DIR}/csrc/include
+)
+target_link_libraries(
+  shadowspill_backend_contract_canary
+  PRIVATE ${CMAKE_DL_LIBS} shadowspill_build_options
+)
+add_test(
+  NAME shadowspill_backend_contract_canary
+  COMMAND shadowspill_backend_contract_canary $<TARGET_FILE:shadowspill_backend_mock>
+)
 
 add_executable(shadowspill_simulator_canary simulator_canary.c)
 target_link_libraries(

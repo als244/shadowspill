@@ -7,24 +7,20 @@ and storage operations into this contract.
 
 ## Pools, budgets, and leases
 
-`MemoryPool` is a generic range owner registered by identity with the runtime.
-Directed transfer routes are registered separately. Each admitted plan then
-selects its execution pool, spill pool, fetch route, and evict route; the
-runtime has no single global execution/spill role pair. The current PyTorch
-backend supports one accelerator-device slab and any number of registered
-pinned-host slabs. Host memory is obtained with ordinary allocation followed
-by provider registration, and is unregistered before it is freed.
+`MemoryPool` is a generic range owner registered by identity with the runtime,
+and directed transfer routes are registered separately; how pools get their
+arenas and routes their lanes is in [memory pools](memory-pools.md). Each
+admitted plan selects its execution pool, spill pool, fetch route, and evict
+route; the runtime has no single global execution/spill role pair. The PyTorch
+adapter registers one device pool and any number of pinned-host pools.
 
 The execution pool's `physical_capacity` is the complete process-attributable
 device cap. Provider headroom and the driver's own baseline lie inside that cap. Planning budgets
 may reduce configured capacities but cannot exceed them.
 
-Runtime construction precedes workload-state construction. The runtime first
-allocates and registers every configured pool, then calibrates each directed
-route using ranges from those actual pools. Workload state is constructed and
-imported afterward. This ordering keeps the physical pages and DMA mapping of
-a large pinned spill arena independent of earlier anonymous model allocations;
-planning consumes the immutable transfer profile published by that runtime.
+Runtime construction precedes workload-state construction, so calibration
+runs on the real arenas before the model claims host memory; the ordering and
+its reason are in [memory pools](memory-pools.md#construction-order).
 
 A `MemoryLease` owns one range for one residency generation. Objects keep a
 lease per pool location; aliases and views share the same object and lease.
@@ -111,7 +107,8 @@ free" state.
 
 ## Transfers
 
-Fetch and evict are separate lanes with independent locks and streams. At an
+Fetch and evict are separate routes, each with its own lane, a stream the
+runtime owns ([transfers](transfers.md)). At an
 action trigger:
 
 1. the dispatcher reserves destination capacity in directive order;
@@ -134,9 +131,9 @@ retirements, and dispatches queued actions. The default incomplete-head query
 cadence is one microsecond; an already-complete head is followed immediately
 without an artificial delay.
 
-Cold plan adoption reserves reusable neutral event records and backend event
-handles, retirement queue entries, `MemoryLease` records, and lease-use
-records. It also sizes one pool-owned release-frontier workspace from the
+Cold plan adoption reserves event leases with their backend events
+([events](events.md)), retirement queue entries, `MemoryLease` records, and
+lease-use records. It also sizes one pool-owned release-frontier workspace from the
 sealed lease inventory. This workspace dry-runs pending-range coalescing
 inside a bounded borrowed range-node arena; destination reservation never
 builds a heap array or clones heap-owned range nodes while holding the pool.
@@ -237,7 +234,7 @@ cleanup](../python/failures.md).
 ## Optional tracing
 
 `runtime_trace=False` has no trace-buffer work on the critical path.
-`profiler_annotations=False` independently controls NVTX or another backend
+`profiler_annotations=False` independently controls the backend's
 profiler. When runtime tracing is enabled, bounded preallocated buffers record
 task, allocator, transfer, and failure events and are converted to Python only
 when diagnostics are resolved.

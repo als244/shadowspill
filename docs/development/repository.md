@@ -13,7 +13,7 @@ shadowspill/
 ├── reference/             executable reference implementations
 ├── benchmarking/          reusable Program datasets and planning evaluation
 ├── qualification/         thin numerical and performance release gates
-├── docs/                  architecture, Python, C, development, and investigations
+├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
 ├── CMakeLists.txt         compiled-component build orchestrator
 └── pyproject.toml         Python build, dependency, lint, type, and test configuration
@@ -40,6 +40,7 @@ src/shadowspill/
 │   └── serialization/     neutral artifact encode/decode
 ├── simulator/             the simulator and diagnostic timeline
 ├── runtime/               physical admission and replay bindings
+├── plots/                 step-run and step-search figures
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
     ├── partition/         stage policies, splitting, provenance, authentic controls
@@ -63,26 +64,19 @@ modules are avoided.
 
 ## The C tree
 
-```text
-csrc/
-├── include/shadowspill/   public headers: shadowspill.h, status.h, simulator.h,
-│                          planner.h, runtime.h, admission_replay.h, backend.h,
-│                          profiler.h
-├── src/
-│   ├── common/            status decoding and the platform layer
-│   ├── simulator/
-│   ├── planner/           and planner/admission/
-│   └── runtime/           and memory/ objects/ tasks/ transfers/ sync/ plan/
-│                          telemetry/, each with its own internal.h
-├── backends/{mock,<provider>}/
-└── adapter/pytorch/       include/shadowspill/pytorch_adapter.h and the
-                           allocator/storage/profiler bridge sources
-```
+[csrc/README.md](../../csrc/README.md) draws the layout of `csrc/`: the
+public headers, the one library under `src/` (common, simulator, planner,
+runtime with a directory per runtime component), the backends, and the
+PyTorch adapter.
 
 Everything under `src/` builds into one library. The backends share one
-`CMakeLists.txt` and the PyTorch adapter has its own, because each is
-compiled elsewhere against a toolchain the rest of the tree must not require.
-Provider dependencies stay inside those boundaries.
+`CMakeLists.txt`, which builds the mock backend always and every provider
+whose toolchain is installed, or the providers named in `SHADOWSPILL_BACKENDS`
+(`-DSHADOWSPILL_BACKENDS=<provider>`, or through pip
+`--config-setting cmake.define.SHADOWSPILL_BACKENDS=<provider>`). The PyTorch
+adapter has its own `CMakeLists.txt` and links no provider: it loads a backend
+library by name at bootstrap. Provider dependencies stay inside
+`backends/<provider>/`.
 
 A private header named `internal.h` belongs to the directory holding it and is
 included by path from anywhere else, so `"internal.h"` always means this

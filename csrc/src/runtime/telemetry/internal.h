@@ -22,6 +22,18 @@ void shadowspill_append_allocation_event_locked(
     ShadowSpillAllocationCategory category
 );
 
+void shadowspill_trace_append_stamped_enabled(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTraceEventKind kind,
+    uint64_t task_id,
+    uint64_t object_id,
+    uint64_t allocation_id,
+    uint64_t bytes,
+    uint64_t detail_0,
+    uint64_t detail_1,
+    uint64_t stream_start_ns,
+    uint64_t stream_end_ns
+);
 void shadowspill_trace_append_enabled(
     ShadowSpillRuntime *runtime,
     ShadowSpillTraceEventKind kind,
@@ -35,28 +47,22 @@ void shadowspill_trace_append_enabled(
 
 
 
-int shadowspill_profiler_is_valid(const ShadowSpillProfiler *profiler);
-
-void shadowspill_profiler_set_enabled(
-    const ShadowSpillProfiler *profiler, uint8_t enabled
-);
-
 void shadowspill_profiler_name_current_thread(
-    const ShadowSpillProfiler *profiler, const char *name
+    const ShadowSpillBackend *backend, const char *name
 );
 
 void shadowspill_profiler_name_stream(
-    const ShadowSpillProfiler *profiler,
+    const ShadowSpillBackend *backend,
     ShadowSpillBackendStream stream,
     const char *name
 );
 
 ShadowSpillProfilerRange shadowspill_profiler_range_begin(
-    const ShadowSpillProfiler *profiler, const char *name
+    const ShadowSpillBackend *backend, const char *name
 );
 
 void shadowspill_profiler_range_end(
-    const ShadowSpillProfiler *profiler, ShadowSpillProfilerRange range
+    const ShadowSpillBackend *backend, ShadowSpillProfilerRange range
 );
 
 #endif

@@ -26,9 +26,8 @@ static void *allocate_from_thread(void *pointer) {
 }
 
 int main(void) {
-    ShadowSpillMockBackend *mock = NULL;
+    ShadowSpillBackend mock = {0};
     const ShadowSpillMockBackendConfig mock_config = {
-        .abi_version = SHADOWSPILL_MOCK_BACKEND_ABI_VERSION,
         .event_delay_nanoseconds = 2000000U,
     };
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
@@ -36,8 +35,7 @@ int main(void) {
     }
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillMockRuntimeTopology topology;
-    shadowspill_mock_runtime_topology(
-        mock, 128U, 1U, 1U, 10000U, &topology
+    shadowspill_mock_runtime_topology(&mock, 128U, 1U, 1U, 10000U, &topology
     );
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
         SHADOWSPILL_STATUS_OK) {
@@ -46,8 +44,8 @@ int main(void) {
     ShadowSpillBackendStream first_stream = {{0U, 0U}};
     ShadowSpillBackendStream second_stream = {{0U, 0U}};
     ShadowSpillAllocation first = {0};
-    if (shadowspill_mock_create_compute_stream(mock, &first_stream) != 0 ||
-        shadowspill_mock_create_compute_stream(mock, &second_stream) != 0 ||
+    if (mock.create_stream(mock.state, &first_stream) != 0 ||
+        mock.create_stream(mock.state, &second_stream) != 0 ||
         shadowspill_memory_pool_allocate(runtime, 0U, 128U, 1U, first_stream, &first) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_record_stream(runtime, 0U, first.allocation_id, second_stream
@@ -105,11 +103,11 @@ int main(void) {
         return EXIT_FAILURE;
     }
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_mock_destroy_compute_stream(mock, first_stream) != 0 ||
-        shadowspill_mock_destroy_compute_stream(mock, second_stream) != 0) {
+        mock.destroy_stream(mock.state, first_stream) != 0 ||
+        mock.destroy_stream(mock.state, second_stream) != 0) {
         return EXIT_FAILURE;
     }
     shadowspill_runtime_destroy(runtime);
-    shadowspill_mock_backend_destroy(mock);
+    shadowspill_backend_destroy(&mock);
     return EXIT_SUCCESS;
 }
