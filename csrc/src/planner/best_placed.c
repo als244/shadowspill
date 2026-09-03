@@ -9,23 +9,24 @@
 /*
  * The best plan any caller has actually placed.
  *
- * Placement is expensive and a plan no better than one already placed cannot
- * win even if it places, so a search consults this before measuring. The
- * object is deliberately generic: it knows nothing about candidates, resolved
- * programs or calls, so the same code shares one gate between the candidates
- * of a single call or between concurrent calls, depending only on which
- * object the caller passes.
+ * This is the authority on what a search's answer is: every candidate
+ * offers the plans it places, and decoding trusts the record over any
+ * re-ranking. It is never consulted during a candidate's own descent --
+ * a mid-search read would make the descent depend on what other workers
+ * had placed by then, which is timing. The object is deliberately generic:
+ * it knows nothing about candidates, resolved programs or calls, so the
+ * same code shares one record between the candidates of a single call or
+ * between concurrent calls, depending only on which object the caller
+ * passes.
  *
  * Two levels of synchronisation, because the two operations have very
- * different frequencies. `admits` runs at every local minimum of every
- * candidate and reads one atomic word, so it never waits. `offer` and `read`
- * touch the whole record and take a spin lock, which is affordable because a
- * placement that succeeds is rare next to the checks that precede it, and the
- * critical section is a fixed-size copy.
- *
- * A stale `admits` read costs at most a measurement that would have been
- * skipped, never a wrong answer: the best plan that will ever be placed is
- * better than everything already placed, so it is never the one refused.
+ * different frequencies. `bound` runs at every local minimum of every
+ * candidate in the default search mode and reads one atomic word, so it
+ * never waits; a stale read costs at most a measurement that would have
+ * been skipped. `offer` and `read` touch the whole record and take a spin
+ * lock, which is affordable because a placement that succeeds is rare next
+ * to the work that precedes it, and the critical section is a fixed-size
+ * copy.
  */
 struct ShadowSpillBestPlaced {
     /* Mirrors record.makespan_ns so the hot path needs no lock. */
@@ -66,18 +67,6 @@ void shadowspill_best_placed_destroy(ShadowSpillBestPlaced *best) {
     }
     shadowspill_schedule_storage_destroy(&best->plan);
     free(best);
-}
-
-int shadowspill_best_placed_admits(
-    const ShadowSpillBestPlaced *best,
-    uint64_t makespan_ns
-) {
-    if (best == NULL) {
-        return 1;
-    }
-    uint64_t bound =
-        atomic_load_explicit(&best->makespan_ns, memory_order_acquire);
-    return bound == 0U || makespan_ns < bound;
 }
 
 int shadowspill_best_placed_offer(
@@ -131,4 +120,11 @@ void shadowspill_best_placed_read(
     lock(mutable_best);
     *record = best->record;
     unlock(mutable_best);
+}
+
+uint64_t shadowspill_best_placed_bound(const ShadowSpillBestPlaced *best) {
+    if (best == NULL) {
+        return 0U;
+    }
+    return atomic_load_explicit(&best->makespan_ns, memory_order_acquire);
 }

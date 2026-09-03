@@ -42,10 +42,10 @@ class PressureFitRepairDiagnostics:
     """Categorized monotonic changes made while repairing one search path."""
 
     unclassified_attempts: int = 0
-    admission_prefetch_advance_attempts: int = 0
-    admission_prefetch_delay_attempts: int = 0
+    admission_fetch_advance_attempts: int = 0
+    admission_fetch_delay_attempts: int = 0
     admission_pressure_boundary_attempts: int = 0
-    simulation_prefetch_delay_attempts: int = 0
+    simulation_fetch_delay_attempts: int = 0
     simulation_pressure_boundary_attempts: int = 0
 
     def __post_init__(self) -> None:
@@ -81,14 +81,14 @@ class PressureFitRepairDiagnostics:
             "pressure_boundary_attempts": self.pressure_boundary_attempts,
             "unclassified_attempts": self.unclassified_attempts,
             "admission_failure": {
-                "prefetch_advance_attempts": (self.admission_prefetch_advance_attempts),
-                "prefetch_delay_attempts": self.admission_prefetch_delay_attempts,
+                "fetch_advance_attempts": (self.admission_fetch_advance_attempts),
+                "fetch_delay_attempts": self.admission_fetch_delay_attempts,
                 "pressure_boundary_attempts": (
                     self.admission_pressure_boundary_attempts
                 ),
             },
             "simulation_failure": {
-                "prefetch_delay_attempts": self.simulation_prefetch_delay_attempts,
+                "fetch_delay_attempts": self.simulation_fetch_delay_attempts,
                 "pressure_boundary_attempts": (
                     self.simulation_pressure_boundary_attempts
                 ),
@@ -109,21 +109,21 @@ class PressureFitRepairDiagnostics:
                 data.get("unclassified_attempts", 0),
                 f"{path}.unclassified_attempts",
             ),
-            admission_prefetch_advance_attempts=_integer(
-                admission.get("prefetch_advance_attempts", 0),
-                f"{path}.admission_failure.prefetch_advance_attempts",
+            admission_fetch_advance_attempts=_integer(
+                admission.get("fetch_advance_attempts", 0),
+                f"{path}.admission_failure.fetch_advance_attempts",
             ),
-            admission_prefetch_delay_attempts=_integer(
-                admission.get("prefetch_delay_attempts", 0),
-                f"{path}.admission_failure.prefetch_delay_attempts",
+            admission_fetch_delay_attempts=_integer(
+                admission.get("fetch_delay_attempts", 0),
+                f"{path}.admission_failure.fetch_delay_attempts",
             ),
             admission_pressure_boundary_attempts=_integer(
                 admission.get("pressure_boundary_attempts", 0),
                 f"{path}.admission_failure.pressure_boundary_attempts",
             ),
-            simulation_prefetch_delay_attempts=_integer(
-                simulation.get("prefetch_delay_attempts", 0),
-                f"{path}.simulation_failure.prefetch_delay_attempts",
+            simulation_fetch_delay_attempts=_integer(
+                simulation.get("fetch_delay_attempts", 0),
+                f"{path}.simulation_failure.fetch_delay_attempts",
             ),
             simulation_pressure_boundary_attempts=_integer(
                 simulation.get("pressure_boundary_attempts", 0),
@@ -236,8 +236,6 @@ class PressureFitWorkDiagnostics:
     independent recomputation problems are evaluated concurrently.
     """
 
-    residency_cache_hits: int = 0
-    residency_cache_misses: int = 0
     schedule_emissions: int = 0
     schedule_cache_hits: int = 0
     simulation_calls: int = 0
@@ -266,10 +264,6 @@ class PressureFitWorkDiagnostics:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "residency": {
-                "cache_hits": self.residency_cache_hits,
-                "evaluations": self.residency_cache_misses,
-            },
             "schedule": {
                 "cache_hits": self.schedule_cache_hits,
                 "emissions": self.schedule_emissions,
@@ -288,17 +282,10 @@ class PressureFitWorkDiagnostics:
         cls, value: object, path: str = "pressurefit_work"
     ) -> PressureFitWorkDiagnostics:
         data = _mapping(value, path)
-        residency = _mapping(data.get("residency"), f"{path}.residency")
         schedule = _mapping(data.get("schedule"), f"{path}.schedule")
         simulation = _mapping(data.get("simulation"), f"{path}.simulation")
         admission = _mapping(data.get("admission"), f"{path}.admission")
         result = cls(
-            residency_cache_hits=_integer(
-                residency.get("cache_hits", 0), f"{path}.residency.cache_hits"
-            ),
-            residency_cache_misses=_integer(
-                residency.get("evaluations", 0), f"{path}.residency.evaluations"
-            ),
             schedule_emissions=_integer(
                 schedule.get("emissions", 0), f"{path}.schedule.emissions"
             ),

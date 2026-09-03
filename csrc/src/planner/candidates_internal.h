@@ -34,12 +34,12 @@ typedef struct ShadowSpillScheduleFacts {
  * by the object and its next consumer.  The bounds survive residency
  * re-emission; addresses remain entirely dynamic.
  */
-typedef struct ShadowSpillPrefetchTriggerConstraint {
+typedef struct ShadowSpillFetchTriggerConstraint {
     uint32_t alias;
     uint32_t consumer_task;
     uint32_t minimum_trigger;
     uint32_t maximum_trigger;
-} ShadowSpillPrefetchTriggerConstraint;
+} ShadowSpillFetchTriggerConstraint;
 
 /* Keep one logical object absent at one residency boundary. */
 int shadowspill_schedule_facts_create(
@@ -66,6 +66,10 @@ int shadowspill_schedule_storage_copy(
 /* Records `record` and keeps its own copy of `plan` if it beats what is
  * held, returning non-zero if it did. Internal because the plan it keeps is
  * an internal storage type; the rest of the gate is public. */
+/* The best placed makespan so far, or zero when nothing has been placed.
+ * Lock-free: the default search mode consults it at every local minimum. */
+uint64_t shadowspill_best_placed_bound(const ShadowSpillBestPlaced *best);
+
 int shadowspill_best_placed_offer(
     ShadowSpillBestPlaced *best,
     const ShadowSpillBestPlacedRecord *record,
@@ -82,29 +86,29 @@ int shadowspill_emit_indexed_schedule(
     const ShadowSpillScheduleFacts *facts,
     const uint8_t *resident,
     const uint8_t *breaks,
-    uint8_t prefetch_rule,
+    uint8_t fetch_rule,
     int coalesced,
-    int prefetch_headroom,
+    int fetch_headroom,
     ShadowSpillScheduleStorage *storage
 );
 
-int shadowspill_delay_indexed_prefetch(
+int shadowspill_delay_indexed_fetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,
     ShadowSpillScheduleStorage *storage,
-    ShadowSpillPrefetchTriggerConstraint *constraint
+    ShadowSpillFetchTriggerConstraint *constraint
 );
 
-int shadowspill_advance_indexed_prefetch_to_release(
+int shadowspill_advance_indexed_fetch_to_release(
     const ShadowSpillScheduleFacts *facts,
     uint32_t action_index,
     ShadowSpillScheduleStorage *storage,
-    ShadowSpillPrefetchTriggerConstraint *constraint
+    ShadowSpillFetchTriggerConstraint *constraint
 );
 
-int shadowspill_apply_prefetch_trigger_constraints(
+int shadowspill_apply_fetch_trigger_constraints(
     const ShadowSpillScheduleFacts *facts,
-    const ShadowSpillPrefetchTriggerConstraint *constraints,
+    const ShadowSpillFetchTriggerConstraint *constraints,
     uint32_t constraint_count,
     ShadowSpillScheduleStorage *storage
 );
