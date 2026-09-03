@@ -34,6 +34,7 @@ def test_pressurefit_fails_closed_without_the_library(
             training_chain_program(1),
             initial_residency=training_chain_initial(1),
             config=training_chain_config(224),
+            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
         )
 
 
@@ -53,7 +54,9 @@ def test_candidate_evaluation_is_deterministic(
     program = training_chain_program(layers)
     initial = training_chain_initial(layers)
     config = training_chain_config(capacity)
-    options = PressureFitOptions(initial_placement=placement, workers=1)
+    options = PressureFitOptions(
+        initial_placement=placement, workers=1, minimum_object_bytes_evict_eligible=0
+    )
 
     indexed = pressurefit(
         program,

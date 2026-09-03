@@ -138,9 +138,11 @@ paying in a sweep.
 smaller than it resident from its first to its last access: the reducer never
 cuts it, so it is never evicted and fetched mid-step, while its boundary
 contract — an opening fetch, a release after the last access, a terminal
-writeback when modified — is emitted as for any object. Zero, the library
-default, makes every object eligible; the PyTorch entrypoints set 1 MiB
-unless told otherwise. Every lease of an object it holds gets a static home
+writeback when modified — is emitted as for any object. It defaults to 1 MiB,
+the size below which a copy is latency-bound and its bytes hardly relieve a
+boundary, while every such object is still a cut candidate, a dispatch, and
+an event. Zero makes every object eligible, which is what a caller planning
+byte-sized objects wants. Every lease of an object it holds gets a static home
 in the `ResidentSlice` the result carries — their sum, one home per lease,
 sized at problem preparation — and the capacity the reducer plans against is
 reduced by that slice, so they are never charged again. A slice a budget

@@ -45,6 +45,7 @@ def _result() -> PressureFitResult:
             residency_strategies=("relaxed-stall",),
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
+            minimum_object_bytes_evict_eligible=0,
         ),
     )
     return result
@@ -80,6 +81,7 @@ def test_fixture_replays_the_physical_pressurefit_call_boundary(
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
             workers=1,
+            minimum_object_bytes_evict_eligible=0,
         ),
         admission=admission,
     )
