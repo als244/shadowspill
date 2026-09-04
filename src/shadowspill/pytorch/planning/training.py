@@ -70,7 +70,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
 from shadowspill.pytorch.state.optimizer import (
-    import_optimizer_state_for_plan,
+    adopt_optimizer_state_for_plan,
     release_optimizer_state_from_plan,
 )
 from shadowspill.simulator import SimulationConfig
@@ -373,10 +373,11 @@ def materialize_training_state(
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
         with timer.measure("optimizer_state_import"):
-            import_optimizer_state_for_plan(
+            adopt_optimizer_state_for_plan(
                 optimizer,
                 runtime=runtime,
                 pool=memory.spill.name,
+                owning_plan=memory.plan_handle,
             )
         with timer.measure("model_placeholder_restoration"):
             state.restore_device_placeholders_after_optimizer_capture()
@@ -1170,10 +1171,11 @@ def _restore_training_ownership(
     release_error: BaseException | None = None
     if optimizer is not None:
         try:
-            release_optimizer_state_from_plan(optimizer, runtime=runtime)
+            if release_optimizer_state_from_plan(optimizer, runtime=runtime):
+                # Only state this plan created is ours to end.
+                optimizer.state.clear()
         except BaseException as error:
             release_error = error
-        optimizer.state.clear()
     try:
         state.restore_cpu_and_unregister()
     except BaseException as error:

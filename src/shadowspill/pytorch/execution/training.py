@@ -811,13 +811,15 @@ class TrainingExecutor(AnnotatedExecutor):
         Nothing is copied: a caller who wants the state takes the checkpoint
         while the callable is open. The state tensors view storage the plan is
         about to reclaim, so they are cleared rather than left dangling -- the
-        same ownership restoration a planning rollback performs.
+        same ownership restoration a planning rollback performs. State the
+        caller imported is left alone; the plan was lent it.
         """
 
-        release_optimizer_state_from_plan(
+        if not release_optimizer_state_from_plan(
             self.optimizer,
             runtime=self._state.runtime,
-        )
+        ):
+            return
         self.optimizer.state.clear()
         self._optimizer_state_initialized = False
         self._optimizer_state_available = False
