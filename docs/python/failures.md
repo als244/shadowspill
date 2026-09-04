@@ -147,7 +147,9 @@ cleanup before the exception reaches the caller. Cleanup:
 - resolves or cancels pending diagnostics;
 - stops profiler annotations;
 - clears transient gradients for training;
-- restores optimizer and model bindings to their pre-plan ownership state;
+- releases optimizer state with the plan, because a failed step publishes no
+  optimizer update, and restores model bindings to their pre-plan ownership
+  state;
 - releases the compiled executor and admitted runtime plan; and
 - restores persistent object identities.
 
@@ -169,6 +171,13 @@ planned callable
      (or release_model_state() when the state is no longer needed)
   -> Runtime
 ```
+
+Closing copies nothing. A planned training callable points the model's
+parameters back at the spill-pool storage they were imported into, which
+already holds their updates, and releases optimizer state along with the plan
+that owns it. So `state_dict()` and `load_state_dict()` answer only while the
+callable is open; take the checkpoint before the close. See the
+[frontend API](api/frontend.md).
 
 `Runtime.close()` rejects an active callable, an in-progress plan, persistent
 imported state, a live public object reference, or caller-owned device output.

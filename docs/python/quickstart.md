@@ -148,7 +148,14 @@ is compatible with an ordinary `nn.Module.load_state_dict()` call.
 `state_dict()` synchronously copies into ordinary CPU memory outside runtime
 pools. After it returns, filesystem serialization can run on another thread or
 process while training continues because the checkpoint no longer aliases
-runtime-owned state.
+runtime-owned state. That independence has a price: the spill pool keeps the
+authoritative copy and is read in place, so the checkpoint is normally one
+further copy of model and optimizer state outside the pool, held for as long
+as you hold it. Budget for that beside the pinned pool itself.
+
+Take the checkpoint before closing. Optimizer state belongs to the plan, so
+`close()` releases it, and `state_dict()` afterwards raises rather than
+reporting an empty optimizer.
 
 ## Plan forward only
 
@@ -182,6 +189,14 @@ model = export_model_state(
 )
 runtime.close()
 ```
+
+Closing copies nothing, and it moves no weights. The model's parameters keep
+the spill-pool storage `import_model_state()` gave them, and that storage
+already holds every step's updates; `export_model_state()` above is what
+copies the values into ordinary CPU tensors. Optimizer state has no equivalent home -- `plan_step()` builds
+the optimizer and owns its state -- so it ends with the plan, which is why the
+checkpoint above is taken before the close, not after. Resume from one with
+`load_state_dict()`.
 
 Both `Runtime` and planned callables are context managers. Explicit lifecycle
 calls make ownership and failure handling easiest to audit.

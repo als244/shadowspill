@@ -688,7 +688,18 @@ class TrainingExecutor(AnnotatedExecutor):
         self._optimizer_state_available = value
 
     def optimizer_state_dict(self) -> dict[str, object]:
-        """Synchronously snapshot optimizer state without stale CUDA pointers."""
+        """Synchronously snapshot optimizer state without stale CUDA pointers.
+
+        The snapshot is independent: each tensor is its own compact host
+        allocation, aliasing neither runtime storage nor the other entries,
+        so a caller can serialize it while training continues. The pool keeps
+        the authoritative copy throughout, and this reads it in place, so the
+        snapshot is normally the only copy of the state outside the pool. An
+        alias whose pool copy is not the current one is read into a buffer
+        first, and that alias costs two until the snapshot is built. On a
+        large model even one copy is the biggest transient the frontend asks
+        for, so budget for it.
+        """
 
         if not self._optimizer_state_initialized:
             raw = self.optimizer.state_dict()
@@ -697,7 +708,7 @@ class TrainingExecutor(AnnotatedExecutor):
                 "param_groups": copy.deepcopy(raw["param_groups"]),
             }
 
-        exposed = self._expose_optimizer_state_cpu()
+        exposed = self._expose_optimizer_state_cpu(self._borrowed_alias_buffer)
         try:
             raw = self.optimizer.state_dict()
             return cast(
@@ -794,14 +805,22 @@ class TrainingExecutor(AnnotatedExecutor):
             self._bridge.write_spill_tensor(alias_id, actual.tensor)
             written.add(alias_id)
 
-    def restore_optimizer_cpu(self) -> None:
-        """Leave live optimizer state backed by ordinary CPU storage."""
+    def release_optimizer_state(self) -> None:
+        """Drop optimizer state with the plan that owns its spill storage.
 
-        self._expose_optimizer_state_cpu()
+        Nothing is copied: a caller who wants the state takes the checkpoint
+        while the callable is open. The state tensors view storage the plan is
+        about to reclaim, so they are cleared rather than left dangling -- the
+        same ownership restoration a planning rollback performs.
+        """
+
         release_optimizer_state_from_plan(
             self.optimizer,
             runtime=self._state.runtime,
         )
+        self.optimizer.state.clear()
+        self._optimizer_state_initialized = False
+        self._optimizer_state_available = False
 
     def _execute_task(
         self,
@@ -1449,9 +1468,36 @@ class TrainingExecutor(AnnotatedExecutor):
             )
         }
 
+    def _copied_alias_buffer(self, alias_id: str) -> torch.Tensor:
+        """Return a writable host buffer holding one alias's current bytes."""
+
+        owner = torch.empty(
+            self._optimizer_size_by_alias[alias_id],
+            dtype=torch.uint8,
+            device="cpu",
+        )
+        self._bridge.read_spill_tensor(alias_id, owner)
+        return owner
+
+    def _borrowed_alias_buffer(self, alias_id: str) -> torch.Tensor:
+        """Return one alias's bytes in place, copying only if it must."""
+
+        window = self._bridge.spill_window(alias_id)
+        return self._copied_alias_buffer(alias_id) if window is None else window
+
     def _expose_optimizer_state_cpu(
         self,
+        owner_for: Callable[[str], torch.Tensor] | None = None,
     ) -> tuple[_ExposedOptimizerTensor, ...]:
+        """Point live optimizer state at host bytes, however they are obtained.
+
+        ``owner_for`` supplies each alias group's bytes. The default copies
+        them out of the pool into a writable buffer, which a caller that
+        intends to write back must use; a read-only caller can pass
+        ``_borrowed_alias_buffer`` to read the pool in place instead.
+        """
+
+        make_owner = self._copied_alias_buffer if owner_for is None else owner_for
         self._bridge.wait_plan_idle()
         current = self._current_optimizer_bindings()
         exposed: list[_ExposedOptimizerTensor] = []
@@ -1464,12 +1510,7 @@ class TrainingExecutor(AnnotatedExecutor):
             alias_id = self._bridge.alias_for_object(item.object_id)
             owner = owners.get(alias_id)
             if owner is None:
-                owner = torch.empty(
-                    self._optimizer_size_by_alias[alias_id],
-                    dtype=torch.uint8,
-                    device="cpu",
-                )
-                self._bridge.read_spill_tensor(alias_id, owner)
+                owner = make_owner(alias_id)
                 owners[alias_id] = owner
             device_placeholder = tensor.data
             layout = _TensorLayout(

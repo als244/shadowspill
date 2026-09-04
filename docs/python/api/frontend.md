@@ -114,9 +114,12 @@ longer need the state, such as qualification hosts that cannot hold an
 anonymous model copy beside the full pinned spill arena.
 
 `import_optimizer_state()` and `export_optimizer_state()` apply the same
-storage policy to already materialized optimizer state. `plan_step()` normally
-constructs and manages its optimizer from the supplied factory, so direct
-optimizer import is an advanced lifecycle operation.
+storage policy to already materialized optimizer state, as a standalone
+ownership operation. They are not a planning input: `plan_step()` constructs
+and manages its own optimizer from the supplied factory and imports that
+optimizer's state itself, so handing it one whose state is already imported
+raises `RuntimeConfigurationError`. Resume prior state through
+`PlannedTrainStep.load_state_dict()` instead.
 
 ## Planning entrypoints
 
@@ -431,6 +434,34 @@ PlannedTrainStep.submit(
 
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
 `state_dict()`, `load_state_dict()`, `close()`, and context manager support.
+
+Closing copies nothing, and it moves no weights. `import_model_state()` gave
+the model's parameters storage in the spill pool, and that one storage holds
+the updated weights throughout: a step both begins and ends with parameters
+spill-resident, so each update is already there. Running a step points those
+same `Parameter` objects at device memory; closing points them back.
+`export_model_state()` is the separate call that copies the values into
+ordinary CPU tensors.
+
+Optimizer state has no equivalent home today. `plan_step()` builds the
+optimizer from the factory it is given and imports its state into storage the
+plan owns, and planning refuses an optimizer whose state the caller already
+imported, so there is no caller-owned pool for it to be left in. Releasing the
+plan therefore releases the state with it: a training callable's
+`state_dict()` and `load_state_dict()` answer only while it is open, and both
+raise afterwards rather than reporting an empty optimizer. Take the checkpoint
+before closing, and resume from one with `load_state_dict()`, which writes the
+values into the storage the plan already owns. Execution failure closes the
+same way, and a failed step publishes no optimizer update in any case.
+
+`state_dict()` returns an independent snapshot: every tensor is its own
+compact host allocation outside the runtime pools, so it can be serialized
+while training continues. The spill pool keeps the authoritative copy
+throughout and is read in place, so the snapshot is normally the only copy of
+the state outside the pool; an object whose pool copy is not current is read
+into a buffer first and costs two until the snapshot is built. Even one copy
+of optimizer state is, on a large model, the largest transient the frontend
+asks for.
 
 `submit()` performs the normal host dispatch and returns an
 `InvocationResult` backed by one cold-created, timing-disabled completion
