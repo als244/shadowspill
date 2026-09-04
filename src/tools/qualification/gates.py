@@ -308,7 +308,10 @@ def main() -> int:
         "gates",
         nargs="*",
         choices=GATE_ORDER,
-        default=list(GATE_ORDER),
+        # Not a list default: argparse validates a default against `choices`
+        # when nargs is "*" and nothing was given, and a list is not one of
+        # them, so `qualification.gates` with no arguments would refuse to run.
+        default=None,
         help=(
             "which gates to run, in any order on the command line; they always "
             "run suite, numerical, performance. Default: all three"
@@ -316,7 +319,9 @@ def main() -> int:
     )
     parser.add_argument(
         "--run",
-        default=_default_run(),
+        # Resolved after parsing, not while building the parser: naming a run
+        # asks git for the revision, and --help should not.
+        default=None,
         help=(
             "names this run's output: qualification/results/numerical_<run>, "
             "performance_<run>, and gates_<run>/ for the logs. Defaults to the "
@@ -336,14 +341,15 @@ def main() -> int:
     )
     arguments = parser.parse_args()
 
+    run = arguments.run or _default_run()
     outcomes = run_gates(
-        arguments.gates,
-        run=arguments.run,
+        arguments.gates or list(GATE_ORDER),
+        run=run,
         keep_going=arguments.keep_going,
         continue_after_failure=arguments.continue_after_failure,
     )
     print()
-    print(_summary(f"gates {arguments.run}", outcomes, arguments.run))
+    print(_summary(f"gates {run}", outcomes, run))
     return 0 if all(outcome.passed for outcome in outcomes) else 1
 
 
