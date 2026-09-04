@@ -659,10 +659,22 @@ def _files_equal(left: Path, right: Path) -> bool:
                 return True
 
 
-def _digest_directory(root: Path, digest: str) -> Path:
+def digest_directory(root: Path, digest: str) -> Path:
+    """Where one content-addressed entry lives, under any store root.
+
+    Every content-addressed artifact follows one shape,
+    ``<kind>/<first two of digest>/<digest>/<document>``: a directory named
+    for the key, sharded so no directory grows unbounded, holding one file
+    per document. A kind that needs a second file later adds it beside the
+    first instead of inventing a path.
+    """
+
     if len(digest) != 64:
         raise ValueError("content-addressed cache key must be SHA-256")
     return root / digest[:2] / digest
+
+
+_digest_directory = digest_directory
 
 
 def _safe_label(value: str) -> str:
@@ -721,4 +733,4 @@ the artifacts touched by that call.  Do not edit content-addressed entries.
 """
 
 
-__all__ = ["ArtifactStore", "PlanningArtifact"]
+__all__ = ["ArtifactStore", "PlanningArtifact", "digest_directory"]
