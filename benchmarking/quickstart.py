@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import gc
+import resource
 import statistics
 import sys
 import time
@@ -73,6 +74,66 @@ def gib(value: float) -> str:
 
 def gib_s(value: float) -> str:
     return f"{value / _GIB:.1f} GiB/s"
+
+
+def host_memory() -> tuple[int, int]:
+    """Return this process's resident and peak-resident host bytes.
+
+    The pinned spill arena is one page-locked mapping, so it counts in full
+    from the moment the runtime registers it; everything the frontend holds
+    on the host -- imported state, captured optimizer state, compiled
+    artifacts -- counts on top of it.
+    """
+
+    pages = int(Path("/proc/self/statm").read_text().split()[1])
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return pages * resource.getpagesize(), peak * 1024
+
+
+def host_memory_ceiling() -> int | None:
+    """Return the tightest cgroup host-memory limit in force, or None.
+
+    A batch scheduler enforces its memory reservation as a cgroup limit, and
+    the kernel answers an overrun with SIGKILL, not with an error this
+    process could catch and report. Reading the ceiling is what lets a run
+    say how much margin it had while it still had some.
+    """
+
+    try:
+        entries = Path("/proc/self/cgroup").read_text().splitlines()
+    except OSError:
+        return None
+    unified = [line for line in entries if line.startswith("0::")]
+    if not unified:
+        return None
+    root = Path("/sys/fs/cgroup")
+    directory = root / unified[0][3:].strip().lstrip("/")
+    limits: list[int] = []
+    while True:
+        try:
+            value = (directory / "memory.max").read_text().strip()
+        except OSError:
+            value = "max"
+        if value.isdigit():
+            limits.append(int(value))
+        if directory == root:
+            return min(limits, default=None)
+        directory = directory.parent
+
+
+def note_host_memory(log: Any, label: str) -> None:
+    """Stamp the host-memory high-water mark into the progress log."""
+
+    resident, peak = host_memory()
+    ceiling = host_memory_ceiling()
+    message = (
+        f"host memory {gib(resident)} resident, {gib(peak)} peak"
+        f"{'' if ceiling is None else f' of {gib(ceiling)}'}: {label}"
+    )
+    if log is not None:
+        log.note(message)
+    else:
+        print(f"  {message}", flush=True)
 
 
 def deltas(label: str, values: list[float], worst_key: str = "") -> str:
@@ -441,6 +502,7 @@ def main() -> int:
         },
     )
     charge("runtime construction and calibration", marker)
+    note_host_memory(None, "runtime pools registered")
     marker = time.perf_counter()
     case = build_case(manifest, seed=arguments.seed)
     charge("model construction", marker)
@@ -464,6 +526,7 @@ def main() -> int:
         marker = time.perf_counter()
         case = import_case_model(case, runtime=runtime)
         charge("model import into the spill pool", marker)
+        note_host_memory(None, "model imported into the spill pool")
         report = None
         plan_log: PlanLog | None = None
         if manual is not None:
@@ -486,6 +549,11 @@ def main() -> int:
 
             def progress(message: str) -> None:
                 plan_log.note(message)
+                # Each geometry materializes model and optimizer state and
+                # tears it down again, so a geometry boundary is where host
+                # growth across builds would show.
+                if message.startswith("geometry"):
+                    note_host_memory(plan_log, message.split(":")[0])
 
             print(f"  progress log: {search_log}   (tail -f it to follow)")
             with contextlib.redirect_stdout(plan_log):
@@ -516,6 +584,7 @@ def main() -> int:
                 Path("benchmarking/quickstart_reports") / f"{arguments.model}.json"
             )
             print(f"  search report: {report.save(report_path)}")
+            note_host_memory(plan_log, "geometry search finished")
             print()
             for build in report.geometries:
                 for name, value in build.phase_seconds.items():
@@ -548,29 +617,20 @@ def main() -> int:
                     print(f"  {path}")
                 print()
 
-        run_entries: list[tuple[int, float, float]] = []
-        for budget in run_budgets:
-            if manual is not None:
-                geometry = (manual, sequences_per_step // manual)
-            else:
-                assert report is not None
-                winner = report.winner(budget, manifest.spill_budget_bytes)
-                if winner is None:
-                    print(
-                        f"  no geometry planned successfully at {gib(budget)};"
-                        " skipping this run budget"
-                    )
-                    continue
-                geometry = (
-                    winner.sequences_per_microbatch,
-                    winner.accumulation_count,
-                )
-            print(rule(f"Run at execution {gib(budget)}"))
-            print(
-                f"  geometry {geometry[0]} sequences per microbatch"
-                f" x {geometry[1]} accumulation rounds"
-            )
-            print()
+        def run_one_budget(
+            budget: int, geometry: tuple[int, int]
+        ) -> tuple[int, float, float]:
+            """Plan one budget, run its steps, close it, and own nothing after.
+
+            Returns the budget beside its simulated and measured step times.
+
+            One budget's plan must be entirely gone before the next one is
+            built: they hold model, optimizer, and compiled state at the same
+            scale, and the host has room for one of them beside the pinned
+            spill arena. Every reference to this budget's plan lives in this
+            frame, so returning is what releases them.
+            """
+
             microbatches = example_microbatches(*geometry)
             walls: list[float] = []
             marker = time.perf_counter()
@@ -598,18 +658,11 @@ def main() -> int:
                     overwrite_plan=False,
                 )
             charge("run planning", marker)
+            note_host_memory(plan_log, f"planned {gib(budget)}")
             plan_report = training.plan_report
             print_promise(plan_report, tokens_per_step)
 
-            def run_step(
-                step: int,
-                *,
-                traced: bool,
-                training: Any = training,
-                microbatches: Any = microbatches,
-                plan_report: Any = plan_report,
-                walls: list[float] = walls,
-            ) -> Any:
+            def run_step(step: int, *, traced: bool) -> Any:
                 started = time.perf_counter()
                 result = training(microbatches, runtime_trace=traced)
                 loss = float(result.objectives[-1])
@@ -636,19 +689,47 @@ def main() -> int:
             diagnostics = result.diagnostics.result()
             print()
             print_epilogue(diagnostics)
-            run_entries.append(
-                (
-                    budget,
-                    plan_report.summary.simulated_step_seconds,
-                    statistics.median(walls),
-                )
-            )
             ledger["steps execution"] = ledger.get("steps execution", 0.0) + sum(walls)
             # The final StepResult's public outputs are caller-owned device
             # tensors; the runtime refuses to close while they are alive.
             del result
             gc.collect()
             training.close()
+            return (
+                budget,
+                plan_report.summary.simulated_step_seconds,
+                statistics.median(walls),
+            )
+
+        run_entries: list[tuple[int, float, float]] = []
+        for budget in run_budgets:
+            if manual is not None:
+                geometry = (manual, sequences_per_step // manual)
+            else:
+                assert report is not None
+                winner = report.winner(budget, manifest.spill_budget_bytes)
+                if winner is None:
+                    print(
+                        f"  no geometry planned successfully at {gib(budget)};"
+                        " skipping this run budget"
+                    )
+                    continue
+                geometry = (
+                    winner.sequences_per_microbatch,
+                    winner.accumulation_count,
+                )
+            print(rule(f"Run at execution {gib(budget)}"))
+            print(
+                f"  geometry {geometry[0]} sequences per microbatch"
+                f" x {geometry[1]} accumulation rounds"
+            )
+            print()
+            run_entries.append(run_one_budget(budget, geometry))
+            # The frame that owned the closed plan is gone; collect what its
+            # internals hold in cycles, so the host memory that plan still
+            # occupies is free before the next budget plans.
+            gc.collect()
+            note_host_memory(plan_log, f"closed the {gib(budget)} plan")
         if plan_log is not None:
             log_handle.close()
         if arguments.plots and run_entries:
@@ -671,6 +752,18 @@ def main() -> int:
         share = value / total if total else 0.0
         print(f"  {name:<38}{value:9.1f} s  {bar(share)}  {share:6.1%}")
     print(f"  {'total':<38}{total:9.1f} s")
+    print()
+    resident, peak = host_memory()
+    ceiling = host_memory_ceiling()
+    print(rule("Where the host memory went"))
+    print(f"  spill arena (pinned)  {gib(manifest.spill_budget_bytes):>12}")
+    print(f"  peak resident         {gib(peak):>12}")
+    print(f"  resident at exit      {gib(resident):>12}")
+    if ceiling is not None:
+        print(
+            f"  cgroup ceiling        {gib(ceiling):>12}"
+            f"   ({gib(max(0, ceiling - peak))} unused at the peak)"
+        )
     print()
     return 0
 
