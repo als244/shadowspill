@@ -229,26 +229,25 @@ def main() -> int:
     for actual, wanted in zip(state_tensors, expected, strict=True):
         torch.testing.assert_close(actual, wanted, rtol=0, atol=0)
 
-    failing = _Model().eval()
-    failing_pointer = failing.projection.weight.untyped_storage().data_ptr()
-    try:
-        plan_forward(
-            failing,
-            example_inputs=[torch.randn(3, 32)],
-            runtime=runtime,
-            execution="execution",
-            spill="spill",
-            verbose=False,
-        )
-    except RuntimeError as error:
-        if "import_model_state" not in str(error):
-            raise AssertionError("unimported model error is not actionable") from error
-    else:
-        raise AssertionError("planning accepted unimported model state")
-    if persistent_state(runtime, failing) is not None:
-        raise AssertionError("failed planning created runtime model state")
-    if failing.projection.weight.untyped_storage().data_ptr() != failing_pointer:
-        raise AssertionError("failed planning changed model storage ownership")
+    # A model the caller did not import is imported by planning, which then
+    # owns the state and releases it when the callable closes.
+    adopted = _Model().eval()
+    planned = plan_forward(
+        adopted,
+        example_inputs=[torch.randn(3, 32)],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        verbose=False,
+    )
+    owned = persistent_state(runtime, adopted)
+    if owned is None or owned.owning_plan is None:
+        raise AssertionError("planning did not take ownership of model state")
+    planned.close()
+    if persistent_state(runtime, adopted) is not None:
+        raise AssertionError("closing did not release plan-owned model state")
+    if any(parameter.numel() != 0 for parameter in adopted.parameters()):
+        raise AssertionError("released model state left live parameter views")
 
     runtime.close()
     return 0

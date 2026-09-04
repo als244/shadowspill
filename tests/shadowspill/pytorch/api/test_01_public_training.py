@@ -16,8 +16,10 @@ from shadowspill.pytorch import (
     export_model_state,
     import_model_state,
     plan_step,
+    read_model_state,
 )
 from shadowspill.pytorch.optimizer import capture as optimizer_module
+from shadowspill.pytorch.runtime_adapter import RuntimeConfigurationError
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
 from shadowspill.pytorch.state.storage import persistent_state
 
@@ -321,6 +323,50 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
     assert persistent_state(runtime, built[0]) is None
     export_model_state(model, runtime=runtime, release_runtime=True)
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_owns_the_model_state_it_imported(tmp_path: object) -> None:
+    _require_adapter()
+    torch.manual_seed(76)
+    model = _TrainingNetwork()
+    examples = [[torch.randn(2, 6), torch.randn(2, 3), "left"]]
+    runtime = public_test_runtime()
+
+    # No import_model_state: planning imports the state, so the plan owns it.
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
+        example_inputs=examples,
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store_dir=tmp_path,
+    )
+    owned = persistent_state(runtime, model)
+    assert owned is not None
+    assert owned.owning_plan is not None
+    weights = training.state_dict()["model"]["first.weight"].clone()
+
+    # Reading answers while the plan holds the model, which exporting cannot.
+    name = "first.weight"
+    assert torch.equal(read_model_state(model, runtime=runtime)[name], weights)
+    viewed = read_model_state(model, runtime=runtime, copy=False)
+    assert torch.equal(viewed[name], weights)
+    with pytest.raises(RuntimeConfigurationError):
+        export_model_state(model, runtime=runtime)
+
+    result = training(examples)
+    del result
+    training.close()
+
+    # The plan created the state, so closing released it and emptied the
+    # parameters that viewed it. What was read before the close survives.
+    assert persistent_state(runtime, model) is None
+    assert all(parameter.numel() == 0 for parameter in model.parameters())
+    assert torch.isfinite(weights).all()
 
 
 @pytest.mark.cuda
