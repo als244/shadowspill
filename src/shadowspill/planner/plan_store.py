@@ -18,7 +18,7 @@ from shadowspill.ir import (
     RecomputationSelection,
     ResidencySpec,
 )
-from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.planner.artifact_store import ArtifactStore, digest_directory
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig, simulate
 from shadowspill.simulator.indexed import (
@@ -92,7 +92,7 @@ class PlanStore:
         self.artifact_recorder = artifact_recorder
 
     def path(self, key: str) -> Path:
-        return self.root / key[:2] / f"{key}.json"
+        return digest_directory(self.root, key) / "selection.json"
 
     def resolve(
         self,
