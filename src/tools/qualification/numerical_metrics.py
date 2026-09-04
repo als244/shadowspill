@@ -109,16 +109,25 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
     if left.numel() == 0:
         return TensorMetrics(1.0, 0.0, 1.0, 0.0)
     difference = right - left
-    left_norm = torch.linalg.vector_norm(left)
-    right_norm = torch.linalg.vector_norm(right)
+    # Reduce in float64. A cosine is at most 1, but the numerator and the
+    # denominator are separate reductions with independent rounding, so in
+    # float32 over millions of small elements the ratio drifts either side of
+    # 1 by more than these thresholds allow -- this metric has reported 1.0013
+    # on real state, which is not a number a cosine can take. The inputs stay
+    # float32; only the accumulation widens.
+    left_norm = torch.linalg.vector_norm(left, dtype=torch.float64)
+    right_norm = torch.linalg.vector_norm(right, dtype=torch.float64)
     denominator = left_norm * right_norm
     cosine = (
         1.0
         if float(denominator) == 0.0 and torch.equal(left, right)
-        else float(torch.dot(left, right) / denominator.clamp_min(1e-30))
+        else float(
+            torch.sum(left * right, dtype=torch.float64) / denominator.clamp_min(1e-30)
+        )
     )
     relative_l2 = float(
-        torch.linalg.vector_norm(difference) / left_norm.clamp_min(1e-30)
+        torch.linalg.vector_norm(difference, dtype=torch.float64)
+        / left_norm.clamp_min(1e-30)
     )
     sign_agreement = float((torch.sign(left) == torch.sign(right)).float().mean())
     return TensorMetrics(
@@ -128,7 +137,9 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
         maximum_absolute_error=float(difference.abs().max()),
         reference_norm=float(left_norm),
         actual_norm=float(right_norm),
-        difference_norm=float(torch.linalg.vector_norm(difference)),
+        difference_norm=float(
+            torch.linalg.vector_norm(difference, dtype=torch.float64)
+        ),
         reference_maximum_absolute=float(left.abs().max()),
         actual_maximum_absolute=float(right.abs().max()),
         numel=left.numel(),

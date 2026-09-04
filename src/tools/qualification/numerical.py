@@ -46,7 +46,14 @@ from .references import (
     reference_inputs_path,
 )
 
-_SPILL_BUDGET = 64 << 30
+# The cells are approximately 1.2 B parameters in bfloat16, so parameters,
+# gradients and both AdamW moments are about 8.8 GiB spill-resident at every
+# step boundary, with the spilled activations on top of that. 64 GiB was far
+# above anything the cells reach and made the gate a 70 GiB-resident process,
+# which is more than the measurement needs and more than a shared host should
+# be asked for. The gate proves the real bound itself: it fails unless the
+# measured spill peak fits the pool.
+_SPILL_BUDGET = 32 << 30
 _LOSS_RELATIVE_TOLERANCE = 0.01
 _LOSS_ABSOLUTE_TOLERANCE = 2e-5
 _MINIMUM_COSINE = 0.999
@@ -97,6 +104,35 @@ def _recomputation_savings_bytes(
         available += max(savings.values(), default=0)
         selected += savings.get(selected_by_group.get(group.group_id, "save"), 0)
     return available, selected
+
+
+def _failures_by_state(keys: Sequence[str]) -> dict[str, int]:
+    """Count failing tensors by which half of the training state they are in.
+
+    Weights disagreeing and optimizer moments disagreeing are different
+    findings: the first says the step computed something else, the second is
+    usually an accumulator whose small values are ill-conditioned for a
+    relative comparison. An aggregate count cannot be read either way, so the
+    split is reported even when one side is zero.
+    """
+    counts = {"model": 0, "optimizer": 0}
+    for key in keys:
+        parts = str(key).split("/")
+        half = parts[1] if len(parts) > 1 and parts[0] == "state" else "other"
+        counts[half] = counts.get(half, 0) + 1
+    return counts
+
+
+def _state_split(keys: Sequence[str]) -> str:
+    """Render the split for a message, always naming both halves."""
+    counts = _failures_by_state(keys)
+    named = [f"model {counts['model']}", f"optimizer {counts['optimizer']}"]
+    named.extend(
+        f"{half} {count}"
+        for half, count in counts.items()
+        if half not in ("model", "optimizer")
+    )
+    return ", ".join(named)
 
 
 def _transfer_pressure_gate_passed(
@@ -344,7 +380,7 @@ def _reference_worker(
     timings: list[float] = []
     compute_timings: list[float] = []
     execution_timings: list[dict[str, object]] = []
-    with case.implementations():
+    with case.implementations(deterministic=True):
         for step in range(steps):
             optimizer.zero_grad(set_to_none=True)
             event_factory: Any = torch.cuda.Event
@@ -504,7 +540,7 @@ def _planned_worker(
             "compiled reference inputs differ from requested qualification; "
             "replace them with --regenerate-reference"
         )
-    with case.implementations():
+    with case.implementations(deterministic=True):
         workload_metadata = _profiling_metadata(case, profiling_metadata)
         case = import_case_model(case, runtime=runtime)
         model = case.model
@@ -672,6 +708,23 @@ def _planned_worker(
         for name, metric in tensor_results.items()
         if not _meets_tensor_tolerance(metric)
     ]
+    # The replayed run has to agree with the uninterrupted one, but it cannot
+    # be required to agree bit for bit: a step is only bitwise reproducible if
+    # every kernel under it is, and the mlops path's are not on every
+    # accelerator. Hold the replay to the same per-tensor tolerance the
+    # reference comparison uses, and keep the bitwise answer as evidence.
+    replay_results, replay_exact_failures = compare_states(
+        {
+            "model": uninterrupted_state["model"],
+            "optimizer": uninterrupted_state["optimizer"],
+        },
+        {"model": final_state["model"], "optimizer": final_state["optimizer"]},
+    )
+    replay_metric_failures = [
+        name
+        for name, metric in replay_results.items()
+        if not _meets_tensor_tolerance(metric)
+    ]
     selections = tuple(
         (item.group_id, item.option_id) for item in report.execution_plan.selections
     )
@@ -760,6 +813,8 @@ def _planned_worker(
             (item.sign_agreement for item in tensor_results.values()), default=1.0
         ),
         "metric_failure_keys": metric_failures,
+        "metric_failures_by_state": _failures_by_state(metric_failures),
+        "exact_failures_by_state": _failures_by_state(exact_failures),
         "metric_failures": {
             name: asdict(tensor_results[name]) for name in metric_failures
         },
@@ -771,6 +826,31 @@ def _planned_worker(
         "exact_failures": exact_failures,
         "checkpoint_replay_bitwise": (
             uninterrupted_digest == replay_digest and expected_replay == replay_losses
+        ),
+        "checkpoint_replay_within_tolerance": (
+            not replay_exact_failures and not replay_metric_failures
+        ),
+        "checkpoint_replay_exact_failures": replay_exact_failures,
+        "checkpoint_replay_metric_failure_keys": replay_metric_failures,
+        "checkpoint_replay_metric_failures_by_state": _failures_by_state(
+            replay_metric_failures
+        ),
+        "checkpoint_replay_metric_failures": {
+            name: asdict(replay_results[name]) for name in replay_metric_failures
+        },
+        "checkpoint_replay_minimum_cosine": min(
+            (item.cosine for item in replay_results.values()), default=1.0
+        ),
+        "checkpoint_replay_maximum_relative_l2": max(
+            (item.relative_l2 for item in replay_results.values()), default=0.0
+        ),
+        "checkpoint_replay_maximum_absolute_error": max(
+            (item.maximum_absolute_error for item in replay_results.values()),
+            default=0.0,
+        ),
+        "checkpoint_replay_tensors_compared": len(replay_results),
+        "checkpoint_replay_tensors_differing": sum(
+            1 for item in replay_results.values() if item.difference_norm > 0.0
         ),
         "checkpoint_steps": _optimizer_steps(checkpoint),
         "uninterrupted_steps": _optimizer_steps(uninterrupted_state),
@@ -923,46 +1003,137 @@ def _planned_worker(
     )
     qualification_result["transfer_pressure_gate_passed"] = transfer_pressure_passed
     qualification_result["pressure_gate_passed"] = transfer_pressure_passed
-    qualification_result["passed"] = bool(
-        not loss_failures
-        and not metric_failures
-        and not exact_failures
-        and qualification_result["checkpoint_replay_bitwise"]
-        and transfer_pressure_passed
-        and report.predicted_device_peak_bytes <= device_budget
-        and not any(physical_statuses)
-        and qualification_result["physical_budget_sealed"]
-        and qualification_result["peak_process_physical_bytes"] <= device_budget
-        and qualification_result["slab_peak_allocated_bytes"]
-        <= qualification_result["execution_pool_bytes"]
-        and qualification_result["spill_peak_allocated_bytes"]
-        <= qualification_result["spill_pool_bytes"]
-        <= _SPILL_BUDGET
-        and qualification_result["callback_failures"] == 0
-        and qualification_result["pointer_lookup_failures"] == 0
-        and not qualification_result["allocation_event_overflow"]
-        and qualification_result["backend_device_allocations"] == 1
-        and qualification_result["steady_state_backend_device_allocations"] == 0
-        and qualification_result["steady_state_pinned_host_registrations"] == 0
-        and qualification_result["steady_state_event_pool_driver_creates"] == 0
-        and qualification_result["event_pool_growth_rejections"] == 0
-        and qualification_result["event_pool_sealed"]
-        and qualification_result["cold_cache_confirmed"]
+    # Every check names the kind of failure it reports, because "the cell
+    # failed" is not actionable: disagreeing with a reference recorded on
+    # other hardware, failing to reproduce its own replay, and exceeding a
+    # budget are different problems with different owners.
+    checks: tuple[tuple[str, object, str], ...] = (
+        ("reference", not loss_failures, f"{len(loss_failures)} losses differ"),
+        (
+            "reference",
+            not metric_failures,
+            f"{len(metric_failures)} tensors outside tolerance "
+            f"[{_state_split(metric_failures)}] "
+            f"(min cosine {qualification_result['minimum_cosine']:.6f}, "
+            f"max relative l2 "
+            f"{qualification_result['maximum_relative_l2']:.6f})",
+        ),
+        (
+            "reference",
+            not exact_failures,
+            f"{len(exact_failures)} tensors differ that must match exactly "
+            f"[{_state_split(exact_failures)}]",
+        ),
+        (
+            "replay",
+            qualification_result["checkpoint_replay_within_tolerance"],
+            f"{qualification_result['checkpoint_replay_tensors_differing']} of "
+            f"{qualification_result['checkpoint_replay_tensors_compared']} "
+            "tensors differ from the checkpoint replay "
+            f"[{_state_split(replay_metric_failures)}] (min cosine "
+            f"{qualification_result['checkpoint_replay_minimum_cosine']:.6f})",
+        ),
+        ("pressure", transfer_pressure_passed, "transfer pressure gate"),
+        (
+            "budget",
+            report.predicted_device_peak_bytes <= device_budget,
+            f"predicted device peak {report.predicted_device_peak_bytes} "
+            f"over budget {device_budget}",
+        ),
+        (
+            "budget",
+            not any(physical_statuses),
+            f"physical statuses {physical_statuses}",
+        ),
+        ("budget", qualification_result["physical_budget_sealed"], "budget not sealed"),
+        (
+            "budget",
+            qualification_result["peak_process_physical_bytes"] <= device_budget,
+            f"process peak {qualification_result['peak_process_physical_bytes']} "
+            f"over budget {device_budget}",
+        ),
+        (
+            "budget",
+            qualification_result["slab_peak_allocated_bytes"]
+            <= qualification_result["execution_pool_bytes"],
+            "slab peak over the execution pool",
+        ),
+        (
+            "budget",
+            qualification_result["spill_peak_allocated_bytes"]
+            <= qualification_result["spill_pool_bytes"]
+            <= _SPILL_BUDGET,
+            "spill peak over the pool, or the pool over its budget",
+        ),
+        (
+            "runtime",
+            qualification_result["callback_failures"] == 0,
+            "callback failures",
+        ),
+        (
+            "runtime",
+            qualification_result["pointer_lookup_failures"] == 0,
+            "pointer lookup failures",
+        ),
+        (
+            "runtime",
+            not qualification_result["allocation_event_overflow"],
+            "allocation event overflow",
+        ),
+        (
+            "runtime",
+            qualification_result["backend_device_allocations"] == 1,
+            f"{qualification_result['backend_device_allocations']} backend device "
+            "allocations, expected one",
+        ),
+        (
+            "runtime",
+            qualification_result["steady_state_backend_device_allocations"] == 0,
+            "device allocations in steady state",
+        ),
+        (
+            "runtime",
+            qualification_result["steady_state_pinned_host_registrations"] == 0,
+            "pinned host registrations in steady state",
+        ),
+        (
+            "runtime",
+            qualification_result["steady_state_event_pool_driver_creates"] == 0,
+            "event pool driver creates in steady state",
+        ),
+        (
+            "runtime",
+            qualification_result["event_pool_growth_rejections"] == 0,
+            "event pool growth rejections",
+        ),
+        ("runtime", qualification_result["event_pool_sealed"], "event pool not sealed"),
+        (
+            "cache",
+            qualification_result["cold_cache_confirmed"],
+            "cold cache not confirmed",
+        ),
     )
+    failures = [
+        {"category": category, "detail": detail}
+        for category, satisfied, detail in checks
+        if not satisfied
+    ]
+    failure_categories = sorted({failure["category"] for failure in failures})
+    qualification_result["failures"] = failures
+    qualification_result["failure_categories"] = failure_categories
+    qualification_result["passed"] = not failures
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
         json.dumps(qualification_result, indent=2, sort_keys=True) + "\n"
     )
     if not qualification_result["passed"]:
         raise AssertionError(
-            f"{model_implementation} {family} numerical qualification failed: "
-            f"loss_failures={len(loss_failures)}, "
-            f"metric_failures={len(metric_failures)}, "
-            f"exact_failures={len(exact_failures)}, "
-            "checkpoint_replay_bitwise="
-            f"{qualification_result['checkpoint_replay_bitwise']}, "
-            f"transfer_pressure_gate_passed={transfer_pressure_passed}, "
-            f"physical_statuses={physical_statuses}, artifact={result_path}"
+            f"{model_implementation} {family} numerical qualification failed "
+            f"({', '.join(failure_categories)}): "
+            + "; ".join(
+                f"{failure['category']}: {failure['detail']}" for failure in failures
+            )
+            + f", artifact={result_path}"
         )
 
 
