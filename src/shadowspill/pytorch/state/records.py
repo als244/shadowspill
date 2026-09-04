@@ -38,12 +38,20 @@ class PersistentStorage:
 
 @dataclass(slots=True)
 class PersistentState:
-    """All persistent storage roots associated with one public Python object."""
+    """All persistent storage roots associated with one public Python object.
+
+    ``owning_plan`` records who created this state, which is the whole of the
+    lifetime rule: ``None`` means the caller imported it, so it outlives every
+    plan and only the caller releases it; a plan handle means that plan
+    created it, so closing that plan releases it. Nothing here knows whether
+    the target is a model, an optimizer, or anything else.
+    """
 
     target: object
     pool: str
     storages: tuple[PersistentStorage, ...]
     source_owner: object | None
+    owning_plan: int | None = None
 
     def by_storage_identity(self) -> dict[int, PersistentStorage]:
         return {item.storage_identity: item for item in self.storages}
