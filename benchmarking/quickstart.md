@@ -68,7 +68,7 @@ Output and caching:
 |---|---|---|
 | `--plots` | Render the figures below | off |
 | `--report-path` | Where the search report JSON is saved — every point's plan summary, build phase times, and statuses, for post-hoc analysis | `benchmarking/quickstart_reports/<model>.json` |
-| `--search-log` | Where the plan-style progress log goes: planner phase lines and search progress, wall-clock stamped | `benchmarking/quickstart_reports/<model>.search.log` |
+| `--search-log` | Where the plan-style progress log goes: planner phase lines, search progress, and host-memory stamps, wall-clock stamped | `benchmarking/quickstart_reports/<model>.search.log` |
 | `--plot-dir` | Where figures are written | `benchmarking/quickstart_plots/<model>` |
 | `--steps` | Optimizer steps per run budget; the last is traced | 5 |
 | `--seed` | Model and data seed | 0 |
@@ -115,6 +115,18 @@ Output and caching:
    builds split by frontend phase, the PressureFit searches, per-budget
    run planning, step execution, figures, and the unattributed rest — so
    the cost of what you just watched is never a mystery.
+6. **Where the host memory went.** The pinned spill arena, the peak and
+   exit resident bytes, and the cgroup ceiling in force with how much of
+   it went unused at the peak. The arena is one page-locked mapping and
+   counts in full from the moment the runtime registers it; everything
+   else the frontend holds on the host counts on top of it, and the
+   largest of those is one optimizer state per plan. The progress log
+   carries the same reading stamped at each boundary — pools registered,
+   model imported, search finished, each budget planned and closed —
+   because a batch scheduler enforces its reservation as a cgroup limit
+   and the kernel answers an overrun with `SIGKILL`, leaving no Python
+   traceback behind. The high-water mark is then the only evidence of
+   what the run was holding.
 
 ## Terms the output uses
 
