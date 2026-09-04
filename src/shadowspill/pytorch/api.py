@@ -18,7 +18,10 @@ from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
 from shadowspill.pytorch.sharing import SharedOutput
-from shadowspill.pytorch.state.model import require_model_state_for_plan
+from shadowspill.pytorch.state.model import (
+    adopt_model_state_for_plan,
+    require_model_state_for_plan,
+)
 from shadowspill.pytorch.state.storage import restore_persistent_object_ids
 
 
@@ -116,9 +119,11 @@ def plan_forward(
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
-    ``model`` must be the value returned by :func:`import_model_state` for
-    this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
-    bindings; it never imports or releases model storage.
+    ``model`` may be one whose state the caller imported into ``spill``, in
+    which case planning adopts it and it outlives the plan, or one whose
+    state has not been imported, in which case planning imports it in place
+    and owns it: closing the callable releases that state and empties the
+    parameters that viewed it, so read what you need before the close.
 
     The runtime and pool roles are explicit. The original model remains
     runtime-owned until the returned callable is closed. ``profiling_metadata``
@@ -160,11 +165,6 @@ def plan_forward(
 
     from .planning.forward import build_forward
 
-    require_model_state_for_plan(
-        model,
-        runtime=runtime,
-        pool=spill,
-    )
     planning_started = False
     try:
         memory = runtime._resolve_plan(
@@ -176,6 +176,14 @@ def plan_forward(
             execution_device=execution_device,
         )
         planning_started = True
+        # After the handle exists, so state imported here can name the plan
+        # that will release it.
+        adopt_model_state_for_plan(
+            model,
+            runtime=runtime,
+            pool=spill,
+            owning_plan=memory.plan_handle,
+        )
         cache = ArtifactStore.resolve(
             artifact_store_dir,
             save_plan=save_plan,
@@ -236,9 +244,11 @@ def plan_step(
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
-    ``model`` must be the value returned by :func:`import_model_state` for
-    this ``runtime`` and ``spill`` pool. Planning consumes existing runtime
-    bindings; it never imports or releases model storage.
+    ``model`` may be one whose state the caller imported into ``spill``, in
+    which case planning adopts it and it outlives the plan, or one whose
+    state has not been imported, in which case planning imports it in place
+    and owns it: closing the callable releases that state and empties the
+    parameters that viewed it, so read what you need before the close.
 
     ``verbose=True`` reports each planning phase and unique structural contract as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
@@ -262,11 +272,6 @@ def plan_step(
 
     from .planning.training import build_training
 
-    require_model_state_for_plan(
-        model,
-        runtime=runtime,
-        pool=spill,
-    )
     planning_started = False
     try:
         memory = runtime._resolve_plan(
@@ -278,6 +283,14 @@ def plan_step(
             execution_device=execution_device,
         )
         planning_started = True
+        # After the handle exists, so state imported here can name the plan
+        # that will release it.
+        adopt_model_state_for_plan(
+            model,
+            runtime=runtime,
+            pool=spill,
+            owning_plan=memory.plan_handle,
+        )
         cache = ArtifactStore.resolve(
             artifact_store_dir,
             save_plan=save_plan,
