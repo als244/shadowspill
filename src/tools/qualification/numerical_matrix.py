@@ -43,6 +43,8 @@ class CaseResult:
     reference: str
     artifact: str
     passed: bool
+    failure_categories: tuple[str, ...] = ()
+    failures: tuple[str, ...] = ()
 
 
 def _parse_bytes(value: str) -> int:
@@ -205,14 +207,35 @@ def _run_case(
         if return_code != 0:
             break
     passed = False
-    if return_code == 0 and artifact.is_file():
-        payload = json.loads(artifact.read_text())
-        passed = bool(
-            payload.get("schema") == artifact_schema("numerical_qualification")
-            and payload.get("passed") is True
+    failure_categories: tuple[str, ...] = ()
+    failures: tuple[str, ...] = ()
+    # A case that judges itself failed exits non-zero, having already written
+    # the artifact saying why, so the artifact is read whenever it exists
+    # rather than only on a clean exit.
+    payload: dict[str, object] | None = None
+    if artifact.is_file():
+        try:
+            candidate = json.loads(artifact.read_text())
+        except json.JSONDecodeError:
+            candidate = None
+        if isinstance(candidate, dict) and candidate.get("schema") == artifact_schema(
+            "numerical_qualification"
+        ):
+            payload = candidate
+    if payload is not None:
+        passed = bool(return_code == 0 and payload.get("passed") is True)
+        failure_categories = tuple(payload.get("failure_categories") or ())
+        failures = tuple(
+            f"{item['category']}: {item['detail']}"
+            for item in payload.get("failures") or ()
         )
-        if not passed:
-            return_code = 1
+    if not passed and return_code == 0:
+        return_code = 1
+    if not passed and not failures:
+        # The case never got far enough to judge itself, which is its own kind
+        # of failure and must not be read as a numerical disagreement.
+        failure_categories = ("process",)
+        failures = (f"process: exited {return_code} without a usable artifact",)
     return CaseResult(
         family=family,
         implementation=implementation,
@@ -222,6 +245,8 @@ def _run_case(
         reference=str(reference),
         artifact=str(artifact),
         passed=passed,
+        failure_categories=failure_categories,
+        failures=failures,
     )
 
 
@@ -448,6 +473,12 @@ def main() -> int:
                     f"START: {started_at}",
                     f"STOP: {utc_now()}",
                     f"DURATION: {result.elapsed_seconds:.3f} seconds",
+                    *(
+                        [f"FAILED: {', '.join(result.failure_categories)}"]
+                        + [f"  {detail}" for detail in result.failures]
+                        if result.failures
+                        else []
+                    ),
                 ],
             )
             if not result.passed and not arguments.keep_going:
@@ -468,6 +499,8 @@ def main() -> int:
                     "reference": item.reference,
                     "artifact": item.artifact,
                     "passed": item.passed,
+                    "failure_categories": list(item.failure_categories),
+                    "failures": list(item.failures),
                 }
                 for item in results
             ],
@@ -481,6 +514,12 @@ def main() -> int:
                 "CASES PASSED: "
                 f"{sum(1 for item in results if item.passed)}"
                 f"/{len(selected_cases)}",
+                *(
+                    f"{item.family}/{item.implementation}: "
+                    f"{', '.join(item.failure_categories)}"
+                    for item in results
+                    if not item.passed
+                ),
                 f"SUMMARY: {summary_path}",
                 f"STOP: {utc_now()}",
                 f"DURATION: {time.perf_counter() - matrix_started:.3f} seconds",
