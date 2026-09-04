@@ -892,6 +892,36 @@ class RuntimeBridge:
             "read host object",
         )
 
+    def spill_window(self, alias_id: str) -> torch.Tensor | None:
+        """View one object's spill bytes in place, or None if they are stale.
+
+        The window aliases pool memory the runtime owns, so it is only a read
+        window for a caller that is about to copy out of it, and only until
+        the plan runs again. A caller that writes must go through
+        ``read_spill_tensor`` and ``write_spill_tensor`` instead, so the
+        runtime keeps its own versions of what the pool holds. None means the
+        pool's copy is not the current one and must be read the copying way.
+        """
+
+        if alias_id not in self._registered or not self.requires_storage(alias_id):
+            return None
+        expected = self._size(alias_id)
+        if expected == 0:
+            return None
+        snapshot = ObjectSnapshot()
+        self._require(
+            self.runtime_library.shadowspill_object_snapshot(
+                self.runtime._runtime_handle,
+                self._runtime_object_id(alias_id),
+                ctypes.byref(snapshot),
+            ),
+            f"snapshot object {alias_id}",
+        )
+        if not snapshot.spill_current or not snapshot.spill_pointer:
+            return None
+        window = (ctypes.c_uint8 * expected).from_address(int(snapshot.spill_pointer))
+        return torch.frombuffer(window, dtype=torch.uint8)
+
     def unregister(self, alias_ids: Iterable[str]) -> None:
         for alias_id in dict.fromkeys(alias_ids):
             if alias_id not in self._registered:
