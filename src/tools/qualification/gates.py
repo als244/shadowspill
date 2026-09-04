@@ -2,8 +2,9 @@
 
 The three gates answer different questions and are usually wanted together:
 the unit suite says the tree is coherent, the numerical matrix says a planned
-step still computes what eager PyTorch computes, and the performance matrix
-says throughput has not regressed and the simulator still predicts it. Running
+step still computes what the same step computes unplanned, and the
+performance matrix says throughput has not regressed and the simulator still
+predicts it. Running
 them by hand means three commands, three output directories to name
 consistently, and remembering the order.
 
@@ -15,11 +16,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,45 @@ from typing import Any
 GATE_ORDER = ("suite", "numerical", "performance")
 
 _RESULTS = Path("qualification/results")
+
+
+def gate_options(path: Path | None) -> dict[str, tuple[str, ...]]:
+    """Read one config into the arguments each gate should be given.
+
+    The file has a section per gate, each holding that gate's own command
+    line. Keeping every gate in one file is what makes a run reproducible
+    from a single artifact, and keeping the sections opaque is what stops
+    this wrapper from having to mirror three other command lines.
+    """
+
+    empty = {name: () for name in GATE_ORDER}
+    if path is None:
+        return empty
+    try:
+        loaded = json.loads(path.read_text())
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"{path}: not valid JSON: {error}") from error
+    if not isinstance(loaded, dict):
+        raise SystemExit(
+            f"{path}: expected an object with a section per gate, "
+            f"found {type(loaded).__name__}"
+        )
+    unknown = sorted(set(loaded) - set(GATE_ORDER))
+    if unknown:
+        raise SystemExit(
+            f"{path}: unknown gate section {unknown}; sections are {list(GATE_ORDER)}"
+        )
+    options = dict(empty)
+    for name, values in loaded.items():
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) for value in values
+        ):
+            raise SystemExit(
+                f"{path}: section {name!r} must be a list of command-line "
+                "arguments, as strings"
+            )
+        options[name] = tuple(values)
+    return options
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,16 +87,38 @@ class GateOutcome:
         return self.returncode == 0
 
 
-def _commands(name: str, run: str, keep_going: bool) -> tuple[str, ...]:
-    """The command one gate runs, named for the run it belongs to."""
+def _commands(
+    name: str,
+    run: str,
+    keep_going: bool,
+    *,
+    options: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """The command one gate runs, named for the run it belongs to.
+
+    ``options`` is that gate's section of the config, forwarded verbatim. The
+    wrapper deliberately does not know what any of them mean: every option it
+    understood would be one it had to gain whenever a matrix gained one, and
+    the two would drift.
+    """
 
     if name == "suite":
         # No -q here: pyproject already passes one, and a second makes it
         # -qq, which drops the closing count the summary reads.
-        return (sys.executable, "-m", "pytest", "tests", "-p", "no:cacheprovider")
+        return (
+            sys.executable,
+            "-u",
+            "-m",
+            "pytest",
+            "tests",
+            "-p",
+            "no:cacheprovider",
+            *options,
+        )
     if name == "numerical":
         command = [
             sys.executable,
+            "-u",
             "-m",
             "qualification.numerical.matrix",
             "--output-dir",
@@ -64,6 +127,7 @@ def _commands(name: str, run: str, keep_going: bool) -> tuple[str, ...]:
     else:
         command = [
             sys.executable,
+            "-u",
             "-m",
             "qualification.performance.matrix",
             "--output-directory",
@@ -71,6 +135,7 @@ def _commands(name: str, run: str, keep_going: bool) -> tuple[str, ...]:
         ]
     if keep_going:
         command.append("--keep-going")
+    command += options
     return tuple(command)
 
 
@@ -227,6 +292,12 @@ def _stream(command: Sequence[str], log: Path) -> int:
     A gate is long enough that watching it matters, and its log is what the
     summary reads afterwards, so the output goes to both rather than to one
     and then the other.
+
+    Two things have to be right for that to actually stream. The child must
+    not block-buffer its own output because its stdout is a pipe rather than
+    a terminal, which is what ``-u`` on each gate command prevents; and this
+    end must not wait for whole lines, which is what reading the descriptor
+    directly avoids.
     """
 
     with log.open("w") as handle:
@@ -234,14 +305,21 @@ def _stream(command: Sequence[str], log: Path) -> int:
             list(command),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
         )
         assert process.stdout is not None
-        for line in process.stdout:
-            sys.stdout.write(line)
+        descriptor = process.stdout.fileno()
+        while True:
+            # Whatever has arrived, rather than whatever completes a line: a
+            # gate that reports progress as characters without newlines --
+            # pytest's dots -- would otherwise show nothing at all until it
+            # finished, which is the case where watching matters most.
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            decoded = chunk.decode("utf-8", errors="replace")
+            sys.stdout.write(decoded)
             sys.stdout.flush()
-            handle.write(line)
+            handle.write(decoded)
         return process.wait()
 
 
@@ -269,6 +347,7 @@ def run_gates(
     run: str,
     keep_going: bool = False,
     continue_after_failure: bool = False,
+    options: Mapping[str, Sequence[str]] | None = None,
 ) -> list[GateOutcome]:
     """Run each gate in `GATE_ORDER`, newest output under `qualification/results`."""
 
@@ -277,7 +356,9 @@ def run_gates(
     logs.mkdir(parents=True, exist_ok=True)
     outcomes: list[GateOutcome] = []
     for name in ordered:
-        command = _commands(name, run, keep_going)
+        command = _commands(
+            name, run, keep_going, options=(options or {}).get(name, ())
+        )
         log = logs / f"{name}.log"
         print(f"[{time.strftime('%H:%M:%S')}] {name}: {' '.join(command)}", flush=True)
         started = time.perf_counter()
@@ -339,6 +420,18 @@ def main() -> int:
         action="store_true",
         help="run the later gates even after one fails",
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "JSON file with a section per gate -- suite, numerical, "
+            "performance -- each holding that gate's own command-line "
+            "arguments, forwarded verbatim. Options belong here rather than "
+            "on this wrapper, which would otherwise have to mirror every "
+            "matrix's command line"
+        ),
+    )
     arguments = parser.parse_args()
 
     run = arguments.run or _default_run()
@@ -347,6 +440,7 @@ def main() -> int:
         run=run,
         keep_going=arguments.keep_going,
         continue_after_failure=arguments.continue_after_failure,
+        options=gate_options(arguments.config),
     )
     print()
     print(_summary(f"gates {run}", outcomes, run))
