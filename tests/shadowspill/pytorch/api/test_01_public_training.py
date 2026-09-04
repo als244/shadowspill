@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Iterable
 from functools import partial
 
 import pytest
@@ -218,7 +219,10 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         model.parameters(), reference.parameters(), strict=True
     ):
         torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-6)
-    assert set(training.state_dict()) == {"model", "optimizer", "step"}
+    # Closing releases optimizer state with the plan, so the checkpoint
+    # taken above is the only one there will be.
+    with pytest.raises(RuntimeError, match="take the checkpoint before close"):
+        training.state_dict()
     with pytest.raises(RuntimeError, match="closed"):
         training(steps[0])
     with pytest.raises(RuntimeError, match="closed"):
@@ -252,10 +256,19 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         pool="spill",
         release_source=True,
     )
+    built: list[torch.optim.Optimizer] = []
+
+    def optimizer_factory(
+        parameters: Iterable[torch.nn.Parameter],
+    ) -> torch.optim.Optimizer:
+        optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
+        built.append(optimizer)
+        return optimizer
+
     training = plan_step(
         model,
         objective=_training_objective,
-        opt=partial(torch.optim.AdamW, lr=0.003, foreach=False),
+        opt=optimizer_factory,
         example_inputs=examples,
         runtime=runtime,
         execution="execution",
@@ -263,7 +276,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
         artifact_store_dir=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
-    optimizer_owner = persistent_state(runtime, training._optimizer)
+    optimizer_owner = persistent_state(runtime, built[0])
     assert optimizer_owner is not None
     assert optimizer_owner.storages
     # Adopting a persistent storage into a plan rekeys it, and the plan being
@@ -304,7 +317,8 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
                 assert torch.equal(value, other)
 
     training.close()
-    assert persistent_state(runtime, training._optimizer) is None
+    # Closing released the optimizer's runtime state along with the plan.
+    assert persistent_state(runtime, built[0]) is None
     export_model_state(model, runtime=runtime, release_runtime=True)
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
 
