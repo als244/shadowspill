@@ -52,6 +52,60 @@ A failing gate stops the ones that would follow unless `--continue-after-failure
 is given, and `--keep-going` lets a matrix finish its remaining cells after
 one cell fails.
 
+### Options, and which gate they reach
+
+`--run`, `--keep-going`, and `--continue-after-failure` describe the run as a
+whole and stay on the wrapper. Everything else belongs to one gate, and goes
+in one config file with a section per gate:
+
+```json
+{
+  "suite": ["-k", "not slow"],
+  "numerical": [
+    "--reference-dir", "qualification/results/references/h100/approximately_1b"
+  ],
+  "performance": []
+}
+```
+
+```bash
+python -m qualification.gates --config qualification/gates.json
+```
+
+Each section is that gate's own command line, forwarded verbatim and
+unread by the wrapper. That is deliberate: an option the wrapper understood
+would be one it had to gain whenever a matrix gained one, and the two would
+drift. It also means the sections accept whatever their matrix accepts today,
+including `pytest` arguments for the suite, with no change here. A missing
+section means no extra arguments; an unknown section name is an error rather
+than a silently ignored typo.
+
+Keeping all three in one file is what lets a run be reproduced from a single
+artifact rather than from a remembered command line.
+
+References are specific to the machine that recorded them, so a set recorded
+elsewhere belongs in a directory named for what recorded it, and the gate is
+pointed at the one that matches. Record a set once, then read it:
+
+```json
+{"numerical": ["--reference-dir", "<root>/h100/approximately_1b",
+               "--regenerate-reference"]}
+```
+
+then drop `--regenerate-reference` from every run after. A run that records
+its own baseline minutes before comparing against it still checks that the
+planned step agrees with the unplanned one, but it cannot notice that either
+has changed since the baseline was blessed.
+
+`--budget FAMILY=BYTES` in the numerical section is how to ask whether moving
+data changes what is computed: the budget decides what spills, prefetches, and
+recomputes, so the same cell run at several budgets against one reference
+should report the same numbers.
+
+Run gates through this wrapper rather than calling a matrix directly, so that
+the order, the run naming, and the per-gate logs all hold. If it cannot say
+something a matrix can, that is a reason to give it the option.
+
 The closing summary reports each gate's verdict and wall time, then what it
 found: the suite's test counts and the name of every test that failed or
 errored, which correctness cells agreed with their reference and which did
@@ -131,3 +185,43 @@ It is the acceptance experiment for simulator changes:
 ```bash
 python -m tools.qualification.gap_report qualification/results/full_model
 ```
+
+## Finding where a step stops being reproducible
+
+The numerical gate runs every case with mlops's `deterministic_kernels`
+in effect, which asks each operation that offers the choice for the kernel
+whose accumulation order is fixed. Without it a kernel that sums with atomics
+returns a slightly different answer each run -- one llama3 step run twice
+differed in 78 of its 111 gradient tensors -- and no comparison against a
+reference or against a replay can mean anything. The ordered kernels cost
+throughput, so they are not the default outside this gate. The request covers
+reference generation as well as the planned run, so a regenerated reference is
+itself reproducible.
+
+The request is baked into a compiled graph without a guard, so a graph cached
+from a run without it would be reused rather than recompiled. The matrix gives
+each case its own compile cache and deletes it afterwards, which is what makes
+that safe here; a tool that reuses a cache across the boundary would need to
+key it on the setting.
+
+The gate requires a checkpoint replay to agree with the uninterrupted run
+within tolerance, and records whether it agreed bit for bit besides. When it
+did not, the useful question is which stage of the step is not reproducible,
+and the nondeterminism probe answers that rather than leaving it at
+"somewhere in the backward":
+
+```bash
+python -m tools.qualification.nondeterminism llama3 --model-implementation mlops
+```
+
+It runs the same fixed input through the same model twice with nothing changed
+in between and compares bitwise at three widening levels -- the objective,
+every module's forward output, and every module's incoming gradient -- then
+names the first divergence in execution order. It takes the same geometry
+knobs as the numerical matrix (`--seed`, `--model-config`, `--data-geometry`,
+`--case-factory`, `--case-option`), so a failing cell can be probed with the
+same shape and data that failed. `--no-modules` drops the per-module hooks,
+which cost memory on a large model, and compares only the objective and the
+parameter gradients. `--deterministic` asks for the ordered kernels first, so
+a divergence that survives it comes from somewhere the request does not reach.
+It exits non-zero when the step is not reproducible.
