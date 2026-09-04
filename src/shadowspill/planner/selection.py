@@ -42,7 +42,10 @@ def select_program(
         spill_budget_bytes=spill_budget_bytes,
         transfer_bandwidths=transfer_bandwidths,
     )
-    selected_options = options or program.options
+    # Policy is the caller's, never the artifact's: a Program says what
+    # problem it is, not how to search it, so an option added later cannot
+    # change what a saved Program means.
+    selected_options = options or PressureFitOptions()
     plans = open_plan_store(artifact_store)
     progress = _progress_printer() if verbose else None
     selection = resolve_fixed_layout_selection(

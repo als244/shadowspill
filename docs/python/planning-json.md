@@ -10,7 +10,7 @@ to any stored structure moves them all together.
 | Python value | Schema | Boundary |
 |---|---|---|
 | `Program` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
-| `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, admission topology, and search options. |
+| `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, and admission topology. It carries no search options: a Program is a problem, and how to search it is the caller's. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
 
@@ -162,8 +162,7 @@ shadowspill.pressurefit_program/v1
 │   └── final
 ├── capacity_contract
 ├── simulation_config
-├── admission_facts
-└── pressurefit_options
+└── admission_facts
 ```
 
 | Key | Meaning |
@@ -174,7 +173,6 @@ shadowspill.pressurefit_program/v1
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
 | `simulation_config` | Logical device object capacity, spill capacity, directional bandwidth, and latency. |
 | `admission_facts` | Current-schema (`shadowspill.admission_facts/v1`) per-task allocation traces, derived anonymous peaks, ownership transitions, handoffs, and physical capacity. |
-| `pressurefit_options` | Every field of `PressureFitOptions`, written from the dataclass and read back the same way, so a record carries the whole search configuration and one missing field is an error rather than a silent default. |
 
 Residency entries identify `alias_group_id` and `location` (`device` or `host`,
 the schema-v1 spelling of the spill pool

@@ -45,8 +45,16 @@ loaded = StepProgram.from_json(Path("program.json").read_text())
 
 `PressureFitProgram` is a self-contained input to `pressurefit_program()`. It
 contains the canonical `Program`, initial and final residency, simulation
-configuration, `AdmissionFacts`, capacity contract, dynamic scratch
-reserve, and `PressureFitOptions`.
+configuration, `AdmissionFacts`, capacity contract, and dynamic scratch
+reserve.
+
+It carries no `PressureFitOptions`. A Program states what problem it is, and
+how to search that problem belongs to whoever plans it, so options are passed
+to `pressurefit_program()` and a saved Program answers any of them. This is
+also what keeps a saved Program readable when the planner gains an option:
+nothing about the measured problem changed, so its identity does not move.
+See [the artifact store](../artifact-store.md#identity) for what each key
+holds.
 
 `PressureFitProgram.pressurefit_inputs()` rebases execution budget, spill
 budget, or `TransferBandwidths` without changing the Program. A requested

@@ -16,7 +16,6 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionFacts,
-    PressureFitOptions,
     TaskAdmissionSpec,
 )
 from shadowspill.planner.program import (
@@ -66,13 +65,6 @@ def _fixture() -> StepProgram:
         fixed_execution_bytes=32,
         object_reserve_bytes=96,
         dynamic_scratch_reserve_bytes=0,
-        options=PressureFitOptions(
-            residency_strategies=("tight-stall",),
-            fetch_rules=("demand",),
-            evaluate_coalesced=False,
-            workers=1,
-            minimum_object_bytes_evict_eligible=0,
-        ),
     )
     return StepProgram(
         recurrent=pre_pressurefit,
