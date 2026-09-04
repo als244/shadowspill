@@ -82,6 +82,11 @@ Configuration and execution failures use `RuntimeConfigurationError` and
 import_model_state(model, *, runtime, pool, release_source=True)
 ```
 
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:import_model_state_from_file -->
+```text
+import_model_state_from_file(model, path, *, runtime, pool)
+```
+
 <!-- source-signature: src/shadowspill/pytorch/state/model.py:export_model_state -->
 ```text
 export_model_state(model, *, runtime, release_runtime=False)
@@ -92,15 +97,38 @@ export_model_state(model, *, runtime, release_runtime=False)
 release_model_state(model, *, runtime)
 ```
 
+<!-- source-signature: src/shadowspill/pytorch/state/model.py:read_model_state -->
+```text
+read_model_state(model, *, runtime, copy=True)
+```
+
 <!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state -->
 ```text
 import_optimizer_state(optimizer, *, runtime, pool, release_source=True)
+```
+
+<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:import_optimizer_state_from_file -->
+```text
+import_optimizer_state_from_file(optimizer, path, *, runtime, pool)
 ```
 
 <!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:export_optimizer_state -->
 ```text
 export_optimizer_state(optimizer, *, runtime, release_runtime=False)
 ```
+
+<!-- source-signature: src/shadowspill/pytorch/state/optimizer.py:read_optimizer_state -->
+```text
+read_optimizer_state(optimizer, *, runtime, copy=True)
+```
+
+Planning takes whichever model it is given. State the caller imported is
+adopted and outlives the plan; state that has not been imported is imported
+in place by `plan_step()` or `plan_forward()`, which then own it, so closing
+the callable releases that state and empties the parameters that viewed it.
+Read what you need before the close, or import beforehand to keep it. Only
+`make_step_program()` still requires an explicit import, because it returns
+no callable that could own the result.
 
 `import_model_state()` returns a copied module hierarchy whose registered
 tensors point at runtime spill leases. `release_source=True` means ShadowSpill
@@ -112,6 +140,44 @@ any CPU copy: the module's registered tensors become invalid, so the module
 must be discarded afterward. It is the teardown operation for callers that no
 longer need the state, such as qualification hosts that cannot hold an
 anonymous model copy beside the full pinned spill arena.
+
+`import_model_state_from_file()` and `import_optimizer_state_from_file()`
+fill pool state from a checkpoint without building the checkpoint in ordinary
+host memory first. The file is mapped rather than read, so its pages are
+reclaimable cache, and the import happens before the copy, so the values land
+in pool memory directly. The checkpoint must name every tensor the target
+enumerates and agree with each on dtype and shape; raw bytes cannot be
+converted, so a disagreement is refused rather than reinterpreted, and extra
+names in the file are ignored. One file per call: a checkpoint sharded across
+several files is refused. The optimizer form is keyed by the paths
+`import_optimizer_state()` enumerates, which is what `read_optimizer_state()`
+writes, so a checkpoint saved from one reads back through the other.
+
+A model need never occupy ordinary host memory on its way into a pool.
+Construct it under `torch.device("meta")`, so its parameters have no storage;
+assign a mapped checkpoint onto it with
+`model.load_state_dict(torch.load(path, mmap=True, weights_only=True),
+assign=True)`, so its parameters become file-backed pages rather than
+anonymous allocations; then `import_model_state()` copies those into the pool
+and releases the source. Only the pool copy is anonymous host memory at any
+point. This needs no ShadowSpill-specific call: `import_model_state_from_file()`
+is the shorter form when the model is already built.
+
+`read_model_state()` and `read_optimizer_state()` answer what the state
+currently is without rebinding anything, which is what makes them usable while
+a plan holds the target -- `export_*` cannot run then, and the runtime refuses
+it. Each returns a flat mapping from the name the state is enumerated under to
+a host tensor.
+
+`copy=True`, the default, gives ordinary host memory outside the runtime
+pools, one buffer per storage root with the target's views laid over it, so
+entries that shared a root still share one, and the values keep what they held
+when the call returned. `copy=False` allocates nothing and views the pool's
+own bytes instead: ordinary torch operations work on them, but treat them as
+read-only, because writing through one changes runtime state behind the
+runtime's back, and they stop being current the next time the plan runs. A
+storage root whose pool copy is not the authoritative one is copied either
+way.
 
 `import_optimizer_state()` and `export_optimizer_state()` apply the same
 storage policy to already materialized optimizer state, as a standalone
