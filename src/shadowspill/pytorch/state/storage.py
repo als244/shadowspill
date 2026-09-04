@@ -39,9 +39,14 @@ def import_tensors(
     runtime: Runtime,
     pool: str,
     release_source: bool,
+    owning_plan: int | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
-    """Copy unique CPU storages into authoritative runtime-pool objects."""
+    """Copy unique CPU storages into authoritative runtime-pool objects.
+
+    ``owning_plan`` names the plan whose close releases the result. Leave it
+    None for state the caller owns, which outlives every plan.
+    """
 
     _validate_pool(
         runtime,
@@ -77,6 +82,7 @@ def import_tensors(
             pool=pool,
             storages=tuple(created),
             source_owner=None,
+            owning_plan=owning_plan,
         )
         registry.add(
             state,
@@ -155,6 +161,7 @@ def own_persistent_state(
     pool: str,
     storages: Iterable[PersistentStorage],
     source_owner: object | None = None,
+    owning_plan: int | None = None,
 ) -> PersistentState:
     """Publish runtime storage ownership for one frontend object."""
 
@@ -163,9 +170,29 @@ def own_persistent_state(
         pool=pool,
         storages=tuple(storages),
         source_owner=source_owner,
+        owning_plan=owning_plan,
     )
     registry_for(runtime).add(state)
     return state
+
+
+def release_plan_owned_state(runtime: Runtime, plan_handle: int) -> tuple[object, ...]:
+    """Release every persistent state one plan created, and name the targets.
+
+    State the caller imported carries no owning plan and is left alone, so
+    this is the whole of what a closing plan owes: it frees what it made and
+    touches nothing it was lent. The targets are returned because their
+    frontend tensors now view released leases and the caller must be told
+    which objects those are.
+    """
+
+    released: list[object] = []
+    for state in registry_for(runtime).values():
+        if state.owning_plan != plan_handle:
+            continue
+        release_persistent_tensors(state.target, runtime=runtime)
+        released.append(state.target)
+    return tuple(released)
 
 
 def unregister_tensor_storages(
