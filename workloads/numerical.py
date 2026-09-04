@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
 
 import mlops
 import torch
 import torch.nn as nn
+from mlops.dispatch import deterministic_kernels
 
 from workloads.mlops import (
     Llama3 as MlopsLlama3,
@@ -77,8 +78,20 @@ class NumericalCase:
             )
         return workload.loss(tokens, targets, seq_lens=sequence_lengths)
 
-    def implementations(self) -> AbstractContextManager[Any]:
-        return implementation_context(self.family, self.model_implementation)
+    @contextmanager
+    def implementations(self, *, deterministic: bool = False) -> Iterator[None]:
+        """Select this case's operation providers for the duration.
+
+        ``deterministic`` additionally asks those providers for kernels whose
+        accumulation order is fixed.  Comparing a run against a reference or
+        against itself needs that; it costs throughput, so callers that only
+        want the case's providers leave it off.
+        """
+        with (
+            implementation_context(self.family, self.model_implementation),
+            deterministic_kernels(deterministic),
+        ):
+            yield
 
     @staticmethod
     def optimizer(parameters: Any) -> torch.optim.Optimizer:
