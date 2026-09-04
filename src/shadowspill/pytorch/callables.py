@@ -248,7 +248,6 @@ class PlannedTrainStep:
         signatures: tuple[InputSignature, ...],
         executor: TrainingExecutor,
         state: TrainingMaterializedState,
-        optimizer: torch.optim.Optimizer,
         report: PlanReport,
         runtime: Runtime,
         plan_handle: int,
@@ -257,7 +256,6 @@ class PlannedTrainStep:
         self._signatures = signatures
         self._executor = executor
         self._state = state
-        self._optimizer = optimizer
         self.plan_report = report
         self._runtime = runtime
         self._plan_handle = plan_handle
@@ -403,23 +401,23 @@ class PlannedTrainStep:
         return self._executor.collect_selected_span_seconds()
 
     def state_dict(self) -> dict[str, object]:
-        """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state."""
+        """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state.
 
-        if self._closed:
-            model_state = OrderedDict(self._model.state_dict())
-        else:
-            model_state = self._state.state_dict()
+        The plan owns the storage holding optimizer state, so the complete
+        checkpoint exists only while this callable is open.
+        """
+
+        self._require_open("read a checkpoint from")
         return {
-            "model": model_state,
-            "optimizer": self._optimizer.state_dict()
-            if self._closed
-            else self._executor.optimizer_state_dict(),
+            "model": self._state.state_dict(),
+            "optimizer": self._executor.optimizer_state_dict(),
             "step": self._step,
         }
 
     def load_state_dict(self, checkpoint: Mapping[str, object]) -> None:
         """Restore the complete three-key checkpoint produced by ``state_dict``."""
 
+        self._require_open("restore a checkpoint into")
         if set(checkpoint) != {"model", "optimizer", "step"}:
             raise RuntimeError("training state_dict keys differ")
         model_state = checkpoint["model"]
@@ -436,7 +434,35 @@ class PlannedTrainStep:
         self._executor.set_optimizer_state_initialized(initialized)
         self._step = step
 
+    def _require_open(self, action: str) -> None:
+        if self._closed:
+            raise RuntimeError(
+                f"cannot {action} a closed planned training callable: optimizer "
+                "state was released with the plan; take the checkpoint before "
+                "close()"
+            )
+
     def close(self) -> None:
+        """Synchronize, give the model back its own storage, release the plan.
+
+        Closing copies nothing, and it moves no weights. ``import_model_state``
+        gave this model's parameters storage in the spill pool, and that one
+        storage holds the updated weights the whole way through: every step
+        both begins and ends with parameters spill-resident, so each step's
+        updates are already there. Running a step points those same Parameter
+        objects at device memory; closing points them back. Reading them as
+        ordinary CPU tensors is ``export_model_state``, a separate call.
+
+        Optimizer state has no equivalent home today. ``plan_step`` builds the
+        optimizer from the factory it is given and imports its state into
+        storage the plan owns; planning refuses an optimizer whose state the
+        caller imported, so there is no caller-owned pool for it to be left
+        in. Releasing the plan therefore releases the state with it, which is
+        why :meth:`state_dict` answers only while this callable is open.
+        Resume from a checkpoint with :meth:`load_state_dict`, which writes
+        the values into the storage the plan already owns.
+        """
+
         if self._closed:
             return
         self._close(primary_error=None)
@@ -478,7 +504,7 @@ class PlannedTrainStep:
         operations.extend(
             (
                 ("clear parameter gradients", self._clear_parameter_gradients),
-                ("restore optimizer state", self._executor.restore_optimizer_cpu),
+                ("release optimizer state", self._executor.release_optimizer_state),
                 ("restore model state", self._state.restore_cpu_and_unregister),
                 ("release compiled executor", self._release_executor),
                 (

@@ -967,7 +967,6 @@ def admit_training_plan(
             captured.signatures,
             executor,
             materialized.state,
-            materialized.optimizer,
             report,
             memory.runtime,
             memory.plan_handle,

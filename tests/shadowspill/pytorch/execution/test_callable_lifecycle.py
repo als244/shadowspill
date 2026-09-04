@@ -14,13 +14,15 @@ class _Signature:
         del inputs
 
 
-class _FailingExecutor:
-    def __init__(self, error: BaseException) -> None:
+class _Executor:
+    def __init__(self, error: BaseException | None = None) -> None:
         self.error = error
-        self.optimizer_restored = False
+        self.optimizer_released = False
 
     def __call__(self, inputs: object) -> object:
         del inputs
+        if self.error is None:
+            raise AssertionError("this executor was given no failure to raise")
         raise self.error
 
     def validate_invocation(self) -> None:
@@ -29,8 +31,8 @@ class _FailingExecutor:
     def prepare_invocation(self, inputs: object) -> object:
         return inputs
 
-    def restore_optimizer_cpu(self) -> None:
-        self.optimizer_restored = True
+    def release_optimizer_state(self) -> None:
+        self.optimizer_released = True
 
 
 class _State:
@@ -65,12 +67,39 @@ class _Runtime:
         if self.fail_release:
             raise RuntimeError("plan cleanup failed")
 
+    def _wait_plan_idle(self, plan_handle: int) -> None:
+        assert plan_handle == 77
+
+
+def _planned_training(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[PlannedTrainStep, _Executor]:
+    """Return a training callable whose every teardown operation succeeds."""
+
+    monkeypatch.setattr(
+        callable_module,
+        "restore_persistent_object_ids",
+        lambda runtime: None,
+    )
+    executor = _Executor()
+    model = nn.Linear(1, 1)
+    planned = PlannedTrainStep(
+        model,
+        (),
+        executor,  # type: ignore[arg-type]
+        _State(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        _Runtime(),  # type: ignore[arg-type]
+        77,
+    )
+    return planned, executor
+
 
 def test_forward_failure_attempts_every_cleanup_without_masking_cause(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = RuntimeError("indexed task failed")
-    executor = _FailingExecutor(original)
+    executor = _Executor(original)
     state = _State(fail=True)
     runtime = _Runtime(fail_release=True)
     persistent_restored: list[object] = []
@@ -104,7 +133,7 @@ def test_forward_failure_attempts_every_cleanup_without_masking_cause(
     planned.close()
 
 
-def test_training_failure_restores_optimizer_and_closes(
+def test_training_failure_releases_optimizer_state_and_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -118,17 +147,15 @@ def test_training_failure_restores_optimizer_and_closes(
         lambda runtime: None,
     )
     original = RuntimeError("optimizer kernel failed")
-    executor = _FailingExecutor(original)
+    executor = _Executor(original)
     state = _State()
     runtime = _Runtime()
     model = nn.Linear(1, 1)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
     planned = PlannedTrainStep(
         model,
         (),
         executor,  # type: ignore[arg-type]
         state,  # type: ignore[arg-type]
-        optimizer,
         object(),  # type: ignore[arg-type]
         runtime,  # type: ignore[arg-type]
         77,
@@ -139,10 +166,28 @@ def test_training_failure_restores_optimizer_and_closes(
 
     assert caught.value is original
     assert planned._closed
-    assert executor.optimizer_restored
+    # A failed step publishes no optimizer update, and cleanup releases the
+    # state with the plan either way.
+    assert executor.optimizer_released
     assert state.restored
     assert runtime.released
     assert runtime.prepared_error is original
+    with pytest.raises(RuntimeError, match="take the checkpoint before close"):
+        planned.state_dict()
+
+
+def test_close_releases_optimizer_state_and_refuses_a_later_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    planned, executor = _planned_training(monkeypatch)
+
+    planned.close()
+
+    assert executor.optimizer_released
+    with pytest.raises(RuntimeError, match="take the checkpoint before close"):
+        planned.state_dict()
+    with pytest.raises(RuntimeError, match="take the checkpoint before close"):
+        planned.load_state_dict({})
 
 
 def test_cleanup_operations_raise_only_after_attempting_every_operation() -> None:
