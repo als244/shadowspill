@@ -134,7 +134,8 @@ def _manifest_path(
         / "task_manifests"
         / f"v{ARTIFACT_VERSION}"
         / identity[:2]
-        / f"{identity}.json"
+        / identity
+        / "manifest.json"
     )
 
 

@@ -14,6 +14,7 @@ import tempfile
 from contextlib import suppress
 from pathlib import Path
 
+from shadowspill.planner.artifact_store import digest_directory
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.profiling.records import ProfileKey
@@ -42,7 +43,7 @@ class CompiledManifestStore:
         self.artifact_recorder = artifact_recorder
 
     def path(self, key: ProfileKey) -> Path:
-        return self.root / key.digest[:2] / f"{key.digest}.json"
+        return digest_directory(self.root, key.digest) / "manifest.json"
 
     def read(
         self,

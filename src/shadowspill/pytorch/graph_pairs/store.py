@@ -14,6 +14,7 @@ from pathlib import Path
 import torch
 
 from shadowspill.errors import CaptureError
+from shadowspill.planner.artifact_store import digest_directory
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 from shadowspill.schema import artifact_schema
@@ -129,8 +130,10 @@ class GraphPairStore:
             "specialize_unit_tangents": key[2],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        selection = hashlib.sha256(encoded.encode()).hexdigest()
-        return self._root / "v7" / key[0][:2] / key[0] / selection / "graph_pairs.pt"
+        # The contract and the differentiation options together are the key:
+        # one entry, one digest, like every other artifact.
+        digest = hashlib.sha256(encoded.encode()).hexdigest()
+        return digest_directory(self._root, digest) / "graph_pairs.pt"
 
     def _manifest_path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
         path = self._path(key)

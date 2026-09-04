@@ -9,6 +9,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
+from shadowspill.planner.artifact_store import digest_directory
+
 from .records import PROFILE_SCHEMA, ProfileKey, TaskMeasurement
 
 
@@ -57,7 +59,7 @@ class ProfileStore:
         self.artifact_recorder = artifact_recorder
 
     def path(self, key: ProfileKey) -> Path:
-        return self.root / key.digest[:2] / f"{key.digest}.json"
+        return digest_directory(self.root, key.digest) / "measurement.json"
 
     def read(self, key: ProfileKey) -> TaskMeasurement | None:
         if not self.read_enabled:
