@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -203,3 +204,16 @@ def test_a_modified_tree_says_so_in_the_run_name(
     monkeypatch.setattr(subprocess, "run", fake_git)
 
     assert gates._default_run().startswith("abc1234_dirty_")
+
+
+def test_naming_no_gate_runs_them_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from tools.qualification import gates
+
+    monkeypatch.chdir(tmp_path)
+    calls = _record(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["gates", "--run", "demo"])
+
+    assert gates.main() == 0
+    assert [_gate_of(call) for call in calls] == list(GATE_ORDER)
