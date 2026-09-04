@@ -173,6 +173,12 @@ def collect_program(
             "model": request.model.to_dict(),
             "geometry": request.to_dict()["geometry"],
             "seed": request.seed,
+            # Provenance, deliberately outside the Program: what the runtime
+            # was configured with when these costs were measured. A Program
+            # says what problem it is, so none of this is part of its
+            # identity, and none of it is read back when the Program is
+            # planned.
+            "runtime": request.runtime.to_dict(),
         },
     )
     print("PROGRAM PHASE save_artifact complete", flush=True)

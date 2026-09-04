@@ -46,8 +46,8 @@ reside on a local filesystem.
 ├── README.md
 ├── layout.json
 ├── cases/<provider-model>/<data-geometry>/<program-digest>/
-│   ├── manifest.json
-│   └── step_program.json
+│   ├── manifest.json      identity and collection provenance
+│   └── step_program.json  the Program itself, named by its digest
 └── _collections/<name>-<config-digest>/
     ├── collection.lock
     ├── config.json
@@ -59,6 +59,13 @@ reside on a local filesystem.
         ├── worker-result-NNNN.json
         └── logs/attempt-NNNN.log
 ```
+
+A case manifest records what produced the Program beside it: the collection
+name and config, the model, the data geometry, the seed, and the runtime
+configuration the costs were measured under. None of it is part of the
+Program's digest and none of it is read back when the Program is planned, so
+a field added here cannot invalidate a corpus. What the digest does cover is
+in [the artifact store guide](../../docs/python/artifact-store.md#identity).
 
 Journal paths are relative to the dataset root. Moving the complete dataset
 does not invalidate resume or integrity validation. The current 168 Programs

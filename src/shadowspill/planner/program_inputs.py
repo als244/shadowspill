@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 
 from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
 from shadowspill.planner.admission import AdmissionFacts
-from shadowspill.planner.request import PressureFitOptions
 from shadowspill.planner.serialization import (
     _canonical_json,
     _digest,
@@ -15,8 +14,6 @@ from shadowspill.planner.serialization import (
     _list,
     _mapping,
     _optional_string,
-    _options_from_value,
-    _options_to_dict,
     _simulation_config_from_value,
     _simulation_config_to_dict,
     _string,
@@ -133,7 +130,6 @@ class PressureFitProgram:
     fixed_execution_bytes: int
     object_reserve_bytes: int
     dynamic_scratch_reserve_bytes: int
-    options: PressureFitOptions = field(default_factory=PressureFitOptions)
 
     def __post_init__(self) -> None:
         if self.role not in {"initial", "recurrent", "forward"}:
@@ -278,7 +274,6 @@ class PressureFitProgram:
             },
             "simulation_config": _simulation_config_to_dict(self.simulation_config),
             "admission_facts": self.admission_facts.to_dict(),
-            "pressurefit_options": _options_to_dict(self.options),
         }
 
     def to_json(self) -> str:
@@ -336,9 +331,6 @@ class PressureFitProgram:
             dynamic_scratch_reserve_bytes=_integer(
                 capacity.get("dynamic_scratch_reserve_bytes"),
                 f"{path}.capacity_contract.dynamic_scratch_reserve_bytes",
-            ),
-            options=_options_from_value(
-                data.get("pressurefit_options"), f"{path}.pressurefit_options"
             ),
         )
 

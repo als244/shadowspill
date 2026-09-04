@@ -29,7 +29,6 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionFacts,
-    PressureFitOptions,
     TaskAdmissionSpec,
     pressurefit_program,
 )
@@ -83,13 +82,6 @@ def _pressurefit_program() -> PressureFitProgram:
         fixed_execution_bytes=32,
         object_reserve_bytes=96,
         dynamic_scratch_reserve_bytes=0,
-        options=PressureFitOptions(
-            residency_strategies=("tight-stall",),
-            fetch_rules=("demand",),
-            evaluate_coalesced=False,
-            workers=1,
-            minimum_object_bytes_evict_eligible=0,
-        ),
     )
 
 
