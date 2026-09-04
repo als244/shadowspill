@@ -20,7 +20,10 @@ from shadowspill.pytorch.materialization import (
     TrainingMaterializedState,
 )
 from shadowspill.pytorch.runtime_adapter import Runtime
-from shadowspill.pytorch.state.storage import restore_persistent_object_ids
+from shadowspill.pytorch.state.storage import (
+    release_plan_owned_state,
+    restore_persistent_object_ids,
+)
 
 
 class PlannedForward:
@@ -202,6 +205,10 @@ class PlannedForward:
                 (
                     "restore persistent object identities",
                     lambda: restore_persistent_object_ids(self._runtime),
+                ),
+                (
+                    "release plan-owned state",
+                    lambda: release_plan_owned_state(self._runtime, self._plan_handle),
                 ),
             )
         )
@@ -514,6 +521,10 @@ class PlannedTrainStep:
                 (
                     "restore persistent object identities",
                     lambda: restore_persistent_object_ids(self._runtime),
+                ),
+                (
+                    "release plan-owned state",
+                    lambda: release_plan_owned_state(self._runtime, self._plan_handle),
                 ),
             )
         )

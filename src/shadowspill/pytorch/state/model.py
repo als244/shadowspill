@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from typing import cast
 
+import torch
 import torch.nn as nn
 
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
@@ -12,8 +14,11 @@ from .model_copy import copy_model_with_runtime_storages
 from .storage import (
     NamedTensor,
     export_tensors,
+    import_state_from_file,
+    import_tensors,
     own_persistent_state,
     persistent_state,
+    read_state,
     register_tensor_storages,
     release_persistent_tensors,
     unregister_tensor_storages,
@@ -66,13 +71,40 @@ def import_model_state[ModelT: nn.Module](
     return cast(ModelT, imported)
 
 
+def import_model_state_from_file(
+    model: nn.Module,
+    path: str | os.PathLike[str],
+    *,
+    runtime: Runtime,
+    pool: str,
+) -> None:
+    """Fill the model's state in ``pool`` from a checkpoint on disk.
+
+    The values go from the file into pool memory without a whole copy of the
+    checkpoint appearing in ordinary host memory first. Unlike
+    :func:`import_model_state` this rebinds the model that was passed rather
+    than returning a copy, so the caller keeps using the object it has.
+    """
+
+    if persistent_state(runtime, model) is not None:
+        raise RuntimeError("model state is already owned by this Runtime")
+    import_state_from_file(
+        model, _model_tensors(model), path, runtime=runtime, pool=pool
+    )
+
+
 def require_model_state_for_plan(
     model: nn.Module,
     *,
     runtime: Runtime,
     pool: str,
 ) -> None:
-    """Require model state to have been explicitly imported into ``pool``."""
+    """Require model state to have been explicitly imported into ``pool``.
+
+    For entry points that return no callable, so nothing would own or release
+    state imported on the caller's behalf. Planning calls that do return one
+    use :func:`adopt_model_state_for_plan` instead.
+    """
 
     existing = persistent_state(runtime, model)
     if existing is None:
@@ -85,6 +117,43 @@ def require_model_state_for_plan(
         raise RuntimeError(
             f"model state is in pool {existing.pool!r}, not requested {pool!r}"
         )
+
+
+def adopt_model_state_for_plan(
+    model: nn.Module,
+    *,
+    runtime: Runtime,
+    pool: str,
+    owning_plan: int,
+) -> bool:
+    """Give one plan the model state it needs, and say whether it owns it.
+
+    State the caller imported is adopted as it stands and outlives the plan.
+    State the caller did not import is imported here, in place, and belongs
+    to the plan: closing the plan releases it, so the caller reads what it
+    wants before that. Returns whether the plan now owns the state.
+
+    Importing in place rebinds the module that was passed rather than
+    returning a copy, so a planning call never hands back a different object.
+    """
+
+    existing = persistent_state(runtime, model)
+    if existing is not None:
+        if existing.pool != pool:
+            raise RuntimeError(
+                f"model state is in pool {existing.pool!r}, not requested {pool!r}"
+            )
+        return False
+    import_tensors(
+        model,
+        _model_tensors(model),
+        runtime=runtime,
+        pool=pool,
+        release_source=True,
+        owning_plan=owning_plan,
+        _allow_in_progress_plan=True,
+    )
+    return True
 
 
 def export_model_state[ModelT: nn.Module](
@@ -103,6 +172,23 @@ def export_model_state[ModelT: nn.Module](
 
     export_tensors(model, runtime=runtime, release_runtime=release_runtime)
     return model
+
+
+def read_model_state(
+    model: nn.Module,
+    *,
+    runtime: Runtime,
+    copy: bool = True,
+) -> dict[str, torch.Tensor]:
+    """Return the model's current values without rebinding its tensors.
+
+    Answerable while a plan holds the model, which ``export_model_state`` is
+    not. ``copy`` has the meaning it has in :func:`read_state`: copied values
+    are yours and keep what they held, uncopied ones view the pool and are
+    read-only and only current until the plan runs again.
+    """
+
+    return read_state(model, _model_tensors(model), runtime=runtime, copy=copy)
 
 
 def release_model_state(
@@ -140,8 +226,11 @@ def _model_tensors(model: nn.Module) -> tuple[NamedTensor, ...]:
 
 
 __all__ = [
+    "adopt_model_state_for_plan",
     "export_model_state",
     "import_model_state",
+    "import_model_state_from_file",
+    "read_model_state",
     "release_model_state",
     "require_model_state_for_plan",
 ]
