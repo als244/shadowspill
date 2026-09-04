@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -94,6 +95,74 @@ def import_tensors(
         raise
 
 
+def import_state_from_file(
+    target: object,
+    tensors: Iterable[NamedTensor],
+    path: str | os.PathLike[str],
+    *,
+    runtime: Runtime,
+    pool: str,
+    owning_plan: int | None = None,
+) -> PersistentState:
+    """Import a checkpoint's values into ``pool`` without building them first.
+
+    ``torch.load`` ordinarily materializes a whole checkpoint in ordinary host
+    memory before an import copies it into the pool, so the peak is the
+    checkpoint plus the pool. Mapping the file instead makes the source
+    reclaimable page cache, and importing before the copy means the values
+    land in pool memory directly: the only anonymous host memory involved is
+    whatever the target already occupied.
+
+    The checkpoint must name every tensor in ``tensors`` and agree with each
+    on dtype and shape. Raw bytes cannot be converted, so a disagreement is
+    refused rather than reinterpreted. Extra names in the file are ignored.
+    """
+
+    values = torch.load(path, map_location="cpu", mmap=True, weights_only=True)
+    if not isinstance(values, dict):
+        raise RuntimeConfigurationError(
+            f"{path} does not hold one mapping of names to tensors; sharded "
+            "checkpoints are not supported"
+        )
+    named = tuple(tensors)
+    _require_checkpoint_agrees(named, values, path)
+    state = import_tensors(
+        target,
+        named,
+        runtime=runtime,
+        pool=pool,
+        release_source=True,
+        owning_plan=owning_plan,
+    )
+    # The target's tensors are pool-backed now, so this writes into the pool.
+    with torch.no_grad():
+        for item in named:
+            item.tensor.copy_(values[item.name])
+    return state
+
+
+def _require_checkpoint_agrees(
+    tensors: tuple[NamedTensor, ...],
+    values: dict[str, Any],
+    path: str | os.PathLike[str],
+) -> None:
+    """Refuse a checkpoint that cannot fill these tensors exactly."""
+
+    for item in tensors:
+        stored = values.get(item.name)
+        if stored is None:
+            raise RuntimeConfigurationError(f"{path} has no entry for {item.name!r}")
+        if not isinstance(stored, torch.Tensor):
+            raise RuntimeConfigurationError(
+                f"{path} entry {item.name!r} is not a tensor"
+            )
+        if stored.dtype != item.tensor.dtype or stored.shape != item.tensor.shape:
+            raise RuntimeConfigurationError(
+                f"{path} entry {item.name!r} is {stored.dtype} {tuple(stored.shape)}; "
+                f"the target is {item.tensor.dtype} {tuple(item.tensor.shape)}"
+            )
+
+
 def register_tensor_storages(
     tensors: Iterable[NamedTensor],
     *,
@@ -181,15 +250,22 @@ def release_plan_owned_state(runtime: Runtime, plan_handle: int) -> tuple[object
 
     State the caller imported carries no owning plan and is left alone, so
     this is the whole of what a closing plan owes: it frees what it made and
-    touches nothing it was lent. The targets are returned because their
-    frontend tensors now view released leases and the caller must be told
-    which objects those are.
+    touches nothing it was lent.
+
+    Releasing a lease leaves the frontend tensors that viewed it pointing at
+    memory the pool has taken back, so every one of them is emptied first: a
+    later use then fails on an empty tensor where it happens, instead of
+    reading whatever the pool put there next. Emptying allocates nothing.
+    The targets are returned so a caller can say which objects were emptied.
     """
 
     released: list[object] = []
     for state in registry_for(runtime).values():
         if state.owning_plan != plan_handle:
             continue
+        for item in state.storages:
+            for tensor in (*(view.tensor for view in item.views), item.anchor):
+                tensor.data = torch.empty(0, dtype=tensor.dtype, device=tensor.device)
         release_persistent_tensors(state.target, runtime=runtime)
         released.append(state.target)
     return tuple(released)
@@ -283,6 +359,91 @@ def export_tensors(
         registry.remove(target)
         return None
     return state
+
+
+def read_state(
+    target: object,
+    tensors: Iterable[NamedTensor],
+    *,
+    runtime: Runtime,
+    copy: bool = True,
+) -> dict[str, torch.Tensor]:
+    """Return one target's current values, without rebinding anything.
+
+    ``export_tensors`` rebinds the target's own tensors, which a plan holding
+    them cannot survive; this only reads, so it is answerable whenever the
+    runtime is idle, plan or no plan. Names come from ``tensors``, so the
+    caller decides what its state is called and this stays indifferent to
+    what kind of state it is.
+
+    ``copy`` decides where the values live. Copied, they are ordinary host
+    memory outside the runtime pools, one buffer per storage root with the
+    target's views laid over it, so entries that shared a root still share
+    one, and they keep the values they had when this returned. Uncopied, they
+    view the pool's own bytes: nothing is allocated, ordinary torch operations
+    work, and they must be treated as read-only, because writing through one
+    changes runtime state behind the runtime's back. They also stop being
+    current the next time the plan runs. A root whose pool copy is not the
+    authoritative one is copied either way.
+    """
+
+    state = registry_for(runtime).get(target)
+    if state is None:
+        return {}
+    _require_status(
+        runtime._installed.library.shadowspill_pytorch_allocator_wait_idle(),
+        "wait before state read",
+    )
+    owners: dict[int, torch.Tensor] = {}
+    for item in state.storages:
+        owners[id(item)] = _storage_bytes(item, runtime=runtime, copy=copy)
+    located = {
+        id(view.tensor): (item, view) for item in state.storages for view in item.views
+    }
+    result: dict[str, torch.Tensor] = {}
+    for named in tensors:
+        found = located.get(id(named.tensor))
+        if found is None:
+            continue
+        item, view = found
+        result[named.name] = torch.empty(0, dtype=view.tensor.dtype).set_(
+            owners[id(item)].untyped_storage(),
+            view.storage_offset,
+            view.shape,
+            view.stride,
+        )
+    return result
+
+
+def _storage_bytes(
+    item: PersistentStorage,
+    *,
+    runtime: Runtime,
+    copy: bool,
+) -> torch.Tensor:
+    """Return one root's bytes, copied out of the pool or viewed in it."""
+
+    if not copy:
+        snapshot = _snapshot(
+            runtime._runtime_handle, item.current_object_id, item.pool_id
+        )
+        if snapshot.current and snapshot.pointer:
+            window = (ctypes.c_uint8 * item.size_bytes).from_address(
+                int(snapshot.pointer)
+            )
+            return torch.frombuffer(window, dtype=torch.uint8)
+    owner = torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
+    _require_status(
+        runtime_library().shadowspill_read_object(
+            runtime._runtime_handle,
+            item.current_object_id,
+            item.pool_id,
+            int(owner.untyped_storage().data_ptr()),
+            item.size_bytes,
+        ),
+        f"read persistent object {item.current_object_id}",
+    )
+    return owner
 
 
 def persistent_state(runtime: Runtime, target: object) -> PersistentState | None:
