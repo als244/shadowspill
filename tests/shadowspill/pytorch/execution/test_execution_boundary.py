@@ -218,7 +218,7 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle() -> None:
     )
     timing = SimpleNamespace(
         dispatch_call_started_ns=0,
-        dispatch_startup_wait_ns=0,
+        prior_invocation_drain_ns=0,
         origin_event=SimpleNamespace(
             record=lambda _stream: calls.append("origin"), cuda_event=0
         ),

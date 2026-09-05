@@ -51,8 +51,8 @@ class RuntimeTraceEvent:
     """One event emitted by the framework-neutral runtime.
 
     ``timestamp_ns`` is the runtime's host clock. A TRANSFER_COMPLETED event
-    also carries the copy's interval on its lane, ``stream_start_ns`` and
-    ``stream_end_ns``, measured on the device from the origin event the trace
+    also carries the copy's interval on its lane, ``lane_started_at_ns`` and
+    ``lane_finished_at_ns``, measured on the device from the origin event the trace
     was begun with; both are ``None`` when the trace had no origin or the
     interval could not be measured, and on every other kind.
     """
@@ -67,8 +67,8 @@ class RuntimeTraceEvent:
     kind: RuntimeTraceEventKind
     detail_0: int
     detail_1: int
-    stream_start_ns: int | None
-    stream_end_ns: int | None
+    lane_started_at_ns: int | None
+    lane_finished_at_ns: int | None
 
     def details(self) -> dict[str, object]:
         if self.kind is RuntimeTraceEventKind.BEFORE_TASK:
@@ -128,8 +128,8 @@ class RuntimeTraceEvent:
             "bytes": self.bytes,
             "kind": self.kind.name.lower(),
             "details": self.details(),
-            "stream_start_ns": self.stream_start_ns,
-            "stream_end_ns": self.stream_end_ns,
+            "lane_started_at_ns": self.lane_started_at_ns,
+            "lane_finished_at_ns": self.lane_finished_at_ns,
         }
 
 
@@ -138,8 +138,8 @@ class CapturedRuntimeTrace:
     """Complete bounded runtime trace copied out after a step becomes idle."""
 
     step_id: int
-    begin_timestamp_ns: int
-    end_timestamp_ns: int
+    began_at_ns: int
+    ended_at_ns: int
     event_capacity: int
     allocation_event_capacity: int
     event_overflow: bool
@@ -246,22 +246,22 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
                 kind=kind,
                 detail_0=int(event.detail_0),
                 detail_1=int(event.detail_1),
-                stream_start_ns=(
+                lane_started_at_ns=(
                     None
-                    if int(event.stream_start_ns) == NO_STREAM_TIME
-                    else int(event.stream_start_ns)
+                    if int(event.lane_started_at_ns) == NO_STREAM_TIME
+                    else int(event.lane_started_at_ns)
                 ),
-                stream_end_ns=(
+                lane_finished_at_ns=(
                     None
-                    if int(event.stream_end_ns) == NO_STREAM_TIME
-                    else int(event.stream_end_ns)
+                    if int(event.lane_finished_at_ns) == NO_STREAM_TIME
+                    else int(event.lane_finished_at_ns)
                 ),
             )
         )
     return CapturedRuntimeTrace(
         step_id=int(copied.step_id),
-        begin_timestamp_ns=int(copied.begin_timestamp_ns),
-        end_timestamp_ns=int(copied.end_timestamp_ns),
+        began_at_ns=int(copied.began_at_ns),
+        ended_at_ns=int(copied.ended_at_ns),
         event_capacity=int(copied.event_capacity),
         allocation_event_capacity=int(copied.allocation_event_capacity),
         event_overflow=bool(copied.event_overflow),

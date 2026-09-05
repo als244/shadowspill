@@ -1130,15 +1130,15 @@ static int handle_action(
                         spill->current = 0U;
                     }
                 }
-                uint64_t stream_start_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
-                uint64_t stream_end_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                uint64_t lane_started_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                uint64_t lane_finished_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
                 if (shadowspill_stream_interval_read(
                         runtime, &action->stream_interval,
                         runtime->trace_origin_event,
-                        &stream_start_ns, &stream_end_ns
+                        &lane_started_at_ns, &lane_finished_at_ns
                     ) != 0) {
-                    stream_start_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
-                    stream_end_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                    lane_started_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+                    lane_finished_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
                 }
                 shadowspill_stream_interval_discard(
                     runtime, &action->stream_interval
@@ -1158,8 +1158,8 @@ static int handle_action(
                     atomic_load_explicit(
                         &runtime->actions.count, memory_order_acquire
                     ),
-                    stream_start_ns,
-                    stream_end_ns
+                    lane_started_at_ns,
+                    lane_finished_at_ns
                 );
                 pthread_mutex_unlock(&object->lock);
                 if (readiness_to_release != NULL &&

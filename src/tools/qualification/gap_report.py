@@ -89,6 +89,31 @@ _SIZE_BUCKETS: tuple[tuple[str, int], ...] = (
 )
 
 
+def _lane_interval(record: Mapping[str, Any]) -> tuple[float, float]:
+    """When the copy started and finished on its lane."""
+
+    lane = record["lane"]
+    return lane["lane_started_at_seconds"], lane["lane_finished_at_seconds"]
+
+
+def _lane_duration(record: Mapping[str, Any]) -> float:
+    """How long the copy held its lane."""
+
+    started, finished = _lane_interval(record)
+    return float(finished - started)
+
+
+def _simulated_duration(record: Mapping[str, Any]) -> float:
+    """The lane time the simulator priced for the copy."""
+
+    simulated = record["simulated"]
+    started = simulated["simulated_started_at_seconds"]
+    finished = simulated["simulated_finished_at_seconds"]
+    if started is None or finished is None:
+        return 0.0
+    return float(finished - started)
+
+
 def _bucket(size: int) -> str:
     for label, limit in _SIZE_BUCKETS:
         if size < limit:
@@ -106,7 +131,7 @@ def _print_size_buckets(
     groups: dict[tuple[str, str], list[tuple[int, float]]] = {}
     total_bytes = sum(item["bytes"] for item in records)
     for item in records:
-        start, end = item["stream"]["start_seconds"], item["stream"]["end_seconds"]
+        start, end = _lane_interval(item)
         if end <= start:
             continue
         fraction = _overlap_fraction(start, end, other)
@@ -135,7 +160,9 @@ def _print_size_buckets(
 
 
 def _measured(records: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    return [item for item in records if item["stream"]["duration_seconds"] is not None]
+    return [
+        item for item in records if item["lane"]["lane_started_at_seconds"] is not None
+    ]
 
 
 def _print_step(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> None:
@@ -152,7 +179,7 @@ def _print_step(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> None
         f" (waiting {summary['real_inter_task_readiness_wait_seconds']:.3f} s,"
         f" exposed {summary['real_inter_task_exposed_overhead_seconds'] * 1e3:.1f} ms)"
         f" | first kernel at"
-        f" {timelines['clocks']['first_task_start_seconds'] * 1e3:.0f} ms,"
+        f" {timelines['clocks']['first_task_started_at_seconds'] * 1e3:.0f} ms,"
         f" of which input wait"
         f" {summary['real_initial_readiness_wait_seconds'] * 1e3:.0f} ms"
     )
@@ -179,8 +206,7 @@ def _print_lanes(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> Non
     calibration = _calibration(cell)
     intervals = {
         direction: sorted(
-            (item["stream"]["start_seconds"], item["stream"]["end_seconds"])
-            for item in _measured(transfers[direction].values())
+            _lane_interval(item) for item in _measured(transfers[direction].values())
         )
         for direction in ("fetch", "evict")
     }
@@ -191,10 +217,9 @@ def _print_lanes(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> Non
         solo_rate, concurrent_rate, planned_rate = calibration[direction]
         effective = lane["effective_bandwidth_bytes_per_second"]
         ratios = [
-            item["stream"]["duration_seconds"] / item["simulated"]["duration_seconds"]
+            _lane_duration(item) / _simulated_duration(item)
             for item in scheduled
-            if item["bytes"] >= _LARGE_COPY_BYTES
-            and item["simulated"]["duration_seconds"]
+            if item["bytes"] >= _LARGE_COPY_BYTES and _simulated_duration(item)
         ]
         print(
             f"  {direction}: {len(scheduled)} scheduled, {lane['opening_transfers']}"
@@ -204,14 +229,14 @@ def _print_lanes(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> Non
             f" | copy duration real/sim median"
             f" {statistics.median(ratios) if ratios else float('nan'):.2f}"
             f" | lane busy simulated {lane['simulated_busy_seconds']:.3f} s"
-            f" real {lane['stream_busy_seconds']:.3f} s"
+            f" real {lane['lane_busy_seconds']:.3f} s"
             f" | largest start delta"
             f" {_milliseconds(lane['largest_start_delta_seconds'])}"
             f" at {lane['largest_start_delta_transfer_id']}"
         )
         classes: dict[str, list[float]] = {"solo": [], "mixed": [], "concurrent": []}
         for item in records:
-            start, end = item["stream"]["start_seconds"], item["stream"]["end_seconds"]
+            start, end = _lane_interval(item)
             if item["bytes"] < _LARGE_COPY_BYTES or end <= start:
                 continue
             fraction = _overlap_fraction(start, end, intervals[other])

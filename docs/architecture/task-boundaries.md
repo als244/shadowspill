@@ -100,12 +100,26 @@ allocator resolves that where the allocation happens, which is inside the
 task, where a wait cannot be told apart from compute. Resolving them here
 instead costs the overlap the late version got -- the first kernel now waits
 on a range only the last allocation needs -- and buys an interval where the
-wait is measurable. See `allocation_reuse_wait_seconds` in
-[step diagnostics](../python/step-diagnostics.md).
+wait is measurable.
 
 The spin is a rendezvous with the worker, not with the copy: it ends when the
 transfer has *started* and published its event, and the copy itself is then
-waited on by the stream rather than the host.
+waited on by the stream rather than the host. That makes it two different
+waits on two clocks, and step diagnostics reports both:
+`dispatch_allocation_reuse_seconds` is how long the dispatching thread spun,
+and `allocation_reuse_wait_seconds` is how long the compute stream then
+waited. They are usually very different sizes.
+
+**This is what bounds the frontend's run-ahead.** A transfer publishes its
+completion event only when the worker submits the copy, and the worker
+submits it only after the task that triggers it has completed on the device.
+So a task whose allocations reuse ranges held by a transfer cannot leave its
+opening boundary until that trigger task has finished executing. The
+dispatcher is therefore pinned to device progress, not merely to the
+worker's, and the lead it holds over the stream stays near zero however far
+ahead the host could otherwise run. On an OLMoE step, this spin is 3.15 s of
+a 4.53 s step while the stream's wait for the same ranges is 0.03 s: the host
+absorbs the wait almost entirely.
 
 ### `shadowspill_after_task_handle`
 

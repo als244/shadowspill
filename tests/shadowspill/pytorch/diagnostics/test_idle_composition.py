@@ -39,10 +39,9 @@ def _task(
         "phase": "forward",
         "microbatch": 0,
         "expected_profile_seconds": finished - started,
-        "compute_duration_seconds": finished - started,
-        "compute_reached_seconds": reached,
-        "compute_started_seconds": started,
-        "compute_finished_seconds": finished,
+        "compute_reached_at_seconds": reached,
+        "compute_started_at_seconds": started,
+        "compute_finished_at_seconds": finished,
         "input_readiness_wait_seconds": (started - reached) - reuse,
         "allocation_reuse_wait_seconds": reuse,
     }
@@ -66,8 +65,11 @@ def test_idle_is_exactly_waiting_plus_not_yet_reached() -> None:
     assert readiness == pytest.approx(0.25)
     assert dispatch == pytest.approx(0.5 + 0.05)
     assert initial == pytest.approx(2.0)
-    span = tasks[-1].compute_finished_seconds - tasks[0].compute_started_seconds
-    busy = sum(item.compute_duration_seconds for item in tasks)
+    span = tasks[-1].compute_finished_at_seconds - tasks[0].compute_started_at_seconds
+    busy = sum(
+        item.compute_finished_at_seconds - item.compute_started_at_seconds
+        for item in tasks
+    )
     assert readiness + dispatch == pytest.approx(span - busy)
 
 
@@ -101,8 +103,11 @@ def test_waiting_holds_both_the_inputs_and_the_ranges() -> None:
     assert readiness == pytest.approx(0.4)
     assert dispatch == pytest.approx(0.0)
     assert initial == pytest.approx(1.0)
-    span = tasks[-1].compute_finished_seconds - tasks[0].compute_started_seconds
-    busy = sum(item.compute_duration_seconds for item in tasks)
+    span = tasks[-1].compute_finished_at_seconds - tasks[0].compute_started_at_seconds
+    busy = sum(
+        item.compute_finished_at_seconds - item.compute_started_at_seconds
+        for item in tasks
+    )
     assert readiness + dispatch == pytest.approx(span - busy)
 
 

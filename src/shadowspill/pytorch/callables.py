@@ -407,6 +407,11 @@ class PlannedTrainStep:
 
         return self._executor.collect_selected_span_seconds()
 
+    def _collect_prior_invocation_drain_seconds(self) -> float:
+        """How long the last call waited for the previous invocation to drain."""
+
+        return self._executor.collect_prior_invocation_drain_seconds()
+
     def state_dict(self) -> dict[str, object]:
         """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state.
 

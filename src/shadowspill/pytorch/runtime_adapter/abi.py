@@ -237,8 +237,8 @@ class TraceEvent(ctypes.Structure):
         ("bytes", ctypes.c_uint64),
         ("detail_0", ctypes.c_uint64),
         ("detail_1", ctypes.c_uint64),
-        ("stream_start_ns", ctypes.c_uint64),
-        ("stream_end_ns", ctypes.c_uint64),
+        ("lane_started_at_ns", ctypes.c_uint64),
+        ("lane_finished_at_ns", ctypes.c_uint64),
         ("kind", ctypes.c_uint8),
     ]
 
@@ -251,8 +251,8 @@ class TraceSummary(ctypes.Structure):
         ("allocation_event_count", ctypes.c_uint64),
         ("event_capacity", ctypes.c_uint64),
         ("allocation_event_capacity", ctypes.c_uint64),
-        ("begin_timestamp_ns", ctypes.c_uint64),
-        ("end_timestamp_ns", ctypes.c_uint64),
+        ("began_at_ns", ctypes.c_uint64),
+        ("ended_at_ns", ctypes.c_uint64),
         ("active", ctypes.c_uint8),
         ("event_overflow", ctypes.c_uint8),
         ("allocation_event_overflow", ctypes.c_uint8),
