@@ -25,6 +25,14 @@ struct ShadowSpillRuntime {
     pthread_t worker_thread;
     int worker_started;
     _Atomic uint8_t closing;
+    /*
+     * Set when the process is exiting and this runtime is being abandoned.
+     * Cleanup that could block -- draining queued work, synchronizing a lane,
+     * finalizing an aborted task's retirements behind a pool lock the worker
+     * may hold -- is skipped while it is set, because none of it can complete
+     * once exit handlers are running and all of it is reclaimed at _exit.
+     */
+    _Atomic uint8_t abandoned;
     _Atomic uint8_t closed;
     _Atomic uint8_t worker_stop;
     _Atomic uint32_t failure_status;
@@ -78,8 +86,8 @@ struct ShadowSpillRuntime {
     uint64_t trace_event_capacity;
     _Atomic uint64_t next_trace_event_sequence;
     uint64_t trace_step_id;
-    uint64_t trace_begin_timestamp_ns;
-    uint64_t trace_end_timestamp_ns;
+    uint64_t trace_began_at_ns;
+    uint64_t trace_ended_at_ns;
     uint64_t trace_allocation_event_capacity;
     _Atomic uint8_t trace_prepared;
     _Atomic uint8_t trace_active;

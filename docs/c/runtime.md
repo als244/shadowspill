@@ -46,6 +46,16 @@ worker, trace buffers, and first-failure state.
 - `shadowspill_memory_pool_grow()` grows one explicitly selected pool only when
   the header's idle-state preconditions hold.
 
+`shadowspill_runtime_abandon()` closes without waiting for anything: no drain,
+no lane synchronization, and no cleanup that could block on a lock the worker
+holds. It is for a process that is already exiting, where waiting prevents the
+exit rather than delaying it, and where everything a drain protects is
+reclaimed at process exit anyway. It still stops the worker and releases every
+route, event pool, and memory pool, which is what unregisters pinned host
+memory and frees device memory. The two counts it fills in, either of which may
+be NULL, report what was still outstanding, so a caller can say so. See
+[failure, abort, and process exit](../architecture/failure-and-exit.md).
+
 Calibration first measures each available directed route alone. When reverse
 routes exist, it then measures both directions simultaneously on independent
 lanes and publishes the concurrent per-direction rates as the effective
@@ -213,7 +223,7 @@ the trace. While the trace is active the worker brackets every copy it
 dispatches with two timing events from the runtime's timing pool on the lane,
 and the transfer's
 `SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries the copy's interval
-from that origin in `stream_start_ns` and `stream_end_ns`. Every other
+from that origin in `lane_started_at_ns` and `lane_finished_at_ns`. Every other
 event kind, and a completion the backend could not measure, carries
 `SHADOWSPILL_TRACE_NO_STREAM_TIME` in both. A zero origin token records no
 intervals. `timestamp_ns` on every event is the host clock; the two stream
