@@ -50,7 +50,10 @@ byte count so the backend keeps no size bookkeeping.
 
 Streams are ordered queues of copies and events. Copies are asynchronous and
 ordered on their stream. `wrap_stream` turns the integer handle the framework
-exposes for one of its own streams into a token.
+exposes for one of its own streams into a token. A handle of 0 is the default
+stream, the one a driver runs work on when the caller names no stream; the
+mock has one too, so a caller with no streams of its own can still drive the
+table.
 
 Events: a dependency event (`timing` clear) is the fast kind that record,
 query, and wait work with. A timing event carries a device timestamp when
