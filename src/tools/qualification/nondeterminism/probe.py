@@ -146,10 +146,10 @@ def probe_step(
         if capture_modules:
             with _recording(model, forward, backward, order):
                 loss = objective()
-                loss.backward()
+                loss.backward()  # type: ignore[no-untyped-call]
         else:
             loss = objective()
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
         runs.append(
             {
                 "loss": loss.detach().clone(),
