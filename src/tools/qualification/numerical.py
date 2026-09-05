@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 import torch
 
-from shadowspill.ir import RecomputationGroup, RecomputationSelection
+from shadowspill.ir import TaskAlternativeChoice, TaskAlternativeGroup
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
@@ -71,8 +71,8 @@ def _meets_tensor_tolerance(metric: Any) -> bool:
 
 
 def _recomputation_savings_bytes(
-    groups: Sequence[RecomputationGroup],
-    selections: Sequence[RecomputationSelection],
+    groups: Sequence[TaskAlternativeGroup],
+    selections: Sequence[TaskAlternativeChoice],
     alias_sizes: Mapping[str, int],
 ) -> tuple[int, int]:
     """Report maximum available and selected retained-byte savings."""
@@ -655,18 +655,37 @@ def _planned_worker(
                 f"{time.perf_counter() - replay_started:.3f}s",
                 flush=True,
             )
+        stage_started = time.perf_counter()
         final_state = training.state_dict()
         replay_digest = state_digest(final_state)
+        print(
+            f"shadowspill {model_implementation}/{family} final state captured "
+            f"and digested: {time.perf_counter() - stage_started:.3f}s",
+            flush=True,
+        )
         report = training.plan_report
         runtime_statistics = adapter_statistics()
+        stage_started = time.perf_counter()
         training.close()
         # Reference parity, checkpoint replay, and transfer evidence all read
         # the state_dict() copies captured above; the model itself is never
         # used again, so release it without another anonymous copy.
         release_case_model(case, runtime=runtime)
         runtime.close()
+        print(
+            f"shadowspill {model_implementation}/{family} callable and runtime "
+            f"closed: {time.perf_counter() - stage_started:.3f}s",
+            flush=True,
+        )
 
+    stage_started = time.perf_counter()
     reference = torch.load(reference_path, map_location="cpu", weights_only=True)
+    print(
+        f"shadowspill {model_implementation}/{family} reference loaded from "
+        f"{reference_path.resolve()}: "
+        f"{time.perf_counter() - stage_started:.3f}s",
+        flush=True,
+    )
     if (
         reference.get("schema") != REFERENCE_SCHEMA
         or reference.get("reference_execution") != _REFERENCE_EXECUTION
@@ -682,9 +701,21 @@ def _planned_worker(
             "compiled reference identity differs from requested qualification; "
             "replace it with --regenerate-reference"
         )
+    stage_started = time.perf_counter()
+    print(
+        f"shadowspill {model_implementation}/{family} comparing model and "
+        "optimizer state against the reference, tensor by tensor",
+        flush=True,
+    )
     tensor_results, exact_failures = compare_states(
         {"model": reference["model"], "optimizer": reference["optimizer"]},
         {"model": final_state["model"], "optimizer": final_state["optimizer"]},
+    )
+    print(
+        f"shadowspill {model_implementation}/{family} compared "
+        f"{len(tensor_results)} tensors: "
+        f"{time.perf_counter() - stage_started:.3f}s",
+        flush=True,
     )
     loss_failures: list[str] = []
     worst_loss_relative = 0.0
@@ -730,7 +761,7 @@ def _planned_worker(
     )
     available_recomputation_savings, selected_recomputation_savings = (
         _recomputation_savings_bytes(
-            report.execution_plan.program.recomputation_groups,
+            report.execution_plan.program.task_alternative_groups,
             report.execution_plan.selections,
             {
                 group.alias_group_id: group.size_bytes
@@ -863,7 +894,7 @@ def _planned_worker(
         "recomputation_memory_saving_available": bool(available_recomputation_savings),
         "maximum_recomputation_savings_bytes": available_recomputation_savings,
         "selected_recomputation_savings_bytes": selected_recomputation_savings,
-        "selection_count": len(selections),
+        "task_alternative_group_count": len(selections),
         "task_count": len(
             report.execution_plan.program.selected_tasks(
                 report.execution_plan.selections
@@ -995,7 +1026,7 @@ def _planned_worker(
             and qualification_result["planned_program_cache_hits"] == 0
         )
     )
-    qualification_result["recomputation_selection_required"] = False
+    qualification_result["graph_pair_selection_required"] = False
     transfer_pressure_passed = _transfer_pressure_gate_passed(
         required=require_pressure,
         evicted_bytes=report.transfer_bytes_evicted,
