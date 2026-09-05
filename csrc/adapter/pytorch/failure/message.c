@@ -42,7 +42,6 @@ static void append_failure_task(
 ) {
     const uint64_t profiling_base = UINT64_C(1) << 62U;
     const uint64_t initial_actions_base = UINT64_C(1) << 60U;
-    const uint64_t caller_handoff_base = UINT64_C(1) << 59U;
     if (task_id >= profiling_base) {
         append_failure_message(
             destination,
@@ -60,16 +59,6 @@ static void append_failure_task(
             offset,
             "runtime_scope: initial_actions.invocation_%06llu\n",
             (unsigned long long)(task_id - initial_actions_base)
-        );
-        return;
-    }
-    if (task_id >= caller_handoff_base) {
-        append_failure_message(
-            destination,
-            destination_bytes,
-            offset,
-            "runtime_scope: caller_handoff.invocation_%06llu\n",
-            (unsigned long long)(task_id - caller_handoff_base)
         );
         return;
     }
@@ -162,6 +151,145 @@ static const char *allocation_operation_name(uint8_t operation) {
     return "unknown";
 }
 
+/* The failure the report describes: the call that just failed, not the
+   first failure the runtime ever saw. A recovered failure latched earlier
+   says nothing about this one, and reporting its operands beside this
+   call's makes every number in the message unattributable. Says whether an
+   earlier first failure is what this call is really failing on. */
+static ShadowSpillStatus reported_failure(
+    ShadowSpillPytorchAdapterFailure *failure,
+    int *superseded_by_first_failure
+) {
+    ShadowSpillStatus status = shadowspill_pytorch_allocator_failure(failure);
+    pthread_mutex_lock(&adapter.mutex);
+    const int have_recent = adapter.recent_valid != 0U;
+    const ShadowSpillPytorchAdapterFailure recent = adapter.recent;
+    pthread_mutex_unlock(&adapter.mutex);
+    *superseded_by_first_failure = 0;
+    if (have_recent) {
+        *superseded_by_first_failure =
+            failure->status != SHADOWSPILL_STATUS_OK &&
+            failure->status != recent.status;
+        status = (ShadowSpillStatus)recent.status;
+        failure->device_ordinal = recent.device_ordinal;
+        failure->requested_bytes = recent.requested_bytes;
+    }
+    return status;
+}
+
+/* "Out of memory" means very different things for the device execution
+   pool and the spill pool, and an internal failure belongs to neither. */
+static const char *pool_name(uint32_t pool_id) {
+    if (pool_id == UINT32_MAX) {
+        return "no pool";
+    }
+    return pool_id == shadowspill_pytorch_allocator_pool_id()
+        ? "execution pool"
+        : "spill pool";
+}
+
+static void append_headline(
+    char *destination,
+    size_t destination_bytes,
+    size_t *offset,
+    ShadowSpillStatus status,
+    const ShadowSpillPytorchAdapterFailure *failure
+) {
+    const char *pool = pool_name(failure->runtime.pool_id);
+    if (status == SHADOWSPILL_STATUS_NO_PROGRESS) {
+        append_failure_message(
+            destination, destination_bytes, offset,
+            "ShadowSpill out of memory in the %s (device %d), with nothing "
+            "left to release\n",
+            pool, failure->device_ordinal
+        );
+    } else if (status == SHADOWSPILL_STATUS_OUT_OF_MEMORY) {
+        append_failure_message(
+            destination, destination_bytes, offset,
+            "ShadowSpill out of memory in the %s (device %d)\n",
+            pool, failure->device_ordinal
+        );
+    } else {
+        append_failure_message(
+            destination, destination_bytes, offset,
+            "ShadowSpill %s (device %d)\nstatus: %u (%s)\n",
+            shadowspill_status_string(status),
+            failure->device_ordinal,
+            (unsigned int)status,
+            shadowspill_status_string(status)
+        );
+    }
+}
+
+static void append_envelope(
+    char *destination,
+    size_t destination_bytes,
+    size_t *offset,
+    const ShadowSpillRuntimeFailure *runtime
+) {
+    append_failure_message(
+        destination,
+        destination_bytes,
+        offset,
+        "reason: TASK_ALLOCATION_ENVELOPE_EXCEEDED\n"
+        "task_live_requested: %llu\n"
+        "task_live_charged: %llu\n"
+        "task_live_requested_limit: %llu\n"
+        "task_live_charged_limit: %llu\n"
+        "task_maximum_requested_allocation: %llu\n"
+        "task_maximum_charged_allocation: %llu\n",
+        (unsigned long long)runtime->task_live_requested_bytes,
+        (unsigned long long)runtime->task_live_charged_bytes,
+        (unsigned long long)runtime->task_live_requested_limit_bytes,
+        (unsigned long long)runtime->task_live_charged_limit_bytes,
+        (unsigned long long)
+            runtime->task_maximum_requested_allocation_bytes,
+        (unsigned long long)
+            runtime->task_maximum_charged_allocation_bytes
+    );
+}
+
+static void append_contract_mismatch(
+    char *destination,
+    size_t destination_bytes,
+    size_t *offset,
+    const ShadowSpillRuntimeFailure *runtime
+) {
+    append_failure_message(
+        destination,
+        destination_bytes,
+        offset,
+        "reason: TASK_ALLOCATION_CONTRACT_MISMATCH\n"
+        "task_allocation_operation_index: %llu\n"
+        "expected_operation: %s\nactual_operation: %s\n"
+        "expected_ordinal: %llu\nactual_ordinal: %llu\n"
+        "expected_requested: %llu\nactual_requested: %llu\n"
+        "expected_charged: %llu\nactual_charged: %llu\n"
+        "expected_alignment: %llu\nactual_alignment: %llu\n",
+        (unsigned long long)runtime->task_allocation_operation_index,
+        allocation_operation_name(
+            runtime->task_allocation_expected_operation
+        ),
+        allocation_operation_name(
+            runtime->task_allocation_actual_operation
+        ),
+        (unsigned long long)runtime->task_allocation_expected_ordinal,
+        (unsigned long long)runtime->task_allocation_actual_ordinal,
+        (unsigned long long)
+            runtime->task_allocation_expected_requested_bytes,
+        (unsigned long long)
+            runtime->task_allocation_actual_requested_bytes,
+        (unsigned long long)
+            runtime->task_allocation_expected_charged_bytes,
+        (unsigned long long)
+            runtime->task_allocation_actual_charged_bytes,
+        (unsigned long long)
+            runtime->task_allocation_expected_alignment_bytes,
+        (unsigned long long)
+            runtime->task_allocation_actual_alignment_bytes
+    );
+}
+
 ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
     char *destination,
     size_t destination_bytes
@@ -171,33 +299,10 @@ ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
     }
     destination[0] = '\0';
     ShadowSpillPytorchAdapterFailure failure = {0};
-    ShadowSpillStatus status =
-        shadowspill_pytorch_allocator_failure(&failure);
-    /*
-     * Describe the call that failed, not the first failure the runtime ever
-     * saw. A recovered failure latched earlier says nothing about this one,
-     * and reporting its operands beside this call's makes every number in the
-     * message unattributable.
-     */
-    pthread_mutex_lock(&adapter.mutex);
-    const int have_recent = adapter.recent_valid != 0U;
-    const ShadowSpillPytorchAdapterFailure recent = adapter.recent;
-    pthread_mutex_unlock(&adapter.mutex);
-    int reported_first_failure = 0;
-    if (have_recent) {
-        reported_first_failure =
-            failure.status != SHADOWSPILL_STATUS_OK &&
-            failure.status != recent.status;
-        status = (ShadowSpillStatus)recent.status;
-        failure.device_ordinal = recent.device_ordinal;
-        failure.requested_bytes = recent.requested_bytes;
-    }
-    const ShadowSpillRuntimeFailure *runtime = &failure.runtime;
-    const uint64_t requested_bytes = failure.requested_bytes != 0U
-        ? failure.requested_bytes
-        : runtime->requested_bytes;
+    int superseded = 0;
+    const ShadowSpillStatus status = reported_failure(&failure, &superseded);
     size_t offset = 0U;
-    if (!have_recent && status == SHADOWSPILL_STATUS_OK) {
+    if (status == SHADOWSPILL_STATUS_OK) {
         /* Nothing recorded this call. Say so rather than inventing a status:
          * a made-up diagnosis is worse than an admitted absence. */
         append_failure_message(
@@ -208,36 +313,8 @@ ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
         );
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    /* Name the pool: "out of memory" means very different things for the
-     * device execution pool and the spill pool, and an internal failure
-     * belongs to neither. */
-    const char *pool_name = runtime->pool_id == UINT32_MAX
-        ? "no pool"
-        : runtime->pool_id == shadowspill_pytorch_allocator_pool_id() ? "execution pool"
-                                                        : "spill pool";
-    if (status == SHADOWSPILL_STATUS_NO_PROGRESS) {
-        append_failure_message(
-            destination, destination_bytes, &offset,
-            "ShadowSpill out of memory in the %s (device %d), with nothing "
-            "left to release\n",
-            pool_name, failure.device_ordinal
-        );
-    } else if (status == SHADOWSPILL_STATUS_OUT_OF_MEMORY) {
-        append_failure_message(
-            destination, destination_bytes, &offset,
-            "ShadowSpill out of memory in the %s (device %d)\n",
-            pool_name, failure.device_ordinal
-        );
-    } else {
-        append_failure_message(
-            destination, destination_bytes, &offset,
-            "ShadowSpill %s (device %d)\nstatus: %u (%s)\n",
-            shadowspill_status_string(status),
-            failure.device_ordinal,
-            (unsigned int)status,
-            shadowspill_status_string(status)
-        );
-    }
+    const ShadowSpillRuntimeFailure *runtime = &failure.runtime;
+    append_headline(destination, destination_bytes, &offset, status, &failure);
     if (runtime->reason != SHADOWSPILL_FAILURE_REASON_UNSPECIFIED) {
         append_failure_message(
             destination, destination_bytes, &offset, "reason: %s\n",
@@ -246,26 +323,25 @@ ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
             )
         );
     }
-    if (reported_first_failure) {
+    if (superseded) {
         append_failure_message(
             destination, destination_bytes, &offset,
             "note: an earlier failure (%s) had already stopped this runtime; "
             "later calls fail because of it, not on their own\n",
-            shadowspill_status_string(
-                (ShadowSpillStatus)failure.status
-            )
+            shadowspill_status_string((ShadowSpillStatus)failure.status)
         );
     }
     if (runtime->task_id != UINT64_MAX) {
         append_failure_task(
-            destination,
-            destination_bytes,
-            &offset,
-            runtime->task_id
+            destination, destination_bytes, &offset, runtime->task_id
         );
     }
-    append_bytes(destination, destination_bytes, &offset, "requested",
-        requested_bytes);
+    append_bytes(
+        destination, destination_bytes, &offset, "requested",
+        failure.requested_bytes != 0U
+            ? failure.requested_bytes
+            : runtime->requested_bytes
+    );
     if (runtime->free_bytes != 0U || runtime->largest_free_range_bytes != 0U) {
         append_bytes(destination, destination_bytes, &offset, "pool free",
             runtime->free_bytes);
@@ -273,59 +349,10 @@ ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
             "largest free range", runtime->largest_free_range_bytes);
     }
     if (status == SHADOWSPILL_STATUS_TASK_ALLOCATION_ENVELOPE_EXCEEDED) {
-        append_failure_message(
-            destination,
-            destination_bytes,
-            &offset,
-            "reason: TASK_ALLOCATION_ENVELOPE_EXCEEDED\n"
-            "task_live_requested: %llu\n"
-            "task_live_charged: %llu\n"
-            "task_live_requested_limit: %llu\n"
-            "task_live_charged_limit: %llu\n"
-            "task_maximum_requested_allocation: %llu\n"
-            "task_maximum_charged_allocation: %llu\n",
-            (unsigned long long)runtime->task_live_requested_bytes,
-            (unsigned long long)runtime->task_live_charged_bytes,
-            (unsigned long long)runtime->task_live_requested_limit_bytes,
-            (unsigned long long)runtime->task_live_charged_limit_bytes,
-            (unsigned long long)
-                runtime->task_maximum_requested_allocation_bytes,
-            (unsigned long long)
-                runtime->task_maximum_charged_allocation_bytes
-        );
+        append_envelope(destination, destination_bytes, &offset, runtime);
     } else if (status == SHADOWSPILL_STATUS_TASK_ALLOCATION_CONTRACT_MISMATCH) {
-        append_failure_message(
-            destination,
-            destination_bytes,
-            &offset,
-            "reason: TASK_ALLOCATION_CONTRACT_MISMATCH\n"
-            "task_allocation_operation_index: %llu\n"
-            "expected_operation: %s\nactual_operation: %s\n"
-            "expected_ordinal: %llu\nactual_ordinal: %llu\n"
-            "expected_requested: %llu\nactual_requested: %llu\n"
-            "expected_charged: %llu\nactual_charged: %llu\n"
-            "expected_alignment: %llu\nactual_alignment: %llu\n",
-            (unsigned long long)runtime->task_allocation_operation_index,
-            allocation_operation_name(
-                runtime->task_allocation_expected_operation
-            ),
-            allocation_operation_name(
-                runtime->task_allocation_actual_operation
-            ),
-            (unsigned long long)runtime->task_allocation_expected_ordinal,
-            (unsigned long long)runtime->task_allocation_actual_ordinal,
-            (unsigned long long)
-                runtime->task_allocation_expected_requested_bytes,
-            (unsigned long long)
-                runtime->task_allocation_actual_requested_bytes,
-            (unsigned long long)
-                runtime->task_allocation_expected_charged_bytes,
-            (unsigned long long)
-                runtime->task_allocation_actual_charged_bytes,
-            (unsigned long long)
-                runtime->task_allocation_expected_alignment_bytes,
-            (unsigned long long)
-                runtime->task_allocation_actual_alignment_bytes
+        append_contract_mismatch(
+            destination, destination_bytes, &offset, runtime
         );
     }
     return status;

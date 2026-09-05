@@ -21,6 +21,16 @@ extern "C" {
 /* Forget the first failure; the caller holds the adapter's lock. */
 void shadowspill_pytorch_failure_clear_locked(int32_t device_ordinal);
 
+/* Latch a physical-budget refusal as the first failure, unless one is
+   already latched; the caller holds the adapter's lock. Such a refusal has
+   no address and no runtime record, only the bytes asked for and the bytes
+   there were. */
+void shadowspill_pytorch_failure_latch_physical_locked(
+    ShadowSpillStatus status,
+    uint64_t requested_bytes,
+    uint64_t free_bytes
+);
+
 void shadowspill_pytorch_latch_failure(
     ShadowSpillStatus status,
     int32_t device_ordinal,

@@ -1,6 +1,35 @@
 #include "internal.h"
 
 #include <stdatomic.h>
+#include <stdio.h>
+
+/* The profiler range name of a task: its label, or its id when it has none. */
+static void format_task_range_name(
+    char *destination,
+    size_t destination_bytes,
+    const char *operation,
+    const ShadowSpillTaskHandle *handle
+) {
+    const uint64_t task_id = shadowspill_task_id(handle);
+    const char *label = shadowspill_task_trace_label(handle);
+    if (label != NULL && label[0] != '\0') {
+        (void)snprintf(
+            destination,
+            destination_bytes,
+            "shadowspill.pytorch.%s.%s",
+            operation,
+            label
+        );
+    } else {
+        (void)snprintf(
+            destination,
+            destination_bytes,
+            "shadowspill.pytorch.%s.canonical_%llu",
+            operation,
+            (unsigned long long)task_id
+        );
+    }
+}
 
 ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
     uintptr_t action_batch_handle,
@@ -36,21 +65,22 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
     const uint64_t task_id = shadowspill_task_id(handle);
-    if (task_range_active || task_handle == 0U ||
+    if (shadowspill_pytorch_task_range_active() || task_handle == 0U ||
         task_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
+    /* Naming the range costs a format; skip it when nothing would show. */
+    char range_name[384];
+    const char *name = NULL;
     if (atomic_load_explicit(
             &adapter.profiler_annotations_enabled, memory_order_relaxed
         ) != 0U) {
-        char range_name[384];
-        shadowspill_pytorch_format_task_range_name(range_name, sizeof(range_name), "task", handle);
-        task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
-    } else {
-        task_range_id = 0U;
+        format_task_range_name(range_name, sizeof(range_name), "task", handle);
+        name = range_name;
     }
-    task_range_active = 1;
-    active_task_label = shadowspill_task_trace_label(handle);
+    shadowspill_pytorch_task_range_begin(
+        name, shadowspill_task_trace_label(handle)
+    );
     ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
@@ -62,7 +92,7 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
             binding_count
         );
     if (status != SHADOWSPILL_STATUS_OK) {
-        shadowspill_pytorch_end_task_range();
+        shadowspill_pytorch_task_range_end();
     }
     return status;
 }
@@ -98,7 +128,7 @@ ShadowSpillStatus shadowspill_pytorch_after_task_handle(
             handle,
             shadowspill_pytorch_stream(compute_stream_address)
         );
-    shadowspill_pytorch_end_task_range();
+    shadowspill_pytorch_task_range_end();
     return status;
 }
 
@@ -113,6 +143,6 @@ ShadowSpillStatus shadowspill_pytorch_abort_task_handle(
         : shadowspill_abort_task_handle(
               runtime, handle
           );
-    shadowspill_pytorch_end_task_range();
+    shadowspill_pytorch_task_range_end();
     return status;
 }

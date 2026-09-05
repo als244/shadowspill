@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../failure/internal.h"
 
 #include <pthread.h>
 
@@ -64,16 +65,14 @@ ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
     if (external > adapter.observed_external_high_water_bytes) {
         adapter.observed_external_high_water_bytes = external;
     }
-    if (status != SHADOWSPILL_STATUS_OK &&
-        adapter.failure.status == SHADOWSPILL_STATUS_OK) {
-        adapter.failure.status = (uint32_t)status;
-        adapter.failure.requested_bytes = memory.process_bytes;
-        adapter.failure.runtime.status = (uint32_t)status;
-        adapter.failure.runtime.requested_bytes = memory.process_bytes;
-        adapter.failure.runtime.free_bytes =
+    if (status != SHADOWSPILL_STATUS_OK) {
+        shadowspill_pytorch_failure_latch_physical_locked(
+            status,
+            memory.process_bytes,
             admission.device_budget_bytes > memory.process_bytes
-            ? admission.device_budget_bytes - memory.process_bytes
-            : 0U;
+                ? admission.device_budget_bytes - memory.process_bytes
+                : 0U
+        );
     }
     pthread_mutex_unlock(&adapter.mutex);
     return status;
@@ -120,15 +119,11 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
     if (required_provider_headroom_bytes >
         adapter.admission.provider_headroom_bytes) {
         status = SHADOWSPILL_STATUS_PLAN_VIOLATION;
-        if (adapter.failure.status == SHADOWSPILL_STATUS_OK) {
-            adapter.failure.status = (uint32_t)status;
-            adapter.failure.requested_bytes = required_provider_headroom_bytes;
-            adapter.failure.runtime.status = (uint32_t)status;
-            adapter.failure.runtime.requested_bytes =
-                required_provider_headroom_bytes;
-            adapter.failure.runtime.free_bytes =
-                adapter.admission.provider_headroom_bytes;
-        }
+        shadowspill_pytorch_failure_latch_physical_locked(
+            status,
+            required_provider_headroom_bytes,
+            adapter.admission.provider_headroom_bytes
+        );
     } else {
         adapter.physical_budget_sealed = 1U;
     }
