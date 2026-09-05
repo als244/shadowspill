@@ -169,3 +169,35 @@ if(TARGET shadowspill_backend_cuda)
   add_test(NAME shadowspill_cuda_backend_canary COMMAND shadowspill_cuda_backend_canary)
   set_tests_properties(shadowspill_cuda_backend_canary PROPERTIES LABELS "cuda")
 endif()
+
+# The adapter's C entry points against the mock backend, loaded by path the
+# way the frontend loads a provider. Needs no accelerator and no libtorch; the
+# storage operators are the Python canaries' to cover.
+if(TARGET shadowspill_pytorch)
+  add_executable(
+    shadowspill_pytorch_adapter_canary adapter/pytorch_adapter_canary.c
+  )
+  target_include_directories(
+    shadowspill_pytorch_adapter_canary
+    PRIVATE
+      ${PROJECT_SOURCE_DIR}/csrc/adapter/pytorch/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/runtime
+  )
+  target_link_libraries(
+    shadowspill_pytorch_adapter_canary
+    PRIVATE
+      shadowspill_pytorch
+      shadowspill
+      shadowspill_backend_mock
+      shadowspill_build_options
+      Threads::Threads
+  )
+  add_test(
+    NAME shadowspill_pytorch_adapter_canary
+    COMMAND
+      shadowspill_pytorch_adapter_canary $<TARGET_FILE:shadowspill_backend_mock>
+  )
+  set_tests_properties(
+    shadowspill_pytorch_adapter_canary PROPERTIES TIMEOUT 30
+  )
+endif()
