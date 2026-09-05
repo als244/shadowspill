@@ -55,6 +55,7 @@ figures/
     graph_pair_selections.csv           one row per geometry, budget, and
                                         graph-pair selection
     run_budgets.csv                     one row per executed budget
+    steps.csv                           one row per budget and step
 ```
 
 ## How the tree is organised
@@ -127,6 +128,10 @@ the CSVs and still a gap in the line. Nothing is dropped for being infeasible.
 
 `raw_data/` holds everything the figures were drawn from, so they can be drawn
 again in another style or another tool without replanning.
+
+`run_budgets.csv` keeps one row per budget, whose `measured_step_seconds` is a
+median; `steps.csv` keeps the steps behind it, one row each, because a median
+cannot say whether a budget was steady or erratic.
 
 `search.json` is the report itself and is lossless: it is the same value
 `plot_step_search()` was handed, so the whole `sim/` tree can be rebuilt from it

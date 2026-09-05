@@ -46,6 +46,10 @@ class RunBudgetOutcome:
     #: The writeback after the last task, which the simulator prices and the
     #: measured step spends after its last event.
     terminal_tail_seconds: float
+    #: Every step this budget ran, in order. ``measured_step_seconds`` is
+    #: their median; keeping the rest is what says whether a budget was steady
+    #: or erratic, which a median cannot.
+    step_seconds: tuple[float, ...] = ()
 
     @property
     def relative_error(self) -> float:
@@ -119,6 +123,23 @@ def _raw_data(
                 item.terminal_tail_seconds,
             )
             for item in ordered
+        )
+
+    steps = target / "steps.csv"
+    with steps.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ("execution_budget_gib", "step", "seconds", "tokens_per_second")
+        )
+        writer.writerows(
+            (
+                item.execution_budget_bytes / _GIB,
+                index,
+                seconds,
+                tokens_per_step / seconds,
+            )
+            for item in ordered
+            for index, seconds in enumerate(item.step_seconds, start=1)
         )
     return path
 

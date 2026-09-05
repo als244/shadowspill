@@ -759,10 +759,13 @@ def main() -> int:
                 note = ""
                 if step == 1 and plan_report.initial_pressurefit_result is not None:
                     note = "   (first-step plan)"
-                print(
+                # Through the log rather than print(), so every step time is
+                # in the run directory as well as on the terminal. Only
+                # planner phase lines are filtered out of stdout.
+                plan_log.write(
                     f"  step {step:>3}   {wall:7.3f} s"
                     f"   {tokens_per_step / wall:>10,.0f} tok/s"
-                    f"   loss {loss:.4f}{note}"
+                    f"   loss {loss:.4f}{note}\n"
                 )
                 return result
 
@@ -794,6 +797,7 @@ def main() -> int:
                 execution_budget_bytes=budget,
                 simulated_step_seconds=plan_report.summary.simulated_step_seconds,
                 measured_step_seconds=statistics.median(walls),
+                step_seconds=tuple(walls),
                 profiled_task_seconds=step_summary.profiled_task_seconds,
                 real_task_seconds=step_summary.real_task_event_seconds,
                 simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
