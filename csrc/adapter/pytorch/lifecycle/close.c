@@ -1,18 +1,9 @@
 #include "internal.h"
 
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdio.h>
-
-static inline void adapter_cpu_relax(void) {
-#if defined(__x86_64__) || defined(__i386__)
-    __asm__ __volatile__("pause" ::: "memory");
-#elif defined(__aarch64__) || defined(__arm__)
-    __asm__ __volatile__("yield" ::: "memory");
-#else
-    atomic_signal_fence(memory_order_seq_cst);
-#endif
-}
 
 /* Refuse new callbacks and wait for those in flight to leave the runtime.
    Hands back the runtime to close, or NULL with the status to return: OK
@@ -23,7 +14,7 @@ static ShadowSpillStatus begin_shutdown(ShadowSpillRuntime **runtime) {
     *runtime = NULL;
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.closed) {
-        status = SHADOWSPILL_STATUS_OK;
+        /* Already closed: nothing to do, and nothing wrong. */
     } else if (atomic_load_explicit(
                    &adapter.shutdown_started, memory_order_acquire
                ) != 0U) {
@@ -40,10 +31,12 @@ static ShadowSpillStatus begin_shutdown(ShadowSpillRuntime **runtime) {
     if (*runtime == NULL) {
         return status;
     }
+    /* Cold: a close waits here only for callbacks already inside the
+       runtime, so the wait is a yield rather than a spin. */
     while (atomic_load_explicit(
                &adapter.active_allocator_callbacks, memory_order_acquire
            ) != 0U) {
-        adapter_cpu_relax();
+        (void)sched_yield();
     }
     return SHADOWSPILL_STATUS_OK;
 }
