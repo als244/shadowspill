@@ -18,6 +18,9 @@
 extern "C" {
 #endif
 
+/* Forget the first failure; the caller holds the adapter's lock. */
+void shadowspill_pytorch_failure_clear_locked(int32_t device_ordinal);
+
 void shadowspill_pytorch_latch_failure(
     ShadowSpillStatus status,
     int32_t device_ordinal,

@@ -8,14 +8,14 @@ ShadowSpillProfilerRange shadowspill_pytorch_profile_range_begin(
 ) {
     return atomic_load_explicit(
                &adapter.profiler_annotations_enabled, memory_order_relaxed
-           ) == 0U || adapter.backend.range_begin == NULL
+           ) == 0U || adapter.backend.table.range_begin == NULL
         ? 0U
-        : adapter.backend.range_begin(adapter.backend.state, name);
+        : adapter.backend.table.range_begin(adapter.backend.table.state, name);
 }
 
 void shadowspill_pytorch_profile_range_end(ShadowSpillProfilerRange range) {
-    if (range != 0U && adapter.backend.range_end != NULL) {
-        adapter.backend.range_end(adapter.backend.state, range);
+    if (range != 0U && adapter.backend.table.range_end != NULL) {
+        adapter.backend.table.range_end(adapter.backend.table.state, range);
     }
 }
 
@@ -24,8 +24,8 @@ ShadowSpillStatus shadowspill_pytorch_profiler_annotations_set(
 ) {
     pthread_mutex_lock(&adapter.mutex);
     const int available = adapter.runtime != NULL &&
-        adapter.backend.profiler_enable != NULL;
-    const ShadowSpillBackend backend = adapter.backend;
+        adapter.backend.table.profiler_enable != NULL;
+    const ShadowSpillBackend backend = adapter.backend.table;
     pthread_mutex_unlock(&adapter.mutex);
     if (!available) {
         return SHADOWSPILL_STATUS_CLOSED;

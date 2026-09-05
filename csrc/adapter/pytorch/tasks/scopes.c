@@ -20,13 +20,11 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
     );
     task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
     task_range_active = 1;
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     const ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_scope_begin(
-              runtime, bound_allocator_pool_id(), scope_id
+              runtime, shadowspill_pytorch_allocator_pool_id(), scope_id
           );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_end_task_range();
@@ -38,24 +36,20 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_end(
     uint64_t scope_id,
     uintptr_t compute_stream_address
 ) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     const ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_scope_end(
               runtime,
               scope_id,
-              adapter_stream(compute_stream_address)
+              shadowspill_pytorch_stream(compute_stream_address)
           );
     shadowspill_pytorch_end_task_range();
     return status;
 }
 
 void shadowspill_pytorch_allocation_scope_abort(void) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     shadowspill_allocation_scope_abort(runtime);
     shadowspill_pytorch_end_task_range();
 }

@@ -25,7 +25,7 @@ ShadowSpillStatus shadowspill_pytorch_physical_memory(
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     pthread_mutex_lock(&adapter.mutex);
-    const ShadowSpillBackend backend = adapter.backend;
+    const ShadowSpillBackend backend = adapter.backend.table;
     pthread_mutex_unlock(&adapter.mutex);
     if (backend.state == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
@@ -38,7 +38,7 @@ ShadowSpillStatus shadowspill_pytorch_physical_memory(
 ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
     ShadowSpillBackendPhysicalMemory memory = {0};
     pthread_mutex_lock(&adapter.mutex);
-    const ShadowSpillBackend backend = adapter.backend;
+    const ShadowSpillBackend backend = adapter.backend.table;
     ShadowSpillPytorchPhysicalAdmission admission = adapter.admission;
     pthread_mutex_unlock(&adapter.mutex);
     if (backend.state == NULL) {
@@ -84,7 +84,7 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
     uint64_t runtime_record_reserve
 ) {
     pthread_mutex_lock(&adapter.mutex);
-    const ShadowSpillBackend backend = adapter.backend;
+    const ShadowSpillBackend backend = adapter.backend.table;
     ShadowSpillRuntime *runtime = adapter.runtime;
     pthread_mutex_unlock(&adapter.mutex);
     if (backend.state == NULL || runtime == NULL) {
