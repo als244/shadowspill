@@ -12,6 +12,7 @@ import torch
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     ObjectBinding,
+    ObjectDescription,
     ObjectSnapshot,
     PlanDescription,
     RuntimeAction,
@@ -35,8 +36,14 @@ def _publish_initial(
 ) -> ObjectBinding:
     _require_ok(
         int(
-            library.shadowspill_pytorch_register_placeholder_object(
-                object_id, tensor.untyped_storage().nbytes(), 0
+            runtime_library().shadowspill_register_object(
+                _runtime_handle(library),
+                ctypes.byref(
+                    ObjectDescription(
+                        object_id=object_id,
+                        size_bytes=tensor.untyped_storage().nbytes(),
+                    )
+                ),
             )
         ),
         "placeholder registration",
@@ -77,6 +84,12 @@ def _runtime_handle(library: object) -> int:
         "runtime handle",
     )
     return int(handle.value)
+
+
+def _wait_idle(library: object) -> int:
+    return int(
+        runtime_library().shadowspill_runtime_wait_idle(_runtime_handle(library))
+    )
 
 
 def _create_plan(library: object) -> int:
@@ -251,7 +264,7 @@ def main() -> int:
         ),
     )
     _require_ok(
-        int(library.shadowspill_pytorch_allocator_wait_idle()),
+        _wait_idle(library),
         "initial evict drain",
     )
     baseline = AdapterStatistics()
@@ -368,7 +381,7 @@ def main() -> int:
         "consumer publication",
     )
     _require_ok(
-        int(library.shadowspill_pytorch_allocator_wait_idle()),
+        _wait_idle(library),
         "final release drain",
     )
     _require_ok(

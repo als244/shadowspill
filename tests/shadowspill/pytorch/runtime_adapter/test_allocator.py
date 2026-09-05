@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from shadowspill.pytorch.runtime_adapter import failures as failures_module
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterCapabilities,
     AdapterConfig,
@@ -17,6 +18,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     FixedLayoutDescription,
     FixedPlacementDescription,
     ObjectBinding,
+    ObjectDescription,
     ObjectLocationSnapshot,
     ObjectSnapshot,
     ObjectUpdate,
@@ -59,6 +61,15 @@ def _two_pool_topology(spill_bytes: int = 1) -> dict[str, object]:
     }
 
 
+class _IdleRuntime:
+    """The neutral runtime as a fake library whose drain always succeeds."""
+
+    @staticmethod
+    def shadowspill_runtime_wait_idle(runtime_handle: int) -> int:
+        del runtime_handle
+        return 0
+
+
 class _Function:
     argtypes: object = None
     restype: object = None
@@ -78,17 +89,11 @@ class _Library:
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
     shadowspill_pytorch_recover_no_progress = _Function()
-    shadowspill_pytorch_allocator_wait_idle = _Function()
-    shadowspill_pytorch_calibrate_transfer_capabilities = _Function()
-    shadowspill_pytorch_transfer_profiles = _Function()
     shadowspill_pytorch_profiler_annotations_set = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
-    shadowspill_pytorch_register_object = _Function()
-    shadowspill_pytorch_register_placeholder_object = _Function()
     shadowspill_pytorch_allocation_scope_begin = _Function()
     shadowspill_pytorch_allocation_scope_end = _Function()
     shadowspill_pytorch_allocation_scope_abort = _Function()
-    shadowspill_pytorch_validate_task_replacement_binding = _Function()
     shadowspill_pytorch_acquire_objects_handle = _Function()
     shadowspill_pytorch_transfer_acquired_object_to_caller = _Function()
     shadowspill_pytorch_submit_action_batch_handle = _Function()
@@ -109,6 +114,7 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterFailure) == 216
     assert ctypes.sizeof(AdapterStatistics) == 672
     assert ctypes.sizeof(ObjectBinding) == 40
+    assert ctypes.sizeof(ObjectDescription) == 32
     assert ctypes.sizeof(ObjectUpdate) == 16
     assert ctypes.sizeof(RuntimeAction) == 24
     assert ctypes.sizeof(FixedPlacementDescription) == 56
@@ -153,27 +159,13 @@ def test_adapter_signatures_are_configured_together() -> None:
     assert library.shadowspill_pytorch_allocator_failure.argtypes == [
         ctypes.POINTER(AdapterFailure)
     ]
-    assert library.shadowspill_pytorch_allocator_wait_idle.argtypes == []
     assert library.shadowspill_pytorch_allocation_for_pointer.argtypes == [
         ctypes.c_uint64,
         ctypes.POINTER(Allocation),
     ]
-    assert library.shadowspill_pytorch_register_object.argtypes == [
-        ctypes.c_uint32,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint8,
-        ctypes.c_uint64,
-    ]
     assert library.shadowspill_pytorch_validate_object_binding.argtypes == [
         ctypes.c_uint32,
         ctypes.c_uint64,
-        ctypes.c_uint64,
-        ctypes.c_uint64,
-    ]
-    assert library.shadowspill_pytorch_validate_task_replacement_binding.argtypes == [
-        ctypes.c_size_t,
-        ctypes.c_uint32,
         ctypes.c_uint64,
         ctypes.c_uint64,
     ]
@@ -231,6 +223,10 @@ class _RuntimeLibrary:
     shadowspill_plan_wait_idle = _Function()
     shadowspill_plan_clear_tasks = _Function()
     shadowspill_plan_seal_fixed_layout = _Function()
+    shadowspill_runtime_wait_idle = _Function()
+    shadowspill_runtime_calibrate_transfer_capabilities = _Function()
+    shadowspill_runtime_transfer_profiles = _Function()
+    shadowspill_register_object = _Function()
 
 
 def test_runtime_signatures_are_configured_together() -> None:
@@ -245,6 +241,11 @@ def test_runtime_signatures_are_configured_together() -> None:
 
     assert library.shadowspill_plan_wait_idle.argtypes == [ctypes.c_size_t]
     assert library.shadowspill_plan_wait_idle.restype == ctypes.c_uint32
+    assert library.shadowspill_runtime_wait_idle.argtypes == [ctypes.c_size_t]
+    assert library.shadowspill_register_object.argtypes == [
+        ctypes.c_size_t,
+        ctypes.POINTER(ObjectDescription),
+    ]
     assert library.shadowspill_plan_destroy.restype is None
     assert library.shadowspill_plan_bind_object.argtypes == [
         ctypes.c_size_t,
@@ -261,16 +262,15 @@ def test_runtime_signatures_are_configured_together() -> None:
     ]
 
 
-def test_execution_reservation_accepts_fragmented_dynamic_capacity() -> None:
+def test_execution_reservation_accepts_fragmented_dynamic_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
     class _StatisticsLibrary:
         allocated = 16
         free = 112
         free_prefix = 112
         largest = 112
-
-        @staticmethod
-        def shadowspill_pytorch_allocator_wait_idle() -> int:
-            return 0
 
         def shadowspill_pytorch_allocator_statistics(self, output: object) -> int:
             statistics = ctypes.cast(output, ctypes.POINTER(AdapterStatistics))[0]

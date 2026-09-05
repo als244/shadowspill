@@ -266,6 +266,13 @@ void rebind_replacement_views(
       publication_ordinals.size() == adopted_tensors.size(),
       "adopted storage fields must have equal lengths");
 
+  uintptr_t runtime_handle = 0;
+  TORCH_CHECK(
+      shadowspill_pytorch_runtime_handle(&runtime_handle) ==
+          SHADOWSPILL_STATUS_OK,
+      "the ShadowSpill runtime is closed");
+  auto *const runtime = reinterpret_cast<ShadowSpillRuntime *>(runtime_handle);
+
   // Validate every retired and successor address before rebinding any view.
   // The runtime has adopted the replacement, but has not yet published task
   // actions, so both leases remain stable throughout this transaction.
@@ -291,11 +298,12 @@ void rebind_replacement_views(
         reinterpret_cast<uintptr_t>(tensor.storage().data_ptr().get()));
     if (current != target) {
       const ShadowSpillStatus status =
-          shadowspill_pytorch_validate_task_replacement_binding(
-              static_cast<uintptr_t>(task_handle),
+          shadowspill_task_validate_replacement_binding(
+              runtime,
+              reinterpret_cast<const ShadowSpillTaskHandle *>(task_handle),
               static_cast<uint32_t>(publication_ordinals[target_index]),
-              current,
-              target);
+              reinterpret_cast<const void *>(static_cast<uintptr_t>(current)),
+              reinterpret_cast<const void *>(static_cast<uintptr_t>(target)));
       TORCH_CHECK(
           status == SHADOWSPILL_STATUS_OK,
           "existing storage does not match the retired object generation: ",

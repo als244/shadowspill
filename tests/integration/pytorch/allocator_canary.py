@@ -14,6 +14,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     Allocation,
     ObjectBinding,
+    ObjectDescription,
     ObjectSnapshot,
     PhysicalMemory,
     PlanDescription,
@@ -31,6 +32,12 @@ def _runtime_handle(library: object) -> int:
     if status != 0 or handle.value == 0:
         raise AssertionError(f"runtime handle unavailable (status {status})")
     return int(handle.value)
+
+
+def _wait_idle(library: object) -> int:
+    return int(
+        runtime_library().shadowspill_runtime_wait_idle(_runtime_handle(library))
+    )
 
 
 def _create_plan(library: object) -> int:
@@ -78,8 +85,14 @@ def _publish_initial(
 ) -> ObjectBinding:
     if not already_registered:
         status = int(
-            library.shadowspill_pytorch_register_placeholder_object(
-                object_id, tensor.untyped_storage().nbytes(), 0
+            runtime_library().shadowspill_register_object(
+                _runtime_handle(library),
+                ctypes.byref(
+                    ObjectDescription(
+                        object_id=object_id,
+                        size_bytes=tensor.untyped_storage().nbytes(),
+                    )
+                ),
             )
         )
         if status != 0:
@@ -223,8 +236,7 @@ def main() -> int:
     torch.cuda.synchronize()
     library = installed.library
     plan = _create_plan(library)
-    library.shadowspill_pytorch_allocator_wait_idle.restype = ctypes.c_uint32
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("allocator did not become idle")
     statistics = AdapterStatistics()
     if (
@@ -288,7 +300,7 @@ def main() -> int:
     torch.ops.shadowspill._dematerialize_storages([parameter])
     if parameter.data_ptr() != 0 or view.data_ptr() != 0:
         raise AssertionError("alias storage was not dematerialized together")
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("evict did not complete")
     snapshot = ObjectSnapshot()
     if (
@@ -344,11 +356,11 @@ def main() -> int:
     if status != 0:
         raise AssertionError(f"release submission failed with status {status}")
     torch.ops.shadowspill._dematerialize_storages([parameter])
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("planned release did not complete")
     del blocker, view, parameter
     gc.collect()
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("canary cleanup did not complete")
     final_statistics = AdapterStatistics()
     if (
@@ -373,15 +385,28 @@ def main() -> int:
         raise AssertionError("storage import caused an allocator callback failure")
 
     spill_source = torch.arange(4096, dtype=torch.uint8)
+    spill_object = ObjectDescription(
+        object_id=3001,
+        size_bytes=spill_source.untyped_storage().nbytes(),
+        initial_pool_id=1,
+        retain_spill_copy=1,
+        initially_resident=1,
+    )
     status = int(
-        library.shadowspill_pytorch_register_object(
-            1,
-            3001,
-            spill_source.untyped_storage().nbytes(),
-            1,
-            spill_source.untyped_storage().data_ptr(),
+        runtime_library().shadowspill_register_object(
+            _runtime_handle(library), ctypes.byref(spill_object)
         )
     )
+    if status == 0:
+        status = int(
+            runtime_library().shadowspill_write_object(
+                _runtime_handle(library),
+                3001,
+                1,
+                spill_source.untyped_storage().data_ptr(),
+                spill_source.untyped_storage().nbytes(),
+            )
+        )
     if status != 0:
         raise AssertionError(f"direct host registration failed with status {status}")
     spill_tensor = torch.empty_like(spill_source, device="cuda")
@@ -389,7 +414,7 @@ def main() -> int:
     spill_release = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=0))
     _submit_actions(library, plan, 300, compute_stream, tuple(spill_release))
     torch.ops.shadowspill._dematerialize_storages([spill_tensor])
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("host placeholder release did not drain")
     spill_fetch = (RuntimeAction * 1)(RuntimeAction(object_id=3001, kind=2))
     _submit_actions(library, plan, 301, compute_stream, tuple(spill_fetch))
@@ -413,7 +438,7 @@ def main() -> int:
     ):
         raise AssertionError("direct host final release failed")
     torch.ops.shadowspill._dematerialize_storages([spill_tensor])
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("direct host final release did not drain")
 
     caller_output = torch.arange(1024, dtype=torch.float32, device="cuda")
@@ -465,7 +490,7 @@ def main() -> int:
         raise AssertionError("caller output changed allocation during transfer")
     del caller_output, spill_tensor
     gc.collect()
-    if int(library.shadowspill_pytorch_allocator_wait_idle()) != 0:
+    if _wait_idle(library) != 0:
         raise AssertionError("caller-owned output did not free normally")
 
     physical = PhysicalMemory()

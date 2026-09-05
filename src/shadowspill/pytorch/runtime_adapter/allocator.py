@@ -262,7 +262,11 @@ def _initialize_provider_state(
         del left
         torch.cuda.current_stream(device_ordinal).synchronize()
 
-    message = wait_allocator_idle(library, problem="provider initialization")
+    message = wait_allocator_idle(
+        library,
+        _published_runtime_handle(library),
+        problem="provider initialization",
+    )
     if message is not None:
         raise AllocatorInstallError(message)
     statistics = AdapterStatistics()
@@ -306,7 +310,9 @@ def validate_dynamic_execution_reservation(
     if reserved_bytes < installed.fixed_execution_bytes:
         raise ValueError("fixed execution reservation is smaller than bootstrap")
     message = wait_allocator_idle(
-        installed.library, problem="fixed execution reservation"
+        installed.library,
+        installed.runtime_handle,
+        problem="fixed execution reservation",
     )
     if message is not None:
         raise AllocatorInstallError(message)

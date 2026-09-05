@@ -752,12 +752,13 @@ class RuntimeBridge:
             return
         runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
-            self.library.shadowspill_pytorch_register_object(
-                self.spill_pool_id,
+            self.runtime._register_object(
                 runtime_object_id,
                 expected,
-                int(retain_spill_copy),
-                storage.data_ptr(),
+                pool_id=self.spill_pool_id,
+                retain_spill_copy=bool(retain_spill_copy),
+                initially_resident=True,
+                source_address=storage.data_ptr(),
             ),
             "register host object",
         )
@@ -836,8 +837,12 @@ class RuntimeBridge:
             return
         runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
-            self.library.shadowspill_pytorch_register_placeholder_object(
-                runtime_object_id, self._size(alias_id), 0
+            self.runtime._register_object(
+                runtime_object_id,
+                self._size(alias_id),
+                pool_id=0,
+                retain_spill_copy=False,
+                initially_resident=False,
             ),
             "register placeholder object",
         )
@@ -1275,7 +1280,10 @@ class RuntimeBridge:
         """Wait for runtime-global quiescence at lifecycle boundaries."""
 
         self._require(
-            self.library.shadowspill_pytorch_allocator_wait_idle(), "wait idle"
+            self.runtime_library.shadowspill_runtime_wait_idle(
+                self.runtime._runtime_handle
+            ),
+            "wait idle",
         )
 
     def input_failure_states(self, alias_ids: Iterable[str]) -> tuple[str, ...]:
