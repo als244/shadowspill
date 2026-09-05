@@ -176,10 +176,9 @@ machine. Its `--measure-only` reports the measurement without those floors,
 closing cells as MEASURED rather than PASS, which is the mode to run on a
 machine the floors did not come from.
 
-Framework-free PressureFit benchmarking belongs in
-`benchmarking/planning_eval/fixture_benchmark.py`. Step inspection reads the
-saved step diagnostics (`docs/python/step-diagnostics.md`), and the gap report
-below summarizes them across a matrix.
+Step inspection reads the saved step diagnostics
+(`docs/python/step-diagnostics.md`), and the gap report below summarizes them
+across a matrix.
 
 `--profiler-annotations` on the performance launcher emits profiler ranges around
 task boundaries and compiled calls, so an external profiler can attribute time
