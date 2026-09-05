@@ -24,7 +24,13 @@ target_include_directories(
     include
     ${PROJECT_SOURCE_DIR}/csrc/include
 )
-target_compile_definitions(shadowspill_pytorch PRIVATE SHADOWSPILL_PYTORCH_BUILDING)
+# on_exit(), which hands the exit handler the process's exit status, is a
+# GNU extension. Asking for it is a property of the compilation, not of a
+# file, so no source has to define _GNU_SOURCE ahead of its first include.
+target_compile_definitions(
+  shadowspill_pytorch
+  PRIVATE SHADOWSPILL_PYTORCH_BUILDING $<$<PLATFORM_ID:Linux>:_GNU_SOURCE>
+)
 target_link_libraries(
   shadowspill_pytorch
   PRIVATE
