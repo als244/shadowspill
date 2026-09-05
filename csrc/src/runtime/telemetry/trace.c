@@ -15,8 +15,8 @@ void shadowspill_trace_append_stamped_enabled(
     uint64_t bytes,
     uint64_t detail_0,
     uint64_t detail_1,
-    uint64_t stream_start_ns,
-    uint64_t stream_end_ns
+    uint64_t lane_started_at_ns,
+    uint64_t lane_finished_at_ns
 ) {
     if (atomic_load_explicit(&runtime->trace_active, memory_order_acquire) == 0U ||
         atomic_load_explicit(
@@ -54,14 +54,14 @@ void shadowspill_trace_append_stamped_enabled(
             .bytes = bytes,
             .detail_0 = detail_0,
             .detail_1 = detail_1,
-            .stream_start_ns = stream_start_ns,
-            .stream_end_ns = stream_end_ns,
+            .lane_started_at_ns = lane_started_at_ns,
+            .lane_finished_at_ns = lane_finished_at_ns,
             .kind = (uint8_t)kind,
         };
     if (kind == SHADOWSPILL_TRACE_SESSION_BEGIN) {
-        runtime->trace_begin_timestamp_ns = timestamp;
+        runtime->trace_began_at_ns = timestamp;
     } else if (kind == SHADOWSPILL_TRACE_SESSION_END) {
-        runtime->trace_end_timestamp_ns = timestamp;
+        runtime->trace_ended_at_ns = timestamp;
     }
 }
 
@@ -204,8 +204,8 @@ ShadowSpillStatus shadowspill_trace_begin(
         runtime->trace_event_count = 0U;
         runtime->next_trace_event_sequence = 0U;
         runtime->trace_step_id = step_id;
-        runtime->trace_begin_timestamp_ns = 0U;
-        runtime->trace_end_timestamp_ns = 0U;
+        runtime->trace_began_at_ns = 0U;
+        runtime->trace_ended_at_ns = 0U;
         runtime->trace_event_overflow = 0;
         runtime->allocation_event_count = 0U;
         runtime->next_allocation_event_sequence = 0U;
@@ -286,8 +286,8 @@ ShadowSpillStatus shadowspill_trace_read(
         .allocation_event_count = runtime->allocation_event_count,
         .event_capacity = runtime->trace_event_capacity,
         .allocation_event_capacity = runtime->allocation_event_capacity,
-        .begin_timestamp_ns = runtime->trace_begin_timestamp_ns,
-        .end_timestamp_ns = runtime->trace_end_timestamp_ns,
+        .began_at_ns = runtime->trace_began_at_ns,
+        .ended_at_ns = runtime->trace_ended_at_ns,
         .active = (uint8_t)(runtime->trace_active != 0),
         .event_overflow = (uint8_t)(runtime->trace_event_overflow != 0),
         .allocation_event_overflow =

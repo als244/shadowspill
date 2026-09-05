@@ -352,14 +352,20 @@ class TrainingExecutor(AnnotatedExecutor):
         if timing is not None:
             timing.dispatch_call_started_ns = time.perf_counter_ns()
             timing.origin_event.record(torch.cuda.current_stream())
+        self._prior_invocation_drain_ns = 0
         if self._invocations:
             # V1 plans have a fresh terminal state. Preserve asynchronous
             # StepResult construction, but do not accidentally overlap the
             # next invocation with terminal transfers from the prior plan.
-            started_ns = time.perf_counter_ns() if timing is not None else 0
+            #
+            # Timed on every invocation rather than only a traced one: the
+            # first invocation has nothing to wait for, so a trace taken on a
+            # warm first step is exactly the step that never pays this.
+            started_ns = time.perf_counter_ns()
             self._bridge.wait_plan_idle()
+            self._prior_invocation_drain_ns = time.perf_counter_ns() - started_ns
             if timing is not None:
-                timing.dispatch_startup_wait_ns = time.perf_counter_ns() - started_ns
+                timing.prior_invocation_drain_ns = self._prior_invocation_drain_ns
         run = (
             self._initial
             if self._initial is not None and not self._optimizer_state_initialized
@@ -524,6 +530,11 @@ class TrainingExecutor(AnnotatedExecutor):
         )
         self._armed_execution_timing = armed
 
+    def collect_prior_invocation_drain_seconds(self) -> float:
+        """How long the last call waited for the previous invocation to drain."""
+
+        return self._prior_invocation_drain_ns / 1e9
+
     def arm_selected_span_timing(self) -> None:
         """Arm a two-event selected-task span without detailed tracing.
 
@@ -620,16 +631,14 @@ class TrainingExecutor(AnnotatedExecutor):
         if timing is None:
             return None
         task = timing.tasks[entrypoint.task_id]
-        task.dispatch_started_ns = time.perf_counter_ns()
-        task.before_task_enter_ns = task.dispatch_started_ns
+        task.before_task_enter_ns = time.perf_counter_ns()
         return task
 
     @staticmethod
     def _finish_task_timing(task: _ArmedTaskTiming | None) -> None:
         if task is None:
             return
-        task.dispatch_finished_ns = time.perf_counter_ns()
-        task.after_task_exit_ns = task.dispatch_finished_ns
+        task.after_task_exit_ns = time.perf_counter_ns()
 
     @staticmethod
     def _record_task_readiness(
@@ -668,7 +677,6 @@ class TrainingExecutor(AnnotatedExecutor):
             if stream is None:
                 raise AssertionError("task timing omitted its CUDA stream")
             task.end_event.record(stream)
-            task.dispatch_after_started_ns = time.perf_counter_ns()
 
     def _profile_range(self, name: str) -> AbstractContextManager[None]:
         return self._task_annotations.range(name)
@@ -863,17 +871,31 @@ class TrainingExecutor(AnnotatedExecutor):
                     f"shadowspill.storage_rebind.{record.trace_label}"
                 ):
                     input_tensors = self._lookup_task_inputs(record, timing)
+                    acquire_started_ns = time.perf_counter_ns()
                     self._acquire_task_inputs(record, stream, input_tensors, timing)
+                    if timing is not None:
+                        timing.dispatch_input_acquire_ns = (
+                            time.perf_counter_ns() - acquire_started_ns
+                        )
                     runtime_scope_open = True
                     call = self._assemble_task_call(record, timing)
                 self._record_task_inputs_ready(timing, stream)
                 with self._profile_range(
                     f"shadowspill.allocation_reuse.{record.trace_label}"
                 ):
+                    # Host time, not the stream's. This call spins until the
+                    # worker has published every transfer that still owns a
+                    # range this task will allocate into, so it is the
+                    # dispatcher waiting, and it is otherwise invisible.
+                    reuse_started_ns = time.perf_counter_ns()
                     self._bridge.wait_task_allocations(
                         record.task_handle,
                         self._state.device.index or 0,
                     )
+                    if timing is not None:
+                        timing.dispatch_allocation_reuse_ns = (
+                            time.perf_counter_ns() - reuse_started_ns
+                        )
                 prepared = _PreparedTask(
                     run=run,
                     record=record,
@@ -885,8 +907,6 @@ class TrainingExecutor(AnnotatedExecutor):
                 )
                 self._record_compute_start(stream)
                 self._record_task_start(timing, stream)
-            if timing is not None:
-                timing.dispatch_before_finished_ns = time.perf_counter_ns()
             return prepared
         except BaseException:
             if runtime_scope_open:
@@ -1062,9 +1082,8 @@ class TrainingExecutor(AnnotatedExecutor):
     def _run_compiled_task(self, prepared: _PreparedTask) -> object:
         """Dispatch only the numerical task represented by ``prepared``."""
 
-        started_ns = time.perf_counter_ns() if prepared.timing is not None else 0
         if prepared.timing is not None:
-            prepared.timing.before_task_exit_ns = started_ns
+            prepared.timing.before_task_exit_ns = time.perf_counter_ns()
         with (
             self._profile_range(
                 f"shadowspill.compiled_call.{prepared.record.trace_label}"
@@ -1078,9 +1097,7 @@ class TrainingExecutor(AnnotatedExecutor):
                     raise AssertionError("compiled task function is unavailable")
                 raw_outputs = prepared.function(*prepared.arguments)
         if prepared.timing is not None:
-            invoked_ns = time.perf_counter_ns()
-            prepared.timing.dispatch_invoke_ns = invoked_ns - started_ns
-            prepared.timing.after_task_enter_ns = invoked_ns
+            prepared.timing.after_task_enter_ns = time.perf_counter_ns()
         self._record_task_end(prepared.timing, prepared.stream)
         if prepared.record.task.task_id == prepared.run.lowered.optimizer_task_id:
             self._record_compute_end(prepared.stream)

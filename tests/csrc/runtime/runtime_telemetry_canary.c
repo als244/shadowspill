@@ -504,15 +504,15 @@ static int bounded_runtime_trace_is_opt_in(void) {
          * be a measured one: the trace was begun with an origin. */
         if (events[index].kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED) {
             failed = failed ||
-                events[index].stream_start_ns ==
+                events[index].lane_started_at_ns ==
                     SHADOWSPILL_TRACE_NO_STREAM_TIME ||
-                events[index].stream_end_ns <
-                    events[index].stream_start_ns;
+                events[index].lane_finished_at_ns <
+                    events[index].lane_started_at_ns;
         } else {
             failed = failed ||
-                events[index].stream_start_ns !=
+                events[index].lane_started_at_ns !=
                     SHADOWSPILL_TRACE_NO_STREAM_TIME ||
-                events[index].stream_end_ns !=
+                events[index].lane_finished_at_ns !=
                     SHADOWSPILL_TRACE_NO_STREAM_TIME;
         }
     }

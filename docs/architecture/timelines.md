@@ -73,7 +73,7 @@ is transfer time.
 The simulator has its own clock, which starts when the first task starts.
 The step diagnostics shift it so that the first selected task starts at
 zero, and report when that task's kernels actually started on the device as
-`first_task_start_seconds`: the step's prologue. Every invocation pays it,
+`first_task_started_at_seconds`: the step's prologue. Every invocation pays it,
 because a step ends by writing its final objects back and begins by
 restoring its initial ones, and the simulator does not price it. Every delta
 between a simulated and a measured time is taken after that shift, so it

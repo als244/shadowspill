@@ -23,7 +23,8 @@ print("real selected span", summary.real_selected_span_seconds)
 
 largest = sorted(
     step.tasks.values(),
-    key=lambda record: record.compute_duration_seconds,
+    key=lambda record: record.compute_finished_at_seconds
+    - record.compute_started_at_seconds,
     reverse=True,
 )
 for record in largest[:10]:
@@ -33,10 +34,9 @@ for record in largest[:10]:
         planned.semantic_name,
         planned.chosen_graph_pair_variant,
         record.expected_profile_seconds,
-        record.compute_duration_seconds,
-        record.duration_delta_seconds,
-        record.dispatch_before_task_seconds,
-        record.dispatch_after_task_seconds,
+        record.compute_finished_at_seconds - record.compute_started_at_seconds,
+        record.before_task_exited_at_seconds - record.before_task_entered_at_seconds,
+        record.after_task_exited_at_seconds - record.after_task_entered_at_seconds,
     )
 
 timelines = step.timelines
@@ -56,8 +56,8 @@ Interpret the first-level result before inspecting raw events:
 
 | Observation | Next evidence |
 |---|---|
-| Real task-event sum is high | Sort `step.tasks` by `duration_delta_seconds`, then inspect that task's allocator events. |
-| Real inter-task gaps are high | Sort `step.tasks` by `dispatch_before_task_seconds` plus `dispatch_after_task_seconds`, and read each record's waits and `frontend_lead_seconds`. |
+| Real task-event sum is high | Sort `step.tasks` by measured kernel time minus `expected_profile_seconds`, then inspect that task's allocator events. |
+| Real inter-task gaps are high | Sort `step.tasks` by `after_task_exited_at_seconds` minus `before_task_entered_at_seconds`, and read each record's waits and its lead, `compute_reached_at_seconds` minus `before_task_exited_at_seconds`. |
 | Simulated waiting exceeds real waiting | Compare each lane's effective bandwidth with the bandwidth the plan summary assumed. |
 | Transfer timing diverges | Walk the lane's `order` through `step.transfers.fetch` or `.evict`: read the record's simulated start against its stream start, then its host queued, reserved, and dispatched times and the records before it. |
 | Physical memory differs | Check charged allocator events, peak bytes, pending retirements, largest free range, fragmentation, and each transfer's `next_access`. |

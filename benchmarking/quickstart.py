@@ -12,9 +12,9 @@ Run from the repository root, for example:
 
     python -m benchmarking.quickstart mlops_llama3 \\
         --sequence-length 1024 --sequences-per-step 64 \\
-        --search-budget-gib 10,12,16,20,24,28 \\
-        --run-budget-gib 10,12,16,20,24,28 --spill-gib 112 --steps 5 \\
-        --plots --plot-dir benchmarking/quickstart_plots/mlops_llama3
+        --search-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \\
+        --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 --spill-gib 112 --steps 5 \\
+        --plots
 
 Every flag defaults to the model's retained qualification value, so
 `python -m benchmarking.quickstart mlops_olmoe` searches and runs the
@@ -26,8 +26,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import gc
+import json
 import resource
+import shutil
 import statistics
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -37,8 +40,10 @@ from typing import Any, cast
 import torch
 
 from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.plots import plot_step_run, plot_step_search
+from shadowspill.planner import PressureFitOptions
+from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
+from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
 from tools.qualification.model_state import import_case_model, release_case_model
 from workloads.full_model import build_case, manifest_for
 from workloads.providers import ModelImplementation
@@ -66,6 +71,33 @@ def rule(title: str) -> str:
 def bar(fraction: float) -> str:
     filled = round(max(0.0, min(1.0, fraction)) * 16)
     return "█" * filled + "░" * (16 - filled)
+
+
+def _revision() -> str:
+    """The revision a run measured, so its outputs name the code they describe.
+
+    A modified tree is marked, because a run from one is not reproducible from
+    the hash alone. Falls back to `nogit` outside a checkout rather than
+    failing: the outputs are still worth keeping, they just cannot be traced
+    to a commit.
+    """
+
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        modified = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "nogit"
+    return f"{revision}_dirty" if modified else revision
 
 
 def gib(value: float) -> str:
@@ -236,15 +268,15 @@ def print_promise(report: Any, tokens: int) -> None:
     print(f"  where the extra {extra:.3f} s goes")
     for label, value in (
         ("extra recomputation", summary.recomputation_overhead_seconds),
-        ("waiting between tasks", summary.idle_seconds),
+        ("stalled", summary.idle_seconds),
         ("terminal writeback", summary.terminal_writeback_seconds),
     ):
         share = value / extra if extra > 0 else 0.0
         print(f"    {label:<22}{value:+8.3f} s  {bar(share)}  {share:6.1%}")
     print(
-        f"  recomputation chosen for {summary.recompute_selection_count}"
-        f" of {summary.selection_count} groups"
-        f" ({summary.recompute_selection_fraction:.0%})"
+        f"  recomputation chosen for {summary.recomputing_group_count}"
+        f" of {summary.task_alternative_group_count} groups"
+        f" ({summary.recomputing_group_fraction:.0%})"
     )
     chosen = summary.selected_candidate
     if chosen:
@@ -279,6 +311,30 @@ def print_promise(report: Any, tokens: int) -> None:
     print()
 
 
+def _task_duration_delta(record: TaskRecord) -> float:
+    """How much longer the task's kernels ran than the profile priced."""
+
+    measured = record.compute_finished_at_seconds - record.compute_started_at_seconds
+    return measured - record.expected_profile_seconds
+
+
+def _transfer_duration_delta(record: TransferRecord) -> float:
+    """How much longer the copy held its lane than the simulator priced."""
+
+    if (
+        record.lane_started_at_seconds is None
+        or record.lane_finished_at_seconds is None
+        or record.simulated_started_at_seconds is None
+        or record.simulated_finished_at_seconds is None
+    ):
+        return 0.0
+    measured = record.lane_finished_at_seconds - record.lane_started_at_seconds
+    simulated = (
+        record.simulated_finished_at_seconds - record.simulated_started_at_seconds
+    )
+    return measured - simulated
+
+
 def print_epilogue(diagnostics: Any) -> None:
     summary = diagnostics.summary
     timelines = diagnostics.timelines
@@ -290,8 +346,8 @@ def print_epilogue(diagnostics: Any) -> None:
         f"   ({(real - simulated) / simulated:+.2%})"
     )
     print(
-        "  between tasks    real"
-        f" {summary.real_inter_task_readiness_wait_seconds:.3f} s waiting"
+        "  stalled          real"
+        f" {summary.real_inter_task_readiness_wait_seconds:.3f} s"
         f"   simulated {summary.simulated_inter_task_readiness_wait_seconds:.3f} s"
     )
     print(
@@ -305,13 +361,13 @@ def print_epilogue(diagnostics: Any) -> None:
         " of writeback after the last task"
     )
     compute = [diagnostics.tasks[task_id] for task_id in timelines.compute]
-    worst = max(compute, key=lambda item: abs(item.duration_delta_seconds))
+    worst = max(compute, key=lambda item: abs(_task_duration_delta(item)))
     print(f"  compute lane ({len(compute)} tasks), real minus simulated")
     print(deltas("starts   ", [item.start_delta_seconds for item in compute]))
     print(
         deltas(
             "durations",
-            [item.duration_delta_seconds for item in compute],
+            [_task_duration_delta(item) for item in compute],
             worst_key=worst.execution_task_id,
         )
     )
@@ -329,7 +385,7 @@ def print_epilogue(diagnostics: Any) -> None:
         print(
             f"  {lane_summary.direction} lane ({lane_summary.transfers} transfers,"
             f" {lane_summary.bytes / 2**30:.1f} GiB), real minus simulated;"
-            f" lane busy real {lane_summary.stream_busy_seconds:.3f} s"
+            f" lane busy real {lane_summary.lane_busy_seconds:.3f} s"
             f" simulated {lane_summary.simulated_busy_seconds:.3f} s"
             + (
                 f"; effective {effective / 2**30:.1f} GiB/s"
@@ -346,7 +402,7 @@ def print_epilogue(diagnostics: Any) -> None:
             print(
                 deltas(
                     "durations",
-                    [item.duration_delta_seconds or 0.0 for item in measured],
+                    [_transfer_duration_delta(item) for item in measured],
                 )
             )
     print()
@@ -384,17 +440,18 @@ def main() -> int:
     parser.add_argument("--spill-gib", type=float)
     parser.add_argument("--plots", action="store_true")
     parser.add_argument(
-        "--report-path",
-        type=Path,
-        default=None,
-        help="where the search report JSON is saved for post-hoc analysis;"
-        " defaults to benchmarking/quickstart_reports/<model>.json",
+        "--force-overwrite",
+        action="store_true",
+        help="replace an existing run at the output directory. Its artifact"
+        " store is kept, being a content-addressed cache",
     )
     parser.add_argument(
-        "--plot-dir",
+        "--output-dir",
         type=Path,
         default=None,
-        help="defaults to benchmarking/quickstart_plots/<model>",
+        help="where this run's search report, log, traced steps and figures"
+        " are written; defaults to benchmarking/quickstart_reports/"
+        "<model>_<revision>/seq<length>/seqsperstep<n>",
     )
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
@@ -402,16 +459,16 @@ def main() -> int:
         "--artifact-store",
         type=Path,
         default=None,
-        help="compile/profile cache; defaults to benchmarking/quickstart_store/<model>",
+        help="compile/profile cache; defaults to benchmarking/quickstart/<model>/store",
     )
-    parser.add_argument("--force-fresh", action="store_true")
     parser.add_argument(
-        "--search-log",
-        type=Path,
-        default=None,
-        help="plan-style progress log (planner phase lines + search"
-        " progress, wall-clock stamped); defaults to"
-        " benchmarking/quickstart_reports/<model>.search.log",
+        "--deterministic",
+        action="store_true",
+        help="make the search reproduce exactly at any worker count: a"
+        " candidate's placement gate consults only its own placed plans"
+        " rather than the shared best-placed record. Costs wall time,"
+        " because the shared bound is what lets a candidate skip measuring"
+        " a plan that cannot win",
     )
     arguments = parser.parse_args()
     if arguments.steps < 1:
@@ -463,9 +520,47 @@ def main() -> int:
             "--sequences-per-microbatch chooses a geometry to run; give at"
             " least one --run-budget-gib"
         )
-    store = arguments.artifact_store or (
-        Path("benchmarking/quickstart_store") / arguments.model
+    # Everything a run leaves behind lands together: the search report, its
+    # log, and one step trace per run budget.
+    # One directory per run: the model and the revision it measured, then
+    # sequence length, then sequences per step, so each level is exactly one
+    # parameter and another run is a sibling rather than an overwrite.
+    run_root = arguments.output_dir or (
+        Path("benchmarking/quickstart_reports")
+        / f"{arguments.model}_{_revision()}"
+        / f"seq{sequence_length}"
+        / f"seqsperstep{sequences_per_step}"
     )
+    # A run directory is written once. Changing budgets for the same model,
+    # length and step size produces a different answer at the same path, and
+    # silently replacing the old one loses a measurement that cost real time.
+    # Refuse instead, and say both ways out.
+    written = tuple(
+        name
+        for name in ("search.json", "progress.log", "steps", "figures")
+        if (run_root / name).exists()
+    )
+    if written and not arguments.force_overwrite:
+        print(
+            f"  {run_root} already holds a run ({', '.join(written)}).\n"
+            "  Pass --force-overwrite to replace it, or --output-dir to write"
+            " somewhere else.",
+            file=sys.stderr,
+        )
+        return 1
+    for name in written:
+        target = run_root / name
+        # The artifact store is deliberately not cleared: it is a
+        # content-addressed cache, so stale entries are unreachable rather
+        # than wrong, and rebuilding it costs capture, compilation and
+        # profiling over again.
+        shutil.rmtree(target) if target.is_dir() else target.unlink()
+
+    # A run owns its store by default, so what it measured is self-contained
+    # and nothing it reused is ambiguous. Point `--artifact-store` at
+    # another run's store, or at a shared one, to skip capture, compilation
+    # and profiling that has already been paid for elsewhere.
+    store = arguments.artifact_store or (run_root / "artifact_store")
 
     print("═" * 68)
     print(f"  ShadowSpill quickstart — {arguments.model}")
@@ -528,7 +623,14 @@ def main() -> int:
         charge("model import into the spill pool", marker)
         note_host_memory(None, "model imported into the spill pool")
         report = None
-        plan_log: PlanLog | None = None
+        # Opened before the branch: a run that chose its geometry by hand still
+        # plans once per budget, and that is the same granular output a search
+        # produces. Only the search is optional; the log is not.
+        progress_log = run_root / "progress.log"
+        progress_log.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = progress_log.open("w")
+        plan_log = PlanLog(log_handle, sys.stdout)
+        print(f"  progress log: {progress_log}   (tail -f it to follow)")
         if manual is not None:
             geometry = (manual, sequences_per_step // manual)
             print(
@@ -539,13 +641,6 @@ def main() -> int:
         else:
             print("  searching… (fresh geometries compile and profile first;")
             print("              warm reruns reuse the artifact store)", flush=True)
-            search_log = arguments.search_log or (
-                Path("benchmarking/quickstart_reports")
-                / f"{arguments.model}.search.log"
-            )
-            search_log.parent.mkdir(parents=True, exist_ok=True)
-            log_handle = search_log.open("w")
-            plan_log = PlanLog(log_handle, sys.stdout)
 
             def progress(message: str) -> None:
                 plan_log.note(message)
@@ -555,7 +650,6 @@ def main() -> int:
                 if message.startswith("geometry"):
                     note_host_memory(plan_log, message.split(":")[0])
 
-            print(f"  progress log: {search_log}   (tail -f it to follow)")
             with contextlib.redirect_stdout(plan_log):
                 report = plan_step_search(
                     case.model,
@@ -576,13 +670,12 @@ def main() -> int:
                     artifact_store_dir=store,
                     verbose=True,
                     progress=progress,
-                    force_fresh=arguments.force_fresh,
+                    force_fresh=False,
+                    options=PressureFitOptions(deterministic=arguments.deterministic),
                 )
             print()
             print_search(report, tokens_per_step)
-            report_path = arguments.report_path or (
-                Path("benchmarking/quickstart_reports") / f"{arguments.model}.json"
-            )
+            report_path = run_root / "search.json"
             print(f"  search report: {report.save(report_path)}")
             note_host_memory(plan_log, "geometry search finished")
             print()
@@ -606,9 +699,7 @@ def main() -> int:
             if report is None:
                 print("  plots need a search; skipped for a manual geometry")
             else:
-                plot_dir = arguments.plot_dir or (
-                    Path("benchmarking/quickstart_plots") / arguments.model
-                )
+                plot_dir = run_root / "figures"
                 marker = time.perf_counter()
                 written = plot_step_search(report, plot_dir)
                 charge("figures", marker)
@@ -617,9 +708,7 @@ def main() -> int:
                     print(f"  {path}")
                 print()
 
-        def run_one_budget(
-            budget: int, geometry: tuple[int, int]
-        ) -> tuple[int, float, float]:
+        def run_one_budget(budget: int, geometry: tuple[int, int]) -> RunBudgetOutcome:
             """Plan one budget, run its steps, close it, and own nothing after.
 
             Returns the budget beside its simulated and measured step times.
@@ -634,13 +723,8 @@ def main() -> int:
             microbatches = example_microbatches(*geometry)
             walls: list[float] = []
             marker = time.perf_counter()
-            plan_sink: Any = (
-                contextlib.redirect_stdout(plan_log)
-                if plan_log is not None
-                else contextlib.nullcontext()
-            )
-            if plan_log is not None:
-                plan_log.note(f"run planning at execution {gib(budget)}")
+            plan_sink: Any = contextlib.redirect_stdout(plan_log)
+            plan_log.note(f"run planning at execution {gib(budget)}")
             with plan_sink:
                 training = plan_step(
                     case.model,
@@ -656,6 +740,10 @@ def main() -> int:
                     save_plan=True,
                     force_fresh=False,
                     overwrite_plan=False,
+                    # The search policy the geometry search used, so the run
+                    # plans the plan the search promised rather than missing
+                    # the store and searching again under other options.
+                    deterministic=arguments.deterministic,
                 )
             charge("run planning", marker)
             note_host_memory(plan_log, f"planned {gib(budget)}")
@@ -689,19 +777,32 @@ def main() -> int:
             diagnostics = result.diagnostics.result()
             print()
             print_epilogue(diagnostics)
+            trace_path = run_root / "steps" / f"{budget / _GIB:g}gib.json"
+            trace_path.parent.mkdir(parents=True, exist_ok=True)
+            trace_path.write_text(
+                json.dumps(diagnostics.as_dict(), indent=2, sort_keys=True)
+            )
+            print(f"  step diagnostics: {trace_path}")
             ledger["steps execution"] = ledger.get("steps execution", 0.0) + sum(walls)
             # The final StepResult's public outputs are caller-owned device
             # tensors; the runtime refuses to close while they are alive.
             del result
             gc.collect()
             training.close()
-            return (
-                budget,
-                plan_report.summary.simulated_step_seconds,
-                statistics.median(walls),
+            step_summary = diagnostics.summary
+            return RunBudgetOutcome(
+                execution_budget_bytes=budget,
+                simulated_step_seconds=plan_report.summary.simulated_step_seconds,
+                measured_step_seconds=statistics.median(walls),
+                profiled_task_seconds=step_summary.profiled_task_seconds,
+                real_task_seconds=step_summary.real_task_event_seconds,
+                simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
+                real_idle_seconds=step_summary.real_inter_task_idle_seconds,
+                prologue_seconds=(step_summary.real_initial_readiness_wait_seconds),
+                terminal_tail_seconds=(step_summary.simulator_terminal_tail_seconds),
             )
 
-        run_entries: list[tuple[int, float, float]] = []
+        run_entries: list[RunBudgetOutcome] = []
         for budget in run_budgets:
             if manual is not None:
                 geometry = (manual, sequences_per_step // manual)
@@ -730,18 +831,18 @@ def main() -> int:
             # occupies is free before the next budget plans.
             gc.collect()
             note_host_memory(plan_log, f"closed the {gib(budget)} plan")
-        if plan_log is not None:
-            log_handle.close()
+        log_handle.close()
         if arguments.plots and run_entries:
-            plot_dir = arguments.plot_dir or (
-                Path("benchmarking/quickstart_plots") / arguments.model
-            )
+            plot_dir = run_root / "figures"
             marker = time.perf_counter()
             written_run = plot_step_run(
-                run_entries, plot_dir, tokens_per_step=tokens_per_step
+                run_entries,
+                plot_dir,
+                tokens_per_step=tokens_per_step,
             )
             charge("figures", marker)
-            print(f"  figure: {written_run}")
+            for path in written_run:
+                print(f"  figure: {path}")
             print()
         release_case_model(case, runtime=runtime)
     runtime.close()

@@ -39,8 +39,8 @@ def _event(
         kind=kind,
         detail_0=0,
         detail_1=0,
-        stream_start_ns=None if stream is None else stream[0],
-        stream_end_ns=None if stream is None else stream[1],
+        lane_started_at_ns=None if stream is None else stream[0],
+        lane_finished_at_ns=None if stream is None else stream[1],
     )
 
 
@@ -103,13 +103,17 @@ def test_deltas_are_taken_after_aligning_the_simulation() -> None:
         stream=(1_250_000_000, 1_260_000_000),
         alignment=0.25,
     )
-    assert record.simulated_start_seconds == pytest.approx(1.0)
-    assert record.stream_start_seconds == pytest.approx(1.25)
+    assert record.simulated_started_at_seconds == pytest.approx(1.0)
+    assert record.lane_started_at_seconds == pytest.approx(1.25)
     assert record.start_delta_seconds == pytest.approx(0.0)
     assert record.end_delta_seconds == pytest.approx(0.0)
-    assert record.duration_delta_seconds == pytest.approx(0.0)
-    assert record.dispatched_seconds == pytest.approx(5e-6)
-    assert record.completion_observed_seconds == pytest.approx(9e-6)
+    assert (
+        record.lane_finished_at_seconds
+        - record.lane_started_at_seconds
+        - (record.simulated_finished_at_seconds - record.simulated_started_at_seconds)
+    ) == pytest.approx(0.0)
+    assert record.dispatched_at_seconds == pytest.approx(5e-6)
+    assert record.completion_observed_at_seconds == pytest.approx(9e-6)
     assert record.previous_access == "execution_000002"
     assert record.next_access == "execution_000004"
     assert record.modified_by == "execution_000001"
@@ -117,10 +121,10 @@ def test_deltas_are_taken_after_aligning_the_simulation() -> None:
 
 def test_an_unmeasured_transfer_keeps_its_host_times_and_no_deltas() -> None:
     record = _record(0, simulated=(0, 10_000_000), stream=None)
-    assert record.stream_start_seconds is None
-    assert record.stream_duration_seconds is None
+    assert record.lane_started_at_seconds is None
+    assert record.lane_finished_at_seconds is None
     assert record.start_delta_seconds is None
-    assert record.dispatched_seconds == pytest.approx(5e-6)
+    assert record.dispatched_at_seconds == pytest.approx(5e-6)
 
 
 def test_lane_summary_reports_measured_bandwidth_and_the_largest_drift() -> None:
@@ -136,7 +140,7 @@ def test_lane_summary_reports_measured_bandwidth_and_the_largest_drift() -> None
     assert summary.measured_transfers == 2
     assert summary.bytes == 3 << 20
     assert summary.simulated_busy_seconds == pytest.approx(0.03)
-    assert summary.stream_busy_seconds == pytest.approx(0.03)
+    assert summary.lane_busy_seconds == pytest.approx(0.03)
     assert summary.effective_bandwidth_bytes_per_second == pytest.approx(
         (2 << 20) / 0.03
     )
