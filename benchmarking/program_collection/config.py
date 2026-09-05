@@ -268,14 +268,10 @@ def _geometry(value: object, path: str) -> GeometryAxes:
         required={"tokens_per_microbatch", "sequence_lengths"},
     )
     present = tuple(
-        key
-        for key in ("accumulation_rounds", "accumulation_steps")
-        if key in data
+        key for key in ("accumulation_rounds", "accumulation_steps") if key in data
     )
     if len(present) != 1:
-        raise ValueError(
-            f"{path} must define exactly one accumulation_rounds field"
-        )
+        raise ValueError(f"{path} must define exactly one accumulation_rounds field")
     rounds_key = present[0]
     return GeometryAxes(
         tokens_per_microbatch=_integer_tuple(
