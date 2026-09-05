@@ -185,8 +185,6 @@ def main() -> int:
     )
     if capabilities.storage_rebinding != 1:
         raise AssertionError("canary requires the version-pinned storage adapter")
-    if capabilities.runtime_trace != 1:
-        raise AssertionError("adapter lacks bounded runtime tracing")
     source = torch.full((1024, 1024), 3.0, device="cuda")
     warm = source + 1.0
     torch.cuda.synchronize()

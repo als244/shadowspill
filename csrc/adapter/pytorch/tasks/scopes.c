@@ -10,7 +10,7 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
     if (shadowspill_pytorch_task_range_active()) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
-    const uint64_t profiling_base = UINT64_C(1) << 62U;
+    const uint64_t profiling_base = SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE;
     char range_name[192];
     (void)snprintf(
         range_name,

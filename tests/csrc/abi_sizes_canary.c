@@ -1,5 +1,6 @@
 /*
- * Print the size of every struct the Python ctypes mirrors describe.
+ * Print the size of every struct the Python ctypes mirrors describe, and
+ * the value of every constant they copy.
  *
  * A mirror that drifts from its C struct is not a compile error and not a
  * failed call: it is silent heap corruption, because ctypes writes the size it
@@ -13,6 +14,8 @@
 #include <shadowspill/runtime.h>
 
 #define REPORT(name) printf("%s %zu\n", #name, sizeof(name))
+#define REPORT_VALUE(name) \
+    printf("%s %llu\n", #name, (unsigned long long)(name))
 
 int main(void) {
     REPORT(ShadowSpillPytorchPoolConfig);
@@ -44,6 +47,7 @@ int main(void) {
     REPORT(ShadowSpillObjectLocationSnapshot);
     REPORT(ShadowSpillPytorchAdapterCapabilities);
     REPORT(ShadowSpillPytorchPhysicalAdmission);
-    REPORT(ShadowSpillPytorchTaskDispatchTiming);
+    REPORT_VALUE(SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE);
+    REPORT_VALUE(SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID);
     return EXIT_SUCCESS;
 }

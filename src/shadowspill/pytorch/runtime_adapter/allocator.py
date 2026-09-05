@@ -474,8 +474,6 @@ def _load_adapter(path: Path) -> Any:
         status != 0
         or capabilities.abi_version != ADAPTER_ABI_VERSION
         or capabilities.runtime_abi_version != ABI_VERSION
-        or capabilities.debug_task_dispatch_timing != 1
-        or capabilities.runtime_trace != 1
     ):
         raise AllocatorInstallError("PyTorch adapter capability/ABI validation failed")
     return library

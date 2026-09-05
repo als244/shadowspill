@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 
-INITIAL_PLACEMENT_TASK_ID = 1 << 60
-
 
 class RuntimePlacementKind(IntEnum):
     """Physical policy for one admitted runtime allocation identity."""
@@ -53,7 +51,6 @@ class RuntimeFixedLayout:
 
 
 __all__ = [
-    "INITIAL_PLACEMENT_TASK_ID",
     "RuntimeFixedDependency",
     "RuntimeFixedLayout",
     "RuntimeFixedPlacement",

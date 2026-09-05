@@ -77,7 +77,7 @@ from ..partition import (
     PartitionSpec,
     partition_export,
 )
-from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
+from ..runtime_adapter import INITIAL_ACTIONS_TASK_ID, PlanMemory, Runtime
 from ..sharing import (
     ResolvedSharedInput,
     ResolvedSharedOutput,
@@ -557,7 +557,7 @@ def admit_forward_plan(
         fixed_layout,
         execution_plan.program,
         execution_plan.schedule,
-        initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+        initial_task_id=INITIAL_ACTIONS_TASK_ID,
         dynamic_task_allocations=(selected_admission.dynamic_provider_allocations()),
     )
     bridge = RuntimeBridge(

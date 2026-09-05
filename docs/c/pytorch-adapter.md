@@ -152,6 +152,11 @@ and offset handling](../architecture/physical-admission.md).
   `shadowspill_pytorch_allocation_scope_end()`, and
   `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
   allocations without creating a fake execution task.
+- Allocation scopes take ids at or above
+  `SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and the pre-task placement
+  batch runs as `SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID`. The failure
+  report decodes both, so the header defines them and the frontend copies
+  them.
 - `shadowspill_pytorch_profiler_annotations_set()` enables the profiler
   backend.
 - `shadowspill_pytorch_profile_range_begin()` and
