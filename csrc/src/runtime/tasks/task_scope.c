@@ -670,6 +670,15 @@ void shadowspill_abort_current_task(ShadowSpillRuntime *runtime) {
     if (runtime == NULL) {
         return;
     }
+    if (atomic_load_explicit(&runtime->abandoned, memory_order_acquire) != 0U) {
+        /*
+         * Finalizing an aborted task takes the pool's foreground lock, which
+         * the worker may hold and, with the process exiting, may never
+         * release. There is nothing to finalize for a process that is going
+         * away.
+         */
+        return;
+    }
     shadowspill_finalize_aborted_task_retirements(
         runtime, shadowspill_current_task_id(runtime)
     );
