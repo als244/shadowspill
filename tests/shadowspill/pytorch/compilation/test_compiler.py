@@ -39,6 +39,7 @@ from shadowspill.pytorch.profiling.inputs import (
     materialize_representative_inputs,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
+from shadowspill.pytorch.runtime_adapter import failures as failures_module
 from shadowspill.pytorch.runtime_adapter.abi import Allocation
 from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
 
@@ -216,7 +217,10 @@ def test_explicit_inductor_path_matches_outer_aot_for_inference(
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
-def test_manifest_hydration_restores_arguments_before_measurement() -> None:
+def test_manifest_hydration_restores_arguments_before_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
     artifact = _artifact()
     profiler = TaskProfiler(
         _TaskLibrary(),
@@ -303,6 +307,7 @@ def test_explicit_optimizer_preserves_outer_aot_mutation_contract() -> None:
 def test_device_measurement_uses_events_and_reports_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
     library = _TaskLibrary()
     profiler = TaskProfiler(
         library,
@@ -335,6 +340,15 @@ def test_device_measurement_uses_events_and_reports_workspace(
     assert environment.provider_id == "test"
 
 
+class _IdleRuntime:
+    """The neutral runtime as a fake library whose drain always succeeds."""
+
+    @staticmethod
+    def shadowspill_runtime_wait_idle(runtime_handle: int) -> int:
+        del runtime_handle
+        return 0
+
+
 class _TaskLibrary:
     def __init__(self, *, before_status: int = 0) -> None:
         self.before_status = before_status
@@ -350,10 +364,6 @@ class _TaskLibrary:
 
     def shadowspill_pytorch_allocation_scope_abort(self) -> None:
         self.aborted = True
-
-    @staticmethod
-    def shadowspill_pytorch_allocator_wait_idle() -> int:
-        return 0
 
     @staticmethod
     def shadowspill_pytorch_allocator_statistics(*arguments: object) -> int:
@@ -377,6 +387,7 @@ class _Stream:
 def test_workspace_boundary_always_stops_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
     calls: list[str] = []
     sentinel = object()
     monkeypatch.setattr(
@@ -430,6 +441,7 @@ def test_workspace_boundary_always_stops_telemetry(
 def test_workspace_releases_disposable_results_before_scope_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
     calls: list[str] = []
 
     class Result:
@@ -610,6 +622,7 @@ def test_profiler_rejects_unknown_artifact_protocol() -> None:
 def test_compiler_function_transfer_deduplicates_structural_artifacts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
     artifact = _artifact()
     calls: list[str] = []
 

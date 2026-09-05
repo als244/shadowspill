@@ -828,7 +828,7 @@ def compile_selected_training_tasks(
         _verify_compiled_manifest_identity(profiled.manifests, compiled)
         profiled.profiler.discard_compiled_tasks()
         message = wait_allocator_idle(
-            installed.library, problem="compiled task release"
+            installed.library, installed.runtime_handle, problem="compiled task release"
         )
         if message is not None:
             raise PlanningError(message)
@@ -1306,7 +1306,7 @@ def _release_program_build_executables(
     with timer.measure("compilation"):
         profiled.profiler.discard_compiled_tasks()
         message = wait_allocator_idle(
-            installed.library, problem="compiled task release"
+            installed.library, installed.runtime_handle, problem="compiled task release"
         )
         if message is not None:
             raise PlanningError(message)

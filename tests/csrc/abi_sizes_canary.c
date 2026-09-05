@@ -31,6 +31,7 @@ int main(void) {
     REPORT(ShadowSpillAllocation);
     REPORT(ShadowSpillRuntimeFailure);
     REPORT(ShadowSpillObjectBinding);
+    REPORT(ShadowSpillObjectDescription);
     REPORT(ShadowSpillObjectUpdate);
     REPORT(ShadowSpillRuntimeAction);
     REPORT(ShadowSpillTaskPublicationDescription);

@@ -9,6 +9,7 @@ from typing import Any
 from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterFailure,
     AdapterStatistics,
+    runtime_library,
 )
 from shadowspill.status import Status
 
@@ -384,17 +385,20 @@ def generic_runtime_error(
     return RuntimeExecutionError("\n".join(lines), diagnostics=diagnostics)
 
 
-def wait_allocator_idle(library: Any, *, problem: str) -> str | None:
+def wait_allocator_idle(
+    library: Any, runtime_handle: int, *, problem: str
+) -> str | None:
     """Drain the runtime, and say what stayed outstanding if it will not.
 
     Returns None once the runtime is idle. Callers raise their own error
     rather than sharing one, because the phases that drain -- installing,
     profiling, planning -- report failure in their own terms. What they do
     share is the description, since the counters that explain a runtime that
-    will not settle are the same wherever it happens.
+    will not settle are the same wherever it happens. The drain is the neutral
+    runtime's; the adapter library is only asked for those counters.
     """
 
-    status = int(library.shadowspill_pytorch_allocator_wait_idle())
+    status = int(runtime_library().shadowspill_runtime_wait_idle(runtime_handle))
     if status == 0:
         return None
     detail = f"status={status}"

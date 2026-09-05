@@ -27,6 +27,7 @@ from shadowspill.memory import (
 from shadowspill.planner.quantization import GIBIBYTE, floored
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.runtime_adapter.abi import (
+    ObjectDescription,
     PlanDescription,
     TransferCalibrationConfig,
     TransferRouteKey,
@@ -342,6 +343,43 @@ class Runtime:
                 )
             self._next_persistent_object_id = limit
             return tuple(range(first, limit))
+
+    def _register_object(
+        self,
+        object_id: int,
+        size_bytes: int,
+        *,
+        pool_id: int,
+        retain_spill_copy: bool,
+        initially_resident: bool,
+        source_address: int = 0,
+    ) -> int:
+        """Register one runtime object, and populate it when a source is given.
+
+        Two neutral calls, made here rather than through an adapter entry
+        point that only forwarded them; the bridge and the state module both
+        register through this.
+        """
+
+        description = ObjectDescription(
+            object_id=object_id,
+            size_bytes=size_bytes,
+            initial_pool_id=pool_id,
+            retain_spill_copy=int(retain_spill_copy),
+            initially_resident=int(initially_resident),
+        )
+        status = int(
+            runtime_library().shadowspill_register_object(
+                self._runtime_handle, ctypes.byref(description)
+            )
+        )
+        if status != 0 or source_address == 0:
+            return status
+        return int(
+            runtime_library().shadowspill_write_object(
+                self._runtime_handle, object_id, pool_id, source_address, size_bytes
+            )
+        )
 
     def _acquire_object_reference(
         self,
@@ -720,8 +758,8 @@ class Runtime:
                 provenance=provenance,
             )
             status = int(
-                self._installed.library.shadowspill_pytorch_calibrate_transfer_capabilities(
-                    ctypes.byref(config), keys, count
+                runtime_library().shadowspill_runtime_calibrate_transfer_capabilities(
+                    self._runtime_handle, ctypes.byref(config), keys, count
                 )
             )
             if status != 0:
@@ -734,8 +772,12 @@ class Runtime:
         count = ctypes.c_uint32()
         generation = ctypes.c_uint64()
         status = int(
-            self._installed.library.shadowspill_pytorch_transfer_profiles(
-                None, 0, ctypes.byref(count), ctypes.byref(generation)
+            runtime_library().shadowspill_runtime_transfer_profiles(
+                self._runtime_handle,
+                None,
+                0,
+                ctypes.byref(count),
+                ctypes.byref(generation),
             )
         )
         if status != 0:
@@ -744,7 +786,8 @@ class Runtime:
             )
         handle = (RuntimeTransferProfile * count.value)()
         status = int(
-            self._installed.library.shadowspill_pytorch_transfer_profiles(
+            runtime_library().shadowspill_runtime_transfer_profiles(
+                self._runtime_handle,
                 handle,
                 count.value,
                 ctypes.byref(count),

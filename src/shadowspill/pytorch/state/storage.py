@@ -182,18 +182,18 @@ def register_tensor_storages(
         len(roots),
         allow_in_progress_plan=_allow_in_progress_plan,
     )
-    library = runtime._installed.library
     created: list[PersistentStorage] = []
     try:
         for object_id, (anchor, views) in zip(object_ids, roots, strict=True):
             size_bytes = int(anchor.untyped_storage().nbytes())
             _require_status(
-                library.shadowspill_pytorch_register_object(
-                    selected_pool.pool_id,
+                runtime._register_object(
                     object_id,
                     size_bytes,
-                    1,
-                    int(anchor.untyped_storage().data_ptr()),
+                    pool_id=selected_pool.pool_id,
+                    retain_spill_copy=True,
+                    initially_resident=True,
+                    source_address=int(anchor.untyped_storage().data_ptr()),
                 ),
                 f"import persistent object {object_id}",
             )
@@ -321,9 +321,8 @@ def export_tensors(
     state = registry.get(target)
     if state is None:
         return None
-    library = runtime._installed.library
     _require_status(
-        library.shadowspill_pytorch_allocator_wait_idle(),
+        runtime_library().shadowspill_runtime_wait_idle(runtime._runtime_handle),
         "wait before state export",
     )
     owners = [
@@ -391,7 +390,7 @@ def read_state(
     if state is None:
         return {}
     _require_status(
-        runtime._installed.library.shadowspill_pytorch_allocator_wait_idle(),
+        runtime_library().shadowspill_runtime_wait_idle(runtime._runtime_handle),
         "wait before state read",
     )
     owners: dict[int, torch.Tensor] = {}

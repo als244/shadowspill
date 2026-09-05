@@ -41,8 +41,9 @@ header; see [backends](../architecture/backends.md).
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
   Sealing also reserves both neutral event records and backend event handles;
   a later callable may explicitly grow both inventories during plan adoption.
-- `shadowspill_pytorch_calibrate_transfer_capabilities()` and
-  `shadowspill_pytorch_transfer_profiles()` manage transfer calibration.
+- Transfer calibration is the neutral runtime's:
+  `shadowspill_runtime_calibrate_transfer_capabilities()` and
+  `shadowspill_runtime_transfer_profiles()`, called with the handle.
 
 ## Allocator callbacks
 
@@ -57,8 +58,8 @@ code can use an invalid address.
 
 ## Objects and storage
 
-- `shadowspill_pytorch_register_object()` and
-  `shadowspill_pytorch_register_placeholder_object()` create runtime objects.
+- `shadowspill_register_object()` creates runtime objects, resident in a pool
+  or as placeholders, and `shadowspill_write_object()` populates them.
 - `shadowspill_unregister_object()` and `shadowspill_rekey_object()` manage
   identity.
 - `shadowspill_plan_publish_initial_allocation()` and
@@ -87,13 +88,12 @@ code can use an invalid address.
 These publish the neutral plan owner without introducing frontend object
 semantics:
 
-- `shadowspill_pytorch_validate_task_replacement_binding()`
 - `shadowspill_pytorch_submit_action_batch_handle()`
 - `shadowspill_pytorch_acquire_objects_handle()`
 - `shadowspill_pytorch_transfer_acquired_object_to_caller()`
 
-Each of those either wraps a provider stream or validates a frontend storage
-view, which is work only this library can do. Everything else in plan
+Each of those wraps a provider stream, which is work only this library can
+do. Everything else in plan
 admission needs nothing but handles the neutral runtime already owns, so the
 frontend calls those on the neutral library, passing the runtime from
 `shadowspill_pytorch_runtime_handle()`:
@@ -110,6 +110,9 @@ frontend calls those on the neutral library, passing the runtime from
   `shadowspill_plan_clear_tasks()`, `shadowspill_plan_wait_idle()`
 - `shadowspill_object_handle_release()`,
   `shadowspill_object_release_generation()`
+- `shadowspill_register_object()`, `shadowspill_write_object()`,
+  `shadowspill_runtime_wait_idle()`, and, from the storage operators,
+  `shadowspill_task_validate_replacement_binding()`
 
 Acquiring an object handle stays on the adapter while releasing one does not:
 acquiring resolves an id against the bound runtime, releasing needs only the
@@ -169,7 +172,8 @@ frontend makes directly, passing the handle from
 
 `shadowspill_pytorch_allocator_failure()` and
 `shadowspill_pytorch_allocator_statistics()` return structured state.
-`shadowspill_pytorch_allocator_wait_idle()` is an explicit lifecycle barrier;
+`shadowspill_runtime_wait_idle()`, called with the handle, is the explicit
+lifecycle barrier;
 `shadowspill_plan_wait_idle()` is the plan-local active-poll boundary
 used for callable recurrence and teardown. It ignores unrelated plans;
 `shadowspill_pytorch_recover_no_progress()` performs the documented recovery
