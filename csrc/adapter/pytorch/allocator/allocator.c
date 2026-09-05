@@ -12,9 +12,7 @@ static ShadowSpillRuntime *acquire_allocator_callback_runtime(
     if (atomic_load_explicit(
             &adapter.shutdown_started, memory_order_acquire
         ) != 0U) {
-        *device_ordinal = atomic_load_explicit(
-            &adapter.published_device_ordinal, memory_order_relaxed
-        );
+        *device_ordinal = shadowspill_pytorch_device_ordinal();
         return NULL;
     }
     (void)atomic_fetch_add_explicit(
@@ -26,12 +24,11 @@ static ShadowSpillRuntime *acquire_allocator_callback_runtime(
         (void)atomic_fetch_sub_explicit(
             &adapter.active_allocator_callbacks, 1U, memory_order_release
         );
-        *device_ordinal = atomic_load_explicit(
-            &adapter.published_device_ordinal, memory_order_relaxed
-        );
+        *device_ordinal = shadowspill_pytorch_device_ordinal();
         return NULL;
     }
-    ShadowSpillRuntime *runtime = bound_runtime(device_ordinal);
+    *device_ordinal = shadowspill_pytorch_device_ordinal();
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         (void)atomic_fetch_sub_explicit(
             &adapter.active_allocator_callbacks, 1U, memory_order_release
@@ -53,14 +50,12 @@ ShadowSpillStatus shadowspill_pytorch_allocation_for_pointer(
     if (address == 0U || allocation == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     return runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_memory_pool_allocation_for_pointer(
               runtime,
-              bound_allocator_pool_id(),
+              shadowspill_pytorch_allocator_pool_id(),
               (const void *)(uintptr_t)address,
               allocation
           );
@@ -109,10 +104,10 @@ void *shadowspill_pytorch_backend_malloc_impl(
     ShadowSpillAllocation allocation = {0};
     ShadowSpillStatus status = shadowspill_memory_pool_allocate(
         runtime,
-        bound_allocator_pool_id(),
+        shadowspill_pytorch_allocator_pool_id(),
         (uint64_t)bytes,
         256U,
-        adapter_stream((uintptr_t)stream),
+        shadowspill_pytorch_stream((uintptr_t)stream),
         &allocation
     );
     if (status != SHADOWSPILL_STATUS_OK) {
@@ -158,7 +153,7 @@ void shadowspill_pytorch_backend_free(
     ShadowSpillAllocation allocation = {0};
     ShadowSpillStatus status =
         shadowspill_memory_pool_allocation_for_pointer(
-            runtime, bound_allocator_pool_id(), address, &allocation
+            runtime, shadowspill_pytorch_allocator_pool_id(), address, &allocation
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         pthread_mutex_lock(&adapter.mutex);
@@ -170,9 +165,9 @@ void shadowspill_pytorch_backend_free(
     }
     status = shadowspill_memory_pool_free(
         runtime,
-        bound_allocator_pool_id(),
+        shadowspill_pytorch_allocator_pool_id(),
         allocation.allocation_id,
-        adapter_stream((uintptr_t)stream)
+        shadowspill_pytorch_stream((uintptr_t)stream)
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_latch_failure(status, device_ordinal, address, (uint64_t)bytes);
@@ -197,7 +192,7 @@ void shadowspill_pytorch_backend_record_stream(void *address, void *stream) {
     ShadowSpillAllocation allocation = {0};
     ShadowSpillStatus status =
         shadowspill_memory_pool_allocation_for_pointer(
-            runtime, bound_allocator_pool_id(), address, &allocation
+            runtime, shadowspill_pytorch_allocator_pool_id(), address, &allocation
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         pthread_mutex_lock(&adapter.mutex);
@@ -209,9 +204,9 @@ void shadowspill_pytorch_backend_record_stream(void *address, void *stream) {
     }
     status = shadowspill_memory_pool_record_stream(
         runtime,
-        bound_allocator_pool_id(),
+        shadowspill_pytorch_allocator_pool_id(),
         allocation.allocation_id,
-        adapter_stream((uintptr_t)stream)
+        shadowspill_pytorch_stream((uintptr_t)stream)
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_latch_failure(status, device_ordinal, address, 0U);

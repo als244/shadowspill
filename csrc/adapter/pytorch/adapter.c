@@ -13,9 +13,7 @@ ShadowSpillStatus shadowspill_pytorch_runtime_handle(
     if (runtime_handle == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     *runtime_handle = (uintptr_t)runtime;
     return runtime == NULL ? SHADOWSPILL_STATUS_CLOSED : SHADOWSPILL_STATUS_OK;
 }
@@ -44,9 +42,7 @@ ShadowSpillStatus shadowspill_pytorch_adapter_capabilities(
 }
 
 ShadowSpillStatus shadowspill_pytorch_allocator_wait_idle(void) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -59,9 +55,7 @@ shadowspill_pytorch_calibrate_transfer_capabilities(
     const ShadowSpillTransferRouteKey *routes,
     uint32_t route_count
 ) {
-    int32_t device_ordinal = -1;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
@@ -76,9 +70,7 @@ ShadowSpillStatus shadowspill_pytorch_transfer_profiles(
     uint32_t *count,
     uint64_t *generation
 ) {
-    int32_t device_ordinal = -1;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }

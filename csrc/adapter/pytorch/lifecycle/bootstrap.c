@@ -1,13 +1,13 @@
 #define _GNU_SOURCE
 
 #include "internal.h"
+#include "../failure/internal.h"
 
-#include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdlib.h>
-#include <string.h>
 
+/* Registered with on_exit once, on the first bootstrap of the process. */
 static uint8_t process_exit_registered;
 
 static int bootstrap_config_is_valid(
@@ -59,6 +59,23 @@ static int bootstrap_config_is_valid(
         }
     }
     return 1;
+}
+
+/* The device pool the budget leaves after what the process already holds
+   and the provider's headroom, in whole 2 MiB pages; 0 when nothing fits. */
+static uint64_t allocator_pool_bytes(
+    const ShadowSpillPytorchAdapterConfig *config,
+    const ShadowSpillBackendPhysicalMemory *physical
+) {
+    const uint64_t physical_granularity = 2U << 20U;
+    if (config->device_budget_bytes > physical->device_total_bytes ||
+        physical->process_bytes >
+            config->device_budget_bytes - config->provider_headroom_bytes) {
+        return 0U;
+    }
+    const uint64_t available = config->device_budget_bytes -
+        physical->process_bytes - config->provider_headroom_bytes;
+    return available - available % physical_granularity;
 }
 
 static ShadowSpillStatus build_runtime_topology(
@@ -116,120 +133,64 @@ static ShadowSpillStatus build_runtime_topology(
     return status;
 }
 
-ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
-    const ShadowSpillPytorchAdapterConfig *config
+/* Size the pool against what the device holds now, and create the runtime
+   over it. */
+static ShadowSpillStatus create_runtime(
+    const ShadowSpillPytorchAdapterConfig *config,
+    const ShadowSpillBackend *backend,
+    ShadowSpillBackendPhysicalMemory *baseline,
+    uint64_t *pool_bytes,
+    ShadowSpillRuntime **runtime
 ) {
-    if (!bootstrap_config_is_valid(config)) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    pthread_mutex_lock(&adapter.mutex);
-    if (adapter.bootstrapped) {
-        pthread_mutex_unlock(&adapter.mutex);
-        return SHADOWSPILL_STATUS_INVALID_STATE;
-    }
-    pthread_mutex_unlock(&adapter.mutex);
-
-    void *const library = dlopen(config->backend_library, RTLD_NOW | RTLD_LOCAL);
-    if (library == NULL) {
-        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
-    }
-    union {
-        void *object;
-        ShadowSpillBackendCreate create;
-        ShadowSpillBackendDestroy destroy;
-    } create_symbol = {.object = dlsym(library, SHADOWSPILL_BACKEND_CREATE_SYMBOL)};
-    union {
-        void *object;
-        ShadowSpillBackendDestroy destroy;
-    } destroy_symbol = {.object = dlsym(library, SHADOWSPILL_BACKEND_DESTROY_SYMBOL)};
-    if (create_symbol.object == NULL || destroy_symbol.object == NULL) {
-        (void)dlclose(library);
-        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
-    }
-    const ShadowSpillBackendConfig backend_config = {
-        .abi_version = SHADOWSPILL_BACKEND_ABI_VERSION,
-        .device_ordinal = config->device_ordinal,
-    };
-    ShadowSpillBackend backend = {0};
-    if (create_symbol.create(&backend_config, &backend) != 0 ||
-        !shadowspill_backend_is_valid(&backend)) {
-        if (backend.state != NULL) {
-            destroy_symbol.destroy(&backend);
-        }
-        (void)dlclose(library);
-        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
-    }
     ShadowSpillBackendCapabilities capabilities = {0};
-    if (backend.capabilities(backend.state, &capabilities) != 0) {
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
+    if (backend->capabilities(backend->state, &capabilities) != 0 ||
+        backend->physical_memory(backend->state, baseline) != 0) {
         return SHADOWSPILL_STATUS_BACKEND_FAILURE;
     }
-    ShadowSpillBackendPhysicalMemory physical = {0};
-    if (backend.physical_memory(backend.state, &physical) != 0) {
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
-        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
-    }
-    const uint64_t physical_granularity = 2U << 20U;
-    if (config->device_budget_bytes > physical.device_total_bytes ||
-        physical.process_bytes >
-            config->device_budget_bytes - config->provider_headroom_bytes) {
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
+    *pool_bytes = allocator_pool_bytes(config, baseline);
+    if (*pool_bytes == 0U) {
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
-    uint64_t available = config->device_budget_bytes -
-        physical.process_bytes - config->provider_headroom_bytes;
-    const uint64_t allocator_pool_bytes =
-        available - available % physical_granularity;
-    if (allocator_pool_bytes == 0U) {
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
-        return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
-    }
-    ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillStatus status = build_runtime_topology(
-        config,
-        &backend,
-        &capabilities,
-        allocator_pool_bytes,
-        &runtime
+    return build_runtime_topology(
+        config, backend, &capabilities, *pool_bytes, runtime
     );
-    if (status != SHADOWSPILL_STATUS_OK) {
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
-        return status;
-    }
-    ShadowSpillBackendPhysicalMemory bootstrap_memory = {0};
-    if (backend.physical_memory(backend.state, &bootstrap_memory) != 0 ||
-        bootstrap_memory.process_bytes > config->device_budget_bytes) {
-        shadowspill_runtime_destroy(runtime);
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
-        return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
-    }
+}
+
+/* The pools exist now; the process must still fit the budget. */
+static ShadowSpillStatus confirm_budget(
+    const ShadowSpillPytorchAdapterConfig *config,
+    const ShadowSpillBackend *backend,
+    ShadowSpillBackendPhysicalMemory *bootstrapped
+) {
+    return backend->physical_memory(backend->state, bootstrapped) != 0 ||
+            bootstrapped->process_bytes > config->device_budget_bytes
+        ? SHADOWSPILL_STATUS_OUT_OF_MEMORY
+        : SHADOWSPILL_STATUS_OK;
+}
+
+/* Everything the rest of the adapter reads, written under the lock, with the
+   runtime published last so a reader that sees it sees all of it. */
+static ShadowSpillStatus publish(
+    const ShadowSpillPytorchAdapterConfig *config,
+    const ShadowSpillPytorchLoadedBackend *backend,
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillBackendPhysicalMemory *baseline,
+    const ShadowSpillBackendPhysicalMemory *bootstrapped,
+    uint64_t pool_bytes
+) {
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime != NULL) {
         pthread_mutex_unlock(&adapter.mutex);
-        shadowspill_runtime_destroy(runtime);
-        destroy_symbol.destroy(&backend);
-        (void)dlclose(library);
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     if (!process_exit_registered) {
         if (on_exit(shadowspill_pytorch_process_exit, NULL) != 0) {
             pthread_mutex_unlock(&adapter.mutex);
-            shadowspill_runtime_destroy(runtime);
-            destroy_symbol.destroy(&backend);
-            (void)dlclose(library);
             return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         }
         process_exit_registered = 1U;
     }
-    adapter.backend = backend;
-    adapter.backend_destroy = destroy_symbol.destroy;
-    adapter.backend_library = library;
+    adapter.backend = *backend;
     adapter.runtime = runtime;
     adapter.bootstrapped = 1U;
     adapter.closed = 0U;
@@ -239,31 +200,23 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
         .abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION,
         .device_ordinal = config->device_ordinal,
         .device_budget_bytes = config->device_budget_bytes,
-        .baseline_bytes = physical.process_bytes,
+        .baseline_bytes = baseline->process_bytes,
         .provider_headroom_bytes = config->provider_headroom_bytes,
         .allocator_pool_id = config->allocator_pool_id,
         .pool_count = config->pool_count,
-        .allocator_pool_bytes = allocator_pool_bytes,
-        .bootstrap_process_bytes = bootstrap_memory.process_bytes,
-        .device_used_bytes = bootstrap_memory.device_used_bytes,
-        .device_total_bytes = bootstrap_memory.device_total_bytes,
+        .allocator_pool_bytes = pool_bytes,
+        .bootstrap_process_bytes = bootstrapped->process_bytes,
+        .device_used_bytes = bootstrapped->device_used_bytes,
+        .device_total_bytes = bootstrapped->device_total_bytes,
     };
     adapter.physical_checks = 1U;
-    adapter.peak_process_physical_bytes = bootstrap_memory.process_bytes;
+    adapter.peak_process_physical_bytes = bootstrapped->process_bytes;
     adapter.observed_external_high_water_bytes =
-        bootstrap_memory.process_bytes >
-                physical.process_bytes + allocator_pool_bytes
-        ? bootstrap_memory.process_bytes - physical.process_bytes -
-            allocator_pool_bytes
+        bootstrapped->process_bytes > baseline->process_bytes + pool_bytes
+        ? bootstrapped->process_bytes - baseline->process_bytes - pool_bytes
         : 0U;
     adapter.physical_budget_sealed = 0U;
-    memset(&adapter.failure, 0, sizeof(adapter.failure));
-    adapter.failure_task_label[0] = '\0';
-    adapter.failure.device_ordinal = config->device_ordinal;
-    adapter.failure.runtime.task_id = SHADOWSPILL_RUNTIME_NO_ID;
-    adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
-    adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-    adapter.failure.runtime.pool_id = UINT32_MAX;
+    shadowspill_pytorch_failure_clear_locked(config->device_ordinal);
     atomic_store_explicit(
         &adapter.published_device_ordinal,
         config->device_ordinal,
@@ -279,4 +232,47 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
     );
     pthread_mutex_unlock(&adapter.mutex);
     return SHADOWSPILL_STATUS_OK;
+}
+
+ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
+    const ShadowSpillPytorchAdapterConfig *config
+) {
+    if (!bootstrap_config_is_valid(config)) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    const int bootstrapped_already = adapter.bootstrapped;
+    pthread_mutex_unlock(&adapter.mutex);
+    if (bootstrapped_already) {
+        return SHADOWSPILL_STATUS_INVALID_STATE;
+    }
+    ShadowSpillPytorchLoadedBackend backend = {0};
+    ShadowSpillStatus status = shadowspill_pytorch_backend_load(
+        config->backend_library, config->device_ordinal, &backend
+    );
+    if (status != SHADOWSPILL_STATUS_OK) {
+        return status;
+    }
+    ShadowSpillBackendPhysicalMemory baseline = {0};
+    ShadowSpillBackendPhysicalMemory bootstrapped = {0};
+    uint64_t pool_bytes = 0U;
+    ShadowSpillRuntime *runtime = NULL;
+    status = create_runtime(
+        config, &backend.table, &baseline, &pool_bytes, &runtime
+    );
+    if (status == SHADOWSPILL_STATUS_OK) {
+        status = confirm_budget(config, &backend.table, &bootstrapped);
+    }
+    if (status == SHADOWSPILL_STATUS_OK) {
+        status = publish(
+            config, &backend, runtime, &baseline, &bootstrapped, pool_bytes
+        );
+    }
+    if (status != SHADOWSPILL_STATUS_OK) {
+        if (runtime != NULL) {
+            shadowspill_runtime_destroy(runtime);
+        }
+        shadowspill_pytorch_backend_unload(&backend);
+    }
+    return status;
 }

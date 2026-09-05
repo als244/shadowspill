@@ -8,6 +8,7 @@ add_library(
   allocator/exception.cpp
   failure/latch.c
   failure/message.c
+  lifecycle/backend.c
   lifecycle/bootstrap.c
   lifecycle/close.c
   lifecycle/physical.c
