@@ -113,9 +113,9 @@ time of each appears above its bar in red, with a `Makespan` key in the legend.
 It is the number the bars are explaining.
 
 **Recompute levels are named by share.** A selection's legend entry is the
-share of groups it recomputes — `0%`, `25%`, `50%`, `75%`, `100% of Groups
-Recomputing` — rather than a raw count, so the ladder reads the same across
-geometries with different group counts.
+share of groups it recomputes, to the nearest eighth — `0%`, `12.5%`, …,
+`87.5%`, `100% of Groups Recomputing` — rather than a raw count, so the ladder
+reads the same across geometries with different group counts.
 
 **Detail insets.** The throughput figure carries an inset covering the points
 within 1.25x of the best, because the interesting budgets crowd together at the

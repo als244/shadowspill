@@ -569,20 +569,21 @@ def _geometry_waste_bars(
 def _recompute_labels(levels: Sequence[int], groups: int) -> dict[int, str]:
     """Name each rung of the ladder by the share of groups it recomputes.
 
-    Rounded to a quarter, because "50% of Groups" reads at a glance where
-    "17 of 36" does not and the exact figure is not what a reader is
-    comparing. Rounding falls back to the true share if it would give two
-    rungs the same name, since a legend with a repeated key is worse than
-    one with an awkward number.
+    Rounded to an eighth, the ladder's own step, because "50% of Groups"
+    reads at a glance where "17 of 36" does not and the exact figure is not
+    what a reader is comparing. Rounding falls back to the true share if it
+    would give two rungs the same name, since a legend with a repeated key is
+    worse than one with an awkward number.
     """
 
     if not groups:
         return {level: f"{level} Recomputing" for level in levels}
-    rounded = {level: round(level / groups * 4) * 25 for level in levels}
+    rounded = {level: round(level / groups * 8) * 12.5 for level in levels}
     if len(set(rounded.values())) != len(levels):
-        rounded = {level: round(level / groups * 100) for level in levels}
+        rounded = {level: float(round(level / groups * 100)) for level in levels}
     return {
-        level: f"{share}% of Groups Recomputing" for level, share in rounded.items()
+        level: f"{share:g}% of Groups Recomputing"
+        for level, share in rounded.items()
     }
 
 

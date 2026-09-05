@@ -7,9 +7,11 @@ Program, and this is a search policy over it.
 
 The policy is coarse and deterministic rather than adaptive. Small inventories
 are evaluated exhaustively. Larger ones whose every group is the current binary
-`save`/`recompute` pair get five selections - 0%, 25%, 50%, 75% and 100% of
+`save`/`recompute` pair get nine selections - every eighth from 0% to 100% of
 groups recomputing - distributed evenly through deterministic group order. That
-fraction is *across* groups, not within one group's inventory.
+fraction is *across* groups, not within one group's inventory. Eighths rather
+than quarters because the answer under pressure sits near the top of the
+ladder, where a quarter step is the difference between a plan and none.
 
 The within-group quantiles below are the path a non-binary inventory would
 take, and are reached today only by a Program whose groups are not binary.
@@ -27,8 +29,9 @@ from .options import TaskAlternativeOptions
 Resolution = tuple[TaskAlternativeChoice, ...]
 
 _EXHAUSTIVE_COMBINATION_LIMIT = 64
+_EIGHTH_DENOMINATOR = 8
+_GROUP_RECOMPUTE_EIGHTHS = tuple(range(9))
 _QUARTER_DENOMINATOR = 4
-_GROUP_RECOMPUTE_QUARTERS = (0, 1, 2, 3, 4)
 _WITHIN_GROUP_MEMORY_QUANTILES = (0, 1, 2, 3, 4)
 
 
@@ -69,14 +72,14 @@ def _group_fractions(
     endpoints: tuple[tuple[int, int], ...],
     pinned: dict[int, int],
 ) -> tuple[tuple[int, ...], ...]:
-    """Build evenly distributed 0/25/50/75/100% resolutions."""
+    """Build evenly distributed resolutions at every eighth from 0% to 100%."""
 
     flexible = tuple(index for index in range(len(endpoints)) if index not in pinned)
     result: list[tuple[int, ...]] = []
-    for numerator in _GROUP_RECOMPUTE_QUARTERS:
+    for numerator in _GROUP_RECOMPUTE_EIGHTHS:
         recompute_count = (
-            len(flexible) * numerator + _QUARTER_DENOMINATOR // 2
-        ) // _QUARTER_DENOMINATOR
+            len(flexible) * numerator + _EIGHTH_DENOMINATOR // 2
+        ) // _EIGHTH_DENOMINATOR
         recomputing = {
             flexible[position]
             for position in _evenly_spaced_indices(len(flexible), recompute_count)
@@ -87,7 +90,9 @@ def _group_fractions(
                 for index, (save, recompute) in enumerate(endpoints)
             )
         )
-    return tuple(result)
+    # Two eighths of a small group count can round to the same resolution;
+    # planning it twice would answer nothing new.
+    return _unique(result)
 
 
 def _within_group_quantiles(
