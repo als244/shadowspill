@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../tasks/internal.h"
 
 #include <ATen/ATen.h>
 #include <c10/core/Allocator.h>

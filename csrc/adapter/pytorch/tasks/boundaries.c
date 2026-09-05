@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include "../internal.h"
+
 #include <stdatomic.h>
 #include <stdio.h>
 
