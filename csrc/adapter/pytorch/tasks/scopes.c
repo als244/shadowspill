@@ -5,7 +5,7 @@
 ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
     uint64_t scope_id
 ) {
-    if (task_range_active) {
+    if (shadowspill_pytorch_task_range_active()) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     const uint64_t profiling_base = UINT64_C(1) << 62U;
@@ -18,8 +18,7 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
             scope_id >= profiling_base ? scope_id - profiling_base : scope_id
         )
     );
-    task_range_id = shadowspill_pytorch_profile_range_begin(range_name);
-    task_range_active = 1;
+    shadowspill_pytorch_task_range_begin(range_name, NULL);
     ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     const ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
@@ -27,7 +26,7 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
               runtime, shadowspill_pytorch_allocator_pool_id(), scope_id
           );
     if (status != SHADOWSPILL_STATUS_OK) {
-        shadowspill_pytorch_end_task_range();
+        shadowspill_pytorch_task_range_end();
     }
     return status;
 }
@@ -44,12 +43,12 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_end(
               scope_id,
               shadowspill_pytorch_stream(compute_stream_address)
           );
-    shadowspill_pytorch_end_task_range();
+    shadowspill_pytorch_task_range_end();
     return status;
 }
 
 void shadowspill_pytorch_allocation_scope_abort(void) {
     ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     shadowspill_allocation_scope_abort(runtime);
-    shadowspill_pytorch_end_task_range();
+    shadowspill_pytorch_task_range_end();
 }

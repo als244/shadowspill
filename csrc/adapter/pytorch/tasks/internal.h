@@ -10,17 +10,17 @@
 
 #include "../internal.h"
 
-extern _Thread_local int task_range_active;
-extern _Thread_local ShadowSpillProfilerRange task_range_id;
-extern _Thread_local const char *active_task_label;
+/* Open the thread's task range: a profiler range under name, when a name is
+   given, and the task's label for the failure record, which a scope leaves
+   NULL. The caller has checked that none is open. */
+void shadowspill_pytorch_task_range_begin(const char *name, const char *label);
 
-void shadowspill_pytorch_end_task_range(void);
+/* Close the range if one is open, ending its profiler range. */
+void shadowspill_pytorch_task_range_end(void);
 
-void shadowspill_pytorch_format_task_range_name(
-    char *destination,
-    size_t destination_bytes,
-    const char *operation,
-    const ShadowSpillTaskHandle *handle
-);
+int shadowspill_pytorch_task_range_active(void);
+
+/* The open range's label, or NULL. */
+const char *shadowspill_pytorch_task_range_label(void);
 
 #endif
