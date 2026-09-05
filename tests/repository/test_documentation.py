@@ -28,6 +28,7 @@ _C_FUNCTION = re.compile(r"\b(shadowspill_[A-Za-z0-9_]+)\s*\(")
 
 _MEMORY_MODULE = ROOT / "src" / "shadowspill" / "memory.py"
 _PYTORCH_MODULE = ROOT / "src" / "shadowspill" / "pytorch" / "__init__.py"
+_PLOTS_MODULE = ROOT / "src" / "shadowspill" / "plots" / "__init__.py"
 _CORE_PYTHON_MODULES = (
     ROOT / "src" / "shadowspill" / "errors.py",
     ROOT / "src" / "shadowspill" / "ir" / "__init__.py",
@@ -39,6 +40,7 @@ _PUBLIC_PYTHON_MODULES = (
     _MEMORY_MODULE,
     *_CORE_PYTHON_MODULES,
     _PYTORCH_MODULE,
+    _PLOTS_MODULE,
 )
 
 _PUBLIC_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
@@ -173,7 +175,7 @@ def _python_page_expectations() -> dict[Path, set[str]]:
     expectations = {
         PYTHON_API / "frontend.md": set(_all_exports(_MEMORY_MODULE)),
         PYTHON_API / "artifacts.md": set(),
-        PYTHON_API / "diagnostics.md": set(),
+        PYTHON_API / "diagnostics.md": set(_all_exports(_PLOTS_MODULE)),
         PYTHON_API / "neutral.md": set(),
     }
     for path in _CORE_PYTHON_MODULES:
@@ -321,7 +323,7 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "architecture/lowering.md",
         "architecture/graph-pair-construction.md",
         "architecture/pressurefit.md",
-        "architecture/recomputation-selection.md",
+        "architecture/graph-pair-selection.md",
         "architecture/physical-admission.md",
         "architecture/planning.md",
         "architecture/simulation.md",
@@ -549,14 +551,14 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
     ):
         assert required in reference
 
-    recomputation = (DOCS / "architecture" / "recomputation-selection.md").read_text()
+    recomputation = (DOCS / "architecture" / "graph-pair-selection.md").read_text()
     for required in (
         "## Inputs and output",
         "## The current selection policy",
         "## Pseudocode",
-        "RecomputationGroup",
-        "RecomputationOption",
-        "RecomputationSelection",
+        "TaskAlternativeGroup",
+        "TaskAlternativeOption",
+        "TaskAlternativeChoice",
     ):
         assert required in recomputation
 
@@ -568,7 +570,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Lowering into Program alternatives",
         "TaskGraphPairs",
         "GraphPairVariant",
-        "RecomputationOption",
+        "TaskAlternativeOption",
     ):
         assert required in graph_pairs
 
@@ -691,39 +693,106 @@ def test_superseded_public_documentation_is_removed() -> None:
         assert not (DOCS / name).exists()
 
 
-def test_every_timing_field_is_described_where_timings_are_explained() -> None:
-    """A timing field nobody can interpret is a timing field nobody can use.
+def test_every_step_diagnostics_field_is_described_in_its_guide() -> None:
+    """A field nobody can interpret is a field nobody can use.
 
     These are the numbers an investigation reads, and several of them are
     only meaningful once you know which origin they count from and whether
     they are an instant or a span. Adding one without saying which is how the
-    next reader draws the wrong conclusion from it.
+    next reader draws the wrong conclusion from it, so the guide has to name
+    every field of every record, not only the timings.
     """
 
     source = (ROOT / "src/shadowspill/pytorch/diagnostics/execution.py").read_text()
     guide = (ROOT / "docs/python/step-diagnostics.md").read_text()
-    tree = ast.parse(source)
     undocumented: dict[str, list[str]] = {}
-    for node in ast.walk(tree):
+    for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.ClassDef):
-            continue
-        if node.name not in {
-            "TaskRecord",
-            "TransferRecord",
-            "LaneSummary",
-            "StepTimingSummary",
-        }:
             continue
         missing = [
             item.target.id
             for item in node.body
             if isinstance(item, ast.AnnAssign)
             and isinstance(item.target, ast.Name)
-            and item.target.id.endswith(("_seconds", "_ns"))
-            and item.target.id not in guide
+            and f"`{item.target.id}`" not in guide
         ]
         if missing:
             undocumented[node.name] = missing
-    assert not undocumented, (
-        f"timing fields absent from step-diagnostics.md: {undocumented}"
+    assert not undocumented, f"fields absent from step-diagnostics.md: {undocumented}"
+
+
+def test_step_diagnostics_names_instants_and_durations_apart() -> None:
+    """One suffix per kind, so a name says what kind of number it holds.
+
+    An instant ends in `_at_seconds` and a duration ends in `_seconds`.
+    Summing instants is meaningless, and the two are indistinguishable
+    without the convention, so a field that reads as a moment -- started,
+    finished, reached, queued -- has to carry the instant suffix.
+    """
+
+    source = (ROOT / "src/shadowspill/pytorch/diagnostics/execution.py").read_text()
+    moments = (
+        "started",
+        "finished",
+        "reached",
+        "entered",
+        "exited",
+        "queued",
+        "reserved",
+        "dispatched",
+        "observed",
+        "ready",
     )
+    offenders: dict[str, list[str]] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        wrong = [
+            item.target.id
+            for item in node.body
+            if isinstance(item, ast.AnnAssign)
+            and isinstance(item.target, ast.Name)
+            and item.target.id.endswith(("_seconds", "_ns"))
+            and not item.target.id.endswith(("_at_seconds", "_at_ns"))
+            and any(word in item.target.id.split("_") for word in moments)
+        ]
+        if wrong:
+            offenders[node.name] = wrong
+    assert not offenders, (
+        f"instants named as durations: {offenders}; end an instant in _at_seconds"
+    )
+
+
+def test_every_plan_report_field_is_described_in_its_reference() -> None:
+    """The planning report is the other half of the evidence, and larger.
+
+    It carries several hundred fields across three dozen records, and a
+    reader looking one up has nowhere else to go. Its reference is a separate
+    page from the step trace because the two describe different objects on
+    different clocks, and merging them would bury both.
+    """
+
+    modules = (
+        "src/shadowspill/planner/diagnostics/plan.py",
+        "src/shadowspill/planner/diagnostics/summary.py",
+        "src/shadowspill/planner/diagnostics/resolved_programs.py",
+        "src/shadowspill/planner/diagnostics/candidates.py",
+        "src/shadowspill/planner/diagnostics/counters.py",
+    )
+    reference = (ROOT / "docs/python/plan-report-fields.md").read_text()
+    undocumented: dict[str, list[str]] = {}
+    for module in modules:
+        for node in ast.walk(ast.parse((ROOT / module).read_text())):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            missing = [
+                item.target.id
+                for item in node.body
+                if isinstance(item, ast.AnnAssign)
+                and isinstance(item.target, ast.Name)
+                and not item.target.id.isupper()
+                and f"`{item.target.id}`" not in reference
+            ]
+            if missing:
+                undocumented[node.name] = missing
+    assert not undocumented, f"fields absent from plan-report-fields.md: {undocumented}"
