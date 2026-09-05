@@ -608,13 +608,11 @@ class PlanPhysicalLayout:
     pool_capacity_bytes: int
     original_object_capacity_bytes: int
     effective_object_capacity_bytes: int
-    object_capacity_reduction_bytes: int
     fixed_slice_bytes: int
     resident_slice_bytes: int
     dynamic_reserve_bytes: int
     scratch_reserve_bytes: int
     required_bytes: int
-    slack_bytes: int
     placement_count: int
     dynamic_lifetime_count: int
     reuse_dependency_count: int
@@ -633,13 +631,11 @@ class PlanPhysicalLayout:
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "original_object_capacity_bytes": self.original_object_capacity_bytes,
             "effective_object_capacity_bytes": self.effective_object_capacity_bytes,
-            "object_capacity_reduction_bytes": (self.object_capacity_reduction_bytes),
             "fixed_slice_bytes": self.fixed_slice_bytes,
             "resident_slice_bytes": self.resident_slice_bytes,
             "dynamic_reserve_bytes": self.dynamic_reserve_bytes,
             "scratch_reserve_bytes": self.scratch_reserve_bytes,
             "required_bytes": self.required_bytes,
-            "slack_bytes": self.slack_bytes,
             "placement_count": self.placement_count,
             "dynamic_lifetime_count": self.dynamic_lifetime_count,
             "reuse_dependency_count": self.reuse_dependency_count,
@@ -655,14 +651,15 @@ class PlanPhysicalLayout:
 class PlanDiagnostics:
     """Structured evidence describing one frontend planning call.
 
-    Phase intervals are mutually exclusive. ``unattributed_overhead_ns`` is
-    the small remainder spent between measured intervals and constructing the
-    immutable report; phases plus that remainder equal ``total_wall_time_ns``.
+    Phase intervals are mutually exclusive, and ``measured_wall_time_ns``
+    adds them up. The difference from ``total_wall_time_ns`` is the small
+    remainder spent between measured intervals and constructing the immutable
+    report, which is a subtraction rather than a stored field so that the two
+    can never disagree.
     """
 
     phases: tuple[PlanPhaseTiming, ...]
     total_wall_time_ns: int
-    unattributed_overhead_ns: int
     profile_unique_keys: int
     profile_cache_hits: int
     profile_cache_misses: int
@@ -694,7 +691,6 @@ class PlanDiagnostics:
             "schema": artifact_schema("plan_diagnostics"),
             "phases": [item.as_dict() for item in self.phases],
             "measured_wall_time_ns": self.measured_wall_time_ns,
-            "unattributed_overhead_ns": self.unattributed_overhead_ns,
             "total_wall_time_ns": self.total_wall_time_ns,
             "profile": {
                 "unique_keys": self.profile_unique_keys,
@@ -786,7 +782,7 @@ class PlanSummary:
     ``simulated_step_seconds == unconstrained_step_seconds +
     recomputation_overhead_seconds + idle_seconds +
     terminal_writeback_seconds``. The unconstrained step charges every
-    recomputation group its cheapest option and no waiting at all — the
+    task-alternative group its cheapest option and no waiting at all — the
     compute floor the geometry admits. A group counts as a recomputation
     selection when the option the search chose costs strictly more compute
     than that group's cheapest, whatever the options are named.
@@ -797,8 +793,8 @@ class PlanSummary:
     recomputation_overhead_seconds: float
     idle_seconds: float
     terminal_writeback_seconds: float
-    recompute_selection_count: int
-    selection_count: int
+    recomputing_group_count: int
+    task_alternative_group_count: int
     #: Scheduled transfer traffic, summed from the simulation's transfer
     #: intervals, and the per-direction bandwidths the simulator planned
     #: against, from the result's simulation config. Solo calibration lives
@@ -821,10 +817,10 @@ class PlanSummary:
     )
 
     @property
-    def recompute_selection_fraction(self) -> float:
-        if self.selection_count == 0:
+    def recomputing_group_fraction(self) -> float:
+        if self.task_alternative_group_count == 0:
             return 0.0
-        return self.recompute_selection_count / self.selection_count
+        return self.recomputing_group_count / self.task_alternative_group_count
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -833,9 +829,9 @@ class PlanSummary:
             "recomputation_overhead_seconds": self.recomputation_overhead_seconds,
             "idle_seconds": self.idle_seconds,
             "terminal_writeback_seconds": self.terminal_writeback_seconds,
-            "recompute_selection_count": self.recompute_selection_count,
-            "selection_count": self.selection_count,
-            "recompute_selection_fraction": self.recompute_selection_fraction,
+            "recomputing_group_count": self.recomputing_group_count,
+            "task_alternative_group_count": self.task_alternative_group_count,
+            "recomputing_group_fraction": self.recomputing_group_fraction,
             "transfer_bytes_fetched": self.transfer_bytes_fetched,
             "transfer_bytes_evicted": self.transfer_bytes_evicted,
             "fetch_bandwidth_bytes_per_second": (self.fetch_bandwidth_bytes_per_second),
@@ -858,8 +854,8 @@ def summarize_selected_plan(
     selected_option = {item.group_id: item.option_id for item in result.selections}
     variant_tasks: set[str] = set()
     floor_ns = 0
-    recompute_selections = 0
-    for group in program.recomputation_groups:
+    graph_pair_selections = 0
+    for group in program.task_alternative_groups:
         costs: dict[str, int] = {}
         for option in group.options:
             variant_tasks.update(option.active_task_ids)
@@ -869,7 +865,7 @@ def summarize_selected_plan(
         cheapest = min(costs.values())
         floor_ns += cheapest
         if costs[selected_option[group.group_id]] > cheapest:
-            recompute_selections += 1
+            graph_pair_selections += 1
     floor_ns += sum(
         task_ns[item.task_id]
         for item in program.tasks
@@ -889,7 +885,7 @@ def summarize_selected_plan(
             evicted += interval.bytes
     device = result.simulation_config.devices[0]
     selected: dict[str, object] = {}
-    for problem in result.diagnostics.recomputation_problems:
+    for problem in result.diagnostics.resolved_programs:
         for candidate in problem.candidate_evaluations:
             if candidate.candidate_id == result.diagnostics.selected_candidate_id:
                 selected = {
@@ -904,8 +900,8 @@ def summarize_selected_plan(
         recomputation_overhead_seconds=(selected_ns - floor_ns) / 1e9,
         idle_seconds=(span_ns - selected_ns) / 1e9,
         terminal_writeback_seconds=(makespan_ns - span_ns) / 1e9,
-        recompute_selection_count=recompute_selections,
-        selection_count=len(result.selections),
+        recomputing_group_count=graph_pair_selections,
+        task_alternative_group_count=len(result.selections),
         transfer_bytes_fetched=fetched,
         transfer_bytes_evicted=evicted,
         fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,

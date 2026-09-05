@@ -142,7 +142,6 @@ def _forward_diagnostics(
     return PlanDiagnostics(
         phases=phases,
         total_wall_time_ns=elapsed,
-        unattributed_overhead_ns=elapsed - sum(item.duration_ns for item in phases),
         profile_unique_keys=profiles.unique_keys,
         profile_cache_hits=profiles.cache_hits,
         profile_cache_misses=profiles.cache_misses,
@@ -423,7 +422,6 @@ def publish_plan_report(
         report.diagnostics,
         phases=phases,
         total_wall_time_ns=elapsed,
-        unattributed_overhead_ns=elapsed - measured,
         cache_artifacts=cache_artifacts(cache),
     )
     phase_timings = tuple(
@@ -484,13 +482,11 @@ def fixed_layout_diagnostic(
         pool_capacity_bytes=layout.pool_capacity_bytes,
         original_object_capacity_bytes=selection.original_object_capacity_bytes,
         effective_object_capacity_bytes=selection.facts.object_capacity_bytes,
-        object_capacity_reduction_bytes=selection.capacity_reduction_bytes,
         fixed_slice_bytes=layout.fixed_slice_bytes,
         resident_slice_bytes=layout.resident_slice_bytes,
         dynamic_reserve_bytes=layout.dynamic_reserve_bytes,
         scratch_reserve_bytes=layout.scratch_reserve_bytes,
         required_bytes=layout.required_bytes,
-        slack_bytes=layout.slack_bytes,
         placement_count=len(layout.placements),
         dynamic_lifetime_count=len(layout.dynamic_lifetimes),
         reuse_dependency_count=len(layout.reuse_dependencies),
