@@ -115,9 +115,8 @@ that planning time went by phase.
 
 Of the suite's counts, the deselected ones are the `fresh_process` tests,
 which need a process where nothing has touched the device yet and so are run
-one per process by CTest rather than in the shared pytest process. The skip
-is `test_command_line_flags`, which has nothing to check when a module
-declares no long options.
+one per process by CTest rather than in the shared pytest process. Nothing is
+skipped.
 
 The launchers delegate to `src/tools/qualification/`, which in turn uses the
 public `src/shadowspill/` APIs and workload definitions under `workloads/`.
@@ -158,6 +157,19 @@ cell subprocess streams live under a `[cell/N]` prefix, and every cell closes
 with a PASS/FAIL block carrying per-gate status and UTC START, STOP, and
 DURATION records. The console stream is duplicated with timestamps into
 `matrix.log` beside `summary.json`, and each cell keeps one timestamped log.
+
+Before its first group each cell prints the plan's own prediction, in the
+same units the measured lines use: seconds per step from the simulated
+makespan, and tokens per second from the manifest's tokens per step divided
+by it. It then names the fetch and evict bandwidths the plan was made
+against, because a prediction is only as good as the rates behind it and a
+machine whose lanes do not deliver them explains its own error, and closes
+with the same two units for the unconstrained step: every graph-pair group at
+its cheapest option and no waiting at all, which is the ceiling the budget is
+being traded against. The measured lines that follow are the whole group's wall clock
+divided by the steps in it, not a median of per-step times, so a group's
+number includes everything between submitting its first step and the device
+finishing its last.
 
 The performance matrix judges throughput against floors measured on one
 machine. Its `--measure-only` reports the measurement without those floors,

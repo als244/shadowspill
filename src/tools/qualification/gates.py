@@ -42,7 +42,7 @@ def gate_options(path: Path | None) -> dict[str, tuple[str, ...]]:
     this wrapper from having to mirror three other command lines.
     """
 
-    empty = {name: () for name in GATE_ORDER}
+    empty: dict[str, tuple[str, ...]] = {name: () for name in GATE_ORDER}
     if path is None:
         return empty
     try:
@@ -85,6 +85,19 @@ class GateOutcome:
     @property
     def passed(self) -> bool:
         return self.returncode == 0
+
+
+#: How wide a gate banner is drawn.
+_BANNER_WIDTH = 78
+
+
+def _banner(text: str) -> str:
+    """A rule that survives being read in a stream of other programs' output."""
+
+    padded = f" {text} "
+    stars = max(_BANNER_WIDTH - len(padded), 8)
+    left = stars // 2
+    return f"{'*' * left}{padded}{'*' * (stars - left)}"
 
 
 def _commands(
@@ -360,6 +373,10 @@ def run_gates(
             name, run, keep_going, options=(options or {}).get(name, ())
         )
         log = logs / f"{name}.log"
+        # Three gates stream into one terminal, and a matrix prints its own
+        # banners, so without a rule of their own the boundary between two
+        # gates is a line that looks like any other.
+        print(f"\n\n{_banner(f'START OF {name.upper()} GATE')}\n", flush=True)
         print(f"[{time.strftime('%H:%M:%S')}] {name}: {' '.join(command)}", flush=True)
         started = time.perf_counter()
         returncode = _stream(command, log)
@@ -375,6 +392,16 @@ def run_gates(
         print(
             f"[{time.strftime('%H:%M:%S')}] {name}: {verdict} in "
             f"{outcome.seconds / 60:.1f} min, log {log}",
+            flush=True,
+        )
+        print(
+            f"\n{
+                _banner(
+                    f'END OF {name.upper()} GATE'
+                    f' [{verdict.split()[0]}, {outcome.seconds / 60:.1f} min]'
+                )
+            }"
+            "\n\n",
             flush=True,
         )
         if not outcome.passed and not continue_after_failure:
