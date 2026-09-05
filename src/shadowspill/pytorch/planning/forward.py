@@ -747,6 +747,7 @@ def build_forward(
     allocation_probe_repetitions: int,
     shared_outputs: Sequence[SharedOutput] = (),
     minimum_object_bytes_evict_eligible: int = 0,
+    deterministic: bool = False,
 ) -> PlannedForward:
     """Compose the independently callable forward-planning boundaries."""
 
@@ -774,7 +775,8 @@ def build_forward(
     selected = pressurefit_forward_program(
         program,
         options=PressureFitOptions(
-            minimum_object_bytes_evict_eligible=minimum_object_bytes_evict_eligible
+            minimum_object_bytes_evict_eligible=minimum_object_bytes_evict_eligible,
+            deterministic=deterministic,
         ),
         stores=artifacts,
         timer=timer,
