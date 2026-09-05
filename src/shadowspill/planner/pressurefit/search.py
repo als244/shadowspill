@@ -1,6 +1,6 @@
-"""Evaluating every recomputation selection and choosing one winner.
+"""Evaluating every resolution and choosing one winner.
 
-PressureFit is given a family of legal recomputation selections and has to
+PressureFit is given a family of legal resolutions and has to
 return the best schedule across all of them. This module owns that loop:
 projecting each selection into what the library needs, dropping the ones that
 cannot fit before paying to evaluate them, running the rest, and merging their
@@ -17,7 +17,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from shadowspill.ir import Program, RecomputationSelection, ResidencySpec
+from shadowspill.ir import (
+    MemoryActionKind,
+    Program,
+    ResidencySpec,
+    TaskAlternativeChoice,
+)
 from shadowspill.planner.result import ResidentSlice
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.indexed import (
@@ -37,8 +42,8 @@ from ..diagnostics import (
     PressureFitDiagnostics,
     PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
-    RecomputationChoiceDiagnostic,
-    RecomputationProblemDiagnostics,
+    ResolvedProgramDiagnostics,
+    TaskAlternativeChoiceDiagnostic,
 )
 from ..recomputation import Resolution
 from ..request import PressureFitOptions
@@ -48,6 +53,7 @@ from ..result import (
     PressureFitSearchExhaustedError,
 )
 from .candidates import (
+    _ACTION_KIND,
     CPreflightResult,
     CProblemResult,
     decode_candidate_diagnostic,
@@ -59,9 +65,9 @@ from .candidates import (
 
 @dataclass(frozen=True, slots=True)
 class SelectionProblem:
-    """One recomputation selection projected into the planner ABI."""
+    """One resolution projected into the planner ABI."""
 
-    selections: tuple[RecomputationSelection, ...]
+    selections: tuple[TaskAlternativeChoice, ...]
     selection_id: str
     indexed_template: IndexedSimulationTemplate
     indexed_admission: IndexedAdmissionFacts | None
@@ -72,10 +78,35 @@ class SelectionProblem:
     indexed_placement: IndexedAdmissionFacts | None = None
 
 
-def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
+def _selection_id(selections: tuple[TaskAlternativeChoice, ...]) -> str:
     if not selections:
         return "none"
     return ",".join(f"{item.group_id}={item.option_id}" for item in selections)
+
+
+def _selected_traffic(program: Program, result: CProblemResult) -> tuple[int, int]:
+    """What one problem's own best plan moves, fetched and evicted.
+
+    The winner's traffic is on the plan summary. This is every other
+    selection's, which is what says whether a selection that asks for less
+    compute pays for it on the lanes instead. Read off the problem's own
+    schedule, which the search already decoded, so it costs a pass over the
+    actions rather than another simulation.
+    """
+
+    schedule = result.selected_schedule
+    if schedule is None:
+        return 0, 0
+    sizes = [group.size_bytes for group in program.alias_groups]
+    fetched = 0
+    evicted = 0
+    for alias, kind in zip(schedule.action_aliases, schedule.action_kinds, strict=True):
+        size = sizes[alias]
+        if _ACTION_KIND[kind] is MemoryActionKind.FETCH:
+            fetched += size
+        elif _ACTION_KIND[kind] is MemoryActionKind.EVICT:
+            evicted += size
+    return fetched, evicted
 
 
 def build_problems(
@@ -89,7 +120,7 @@ def build_problems(
     resolutions: tuple[Resolution, ...],
     progress: Callable[[str], None] | None,
 ) -> tuple[SelectionProblem, ...]:
-    """Project each recomputation selection without Python residency matrices."""
+    """Project each resolution without Python residency matrices."""
 
     problems: list[SelectionProblem] = []
     started = time.perf_counter_ns()
@@ -184,7 +215,7 @@ def _preflight_error(
 def preflight_problems(
     problems: tuple[SelectionProblem, ...],
 ) -> tuple[SelectionProblem, ...]:
-    """Keep selections that satisfy the semantic-capacity preflight."""
+    """Keep resolutions that satisfy the semantic-capacity preflight."""
 
     valid: list[SelectionProblem] = []
     failures: list[ValueError] = []
@@ -202,8 +233,8 @@ def preflight_problems(
     if failures:
         raise failures[0]
     raise PressureFitInfeasibleError(
-        "no recomputation selection could be constructed",
-        kind="recomputation_selection",
+        "no resolution could be constructed",
+        kind="graph_pair_selection",
     )
 
 
@@ -259,7 +290,7 @@ def finish_pressurefit(
     plan *it* placed, which is not the best plan placed.
     """
 
-    recomputation_problems: list[RecomputationProblemDiagnostics] = []
+    resolved_programs: list[ResolvedProgramDiagnostics] = []
     selected: tuple[int, int, CProblemResult] | None = None
     held = None if best is None else best.read()
     for problem_index, (problem, result) in enumerate(
@@ -278,11 +309,12 @@ def finish_pressurefit(
             if result.selected_candidate_index is None
             else candidates[result.selected_candidate_index]
         )
-        recomputation_problems.append(
-            RecomputationProblemDiagnostics(
+        fetched_bytes, evicted_bytes = _selected_traffic(program, result)
+        resolved_programs.append(
+            ResolvedProgramDiagnostics(
                 selection_id=problem.selection_id,
                 choices=tuple(
-                    RecomputationChoiceDiagnostic(item.group_id, item.option_id)
+                    TaskAlternativeChoiceDiagnostic(item.group_id, item.option_id)
                     for item in problem.selections
                 ),
                 selected_candidate_id=(
@@ -301,6 +333,8 @@ def finish_pressurefit(
                 finished_ns=result.finished_ns,
                 evict_ineligible_aliases=result.evict_ineligible_aliases,
                 evict_ineligible_bytes=result.evict_ineligible_bytes,
+                fetched_bytes=fetched_bytes,
+                evicted_bytes=evicted_bytes,
             )
         )
         if result.selected_candidate_index is None:
@@ -321,7 +355,7 @@ def finish_pressurefit(
     if selected is None:
         frozen = tuple(
             candidate
-            for problem in recomputation_problems
+            for problem in resolved_programs
             for candidate in problem.candidate_evaluations
         )
         if any(item.status == "exhausted" for item in frozen):
@@ -403,7 +437,7 @@ def finish_pressurefit(
         selected_candidate_id=selected_diagnostic.candidate_id,
         selected_selection_id=problem.selection_id,
         selected_makespan_ns=simulation.makespan_ns,
-        recomputation_problems=tuple(recomputation_problems),
+        resolved_programs=tuple(resolved_programs),
         work=aggregate_work,
     )
     return PressureFitResult(

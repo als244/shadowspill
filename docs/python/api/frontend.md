@@ -202,6 +202,7 @@ plan_forward(
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
     minimum_object_bytes_evict_eligible=1 << 20,
+    deterministic=False,
     execution_device=None,
     partition="auto",
     verbose=True,
@@ -288,6 +289,7 @@ plan_step(
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
     minimum_object_bytes_evict_eligible=1 << 20,
+    deterministic=False,
     execution_device=None,
     partition="auto",
     optimizer_ordering="stage_interleaved",
@@ -375,8 +377,10 @@ and lowering once — the artifact store deduplicates by structural digest —
 and every geometry-budget point then runs the PressureFit search. The
 returned `StepSearchReport` carries per-geometry build phase timings, one
 `StepSearchPoint` per geometry and budget with its status, simulated makespan,
-and `PlanSummary`, the bound-skipped geometries with reasons, and derived
-winners per budget. Running a winner afterward is one warm `plan_step()`
+`PlanSummary`, and `graph_pair_selections`, one `GraphPairOutcome` per
+graph-pair selection the search evaluated rather than only the one it
+answered with, the bound-skipped
+geometries with reasons, and derived winners per budget. Running a winner afterward is one warm `plan_step()`
 call at the chosen geometry.
 
 Failures are outcomes rather than errors. A point that proves infeasible or
