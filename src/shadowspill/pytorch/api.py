@@ -104,6 +104,7 @@ def plan_forward(
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
     minimum_object_bytes_evict_eligible: int = 1 << 20,
+    deterministic: bool = False,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     verbose: bool = True,
@@ -150,6 +151,13 @@ def plan_forward(
     planner evict and fetch it mid-step; its opening fetch, release, and
     terminal writeback are unchanged. The default is 1 MiB; zero makes every
     object eligible.
+
+    ``deterministic`` makes the search reproduce exactly at any worker count:
+    a candidate's placement gate consults only its own placed plans rather
+    than the shared best-placed record. It costs wall time, because that
+    shared bound is what lets a candidate skip measuring a plan which cannot
+    win. It is part of the planned program's identity, so a plan searched
+    under it is a different artifact-store entry from one searched without.
 
     ``allocation_probe_seeds`` controls independent randomized activation
     probes per structural contract. ``allocation_probe_repetitions`` repeats each
@@ -206,6 +214,7 @@ def plan_forward(
                 minimum_object_bytes_evict_eligible=(
                     minimum_object_bytes_evict_eligible
                 ),
+                deterministic=deterministic,
             )
     except BaseException as error:
         _surface_failed_plan(
@@ -229,6 +238,7 @@ def plan_step(
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
     minimum_object_bytes_evict_eligible: int = 1 << 20,
+    deterministic: bool = False,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
@@ -263,8 +273,8 @@ def plan_step(
     graph pairs across structurally equivalent stage occurrences.
 
     ``dynamic_scratch_reserve_bytes`` and
-    ``minimum_object_bytes_evict_eligible`` have the same semantics and
-    defaults as :func:`plan_forward`.
+    ``minimum_object_bytes_evict_eligible`` and ``deterministic`` have the
+    same semantics and defaults as :func:`plan_forward`.
 
     Allocation-path probe settings have the same semantics and defaults as
     :func:`plan_forward`.
@@ -315,6 +325,7 @@ def plan_step(
                 minimum_object_bytes_evict_eligible=(
                     minimum_object_bytes_evict_eligible
                 ),
+                deterministic=deterministic,
             )
     except BaseException as error:
         _surface_failed_plan(
