@@ -50,8 +50,8 @@ class IndexedProgram:
     object_ids: tuple[str, ...]
     profile_ids: tuple[str, ...]
     task_ids: tuple[str, ...]
-    recomputation_group_ids: tuple[str, ...]
-    recomputation_option_ids: tuple[str, ...]
+    task_alternative_group_ids: tuple[str, ...]
+    task_alternative_option_ids: tuple[str, ...]
     alias_device: tuple[int, ...]
     alias_size_bytes: tuple[int, ...]
     alias_initial_version: tuple[int, ...]
@@ -163,9 +163,9 @@ def index_program(program: Program) -> IndexedProgram:
     object_ids = tuple(item.object_id for item in program.objects)
     profile_ids = tuple(item.profile_id for item in program.profiles)
     task_ids = tuple(item.task_id for item in program.tasks)
-    group_ids = tuple(item.group_id for item in program.recomputation_groups)
+    group_ids = tuple(item.group_id for item in program.task_alternative_groups)
     options = tuple(
-        option for group in program.recomputation_groups for option in group.options
+        option for group in program.task_alternative_groups for option in group.options
     )
     option_ids = tuple(option.option_id for option in options)
     device_index = {value: index for index, value in enumerate(device_ids)}
@@ -189,7 +189,7 @@ def index_program(program: Program) -> IndexedProgram:
         )
     )
     group_option_offsets = [0]
-    for group in program.recomputation_groups:
+    for group in program.task_alternative_groups:
         group_option_offsets.append(group_option_offsets[-1] + len(group.options))
     option_active_task_offsets, option_active_tasks = _flatten_strings(
         tuple(option.active_task_ids for option in options), task_index
@@ -206,8 +206,8 @@ def index_program(program: Program) -> IndexedProgram:
         object_ids=object_ids,
         profile_ids=profile_ids,
         task_ids=task_ids,
-        recomputation_group_ids=group_ids,
-        recomputation_option_ids=option_ids,
+        task_alternative_group_ids=group_ids,
+        task_alternative_option_ids=option_ids,
         alias_device=tuple(
             device_index[item.device_id] for item in program.alias_groups
         ),
@@ -313,11 +313,11 @@ def index_execution_plan(plan: ExecutionPlan) -> IndexedExecutionPlan:
     }
     group_index = {
         group_id: index
-        for index, group_id in enumerate(indexed_program.recomputation_group_ids)
+        for index, group_id in enumerate(indexed_program.task_alternative_group_ids)
     }
     option_index: dict[tuple[str, str], int] = {}
     next_option = 0
-    for group in plan.program.recomputation_groups:
+    for group in plan.program.task_alternative_groups:
         for option in group.options:
             option_index[(group.group_id, option.option_id)] = next_option
             next_option += 1

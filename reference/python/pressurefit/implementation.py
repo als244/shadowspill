@@ -12,8 +12,8 @@ from reference.python.simulator import simulate_python
 from shadowspill.ir import (
     MemorySchedule,
     Program,
-    RecomputationSelection,
     ResidencySpec,
+    TaskAlternativeChoice,
 )
 from shadowspill.ir.validation import ValidationError
 from shadowspill.planner.admission import AdmissionFacts
@@ -23,8 +23,8 @@ from shadowspill.planner.diagnostics import (
     PressureFitRepairDiagnostics,
     PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
-    RecomputationChoiceDiagnostic,
-    RecomputationProblemDiagnostics,
+    ResolvedProgramDiagnostics,
+    TaskAlternativeChoiceDiagnostic,
 )
 from shadowspill.planner.recomputation import resolutions
 from shadowspill.planner.request import PressureFitOptions
@@ -58,7 +58,7 @@ _ADMISSION_LINEAR_REFINEMENT_BYTES = 512 << 20
 
 @dataclass(frozen=True, slots=True)
 class _SelectionProblem:
-    selections: tuple[RecomputationSelection, ...]
+    selections: tuple[TaskAlternativeChoice, ...]
     selection_id: str
     facts: PlanningFacts
     seed: ResidencyPlan
@@ -145,7 +145,7 @@ class _CandidateOutcome:
     simulation: SimulationResult | None = None
 
 
-def _selection_id(selections: tuple[RecomputationSelection, ...]) -> str:
+def _selection_id(selections: tuple[TaskAlternativeChoice, ...]) -> str:
     if not selections:
         return "none"
     return ",".join(f"{item.group_id}={item.option_id}" for item in selections)
@@ -162,7 +162,7 @@ def validate_schedule_feasibility(
     """Reject irreducible capacity failures before schedule search.
 
     This is a necessary-condition preflight, not a PressureFit candidate
-    search. It accepts when at least one legal recomputation selection has a
+    search. It accepts when at least one legal resolution has a
     task-by-task residency floor that fits the declared capacity. PressureFit
     retains the same checks internally as defensive invariants.
     """
@@ -208,8 +208,8 @@ def validate_schedule_feasibility(
     if failures:
         raise failures[0]
     raise PressureFitInfeasibleError(
-        "no recomputation selection could be constructed",
-        kind="recomputation_selection",
+        "no resolution could be constructed",
+        kind="graph_pair_selection",
     )
 
 
@@ -571,7 +571,7 @@ def _build_problems(
     config: SimulationConfig,
     options: PressureFitOptions,
     *,
-    resolved: tuple[tuple[RecomputationSelection, ...], ...],
+    resolved: tuple[tuple[TaskAlternativeChoice, ...], ...],
     progress: Callable[[str], None] | None,
 ) -> tuple[_SelectionProblem, ...]:
     problems: list[_SelectionProblem] = []
@@ -618,8 +618,8 @@ def _build_problems(
     if failures:
         raise failures[0]
     raise PressureFitInfeasibleError(
-        "no recomputation selection could be constructed",
-        kind="recomputation_selection",
+        "no resolution could be constructed",
+        kind="graph_pair_selection",
     )
 
 
@@ -707,7 +707,7 @@ def _pressurefit_once(
     if progress is not None:
         progress(
             "PressureFit resolved: "
-            f"groups={len(program.recomputation_groups)}, "
+            f"groups={len(program.task_alternative_groups)}, "
             f"selections={len(resolved)}"
         )
     problems_started = time.perf_counter_ns()
@@ -789,7 +789,7 @@ def _pressurefit_once(
     assert best.schedule is not None
     assert best.simulation is not None
     final_simulation = best.simulation
-    problem_diagnostics: list[RecomputationProblemDiagnostics] = []
+    problem_diagnostics: list[ResolvedProgramDiagnostics] = []
     aggregate_work = PressureFitWorkDiagnostics()
     for problem in problems:
         problem_outcomes = tuple(
@@ -817,10 +817,10 @@ def _pressurefit_once(
             problem_work += candidate.work
         aggregate_work += problem_work
         problem_diagnostics.append(
-            RecomputationProblemDiagnostics(
+            ResolvedProgramDiagnostics(
                 selection_id=problem.selection_id,
                 choices=tuple(
-                    RecomputationChoiceDiagnostic(item.group_id, item.option_id)
+                    TaskAlternativeChoiceDiagnostic(item.group_id, item.option_id)
                     for item in problem.selections
                 ),
                 selected_candidate_id=(
@@ -839,7 +839,7 @@ def _pressurefit_once(
         selected_candidate_id=best.spec.candidate_id,
         selected_selection_id=best.spec.problem.selection_id,
         selected_makespan_ns=final_simulation.makespan_ns,
-        recomputation_problems=tuple(problem_diagnostics),
+        resolved_programs=tuple(problem_diagnostics),
         work=aggregate_work,
     )
     return PressureFitResult(

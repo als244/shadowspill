@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shadowspill.ir import MemorySchedule, Program, RecomputationSelection, TaskSpec
+from shadowspill.ir import MemorySchedule, Program, TaskAlternativeChoice, TaskSpec
 from shadowspill.planner.admission.admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
@@ -23,7 +23,7 @@ def simulation_admission_from_replay(
     program: Program,
     schedule: MemorySchedule,
     *,
-    selections: tuple[RecomputationSelection, ...] = (),
+    selections: tuple[TaskAlternativeChoice, ...] = (),
     device_capacity_bytes: int | None = None,
 ) -> SimulationAdmission:
     """Project exact pool deltas onto task and action timing boundaries."""

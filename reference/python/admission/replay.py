@@ -24,7 +24,7 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     Program,
-    RecomputationSelection,
+    TaskAlternativeChoice,
     TaskSpec,
 )
 from shadowspill.planner import (
@@ -66,7 +66,7 @@ class _AdmissionScriptBuilder:
         self,
         program: Program,
         schedule: MemorySchedule,
-        selections: tuple[RecomputationSelection, ...],
+        selections: tuple[TaskAlternativeChoice, ...],
         facts: AdmissionFacts,
     ) -> None:
         self.program = program
@@ -539,7 +539,7 @@ def replay_admission(
     schedule: MemorySchedule,
     *,
     facts: AdmissionFacts,
-    selections: tuple[RecomputationSelection, ...] = (),
+    selections: tuple[TaskAlternativeChoice, ...] = (),
 ) -> AdmissionReplay:
     """Certify one schedule's exact causal allocation geometry."""
 
@@ -626,7 +626,7 @@ def _resolve_dependency(
 def _compatibility_digest(
     program: Program,
     schedule: MemorySchedule,
-    selections: tuple[RecomputationSelection, ...],
+    selections: tuple[TaskAlternativeChoice, ...],
     operations: tuple[AdmissionReplayStep, ...],
     transitions: tuple[OwnershipTransition, ...],
     facts_digest: str,

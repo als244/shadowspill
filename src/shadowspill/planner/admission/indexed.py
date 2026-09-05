@@ -163,7 +163,7 @@ def index_admission_facts(
     facts: AdmissionFacts,
     simulation: IndexedSimulationTemplate,
 ) -> IndexedAdmissionFacts:
-    """Project only tasks selected by one recomputation problem."""
+    """Project only tasks selected by one resolved program."""
 
     if facts.device_id not in simulation.device_ids:
         raise ValueError(

@@ -2,7 +2,7 @@
 
 The work divides four ways, one module each:
 
-``recomputation``  which recomputation selections are worth evaluating
+``recomputation``  which resolutions are worth evaluating
 ``search``         evaluating them and picking a winner
 ``refinement``     what to try when admission refuses that winner
 this module        the entry point, and validating what it was given

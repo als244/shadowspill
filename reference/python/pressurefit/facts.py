@@ -1,4 +1,4 @@
-"""Framework-neutral facts derived once for one recomputation selection."""
+"""Framework-neutral facts derived once for one resolution."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from shadowspill.ir import (
     MemoryLocation,
     Program,
-    RecomputationSelection,
     ResidencySpec,
+    TaskAlternativeChoice,
     TaskSpec,
 )
 from shadowspill.planner.result import PressureFitInfeasibleError
@@ -18,7 +18,7 @@ from shadowspill.simulator import SimulationConfig
 @dataclass(frozen=True, slots=True)
 class PlanningFacts:
     program: Program
-    selections: tuple[RecomputationSelection, ...]
+    selections: tuple[TaskAlternativeChoice, ...]
     tasks: tuple[TaskSpec, ...]
     task_index: dict[str, int]
     alias_ids: tuple[str, ...]
@@ -65,7 +65,7 @@ def _residency_map(
 
 def build_facts(
     program: Program,
-    selections: tuple[RecomputationSelection, ...],
+    selections: tuple[TaskAlternativeChoice, ...],
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,

@@ -11,9 +11,9 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     Program,
-    RecomputationSelection,
     ResidencySpec,
     ResourceKind,
+    TaskAlternativeChoice,
     TaskSpec,
     shared_residency_footprint,
 )
@@ -133,7 +133,7 @@ class IndexedSimulationSummary:
 
 def index_simulation_template(
     program: Program,
-    selections: tuple[RecomputationSelection, ...],
+    selections: tuple[TaskAlternativeChoice, ...],
     config: SimulationConfig,
     *,
     selected_tasks: tuple[TaskSpec, ...] | None = None,
@@ -593,7 +593,7 @@ def _bind_schedule(
 def _project(
     program: Program,
     schedule: MemorySchedule,
-    selections: tuple[RecomputationSelection, ...],
+    selections: tuple[TaskAlternativeChoice, ...],
     config: SimulationConfig,
     admission: SimulationAdmission | None,
 ) -> _Projection:
@@ -660,7 +660,7 @@ def simulate_program(
     program: Program,
     schedule: MemorySchedule,
     *,
-    selections: tuple[RecomputationSelection, ...] = (),
+    selections: tuple[TaskAlternativeChoice, ...] = (),
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:

@@ -10,10 +10,10 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     MutationSpec,
-    RecomputationGroup,
-    RecomputationOption,
     ResidencySpec,
     SharedResidencyPolicy,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
     ValidationError,
     index_program,
 )
@@ -92,17 +92,17 @@ def test_causal_shared_alias_can_be_published_but_not_recomputation_retained() -
             replace(first, inputs=("input",), outputs=("weight",)),
             *program.tasks[1:2],
         ),
-        recomputation_groups=(),
+        task_alternative_groups=(),
     )
 
     assert published.tasks[0].outputs == ("weight",)
 
-    group = RecomputationGroup(
+    group = TaskAlternativeGroup(
         "shared_retention",
-        (RecomputationOption("invalid", (), ("weight_storage",)),),
+        (TaskAlternativeOption("invalid", (), ("weight_storage",)),),
     )
     with pytest.raises(ValidationError, match="runtime-resident"):
-        replace(program, recomputation_groups=(group,))
+        replace(program, task_alternative_groups=(group,))
 
 
 @pytest.mark.parametrize(
@@ -125,7 +125,7 @@ def test_noncausal_shared_alias_cannot_publish_task_outputs(
                 replace(first, inputs=("input",), outputs=("weight",)),
                 *program.tasks[1:2],
             ),
-            recomputation_groups=(),
+            task_alternative_groups=(),
         )
 
 

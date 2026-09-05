@@ -1,6 +1,6 @@
 """Standalone deterministic execution and memory simulation."""
 
-from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
+from shadowspill.ir import MemorySchedule, Program, TaskAlternativeChoice
 
 from .capi import simulator_api
 from .indexed import simulate_program
@@ -26,7 +26,7 @@ def simulate(
     program: Program,
     schedule: MemorySchedule,
     *,
-    selections: tuple[RecomputationSelection, ...] = (),
+    selections: tuple[TaskAlternativeChoice, ...] = (),
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:

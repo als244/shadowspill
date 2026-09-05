@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.ir import Program, RecomputationSelection
+from shadowspill.ir import Program, TaskAlternativeChoice
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.indexed import (
@@ -65,7 +65,7 @@ class AdmissionSetup:
 
 def build_admission_setup(
     program: Program,
-    selections: tuple[RecomputationSelection, ...],
+    selections: tuple[TaskAlternativeChoice, ...],
     config: SimulationConfig,
     facts: AdmissionFacts,
 ) -> AdmissionSetup:

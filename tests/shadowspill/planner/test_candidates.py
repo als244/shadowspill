@@ -86,10 +86,10 @@ def test_candidate_evaluation_is_deterministic(
     )
     assert tuple(
         candidate.candidate_id
-        for problem in indexed.diagnostics.recomputation_problems
+        for problem in indexed.diagnostics.resolved_programs
         for candidate in problem.candidate_evaluations
     ) == tuple(
         candidate.candidate_id
-        for problem in repeated.diagnostics.recomputation_problems
+        for problem in repeated.diagnostics.resolved_programs
         for candidate in problem.candidate_evaluations
     )

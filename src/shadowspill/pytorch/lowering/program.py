@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from shadowspill.ir import DeviceSpec, Program, RecomputationGroup, TaskSpec
+from shadowspill.ir import DeviceSpec, Program, TaskAlternativeGroup, TaskSpec
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
 
 from .catalog import ObjectCatalog
@@ -21,7 +21,7 @@ def publish_program(
     tasks: tuple[TaskSpec, ...],
     *,
     device_ordinal: int,
-    recomputation_groups: tuple[RecomputationGroup, ...] = (),
+    task_alternative_groups: tuple[TaskAlternativeGroup, ...] = (),
 ) -> Program:
     """Freeze shared object, profile, and task inventories into canonical IR."""
 
@@ -32,7 +32,7 @@ def publish_program(
         objects=catalog.objects(),
         profiles=profiles.profiles,
         tasks=tasks,
-        recomputation_groups=recomputation_groups,
+        task_alternative_groups=task_alternative_groups,
     )
 
 

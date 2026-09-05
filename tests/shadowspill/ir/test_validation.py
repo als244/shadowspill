@@ -18,10 +18,10 @@ from shadowspill.ir import (
     PhysicalAdmission,
     PlanPrediction,
     Program,
-    RecomputationGroup,
-    RecomputationOption,
-    RecomputationSelection,
     ResidencySpec,
+    TaskAlternativeChoice,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
     TaskSpec,
     ValidationError,
 )
@@ -189,28 +189,28 @@ def test_simultaneously_active_writers_are_rejected() -> None:
     )
 
 
-def test_recomputation_groups_validate_membership_and_exclusivity() -> None:
+def test_task_alternative_groups_validate_membership_and_exclusivity() -> None:
     program = representative_program()
-    unknown = RecomputationGroup(
+    unknown = TaskAlternativeGroup(
         "bad_group",
-        (RecomputationOption("bad_option", ("missing_task",)),),
+        (TaskAlternativeOption("bad_option", ("missing_task",)),),
     )
     assert_invalid(
-        "program.recomputation_groups[1].options[0].active_task_ids",
+        "program.task_alternative_groups[1].options[0].active_task_ids",
         lambda: replace(
             program,
-            recomputation_groups=(*program.recomputation_groups, unknown),
+            task_alternative_groups=(*program.task_alternative_groups, unknown),
         ),
     )
-    overlapping = RecomputationGroup(
+    overlapping = TaskAlternativeGroup(
         "other_group",
-        (RecomputationOption("same_task", ("forward_save",)),),
+        (TaskAlternativeOption("same_task", ("forward_save",)),),
     )
     assert_invalid(
-        "program.recomputation_groups[1]",
+        "program.task_alternative_groups[1]",
         lambda: replace(
             program,
-            recomputation_groups=(*program.recomputation_groups, overlapping),
+            task_alternative_groups=(*program.task_alternative_groups, overlapping),
         ),
     )
 
@@ -220,15 +220,15 @@ def test_recomputation_groups_validate_membership_and_exclusivity() -> None:
     [
         (),
         (
-            RecomputationSelection("activation_tradeoff", "save"),
-            RecomputationSelection("activation_tradeoff", "save"),
+            TaskAlternativeChoice("activation_tradeoff", "save"),
+            TaskAlternativeChoice("activation_tradeoff", "save"),
         ),
-        (RecomputationSelection("missing_group", "save"),),
-        (RecomputationSelection("activation_tradeoff", "missing_option"),),
+        (TaskAlternativeChoice("missing_group", "save"),),
+        (TaskAlternativeChoice("activation_tradeoff", "missing_option"),),
     ],
 )
-def test_recomputation_selection_is_total_and_unique(
-    selections: tuple[RecomputationSelection, ...],
+def test_graph_pair_selection_is_total_and_unique(
+    selections: tuple[TaskAlternativeChoice, ...],
 ) -> None:
     assert_invalid(
         "selections",

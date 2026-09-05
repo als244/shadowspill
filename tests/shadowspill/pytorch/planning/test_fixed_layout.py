@@ -20,8 +20,8 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
-    RecomputationProblemDiagnostics,
     ResidentSlice,
+    ResolvedProgramDiagnostics,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
@@ -55,8 +55,8 @@ def _selected(
             selected_candidate_id="fixture",
             selected_selection_id="fixture",
             selected_makespan_ns=simulation.makespan_ns,
-            recomputation_problems=(
-                RecomputationProblemDiagnostics(
+            resolved_programs=(
+                ResolvedProgramDiagnostics(
                     selection_id="fixture",
                     choices=(),
                     selected_candidate_id="fixture",

@@ -22,8 +22,8 @@ from .json import (
     _string,
     without_measurements,
 )
-from .selections import (
-    RecomputationProblemDiagnostics,
+from .resolved_programs import (
+    ResolvedProgramDiagnostics,
 )
 
 
@@ -36,21 +36,21 @@ class PressureFitDiagnostics:
     selected_candidate_id: str
     selected_selection_id: str
     selected_makespan_ns: int
-    recomputation_problems: tuple[RecomputationProblemDiagnostics, ...]
+    resolved_programs: tuple[ResolvedProgramDiagnostics, ...]
     work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
     effective_object_capacity_bytes: int | None = None
 
     def __post_init__(self) -> None:
-        problem_ids = tuple(item.selection_id for item in self.recomputation_problems)
+        problem_ids = tuple(item.selection_id for item in self.resolved_programs)
         if len(problem_ids) != len(set(problem_ids)):
-            raise ValueError("recomputation selection appears more than once")
+            raise ValueError("resolution appears more than once")
         selected_problem = tuple(
             problem
-            for problem in self.recomputation_problems
+            for problem in self.resolved_programs
             if problem.selection_id == self.selected_selection_id
         )
         if len(selected_problem) != 1:
-            raise ValueError("selected recomputation problem is not unique")
+            raise ValueError("selected resolved program is not unique")
         problem = selected_problem[0]
         if problem.selected_candidate_id != self.selected_candidate_id:
             raise ValueError("global and problem candidate selections disagree")
@@ -60,13 +60,13 @@ class PressureFitDiagnostics:
     def _candidate_evaluations(self) -> tuple[CandidateDiagnostic, ...]:
         return tuple(
             candidate
-            for problem in self.recomputation_problems
+            for problem in self.resolved_programs
             for candidate in problem.candidate_evaluations
         )
 
     @property
-    def recomputation_problem_count(self) -> int:
-        return len(self.recomputation_problems)
+    def resolved_program_count(self) -> int:
+        return len(self.resolved_programs)
 
     @property
     def candidate_policy_count(self) -> int:
@@ -81,10 +81,10 @@ class PressureFitDiagnostics:
         return sum(item.status == "valid" for item in self._candidate_evaluations())
 
     @property
-    def valid_recomputation_problem_count(self) -> int:
+    def valid_resolved_program_count(self) -> int:
         return sum(
             problem.selected_candidate_id is not None
-            for problem in self.recomputation_problems
+            for problem in self.resolved_programs
         )
 
     @property
@@ -119,12 +119,12 @@ class PressureFitDiagnostics:
             )
             if problem.selection_id == self.selected_selection_id
             else problem
-            for problem in self.recomputation_problems
+            for problem in self.resolved_programs
         )
         return replace(
             self,
             selected_makespan_ns=makespan_ns,
-            recomputation_problems=problems,
+            resolved_programs=problems,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -136,9 +136,9 @@ class PressureFitDiagnostics:
                 "makespan_ns": self.selected_makespan_ns,
             },
             "summary": {
-                "recomputation_problem_count": self.recomputation_problem_count,
+                "recomputation_problem_count": self.resolved_program_count,
                 "valid_recomputation_problem_count": (
-                    self.valid_recomputation_problem_count
+                    self.valid_resolved_program_count
                 ),
                 "candidate_policy_count": self.candidate_policy_count,
                 "candidate_evaluation_count": self.candidate_evaluation_count,
@@ -155,7 +155,7 @@ class PressureFitDiagnostics:
                 ),
             },
             "recomputation_problems": [
-                item.to_dict() for item in self.recomputation_problems
+                item.to_dict() for item in self.resolved_programs
             ],
         }
 
@@ -177,13 +177,13 @@ class PressureFitDiagnostics:
             data.get("capacity_refinement"), f"{path}.capacity_refinement"
         )
         problems = tuple(
-            RecomputationProblemDiagnostics.from_value(
-                item, f"{path}.recomputation_problems[{index}]"
+            ResolvedProgramDiagnostics.from_value(
+                item, f"{path}.resolved_programs[{index}]"
             )
             for index, item in enumerate(
                 _list(
                     data.get("recomputation_problems"),
-                    f"{path}.recomputation_problems",
+                    f"{path}.resolved_programs",
                 )
             )
         )
@@ -197,7 +197,7 @@ class PressureFitDiagnostics:
             selected_makespan_ns=_integer(
                 selection.get("makespan_ns"), f"{path}.selection.makespan_ns"
             ),
-            recomputation_problems=problems,
+            resolved_programs=problems,
             work=PressureFitWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
@@ -212,10 +212,8 @@ class PressureFitDiagnostics:
         if declared_repairs != result.repairs:
             raise ValueError(f"{path}.repairs does not match candidate repairs")
         expected_summary = {
-            "recomputation_problem_count": result.recomputation_problem_count,
-            "valid_recomputation_problem_count": (
-                result.valid_recomputation_problem_count
-            ),
+            "recomputation_problem_count": result.resolved_program_count,
+            "valid_recomputation_problem_count": (result.valid_resolved_program_count),
             "candidate_policy_count": result.candidate_policy_count,
             "candidate_evaluation_count": result.candidate_evaluation_count,
             "valid_candidate_evaluation_count": (

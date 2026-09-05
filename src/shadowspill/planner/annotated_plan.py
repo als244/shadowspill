@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from shadowspill.ir import MemorySchedule, RecomputationSelection, ResidencySpec
+from shadowspill.ir import MemorySchedule, ResidencySpec, TaskAlternativeChoice
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.program_inputs import (
     MemoryBudgets,
@@ -239,7 +239,7 @@ class AnnotatedProgramPlan:
             selection.get("selections"), "annotated_program_plan.selection.selections"
         )
         selections = tuple(
-            RecomputationSelection.from_value(
+            TaskAlternativeChoice.from_value(
                 item, f"annotated_program_plan.selection.selections[{index}]"
             )
             for index, item in enumerate(selection_values)

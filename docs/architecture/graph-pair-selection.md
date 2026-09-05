@@ -1,10 +1,10 @@
-# Recomputation selection
+# Graph-pair selection
 
-Recomputation selection constructs the finite family of complete Program task
+Graph-pair selection constructs the finite family of complete Program task
 selections that PressureFit evaluates. It consumes the occurrence-level
 options produced by [graph-pair construction](graph-pair-construction.md), but
 does not capture, compile, or profile graphs. It is also separate from
-[PressureFit](pressurefit.md): recomputation decides **which executable task
+[PressureFit](pressurefit.md): selection decides **which executable task
 alternative is active**, while PressureFit decides **where the resulting
 objects reside and when they move**.
 
@@ -12,8 +12,8 @@ The common PyTorch training case gives each differentiated stage occurrence a
 `save` graph pair and a `recompute` graph pair. Structurally equivalent
 occurrences share graph construction and profiling, but remain separate
 Program choices because their lifetimes and surrounding pressure differ. The
-framework-neutral IR is more general: a `RecomputationGroup` may expose any
-finite set of mutually exclusive `RecomputationOption` values, and Programs
+framework-neutral IR is more general: a `TaskAlternativeGroup` may expose any
+finite set of mutually exclusive `TaskAlternativeOption` values, and Programs
 may contain no groups at all.
 
 For example, two occurrences can share one set of structural graph pairs while still
@@ -36,20 +36,73 @@ Selection emits a bounded collection of complete rows like $r_0,r_1,r_2$.
 It never returns a partial assignment and never treats one structural cache
 entry as one global choice for all of its occurrences.
 
+## Vocabulary
+
+Five terms name five different things, and they are told apart by what each
+one fixes:
+
+| Term | What it is | Who fixes it |
+|---|---|---|
+| Graph-pair group | One occurrence-level set of mutually exclusive alternatives, `TaskAlternativeGroup`. | [Graph-pair construction](graph-pair-construction.md), one per differentiated stage occurrence |
+| Graph-pair option | One alternative in a group, `TaskAlternativeOption`: the tasks it activates and the aliases it retains. | Graph-pair construction |
+| Graph-pair choice | One option fixed for one group, `TaskAlternativeChoice`. | Selection, one per group |
+| Graph-pair selection | One option fixed for **every** group: one complete row. | Selection, as the bounded family below |
+| Graph-pair problem | The question one selection poses to PressureFit, and the diagnostics record its answer produces. | [PressureFit](pressurefit.md), one per selection |
+
+The two that are easiest to confuse differ only in how much they fix:
+
+```text
+choice     (g0, save)                          one option, one group
+selection  {g0: save, g1: recompute, g2: save} one option, every group
+```
+
+Two neighbouring terms are deliberately outside the family. A **candidate
+policy** — a residency strategy, fetch rule, and coalescing mode — is
+evaluated *within* one problem, so a plan is chosen by a selection and a
+policy together, and "selection" alone never means the policy.
+**Recomputation** keeps its own name wherever it is the subject: a graph pair
+either recomputes or it does not, and `recomputation_overhead_seconds` is the
+compute a selection spends above the cheapest option of every group.
+
+### Where the name applies
+
+A graph pair is a forward graph and its backward graph, so this whole family
+is training vocabulary. The neutral tree does not use it. `shadowspill.ir`,
+`shadowspill.planner`, `shadowspill.simulator` and `shadowspill.runtime` plan
+any **resolved program** — a Program with every alternative fixed, leaving one
+concrete task set — and an inference Program resolves a forward partition with
+no pair in sight. So the IR names the general case: a `TaskAlternativeGroup`
+owns mutually exclusive `TaskAlternativeOption` values, and a
+`TaskAlternativeChoice` fixes one option for one group.
+
+A graph-pair selection is the training-specific instance of that. The frontend
+builds each group's options from the forward/backward pairs of one structural
+contract, so a complete selection resolves the program by fixing one pair per
+occurrence. That is why [PressureFit](pressurefit.md) and [from a resolved
+program to leases](admission-leases.md) are written in terms of resolved
+programs while this page is written in terms of graph pairs: the same object,
+named from whichever side of the boundary is speaking.
+
+The serialized keys spell three of these differently — `recomputation_groups`
+in the Program JSON, `recomputation_selection` and `recomputation_problems` in
+the plan store. Those keys are identity rather than prose: `Program.digest` is
+computed over the Program's own JSON, and every plan-store key derives from
+it, so a key moves only with a schema version and a recollected corpus.
+
 ## Inputs and output
 
 The planner consumes only immutable Program facts:
 
-- ordered `RecomputationGroup` values;
+- ordered `TaskAlternativeGroup` values;
 - each option's `option_id`, active task IDs, and retained alias IDs;
 - task-profile runtimes and alias sizes;
 - the selected task dependency graph and task phases.
 
-It returns a tuple of complete `RecomputationSelection` tuples. Each complete
+It returns a tuple of complete `TaskAlternativeChoice` tuples. Each complete
 selection chooses exactly one option for every group and becomes one parent
 problem in PressureFit diagnostics.
 
-The recomputation selector does not consider execution capacity, spill
+The graph-pair selector does not consider execution capacity, spill
 capacity, transfer bandwidth, residency, or simulated makespan. PressureFit
 evaluates those consequences after the resolutions have been built.
 
@@ -78,7 +131,7 @@ and contention; PressureFit's simulator evaluates those jointly.
 
 ### No groups
 
-A Program without recomputation groups yields one empty selection. PressureFit
+A Program without graph-pair groups yields one empty selection. PressureFit
 then operates as an ordinary residency and transfer planner.
 
 ### Small products
@@ -126,11 +179,14 @@ deduplication.
 
 ## Terminal forward groups
 
-Every recomputation group whose forward tasks are sinks of the selected
+Every graph-pair group whose forward tasks are sinks of the selected
 forward dependency graph is required to expose exactly one option named
 `save`. That option is pinned in every resolution. Terminal forward
 groups are therefore not treated as recomputation degrees of freedom by the
-current policy.
+current policy. The rule names the `forward` phase deliberately: a Program
+that declares no forward phase pins nothing and keeps every alternative open.
+See [phases and sinks](ir.md#phases-and-sinks) for what sink means and why
+generalising the rule would be worse than naming the phase.
 
 The rule is graph-derived: it uses task phase and dependency edges, not model
 family, module name, stage number, or operator identity.
@@ -139,7 +195,7 @@ family, module name, stage number, or operator identity.
 
 ```text
 Resolutions(program):
-    groups = program.recomputation_groups
+    groups = program.task_alternative_groups
     if groups is empty:
         return [empty selection]
 

@@ -12,8 +12,8 @@ from shadowspill.ir import (
     PhysicalAdmission,
     PlanPrediction,
     Program,
-    RecomputationSelection,
     ResidencySpec,
+    TaskAlternativeChoice,
 )
 from shadowspill.simulator import SimulationConfig, SimulationResult
 
@@ -104,7 +104,7 @@ class PressureFitResult:
     final_residency: tuple[ResidencySpec, ...]
     simulation_config: SimulationConfig
     schedule: MemorySchedule
-    selections: tuple[RecomputationSelection, ...]
+    selections: tuple[TaskAlternativeChoice, ...]
     simulation: SimulationResult
     diagnostics: PressureFitDiagnostics
     resident_slice: ResidentSlice = ResidentSlice(0, ())

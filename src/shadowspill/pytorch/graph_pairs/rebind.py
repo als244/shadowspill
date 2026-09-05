@@ -1,4 +1,4 @@
-"""Bind one structural graph-pair graph_pairs to a stage occurrence."""
+"""Bind one structural `TaskGraphPairs` to a stage occurrence."""
 
 from __future__ import annotations
 

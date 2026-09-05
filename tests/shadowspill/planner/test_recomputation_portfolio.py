@@ -7,10 +7,10 @@ from shadowspill.ir import (
     DeviceSpec,
     ObjectSpec,
     Program,
-    RecomputationGroup,
-    RecomputationOption,
     ResourceKind,
     ResourceSpec,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
     TaskProfile,
     TaskSpec,
 )
@@ -33,7 +33,7 @@ def _binary_program(group_count: int) -> Program:
         TaskProfile("recompute_profile", 20, 0, "recompute_abi"),
     )
     tasks: list[TaskSpec] = []
-    groups: list[RecomputationGroup] = []
+    groups: list[TaskAlternativeGroup] = []
     for index in range(group_count):
         save_task = f"save_task_{index}"
         recompute_task = f"recompute_task_{index}"
@@ -44,15 +44,15 @@ def _binary_program(group_count: int) -> Program:
             )
         )
         groups.append(
-            RecomputationGroup(
+            TaskAlternativeGroup(
                 f"choice_{index}",
                 (
-                    RecomputationOption(
+                    TaskAlternativeOption(
                         "save",
                         (save_task,),
                         (f"saved_{index}",),
                     ),
-                    RecomputationOption("recompute", (recompute_task,)),
+                    TaskAlternativeOption("recompute", (recompute_task,)),
                 ),
             )
         )
@@ -62,7 +62,7 @@ def _binary_program(group_count: int) -> Program:
         objects=objects,
         profiles=profiles,
         tasks=tuple(tasks),
-        recomputation_groups=tuple(groups),
+        task_alternative_groups=tuple(groups),
     )
 
 

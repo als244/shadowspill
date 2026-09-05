@@ -17,17 +17,17 @@ from shadowspill.ir import (
     PhysicalAdmission,
     PlanPrediction,
     Program,
-    RecomputationGroup,
-    RecomputationOption,
-    RecomputationSelection,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    TaskAlternativeChoice,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
     TaskProfile,
     TaskSpec,
 )
 
-SAVE_SELECTION = (RecomputationSelection("activation_tradeoff", "save"),)
+SAVE_SELECTION = (TaskAlternativeChoice("activation_tradeoff", "save"),)
 
 
 def representative_program() -> Program:
@@ -110,16 +110,16 @@ def representative_program() -> Program:
                 phase="backward",
             ),
         ),
-        recomputation_groups=(
-            RecomputationGroup(
+        task_alternative_groups=(
+            TaskAlternativeGroup(
                 "activation_tradeoff",
                 (
-                    RecomputationOption(
+                    TaskAlternativeOption(
                         "save",
                         ("forward_save",),
                         ("activation_storage",),
                     ),
-                    RecomputationOption("recompute", ("forward_recompute",)),
+                    TaskAlternativeOption("recompute", ("forward_recompute",)),
                 ),
             ),
         ),

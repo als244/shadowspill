@@ -31,7 +31,7 @@ def _steps(value: object, path: str) -> tuple[ReductionStep, ...]:
 
 @dataclass(frozen=True, slots=True)
 class CandidateDiagnostic:
-    """One candidate policy evaluated in one recomputation problem.
+    """One candidate policy evaluated in one resolved program.
 
     ``candidate_id`` identifies only the reusable policy: residency strategy,
     fetch rule, and coalescing mode.  ``selection_id`` is the parent-problem

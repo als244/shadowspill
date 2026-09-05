@@ -1,7 +1,7 @@
 # Simulation
 
 The simulator deterministically replays an explicit `Program`,
-`MemorySchedule`, recomputation selection, device configuration, and optional
+`MemorySchedule`, graph-pair selection, device configuration, and optional
 physical admission. It never invokes the planner. [PressureFit](pressurefit.md)
 calls it while evaluating candidates, and the same public API can evaluate a
 supplied schedule independently.

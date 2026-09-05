@@ -698,7 +698,7 @@ def _report_training_program_inventory(
         f"tasks={len(recurrent.program.tasks)}, "
         f"objects={len(recurrent.program.objects)}, "
         f"aliases={len(recurrent.program.alias_groups)}, "
-        f"recomputation_groups={len(recurrent.program.recomputation_groups)}, "
+        f"task_alternative_groups={len(recurrent.program.task_alternative_groups)}, "
         f"largest_workspace={largest.workspace_bytes} ({largest.profile_id})"
     )
 
@@ -1465,6 +1465,7 @@ def build_training(
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
     minimum_object_bytes_evict_eligible: int = 0,
+    deterministic: bool = False,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries."""
 
@@ -1512,7 +1513,8 @@ def build_training(
             options=PressureFitOptions(
                 minimum_object_bytes_evict_eligible=(
                     minimum_object_bytes_evict_eligible
-                )
+                ),
+                deterministic=deterministic,
             ),
             stores=artifacts,
             timer=timer,
