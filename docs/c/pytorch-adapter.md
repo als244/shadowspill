@@ -124,10 +124,6 @@ IDs. The adapter does not infer routes from global runtime roles.
 
 Task calls mirror the neutral runtime:
 
-- `shadowspill_pytorch_wait_task_allocations()` forwards the boundary's
-  range-reuse resolution to the neutral runtime on the caller's current
-  compute stream. Its operator carries no tensor, so it is registered against
-  the schema rather than against a dispatch key.
 - `shadowspill_pytorch_before_task_handle()` and
   `shadowspill_pytorch_after_task_handle()` are the production task boundary.
   The before boundary exposes the task-owned borrowed binding array instead
@@ -137,6 +133,11 @@ Task calls mirror the neutral runtime:
   admitted handle; no parallel task ID or mutable label table exists. The
   after boundary returns once the continuously active worker acknowledges
   submission of eligible actions, not when their asynchronous copies finish.
+- The allocation wait between them is an operator rather than an entry point
+  here: `torch.ops.shadowspill._wait_task_allocations` forwards the
+  boundary's range-reuse resolution to the neutral runtime on the caller's
+  current compute stream. It carries no tensor, so it is registered against
+  the schema rather than against a dispatch key.
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission

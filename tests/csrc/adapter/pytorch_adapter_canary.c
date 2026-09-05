@@ -337,7 +337,7 @@ static int scopes(void) {
     return 0;
 }
 
-/* The task boundary: before, an allocation, the wait, after; then abort. */
+/* The task boundary: before, an allocation, after; then abort. */
 static int tasks(ShadowSpillRuntime *runtime) {
     const ShadowSpillTaskDescription task = {
         .task_id = 1U,
@@ -368,11 +368,6 @@ static int tasks(ShadowSpillRuntime *runtime) {
     void *const scratch = shadowspill_pytorch_backend_malloc(1024, 0, DEFAULT_STREAM);
     REQUIRE(scratch != NULL, "a request inside a task failed");
     shadowspill_pytorch_backend_free(scratch, 1024U, 0, DEFAULT_STREAM);
-    REQUIRE(
-        shadowspill_pytorch_wait_task_allocations(handle, 0U) ==
-            SHADOWSPILL_STATUS_OK,
-        "wait_task_allocations failed"
-    );
     REQUIRE(
         shadowspill_pytorch_after_task_handle(handle, 0U) ==
             SHADOWSPILL_STATUS_OK,

@@ -226,12 +226,6 @@ shadowspill_pytorch_before_task_handle(
     uint32_t *binding_count
 );
 
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_wait_task_allocations(
-    uintptr_t task_handle,
-    uintptr_t compute_stream_address
-);
-
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_pytorch_after_task_handle(
     uintptr_t task_handle,

@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include "../internal.h"
+
 #include <stdio.h>
 
 ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
