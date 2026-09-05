@@ -192,6 +192,7 @@ else a run writes has a fixed name inside the run directory.
        graph_pair_selections.csv   one row per geometry, budget and
                                    graph-pair selection
        run_budgets.csv             one row per executed budget
+       steps.csv                   one row per budget and step
      real/
        throughput.png              measured against simulated, per run budget
        sim_fidelity.png            how far the prediction fell at each budget,
