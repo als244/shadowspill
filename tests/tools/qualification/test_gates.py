@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,11 +14,19 @@ from tools.qualification.gates import GATE_ORDER, _suite_report, run_gates
 
 
 class _FakeProcess:
-    """Enough of Popen for a gate: lines to stream, then a return code."""
+    """Enough of Popen for a gate: output to stream, then a return code.
+
+    A real pipe rather than an iterable of lines, because the runner streams
+    by file descriptor so that a gate reporting progress without newlines
+    still appears while it runs.
+    """
 
     def __init__(self, returncode: int) -> None:
         self._returncode = returncode
-        self.stdout = iter(["one line of gate output\n"])
+        read_descriptor, write_descriptor = os.pipe()
+        os.write(write_descriptor, b"one line of gate output\n")
+        os.close(write_descriptor)
+        self.stdout = os.fdopen(read_descriptor, "rb")
 
     def wait(self) -> int:
         return self._returncode

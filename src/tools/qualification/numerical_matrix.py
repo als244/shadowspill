@@ -224,10 +224,22 @@ def _run_case(
             payload = candidate
     if payload is not None:
         passed = bool(return_code == 0 and payload.get("passed") is True)
-        failure_categories = tuple(payload.get("failure_categories") or ())
-        failures = tuple(
-            f"{item['category']}: {item['detail']}"
-            for item in payload.get("failures") or ()
+        # Read back from JSON, so every member is object until it is checked.
+        raw_categories = payload.get("failure_categories")
+        failure_categories = (
+            tuple(str(item) for item in raw_categories)
+            if isinstance(raw_categories, list)
+            else ()
+        )
+        raw_failures = payload.get("failures")
+        failures = (
+            tuple(
+                f"{item['category']}: {item['detail']}"
+                for item in raw_failures
+                if isinstance(item, dict)
+            )
+            if isinstance(raw_failures, list)
+            else ()
         )
     if not passed and return_code == 0:
         return_code = 1
@@ -255,7 +267,7 @@ def main() -> int:
         description=(
             "Run fresh-process compiled-reference/planned parity, checkpoint "
             "replay, transfer, and physical-budget gates while reporting "
-            "recomputation selections diagnostically."
+            "graph-pair selections diagnostically."
         )
     )
     parser.add_argument(

@@ -338,10 +338,30 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         _wait_idle(training)
         execution_baseline = adapter_statistics()
 
+        # State the plan's own prediction before the first group, so the
+        # measured lines below can be read against it as they appear, and the
+        # rates it was made against, because that is what it is only as good as.
+        predicted_step_seconds = report.predicted_makespan_ns / 1e9
+        planned = report.summary
+        print(
+            f"simulator predicts {manifest.identity}: "
+            f"{predicted_step_seconds:.4f} s/step, "
+            f"{manifest.tokens_per_step / predicted_step_seconds:.2f} tokens/s "
+            f"(planned with: fetch "
+            f"{planned.fetch_bandwidth_bytes_per_second / 1e9:.1f} GB/s, evict "
+            f"{planned.evict_bandwidth_bytes_per_second / 1e9:.1f} GB/s)"
+            f"; unconstrained throughput "
+            f"{planned.unconstrained_step_seconds:.4f} s/step, "
+            f"{manifest.tokens_per_step / planned.unconstrained_step_seconds:.2f}"
+            f" tokens/s",
+            flush=True,
+        )
+
         group_seconds: list[float] = []
         group_tokens_per_second: list[float] = []
         selected_spans: list[float] = []
         dispatch_seconds: list[float] = []
+        prior_invocation_drain_seconds: list[float] = []
         measured_objectives: list[list[float]] = []
         for group in range(arguments.groups):
             retained_results: list[Any] = []
@@ -354,6 +374,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                     profiler_annotations=arguments.profiler_annotations,
                 )
                 dispatch_seconds.append(time.perf_counter() - call_started)
+                prior_invocation_drain_seconds.append(
+                    training._collect_prior_invocation_drain_seconds()
+                )
                 selected_spans.append(training._collect_selected_span_seconds())
                 retained_results.append(step_result)
                 print(
@@ -392,7 +415,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         median_group_seconds = float(statistics.median(group_seconds))
         median_step_seconds = median_group_seconds / arguments.steps_per_group
         median_throughput = manifest.tokens_per_step / median_step_seconds
-        predicted_seconds = report.predicted_makespan_ns / 1e9
+        predicted_seconds = predicted_step_seconds
         simulator_relative_error = (
             (median_step_seconds - predicted_seconds) / predicted_seconds
             if predicted_seconds > 0.0
@@ -482,6 +505,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 statistics.median(selected_spans)
             ),
             "dispatch_seconds": dispatch_seconds,
+            "prior_invocation_drain_seconds": prior_invocation_drain_seconds,
             "predicted_makespan_seconds": predicted_seconds,
             "simulator_relative_error": simulator_relative_error,
             "simulator_gate_passed": simulator_passed,
