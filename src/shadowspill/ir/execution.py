@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from shadowspill.schema import artifact_schema
 
-from .program import Program, RecomputationSelection
+from .program import Program, TaskAlternativeChoice
 from .schedule import MemorySchedule
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
@@ -190,7 +190,7 @@ class PlanPrediction:
 class ExecutionPlan:
     program: Program
     schedule: MemorySchedule
-    selections: tuple[RecomputationSelection, ...]
+    selections: tuple[TaskAlternativeChoice, ...]
     entrypoints: tuple[EntrypointSpec, ...]
     admission: PhysicalAdmission
     prediction: PlanPrediction
@@ -271,7 +271,7 @@ class ExecutionPlan:
             program=Program.from_dict(field(data, "program", "plan")),
             schedule=MemorySchedule.from_dict(field(data, "schedule", "plan")),
             selections=tuple(
-                RecomputationSelection.from_value(item, f"plan.selections[{index}]")
+                TaskAlternativeChoice.from_value(item, f"plan.selections[{index}]")
                 for index, item in enumerate(selections)
             ),
             entrypoints=tuple(

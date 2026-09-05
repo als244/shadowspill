@@ -12,8 +12,8 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     Program,
-    RecomputationSelection,
     ResourceKind,
+    TaskAlternativeChoice,
     TaskSpec,
 )
 from shadowspill.simulator.model import (
@@ -88,7 +88,7 @@ class _Simulator:
         self,
         program: Program,
         schedule: MemorySchedule,
-        selections: tuple[RecomputationSelection, ...],
+        selections: tuple[TaskAlternativeChoice, ...],
         config: SimulationConfig,
         *,
         admission: SimulationAdmission | None,
@@ -1025,7 +1025,7 @@ def simulate_python(
     program: Program,
     schedule: MemorySchedule,
     *,
-    selections: tuple[RecomputationSelection, ...] = (),
+    selections: tuple[TaskAlternativeChoice, ...] = (),
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
     record_timeline: bool = False,

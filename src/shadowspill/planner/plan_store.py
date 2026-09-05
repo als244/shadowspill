@@ -15,8 +15,8 @@ from typing import Protocol
 from shadowspill.ir import (
     MemorySchedule,
     Program,
-    RecomputationSelection,
     ResidencySpec,
+    TaskAlternativeChoice,
 )
 from shadowspill.planner.artifact_store import ArtifactStore, digest_directory
 from shadowspill.schema import artifact_schema
@@ -190,7 +190,7 @@ class PlanStore:
         if not isinstance(raw_selections, list):
             raise ValueError(f"planned program {path} has invalid selections")
         selections = tuple(
-            RecomputationSelection.from_value(item, f"cache.selections[{index}]")
+            TaskAlternativeChoice.from_value(item, f"cache.selections[{index}]")
             for index, item in enumerate(raw_selections)
         )
         schedule.validate(program, selections)

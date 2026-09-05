@@ -97,7 +97,7 @@ def lower_partitioned_training_program(
             profiles,
             graph.tasks,
             device_ordinal=device_ordinal,
-            recomputation_groups=graph.recomputation_groups,
+            task_alternative_groups=graph.task_alternative_groups,
         ),
         initial_residency,
         final_residency,

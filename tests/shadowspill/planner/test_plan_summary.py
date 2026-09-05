@@ -6,7 +6,7 @@ from shadowspill.planner import PressureFitOptions
 from shadowspill.planner.diagnostics import (
     CandidateDiagnostic,
     PressureFitDiagnostics,
-    RecomputationProblemDiagnostics,
+    ResolvedProgramDiagnostics,
 )
 from shadowspill.planner.diagnostics.plan import PlanSummary, summarize_selected_plan
 from shadowspill.planner.result import PressureFitResult
@@ -54,8 +54,8 @@ def _result() -> PressureFitResult:
             selected_candidate_id="fixture",
             selected_selection_id="fixture",
             selected_makespan_ns=simulation.makespan_ns,
-            recomputation_problems=(
-                RecomputationProblemDiagnostics(
+            resolved_programs=(
+                ResolvedProgramDiagnostics(
                     selection_id="fixture",
                     choices=(),
                     selected_candidate_id="fixture",
@@ -114,10 +114,10 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
         + summary.terminal_writeback_seconds
     )
     assert abs(reassembled - summary.simulated_step_seconds) < 1e-12
-    assert summary.selection_count == len(SAVE_SELECTION)
+    assert summary.task_alternative_group_count == len(SAVE_SELECTION)
     # Save and recompute share one profile in the representative program, so
     # the chosen option is never strictly costlier than the cheapest.
-    assert summary.recompute_selection_count == 0
+    assert summary.recomputing_group_count == 0
     assert summary.recomputation_overhead_seconds == 0.0
 
 
@@ -128,8 +128,8 @@ def test_recompute_fraction_is_guarded_against_empty_selections() -> None:
         recomputation_overhead_seconds=0.0,
         idle_seconds=0.0,
         terminal_writeback_seconds=0.0,
-        recompute_selection_count=0,
-        selection_count=0,
+        recomputing_group_count=0,
+        task_alternative_group_count=0,
     )
-    assert empty.recompute_selection_fraction == 0.0
+    assert empty.recomputing_group_fraction == 0.0
     assert dict(empty.planning_phase_seconds) == {}

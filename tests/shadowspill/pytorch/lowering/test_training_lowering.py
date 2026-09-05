@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.errors import CaptureError
-from shadowspill.ir import RecomputationSelection
+from shadowspill.ir import TaskAlternativeChoice
 from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
@@ -267,7 +267,7 @@ def _lowered(
 
 def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     lowered = _lowered()
-    assert len(lowered.program.recomputation_groups) == 2
+    assert len(lowered.program.task_alternative_groups) == 2
     assert len(lowered.program.tasks) == 8 + len(lowered.optimizer_task_ids)
     assert len(lowered.gradients) == 2
     assert lowered.fixed_tensors == ()
@@ -276,17 +276,17 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
         not next(
             option for option in group.options if option.option_id == "recompute"
         ).retained_alias_group_ids
-        for group in lowered.program.recomputation_groups
+        for group in lowered.program.task_alternative_groups
     )
     assert any(
         next(
             option for option in group.options if option.option_id == "save"
         ).retained_alias_group_ids
-        for group in lowered.program.recomputation_groups
+        for group in lowered.program.task_alternative_groups
     )
     selections = tuple(
-        RecomputationSelection(group.group_id, "save")
-        for group in lowered.program.recomputation_groups
+        TaskAlternativeChoice(group.group_id, "save")
+        for group in lowered.program.task_alternative_groups
     )
     selected = lowered.program.selected_tasks(selections)
     assert [task.phase for task in selected[:4]] == [
@@ -300,15 +300,15 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
 
 def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
     lowered = _lowered(include_intermediate_variant=True)
-    assert len(lowered.program.recomputation_groups) == 2
+    assert len(lowered.program.task_alternative_groups) == 2
     assert all(
         tuple(option.option_id for option in group.options)
         == ("save", "recompute_050", "recompute")
-        for group in lowered.program.recomputation_groups
+        for group in lowered.program.task_alternative_groups
     )
     selections = tuple(
-        RecomputationSelection(group.group_id, "recompute_050")
-        for group in lowered.program.recomputation_groups
+        TaskAlternativeChoice(group.group_id, "recompute_050")
+        for group in lowered.program.task_alternative_groups
     )
     selected = lowered.program.selected_tasks(selections)
     assert [task.phase for task in selected[:4]] == [
@@ -518,7 +518,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
     lowered = lower_partitioned_training_program(
         model, (capture,), measurements, optimizer_capture
     )
-    assert len(lowered.program.recomputation_groups) == len(capture.stages)
+    assert len(lowered.program.task_alternative_groups) == len(capture.stages)
     alias_by_object = {
         item.object_id: item.alias_group_id for item in lowered.program.objects
     }

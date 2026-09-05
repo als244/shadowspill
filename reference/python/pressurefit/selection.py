@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 
-from shadowspill.ir import MemorySchedule, Program, RecomputationSelection
+from shadowspill.ir import MemorySchedule, Program, TaskAlternativeChoice
 from shadowspill.planner.capi import (
     CCandidateResult,
     CPlanCandidate,
@@ -22,7 +22,7 @@ class SelectionCandidate:
 
     program: Program
     schedule: MemorySchedule
-    selections: tuple[RecomputationSelection, ...]
+    selections: tuple[TaskAlternativeChoice, ...]
     config: SimulationConfig
     candidate_id: int
     selection_id: int

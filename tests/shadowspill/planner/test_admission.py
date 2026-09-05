@@ -642,7 +642,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         ),
     )
 
-    diagnostic = result.diagnostics.recomputation_problems[0].candidate_evaluations[0]
+    diagnostic = result.diagnostics.resolved_programs[0].candidate_evaluations[0]
     assert diagnostic.repairs.total_attempts == 2
     assert diagnostic.repairs.admission_fetch_delay_attempts == 1
     assert diagnostic.repairs.admission_pressure_boundary_attempts == 1

@@ -9,11 +9,11 @@ from shadowspill.ir import (
     MutationSpec,
     ObjectSpec,
     Program,
-    RecomputationGroup,
-    RecomputationOption,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
     TaskProfile,
     TaskSpec,
 )
@@ -176,16 +176,16 @@ def recomputation_program() -> Program:
                 inputs=("activation",),
             ),
         ),
-        recomputation_groups=(
-            RecomputationGroup(
+        task_alternative_groups=(
+            TaskAlternativeGroup(
                 "activation_tradeoff",
                 (
-                    RecomputationOption(
+                    TaskAlternativeOption(
                         "save",
                         ("forward_save",),
                         ("activation_storage",),
                     ),
-                    RecomputationOption(
+                    TaskAlternativeOption(
                         "recompute",
                         ("forward_recompute",),
                     ),

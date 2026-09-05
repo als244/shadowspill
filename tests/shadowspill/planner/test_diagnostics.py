@@ -8,9 +8,9 @@ from shadowspill.planner import (
     PressureFitRepairDiagnostics,
     PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
-    RecomputationChoiceDiagnostic,
-    RecomputationProblemDiagnostics,
     ReductionStep,
+    ResolvedProgramDiagnostics,
+    TaskAlternativeChoiceDiagnostic,
 )
 
 
@@ -59,9 +59,9 @@ def _diagnostics() -> PressureFitDiagnostics:
         work=candidate_work,
         steps=(step,),
     )
-    problem = RecomputationProblemDiagnostics(
+    problem = ResolvedProgramDiagnostics(
         selection_id=selection_id,
-        choices=(RecomputationChoiceDiagnostic("stage_0", "recompute"),),
+        choices=(TaskAlternativeChoiceDiagnostic("stage_0", "recompute"),),
         selected_candidate_id=candidate.candidate_id,
         selected_makespan_ns=1_000,
         candidate_evaluations=(candidate,),
@@ -84,7 +84,7 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_candidate_id=candidate.candidate_id,
         selected_selection_id=selection_id,
         selected_makespan_ns=1_000,
-        recomputation_problems=(problem,),
+        resolved_programs=(problem,),
         work=PressureFitWorkDiagnostics(
             schedule_emissions=1,
             simulation_calls=4,
@@ -108,12 +108,12 @@ def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
     restored = PressureFitDiagnostics.from_value(source.to_dict(), "diagnostics")
 
     assert restored == source
-    assert restored.recomputation_problem_count == 1
+    assert restored.resolved_program_count == 1
     assert restored.candidate_policy_count == 1
     assert restored.candidate_evaluation_count == 1
     assert restored.repairs.total_attempts == 3
     assert restored.repairs.pressure_boundary_attempts == 2
-    candidate = restored.recomputation_problems[0].candidate_evaluations[0]
+    candidate = restored.resolved_programs[0].candidate_evaluations[0]
     assert candidate.residency_strategy == "tight-transfer"
     assert candidate.fetch_rule == "latest-safe"
     assert candidate.coalesced
@@ -157,9 +157,9 @@ def test_physical_prediction_updates_nested_selected_candidate() -> None:
 
     assert source.selected_makespan_ns == 1_000
     assert updated.selected_makespan_ns == 1_250
-    problem = updated.recomputation_problems[0]
+    problem = updated.resolved_programs[0]
     assert problem.selected_makespan_ns == 1_250
     assert problem.candidate_evaluations[0].makespan_ns == 1_250
     assert problem.candidate_evaluations[0].work == (
-        source.recomputation_problems[0].candidate_evaluations[0].work
+        source.resolved_programs[0].candidate_evaluations[0].work
     )

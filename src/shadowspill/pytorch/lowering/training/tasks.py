@@ -8,10 +8,10 @@ from typing import Literal
 from shadowspill.errors import CaptureError
 from shadowspill.ir import (
     MutationSpec,
-    RecomputationGroup,
-    RecomputationOption,
     ResourceKind,
     ResourceSpec,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
     TaskSpec,
 )
 from shadowspill.pytorch.optimizer import (
@@ -80,7 +80,7 @@ class _TrainingTaskEmitter:
         for position, variants in enumerate(self.prepared):
             self._emit_forwards(position, variants, completion_ids)
             completion_ids = self._emit_backwards(position, variants)
-        groups = self._recomputation_groups()
+        groups = self._task_alternative_groups()
         self._emit_tail_optimizer()
         if not self.optimizer_task_ids:
             raise CaptureError("optimizer has no executable task components")
@@ -427,12 +427,12 @@ class _TrainingTaskEmitter:
         )
         return by_stage, unplaced
 
-    def _recomputation_groups(self) -> tuple[RecomputationGroup, ...]:
+    def _task_alternative_groups(self) -> tuple[TaskAlternativeGroup, ...]:
         return tuple(
-            RecomputationGroup(
+            TaskAlternativeGroup(
                 f"recompute_{position:04d}_{stage_index:04d}",
                 tuple(
-                    RecomputationOption(
+                    TaskAlternativeOption(
                         variant,
                         (
                             self.forward_ids[(position, stage_index, variant)],

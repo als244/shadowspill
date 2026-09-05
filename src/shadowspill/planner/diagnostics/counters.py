@@ -233,7 +233,7 @@ class PressureFitWorkDiagnostics:
     Invocation-level values include shared work performed before or across
     candidates. Consequently they need not equal the sum of candidate values.
     Times are summed section work, not necessarily elapsed wall time when
-    independent recomputation problems are evaluated concurrently.
+    independent resolved programs are evaluated concurrently.
     """
 
     schedule_emissions: int = 0

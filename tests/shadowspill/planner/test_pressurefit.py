@@ -351,16 +351,14 @@ def test_objects_under_the_eligibility_threshold_are_never_cut() -> None:
     assert ("retained", MemoryActionKind.EVICT) in {
         (action.alias_group_id, action.kind) for action in restricted.schedule.actions
     }
-    problem = restricted.diagnostics.recomputation_problems[0]
+    problem = restricted.diagnostics.resolved_programs[0]
     assert problem.evict_ineligible_aliases == 1
     assert problem.evict_ineligible_bytes == 8
     # Given a static home of its own, in a slice the main layout never sees.
     assert restricted.resident_slice.bytes == 8
     assert restricted.resident_slice.aliases == ("later",)
     assert unrestricted.resident_slice.bytes == 0
-    assert (
-        unrestricted.diagnostics.recomputation_problems[0].evict_ineligible_aliases == 0
-    )
+    assert unrestricted.diagnostics.resolved_programs[0].evict_ineligible_aliases == 0
 
 
 def test_eligibility_threshold_is_validated() -> None:

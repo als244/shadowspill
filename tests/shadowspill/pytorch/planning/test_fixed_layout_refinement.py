@@ -9,7 +9,7 @@ from shadowspill.planner import (
     PressureFitDiagnostics,
     PressureFitOptions,
     PressureFitResult,
-    RecomputationProblemDiagnostics,
+    ResolvedProgramDiagnostics,
     TaskAdmissionSpec,
 )
 from shadowspill.planner.plan_store import PlanLookup
@@ -48,8 +48,8 @@ def _selection(
                 selected_candidate_id="candidate",
                 selected_selection_id="selection",
                 selected_makespan_ns=simulation.makespan_ns,
-                recomputation_problems=(
-                    RecomputationProblemDiagnostics(
+                resolved_programs=(
+                    ResolvedProgramDiagnostics(
                         selection_id="selection",
                         choices=(),
                         selected_candidate_id="candidate",

@@ -38,7 +38,7 @@ Logical program values:
 - `SharedResidencyPolicy`
 - `SharedResidencyFootprint`, `shared_residency_footprint()`
 - `ResourceSpec`, `ResourceKind`, `DeviceSpec`
-- `RecomputationGroup`, `RecomputationOption`, `RecomputationSelection`
+- `TaskAlternativeGroup`, `TaskAlternativeOption`, `TaskAlternativeChoice`
 
 Scheduling and execution values:
 
@@ -96,7 +96,7 @@ Call `validate_schedule_feasibility()` to check whether at least one legal
 Program selection satisfies the required task-by-task residency floor. Use
 `simulate()` to validate an explicit schedule. See the [PressureFit
 formulation and algorithm](../../architecture/pressurefit.md) and the separate
-[recomputation selector](../../architecture/recomputation-selection.md). The
+[graph-pair selector](../../architecture/graph-pair-selection.md). The
 task-allocation topology and exact range certificate are described in
 [physical admission](../../architecture/physical-admission.md), and how a
 schedule becomes leases in [from a resolved program to
@@ -147,7 +147,7 @@ in the `ResidentSlice` the result carries — their sum, one home per lease,
 sized at problem preparation — and the capacity the reducer plans against is
 reduced by that slice, so they are never charged again. A slice a budget
 cannot hold is reported as infeasible
-rather than quietly relaxed, and each recomputation problem reports how many
+rather than quietly relaxed, and each graph-pair problem reports how many
 objects it held, their bytes, and their peak resident bytes.
 
 Configuration and results:
@@ -160,7 +160,7 @@ Configuration and results:
 
 Search diagnostics:
 
-- `RecomputationChoiceDiagnostic`, `RecomputationProblemDiagnostics`
+- `TaskAlternativeChoiceDiagnostic`, `ResolvedProgramDiagnostics`
 - `CandidateDiagnostic`
 - `PressureFitRepairDiagnostics`, `PressureFitWorkDiagnostics`
 - `PressureFitSectionTiming`, `ReductionStep`
@@ -177,7 +177,7 @@ built.
 Sections measure work rather than elapsed time, so with several workers a
 resolved program's total exceeds the time the call took. `started_ns` and
 `finished_ns`, on both `CandidateDiagnostic` and
-`RecomputationProblemDiagnostics`, are the elapsed-time counterpart:
+`ResolvedProgramDiagnostics`, are the elapsed-time counterpart:
 nanoseconds from the start of the call, shared by every span in it, so two
 candidates ran at the same time exactly when their spans overlap.
 

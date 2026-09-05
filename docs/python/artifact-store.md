@@ -186,7 +186,7 @@ simulation, admission_digest, options, selections, schedule,
 resident_slice, diagnostics
 ```
 
-`selections` is the recomputation choice per group and `schedule` the memory
+`selections` is the task-alternative choice per group and `schedule` the memory
 schedule it implies. Reading one re-derives the request fields and rejects a
 mismatch, which is what makes a stale entry an error rather than a silent
 wrong answer.
