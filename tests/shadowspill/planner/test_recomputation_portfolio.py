@@ -81,12 +81,12 @@ def test_a_small_inventory_is_resolved_exhaustively() -> None:
     assert options[-1] == ("recompute",) * 6
 
 
-def test_a_large_binary_inventory_uses_even_group_quarters() -> None:
+def test_a_large_binary_inventory_uses_even_group_eighths() -> None:
     options = _option_ids(_binary_program(8))
 
-    assert tuple(item.count("recompute") for item in options) == (0, 2, 4, 6, 8)
+    assert tuple(item.count("recompute") for item in options) == tuple(range(9))
     assert options[0] == ("save",) * 8
-    assert options[1] == (
+    assert options[2] == (
         "save",
         "save",
         "recompute",
@@ -96,7 +96,7 @@ def test_a_large_binary_inventory_uses_even_group_quarters() -> None:
         "recompute",
         "save",
     )
-    assert options[2] == (
+    assert options[4] == (
         "save",
         "recompute",
         "save",
@@ -112,13 +112,9 @@ def test_a_large_binary_inventory_uses_even_group_quarters() -> None:
 def test_a_large_inventory_is_bounded() -> None:
     options = _option_ids(_binary_program(64))
 
-    assert len(options) == 5
-    assert tuple(item.count("recompute") for item in options) == (
-        0,
-        16,
-        32,
-        48,
-        64,
+    assert len(options) == 9
+    assert tuple(item.count("recompute") for item in options) == tuple(
+        range(0, 65, 8)
     )
 
 
@@ -142,6 +138,7 @@ def test_terminal_forward_group_is_always_saved() -> None:
 
     options = _option_ids(linear)
 
-    assert len(options) == 5
-    assert tuple(item.count("recompute") for item in options) == (0, 2, 4, 5, 7)
+    # seven flexible groups: nine eighths round to eight distinct rungs
+    assert len(options) == 8
+    assert tuple(item.count("recompute") for item in options) == tuple(range(8))
     assert all(item[-1] == "save" for item in options)

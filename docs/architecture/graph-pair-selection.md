@@ -143,12 +143,16 @@ enumerates every legal combination in deterministic group/option order.
 ### Large binary save/recompute products
 
 If every flexible group has exactly one `save` and one `recompute` option, the
-planner emits five coarse selections. Among flexible groups, the target
-fractions recomputed are:
+planner emits nine coarse selections. Among flexible groups, the target
+fractions recomputed are every eighth:
 
 ```text
-0%, 25%, 50%, 75%, 100%
+0%, 12.5%, 25%, 37.5%, 50%, 62.5%, 75%, 87.5%, 100%
 ```
+
+Eighths rather than quarters because under pressure the answer sits near the
+top of the ladder, where one quarter step separates a plan from no plan at
+all.
 
 For each fraction, recomputed groups are chosen at centered, evenly spaced
 positions in stable group order. If there are $G$ flexible groups and the
@@ -207,7 +211,7 @@ Resolutions(program):
 
     if every group is exactly {save, recompute}:
         resolutions = []
-        for fraction in [0%, 25%, 50%, 75%, 100%]:
+        for fraction in [0%, 12.5%, 25%, ..., 87.5%, 100%]:
             flexible = groups not fixed by required
             chosen = centered_evenly_spaced_subset(flexible, fraction)
             resolutions.append(save_or_recompute_each_group(chosen, required))
