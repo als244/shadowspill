@@ -41,7 +41,7 @@ endif()
 
 find_package(Torch QUIET)
 if(Torch_FOUND)
-  target_sources(shadowspill_pytorch PRIVATE storage.cpp)
+  target_sources(shadowspill_pytorch PRIVATE storage/cpu.cpp storage/device.cpp)
   target_link_libraries(shadowspill_pytorch PRIVATE ${TORCH_LIBRARIES})
   target_compile_definitions(
     shadowspill_pytorch

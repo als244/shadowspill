@@ -99,7 +99,8 @@ its boundaries, the backend underneath, and the clocks a step is read on.
 19. [Events](architecture/events.md) — event leases and pools, sealing,
     completion tracking, and the timing pool behind traced intervals.
 20. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
-    made of, what it requires of a backend, and what it exposes upward.
+    made of, how its source is laid out, what it requires of a backend, and
+    what it exposes upward.
 21. [Timelines](architecture/timelines.md) — the two clocks a traced step
     is measured on, the origin they share, and what an untraced step pays.
 
