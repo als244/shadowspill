@@ -5,6 +5,20 @@ neutral runtime on the other. It is the only place framework conventions and
 the process-global allocator live, and since the backend contract it holds no
 provider knowledge either.
 
+## Why it exists
+
+PyTorch's pluggable allocator calls three C functions -- malloc, free,
+record_stream -- with no pointer of the caller's to carry state in, and its
+storages are rebound through libtorch's C++ API. Both need compiled code that
+knows PyTorch, and nothing else in ShadowSpill may: planning-only callers must
+not carry libtorch, and the runtime must stay usable from any framework. So
+the adapter is the one library that links both, and it holds exactly what
+needs PyTorch -- the callbacks, the storage views, the stream wrapping and
+profiler ranges at task boundaries, and loading the backend by name -- and no
+policy: no planning, no pools, routes or lanes of its own, no provider code.
+Anything reachable with the runtime handle it publishes is called on the
+neutral library instead.
+
 ## What it is made of
 
 ```text
@@ -28,6 +42,26 @@ torch allocator hooks     objects and storage views     task boundaries
   claim.
 - **Task boundaries** wrap each compiled task with the runtime's readiness and
   completion protocol, profiler ranges, and the trace's timing markers.
+
+## How the source is laid out
+
+`csrc/adapter/pytorch/` has the runtime's shape: one `internal.h` per
+directory saying what it holds, one file per concern.
+
+- `lifecycle/` — bootstrap from a config, close, the process-exit hook, and
+  the physical-memory ledger.
+- `allocator/` — the three callbacks PyTorch's pluggable allocator makes, and
+  the C++ wrapper that turns a failed one into a typed exception.
+- `failure/` — what a failed call latches, and the report a person reads.
+- `tasks/` — the task boundary on the dispatching thread: the range a task
+  opens, allocation scopes, before, after, abort, and the pre-task action
+  batch.
+- `storage/` — PyTorch storages over runtime leases: the C primitives, and
+  the torch operators over them, one file per dispatch key.
+- `internal.h`, `adapter.c` and `profiler.c` at the top: the one
+  process-global instance PyTorch's callback signature forces, the calls
+  that describe the process, and the profiler every directory opens ranges
+  through.
 
 ## What it requires of a backend
 

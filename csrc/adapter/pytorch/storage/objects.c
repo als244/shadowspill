@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include "../internal.h"
+
 ShadowSpillStatus shadowspill_pytorch_register_object(
     uint32_t pool_id,
     uint64_t object_id,
