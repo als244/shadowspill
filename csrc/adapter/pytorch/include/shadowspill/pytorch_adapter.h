@@ -21,7 +21,13 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 2U
+
+/* Ids the frontend synthesises for work that is not a planned task: the
+   profiling allocation scopes, and the pre-task placement batch. The
+   failure report decodes them, so both sides read one definition. */
+#define SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE (UINT64_C(1) << 62)
+#define SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID (UINT64_C(1) << 60)
 
 typedef struct ShadowSpillPytorchPoolConfig {
     uint32_t pool_id;
@@ -67,37 +73,15 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     uint64_t device_total_bytes;
 } ShadowSpillPytorchPhysicalAdmission;
 
+/* The three contracts this build was compiled against, and the one thing
+   that varies between builds: whether libtorch was found, so the storage
+   operators exist. */
 typedef struct ShadowSpillPytorchAdapterCapabilities {
     uint32_t abi_version;
     uint32_t runtime_abi_version;
     uint32_t backend_abi_version;
-    uint8_t slab_memory_strategy;
-    uint8_t record_stream_callback;
     uint8_t storage_rebinding;
-    uint8_t debug_task_dispatch_timing;
-    uint8_t runtime_trace;
 } ShadowSpillPytorchAdapterCapabilities;
-
-/*
- * Optional task-boundary dispatch timestamps. The four fields use
- * CLOCK_MONOTONIC. The six compute-stream compatibility fields are reserved
- * and zero; the PyTorch frontend records non-invasive preallocated backend events
- * for those boundaries instead of executing dispatch callbacks on the compute
- * stream.
- */
-typedef struct ShadowSpillPytorchTaskDispatchTiming {
-    uint64_t task_id;
-    uint64_t before_readiness_waits_timestamp_ns;
-    uint64_t before_task_compute_timestamp_ns;
-    uint64_t after_task_compute_timestamp_ns;
-    uint64_t before_readiness_waits_sequence;
-    uint64_t before_task_compute_sequence;
-    uint64_t after_task_compute_sequence;
-    uint64_t before_task_enter_timestamp_ns;
-    uint64_t before_task_exit_timestamp_ns;
-    uint64_t after_task_enter_timestamp_ns;
-    uint64_t after_task_exit_timestamp_ns;
-} ShadowSpillPytorchTaskDispatchTiming;
 
 typedef struct ShadowSpillPytorchAdapterStatistics {
     uint64_t allocation_callbacks;

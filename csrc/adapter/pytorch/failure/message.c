@@ -40,8 +40,9 @@ static void append_failure_task(
     size_t *offset,
     uint64_t task_id
 ) {
-    const uint64_t profiling_base = UINT64_C(1) << 62U;
-    const uint64_t initial_actions_base = UINT64_C(1) << 60U;
+    const uint64_t profiling_base = SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE;
+    const uint64_t initial_actions_base =
+        SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID;
     if (task_id >= profiling_base) {
         append_failure_message(
             destination,

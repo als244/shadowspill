@@ -27,7 +27,6 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RuntimeAction,
     RuntimeFailure,
     RuntimeStatistics,
-    TaskDispatchTiming,
     TraceConfig,
     TraceEvent,
     TraceSummary,
@@ -105,7 +104,7 @@ class _Library:
 
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterConfig) == 80
-    assert ctypes.sizeof(AdapterCapabilities) == 20
+    assert ctypes.sizeof(AdapterCapabilities) == 16
     assert ctypes.sizeof(RuntimeStatistics) == 52 * 8
     assert ctypes.sizeof(AllocationEvent) == 80
     assert ctypes.sizeof(Allocation) == 48
@@ -124,7 +123,6 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(ObjectLocationSnapshot) == 64
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 24
-    assert ctypes.sizeof(TaskDispatchTiming) == 88
     assert ctypes.sizeof(TraceConfig) == 24
     assert ctypes.sizeof(TraceEvent) == 96
     assert ctypes.sizeof(TraceSummary) == 72
