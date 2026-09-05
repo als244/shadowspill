@@ -580,8 +580,9 @@ done:
     return status;
 }
 
-ShadowSpillStatus shadowspill_runtime_close(
-    ShadowSpillRuntime *runtime
+static ShadowSpillStatus runtime_close_internal(
+    ShadowSpillRuntime *runtime,
+    int wait_for_outstanding_work
 ) {
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -594,18 +595,27 @@ ShadowSpillStatus shadowspill_runtime_close(
     atomic_store_explicit(&runtime->closing, 1U, memory_order_release);
     pthread_mutex_unlock(&runtime->mutex);
     ShadowSpillIdleWakeup *wakeup = &runtime->idle_wakeup;
-    pthread_mutex_lock(&wakeup->lock);
-    while (shadowspill_failure_status(runtime) == SHADOWSPILL_STATUS_OK &&
-           (atomic_load_explicit(
-                &runtime->actions.count, memory_order_acquire
-            ) != 0U ||
-            runtime->pending_retirements != 0U)) {
-        pthread_cond_wait(&wakeup->condition, &wakeup->lock);
+    if (wait_for_outstanding_work) {
+        pthread_mutex_lock(&wakeup->lock);
+        while (shadowspill_failure_status(runtime) == SHADOWSPILL_STATUS_OK &&
+               (atomic_load_explicit(
+                    &runtime->actions.count, memory_order_acquire
+                ) != 0U ||
+                runtime->pending_retirements != 0U)) {
+            pthread_cond_wait(&wakeup->condition, &wakeup->lock);
+        }
+        pthread_mutex_unlock(&wakeup->lock);
     }
-    pthread_mutex_unlock(&wakeup->lock);
 
     int synchronization_failed = 0;
-    for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
+    /*
+     * Synchronizing a lane waits on the device. A close that is not waiting
+     * for outstanding work is not in a position to wait on hardware either:
+     * the work it would wait for is the work it just declined to finish.
+     */
+    for (uint32_t route_id = 0U;
+         wait_for_outstanding_work && route_id < runtime->route_count;
+         ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
         if (route->lane_created && runtime->backend.synchronize_stream(
                 runtime->backend.state, route->lane
@@ -638,6 +648,32 @@ ShadowSpillStatus shadowspill_runtime_close(
     shadowspill_idle_notify(runtime);
     release_resources(runtime);
     return status;
+}
+
+ShadowSpillStatus shadowspill_runtime_close(
+    ShadowSpillRuntime *runtime
+) {
+    return runtime_close_internal(runtime, 1);
+}
+
+ShadowSpillStatus shadowspill_runtime_abandon(
+    ShadowSpillRuntime *runtime,
+    uint64_t *outstanding_actions,
+    uint64_t *outstanding_retirements
+) {
+    if (runtime == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    if (outstanding_actions != NULL) {
+        *outstanding_actions = atomic_load_explicit(
+            &runtime->actions.count, memory_order_acquire
+        );
+    }
+    if (outstanding_retirements != NULL) {
+        *outstanding_retirements = runtime->pending_retirements;
+    }
+    atomic_store_explicit(&runtime->abandoned, 1U, memory_order_release);
+    return runtime_close_internal(runtime, 0);
 }
 
 void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {

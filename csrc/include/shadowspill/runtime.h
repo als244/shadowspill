@@ -446,7 +446,7 @@ typedef struct ShadowSpillTransferProfile {
  * SHADOWSPILL_RUNTIME_NO_ID when they do not apply.
  *
  * A TRANSFER_COMPLETED event also carries the transfer's interval on the
- * device: ``stream_start_ns`` and ``stream_end_ns`` are measured on the
+ * device: ``lane_started_at_ns`` and ``lane_finished_at_ns`` are measured on the
  * transfer lane from the origin event the trace was begun with, so they sit
  * on the same timeline as any other event measured from that origin. Both
  * hold SHADOWSPILL_TRACE_NO_STREAM_TIME when the trace has no origin or the
@@ -463,8 +463,8 @@ typedef struct ShadowSpillTraceEvent {
     uint64_t bytes;
     uint64_t detail_0;
     uint64_t detail_1;
-    uint64_t stream_start_ns;
-    uint64_t stream_end_ns;
+    uint64_t lane_started_at_ns;
+    uint64_t lane_finished_at_ns;
     uint8_t kind;
 } ShadowSpillTraceEvent;
 
@@ -475,8 +475,8 @@ typedef struct ShadowSpillTraceSummary {
     uint64_t allocation_event_count;
     uint64_t event_capacity;
     uint64_t allocation_event_capacity;
-    uint64_t begin_timestamp_ns;
-    uint64_t end_timestamp_ns;
+    uint64_t began_at_ns;
+    uint64_t ended_at_ns;
     uint8_t active;
     uint8_t event_overflow;
     uint8_t allocation_event_overflow;
@@ -677,6 +677,23 @@ SHADOWSPILL_API void shadowspill_plan_destroy(ShadowSpillPlan *plan);
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_close(
     ShadowSpillRuntime *runtime
+);
+
+/*
+ * Closes without waiting for anything: no drain, no stream synchronization.
+ * For a process that is already going away, where waiting is both pointless
+ * and unbounded. Outstanding work cannot complete once the process is
+ * exiting, and everything the drain protects -- device allocations, pinned
+ * registrations, the context itself -- is reclaimed at process exit anyway,
+ * so this stops the worker, releases what it owns, and returns.
+ *
+ * The counts a caller passes are filled in before anything is stopped, so a
+ * caller can report what was still outstanding. Either may be NULL.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_abandon(
+    ShadowSpillRuntime *runtime,
+    uint64_t *outstanding_actions,
+    uint64_t *outstanding_retirements
 );
 
 /*

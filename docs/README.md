@@ -39,7 +39,7 @@ What ShadowSpill is for, and the vocabulary every later page uses.
 1. [Architecture overview](architecture/overview.md) — vocabulary, artifacts,
    ownership, invariants, and supported scope.
 2. [Intermediate representation](architecture/ir.md) — logical Programs,
-   recomputation, schedules, and execution plans.
+   task alternatives, phases and sinks, schedules, and execution plans.
 
 ### PyTorch lowering
 
@@ -57,7 +57,7 @@ what is profiled, and what the planner is handed.
 How a program becomes an executable plan: which tasks run, where every object
 lives at each boundary, and what address every allocation gets.
 
-5. [Recomputation selection](architecture/recomputation-selection.md) — bounded
+5. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
    complete selections across occurrence-level graph-pair options.
 6. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
    inputs/outputs, bounded policy search, repair, and pseudocode.
@@ -82,22 +82,25 @@ its boundaries, the backend underneath, and the clocks a step is read on.
 13. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-14. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+14. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
+    a failure is handled at each scope, and why a process that is exiting is
+    abandoned rather than closed.
+15. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening
     restore, and what step time means.
-15. [Backends](architecture/backends.md) — the one component that knows a
+16. [Backends](architecture/backends.md) — the one component that knows a
     platform, the driver-level table it implements, and how a new provider
     plugs in.
-16. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
+17. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
     device and pinned host, as ShadowSpill objects built on the backend.
-17. [Transfers](architecture/transfers.md) — routes, the lane each owns,
+18. [Transfers](architecture/transfers.md) — routes, the lane each owns,
     dispatch order, and calibration on those lanes.
-18. [Events](architecture/events.md) — event leases and pools, sealing,
+19. [Events](architecture/events.md) — event leases and pools, sealing,
     completion tracking, and the timing pool behind traced intervals.
-19. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
+20. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
     made of, what it requires of a backend, and what it exposes upward.
-20. [Timelines](architecture/timelines.md) — the two clocks a traced step
+21. [Timelines](architecture/timelines.md) — the two clocks a traced step
     is measured on, the origin they share, and what an untraced step pays.
 
 ## Python
@@ -118,11 +121,16 @@ Task-oriented pages: how to do something, and how to read what comes back.
   allocator sits under PyTorch and what it accounts for.
 - [Interpreting a PlanReport](python/plan-report.md) — planning time, task and
   graph-pair selection, profiles, PressureFit, caches, and physical admission.
-- [Interpreting StepResult diagnostics](python/step-diagnostics.md) — seven task
-  timestamps, host boundaries, allocator/transfer evidence, and simulator
-  reconciliation.
+- [PlanReport field reference](python/plan-report-fields.md) — every field of
+  every record the planning report carries, and what it holds.
+- [Interpreting StepResult diagnostics](python/step-diagnostics.md) — task and
+  transfer instants, host boundaries, allocator evidence, and simulator
+  reconciliation, with a complete field reference.
 - [Program and annotated-plan JSON](python/planning-json.md) — canonical Program,
   PressureFitProgram, StepProgram, and AnnotatedProgramPlan schemas.
+- [Figures over a step search](python/plots.md) — the figure tree, what each
+  plot represents, the conventions they share, and how `raw_data/` redraws
+  them.
 - [Errors, failures, and cleanup](python/failures.md) — exception taxonomy,
   structured runtime evidence, rollback, and teardown.
 

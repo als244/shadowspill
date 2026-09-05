@@ -224,8 +224,11 @@ public object reference, or caller-owned device output. It then calls the C
 close/destroy path, which stops and joins the worker, closes every route and
 pool backend, unregisters pinned memory, and releases device memory. PyTorch
 cannot uninstall its selected process allocator, so only the allocator shim
-remains; it rejects future allocations as closed. Registered process-exit
-cleanup invokes the same idempotent path as a last resort.
+remains; it rejects future allocations as closed.
+
+A process that is exiting takes a different path, because waiting there
+prevents the exit rather than delaying it. See
+[failure, abort, and process exit](failure-and-exit.md).
 
 The Python-facing taxonomy, structured diagnostic fields, automatic rollback,
 and normal close order are documented in [Errors, failures, and
