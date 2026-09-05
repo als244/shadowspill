@@ -91,6 +91,26 @@ All public diagnostic records are immutable. `PlanDiagnostics.as_dict()` and
 artifact storage or analysis; the [StepResult diagnostics
 guide](../step-diagnostics.md) defines every field.
 
+## Figures
+
+`shadowspill.plots` draws figures from artifacts that already exist. It plans
+nothing and executes nothing, so it never needs the device that produced its
+inputs, and it writes into the directory it is given without keying the tree
+itself.
+
+- `plot_step_search(report, directory)` writes the plan-side tree from a
+  `StepSearchReport`: throughput, overheads, transfers, and distance from the
+  unconstrained floor, plus `raw_data/` from which the whole tree can be drawn
+  again.
+- `plot_step_run(outcomes, directory, tokens_per_step=...)` writes the
+  measured tree from executed budgets: throughput against the simulation, and
+  where the prediction fell short.
+- `RunBudgetOutcome` is one executed budget: what was planned for it and what
+  the hardware then did.
+
+The [figures guide](../plots.md) describes the tree, what each figure
+represents, and the conventions they share.
+
 ## Defaults and overhead
 
 Tracing uses bounded preallocated native buffers. No trace record is appended
