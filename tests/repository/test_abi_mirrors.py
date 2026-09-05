@@ -54,7 +54,13 @@ _MIRRORS = {
     "ShadowSpillObjectLocationSnapshot": abi.ObjectLocationSnapshot,
     "ShadowSpillPytorchAdapterCapabilities": abi.AdapterCapabilities,
     "ShadowSpillPytorchPhysicalAdmission": abi.PhysicalAdmission,
-    "ShadowSpillPytorchTaskDispatchTiming": abi.TaskDispatchTiming,
+}
+
+
+#: Each mirrored constant and the C macro it copies.
+_CONSTANTS = {
+    "SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE": abi.PROFILING_SCOPE_BASE,
+    "SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID": abi.INITIAL_ACTIONS_TASK_ID,
 }
 
 
@@ -85,6 +91,28 @@ def test_every_ctypes_structure_matches_its_c_struct() -> None:
     assert not mismatched, f"ctypes mirrors disagree with C (c, python): {mismatched}"
     missing = sorted(set(_MIRRORS) - set(sizes))
     assert not missing, f"the size probe does not cover: {missing}"
+
+
+def test_every_mirrored_constant_matches_its_c_macro() -> None:
+    values = _c_sizes()
+    mismatched = {
+        name: (values.get(name), value)
+        for name, value in _CONSTANTS.items()
+        if values.get(name) != value
+    }
+    assert not mismatched, f"constants disagree with C (c, python): {mismatched}"
+
+
+def test_the_adapter_abi_version_is_one_number() -> None:
+    header = (
+        ROOT / "csrc" / "adapter" / "pytorch" / "include" / "shadowspill"
+        / "pytorch_adapter.h"
+    ).read_text()
+    declared = re.search(
+        r"#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION (\d+)U", header
+    )
+    assert declared is not None
+    assert int(declared.group(1)) == abi.ADAPTER_ABI_VERSION
 
 
 def test_status_vocabulary_matches_the_header() -> None:

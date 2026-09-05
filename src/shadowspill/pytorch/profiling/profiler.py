@@ -27,7 +27,11 @@ from shadowspill.pytorch.optimizer import (
     materialize_opaque_optimizer,
     opaque_optimizer_outputs,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, Allocation
+from shadowspill.pytorch.runtime_adapter.abi import (
+    PROFILING_SCOPE_BASE,
+    AdapterStatistics,
+    Allocation,
+)
 from shadowspill.pytorch.runtime_adapter.failures import (
     raise_if_allocator_failed,
     wait_allocator_idle,
@@ -125,7 +129,7 @@ class TaskProfiler:
         self._telemetry_capacity = telemetry_capacity
         self._allocation_probe_seeds = allocation_probe_seeds
         self._allocation_probe_repetitions = allocation_probe_repetitions
-        self._next_scope_id = 1 << 62
+        self._next_scope_id = PROFILING_SCOPE_BASE
         self._executables = ProfileExecutableStore(
             device_ordinal=device_ordinal,
             allocation_check=lambda operation: raise_if_allocator_failed(

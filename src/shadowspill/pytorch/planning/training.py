@@ -98,7 +98,7 @@ from ..materialization import representative_cpu_inputs
 from ..partition import (
     PartitionSpec,
 )
-from ..runtime_adapter import INITIAL_PLACEMENT_TASK_ID, PlanMemory, Runtime
+from ..runtime_adapter import INITIAL_ACTIONS_TASK_ID, PlanMemory, Runtime
 from .admission import (
     FixedLayoutInfeasibleError,
     SelectedAdmission,
@@ -878,7 +878,7 @@ def admit_training_plan(
             recurrent_fixed_layout,
             recurrent_plan.program,
             recurrent_plan.schedule,
-            initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+            initial_task_id=INITIAL_ACTIONS_TASK_ID,
             dynamic_task_allocations=(
                 admitted.recurrent_admission.dynamic_provider_allocations()
             ),
@@ -892,7 +892,7 @@ def admit_training_plan(
                 initial_admission.fixed_layout,
                 initial_plan.program,
                 initial_plan.schedule,
-                initial_task_id=INITIAL_PLACEMENT_TASK_ID,
+                initial_task_id=INITIAL_ACTIONS_TASK_ID,
                 dynamic_task_allocations=(
                     initial_admission.dynamic_provider_allocations()
                 ),

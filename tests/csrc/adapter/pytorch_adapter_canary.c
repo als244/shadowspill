@@ -305,8 +305,7 @@ static int objects(ShadowSpillRuntime *runtime) {
 
 /* Allocation scopes outside any task, ended and aborted. */
 static int scopes(ShadowSpillRuntime *runtime) {
-    /* The frontend's profiling scopes sit above 1 << 62. */
-    const uint64_t scope_id = (UINT64_C(1) << 62U) | 3U;
+    const uint64_t scope_id = SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE | 3U;
     REQUIRE(
         shadowspill_pytorch_allocation_scope_begin(scope_id) ==
             SHADOWSPILL_STATUS_OK,
@@ -406,7 +405,11 @@ static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
     const ShadowSpillActionBatchHandle *batch = NULL;
     REQUIRE(
         shadowspill_plan_admit_action_batch(
-            record->plan, UINT64_C(1) << 60U, &fetch, 1U, &batch
+            record->plan,
+            SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID,
+            &fetch,
+            1U,
+            &batch
         ) == SHADOWSPILL_STATUS_OK &&
             batch != NULL,
         "admitting the placement batch failed"

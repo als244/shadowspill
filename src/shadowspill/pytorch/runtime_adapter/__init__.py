@@ -1,5 +1,6 @@
 """PyTorch integration for the framework-neutral ShadowSpill runtime."""
 
+from .abi import INITIAL_ACTIONS_TASK_ID
 from .bridge import RuntimeBridge, actions_by_task
 from .failures import (
     ExecutionTaskIdentity,
@@ -7,7 +8,6 @@ from .failures import (
     RuntimeFailureDiagnostics,
 )
 from .fixed_layout import (
-    INITIAL_PLACEMENT_TASK_ID,
     RuntimeFixedDependency,
     RuntimeFixedLayout,
     RuntimeFixedPlacement,
@@ -24,7 +24,7 @@ from .runtime import (
 )
 
 __all__ = [
-    "INITIAL_PLACEMENT_TASK_ID",
+    "INITIAL_ACTIONS_TASK_ID",
     "ExecutionTaskIdentity",
     "MemoryPool",
     "PlanMemory",

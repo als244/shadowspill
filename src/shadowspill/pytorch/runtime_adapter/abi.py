@@ -8,7 +8,12 @@ from typing import Any, Final
 
 from shadowspill.libraries import load_shadowspill_library
 
-ADAPTER_ABI_VERSION: Final = 1
+ADAPTER_ABI_VERSION: Final = 2
+
+#: Ids the frontend synthesises for work that is not a planned task, copied
+#: from the adapter header, which decodes them in its failure report.
+PROFILING_SCOPE_BASE: Final = 1 << 62
+INITIAL_ACTIONS_TASK_ID: Final = 1 << 60
 
 
 class PoolConfig(ctypes.Structure):
@@ -73,27 +78,7 @@ class AdapterCapabilities(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("runtime_abi_version", ctypes.c_uint32),
         ("backend_abi_version", ctypes.c_uint32),
-        ("slab_memory_strategy", ctypes.c_uint8),
-        ("record_stream_callback", ctypes.c_uint8),
         ("storage_rebinding", ctypes.c_uint8),
-        ("debug_task_dispatch_timing", ctypes.c_uint8),
-        ("runtime_trace", ctypes.c_uint8),
-    ]
-
-
-class TaskDispatchTiming(ctypes.Structure):
-    _fields_ = [
-        ("task_id", ctypes.c_uint64),
-        ("before_readiness_waits_timestamp_ns", ctypes.c_uint64),
-        ("before_task_compute_timestamp_ns", ctypes.c_uint64),
-        ("after_task_compute_timestamp_ns", ctypes.c_uint64),
-        ("before_readiness_waits_sequence", ctypes.c_uint64),
-        ("before_task_compute_sequence", ctypes.c_uint64),
-        ("after_task_compute_sequence", ctypes.c_uint64),
-        ("before_task_enter_timestamp_ns", ctypes.c_uint64),
-        ("before_task_exit_timestamp_ns", ctypes.c_uint64),
-        ("after_task_enter_timestamp_ns", ctypes.c_uint64),
-        ("after_task_exit_timestamp_ns", ctypes.c_uint64),
     ]
 
 
