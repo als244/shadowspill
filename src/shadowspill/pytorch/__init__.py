@@ -68,6 +68,7 @@ from .state import (
     release_model_state,
 )
 from .step_search import (
+    GraphPairOutcome,
     StepSearchGeometryBuild,
     StepSearchPoint,
     StepSearchReport,
@@ -78,6 +79,7 @@ from .step_search import (
 __all__ = [
     "DiagnosticsHandle",
     "ExecutionTaskIdentity",
+    "GraphPairOutcome",
     "InvocationResult",
     "LaneSummary",
     "MemoryPool",
