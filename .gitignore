@@ -35,11 +35,19 @@ compile_commands.json
 # storage, and a directory-only pattern leaves the symlink visible.
 /benchmarking/datasets
 /benchmarking/program_collection/planning_caches
-/benchmarking/program_collection/results
 /benchmarking/planning_eval/planning_caches
 /benchmarking/planning_eval/results
 *.nsys-rep
 *.sqlite
-/benchmarking/quickstart_store/
-/benchmarking/quickstart_plots/
 /benchmarking/quickstart_reports/
+
+# Figures, the raw data behind them, and logs. `plot_step_search()` writes
+# wherever its caller points it, so the file types are ignored rather than one
+# path: none of this belongs in the repository, and all of it is reproducible
+# from the artifacts. Force a deliberate exception with `git add -f`.
+*.png
+*.svg
+*.pdf
+*.csv
+*.log
+/figures/
