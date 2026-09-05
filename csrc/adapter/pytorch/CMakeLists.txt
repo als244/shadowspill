@@ -9,6 +9,10 @@ add_library(
   lifecycle/bootstrap.c
   lifecycle/close.c
   lifecycle/physical.c
+  profiler.c
+  tasks/boundaries.c
+  tasks/scopes.c
+  tasks/task_range.c
 )
 target_include_directories(
   shadowspill_pytorch
