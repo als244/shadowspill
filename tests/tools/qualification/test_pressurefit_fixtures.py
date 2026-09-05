@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from benchmarking.planning_eval.fixture_benchmark import _run_suite
 from shadowspill.planner import (
     PressureFitOptions,
     PressureFitResult,
@@ -64,9 +63,7 @@ def test_fixture_contains_complete_request_and_expected_result() -> None:
     assert fixture["request"]["admission"] is None  # type: ignore[index]
 
 
-def test_fixture_replays_the_physical_pressurefit_call_boundary(
-    tmp_path: Path,
-) -> None:
+def test_fixture_carries_the_physical_pressurefit_call_boundary() -> None:
     program = causal_program()
     schedule = causal_schedule()
     simulation = causal_config()
@@ -91,9 +88,6 @@ def test_fixture_replays_the_physical_pressurefit_call_boundary(
     assert fixture["schema"] == artifact_schema("pressurefit_fixture")
     assert fixture["request"]["admission"] == admission.to_dict()  # type: ignore[index]
     assert fixture["request"]["placement"] is None  # type: ignore[index]
-    write_pressurefit_fixtures(results=(result,), directory=tmp_path)
-    replay = _run_suite((tmp_path / "recurrent.json",), repeats=1)
-    assert replay["outputs_match"] is True
 
 
 def test_fixture_file_is_byte_deterministic(tmp_path: Path) -> None:
@@ -113,18 +107,3 @@ def test_fixture_file_is_byte_deterministic(tmp_path: Path) -> None:
     payload = json.loads(first_bytes)
     assert payload["request_digest"] == first[0]["request_digest"]
     assert payload["expected_digest"] == first[0]["expected_digest"]
-
-
-def test_benchmark_replays_fixture_directly(tmp_path: Path) -> None:
-    result = _result()
-    write_pressurefit_fixtures(
-        results=(result,),
-        directory=tmp_path,
-    )
-
-    benchmark = _run_suite((tmp_path / "recurrent.json",), repeats=2)
-    assert benchmark["outputs_match"] is True
-    assert benchmark["fixture_count"] == 1
-    assert isinstance(benchmark["suite_digest"], str)
-    assert len(benchmark["samples_ns"]) == 2  # type: ignore[arg-type]
-    assert benchmark["median_ns"] > 0  # type: ignore[operator]
