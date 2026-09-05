@@ -25,7 +25,10 @@ csrc/
 ├── backends/              dlopened device backends: mock and provider
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
     ├── lifecycle/         bootstrap, close, and the physical-memory ledger
-    └── tasks/             the task boundary: ranges, scopes, the action batch
+    ├── allocator/         the callbacks PyTorch's pluggable allocator makes
+    ├── failure/           what a failed call latches, and the report it makes
+    ├── tasks/             the task boundary: ranges, scopes, the action batch
+    └── storage/           PyTorch storages over runtime leases
 ```
 
 Everything under `src/` compiles into one shared object. The simulator, the
@@ -50,6 +53,10 @@ build gets from its toolchain rather than from a shim here.
 Public headers live in `include/shadowspill/`. A private header named
 `internal.h` belongs to the directory holding it, and is included by path from
 anywhere else, so `"internal.h"` always means this directory's.
+The adapter adds one refinement: a directory whose header the C++ storage
+operators include -- `allocator/`, `failure/`, `tasks/`, `storage/` -- keeps
+that header free of C11 atomics, and its C files include the adapter's state
+header, `../internal.h`, themselves.
 
 The [C API guide](../docs/c/README.md) documents ownership, threading, and each
 public component boundary.
