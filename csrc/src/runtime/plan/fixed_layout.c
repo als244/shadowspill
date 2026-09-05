@@ -15,6 +15,44 @@ static void cpu_relax(void) {
 #endif
 }
 
+/*
+ * Placements are sorted by (kind, task_id, ordinal, object_id), so the run
+ * belonging to one task is contiguous and its start is a binary search,
+ * the same shape first_successor_dependency uses over the dependencies.
+ */
+static int placement_task_compare(
+    const ShadowSpillFixedPlacementDescription *placement,
+    uint8_t kind,
+    uint64_t task_id
+) {
+    if (placement->kind != kind) {
+        return placement->kind < kind ? -1 : 1;
+    }
+    if (placement->task_id != task_id) {
+        return placement->task_id < task_id ? -1 : 1;
+    }
+    return 0;
+}
+
+static uint64_t first_task_placement(
+    const ShadowSpillFixedLayoutState *layout,
+    uint8_t kind,
+    uint64_t task_id
+) {
+    uint64_t left = 0U;
+    uint64_t right = layout->placement_count;
+    while (left < right) {
+        const uint64_t middle = left + (right - left) / 2U;
+        if (placement_task_compare(&layout->placements[middle], kind, task_id) <
+            0) {
+            left = middle + 1U;
+        } else {
+            right = middle;
+        }
+    }
+    return left;
+}
+
 static int placement_key_compare(
     const ShadowSpillFixedPlacementDescription *left,
     const ShadowSpillFixedPlacementDescription *right
@@ -471,12 +509,15 @@ ShadowSpillStatus shadowspill_fixed_layout_wait_for_task_allocations(
         return SHADOWSPILL_STATUS_OK;
     }
     const ShadowSpillFixedLayoutState *layout = &plan->fixed_layout;
-    for (uint64_t index = 0U; index < layout->placement_count; ++index) {
+    uint64_t index =
+        first_task_placement(layout, SHADOWSPILL_FIXED_TASK_ALLOCATION, task_id);
+    for (; index < layout->placement_count; ++index) {
         const ShadowSpillFixedPlacementDescription *placement =
             &layout->placements[index];
-        if (placement->kind != SHADOWSPILL_FIXED_TASK_ALLOCATION ||
-            placement->task_id != task_id) {
-            continue;
+        if (placement_task_compare(
+                placement, SHADOWSPILL_FIXED_TASK_ALLOCATION, task_id
+            ) != 0) {
+            break;
         }
         const ShadowSpillStatus status =
             shadowspill_fixed_layout_wait_for_dependencies(
