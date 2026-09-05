@@ -17,6 +17,21 @@ void shadowspill_pytorch_failure_clear_locked(int32_t device_ordinal) {
     adapter.failure.runtime.pool_id = UINT32_MAX;
 }
 
+void shadowspill_pytorch_failure_latch_physical_locked(
+    ShadowSpillStatus status,
+    uint64_t requested_bytes,
+    uint64_t free_bytes
+) {
+    if (adapter.failure.status != SHADOWSPILL_STATUS_OK) {
+        return;
+    }
+    adapter.failure.status = (uint32_t)status;
+    adapter.failure.requested_bytes = requested_bytes;
+    adapter.failure.runtime.status = (uint32_t)status;
+    adapter.failure.runtime.requested_bytes = requested_bytes;
+    adapter.failure.runtime.free_bytes = free_bytes;
+}
+
 void shadowspill_pytorch_latch_failure(
     ShadowSpillStatus status,
     int32_t device_ordinal,
@@ -24,8 +39,9 @@ void shadowspill_pytorch_latch_failure(
     uint64_t requested_bytes
 ) {
     char task_label[SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES + 1U] = {0};
-    if (active_task_label != NULL) {
-        (void)snprintf(task_label, sizeof(task_label), "%s", active_task_label);
+    const char *const active_label = shadowspill_pytorch_task_range_label();
+    if (active_label != NULL) {
+        (void)snprintf(task_label, sizeof(task_label), "%s", active_label);
     }
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.callback_failures;
