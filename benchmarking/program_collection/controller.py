@@ -295,9 +295,7 @@ def _recover_worker_result(
         raise ValueError("running case has incomplete worker-result identity")
     stored_path = Path(result_value)
     result_path = (
-        stored_path
-        if stored_path.is_absolute()
-        else paths.output_root / stored_path
+        stored_path if stored_path.is_absolute() else paths.output_root / stored_path
     )
     if not result_path.exists():
         result_path = paths.worker_result_path(request, attempt)
