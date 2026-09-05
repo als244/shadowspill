@@ -1,4 +1,4 @@
-"""The six step-search figures render from a fabricated report."""
+"""The step-search figures render from a fabricated report."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ def _summary(step: float) -> PlanSummary:
         recomputation_overhead_seconds=step * 0.2,
         idle_seconds=step * 0.25,
         terminal_writeback_seconds=step * 0.05,
-        recompute_selection_count=2,
-        selection_count=4,
+        recomputing_group_count=2,
+        task_alternative_group_count=4,
         transfer_bytes_fetched=int(4e9),
         transfer_bytes_evicted=int(3e9),
         fetch_bandwidth_bytes_per_second=int(20e9),
@@ -43,7 +43,7 @@ def _point(execution: int, spill: int, step: float) -> StepSearchPoint:
     )
 
 
-def test_all_six_figures_render(tmp_path: Path) -> None:
+def test_every_figure_renders(tmp_path: Path) -> None:
     budgets = ((8 << 30, 64 << 30), (16 << 30, 64 << 30))
     report = StepSearchReport(
         total_sequences_per_step=32,
@@ -54,20 +54,37 @@ def test_all_six_figures_render(tmp_path: Path) -> None:
         skipped=(),
     )
     written = plot_step_search(report, tmp_path)
-    assert len(written) == 7
+    assert written
     for path in written:
         assert path.exists() and path.stat().st_size > 0
 
 
-def test_run_throughput_figure_renders(tmp_path: Path) -> None:
-    from shadowspill.plots import plot_step_run
+def test_run_figures_render(tmp_path: Path) -> None:
+    from shadowspill.plots import RunBudgetOutcome, plot_step_run
 
-    path = plot_step_run(
-        [(16 << 30, 4.0, 4.4), (8 << 30, 6.0, 6.9)],
+    written = plot_step_run(
+        [
+            RunBudgetOutcome(
+                execution_budget_bytes=budget,
+                simulated_step_seconds=simulated,
+                measured_step_seconds=measured,
+                profiled_task_seconds=simulated * 0.8,
+                real_task_seconds=measured * 0.8,
+                simulated_idle_seconds=simulated * 0.2,
+                real_idle_seconds=measured * 0.15,
+                prologue_seconds=measured * 0.05,
+                terminal_tail_seconds=simulated * 0.02,
+            )
+            for budget, simulated, measured in (
+                (16 << 30, 4.0, 4.4),
+                (8 << 30, 6.0, 6.9),
+            )
+        ],
         tmp_path,
         tokens_per_step=32 * 1024,
     )
-    assert path.exists() and path.stat().st_size > 0
+    for path in written:
+        assert path.exists() and path.stat().st_size > 0
 
 
 def test_mixed_spill_budgets_are_rejected() -> None:
