@@ -21,6 +21,8 @@ struct ShadowSpillMockBackend {
     ShadowSpillBackendStatistics statistics;
     uint64_t operation_count;
     uint64_t fail_operation;
+    /* The stream a framework handle of 0 names; see wrap_stream. */
+    MockStream default_stream;
 };
 
 static uint64_t now_nanoseconds(void) {
@@ -150,12 +152,21 @@ static int synchronize_stream(void *state, ShadowSpillBackendStream stream) {
     return 0;
 }
 
+/* A framework handle is a MockStream the framework created through this
+ * table, except 0, which is the default stream: the one a driver runs work
+ * on when the caller names no stream. Without it a caller with no stream of
+ * its own could not drive the table at all. */
 static ShadowSpillBackendStream wrap_stream(
     void *state, uint64_t framework_stream_handle
 ) {
-    (void)state;
+    ShadowSpillMockBackend *backend = state;
     return (ShadowSpillBackendStream){
-        .words = {(uintptr_t)framework_stream_handle, 0U},
+        .words = {
+            framework_stream_handle == 0U
+                ? (uintptr_t)&backend->default_stream
+                : (uintptr_t)framework_stream_handle,
+            0U,
+        },
     };
 }
 
