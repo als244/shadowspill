@@ -59,7 +59,9 @@ task boundaries, allocation scopes, telemetry, and finally waiting and
 inspection. Grep for a banner rather than a name if you do not know what you
 are looking for yet.
 
-The other headers are small enough to read start to finish.
+`pytorch_adapter.h` follows the same convention at a smaller scale, in the
+order its reference page describes. The other headers are small enough to
+read start to finish.
 
 ## Ownership rules
 
