@@ -128,7 +128,7 @@ else a run writes has a fixed name inside the run directory.
 | `--steps` | Optimizer steps per run budget; the last is traced | 5 |
 | `--seed` | Model and data seed | 0 |
 | `--artifact-store` | Compile, profile and plan cache to read and write. Point it at another run's store to skip work already paid for there | `<output-dir>/artifact_store` |
-| `--deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | off |
+| `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 
 ## What the output shows, in order
 

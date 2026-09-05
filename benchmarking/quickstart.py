@@ -463,12 +463,15 @@ def main() -> int:
     )
     parser.add_argument(
         "--deterministic",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="make the search reproduce exactly at any worker count: a"
         " candidate's placement gate consults only its own placed plans"
-        " rather than the shared best-placed record. Costs wall time,"
-        " because the shared bound is what lets a candidate skip measuring"
-        " a plan that cannot win",
+        " rather than the shared best-placed record, so every graph-pair"
+        " selection reports the plan it actually found. On by default,"
+        " because the figures compare selections; --no-deterministic lets"
+        " the shared bound skip measuring plans that cannot win, at the"
+        " cost of selections that show up or not depending on timing",
     )
     arguments = parser.parse_args()
     if arguments.steps < 1:
