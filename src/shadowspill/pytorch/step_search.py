@@ -40,6 +40,7 @@ from shadowspill.planner.diagnostics.plan import (
     summarize_selected_plan,
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.planner.result import PressureFitResult
 from shadowspill.pytorch.api import make_step_program
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.schema import artifact_schema
@@ -122,6 +123,141 @@ def search_geometries(
 
 
 @dataclass(frozen=True, slots=True)
+class GraphPairOutcome:
+    """The best plan the search found under one graph-pair selection.
+
+    A search settles one selection at a time -- one choice of graph-pair
+    option per graph-pair group -- and answers with the best plan across
+    all of them. Keeping only that answer hides what the choice cost: whether
+    the winner beat the alternatives by a hair or by a factor, and whether
+    the others were slower or simply would not fit.
+
+    Everything here is derivable without a second simulation.
+    ``selected_compute_seconds`` and ``unconstrained_seconds`` come from the
+    program's task profiles and this selection's own choices, so the split
+    below needs only the makespan the search already recorded.
+    """
+
+    selection_id: str
+    #: Groups this selection asked to recompute rather than save, out of the
+    #: graph-pair groups the program has. This is the "level" the ladder
+    #: of selections walks.
+    recompute_groups: int
+    group_count: int
+    #: The makespan of this selection's best plan, or `None` when no policy
+    #: produced a plan that fits.
+    makespan_seconds: float | None
+    #: Compute this selection asks for, and the cheapest any selection could
+    #: ask for, both as the sum of the selected tasks' profiles.
+    selected_compute_seconds: float
+    unconstrained_seconds: float
+    valid_candidate_count: int
+    candidate_count: int
+    #: What this selection's own best plan moves. Zero when it placed
+    #: nothing, and on a plan read back from a store written before these
+    #: were recorded.
+    fetched_bytes: int
+    evicted_bytes: int
+
+    @property
+    def recomputation_overhead_seconds(self) -> float:
+        """Compute this selection spends above the cheapest possible."""
+
+        return self.selected_compute_seconds - self.unconstrained_seconds
+
+    @property
+    def waiting_seconds(self) -> float | None:
+        """Everything in the step that is not compute.
+
+        Waiting between tasks and the terminal writeback together, because
+        separating them needs the span of this selection's plan and the
+        search records only its makespan.
+        """
+
+        if self.makespan_seconds is None:
+            return None
+        return self.makespan_seconds - self.selected_compute_seconds
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "selection_id": self.selection_id,
+            "recompute_groups": self.recompute_groups,
+            "group_count": self.group_count,
+            "makespan_seconds": self.makespan_seconds,
+            "selected_compute_seconds": self.selected_compute_seconds,
+            "unconstrained_seconds": self.unconstrained_seconds,
+            "valid_candidate_count": self.valid_candidate_count,
+            "candidate_count": self.candidate_count,
+            "fetched_bytes": self.fetched_bytes,
+            "evicted_bytes": self.evicted_bytes,
+        }
+
+
+def _graph_pair_outcomes(
+    result: PressureFitResult,
+) -> tuple[GraphPairOutcome, ...]:
+    """One record per graph-pair selection the search evaluated.
+
+    The costs are read off the program rather than the simulator: a group's
+    option names the tasks it activates, and a task names its profile, so
+    both the cheapest total and this selection's total are sums over the
+    same table.
+    """
+
+    program = result.program
+    runtime_ns = {item.profile_id: item.runtime_ns for item in program.profiles}
+    task_ns = {item.task_id: runtime_ns[item.profile_id] for item in program.tasks}
+    variant_tasks: set[str] = set()
+    option_cost: dict[tuple[str, str], int] = {}
+    cheapest: dict[str, int] = {}
+    for group in program.task_alternative_groups:
+        for option in group.options:
+            variant_tasks.update(option.active_task_ids)
+            cost = sum(task_ns[task_id] for task_id in option.active_task_ids)
+            option_cost[(group.group_id, option.option_id)] = cost
+        cheapest[group.group_id] = min(
+            option_cost[(group.group_id, option.option_id)] for option in group.options
+        )
+    fixed_ns = sum(
+        task_ns[item.task_id]
+        for item in program.tasks
+        if item.task_id not in variant_tasks
+    )
+    floor_ns = fixed_ns + sum(cheapest.values())
+
+    outcomes = []
+    for problem in result.diagnostics.resolved_programs:
+        chosen = {item.group_id: item.option_id for item in problem.choices}
+        selected_ns = fixed_ns
+        recomputing = 0
+        for group_id, option_id in chosen.items():
+            cost = option_cost[(group_id, option_id)]
+            selected_ns += cost
+            if cost > cheapest[group_id]:
+                recomputing += 1
+        statuses = [item.status for item in problem.candidate_evaluations]
+        outcomes.append(
+            GraphPairOutcome(
+                selection_id=problem.selection_id,
+                recompute_groups=recomputing,
+                group_count=len(chosen),
+                makespan_seconds=(
+                    None
+                    if problem.selected_makespan_ns is None
+                    else problem.selected_makespan_ns / 1e9
+                ),
+                selected_compute_seconds=selected_ns / 1e9,
+                unconstrained_seconds=floor_ns / 1e9,
+                valid_candidate_count=sum(1 for item in statuses if item == "valid"),
+                candidate_count=len(statuses),
+                fetched_bytes=problem.fetched_bytes,
+                evicted_bytes=problem.evicted_bytes,
+            )
+        )
+    return tuple(sorted(outcomes, key=lambda item: item.recompute_groups))
+
+
+@dataclass(frozen=True, slots=True)
 class StepSearchPoint:
     """One geometry under one budget pair, with its search outcome."""
 
@@ -134,6 +270,11 @@ class StepSearchPoint:
     summary: PlanSummary | None
     error: str | None
     search_seconds: float
+    #: Every graph-pair selection the search evaluated at this point, not
+    #: only the one it answered with, ordered by how many groups recompute.
+    #: Named for the graph-pair choices it makes rather than "selections",
+    #: which in this codebase also names a candidate policy.
+    graph_pair_selections: tuple[GraphPairOutcome, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +379,9 @@ class StepSearchReport:
                     ),
                     "error": item.error,
                     "search_seconds": item.search_seconds,
+                    "graph_pair_selections": [
+                        outcome.as_dict() for outcome in item.graph_pair_selections
+                    ],
                 }
                 for item in self.points
             ],
@@ -391,6 +535,7 @@ def plan_step_search(
             point_index += 1
             search_started = time.perf_counter()
             status, makespan, summary, failure = "succeeded", None, None, None
+            outcomes: tuple[GraphPairOutcome, ...] = ()
             try:
                 plan = pressurefit_program(
                     step.recurrent,
@@ -411,6 +556,7 @@ def plan_step_search(
             else:
                 makespan = plan.simulation.makespan_ns / 1e9
                 summary = summarize_selected_plan(plan.result)
+                outcomes = _graph_pair_outcomes(plan.result)
             announce(
                 f"point {point_index}/{point_total}: {sequences} x"
                 f" {accumulation} @ {execution_budget >> 30} GiB -> {status}"
@@ -427,6 +573,7 @@ def plan_step_search(
                     summary=summary,
                     error=failure,
                     search_seconds=time.perf_counter() - search_started,
+                    graph_pair_selections=outcomes,
                 )
             )
     return StepSearchReport(
