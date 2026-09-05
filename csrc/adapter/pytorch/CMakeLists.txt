@@ -4,14 +4,17 @@ add_library(
   shadowspill_pytorch
   SHARED
   adapter.c
-  allocator.c
-  allocator_callback.cpp
+  allocator/allocator.c
+  allocator/exception.cpp
+  failure/latch.c
+  failure/message.c
   lifecycle/bootstrap.c
   lifecycle/close.c
   lifecycle/physical.c
   profiler.c
   tasks/boundaries.c
   tasks/scopes.c
+  storage/objects.c
   tasks/task_range.c
 )
 target_include_directories(
