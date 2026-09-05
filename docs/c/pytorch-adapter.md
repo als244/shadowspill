@@ -12,9 +12,10 @@ header carries only what needs PyTorch.
 
 ## What the adapter exposes
 
-The sections below, in order: bootstrap and physical admission; the allocator
-hooks PyTorch calls; object and storage operations; execution boundaries;
-profiling and tracing; failure and lifecycle. Every symbol is prefixed
+The header is ordered the way this page is, with a section banner at each
+heading below: vocabulary and descriptions; bootstrap, physical admission and
+close; the allocator callbacks; objects and storage; task boundaries and
+allocation scopes; profiling; failure and recovery. Every symbol is prefixed
 `shadowspill_pytorch_`.
 
 ## What the adapter requires of a backend
@@ -26,15 +27,39 @@ the table with `shadowspill_backend_is_valid()`, and keeps it for the life of
 the runtime. The adapter links no provider library and includes no provider
 header; see [backends](../architecture/backends.md).
 
-## Bootstrap and capabilities
+## Vocabulary and descriptions
+
+`ShadowSpillPytorchAdapterConfig` is what bootstrap takes: the pools and
+directed routes, the device budget and the provider's headroom, and the
+backend library by path. The adapter hands back
+`ShadowSpillPytorchPhysicalAdmission` (the ledger as sealed),
+`ShadowSpillPytorchAdapterCapabilities` (the three contract versions and
+whether the storage operators were built), `ShadowSpillPytorchAdapterStatistics`
+(the callback counters with the runtime's and the backend's statistics inside)
+and `ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
+record inside). `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION` versions all of it.
+
+Two ids the frontend synthesises for work that is not a planned task are
+defined here so the failure report can decode them: allocation scopes take
+ids at or above `SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and the pre-task
+placement batch runs as `SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID`. The
+frontend copies both.
+
+## Bootstrap, physical admission and close
 
 - `shadowspill_pytorch_allocator_bootstrap()` installs the allocator and
   process-owned runtime from explicit pool and directed-route registries.
 - `shadowspill_pytorch_allocator_close()` permanently closes the installed
   runtime, joins its worker, releases its routes, pools, and backend, and
-  closes the backend library. The
-  PyTorch allocator shim remains installed and rejects future allocations.
+  closes the backend library. The PyTorch allocator shim remains installed and
+  rejects future allocations. Close is deterministic and idempotent; the
+  adapter also registers the same close at process exit as a last resort,
+  without waiting. Python callables must still be closed explicitly so errors
+  and ownership violations are reported at the correct boundary.
 - `shadowspill_pytorch_adapter_capabilities()` reports the adapter contract.
+- `shadowspill_pytorch_runtime_handle()` publishes the neutral runtime this
+  process bound. Everything reachable with that handle alone is called on the
+  neutral library; what remains here needs something only this library has.
 - `shadowspill_pytorch_physical_memory()`,
   `shadowspill_pytorch_physical_admission()`,
   `shadowspill_pytorch_check_physical_budget()`, and
@@ -45,16 +70,18 @@ header; see [backends](../architecture/backends.md).
   `shadowspill_runtime_calibrate_transfer_capabilities()` and
   `shadowspill_runtime_transfer_profiles()`, called with the handle.
 
-## Allocator callbacks
+## The allocator callbacks
 
 - `shadowspill_pytorch_backend_malloc()`
 - `shadowspill_pytorch_backend_free()`
 - `shadowspill_pytorch_backend_record_stream()`
 - `shadowspill_pytorch_allocation_for_pointer()`
 
-These are the symbols PyTorch's pluggable allocator is pointed at. A nonzero
-allocation failure is surfaced as a typed frontend exception before compiled
-code can use an invalid address.
+The first three are the symbols PyTorch's pluggable allocator is pointed at.
+A nonzero allocation failure is surfaced as a typed frontend exception before
+compiled code can use an invalid address. The fourth is the read-only lookup
+that says which allocation a pointer belongs to, used to classify profiled
+task outputs.
 
 ## Objects and storage
 
@@ -71,8 +98,11 @@ code can use an invalid address.
   address.
 - `shadowspill_write_object()` and `shadowspill_read_object()` move persistent
   state through an explicitly selected pool.
-- `shadowspill_pytorch_transfer_acquired_object_to_caller()` and
-  `shadowspill_pytorch_release_caller_allocation()` manage public outputs.
+- `shadowspill_pytorch_acquire_objects_handle()` acquires the objects an
+  admitted acquisition names for a consumer stream, and
+  `shadowspill_pytorch_transfer_acquired_object_to_caller()` and
+  `shadowspill_pytorch_release_caller_allocation()` hand one to the caller
+  and take it back.
 - `shadowspill_object_snapshot()` returns diagnostic state.
 - `shadowspill_object_location_snapshot()` returns one explicit
   pool-location view without assigning execution or spill meaning to it.
@@ -83,7 +113,7 @@ code can use an invalid address.
   residency generation without destroying its logical object or plan
   binding.
 
-## Execution boundaries
+## Task boundaries and allocation scopes
 
 These publish the neutral plan owner without introducing frontend object
 semantics:
@@ -93,10 +123,9 @@ semantics:
 - `shadowspill_pytorch_transfer_acquired_object_to_caller()`
 
 Each of those wraps a provider stream, which is work only this library can
-do. Everything else in plan
-admission needs nothing but handles the neutral runtime already owns, so the
-frontend calls those on the neutral library, passing the runtime from
-`shadowspill_pytorch_runtime_handle()`:
+do. Everything else in plan admission needs nothing but handles the neutral
+runtime already owns, so the frontend calls those on the neutral library,
+passing the runtime from `shadowspill_pytorch_runtime_handle()`:
 
 - `shadowspill_plan_bind_object()`, `shadowspill_plan_admit_task()`,
   `shadowspill_plan_publish_initial_allocation()`
@@ -118,10 +147,6 @@ Acquiring an object handle stays on the adapter while releasing one does not:
 acquiring resolves an id against the bound runtime, releasing needs only the
 handle.
 
-`shadowspill_pytorch_runtime_handle()` publishes the neutral runtime this
-process bound. Everything reachable with that handle alone is called on the
-neutral library; what remains here needs something only this library has.
-
 Plan creation receives explicit execution/spill pool IDs and fetch/evict route
 IDs. The adapter does not infer routes from global runtime roles.
 
@@ -141,28 +166,24 @@ Task calls mirror the neutral runtime:
   boundary's range-reuse resolution to the neutral runtime on the caller's
   current compute stream. It carries no tensor, so it is registered against
   the schema rather than against a dispatch key.
+- `shadowspill_pytorch_abort_task_handle()` closes the matching admitted task
+  scope and its profiler range after frontend execution aborts.
+- `shadowspill_pytorch_allocation_scope_begin()`,
+  `shadowspill_pytorch_allocation_scope_end()`, and
+  `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
+  allocations without creating a fake execution task.
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission
 and offset handling](../architecture/physical-admission.md).
 
-## Profiling and tracing
+## Profiling
 
-- `shadowspill_pytorch_allocation_scope_begin()`,
-  `shadowspill_pytorch_allocation_scope_end()`, and
-  `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
-  allocations without creating a fake execution task.
-- Allocation scopes take ids at or above
-  `SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE`, and the pre-task placement
-  batch runs as `SHADOWSPILL_PYTORCH_INITIAL_ACTIONS_TASK_ID`. The failure
-  report decodes both, so the header defines them and the frontend copies
-  them.
 - `shadowspill_pytorch_profiler_annotations_set()` enables the profiler
   backend.
 - `shadowspill_pytorch_profile_range_begin()` and
-  `shadowspill_pytorch_profile_range_end()` manage explicit ranges.
-- `shadowspill_pytorch_abort_task_handle()` closes the matching admitted task
-  scope and its profiler range after frontend execution aborts.
+  `shadowspill_pytorch_profile_range_end()` manage explicit ranges. They are
+  no-ops on a backend without a profiler.
 
 Structured runtime tracing (`shadowspill_trace_prepare()`,
 `shadowspill_trace_begin()`, `shadowspill_trace_end()`,
@@ -173,18 +194,14 @@ Structured runtime tracing (`shadowspill_trace_prepare()`,
 frontend makes directly, passing the handle from
 `shadowspill_pytorch_runtime_handle()`.
 
-## Failure and lifecycle
+## Failure and recovery
 
 `shadowspill_pytorch_allocator_failure()` and
-`shadowspill_pytorch_allocator_statistics()` return structured state.
+`shadowspill_pytorch_allocator_statistics()` return structured state: the
+first failure, which is what stopped the runtime, and the counters around it.
 `shadowspill_runtime_wait_idle()`, called with the handle, is the explicit
-lifecycle barrier;
-`shadowspill_plan_wait_idle()` is the plan-local active-poll boundary
-used for callable recurrence and teardown. It ignores unrelated plans;
-`shadowspill_pytorch_recover_no_progress()` performs the documented recovery
-operation.
-
-`shadowspill_pytorch_allocator_close()` performs deterministic teardown and is
-idempotent. The adapter also registers the same cleanup at process exit as a
-last resort. Python callables must still be closed explicitly so errors and
-ownership violations are reported at the correct boundary.
+lifecycle barrier; `shadowspill_plan_wait_idle()` is the plan-local
+active-poll boundary used for callable recurrence and teardown, and ignores
+unrelated plans. `shadowspill_pytorch_recover_no_progress()` performs the one
+documented recovery: the frontend synchronizes the execution device first,
+and only a latched NO_PROGRESS failure can be cleared.

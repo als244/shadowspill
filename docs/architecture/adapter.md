@@ -75,9 +75,9 @@ routes, and lanes; see [backends](backends.md).
 ## What it exposes upward
 
 The C entry points in `<shadowspill/pytorch_adapter.h>`, grouped in the
-[adapter C API](../c/pytorch-adapter.md): bootstrap and physical admission,
-the allocator hooks, object and storage operations, execution boundaries,
-profiling and tracing, and failure reporting. The Python layer wraps them in
+[adapter C API](../c/pytorch-adapter.md): bootstrap, physical admission and
+close; the allocator callbacks; objects and storage; task boundaries and
+allocation scopes; profiling; and failure and recovery. The Python layer wraps them in
 `shadowspill.pytorch.runtime_adapter`; anything reachable through a runtime
 handle the adapter already published is called on the neutral library
 directly rather than restated here.
