@@ -1,5 +1,3 @@
-#define _GNU_SOURCE
-
 #include "internal.h"
 #include "../failure/internal.h"
 
