@@ -38,13 +38,14 @@ The workflow has two independent phases:
 gradient accumulation rounds, and tokens per optimizer step. Logs and result
 records use that terminology consistently.
 
-The current full dataset is:
-
-`benchmarking/datasets/input_programs/full_model_program_corpus_d65e6ef`
-
-It contains 168 already-collected Programs. Generated datasets, caches, and
-results are intentionally git-ignored; their versioned configurations,
-launchers, schemas, and documentation are tracked.
+A dataset lives under `datasets/input_programs/`, named for its collection
+configuration and the revision that collected it, and holds one `StepProgram`
+per case; a frontier's results live under `planning_eval/results/`, named the
+same way for the revision measured. Both, and the artifact stores, are
+git-ignored. What is tracked is what reproduces them: the versioned
+configurations, the launchers, the schemas, and these guides. Which dataset
+is current is a fact about the checkout, read from `input_programs/` rather
+than from here.
 
 See [program_collection/README.md](program_collection/README.md) to build or
 validate Program inputs and [planning_eval/README.md](planning_eval/README.md)

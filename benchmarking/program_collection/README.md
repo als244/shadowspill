@@ -10,12 +10,12 @@ The obvious launcher is:
 ```bash
 python -m benchmarking.program_collection.collect \
   --config benchmarking/program_collection/configs/full_model_program_corpus_v1.json \
-  --output-dir benchmarking/datasets/input_programs/full_model_program_corpus_d65e6ef \
-  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_d65e6ef
+  --output-dir benchmarking/datasets/input_programs/full_model_program_corpus_<rev> \
+  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_<rev>
 ```
 
-The v1 configuration expands model providers and `DataGeometry` axes into 168
-Programs. In user-facing text, the third geometry axis is **gradient
+The v1 configuration expands model providers and `DataGeometry` axes into one
+Program per point. In user-facing text, the third geometry axis is **gradient
 accumulation rounds**. The schema-v1 internal field name `accumulation_steps`
 is retained on write to keep digests stable, and accepted on read.
 
@@ -28,8 +28,8 @@ Resume and validate an existing dataset without rebuilding completed Programs:
 ```bash
 python -m benchmarking.program_collection.collect \
   --config benchmarking/program_collection/configs/full_model_program_corpus_v1.json \
-  --output-dir benchmarking/datasets/input_programs/full_model_program_corpus_d65e6ef \
-  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_d65e6ef \
+  --output-dir benchmarking/datasets/input_programs/full_model_program_corpus_<rev> \
+  --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_<rev> \
   --resume
 ```
 
@@ -67,17 +67,16 @@ Program's digest and none of it is read back when the Program is planned, so
 a field added here cannot invalidate a corpus. What the digest does cover is
 in [the artifact store guide](../../docs/python/artifact-store.md#identity).
 
-Journal paths are relative to the dataset root. Moving the complete dataset
-does not invalidate resume or integrity validation. The current 168 Programs
-and their artifact store were collected in this tree, most recently on
-2026-08-29 at `d65e6ef`; the collection log under `_collections/` records
-when and at what revision.
+Journal paths are relative to the dataset root, so moving a complete dataset
+does not invalidate resume or integrity validation. When and at what revision
+a dataset was collected is recorded in its own collection log under
+`_collections/` and on every case manifest, not here.
 
 ## Collecting on another machine
 
 Collection needs an execution device and a working provider backend: it
-builds each model, compiles it, and profiles real kernels. The 168-Program
-corpus took 5.24 hours to collect on this tree's machine.
+builds each model, compiles it, and profiles real kernels, so a full matrix
+takes hours.
 
 The measured task costs are written into each `StepProgram`, so a corpus
 describes the machine that collected it. That is what makes a corpus reusable
@@ -86,4 +85,4 @@ portable description of different hardware. Evaluating planning against
 another machine's costs means collecting a corpus there; reusing this one
 measures the planner against the costs recorded here, whatever machine the
 planner runs on. Name the output directory for the revision that collected
-it, as the existing corpora are, so the two cases stay distinguishable.
+it, so the two cases stay distinguishable.
