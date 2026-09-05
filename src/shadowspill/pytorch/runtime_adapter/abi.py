@@ -366,6 +366,17 @@ class PlanDescription(ctypes.Structure):
     ]
 
 
+class ObjectDescription(ctypes.Structure):
+    _fields_ = [
+        ("object_id", ctypes.c_uint64),
+        ("size_bytes", ctypes.c_uint64),
+        ("initial_version", ctypes.c_uint64),
+        ("initial_pool_id", ctypes.c_uint32),
+        ("retain_spill_copy", ctypes.c_uint8),
+        ("initially_resident", ctypes.c_uint8),
+    ]
+
+
 class ObjectBinding(ctypes.Structure):
     _fields_ = [
         ("object_id", ctypes.c_uint64),
@@ -507,7 +518,6 @@ def configure_adapter_library(library: Any) -> None:
     _configure_profiler(library)
     _configure_physical_memory(library)
     _configure_allocator(library)
-    _configure_transfer_calibration(library)
     _configure_objects(library)
     _configure_task_boundaries(library)
     _configure_execution(library)
@@ -617,6 +627,33 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
             ctypes.c_uint64,
             ctypes.POINTER(ctypes.c_uint64),
         ],
+        ctypes.c_uint32,
+    ),
+    ("shadowspill_runtime_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),
+    (
+        "shadowspill_runtime_calibrate_transfer_capabilities",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(TransferCalibrationConfig),
+            ctypes.POINTER(TransferRouteKey),
+            ctypes.c_uint32,
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_runtime_transfer_profiles",
+        [
+            ctypes.c_size_t,
+            ctypes.POINTER(TransferProfile),
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(ctypes.c_uint64),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_register_object",
+        [ctypes.c_size_t, ctypes.POINTER(ObjectDescription)],
         ctypes.c_uint32,
     ),
     (
@@ -804,7 +841,6 @@ def _configure_allocator(library: Any) -> None:
         [],
         ctypes.c_uint32,
     )
-    _signature(library, "shadowspill_pytorch_allocator_wait_idle", [], ctypes.c_uint32)
     _signature(
         library,
         "shadowspill_pytorch_allocation_for_pointer",
@@ -813,49 +849,7 @@ def _configure_allocator(library: Any) -> None:
     )
 
 
-def _configure_transfer_calibration(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_calibrate_transfer_capabilities",
-        [
-            ctypes.POINTER(TransferCalibrationConfig),
-            ctypes.POINTER(TransferRouteKey),
-            ctypes.c_uint32,
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_transfer_profiles",
-        [
-            ctypes.POINTER(TransferProfile),
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.POINTER(ctypes.c_uint64),
-        ],
-        ctypes.c_uint32,
-    )
-
-
 def _configure_objects(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_register_object",
-        [
-            ctypes.c_uint32,
-            ctypes.c_uint64,
-            ctypes.c_uint64,
-            ctypes.c_uint8,
-            ctypes.c_uint64,
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_register_placeholder_object",
-        [ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint8],
-        ctypes.c_uint32,
-    )
     _signature(
         library,
         "shadowspill_pytorch_validate_object_binding",
@@ -887,12 +881,6 @@ def _configure_task_boundaries(library: Any) -> None:
 
 
 def _configure_execution(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_validate_task_replacement_binding",
-        [ctypes.c_size_t, ctypes.c_uint32, ctypes.c_uint64, ctypes.c_uint64],
-        ctypes.c_uint32,
-    )
     _signature(
         library,
         "shadowspill_pytorch_acquire_objects_handle",

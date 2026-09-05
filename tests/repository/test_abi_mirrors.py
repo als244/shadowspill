@@ -41,6 +41,7 @@ _MIRRORS = {
     "ShadowSpillAllocation": abi.Allocation,
     "ShadowSpillRuntimeFailure": abi.RuntimeFailure,
     "ShadowSpillObjectBinding": abi.ObjectBinding,
+    "ShadowSpillObjectDescription": abi.ObjectDescription,
     "ShadowSpillObjectUpdate": abi.ObjectUpdate,
     "ShadowSpillRuntimeAction": abi.RuntimeAction,
     "ShadowSpillTaskPublicationDescription": abi.TaskPublicationDescription,

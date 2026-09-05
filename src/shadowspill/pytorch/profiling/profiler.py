@@ -851,7 +851,9 @@ class TaskProfiler:
     ) -> None:
         """Block on the runtime's progress-safe quiescence boundary."""
 
-        message = wait_allocator_idle(self._library, problem=problem)
+        message = wait_allocator_idle(
+            self._library, self._runtime_handle, problem=problem
+        )
         if message is not None:
             raise AllocationTelemetryError(message)
 

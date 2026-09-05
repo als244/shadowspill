@@ -365,7 +365,9 @@ def profile_forward_tasks(
         )
         _verify_manifest_identity(manifests, compiled_tasks)
         message = wait_allocator_idle(
-            captured.installed.library, problem="compiled entrypoint release"
+            captured.installed.library,
+            captured.installed.runtime_handle,
+            problem="compiled entrypoint release",
         )
         if message is not None:
             raise PlanningError(message)

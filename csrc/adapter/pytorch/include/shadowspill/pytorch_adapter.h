@@ -232,15 +232,6 @@ shadowspill_pytorch_after_task_handle(
     uintptr_t compute_stream_address
 );
 
-/* Validate one replacement's retired and successor addresses by direct record. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_validate_task_replacement_binding(
-    uintptr_t task_handle,
-    uint32_t publication_ordinal,
-    uint64_t retired_address,
-    uint64_t successor_address
-);
-
 /* Reconciles current process bytes against the sealed or provisional cap. */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_check_physical_budget(void);
@@ -262,49 +253,11 @@ shadowspill_pytorch_allocator_failure(
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_recover_no_progress(void);
 
-/* Explicitly synchronizing qualification/checkpoint helper. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_allocator_wait_idle(void);
-
-/* Public frontend bridge for runtime transfer-route calibration and snapshots. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_calibrate_transfer_capabilities(
-    const ShadowSpillTransferCalibrationConfig *config,
-    const ShadowSpillTransferRouteKey *routes,
-    uint32_t route_count
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_transfer_profiles(
-    ShadowSpillTransferProfile *profiles,
-    uint32_t capacity,
-    uint32_t *count,
-    uint64_t *generation
-);
-
 /* Read-only exact pointer lookup used to classify profiled task outputs. */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_for_pointer(
     uint64_t address,
     ShadowSpillAllocation *allocation
-);
-
-/* Register and populate one object in an explicitly selected pool. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_register_object(
-    uint32_t pool_id,
-    uint64_t object_id,
-    uint64_t size_bytes,
-    uint8_t retain_spill_copy,
-    uint64_t source_address
-);
-
-/* Register a logical object without allocating spill or device residency. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_register_placeholder_object(
-    uint64_t object_id,
-    uint64_t size_bytes,
-    uint8_t retain_spill_copy
 );
 
 /* Release one caller-owned allocation from the private owning DataPtr. */

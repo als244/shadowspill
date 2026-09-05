@@ -2,64 +2,6 @@
 
 #include "../internal.h"
 
-ShadowSpillStatus shadowspill_pytorch_register_object(
-    uint32_t pool_id,
-    uint64_t object_id,
-    uint64_t size_bytes,
-    uint8_t retain_spill_copy,
-    uint64_t source_address
-) {
-    if (retain_spill_copy > 1U ||
-        (size_bytes != 0U && source_address == 0U)) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    const ShadowSpillObjectDescription description = {
-        .object_id = object_id,
-        .size_bytes = size_bytes,
-        .retain_spill_copy = retain_spill_copy,
-        .initial_pool_id = pool_id,
-        .initially_resident = 1U,
-    };
-    ShadowSpillStatus status = shadowspill_register_object(
-        runtime, &description
-    );
-    if (status != SHADOWSPILL_STATUS_OK) {
-        return status;
-    }
-    return shadowspill_write_object(
-        runtime,
-        object_id,
-        pool_id,
-        (const void *)(uintptr_t)source_address,
-        size_bytes
-    );
-}
-
-ShadowSpillStatus shadowspill_pytorch_register_placeholder_object(
-    uint64_t object_id,
-    uint64_t size_bytes,
-    uint8_t retain_spill_copy
-) {
-    if (retain_spill_copy > 1U) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    const ShadowSpillObjectDescription description = {
-        .object_id = object_id,
-        .size_bytes = size_bytes,
-        .retain_spill_copy = retain_spill_copy,
-        .initially_resident = 0U,
-    };
-    return shadowspill_register_object(runtime, &description);
-}
-
 ShadowSpillStatus shadowspill_pytorch_validate_object_binding(
     uint32_t pool_id,
     uint64_t object_id,
@@ -145,28 +87,5 @@ ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
               shadowspill_pytorch_allocator_pool_id(),
               allocation_id,
               shadowspill_pytorch_stream(stream)
-          );
-}
-
-ShadowSpillStatus
-shadowspill_pytorch_validate_task_replacement_binding(
-    uintptr_t task_handle,
-    uint32_t publication_ordinal,
-    uint64_t retired_address,
-    uint64_t successor_address
-) {
-    if (task_handle == 0U || retired_address == 0U ||
-        successor_address == 0U) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
-    return runtime == NULL
-        ? SHADOWSPILL_STATUS_CLOSED
-        : shadowspill_task_validate_replacement_binding(
-              runtime,
-              (const ShadowSpillTaskHandle *)task_handle,
-              publication_ordinal,
-              (const void *)(uintptr_t)retired_address,
-              (const void *)(uintptr_t)successor_address
           );
 }

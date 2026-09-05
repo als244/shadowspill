@@ -191,7 +191,7 @@ static int profiler(void) {
 }
 
 /* The three callbacks PyTorch's pluggable allocator makes, and the query. */
-static int allocator(void) {
+static int allocator(ShadowSpillRuntime *runtime) {
     REQUIRE(
         shadowspill_pytorch_backend_malloc(0, 0, DEFAULT_STREAM) == NULL,
         "a zero-byte request must return NULL"
@@ -212,7 +212,7 @@ static int allocator(void) {
     shadowspill_pytorch_backend_record_stream(block, DEFAULT_STREAM);
     shadowspill_pytorch_backend_free(block, (size_t)MIB(1), 0, DEFAULT_STREAM);
     REQUIRE(
-        shadowspill_pytorch_allocator_wait_idle() == SHADOWSPILL_STATUS_OK,
+        shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle after the free failed"
     );
     ShadowSpillPytorchAdapterStatistics statistics = {0};
@@ -237,14 +237,18 @@ static int objects(ShadowSpillRuntime *runtime) {
     for (uint32_t index = 0U; index < sizeof(payload); ++index) {
         payload[index] = (unsigned char)(index * 7U);
     }
+    const ShadowSpillObjectDescription object = {
+        .object_id = OBJECT_ID,
+        .size_bytes = sizeof(payload),
+        .initial_pool_id = SPILL_POOL,
+        .retain_spill_copy = 1U,
+        .initially_resident = 1U,
+    };
     REQUIRE(
-        shadowspill_pytorch_register_object(
-            SPILL_POOL,
-            OBJECT_ID,
-            sizeof(payload),
-            1U,
-            (uint64_t)(uintptr_t)payload
-        ) == SHADOWSPILL_STATUS_OK,
+        shadowspill_register_object(runtime, &object) == SHADOWSPILL_STATUS_OK &&
+            shadowspill_write_object(
+                runtime, OBJECT_ID, SPILL_POOL, payload, sizeof(payload)
+            ) == SHADOWSPILL_STATUS_OK,
         "registering a spill-resident object failed"
     );
     ShadowSpillObjectLocationSnapshot location = {0};
@@ -282,17 +286,14 @@ static int objects(ShadowSpillRuntime *runtime) {
             memcmp(payload, back, sizeof(back)) == 0,
         "the object does not read back what was written"
     );
+    const ShadowSpillObjectDescription placeholder = {
+        .object_id = OBJECT_ID + 1U,
+        .size_bytes = 512U,
+    };
     REQUIRE(
-        shadowspill_pytorch_register_placeholder_object(
-            OBJECT_ID + 1U, 512U, 0U
-        ) == SHADOWSPILL_STATUS_OK,
+        shadowspill_register_object(runtime, &placeholder) ==
+            SHADOWSPILL_STATUS_OK,
         "registering a placeholder failed"
-    );
-    REQUIRE(
-        shadowspill_pytorch_register_placeholder_object(
-            OBJECT_ID + 2U, 512U, 2U
-        ) == SHADOWSPILL_STATUS_INVALID_ARGUMENT,
-        "retain_spill_copy above 1 must be refused"
     );
     REQUIRE(
         shadowspill_unregister_object(runtime, OBJECT_ID + 1U) ==
@@ -303,7 +304,7 @@ static int objects(ShadowSpillRuntime *runtime) {
 }
 
 /* Allocation scopes outside any task, ended and aborted. */
-static int scopes(void) {
+static int scopes(ShadowSpillRuntime *runtime) {
     /* The frontend's profiling scopes sit above 1 << 62. */
     const uint64_t scope_id = (UINT64_C(1) << 62U) | 3U;
     REQUIRE(
@@ -331,7 +332,7 @@ static int scopes(void) {
     );
     shadowspill_pytorch_allocation_scope_abort();
     REQUIRE(
-        shadowspill_pytorch_allocator_wait_idle() == SHADOWSPILL_STATUS_OK,
+        shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle after the scopes failed"
     );
     return 0;
@@ -384,7 +385,7 @@ static int tasks(ShadowSpillRuntime *runtime) {
         "abort_task failed"
     );
     REQUIRE(
-        shadowspill_pytorch_allocator_wait_idle() == SHADOWSPILL_STATUS_OK,
+        shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle after the task failed"
     );
     return 0;
@@ -421,7 +422,7 @@ static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
         "submitting the placement batch failed"
     );
     REQUIRE(
-        shadowspill_pytorch_allocator_wait_idle() == SHADOWSPILL_STATUS_OK,
+        shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle after the batch failed"
     );
     const uint64_t object_id = OBJECT_ID;
@@ -463,14 +464,14 @@ static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
         "releasing the caller's allocation failed"
     );
     REQUIRE(
-        shadowspill_pytorch_allocator_wait_idle() == SHADOWSPILL_STATUS_OK,
+        shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle after the handoff failed"
     );
     return 0;
 }
 
 /* Transfer calibration through the adapter, and the profiles it leaves. */
-static int calibration(void) {
+static int calibration(ShadowSpillRuntime *runtime) {
     const ShadowSpillTransferRouteKey keys[2] = {
         {.source_pool_id = SPILL_POOL, .destination_pool_id = DEVICE_POOL},
         {.source_pool_id = DEVICE_POOL, .destination_pool_id = SPILL_POOL},
@@ -484,8 +485,8 @@ static int calibration(void) {
         .provenance = SHADOWSPILL_TRANSFER_PROFILE_RECALIBRATION,
     };
     REQUIRE(
-        shadowspill_pytorch_calibrate_transfer_capabilities(
-            &config, keys, 2U
+        shadowspill_runtime_calibrate_transfer_capabilities(
+            runtime, &config, keys, 2U
         ) == SHADOWSPILL_STATUS_OK,
         "transfer calibration failed"
     );
@@ -494,16 +495,16 @@ static int calibration(void) {
     uint32_t count = 0U;
     uint64_t generation = 0U;
     REQUIRE(
-        shadowspill_pytorch_transfer_profiles(
-            NULL, 0U, &count, &generation
+        shadowspill_runtime_transfer_profiles(
+            runtime, NULL, 0U, &count, &generation
         ) == SHADOWSPILL_STATUS_OK &&
             count == 4U,
         "the profile count is not the pool-pair matrix"
     );
     ShadowSpillTransferProfile profiles[4] = {{0}};
     REQUIRE(
-        shadowspill_pytorch_transfer_profiles(
-            profiles, 4U, &count, &generation
+        shadowspill_runtime_transfer_profiles(
+            runtime, profiles, 4U, &count, &generation
         ) == SHADOWSPILL_STATUS_OK &&
             count == 4U && generation == 1U,
         "the profiles are unreadable after one calibration"
@@ -575,7 +576,7 @@ static int close_adapter(ShadowSpillRuntime *runtime) {
         "unregistering the object failed"
     );
     REQUIRE(
-        shadowspill_pytorch_allocator_wait_idle() == SHADOWSPILL_STATUS_OK,
+        shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle before close failed"
     );
     REQUIRE(
@@ -600,10 +601,10 @@ static int close_adapter(ShadowSpillRuntime *runtime) {
         "statistics after close must say CLOSED"
     );
     REQUIRE(
-        shadowspill_pytorch_register_placeholder_object(
-            OBJECT_ID + 3U, 1U, 0U
+        shadowspill_pytorch_validate_object_binding(
+            SPILL_POOL, OBJECT_ID, 0U, 0U
         ) == SHADOWSPILL_STATUS_CLOSED,
-        "registration after close must say CLOSED"
+        "validation after close must say CLOSED"
     );
     ShadowSpillBackendPhysicalMemory memory = {0};
     REQUIRE(
@@ -636,9 +637,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     ShadowSpillRuntime *const runtime = (ShadowSpillRuntime *)handle;
-    if (ledger() != 0 || profiler() != 0 || allocator() != 0 ||
-        objects(runtime) != 0 || scopes() != 0 || tasks(runtime) != 0 ||
-        placement_and_acquisition(runtime) != 0 || calibration() != 0 ||
+    if (ledger() != 0 || profiler() != 0 || allocator(runtime) != 0 ||
+        objects(runtime) != 0 || scopes(runtime) != 0 || tasks(runtime) != 0 ||
+        placement_and_acquisition(runtime) != 0 || calibration(runtime) != 0 ||
         failure() != 0 ||
         close_adapter(runtime) != 0) {
         return 1;
