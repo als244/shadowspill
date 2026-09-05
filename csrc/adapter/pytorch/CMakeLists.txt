@@ -3,8 +3,12 @@
 add_library(
   shadowspill_pytorch
   SHARED
+  adapter.c
   allocator.c
   allocator_callback.cpp
+  lifecycle/bootstrap.c
+  lifecycle/close.c
+  lifecycle/physical.c
 )
 target_include_directories(
   shadowspill_pytorch

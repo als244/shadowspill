@@ -1,6 +1,6 @@
 #include "shadowspill/pytorch_adapter.h"
 
-#include "internal.h"
+#include "allocator_callback.h"
 
 #ifdef SHADOWSPILL_PYTORCH_STORAGE_ADAPTER
 #include <c10/util/Exception.h>
