@@ -24,6 +24,7 @@ csrc/
 │       └── telemetry/
 ├── backends/              dlopened device backends: mock and provider
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
+    └── lifecycle/         bootstrap, close, and the physical-memory ledger
 ```
 
 Everything under `src/` compiles into one shared object. The simulator, the
