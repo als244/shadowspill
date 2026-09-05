@@ -1,12 +1,12 @@
-"""What each task's graph pair offers, and what each option costs.
+"""What each task-alternative group offers, and what each option costs.
 
-A graph pair exposes alternatives for one task: today `save` and `recompute`,
+A group exposes alternatives for one task: today `save` and `recompute`,
 which is a binary choice, but nothing here assumes that. Lowering decides which
 alternatives exist and profiling measures the tasks each one activates. This
 joins the two, so that choosing among them is a decision about costs rather
 than a second traversal of the Program.
 
-The inventory is orthogonal to the choice. Every option a graph pair exposes
+The inventory is orthogonal to the choice. Every option a group exposes
 reaches PressureFit; `recomputation` decides which combinations of them are
 worth evaluating, and resolving one combination yields the concrete program a
 candidate is planned against.
@@ -24,8 +24,8 @@ _RECOMPUTE = "recompute"
 
 
 @dataclass(frozen=True, slots=True)
-class GraphPairOption:
-    """One alternative a graph pair exposes, with what choosing it costs."""
+class TaskAlternativeOption:
+    """One alternative a group exposes, with what choosing it costs."""
 
     option_id: str
     #: Bytes this option keeps resident rather than recomputing.
@@ -35,11 +35,11 @@ class GraphPairOption:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphPairGroup:
-    """Every alternative one graph pair exposes, in the Program's order."""
+class TaskAlternativeGroup:
+    """Every alternative one group exposes, in the Program's order."""
 
     group_id: str
-    options: tuple[GraphPairOption, ...]
+    options: tuple[TaskAlternativeOption, ...]
     #: The one index structure leaves, when the choice is not free. A forward
     #: sink has to keep its value: nothing downstream would recompute it.
     pinned_index: int | None
@@ -82,10 +82,10 @@ class GraphPairGroup:
 
 
 @dataclass(frozen=True, slots=True)
-class GraphPairOptions:
-    """Every graph pair in one Program, costed."""
+class TaskAlternativeOptions:
+    """Every task-alternative group in one Program, costed."""
 
-    groups: tuple[GraphPairGroup, ...]
+    groups: tuple[TaskAlternativeGroup, ...]
 
     @classmethod
     def from_program(cls, program: Program) -> Self:
@@ -99,10 +99,10 @@ class GraphPairOptions:
         pinned = _forward_sink_saves(program)
         return cls(
             groups=tuple(
-                GraphPairGroup(
+                TaskAlternativeGroup(
                     group_id=group.group_id,
                     options=tuple(
-                        GraphPairOption(
+                        TaskAlternativeOption(
                             option_id=option.option_id,
                             retained_bytes=sum(
                                 alias_bytes[alias_id]
@@ -117,7 +117,7 @@ class GraphPairOptions:
                     ),
                     pinned_index=pinned.get(group_index),
                 )
-                for group_index, group in enumerate(program.recomputation_groups)
+                for group_index, group in enumerate(program.task_alternative_groups)
             )
         )
 
@@ -157,11 +157,24 @@ class GraphPairOptions:
 
 
 def _forward_sink_saves(program: Program) -> dict[int, int]:
-    """Pin every forward-DAG sink group to its structural ``save`` variant.
+    """Pin every sink of the forward phase to its ``save`` option.
 
-    A group whose forward tasks nothing else in the forward graph consumes is
-    producing a value the backward pass will read. Recomputing it would mean
-    recomputing it from nothing, so the choice is not free.
+    A task is a **sink of a phase** when no other task in that same phase
+    consumes it, reading the graph the way values travel: producer to
+    consumer. (``TaskSpec.dependencies`` stores the opposite orientation, so
+    read that field literally and a sink looks like a source.) A group whose
+    forward tasks are forward sinks is producing a value the backward pass
+    will read, and recomputing it would mean recomputing it from nothing, so
+    the choice is not free and the group is pinned.
+
+    The rule deliberately names one phase rather than generalising to "sinks
+    of whatever phase the group enters first". That generalisation is not
+    behaviour-preserving: a Program whose tasks carry no ``forward`` phase
+    pins nothing here and keeps every alternative open, and phrasing the rule
+    in the abstract would instead pin all of its terminal groups and delete
+    its recomputation search entirely. Scoping to ``forward`` is what confines
+    this piece of training knowledge to programs that declare they are
+    training. See the phases-and-sinks section of the IR architecture page.
     """
 
     forward_task_ids = {
@@ -175,7 +188,7 @@ def _forward_sink_saves(program: Program) -> dict[int, int]:
         if dependency in forward_task_ids
     }
     pinned: dict[int, int] = {}
-    for group_index, group in enumerate(program.recomputation_groups):
+    for group_index, group in enumerate(program.task_alternative_groups):
         group_forward_tasks = {
             task_id
             for option in group.options
@@ -193,11 +206,11 @@ def _forward_sink_saves(program: Program) -> dict[int, int]:
         )
         if len(save_indices) != 1:
             raise ValueError(
-                "terminal forward recomputation group must expose exactly one "
-                f"'save' option: {group.group_id!r}"
+                "a group that is a sink of the forward phase must expose "
+                f"exactly one 'save' option: {group.group_id!r}"
             )
         pinned[group_index] = save_indices[0]
     return pinned
 
 
-__all__ = ["GraphPairGroup", "GraphPairOption", "GraphPairOptions"]
+__all__ = ["TaskAlternativeGroup", "TaskAlternativeOption", "TaskAlternativeOptions"]

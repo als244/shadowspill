@@ -20,7 +20,7 @@ Four levels, each fixing something the level below varies:
 | probe | a few per candidate | — | the repaired schedule |
 
 A **resolved program** is the Program with every alternative fixed, leaving one
-concrete task set. Recomputation is the frontend alternative that produces
+concrete task set. Graph-pair selection is the frontend choice that produces
 them, but the invariant is unaware of that: it plans memory for whatever tasks
 execute. A hand-authored Program with no alternatives resolves to exactly one,
 and nothing below can tell the difference.

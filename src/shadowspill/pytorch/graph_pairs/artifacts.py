@@ -31,7 +31,7 @@ class GraphPairVariant:
     so they run a backward that takes those gradients as further arguments
     and returns the sum. Which form a stage uses follows from its microbatch,
     not from planning, so both forms share one option ID and the planner sees
-    the same recomputation choices at every microbatch.
+    the same graph-pair choices at every microbatch.
     """
 
     def __post_init__(self) -> None:
@@ -113,7 +113,7 @@ class TaskGraphPairs:
     def options(self, *, accumulates: bool) -> tuple[GraphPairVariant, ...]:
         """Return the variants one microbatch may choose between.
 
-        Every microbatch offers the same recomputation choices; which form of
+        Every microbatch offers the same graph-pair choices; which form of
         them it runs follows from its position rather than from planning. A
         step with a single microbatch never asks for the accumulating form, so
         the store never derives it and it is never compiled or profiled.

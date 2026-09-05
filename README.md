@@ -101,7 +101,7 @@ and the [examples](docs/examples/README.md) are complete workflows.
 | C components and APIs | [C documentation](docs/c/README.md) |
 | PressureFit planner | [PressureFit](docs/architecture/pressurefit.md) |
 | Graph-pair construction | [Graph-pair construction](docs/architecture/graph-pair-construction.md) |
-| Recomputation selection | [Recomputation selection](docs/architecture/recomputation-selection.md) |
+| Graph-pair selection | [Graph-pair selection](docs/architecture/graph-pair-selection.md) |
 | Physical admission | [Physical admission and offset handling](docs/architecture/physical-admission.md) |
 | Plan and step diagnostics | [Diagnostics guides](docs/python/plan-report.md) |
 | Serialized planning artifacts | [Program and annotated-plan JSON](docs/python/planning-json.md) |

@@ -1,4 +1,4 @@
-"""One-call indexed C evaluation for a resolved recomputation problem."""
+"""One-call indexed C evaluation for one resolved program."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ class CompiledIndexedSchedule:
 
     Keeping the problem-local winner indexed avoids constructing and validating
     thousands of Python IR records that will be discarded when a different
-    recomputation problem wins overall.
+    resolved program wins overall.
     """
 
     action_trigger_tasks: tuple[int, ...]

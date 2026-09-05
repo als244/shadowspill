@@ -1,7 +1,7 @@
 """Structured PressureFit search, repair, and work diagnostics.
 
 One module per kind of record: what the search did (``counters``), each
-candidate it evaluated (``candidates``), each recomputation selection it
+candidate it evaluated (``candidates``), each resolution it
 planned (``selections``), each capacity refinement it fell back to
 (``refinement``), and all of it together (``summary``).
 """
@@ -15,9 +15,9 @@ from .counters import (
     PressureFitWorkDiagnostics,
     ReductionStep,
 )
-from .selections import (
-    RecomputationChoiceDiagnostic,
-    RecomputationProblemDiagnostics,
+from .resolved_programs import (
+    ResolvedProgramDiagnostics,
+    TaskAlternativeChoiceDiagnostic,
 )
 from .summary import PressureFitDiagnostics
 
@@ -27,7 +27,7 @@ __all__ = [
     "PressureFitRepairDiagnostics",
     "PressureFitSectionTiming",
     "PressureFitWorkDiagnostics",
-    "RecomputationChoiceDiagnostic",
-    "RecomputationProblemDiagnostics",
     "ReductionStep",
+    "ResolvedProgramDiagnostics",
+    "TaskAlternativeChoiceDiagnostic",
 ]

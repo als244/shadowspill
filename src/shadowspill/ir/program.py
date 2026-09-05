@@ -431,22 +431,22 @@ class TaskSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class RecomputationOption:
+class TaskAlternativeOption:
     option_id: str
     active_task_ids: tuple[str, ...]
     retained_alias_group_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        require_identifier(self.option_id, "recomputation_option.option_id")
-        require_tuple(self.active_task_ids, "recomputation_option.active_task_ids")
+        require_identifier(self.option_id, "task_alternative_option.option_id")
+        require_tuple(self.active_task_ids, "task_alternative_option.active_task_ids")
         require_tuple(
             self.retained_alias_group_ids,
-            "recomputation_option.retained_alias_group_ids",
+            "task_alternative_option.retained_alias_group_ids",
         )
-        index_unique(self.active_task_ids, "recomputation_option.active_task_ids")
+        index_unique(self.active_task_ids, "task_alternative_option.active_task_ids")
         index_unique(
             self.retained_alias_group_ids,
-            "recomputation_option.retained_alias_group_ids",
+            "task_alternative_option.retained_alias_group_ids",
         )
 
     def to_dict(self) -> dict[str, JsonValue]:
@@ -457,7 +457,7 @@ class RecomputationOption:
         }
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> RecomputationOption:
+    def from_value(cls, value: object, path: str) -> TaskAlternativeOption:
         data = expect_mapping(value, path)
         active = expect_list(
             field(data, "active_task_ids", path), f"{path}.active_task_ids"
@@ -482,17 +482,19 @@ class RecomputationOption:
 
 
 @dataclass(frozen=True, slots=True)
-class RecomputationGroup:
+class TaskAlternativeGroup:
     group_id: str
-    options: tuple[RecomputationOption, ...]
+    options: tuple[TaskAlternativeOption, ...]
 
     def __post_init__(self) -> None:
-        require_identifier(self.group_id, "recomputation_group.group_id")
-        require_tuple(self.options, "recomputation_group.options")
-        require(bool(self.options), "recomputation_group.options", "must not be empty")
+        require_identifier(self.group_id, "task_alternative_group.group_id")
+        require_tuple(self.options, "task_alternative_group.options")
+        require(
+            bool(self.options), "task_alternative_group.options", "must not be empty"
+        )
         index_unique(
             (option.option_id for option in self.options),
-            "recomputation_group.options",
+            "task_alternative_group.options",
         )
 
     def to_dict(self) -> dict[str, JsonValue]:
@@ -502,20 +504,20 @@ class RecomputationGroup:
         }
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> RecomputationGroup:
+    def from_value(cls, value: object, path: str) -> TaskAlternativeGroup:
         data = expect_mapping(value, path)
         options = expect_list(field(data, "options", path), f"{path}.options")
         return cls(
             group_id=expect_string(field(data, "group_id", path), f"{path}.group_id"),
             options=tuple(
-                RecomputationOption.from_value(item, f"{path}.options[{index}]")
+                TaskAlternativeOption.from_value(item, f"{path}.options[{index}]")
                 for index, item in enumerate(options)
             ),
         )
 
 
 @dataclass(frozen=True, slots=True)
-class RecomputationSelection:
+class TaskAlternativeChoice:
     group_id: str
     option_id: str
 
@@ -527,7 +529,7 @@ class RecomputationSelection:
         return {"group_id": self.group_id, "option_id": self.option_id}
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> RecomputationSelection:
+    def from_value(cls, value: object, path: str) -> TaskAlternativeChoice:
         data = expect_mapping(value, path)
         return cls(
             group_id=expect_string(field(data, "group_id", path), f"{path}.group_id"),
@@ -544,7 +546,7 @@ class Program:
     objects: tuple[ObjectSpec, ...]
     profiles: tuple[TaskProfile, ...]
     tasks: tuple[TaskSpec, ...]
-    recomputation_groups: tuple[RecomputationGroup, ...] = ()
+    task_alternative_groups: tuple[TaskAlternativeGroup, ...] = ()
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -553,7 +555,7 @@ class Program:
             ("objects", self.objects),
             ("profiles", self.profiles),
             ("tasks", self.tasks),
-            ("recomputation_groups", self.recomputation_groups),
+            ("task_alternative_groups", self.task_alternative_groups),
         ):
             require_tuple(value, f"program.{name}")
         require(bool(self.devices), "program.devices", "must not be empty")
@@ -572,8 +574,8 @@ class Program:
         )
         task_ids = index_unique((task.task_id for task in self.tasks), "program.tasks")
         group_ids = index_unique(
-            (group.group_id for group in self.recomputation_groups),
-            "program.recomputation_groups",
+            (group.group_id for group in self.task_alternative_groups),
+            "program.task_alternative_groups",
         )
 
         alias_by_id = {
@@ -602,16 +604,18 @@ class Program:
 
         tasks_in_groups: set[str] = set()
         exclusive_pairs: set[frozenset[str]] = set()
-        for group_index, recomputation_group in enumerate(self.recomputation_groups):
-            group_path = f"program.recomputation_groups[{group_index}]"
+        for group_index, task_alternative_group in enumerate(
+            self.task_alternative_groups
+        ):
+            group_path = f"program.task_alternative_groups[{group_index}]"
             require(
-                recomputation_group.group_id in group_ids,
+                task_alternative_group.group_id in group_ids,
                 group_path,
                 "invalid group identity",
             )
             group_tasks: set[str] = set()
             option_tasks: list[set[str]] = []
-            for option_index, option in enumerate(recomputation_group.options):
+            for option_index, option in enumerate(task_alternative_group.options):
                 option_path = f"{group_path}.options[{option_index}]"
                 active = set(option.active_task_ids)
                 option_tasks.append(active)
@@ -633,14 +637,14 @@ class Program:
                         f"{option_path}.retained_alias_group_ids",
                         (
                             f"shared alias group {alias_id!r} is runtime-resident and "
-                            "cannot be retained by a recomputation option"
+                            "cannot be retained by a task-alternative option"
                         ),
                     )
             overlap = tasks_in_groups & group_tasks
             require(
                 not overlap,
                 group_path,
-                f"tasks occur in several recomputation groups: {sorted(overlap)}",
+                f"tasks occur in several task-alternative groups: {sorted(overlap)}",
             )
             tasks_in_groups.update(group_tasks)
             for left_index, left in enumerate(option_tasks):
@@ -738,7 +742,7 @@ class Program:
             "objects": [item.to_dict() for item in self.objects],
             "profiles": [profile.to_dict() for profile in self.profiles],
             "recomputation_groups": [
-                group.to_dict() for group in self.recomputation_groups
+                group.to_dict() for group in self.task_alternative_groups
             ],
             "schema": PROGRAM_SCHEMA,
             "tasks": [task.to_dict() for task in self.tasks],
@@ -785,8 +789,8 @@ class Program:
                 TaskSpec.from_value(item, f"program.tasks[{index}]")
                 for index, item in enumerate(tasks)
             ),
-            recomputation_groups=tuple(
-                RecomputationGroup.from_value(
+            task_alternative_groups=tuple(
+                TaskAlternativeGroup.from_value(
                     item, f"program.recomputation_groups[{index}]"
                 )
                 for index, item in enumerate(groups)
@@ -798,7 +802,7 @@ class Program:
         return cls.from_dict(parse_json(payload))
 
     def selected_tasks(
-        self, selections: tuple[RecomputationSelection, ...]
+        self, selections: tuple[TaskAlternativeChoice, ...]
     ) -> tuple[TaskSpec, ...]:
         require_tuple(selections, "selections")
         selection_by_group = {selection.group_id: selection for selection in selections}
@@ -807,15 +811,15 @@ class Program:
             "selections",
             "contains duplicate group IDs",
         )
-        expected_groups = {group.group_id for group in self.recomputation_groups}
+        expected_groups = {group.group_id for group in self.task_alternative_groups}
         require(
             set(selection_by_group) == expected_groups,
             "selections",
-            "must select exactly one option from every recomputation group",
+            "must select exactly one option from every task-alternative group",
         )
         variant_tasks: set[str] = set()
         active_variant_tasks: set[str] = set()
-        for group in self.recomputation_groups:
+        for group in self.task_alternative_groups:
             options = {option.option_id: option for option in group.options}
             selection = selection_by_group[group.group_id]
             require(
@@ -871,11 +875,11 @@ __all__ = [
     "ObjectSpec",
     "Persistence",
     "Program",
-    "RecomputationGroup",
-    "RecomputationOption",
-    "RecomputationSelection",
     "ResourceKind",
     "ResourceSpec",
+    "TaskAlternativeChoice",
+    "TaskAlternativeGroup",
+    "TaskAlternativeOption",
     "TaskProfile",
     "TaskSpec",
     "ValidationError",

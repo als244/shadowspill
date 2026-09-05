@@ -1,9 +1,9 @@
 """Search across resolved programs, one at a time.
 
-A Program arrives with alternatives still open: each graph pair can be saved
-or recomputed, so one Program expands into several *resolved programs*, each
-a concrete task set. PressureFit plans one of those. Deciding which ones to
-try, and in what order, is this layer's job.
+A Program arrives with alternatives still open: each task-alternative
+group can be saved or recomputed, so one Program expands into several
+*resolved programs*, each a concrete task set. PressureFit plans one of
+those. Deciding which ones to try, and in what order, is this layer's job.
 
 The split matters because of what will cross the boundary. A plan admitted
 under any resolved program is a real plan, so it can bound the search under
@@ -46,14 +46,14 @@ from .recomputation import Resolution, resolutions
 from .request import PressureFitOptions
 from .result import PressureFitResult
 
-#: What a graph pair's alternatives are called today. Ordering only needs to
+#: What a group's alternatives are called today. Ordering only needs to
 #: recognise the two extremes; anything else falls through to the middle.
 _RECOMPUTE = "recompute"
 _SAVE = "save"
 
 
 def _recompute_share(resolution: Resolution) -> float:
-    """Fraction of this resolution's graph pairs that recompute."""
+    """Fraction of this resolution's groups that recompute."""
 
     if not resolution:
         return 0.0
@@ -135,7 +135,7 @@ def plan_program(
     if progress is not None:
         progress(
             "PressureFit resolutions: "
-            f"groups={len(program.recomputation_groups)}, "
+            f"groups={len(program.task_alternative_groups)}, "
             f"selections={len(resolved)}"
         )
 

@@ -542,7 +542,7 @@ def capture_forward_stage_artifacts(
 
 @dataclass(frozen=True, slots=True)
 class AotGraphPair:
-    """Explicit forward/backward pair for one recomputation choice."""
+    """Explicit forward/backward pair for one graph-pair choice."""
 
     forward: GraphArtifact
     backward: GraphArtifact

@@ -1,4 +1,4 @@
-"""Which resolutions of the graph-pair options are worth planning.
+"""Which resolutions of the task-alternative options are worth planning.
 
 `options` says what each graph pair offers and what each alternative costs.
 This decides which combinations of those alternatives PressureFit should
@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from itertools import product
 
-from shadowspill.ir import Program, RecomputationSelection
+from shadowspill.ir import Program, TaskAlternativeChoice
 
-from .options import GraphPairOptions
+from .options import TaskAlternativeOptions
 
 #: One option chosen per graph pair - what makes a Program concrete.
-Resolution = tuple[RecomputationSelection, ...]
+Resolution = tuple[TaskAlternativeChoice, ...]
 
 _EXHAUSTIVE_COMBINATION_LIMIT = 64
 _QUARTER_DENOMINATOR = 4
@@ -35,12 +35,12 @@ _WITHIN_GROUP_MEMORY_QUANTILES = (0, 1, 2, 3, 4)
 def resolutions(program: Program) -> tuple[Resolution, ...]:
     """Return a small deterministic family of legal resolutions."""
 
-    if not program.recomputation_groups:
+    if not program.task_alternative_groups:
         return ((),)
-    return select(GraphPairOptions.from_program(program))
+    return select(TaskAlternativeOptions.from_program(program))
 
 
-def select(options: GraphPairOptions) -> tuple[Resolution, ...]:
+def select(options: TaskAlternativeOptions) -> tuple[Resolution, ...]:
     """Choose which resolutions of the inventory to plan."""
 
     if not options.groups:
@@ -69,7 +69,7 @@ def _group_fractions(
     endpoints: tuple[tuple[int, int], ...],
     pinned: dict[int, int],
 ) -> tuple[tuple[int, ...], ...]:
-    """Build evenly distributed 0/25/50/75/100% recompute selections."""
+    """Build evenly distributed 0/25/50/75/100% resolutions."""
 
     flexible = tuple(index for index in range(len(endpoints)) if index not in pinned)
     result: list[tuple[int, ...]] = []
@@ -91,7 +91,7 @@ def _group_fractions(
 
 
 def _within_group_quantiles(
-    options: GraphPairOptions,
+    options: TaskAlternativeOptions,
 ) -> tuple[tuple[int, ...], ...]:
     """Walk each group's own inventory, from least retained to most."""
 
@@ -136,11 +136,11 @@ def _evenly_spaced_indices(total: int, count: int) -> frozenset[int]:
 
 
 def _resolution(
-    options: GraphPairOptions,
+    options: TaskAlternativeOptions,
     indices: tuple[int, ...],
 ) -> Resolution:
     return tuple(
-        RecomputationSelection(group.group_id, group.options[index].option_id)
+        TaskAlternativeChoice(group.group_id, group.options[index].option_id)
         for group, index in zip(options.groups, indices, strict=True)
     )
 

@@ -3,7 +3,7 @@
 Graph-pair construction turns one differentiable, partitioned PyTorch stage
 into every executable forward/backward alternative that ShadowSpill is willing
 to expose to planning. It is a PyTorch frontend operation. It is not
-[recomputation selection](recomputation-selection.md), and it is not part of
+[graph-pair selection](graph-pair-selection.md), and it is not part of
 [PressureFit](pressurefit.md).
 
 The three layers have deliberately different outputs:
@@ -11,11 +11,11 @@ The three layers have deliberately different outputs:
 | Layer | Unit of work | Output |
 |---|---|---|
 | Graph-pair construction | One structural stage contract | A `TaskGraphPairs` containing named forward/backward variants |
-| Recomputation selection | All occurrence-level `RecomputationGroup` values in one Program | A bounded tuple of complete `RecomputationSelection` assignments |
+| Graph-pair selection | All occurrence-level `TaskAlternativeGroup` values in one Program | A bounded tuple of complete `TaskAlternativeChoice` assignments |
 | PressureFit | One complete assignment plus the Program and machine model | A residency/action schedule with simulated cost |
 
 This separation lets the frontend add another legal graph-pair variant without
-changing the framework-neutral recomputation, PressureFit, simulator, or
+changing the framework-neutral selection, PressureFit, simulator, or
 runtime contracts.
 
 ## Vocabulary
@@ -27,7 +27,10 @@ runtime contracts.
 | Graph pair | One mutually compatible AOTAutograd forward graph and backward graph. |
 | Variant | A named graph pair produced by one partitioning policy, such as `save` or `recompute`. |
 | Task graph pairs | Every configured legal variant for one structural contract. |
-| Recomputation group | The occurrence-level Program choice whose options activate one variant's forward and backward tasks. |
+| Graph-pair group | The occurrence-level Program choice whose options activate one variant's forward and backward tasks. |
+
+The rest of the family — choice, selection, and problem — is named in
+[Graph-pair selection](graph-pair-selection.md).
 
 A graph pair is not a pair of chronological execution IDs. Construction
 happens before execution tasks receive their final Program identities. During
@@ -79,7 +82,7 @@ contribution.
 
 Which form a microbatch runs follows from its position, not from planning, so
 both forms share one option ID and every microbatch is offered the same
-recomputation choices. The accumulating form is derived on demand rather than
+graph-pair choices. The accumulating form is derived on demand rather than
 captured, so a step with a single microbatch never builds, compiles, or
 profiles a form it would not run.
 
@@ -139,7 +142,7 @@ Functorch configuration cannot change the generated pair.
 The representation also supports intermediate budgets strictly
 between zero and one. Adding such variants changes the configured construction
 inventory, not the downstream type system. Budget `1.0` reproduces the
-save-everything endpoint and is not exposed as a recomputation alternative by
+save-everything endpoint and is not exposed as a graph-pair alternative by
 the current builder. The current default emits no intermediate choices.
 
 ### Captured pair contract
@@ -169,7 +172,7 @@ saved storage roots:
 | Internal root | A fresh, non-public root exists only to feed the paired backward. | Root's physical extent |
 
 Only internal roots become `retained_alias_group_ids` for the occurrence-level
-`RecomputationOption`. This prevents repeated leaves, input passthroughs, and
+`TaskAlternativeOption`. This prevents repeated leaves, input passthroughs, and
 views of public outputs from being double-counted as activation memory.
 
 The reference and every alternative must preserve the same public stage
@@ -208,10 +211,10 @@ variant backward task
         +
 fresh internal saved-value aliases
         ↓
-RecomputationOption
+TaskAlternativeOption
 ```
 
-One occurrence-level `RecomputationGroup` contains all of those options. Each
+One occurrence-level `TaskAlternativeGroup` contains all of those options. Each
 option names exactly the forward/backward task IDs it activates and the
 internal alias groups it retains. Tasks for unselected variants remain in the
 immutable Program but are excluded by `Program.selected_tasks()`.
@@ -221,8 +224,8 @@ Structural deduplication and occurrence-level choice are both preserved:
 - `PlanReport.diagnostics.unique_stages` describes one structural contract and all
   profiled graph pairs;
 - the execution-task map identifies each occurrence and its selected variant;
-- the Program's recomputation groups carry the exact occurrence-level task and
-  retained-alias identities consumed by recomputation selection.
+- the Program's task-alternative groups carry the exact occurrence-level task
+  and retained-alias identities that graph-pair selection then fixes.
 
 ## PlanReport diagnostics
 
@@ -286,8 +289,8 @@ LowerOccurrence(stage, profiles):
         forward = bind_and_emit_forward_task(variant, profiles)
         backward = bind_and_emit_backward_task(variant, profiles)
         retained = fresh_internal_saved_aliases(variant)
-        options.append(RecomputationOption(variant.name, [forward, backward], retained))
-    return RecomputationGroup(stage.occurrence_id, options)
+        options.append(TaskAlternativeOption(variant.name, [forward, backward], retained))
+    return TaskAlternativeGroup(stage.occurrence_id, options)
 ```
 
 ## Fail-closed conditions
@@ -319,4 +322,4 @@ from allocator pointers or FakeTensor storage identity.
 | `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit Program groups. |
 
 Previous: [PyTorch capture and lowering](lowering.md). Next:
-[Recomputation selection](recomputation-selection.md).
+[Graph-pair selection](graph-pair-selection.md).

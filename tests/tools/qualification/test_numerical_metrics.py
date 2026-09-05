@@ -3,9 +3,9 @@ from __future__ import annotations
 import torch
 
 from shadowspill.ir import (
-    RecomputationGroup,
-    RecomputationOption,
-    RecomputationSelection,
+    TaskAlternativeChoice,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
 )
 from tools.qualification.numerical import (
     _failure_tensor_values,
@@ -73,12 +73,12 @@ def test_numerical_gate_uses_one_global_tensor_policy() -> None:
 
 def test_recomputation_diagnostics_count_only_retained_physical_savings() -> None:
     groups = (
-        RecomputationGroup(
+        TaskAlternativeGroup(
             "group_0",
             (
-                RecomputationOption("save", (), ("a", "b")),
-                RecomputationOption("same_size", (), ("a", "c")),
-                RecomputationOption("recompute", (), ("a",)),
+                TaskAlternativeOption("save", (), ("a", "b")),
+                TaskAlternativeOption("same_size", (), ("a", "c")),
+                TaskAlternativeOption("recompute", (), ("a",)),
             ),
         ),
     )
@@ -86,29 +86,29 @@ def test_recomputation_diagnostics_count_only_retained_physical_savings() -> Non
 
     assert _recomputation_savings_bytes(
         groups,
-        (RecomputationSelection("group_0", "same_size"),),
+        (TaskAlternativeChoice("group_0", "same_size"),),
         sizes,
     ) == (32, 0)
     assert _recomputation_savings_bytes(
         groups,
-        (RecomputationSelection("group_0", "recompute"),),
+        (TaskAlternativeChoice("group_0", "recompute"),),
         sizes,
     ) == (32, 32)
 
 
 def test_recomputation_diagnostics_ignore_equal_footprints() -> None:
     groups = (
-        RecomputationGroup(
+        TaskAlternativeGroup(
             "group_0",
             (
-                RecomputationOption("save", (), ("a",)),
-                RecomputationOption("recompute", (), ("b",)),
+                TaskAlternativeOption("save", (), ("a",)),
+                TaskAlternativeOption("recompute", (), ("b",)),
             ),
         ),
     )
     assert _recomputation_savings_bytes(
         groups,
-        (RecomputationSelection("group_0", "save"),),
+        (TaskAlternativeChoice("group_0", "save"),),
         {"a": 64, "b": 64},
     ) == (0, 0)
 

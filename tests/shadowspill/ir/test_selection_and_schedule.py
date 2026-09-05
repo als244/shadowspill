@@ -37,7 +37,7 @@ def test_save_selection_removes_inactive_task_and_dependencies() -> None:
     assert tasks[2].dependencies == ("forward_save", "backward_marker")
 
 
-def test_recompute_selection_moves_the_active_writer() -> None:
+def test_graph_pair_selection_moves_the_active_writer() -> None:
     program = representative_program()
     selection_type = type(SAVE_SELECTION[0])
     tasks = program.selected_tasks(

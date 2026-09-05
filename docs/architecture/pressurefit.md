@@ -16,7 +16,7 @@ runtime worker. It consumes only Program facts and machine parameters.
 
 What PressureFit is handed is a **resolved program**: a Program with one legal
 task selection already chosen. Choosing those selections is the separate
-[recomputation selector](recomputation-selection.md)'s job, and it usually
+[graph-pair selector](graph-pair-selection.md)'s job, and it usually
 produces several — so one call takes one or more resolved programs and answers
 each of them. A Program with no alternatives resolves to exactly one and is a
 normal input. Program and problem are not the same word here: the Program is
@@ -357,7 +357,7 @@ candidate search happens.
 
 PressureFit then obtains the finite set of legal selections from the Program.
 The training-specific policy used to construct this set is documented
-separately in [Recomputation selection](recomputation-selection.md). Each
+separately in [Graph-pair selection](graph-pair-selection.md). Each
 selection becomes one *resolved program*, and one resolved program is one
 call into the planner: deciding which resolved programs exist, and in what
 order to try them, belongs above the planner API.
@@ -735,5 +735,5 @@ Python implementations live only under `reference/python/pressurefit` and
 `reference/python/simulator`; they are differential-test oracles and do not
 silently replace a missing or ABI-incompatible library.
 
-Previous: [Recomputation selection](recomputation-selection.md). Next:
+Previous: [Graph-pair selection](graph-pair-selection.md). Next:
 [Physical admission and offset handling](physical-admission.md).

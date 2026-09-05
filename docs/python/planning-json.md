@@ -9,7 +9,7 @@ to any stored structure moves them all together.
 
 | Python value | Schema | Boundary |
 |---|---|---|
-| `Program` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and recomputation choices. |
+| `Program` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
 | `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, and admission topology. It carries no search options: a Program is a problem, and how to search it is the caller's. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
@@ -132,7 +132,7 @@ Object roles are `input`, `parameter`, `buffer`, `activation`, `gradient`,
 Tasks appear in topological order. Dependencies and all object/profile
 references are validated during construction and loading.
 
-### Recomputation groups
+### Graph-pair groups
 
 Each record has a `group_id` and an `options` array. Each option contains:
 
@@ -272,12 +272,12 @@ shadowspill.annotated_program_plan/v1
 | Key | Meaning |
 |---|---|
 | `from_store` | Whether the selected plan was read back from the plan store rather than planned during this call. |
-| `diagnostics` | Full recomputation-problem and candidate-policy search evidence. |
+| `diagnostics` | Full resolved-program and candidate-policy search evidence. |
 | `initial_residency`, `final_residency` | Selected boundary state. |
 | `options` | Effective `PressureFitOptions`, every field of it. |
 | `resident_slice` | The slice reserved for the objects `minimum_object_bytes_evict_eligible` kept resident: its `bytes`, the sum of the static homes their leases take, and the `aliases` it holds; empty when it kept none. |
 | `schedule` | `shadowspill.memory_schedule/v1` with ordered actions. |
-| `selections` | One chosen option per recomputation group. |
+| `selections` | One chosen option per task-alternative group. |
 
 The schedule contains `initial_residency`, ordered `actions`, and
 `final_residency`. An action records its kind (`release`, `evict`, or
@@ -288,10 +288,10 @@ device through the Program.
 The diagnostics hierarchy is:
 
 ```text
-selected recomputation problem
+selected resolved program
 └── selected candidate policy
 
-all recomputation problems
+all resolved programs
 └── candidate-policy evaluations
     ├── outcome
     ├── repair counts
@@ -429,7 +429,7 @@ artifact they validate:
 - schema labels and field types;
 - Program cross-references and topological order;
 - embedded Program, schedule, topology, and layout digests;
-- one legal recomputation option per group;
+- one legal task-alternative option per group;
 - residency and memory-action legality;
 - physical-layout identity and capacity;
 - simulation makespan against the selected result;

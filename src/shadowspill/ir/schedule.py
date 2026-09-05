@@ -7,7 +7,7 @@ from enum import StrEnum
 
 from shadowspill.schema import artifact_schema
 
-from .program import Program, RecomputationSelection, TaskSpec
+from .program import Program, TaskAlternativeChoice, TaskSpec
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
     expect_list,
@@ -185,7 +185,7 @@ class MemorySchedule:
     def validate(
         self,
         program: Program,
-        selections: tuple[RecomputationSelection, ...] = (),
+        selections: tuple[TaskAlternativeChoice, ...] = (),
     ) -> None:
         self._validate_selected(program, program.selected_tasks(selections))
 

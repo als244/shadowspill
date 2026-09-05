@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
-from shadowspill.ir import Program, RecomputationGroup, ResidencySpec, TaskSpec
+from shadowspill.ir import Program, ResidencySpec, TaskAlternativeGroup, TaskSpec
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact, OptimizerTensorRole
 
@@ -125,5 +125,5 @@ class TrainingBoundaries:
 class TrainingTaskGraph:
     tasks: tuple[TaskSpec, ...]
     entrypoints: tuple[TrainingTaskEntrypoint, ...]
-    recomputation_groups: tuple[RecomputationGroup, ...]
+    task_alternative_groups: tuple[TaskAlternativeGroup, ...]
     optimizer_task_ids: tuple[str, ...]

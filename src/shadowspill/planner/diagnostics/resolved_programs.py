@@ -1,4 +1,4 @@
-"""One recomputation selection: what it chose, and what it cost."""
+"""One resolved program: what it chose, and what it cost."""
 
 from __future__ import annotations
 
@@ -21,8 +21,8 @@ from .json import (
 
 
 @dataclass(frozen=True, slots=True)
-class RecomputationChoiceDiagnostic:
-    """One graph-pair choice in a recomputation selection."""
+class TaskAlternativeChoiceDiagnostic:
+    """One task-alternative choice in a resolution."""
 
     group_id: str
     option_id: str
@@ -31,7 +31,7 @@ class RecomputationChoiceDiagnostic:
         return {"group_id": self.group_id, "option_id": self.option_id}
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> RecomputationChoiceDiagnostic:
+    def from_value(cls, value: object, path: str) -> TaskAlternativeChoiceDiagnostic:
         data = _mapping(value, path)
         return cls(
             group_id=_string(data.get("group_id"), f"{path}.group_id"),
@@ -40,11 +40,11 @@ class RecomputationChoiceDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class RecomputationProblemDiagnostics:
-    """Shared problem work and policy evaluations for one concrete selection."""
+class ResolvedProgramDiagnostics:
+    """Shared problem work and policy evaluations for one resolved program."""
 
     selection_id: str
-    choices: tuple[RecomputationChoiceDiagnostic, ...]
+    choices: tuple[TaskAlternativeChoiceDiagnostic, ...]
     selected_candidate_id: str | None
     selected_makespan_ns: int | None
     candidate_evaluations: tuple[CandidateDiagnostic, ...]
@@ -59,6 +59,13 @@ class RecomputationProblemDiagnostics:
     #: this problem: how many, and their bytes.
     evict_ineligible_aliases: int = 0
     evict_ineligible_bytes: int = 0
+    #: What this problem's own best plan moves. The winner's traffic is on
+    #: the plan summary; these are the alternatives', which is what says
+    #: whether a cheaper-compute selection pays for it on the lanes. Zero on
+    #: a problem that placed nothing, and on one read back from a store
+    #: written before these were recorded.
+    fetched_bytes: int = 0
+    evicted_bytes: int = 0
 
     def __post_init__(self) -> None:
         if any(
@@ -66,14 +73,14 @@ class RecomputationProblemDiagnostics:
             for candidate in self.candidate_evaluations
         ):
             raise ValueError(
-                "candidate evaluation does not reference its recomputation problem"
+                "candidate evaluation does not reference its resolved program"
             )
         candidate_ids = tuple(
             candidate.candidate_id for candidate in self.candidate_evaluations
         )
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError(
-                "candidate policy appears more than once in a recomputation problem"
+                "candidate policy appears more than once in a resolved program"
             )
         valid = tuple(
             candidate
@@ -145,6 +152,10 @@ class RecomputationProblemDiagnostics:
                 "aliases": self.evict_ineligible_aliases,
                 "bytes": self.evict_ineligible_bytes,
             },
+            "transfer": {
+                "fetched_bytes": self.fetched_bytes,
+                "evicted_bytes": self.evicted_bytes,
+            },
             "repairs": self.repairs.to_dict(),
             "candidate_policy_evaluations": [
                 item.to_dict() for item in self.candidate_evaluations
@@ -152,7 +163,7 @@ class RecomputationProblemDiagnostics:
         }
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> RecomputationProblemDiagnostics:
+    def from_value(cls, value: object, path: str) -> ResolvedProgramDiagnostics:
         data = _mapping(value, path)
         selection = _mapping(
             data.get("recomputation_selection"),
@@ -182,7 +193,7 @@ class RecomputationProblemDiagnostics:
         result = cls(
             selection_id=selection_id,
             choices=tuple(
-                RecomputationChoiceDiagnostic.from_value(
+                TaskAlternativeChoiceDiagnostic.from_value(
                     item,
                     f"{path}.recomputation_selection.graph_pair_choices[{index}]",
                 )
@@ -212,6 +223,12 @@ class RecomputationProblemDiagnostics:
             ),
             evict_ineligible_bytes=_span(
                 data.get("evict_ineligible"), "bytes", f"{path}.evict_ineligible"
+            ),
+            fetched_bytes=_span(
+                data.get("transfer"), "fetched_bytes", f"{path}.transfer"
+            ),
+            evicted_bytes=_span(
+                data.get("transfer"), "evicted_bytes", f"{path}.transfer"
             ),
         )
         expected_summary = {

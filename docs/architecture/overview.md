@@ -31,7 +31,7 @@ flowchart LR
         inputs["PyTorch model<br/>objective + optimizer<br/>fixed examples"]
         frontend["PyTorch frontend<br/>capture, partition, lower, profile"]
         program["Framework-neutral<br/>Program"]
-        planner["Recomputation selection<br/>PressureFit + simulator"]
+        planner["Graph-pair selection<br/>PressureFit + simulator"]
         admission["Physical admission<br/>ranges + causal reuse"]
         materialize["Planned callable<br/>+ PlanReport"]
 
@@ -89,14 +89,14 @@ The planning components answer deliberately different questions:
 |---|---|
 | Stage partitioning | Where is the captured model divided into ordered compiled tasks? |
 | Graph-pair construction | What legal forward/backward implementations exist for one structural task contract? |
-| Recomputation selection | Which complete assignments of those local alternatives should the planner consider? |
+| Graph-pair selection | Which complete assignments of those local alternatives should the planner consider? |
 | PressureFit | For one complete assignment, which objects reside where and when do memory actions trigger? |
 | Simulator | What compute, transfer, dependency, and capacity timeline does that policy imply? |
 | Physical admission | Can the selected task allocations and object lifetimes occupy real pool ranges without unsafe reuse? |
 | Materialization | How are the admitted records and compiled callables installed into the runtime? |
 
 Graph-pair construction is local: it builds options such as save and full
-recompute for one structural contract. Recomputation selection is global: one
+recompute for one structural contract. Graph-pair selection is global: one
 selection chooses an option for every occurrence-level group. PressureFit then
 evaluates each selected assignment together with residency and fetch policy.
 
@@ -121,7 +121,7 @@ flowchart TD
     profile --> program
     program --> step
     step --> pressure
-    pressure -->|"recomputation + policy search"| annotated
+    pressure -->|"graph-pair selection + policy search"| annotated
     annotated -->|"physical admission + materialization"| report
 ```
 
@@ -193,7 +193,7 @@ retirements; unrelated plans continue independently.
 |---|---|---|
 | PyTorch frontend | Export/AOT capture, stage partitioning, compiled callables, storage rebinding, objective and optimizer integration | Memory-policy search or transfer progress |
 | IR | Objects, tasks, resources, graph-pair alternatives, schedules, and resolved task records | PyTorch tensors or provider handles |
-| Planner | Complete recomputation selections, residency strategies, memory actions, and candidate ranking | Graph construction or numerical execution |
+| Planner | Complete graph-pair selections, residency strategies, memory actions, and candidate ranking | Graph construction or numerical execution |
 | Simulator | Deterministic compute, transfer, capacity, and dependency replay | Candidate generation or physical placement |
 | Physical admission | Allocation lifetimes, task-allocation contract, fixed placements, dynamic scratch, and causal reuse dependencies | Logical PressureFit policy |
 | Runtime | Pools and their arenas, leases, objects, routes and lanes, calibration, event and timing pools, task boundaries, failure state, and worker progress | Graph capture or model semantics |
@@ -216,7 +216,7 @@ A logical value retains one identity even as its physical address changes:
 3. Compilation and profiling attach physical extents, allocation behavior,
    workspace, and timing without redefining that root.
 4. `ObjectCatalog` maps the root to one canonical Program object across tasks.
-5. Recomputation selection and PressureFit decide whether the value exists,
+5. Graph-pair selection and PressureFit decide whether the value exists,
    resides, moves, or is recreated at each boundary.
 6. Physical admission assigns ranges and proves every reuse dependency.
 7. Materialization registers direct task records with the runtime.
@@ -254,8 +254,8 @@ causal completion fence before a successor can reuse its bytes.
 |---|---|
 | Stage | One ordered partition of the captured model graph. |
 | Structural contract | Shape, dtype, role, alias, mutation, and executable-storage contract shared by equivalent task occurrences. |
-| Graph-pair graph pairs | Every configured forward/backward alternative for one differentiated structural contract. |
-| Recomputation selection | One complete choice of graph-pair option for every occurrence-level group. |
+| Task graph pairs | Every configured forward/backward alternative for one differentiated structural contract. |
+| Graph-pair selection | One complete choice of graph-pair option for every occurrence-level group. |
 | Storage root | One semantic allocation identity shared by all of its views. |
 | Program object | One logical alias bundle with size, role, persistence, and task dependencies. |
 | Action trigger | The task boundary at which a fetch, eviction, or release becomes ordered and destination capacity is reserved. |
@@ -295,7 +295,7 @@ admission instead of selecting a heuristic semantic fallback.
 
 **Planning**
 
-4. [Recomputation selection](recomputation-selection.md) constructs bounded
+4. [Graph-pair selection](graph-pair-selection.md) constructs bounded
    complete assignments across those alternatives.
 5. [PressureFit](pressurefit.md) formulates logical residency and memory-action
    selection.

@@ -12,7 +12,7 @@ capture/export and stage partitioning
         -> canonical Program lowering
         -> StepProgram
         -> PressureFitProgram
-        -> complete recomputation-selection graph pairs
+        -> complete graph-pair selections
         -> pressurefit()
         -> fixed physical layout and admission
         -> AnnotatedProgramPlan
@@ -27,7 +27,7 @@ frontend; planning a saved one does not, so `pressurefit_program()` lives in
 
 ## Policy selection
 
-[Recomputation selection](recomputation-selection.md) constructs the finite set
+[Graph-pair selection](graph-pair-selection.md) constructs the finite set
 of legal task-alternative problems. [PressureFit](pressurefit.md) evaluates
 residency, eviction, fetch-trigger, and coalescing candidates within each
 problem. The two levels remain separate in diagnostics. All the problems go
