@@ -4,26 +4,26 @@ This package consumes immutable `StepProgram` inputs and evaluates PressureFit,
 simulation, and physical admission. It never constructs a model, captures a
 graph, compiles a task, or profiles a kernel.
 
-Run the complete 168-Program, 2,520-point baseline:
+Run a complete frontier over a corpus:
 
 ```bash
 PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
   --config benchmarking/planning_eval/configs/full_pressurefit_frontier_v1_repairs256.json \
-  --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_d65e6ef \
+  --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_<rev> \
   --output-dir benchmarking/planning_eval/results/full_pressurefit_frontier_<rev>_repairs256 \
   --artifact-store benchmarking/planning_eval/planning_caches/frontier_<rev>
 ```
 
 A corpus is named for the revision that collected it, and it holds whole
-Programs, so it stops loading when the Program schema moves on. Point the
-run at the newest corpus under `input_programs/`, not at a name copied
-from here; `full_model_program_corpus_v1` predates `shadowspill.program/v3`
-and now fails on its first point. Give the output directory the revision
-being measured, so two baselines can be told apart later.
+Programs, so it stops loading when the Program schema moves on: point a run
+at a corpus collected at or after the current schema, read from
+`input_programs/` rather than from a name copied from here. Give the output
+directory the revision being measured, so two baselines can be told apart
+later.
 
-The v1 matrix evaluates 15 budget/bandwidth points per Program. All 2,520
-points use three global bidirectional-concurrent transfer pairs: 1/2x, 1x, and
-2x the calibrated fetch/evict bandwidths. PressureFit is cold by default; the
+The v1 matrix evaluates 15 budget/bandwidth points per Program, over three
+global bidirectional-concurrent transfer pairs: 1/2x, 1x, and 2x the
+calibrated fetch/evict bandwidths. PressureFit is cold by default; the
 saved artifact store is used only where the configuration explicitly permits
 it.
 
@@ -33,13 +33,12 @@ are carried in each `StepProgram`. So a run measures the planner on the
 machine it runs on, against costs recorded on the machine that collected the
 corpus, and those need not be the same machine. Planner worker count is
 resolved from the logical CPU count when `workers` is left at its default of
-auto, so parallelism follows the host without configuration. The 2,520-point
-baseline took 3.22 hours on this tree's machine; the wall time is dominated by
-selection, so a host with more cores finishes sooner.
+auto, so parallelism follows the host without configuration. Wall time is
+dominated by selection, so a host with more cores finishes sooner.
 
 Each point log contains:
 
-- `[program/168]` and `[point/2520]` progress;
+- `[program/N]` and `[point/M]` progress;
 - model/provider identity;
 - one grouped `DATA GEOMETRY` block (sequence length, tokens and sequences per
   microbatch, gradient accumulation rounds, and tokens per optimizer step);
