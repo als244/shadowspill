@@ -6,9 +6,7 @@ ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
     uintptr_t action_batch_handle,
     uintptr_t trigger_stream_address
 ) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -23,7 +21,7 @@ ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
         shadowspill_submit_action_batch_handle(
             runtime,
             (const ShadowSpillActionBatchHandle *)action_batch_handle,
-            adapter_stream(trigger_stream_address)
+            shadowspill_pytorch_stream(trigger_stream_address)
         );
     shadowspill_pytorch_profile_range_end(range);
     return status;
@@ -53,15 +51,13 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     }
     task_range_active = 1;
     active_task_label = shadowspill_task_trace_label(handle);
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_before_task_handle(
             runtime,
             handle,
-            adapter_stream(compute_stream_address),
+            shadowspill_pytorch_stream(compute_stream_address),
             bindings,
             binding_count
         );
@@ -77,15 +73,13 @@ ShadowSpillStatus shadowspill_pytorch_wait_task_allocations(
 ) {
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     return runtime == NULL || task_handle == 0U
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_wait_task_allocations_handle(
             runtime,
             handle,
-            adapter_stream(compute_stream_address)
+            shadowspill_pytorch_stream(compute_stream_address)
         );
 }
 
@@ -95,16 +89,14 @@ ShadowSpillStatus shadowspill_pytorch_after_task_handle(
 ) {
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     ShadowSpillStatus status =
         runtime == NULL || task_handle == 0U
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_after_task_handle(
             runtime,
             handle,
-            adapter_stream(compute_stream_address)
+            shadowspill_pytorch_stream(compute_stream_address)
         );
     shadowspill_pytorch_end_task_range();
     return status;
@@ -115,9 +107,7 @@ ShadowSpillStatus shadowspill_pytorch_abort_task_handle(
 ) {
     const ShadowSpillTaskHandle *handle =
         (const ShadowSpillTaskHandle *)task_handle;
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     const ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_abort_task_handle(

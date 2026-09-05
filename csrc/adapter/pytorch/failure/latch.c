@@ -7,6 +7,16 @@
 #include <stdio.h>
 #include <string.h>
 
+void shadowspill_pytorch_failure_clear_locked(int32_t device_ordinal) {
+    memset(&adapter.failure, 0, sizeof(adapter.failure));
+    adapter.failure_task_label[0] = '\0';
+    adapter.failure.device_ordinal = device_ordinal;
+    adapter.failure.runtime.task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    adapter.failure.runtime.pool_id = UINT32_MAX;
+}
+
 void shadowspill_pytorch_latch_failure(
     ShadowSpillStatus status,
     int32_t device_ordinal,
@@ -54,7 +64,7 @@ ShadowSpillStatus shadowspill_pytorch_allocator_statistics(
     }
     pthread_mutex_lock(&adapter.mutex);
     ShadowSpillRuntime *runtime = adapter.runtime;
-    const ShadowSpillBackend backend = adapter.backend;
+    const ShadowSpillBackend backend = adapter.backend.table;
     *statistics = (ShadowSpillPytorchAdapterStatistics){
         .allocation_callbacks = adapter.allocation_callbacks,
         .zero_size_allocation_callbacks =
@@ -105,8 +115,7 @@ ShadowSpillStatus shadowspill_pytorch_allocator_failure(
 }
 
 ShadowSpillStatus shadowspill_pytorch_recover_no_progress(void) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -117,13 +126,9 @@ ShadowSpillStatus shadowspill_pytorch_recover_no_progress(void) {
     }
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.failure.status == SHADOWSPILL_STATUS_NO_PROGRESS) {
-        memset(&adapter.failure, 0, sizeof(adapter.failure));
-        adapter.failure_task_label[0] = '\0';
-        adapter.failure.device_ordinal = device_ordinal;
-        adapter.failure.runtime.task_id = SHADOWSPILL_RUNTIME_NO_ID;
-        adapter.failure.runtime.object_id = SHADOWSPILL_RUNTIME_NO_ID;
-        adapter.failure.runtime.allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-        adapter.failure.runtime.pool_id = UINT32_MAX;
+        shadowspill_pytorch_failure_clear_locked(
+            shadowspill_pytorch_device_ordinal()
+        );
     } else if (adapter.failure.status != SHADOWSPILL_STATUS_OK) {
         status = (ShadowSpillStatus)adapter.failure.status;
     }

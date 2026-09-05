@@ -13,9 +13,7 @@ ShadowSpillStatus shadowspill_pytorch_register_object(
         (size_bytes != 0U && source_address == 0U)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -49,9 +47,7 @@ ShadowSpillStatus shadowspill_pytorch_register_placeholder_object(
     if (retain_spill_copy > 1U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -73,9 +69,7 @@ ShadowSpillStatus shadowspill_pytorch_validate_object_binding(
     if (address == 0U && size_bytes != 0U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -99,9 +93,7 @@ ShadowSpillStatus shadowspill_pytorch_acquire_objects_handle(
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     if (runtime == NULL) {
         return SHADOWSPILL_STATUS_CLOSED;
     }
@@ -110,7 +102,7 @@ ShadowSpillStatus shadowspill_pytorch_acquire_objects_handle(
         : shadowspill_acquire_objects_handle(
             runtime,
             (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
-            adapter_stream(consumer_stream_address),
+            shadowspill_pytorch_stream(consumer_stream_address),
             bindings,
             binding_capacity
         );
@@ -126,16 +118,14 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
     uint64_t expected_allocation_id,
     ShadowSpillAllocation *allocation
 ) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     return runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_transfer_acquired_object_to_caller(
               runtime,
               (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
               object_ordinal,
-              adapter_stream(consumer_stream),
+              shadowspill_pytorch_stream(consumer_stream),
               (const void *)(uintptr_t)expected_address,
               expected_generation,
               expected_allocation_id,
@@ -147,16 +137,14 @@ ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
     uint64_t allocation_id,
     uintptr_t stream
 ) {
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     return runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_memory_pool_free(
               runtime,
-              bound_allocator_pool_id(),
+              shadowspill_pytorch_allocator_pool_id(),
               allocation_id,
-              adapter_stream(stream)
+              shadowspill_pytorch_stream(stream)
           );
 }
 
@@ -171,9 +159,7 @@ shadowspill_pytorch_validate_task_replacement_binding(
         successor_address == 0U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    int32_t device_ordinal;
-    ShadowSpillRuntime *runtime = bound_runtime(&device_ordinal);
-    (void)device_ordinal;
+    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
     return runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_task_validate_replacement_binding(

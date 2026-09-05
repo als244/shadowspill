@@ -16,11 +16,17 @@
 #include <shadowspill/backend.h>
 #include <shadowspill/pytorch_adapter.h>
 
+/* A backend as loaded from its shared object: the table, and what releasing
+   it takes. Nothing here is valid after unload. */
+typedef struct ShadowSpillPytorchLoadedBackend {
+    void *library;
+    ShadowSpillBackend table;
+    ShadowSpillBackendDestroy destroy;
+} ShadowSpillPytorchLoadedBackend;
+
 typedef struct ShadowSpillPytorchAdapterState {
     pthread_mutex_t mutex;
-    ShadowSpillBackend backend;
-    ShadowSpillBackendDestroy backend_destroy;
-    void *backend_library;
+    ShadowSpillPytorchLoadedBackend backend;
     ShadowSpillRuntime *runtime;
     int32_t device_ordinal;
     uint32_t allocator_pool_id;
@@ -59,26 +65,38 @@ typedef struct ShadowSpillPytorchAdapterState {
 
 extern ShadowSpillPytorchAdapterState adapter;
 
-static inline ShadowSpillRuntime *bound_runtime(int32_t *device_ordinal) {
-    *device_ordinal = atomic_load_explicit(
-        &adapter.published_device_ordinal, memory_order_relaxed
-    );
+/* The bound runtime, or NULL before bootstrap and after close. Lock-free:
+   bootstrap publishes it last and close clears it first, so a reader that
+   sees it sees every field written before it. */
+static inline ShadowSpillRuntime *shadowspill_pytorch_runtime(void) {
     return atomic_load_explicit(
         &adapter.published_runtime, memory_order_acquire
     );
 }
 
-static inline uint32_t bound_allocator_pool_id(void) {
+/* The device the runtime was bound to; -1 before bootstrap. */
+static inline int32_t shadowspill_pytorch_device_ordinal(void) {
+    return atomic_load_explicit(
+        &adapter.published_device_ordinal, memory_order_relaxed
+    );
+}
+
+/* The pool PyTorch's allocations are served from. */
+static inline uint32_t shadowspill_pytorch_allocator_pool_id(void) {
     return atomic_load_explicit(
         &adapter.published_allocator_pool_id, memory_order_relaxed
     );
 }
 
-/* The framework's stream handle as the token the backend's vtables accept. The
- * bundle is written once at bootstrap and cleared only after the runtime it
- * served is gone, so reading it here needs no lock. */
-static inline ShadowSpillBackendStream adapter_stream(uint64_t framework_stream_handle) {
-    return adapter.backend.wrap_stream(adapter.backend.state, framework_stream_handle);
+/* The framework's stream handle as the token the backend's table accepts.
+   The table is written once at bootstrap and cleared only after the runtime
+   it served is gone, so reading it here needs no lock. */
+static inline ShadowSpillBackendStream shadowspill_pytorch_stream(
+    uint64_t framework_stream_handle
+) {
+    return adapter.backend.table.wrap_stream(
+        adapter.backend.table.state, framework_stream_handle
+    );
 }
 
 #endif

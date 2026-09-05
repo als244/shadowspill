@@ -213,7 +213,7 @@ ShadowSpillStatus shadowspill_pytorch_backend_malloc_failure_message(
      * belongs to neither. */
     const char *pool_name = runtime->pool_id == UINT32_MAX
         ? "no pool"
-        : runtime->pool_id == bound_allocator_pool_id() ? "execution pool"
+        : runtime->pool_id == shadowspill_pytorch_allocator_pool_id() ? "execution pool"
                                                         : "spill pool";
     if (status == SHADOWSPILL_STATUS_NO_PROGRESS) {
         append_failure_message(
