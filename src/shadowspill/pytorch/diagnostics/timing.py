@@ -26,21 +26,19 @@ class ArmedTaskTiming:
     inputs_ready_event: torch.cuda.Event
     start_event: torch.cuda.Event
     end_event: torch.cuda.Event
-    dispatch_started_ns: int = 0
-    dispatch_finished_ns: int = 0
-    #: The two task boundaries, which are everything the frontend does between
-    #: one task's kernels and the next's. Dispatch begins in the first and ends
-    #: in the second, so nothing it does falls outside them.
+    #: Four instants that partition one task's frontend cycle with no gap:
+    #: entering the opening boundary, leaving it for the compiled call, the
+    #: call returning, and leaving the closing boundary. Every duration
+    #: between boundaries is a difference of two of these, so none is stored.
     before_task_enter_ns: int = 0
     before_task_exit_ns: int = 0
     after_task_enter_ns: int = 0
     after_task_exit_ns: int = 0
-    dispatch_before_finished_ns: int = 0
-    dispatch_after_started_ns: int = 0
     dispatch_input_lookup_ns: int = 0
     dispatch_storage_rebind_ns: int = 0
+    dispatch_input_acquire_ns: int = 0
+    dispatch_allocation_reuse_ns: int = 0
     dispatch_argument_assembly_ns: int = 0
-    dispatch_invoke_ns: int = 0
     dispatch_output_flatten_ns: int = 0
     dispatch_output_classification_ns: int = 0
     dispatch_output_adoption_ns: int = 0
@@ -63,7 +61,7 @@ class ArmedExecutionTiming:
     finished: bool = False
     dispatch_call_started_ns: int = 0
     dispatch_call_finished_ns: int = 0
-    dispatch_startup_wait_ns: int = 0
+    prior_invocation_drain_ns: int = 0
     dispatch_initial_actions_ns: int = 0
     stream: torch.cuda.Stream | None = None
     statistics_before: AdapterStatistics | None = None

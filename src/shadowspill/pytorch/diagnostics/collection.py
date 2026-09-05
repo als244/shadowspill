@@ -83,7 +83,7 @@ def collect_step_diagnostics(
     intervals = _selected_intervals(simulation, stream_tasks)
     simulated_origin_ns = min(item.start_ns for item in intervals.values())
     alignment = min(item.started for item in stream_tasks)
-    origin_ns = evidence.runtime_trace.begin_timestamp_ns
+    origin_ns = evidence.runtime_trace.began_at_ns
     compute = tuple(
         _compute_record(
             item, intervals[item.task_id], simulated_origin_ns, alignment, origin_ns
@@ -103,7 +103,7 @@ def collect_step_diagnostics(
         ),
     )
     timelines = Timelines(
-        first_task_start_seconds=alignment,
+        first_task_started_at_seconds=alignment,
         compute=tuple(item.execution_task_id for item in compute),
         fetch=TransferLane(
             order=tuple(item.transfer_id for item in lanes["fetch"].records),
@@ -193,8 +193,6 @@ def _compute_record(
     task = item.task
     simulated_start = (interval.start_ns - simulated_origin_ns) / 1e9
     simulated_end = (interval.end_ns - simulated_origin_ns) / 1e9
-    duration = float(task.start_event.elapsed_time(task.end_event)) / 1e3
-    before_exit = _relative_seconds(task.before_task_exit_ns, origin_ns)
     return TaskRecord(
         execution_task_id=f"execution_{task.execution_ordinal:06d}",
         task_id=item.task_id,
@@ -202,39 +200,33 @@ def _compute_record(
         semantic_name=task.semantic_name,
         phase=task.entrypoint.phase,
         microbatch=task.entrypoint.microbatch,
-        simulated_ready_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
-        simulated_start_seconds=simulated_start,
-        simulated_end_seconds=simulated_end,
+        simulated_ready_at_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
+        simulated_started_at_seconds=simulated_start,
+        simulated_finished_at_seconds=simulated_end,
         expected_profile_seconds=task.expected_profile_seconds,
-        compute_reached_seconds=item.reached,
-        compute_started_seconds=item.started,
-        compute_finished_seconds=item.finished,
-        compute_duration_seconds=duration,
+        compute_reached_at_seconds=item.reached,
+        compute_started_at_seconds=item.started,
+        compute_finished_at_seconds=item.finished,
         input_readiness_wait_seconds=item.input_wait,
         allocation_reuse_wait_seconds=item.reuse_wait,
         start_delta_seconds=item.started - (simulated_start + alignment),
         end_delta_seconds=item.finished - (simulated_end + alignment),
-        duration_delta_seconds=duration - task.expected_profile_seconds,
-        before_task_enter_seconds=_relative_seconds(
+        before_task_entered_at_seconds=_relative_seconds(
             task.before_task_enter_ns, origin_ns
         ),
-        before_task_exit_seconds=before_exit,
-        after_task_enter_seconds=_relative_seconds(task.after_task_enter_ns, origin_ns),
-        after_task_exit_seconds=_relative_seconds(task.after_task_exit_ns, origin_ns),
-        frontend_lead_seconds=None
-        if before_exit is None
-        else item.reached - before_exit,
-        dispatch_before_task_seconds=(
-            task.dispatch_before_finished_ns - task.dispatch_started_ns
-        )
-        / 1e9,
-        dispatch_invoke_seconds=task.dispatch_invoke_ns / 1e9,
-        dispatch_after_task_seconds=(
-            task.dispatch_finished_ns - task.dispatch_after_started_ns
-        )
-        / 1e9,
+        before_task_exited_at_seconds=_relative_seconds(
+            task.before_task_exit_ns, origin_ns
+        ),
+        after_task_entered_at_seconds=_relative_seconds(
+            task.after_task_enter_ns, origin_ns
+        ),
+        after_task_exited_at_seconds=_relative_seconds(
+            task.after_task_exit_ns, origin_ns
+        ),
         dispatch_input_lookup_seconds=task.dispatch_input_lookup_ns / 1e9,
         dispatch_storage_rebind_seconds=task.dispatch_storage_rebind_ns / 1e9,
+        dispatch_input_acquire_seconds=task.dispatch_input_acquire_ns / 1e9,
+        dispatch_allocation_reuse_seconds=task.dispatch_allocation_reuse_ns / 1e9,
         dispatch_argument_assembly_seconds=task.dispatch_argument_assembly_ns / 1e9,
         dispatch_output_flatten_seconds=task.dispatch_output_flatten_ns / 1e9,
         dispatch_output_classification_seconds=(
@@ -384,11 +376,13 @@ def _opening_record(
         )
     alias_group_id = alias_by_object[dispatch.object_id]
     accesses = timing.alias_accesses.get(alias_group_id, ())
-    stream_start = stream_end = stream_duration = None
-    if completion.stream_start_ns is not None and completion.stream_end_ns is not None:
-        stream_start = completion.stream_start_ns / 1e9
-        stream_end = completion.stream_end_ns / 1e9
-        stream_duration = stream_end - stream_start
+    lane_started = lane_finished = None
+    if (
+        completion.lane_started_at_ns is not None
+        and completion.lane_finished_at_ns is not None
+    ):
+        lane_started = completion.lane_started_at_ns / 1e9
+        lane_finished = completion.lane_finished_at_ns / 1e9
     return TransferRecord(
         transfer_id=f"{direction}_opening_{index:06d}",
         direction=direction,
@@ -403,20 +397,17 @@ def _opening_record(
             else "persistent"
         ),
         modified_by="init",
-        simulated_ready_seconds=None,
-        simulated_start_seconds=None,
-        simulated_end_seconds=None,
-        simulated_duration_seconds=None,
-        stream_start_seconds=stream_start,
-        stream_end_seconds=stream_end,
-        stream_duration_seconds=stream_duration,
+        simulated_ready_at_seconds=None,
+        simulated_started_at_seconds=None,
+        simulated_finished_at_seconds=None,
+        lane_started_at_seconds=lane_started,
+        lane_finished_at_seconds=lane_finished,
         start_delta_seconds=None,
         end_delta_seconds=None,
-        duration_delta_seconds=None,
-        queued_seconds=None,
-        reserved_seconds=None,
-        dispatched_seconds=(dispatch.timestamp_ns - origin_ns) / 1e9,
-        completion_observed_seconds=(completion.timestamp_ns - origin_ns) / 1e9,
+        queued_at_seconds=None,
+        reserved_at_seconds=None,
+        dispatched_at_seconds=(dispatch.timestamp_ns - origin_ns) / 1e9,
+        completion_observed_at_seconds=(completion.timestamp_ns - origin_ns) / 1e9,
     )
 
 
@@ -459,16 +450,16 @@ def _transfer_record(
 ) -> TransferRecord:
     simulated_start = (interval.start_ns - simulated_origin_ns) / 1e9
     simulated_end = (interval.end_ns - simulated_origin_ns) / 1e9
-    simulated_duration = (interval.end_ns - interval.start_ns) / 1e9
-    stream_start = stream_end = stream_duration = None
-    start_delta = end_delta = duration_delta = None
-    if completion.stream_start_ns is not None and completion.stream_end_ns is not None:
-        stream_start = completion.stream_start_ns / 1e9
-        stream_end = completion.stream_end_ns / 1e9
-        stream_duration = stream_end - stream_start
-        start_delta = stream_start - (simulated_start + alignment)
-        end_delta = stream_end - (simulated_end + alignment)
-        duration_delta = stream_duration - simulated_duration
+    lane_started = lane_finished = None
+    start_delta = end_delta = None
+    if (
+        completion.lane_started_at_ns is not None
+        and completion.lane_finished_at_ns is not None
+    ):
+        lane_started = completion.lane_started_at_ns / 1e9
+        lane_finished = completion.lane_finished_at_ns / 1e9
+        start_delta = lane_started - (simulated_start + alignment)
+        end_delta = lane_finished - (simulated_end + alignment)
     return TransferRecord(
         transfer_id=f"{direction}_{interval.sequence:06d}",
         direction=direction,
@@ -479,21 +470,40 @@ def _transfer_record(
         previous_access=relations[0],
         next_access=relations[1],
         modified_by=relations[2],
-        simulated_ready_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
-        simulated_start_seconds=simulated_start,
-        simulated_end_seconds=simulated_end,
-        simulated_duration_seconds=simulated_duration,
-        stream_start_seconds=stream_start,
-        stream_end_seconds=stream_end,
-        stream_duration_seconds=stream_duration,
+        simulated_ready_at_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
+        simulated_started_at_seconds=simulated_start,
+        simulated_finished_at_seconds=simulated_end,
+        lane_started_at_seconds=lane_started,
+        lane_finished_at_seconds=lane_finished,
         start_delta_seconds=start_delta,
         end_delta_seconds=end_delta,
-        duration_delta_seconds=duration_delta,
-        queued_seconds=_event_seconds(queued, origin_ns),
-        reserved_seconds=_event_seconds(reserved, origin_ns),
-        dispatched_seconds=(dispatch.timestamp_ns - origin_ns) / 1e9,
-        completion_observed_seconds=(completion.timestamp_ns - origin_ns) / 1e9,
+        queued_at_seconds=_event_seconds(queued, origin_ns),
+        reserved_at_seconds=_event_seconds(reserved, origin_ns),
+        dispatched_at_seconds=(dispatch.timestamp_ns - origin_ns) / 1e9,
+        completion_observed_at_seconds=(completion.timestamp_ns - origin_ns) / 1e9,
     )
+
+
+def _lane_duration(record: TransferRecord) -> float | None:
+    """The copy's measured time on its lane, or `None` if it was not traced."""
+
+    if (
+        record.lane_started_at_seconds is None
+        or record.lane_finished_at_seconds is None
+    ):
+        return None
+    return record.lane_finished_at_seconds - record.lane_started_at_seconds
+
+
+def _simulated_duration(record: TransferRecord) -> float | None:
+    """The lane time the simulator priced for this transfer."""
+
+    if (
+        record.simulated_started_at_seconds is None
+        or record.simulated_finished_at_seconds is None
+    ):
+        return None
+    return record.simulated_finished_at_seconds - record.simulated_started_at_seconds
 
 
 def _lane_summary(
@@ -501,10 +511,8 @@ def _lane_summary(
     records: tuple[TransferRecord, ...],
     opening: tuple[TransferRecord, ...],
 ) -> LaneSummary:
-    measured = tuple(
-        item for item in records if item.stream_duration_seconds is not None
-    )
-    stream_busy = sum(item.stream_duration_seconds or 0.0 for item in measured)
+    measured = tuple(item for item in records if _lane_duration(item) is not None)
+    lane_busy = sum(_lane_duration(item) or 0.0 for item in measured)
     measured_bytes = sum(item.bytes for item in measured)
     drift = max(
         (item for item in measured if item.start_delta_seconds is not None),
@@ -516,12 +524,12 @@ def _lane_summary(
         transfers=len(records),
         bytes=sum(item.bytes for item in records),
         simulated_busy_seconds=sum(
-            item.simulated_duration_seconds or 0.0 for item in records
+            _simulated_duration(item) or 0.0 for item in records
         ),
         measured_transfers=len(measured),
-        stream_busy_seconds=stream_busy,
+        lane_busy_seconds=lane_busy,
         effective_bandwidth_bytes_per_second=(
-            measured_bytes / stream_busy if stream_busy > 0.0 else None
+            measured_bytes / lane_busy if lane_busy > 0.0 else None
         ),
         largest_start_delta_seconds=(
             None if drift is None else drift.start_delta_seconds
@@ -639,8 +647,8 @@ def _build_runtime_trace(evidence: _TraceEvidence) -> RuntimeTrace:
         pending_retirements_after=int(after.runtime.pending_retirements),
         callback_failures_after=int(after.callback_failures),
         step_id=runtime_trace.step_id,
-        begin_timestamp_ns=runtime_trace.begin_timestamp_ns,
-        end_timestamp_ns=runtime_trace.end_timestamp_ns,
+        began_at_ns=runtime_trace.began_at_ns,
+        ended_at_ns=runtime_trace.ended_at_ns,
         event_capacity=runtime_trace.event_capacity,
         allocation_event_capacity=runtime_trace.allocation_event_capacity,
         event_overflow=runtime_trace.event_overflow,
@@ -668,7 +676,7 @@ def _idle_composition(
     still being time the step spent.
     """
 
-    ordered = sorted(tasks, key=lambda item: item.compute_started_seconds)
+    ordered = sorted(tasks, key=lambda item: item.compute_started_at_seconds)
     if not ordered:
         return 0.0, 0.0, 0.0
     readiness = 0.0
@@ -678,13 +686,28 @@ def _idle_composition(
             current.input_readiness_wait_seconds + current.allocation_reuse_wait_seconds
         )
         dispatch += max(
-            0.0, current.compute_reached_seconds - previous.compute_finished_seconds
+            0.0,
+            current.compute_reached_at_seconds - previous.compute_finished_at_seconds,
         )
     first = (
         ordered[0].input_readiness_wait_seconds
         + ordered[0].allocation_reuse_wait_seconds
     )
     return readiness, dispatch, first
+
+
+def _compute_duration(record: TaskRecord) -> float:
+    """How long the task's kernels ran, between its two compute instants."""
+
+    return record.compute_finished_at_seconds - record.compute_started_at_seconds
+
+
+def _frontend_lead(record: TaskRecord) -> float | None:
+    """How long after the frontend handed the task off the stream reached it."""
+
+    if record.before_task_exited_at_seconds is None:
+        return None
+    return record.compute_reached_at_seconds - record.before_task_exited_at_seconds
 
 
 def _build_step_summary(
@@ -695,7 +718,7 @@ def _build_step_summary(
     runtime: RuntimeTrace,
 ) -> StepTimingSummary:
     profiled_task_seconds = sum(item.expected_profile_seconds for item in tasks)
-    real_task_seconds = sum(item.compute_duration_seconds for item in tasks)
+    real_task_seconds = sum(_compute_duration(item) for item in tasks)
     selected = tuple(intervals.values())
     simulated_start_ns = min(item.start_ns for item in selected)
     simulated_end_ns = max(item.end_ns for item in selected)
@@ -709,10 +732,12 @@ def _build_step_summary(
                 item.expected_profile_seconds for item in tasks if item.phase == phase
             ),
             real_task_event_seconds=sum(
-                item.compute_duration_seconds for item in tasks if item.phase == phase
+                _compute_duration(item) for item in tasks if item.phase == phase
             ),
             delta_seconds=sum(
-                item.duration_delta_seconds for item in tasks if item.phase == phase
+                _compute_duration(item) - item.expected_profile_seconds
+                for item in tasks
+                if item.phase == phase
             ),
         )
         for phase in phases
@@ -721,9 +746,7 @@ def _build_step_summary(
     real_idle = max(0.0, real_span_seconds - real_task_seconds)
     readiness, dispatch, initial_readiness = _idle_composition(tasks)
     leads = [
-        item.frontend_lead_seconds
-        for item in tasks
-        if item.frontend_lead_seconds is not None
+        lead for lead in (_frontend_lead(item) for item in tasks) if lead is not None
     ]
     optimizer = tuple(item for item in tasks if item.phase == "optimizer")
     makespan_seconds = simulation.makespan_ns / 1e9
@@ -752,12 +775,12 @@ def _build_step_summary(
             timing.dispatch_call_finished_ns - timing.dispatch_call_started_ns
         )
         / 1e9,
-        startup_wait_seconds=timing.dispatch_startup_wait_ns / 1e9,
+        prior_invocation_drain_seconds=timing.prior_invocation_drain_ns / 1e9,
         initial_actions_seconds=timing.dispatch_initial_actions_ns / 1e9,
         trace_setup_seconds=timing.trace_setup_ns / 1e9,
         optimizer_span_seconds=(
-            max(item.compute_finished_seconds for item in optimizer)
-            - min(item.compute_started_seconds for item in optimizer)
+            max(item.compute_finished_at_seconds for item in optimizer)
+            - min(item.compute_started_at_seconds for item in optimizer)
             if optimizer
             else 0.0
         ),

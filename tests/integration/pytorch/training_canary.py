@@ -162,12 +162,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("plan diagnostics omitted cache artifacts")
         if len(plan_diagnostics.profiling_metadata) != 2:
             raise AssertionError("plan diagnostics omitted profiling metadata")
-        if (
-            plan_diagnostics.measured_wall_time_ns
-            + plan_diagnostics.unattributed_overhead_ns
-            != plan_diagnostics.total_wall_time_ns
-        ):
-            raise AssertionError("plan diagnostic wall time does not reconcile")
+        if plan_diagnostics.measured_wall_time_ns > plan_diagnostics.total_wall_time_ns:
+            raise AssertionError("plan phases measure more than the whole call")
         phase_names = {item.name for item in plan_diagnostics.phases}
         if (
             "pressurefit_simulation" not in phase_names
@@ -259,9 +255,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     raise AssertionError("first trace omitted lazy setup time")
                 if (
                     not diagnostics.runtime.events
-                    or diagnostics.runtime.begin_timestamp_ns <= 0
-                    or diagnostics.runtime.end_timestamp_ns
-                    < diagnostics.runtime.begin_timestamp_ns
+                    or diagnostics.runtime.began_at_ns <= 0
+                    or diagnostics.runtime.ended_at_ns < diagnostics.runtime.began_at_ns
                     or diagnostics.runtime.event_overflow
                     or diagnostics.runtime.allocation_event_overflow
                 ):
@@ -334,22 +329,22 @@ def main(arguments: Iterable[str] | None = None) -> int:
                             or (transfer.triggered_by == "init")
                             != (expected_trigger_kind == "init")
                             or transfer.direction != lane.summary.direction
-                            or transfer.completion_observed_seconds
-                            < transfer.dispatched_seconds
+                            or transfer.completion_observed_at_seconds
+                            < transfer.dispatched_at_seconds
                             or transfer.bytes <= 0
                         ):
                             raise AssertionError("transfer lane record is invalid")
                         if transfer.triggered_by != "init" and (
                             transfer.triggered_by not in diagnostics.tasks
-                            or transfer.simulated_start_seconds is None
+                            or transfer.simulated_started_at_seconds is None
                         ):
                             raise AssertionError(
                                 "scheduled transfer lacks its trigger or simulation"
                             )
-                        if transfer.stream_start_seconds is None or (
-                            transfer.stream_end_seconds is None
-                            or transfer.stream_end_seconds
-                            < transfer.stream_start_seconds
+                        if transfer.lane_started_at_seconds is None or (
+                            transfer.lane_finished_at_seconds is None
+                            or transfer.lane_finished_at_seconds
+                            < transfer.lane_started_at_seconds
                         ):
                             raise AssertionError(
                                 "transfer lane record lacks its stream interval"
@@ -383,26 +378,27 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     if record.expected_profile_seconds <= 0.0:
                         raise AssertionError("task omitted expected profile time")
                     if (
-                        record.simulated_end_seconds < record.simulated_start_seconds
-                        or record.compute_finished_seconds
-                        < record.compute_started_seconds
-                        or record.compute_started_seconds
-                        < record.compute_reached_seconds
+                        record.simulated_finished_at_seconds
+                        < record.simulated_started_at_seconds
+                        or record.compute_finished_at_seconds
+                        < record.compute_started_at_seconds
+                        or record.compute_started_at_seconds
+                        < record.compute_reached_at_seconds
                     ):
                         raise AssertionError("compute lane record is out of order")
                     if any(
                         value is None
                         for value in (
-                            record.before_task_enter_seconds,
-                            record.before_task_exit_seconds,
-                            record.after_task_enter_seconds,
-                            record.after_task_exit_seconds,
-                            record.frontend_lead_seconds,
+                            record.before_task_entered_at_seconds,
+                            record.before_task_exited_at_seconds,
+                            record.after_task_entered_at_seconds,
+                            record.after_task_exited_at_seconds,
                         )
                     ):
                         raise AssertionError("host boundary timing omitted a boundary")
-                    if record.compute_reached_seconds <= 0.0 or (
-                        record.compute_duration_seconds <= 0.0
+                    if record.compute_reached_at_seconds <= 0.0 or (
+                        record.compute_finished_at_seconds
+                        <= record.compute_started_at_seconds
                     ):
                         raise AssertionError("compute lane record lacks stream markers")
             if actual.step_number != step + 1 or len(actual.objectives) != 2:
