@@ -9,18 +9,18 @@ artifact_store_dir/
 └── v1/                   one tree per store format version
     ├── layout.json
     ├── README.md
-    ├── pytorch/
+    ├── build/            what a run pays for, and another run can reuse
     │   ├── exports/      normalized Export archives and manifests
-    │   └── inductor/     PyTorch Inductor and Triton caches
-    ├── graphpairs/       structural AOT graph pairs
-    ├── profiling/
-    │   ├── compiled_manifests/
-    │   └── measurements/
-    ├── pressurefit/
-    │   ├── programs/     canonical PressureFit inputs
-    │   ├── selections/   selected schedules
-    │   └── requests/     budget/bandwidth request indexes
-    └── plans/            readable request-to-artifact manifests
+    │   ├── inductor/     PyTorch Inductor and Triton caches
+    │   ├── graphpairs/   structural AOT graph pairs
+    │   ├── profiling/
+    │   │   ├── compiled_manifests/
+    │   │   └── measurements/
+    │   └── programs/     canonical PressureFit inputs
+    └── planning/         what a run measured
+        ├── requests/     what each PressureFit search was asked for
+        ├── results/      its answer: resolution, schedule, diagnostics
+        └── plans/        the ExecutionPlan a callable runs, with its lineage
 ```
 
 There is exactly one version for the store and everything in it:
@@ -112,13 +112,13 @@ path through the same helper, `digest_directory`.
 
 | Kind | Path under `v<N>/` |
 |---|---|
-| Export | `pytorch/exports/<2>/<digest>/` |
-| Graph pair | `graphpairs/<2>/<digest>/graph_pairs.pt` |
-| Compiled manifest | `profiling/compiled_manifests/<2>/<digest>/manifest.json` |
-| Profile measurement | `profiling/measurements/<2>/<digest>/measurement.json` |
-| PressureFit program | `pressurefit/programs/<2>/<digest>/program.json` |
-| Selection request | `pressurefit/requests/<2>/<digest>/request.json` |
-| Selection | `pressurefit/selections/<2>/<digest>/selection.json` |
+| Export | `build/exports/<2>/<digest>/` |
+| Graph pair | `build/graphpairs/<2>/<digest>/graph_pairs.pt` |
+| Compiled manifest | `build/profiling/compiled_manifests/<2>/<digest>/manifest.json` |
+| Profile measurement | `build/profiling/measurements/<2>/<digest>/measurement.json` |
+| PressureFit program | `build/programs/<2>/<digest>/program.json` |
+| PressureFit request | `planning/requests/<2>/<digest>/request.json` |
+| PressureFit result | `planning/results/<2>/<digest>/selection.json` |
 
 The digest in a path is the key described above, so a path is a question and
 its contents are the answer. A graph pair is the only entry that is not JSON,
@@ -126,12 +126,21 @@ because it holds compiled graphs; its key covers the structural contract and
 the differentiation options together, so one entry is one digest like
 everything else.
 
+`build/` is what a run paid for and another run can reuse; `planning/` is
+what a run measured. A planning call given a `plan_store_dir` keeps the
+`planning/` tree under that directory's own `v<N>/` instead, so several runs
+can share one artifact store and each own their plans, and a run that shares
+a store still plans every point itself rather than reading back a plan
+another run searched. `None` keeps both trees under one root, and the store's
+diagnostics name both. A store laid out before this split is moved into place
+the first time it is opened, directory by directory, without copying.
+
 Two directories are deliberately not content-addressed, and both say why in
-their names. `pytorch/inductor/` is PyTorch's own cache, laid out by PyTorch.
-`plans/<qualified callable>/<program digest>/<plan digest>/` groups plan
-manifests under the callable they were planned for, because a person reading
-a store wants the plans for one model rather than a digest they would have to
-compute.
+their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch.
+`planning/plans/<qualified callable>/<program digest>/<plan digest>/` groups
+plan manifests under the callable they were planned for, because a person
+reading a store wants the plans for one model rather than a digest they would
+have to compute.
 
 ## What each record contains
 
@@ -212,6 +221,7 @@ is traced back to the profiles and programs behind it.
 
 | Argument | Behavior |
 |---|---|
+| `plan_store_dir=None` | Keep the `planning/` tree (requests, results, plans) under this directory instead of the artifact store. |
 | `save_plan=True` | Persist artifacts and readable manifests. |
 | `force_fresh=True` | Do not read cached artifacts; use isolated compiler caches. |
 | `overwrite_plan=True` | Replace matching saved artifacts; requires both `save_plan=True` and `force_fresh=True`. |

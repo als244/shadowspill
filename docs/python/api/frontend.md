@@ -207,6 +207,7 @@ plan_forward(
     partition="auto",
     verbose=True,
     artifact_store_dir=None,
+    plan_store_dir=None,
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
@@ -300,6 +301,7 @@ plan_step(
     resolution_options=None,
     verbose=True,
     artifact_store_dir=None,
+    plan_store_dir=None,
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
@@ -344,6 +346,7 @@ Shared planning arguments have these meanings:
 | `execution_device` | Accelerator ordinal or `torch.device`; `None` uses the current PyTorch device. |
 | `partition` | `"auto"`, `"whole"`, or `PartitionPolicy`. |
 | `artifact_store_dir` | Shared content-addressed artifact root. |
+| `plan_store_dir` | Where this call's plan records (selection request, selection, manifest) go, kept apart from the artifact store so one store can serve many runs; `None` keeps them in the store. |
 | `profiling_metadata` | JSON-compatible identity for data-sensitive task measurement. |
 | `allocation_probe_seeds` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | Identical repeats per probe seed. |
@@ -444,6 +447,7 @@ plan_step_search(
     orderings=None,
     resolution_options=None,
     artifact_store_dir=None,
+    plan_store_dir=None,
     verbose=False,
     progress=None,
     force_fresh=False,

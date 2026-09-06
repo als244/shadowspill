@@ -571,7 +571,18 @@ def main() -> int:
         "--artifact-store",
         type=Path,
         default=None,
-        help="compile/profile cache; defaults to benchmarking/quickstart/<model>/store",
+        help="the captures, graph pairs, profiles and lowered programs to read"
+        " and write; point it at another run's store to skip work already"
+        " paid for there. Defaults to <output-dir>/artifact_store",
+    )
+    parser.add_argument(
+        "--plan-store",
+        type=Path,
+        default=None,
+        help="where this run's plans go: every selection request, selection"
+        " and plan manifest, kept apart from the artifact store so a shared"
+        " store never hands a run another run's plans. Defaults to"
+        " <output-dir>/plan_store",
     )
     parser.add_argument(
         "--deterministic",
@@ -676,11 +687,14 @@ def main() -> int:
         # profiling over again.
         shutil.rmtree(target) if target.is_dir() else target.unlink()
 
-    # A run owns its store by default, so what it measured is self-contained
+    # A run owns both stores by default, so what it measured is self-contained
     # and nothing it reused is ambiguous. Point `--artifact-store` at
     # another run's store, or at a shared one, to skip capture, compilation
-    # and profiling that has already been paid for elsewhere.
+    # and profiling that has already been paid for elsewhere; the plans stay
+    # this run's own either way, so a shared store never answers a point
+    # with a plan another run searched.
     store = arguments.artifact_store or (run_root / "artifact_store")
+    plan_store = arguments.plan_store or (run_root / "plan_store")
 
     print("═" * 68)
     print(f"  ShadowSpill quickstart — {arguments.model}")
@@ -805,6 +819,7 @@ def main() -> int:
                     min_tokens_per_microbatch=arguments.min_tokens_per_microbatch,
                     max_tokens_per_microbatch=arguments.max_tokens_per_microbatch,
                     artifact_store_dir=store,
+                    plan_store_dir=plan_store,
                     verbose=True,
                     progress=progress,
                     force_fresh=False,
@@ -887,6 +902,7 @@ def main() -> int:
                     reverse_breadth=ordering.reverse_breadth,
                     pair_loss=ordering.pair_loss,
                     artifact_store_dir=store,
+                    plan_store_dir=plan_store,
                     save_plan=True,
                     force_fresh=False,
                     overwrite_plan=False,

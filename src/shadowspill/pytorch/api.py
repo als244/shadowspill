@@ -111,6 +111,7 @@ def plan_forward(
     partition: PartitionSpec = "auto",
     verbose: bool = True,
     artifact_store_dir: str | os.PathLike[str] | None = None,
+    plan_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: object = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -133,7 +134,11 @@ def plan_forward(
     is a JSON-compatible, key-only description of value-sensitive profiling
     behavior. It is not passed to the model or returned callable.
 
-    ``artifact_store_dir`` selects the shared artifact store. ``force_fresh``
+    ``artifact_store_dir`` selects the shared artifact store, and
+    ``plan_store_dir`` keeps this call's plan records (its selection request,
+    selection and manifest) somewhere of their own, so one store can serve
+    many runs that each keep their plans; ``None`` keeps them in the store.
+    ``force_fresh``
     disables cache reads; ``save_plan`` controls writes; and
     ``overwrite_plan`` replaces an existing identity only during a saved fresh
     run. ``implementation_revision`` invalidates compiler/profile artifacts
@@ -196,6 +201,7 @@ def plan_forward(
         )
         cache = ArtifactStore.resolve(
             artifact_store_dir,
+            plan_store_dir=plan_store_dir,
             save_plan=save_plan,
             force_fresh=force_fresh,
             overwrite_plan=overwrite_plan,
@@ -251,6 +257,7 @@ def plan_step(
     resolution_options: Sequence[ShareValue] | None = None,
     verbose: bool = True,
     artifact_store_dir: str | os.PathLike[str] | None = None,
+    plan_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -274,7 +281,8 @@ def plan_step(
     ``profiling_metadata`` has one JSON-compatible entry per example
     microbatch. It only distinguishes value-sensitive task measurements and
     their downstream plans; it is never passed to the objective or runtime.
-    Cache policy arguments have the same meaning as :func:`plan_forward`.
+    Cache policy arguments, ``plan_store_dir`` included, have the same meaning
+    as :func:`plan_forward`.
     ``partition`` uses the same stage-only policy contract as forward
     planning. A later graph-pair phase independently shares differentiation
     graph pairs across structurally equivalent stage occurrences.
@@ -336,6 +344,7 @@ def plan_step(
         )
         cache = ArtifactStore.resolve(
             artifact_store_dir,
+            plan_store_dir=plan_store_dir,
             save_plan=save_plan,
             force_fresh=force_fresh,
             overwrite_plan=overwrite_plan,
