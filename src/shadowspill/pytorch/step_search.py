@@ -470,6 +470,7 @@ def plan_step_search(
     orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
     artifact_store_dir: str | PathLike[str] | None = None,
+    plan_store_dir: str | PathLike[str] | None = None,
     verbose: bool = False,
     progress: Callable[[str], None] | None = None,
     force_fresh: bool = False,
@@ -508,6 +509,11 @@ def plan_step_search(
     over, with the meaning it has for :func:`plan_step`; ``None`` is the
     library's default of every quarter. Options that are not valid are
     rejected before any geometry is built.
+
+    ``plan_store_dir`` keeps every point's plan records apart from the
+    artifact store, so a search can reuse another run's captures, profiles
+    and lowering and still plan every point itself; ``None`` keeps them in
+    the store, where a matching plan would be read back instead of planned.
     """
 
     def announce(message: str) -> None:
@@ -634,6 +640,7 @@ def plan_step_search(
                         options=options,
                         resolution_options=chosen,
                         artifact_store_dir=artifact_store_dir,
+                        plan_store_dir=plan_store_dir,
                         verbose=verbose,
                         save_plan=True,
                         force_fresh=force_fresh,

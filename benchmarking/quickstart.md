@@ -78,7 +78,7 @@ Output and caching:
 | Argument | Meaning | Default |
 |---|---|---|
 | `--plots` | Render the figures below | off |
-| `--output-dir` | Where this run writes: its search report, log, traced steps, figures, and — unless `--artifact-store` points elsewhere — its artifact store | `benchmarking/quickstart_reports/<model>_<revision>/seq<length>/seqsperstep<n>` |
+| `--output-dir` | Where this run writes: its search report, log, traced steps, figures, and — unless `--artifact-store` or `--plan-store` point elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>/seq<length>/seqsperstep<n>` |
 
 Each run budget also writes its traced step beside those, as
 `<model>_seq<length>_seqsperstep<n>.step-<budget>gib.json`: the complete `StepDiagnostics`
@@ -107,7 +107,10 @@ benchmarking/quickstart/
           16gib.json
         figures/
           sim/  real/  raw_data/
-        artifact_store/         this run's compile, profile and plan cache
+        artifact_store/         this run's captures, graph pairs, profiles
+                                and lowered programs, reusable by other runs
+        plan_store/             this run's plans: every request, selection
+                                and plan manifest
       seqsperstep32/            another shape, beside the first
     seq2048/
       ...
@@ -116,18 +119,23 @@ benchmarking/quickstart/
 Each directory level is exactly one parameter, so the shapes at one sequence
 length sit together, which is the comparison worth making most often.
 
-A run owns its store by default, so everything it measured is in one place and
-nothing it reused is ambiguous. That means a fresh run pays capture,
+A run owns both stores by default, so everything it measured is in one place
+and nothing it reused is ambiguous. That means a fresh run pays capture,
 compilation and profiling in full. To skip work already done, point
 `--artifact-store` at another run's store: the store is content-addressed, so
-whatever matches by structural digest is reused and the rest is built.
+whatever matches by structural digest is reused and the rest is built. The
+plans stay this run's own, in its `plan_store`, so a shared artifact store
+never answers a point with a plan another run searched; that is what makes a
+planning-time comparison between two runs on one store honest.
 
-`--output-dir` moves the whole tree somewhere else; `--artifact-store` points
-the cache at an existing one. Those are the only path flags, because everything
-else a run writes has a fixed name inside the run directory.
+`--output-dir` moves the whole tree somewhere else; `--artifact-store` and
+`--plan-store` point the two stores at existing ones. Those are the only path
+flags, because everything else a run writes has a fixed name inside the run
+directory.
 | `--steps` | Optimizer steps per run budget; the last is traced | 5 |
 | `--seed` | Model and data seed | 0 |
-| `--artifact-store` | Compile, profile and plan cache to read and write. Point it at another run's store to skip work already paid for there | `<output-dir>/artifact_store` |
+| `--artifact-store` | The captures, graph pairs, profiles and lowered programs to read and write. Point it at another run's store to skip work already paid for there | `<output-dir>/artifact_store` |
+| `--plan-store` | Where this run's plans go: every selection request, selection and plan manifest, kept apart from the artifact store so a shared store never hands a run another run's plans | `<output-dir>/plan_store` |
 | `--orderings` | Which microbatch orderings the search tries per geometry: `factors` (the default) lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the walk every step used before there was a choice. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
 | `--resolution-options` | Which resolutions the search and the runs plan: the shares of flexible groups to recompute, as `quarters` (the library default), `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point: on the llama3 frontier `eighths` cost 1.75x the search wall and beat the quarter rungs by a median of 0.00 % (mean 0.77 %). The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
 | `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run (22 against 26 GB/s on one machine, one hour apart). The run phase keeps the live calibration | calibrated |

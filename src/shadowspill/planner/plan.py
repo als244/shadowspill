@@ -318,6 +318,7 @@ def pressurefit_program(
     options: PressureFitOptions | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
     artifact_store_dir: str | os.PathLike[str] | None = None,
+    plan_store_dir: str | os.PathLike[str] | None = None,
     verbose: bool = True,
     save_plan: bool = True,
     force_fresh: bool = False,
@@ -332,7 +333,9 @@ def pressurefit_program(
     frontier without capture, compilation, or profiling. ``resolution_options``
     names the resolutions to search, as for :func:`plan_program`; the program
     itself carries none, because a Program is a problem and how to search it
-    is the caller's.
+    is the caller's. ``plan_store_dir`` keeps this call's request, selection
+    and plan manifest apart from the artifact store, so one store can serve
+    many runs that each own their plans; ``None`` keeps them in the store.
     """
 
     from .selection import select_program
@@ -341,6 +344,7 @@ def pressurefit_program(
         raise TypeError("options must be PressureFitOptions or None")
     cache = ArtifactStore.resolve(
         artifact_store_dir,
+        plan_store_dir=plan_store_dir,
         save_plan=save_plan,
         force_fresh=force_fresh,
         overwrite_plan=overwrite_plan,

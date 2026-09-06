@@ -107,6 +107,7 @@ pressurefit_program(
     options=None,
     resolution_options=None,
     artifact_store_dir=None,
+    plan_store_dir=None,
     verbose=True,
     save_plan=True,
     force_fresh=False,
