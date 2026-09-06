@@ -98,6 +98,7 @@ def _run_case(
     case_factory: str | None,
     case_options: list[str],
     optimizer_ordering: str,
+    data_ordering: str | None,
     cold: bool,
     cache_directory: Path | None,
     detailed_artifacts: bool,
@@ -123,6 +124,8 @@ def _run_case(
     ]
     if data_geometry is not None:
         options.extend(("--data-geometry", data_geometry))
+    if data_ordering is not None:
+        options.extend(("--data-ordering", data_ordering))
     if case_factory is not None:
         options.extend(("--case-factory", case_factory))
     for value in case_options:
@@ -327,6 +330,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--data-ordering",
+        help="how every selected case walks its microbatches, as"
+        " <depth>x<breadth> with r for the reversed backward walk and p for"
+        " the paired loss, for example 2x4rp; the product must be the case's"
+        " microbatch count. Omitted plans depth-first, which is what every"
+        " stored reference was compared against so far",
+    )
+    parser.add_argument(
         "--model-config",
         default="{}",
         metavar="JSON|@FILE",
@@ -470,6 +481,7 @@ def main() -> int:
                 case_factory=arguments.case_factory,
                 case_options=arguments.case_option,
                 optimizer_ordering=arguments.optimizer_ordering,
+                data_ordering=arguments.data_ordering,
                 cold=arguments.cold,
                 cache_directory=arguments.cache_dir,
                 detailed_artifacts=arguments.detailed_artifacts,
