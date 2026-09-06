@@ -7,10 +7,12 @@ import json
 import time
 from collections import Counter
 from dataclasses import replace
+from fractions import Fraction
 
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import PressureFitResult
 from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.profiling import ProfilingMetadata, ProfilingResult
 
 from ..diagnostics import (
@@ -309,7 +311,9 @@ def build_training_report(
     profiling_metadata: tuple[ProfilingMetadata, ...],
     physical_layouts: tuple[PlanPhysicalLayout, ...],
     optimizer_ordering: str,
+    data_ordering: StepDataOrdering,
     memory: PlanMemory,
+    resolution_options: tuple[Fraction, ...] | None = None,
 ) -> PlanReport:
     """Build complete accumulated-training planning evidence without writing it."""
 
@@ -318,7 +322,11 @@ def build_training_report(
         "signatures": signature_digests,
         "artifacts": [item.contract_digest for item in execution_plan.entrypoints],
         "optimizer_ordering": optimizer_ordering,
+        "data_ordering": data_ordering.to_dict(),
     }
+    if resolution_options is not None:
+        # The resolution options the plan was searched over help name it.
+        identity["resolution_options"] = [str(share) for share in resolution_options]
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -369,6 +377,8 @@ def build_training_report(
         pressurefit_results=pressurefit_results,
         diagnostics=diagnostics,
         optimizer_ordering=optimizer_ordering,
+        data_ordering=data_ordering,
+        resolution_options=resolution_options,
     )
 
 

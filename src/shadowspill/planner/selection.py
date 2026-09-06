@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 # The admission package also re-exports the binding half, which reaches
@@ -20,6 +20,7 @@ from shadowspill.planner.program import (
     PressureFitProgram,
     TransferBandwidths,
 )
+from shadowspill.planner.recomputation import ShareValue
 from shadowspill.planner.request import PressureFitOptions
 from shadowspill.planner.result import PressureFitResult
 
@@ -33,6 +34,7 @@ def select_program(
     options: PressureFitOptions | None,
     artifact_store: ArtifactStore,
     verbose: bool,
+    resolution_options: Sequence[ShareValue] | None = None,
 ) -> AnnotatedProgramPlan:
     """Select and physically admit one reusable Program."""
 
@@ -59,6 +61,7 @@ def select_program(
             final_residency=program.final_residency,
             config=candidate_config,
             options=selected_options,
+            resolution_options=resolution_options,
             # The pool topology, so the search can measure whether a plan
             # has a layout that fits. Not passed as `admission`: that
             # switches on the dynamic-pool replay, and the fixed-layout

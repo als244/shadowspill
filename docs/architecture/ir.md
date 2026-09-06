@@ -108,6 +108,15 @@ literally and `t3` looks like a *source*, because nothing points at it. Both
 describe the same graph. The documentation fixes the data-flow reading, so
 "sink" always means nothing downstream in this phase consumes it.
 
+Dependencies are data, and only data: a task lists the producers of what it
+consumes and the earlier writers of what it accumulates into, nothing else.
+The order of `Program.tasks` is the schedule, and the schedule is the
+lowering's choice; it is not written into the dependencies. So any
+topological order of a Program's tasks is a legal schedule, and one lowering
+can emit the same tasks in more than one order for the planner to compare.
+The training lowering's orders are the microbatch walks of
+[planning](planning.md#the-walk-through-the-microbatches).
+
 ### Why a sink is pinned
 
 A sink's value leaves its phase. Nothing later in the same phase reproduces

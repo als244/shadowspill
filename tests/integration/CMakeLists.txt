@@ -69,6 +69,9 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_accumulates_replays_and_restores 300
 )
 shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_breadth_first_matches_the_eager_reference 300
+)
+shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_lazy_adamw_state_replays 300
 )
 shadowspill_add_public_api_test(

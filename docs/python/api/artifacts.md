@@ -7,7 +7,9 @@ schema hierarchy and key-by-key interpretation.
 
 ## `StepProgram`
 
-`StepProgram` is the result of `make_step_program()`. It contains:
+`StepProgram` is the result of `make_step_program()`. It records the
+`StepDataOrdering` the step was lowered with, since a different walk is a
+different program. It contains:
 
 - the recurrent `PressureFitProgram`;
 - an optional initialization `PressureFitProgram`;

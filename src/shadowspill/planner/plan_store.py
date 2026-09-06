@@ -6,9 +6,10 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import asdict, dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
 
@@ -35,6 +36,7 @@ from .admission.indexed import (
 from .diagnostics import PressureFitDiagnostics
 from .diagnostics.json import without_measurements
 from .plan import pressurefit
+from .recomputation import ShareValue, resolution_options_or_default
 from .request import PressureFitOptions
 from .result import PressureFitResult
 from .serialization import _resident_slice_from_value
@@ -69,7 +71,9 @@ class PlanStore:
     """Selected plans on disk, keyed by the request that produced them.
 
     The key excludes worker concurrency, which changes how the search is
-    scheduled but not which plan it may answer with.
+    scheduled but not which plan it may answer with, and names the resolution
+    options the plan was searched over, so a plan found under one set is never
+    read back for another, whatever the library's default is that day.
     """
 
     def __init__(
@@ -105,10 +109,12 @@ class PlanStore:
         admission: AdmissionFacts | None = None,
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
+        resolution_options: Sequence[ShareValue] | None = None,
     ) -> PlanLookup:
         """Return the stored planned program when it still matches, or plan."""
 
         selected_options = options or PressureFitOptions()
+        chosen = resolution_options_or_default(resolution_options)
         key = _key(
             program,
             initial_residency,
@@ -117,6 +123,7 @@ class PlanStore:
             selected_options,
             admission,
             placement,
+            chosen,
         )
         cached = (
             self._read(
@@ -127,6 +134,7 @@ class PlanStore:
                 config,
                 selected_options,
                 admission,
+                chosen,
             )
             if self.read_enabled
             else None
@@ -142,8 +150,9 @@ class PlanStore:
             admission=admission,
             placement=placement,
             progress=progress,
+            resolution_options=chosen,
         )
-        self._write(key, result, admission)
+        self._write(key, result, admission, chosen)
         return PlanLookup(result, False)
 
     def _read(
@@ -155,6 +164,7 @@ class PlanStore:
         config: SimulationConfig,
         options: PressureFitOptions,
         admission: AdmissionFacts | None,
+        resolution_options: tuple[Fraction, ...],
     ) -> PressureFitResult | None:
         path = self.path(key)
         try:
@@ -178,6 +188,7 @@ class PlanStore:
             },
             "options": options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
+            **_resolution_options_field(resolution_options),
         }
         normalized_boundary = json.loads(
             json.dumps(expected_boundary, sort_keys=True, separators=(",", ":"))
@@ -240,6 +251,7 @@ class PlanStore:
         key: str,
         result: PressureFitResult,
         admission: AdmissionFacts | None,
+        resolution_options: tuple[Fraction, ...],
     ) -> None:
         if not self.write_enabled:
             return
@@ -257,6 +269,7 @@ class PlanStore:
             },
             "options": result.options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
+            **_resolution_options_field(resolution_options),
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
             "diagnostics": result.diagnostics.to_dict(),
@@ -321,7 +334,8 @@ def _key(
     config: SimulationConfig,
     options: PressureFitOptions,
     admission: AdmissionFacts | None,
-    placement: AdmissionFacts | None = None,
+    placement: AdmissionFacts | None,
+    resolution_options: tuple[Fraction, ...],
 ) -> str:
     payload = {
         "schema": _SCHEMA,
@@ -338,9 +352,20 @@ def _key(
         # topology, so the same program under a different pool is a
         # different question and must not read a cached answer.
         "placement_digest": placement.digest if placement is not None else None,
+        # The resolution options are part of the question: a plan searched
+        # over one set is not the answer for another.
+        **_resolution_options_field(resolution_options),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _resolution_options_field(
+    resolution_options: tuple[Fraction, ...],
+) -> dict[str, list[str]]:
+    """The options as a record field: exact fractions, sorted, as strings."""
+
+    return {"resolution_options": [str(share) for share in resolution_options]}
 
 
 def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics:
@@ -377,6 +402,7 @@ def resolve_plan(
     admission: AdmissionFacts | None = None,
     placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
+    resolution_options: Sequence[ShareValue] | None = None,
 ) -> PlanLookup:
     """Resolve one plan, planning only when the store does not have it.
 
@@ -386,6 +412,7 @@ def resolve_plan(
 
     artifact_store.archive_program(program)
     selected_options = options or PressureFitOptions()
+    chosen = resolution_options_or_default(resolution_options)
     artifact_store.archive_pressurefit_request(
         {
             "schema": artifact_schema("pressurefit_request"),
@@ -406,6 +433,7 @@ def resolve_plan(
                 "deterministic": selected_options.deterministic,
             },
             "admission": None if admission is None else admission.to_dict(),
+            **_resolution_options_field(chosen),
         }
     )
     return plans.resolve(
@@ -417,4 +445,5 @@ def resolve_plan(
         admission=admission,
         placement=placement,
         progress=progress,
+        resolution_options=chosen,
     )

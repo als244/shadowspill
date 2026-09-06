@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from shadowspill.ir import Program
 from shadowspill.planner.diagnostics.plan import (
     PlanCacheArtifact,
     PlanProfilingMetadata,
@@ -22,7 +23,21 @@ from shadowspill.planner.serialization import (
 )
 from shadowspill.schema import artifact_schema
 
+from .step_ordering import StepDataOrdering
+
 _STEP_PROGRAM_SCHEMA = artifact_schema("step_program")
+
+
+def _data_ordering(value: object, program: Program) -> StepDataOrdering:
+    """The record's ordering; a record from before there was one ran depth-first."""
+    if value is not None:
+        return StepDataOrdering.from_dict(value, "step_program.planning.data_ordering")
+    positions = {
+        int(group.group_id.split("_")[1])
+        for group in program.task_alternative_groups
+        if group.group_id.startswith("recompute_")
+    }
+    return StepDataOrdering.depth_first(max(positions) + 1 if positions else 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +47,7 @@ class StepProgram:
     recurrent: PressureFitProgram
     initial: PressureFitProgram | None
     optimizer_ordering: str
+    data_ordering: StepDataOrdering
     signature_digests: tuple[str, ...]
     profiling_metadata: tuple[PlanProfilingMetadata, ...]
     phase_timings_ns: tuple[tuple[str, int], ...]
@@ -75,7 +91,10 @@ class StepProgram:
                     "unique_profile_count": self.unique_profile_count,
                     "captured_stage_count": self.captured_stage_count,
                 },
-                "planning": {"optimizer_ordering": self.optimizer_ordering},
+                "planning": {
+                    "optimizer_ordering": self.optimizer_ordering,
+                    "data_ordering": self.data_ordering.to_dict(),
+                },
                 "transfer_capabilities": json.loads(self.transfer_capabilities_json),
             }
         )
@@ -101,6 +120,7 @@ class StepProgram:
             },
             "planning": {
                 "optimizer_ordering": self.optimizer_ordering,
+                "data_ordering": self.data_ordering.to_dict(),
                 "phase_timings_ns": [list(item) for item in self.phase_timings_ns],
             },
             "transfer_capabilities": json.loads(self.transfer_capabilities_json),
@@ -168,6 +188,9 @@ class StepProgram:
             optimizer_ordering=_string(
                 planning.get("optimizer_ordering"),
                 "step_program.planning.optimizer_ordering",
+            ),
+            data_ordering=_data_ordering(
+                planning.get("data_ordering"), recurrent.program
             ),
             signature_digests=tuple(
                 _string(item, f"step_program.signature_digests[{index}]")

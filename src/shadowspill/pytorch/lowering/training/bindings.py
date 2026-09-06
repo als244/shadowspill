@@ -7,6 +7,7 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -214,7 +215,14 @@ def prepare_training_variants(
     boundaries: TrainingBoundaries,
     profiles: TaskProfileCatalog,
     metadata: tuple[str | None, ...],
+    ordering: StepDataOrdering,
 ) -> tuple[tuple[dict[str, PreparedStageVariant], ...], ...]:
+    """Bind every microbatch's stages to the graph-pair form its walk needs.
+
+    A stage's backward either creates the gradient or adds into one another
+    microbatch created; which is a fact about the order the step runs in,
+    not about the microbatch, and `ordering.creates` says which.
+    """
     prepared: list[tuple[dict[str, PreparedStageVariant], ...]] = []
     parameter_ids = set(objects.parameter_objects.values())
     for position, capture in enumerate(captures):
@@ -228,6 +236,9 @@ def prepare_training_variants(
                 profiles,
                 metadata[position],
                 parameter_ids,
+                accumulates=not ordering.creates(
+                    position, stage_index, stage_count=len(capture.stages)
+                ),
             )
             for stage_index, stage in enumerate(capture.stages)
         )
@@ -244,6 +255,8 @@ def _prepare_stage_variants(
     profiles: TaskProfileCatalog,
     metadata_digest: str | None,
     parameter_ids: set[str],
+    *,
+    accumulates: bool,
 ) -> dict[str, PreparedStageVariant]:
     canonical_outputs = boundaries.object_ids[position][stage_index]
     terminal = stage_index == len(boundaries.object_ids[position]) - 1
@@ -261,7 +274,7 @@ def _prepare_stage_variants(
             canonical_outputs,
             terminal=terminal,
         )
-        for option in stage.graph_pairs.options(accumulates=position > 0)
+        for option in stage.graph_pairs.options(accumulates=accumulates)
     }
 
 

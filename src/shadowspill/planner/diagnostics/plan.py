@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from fractions import Fraction
 from types import MappingProxyType
 
 from shadowspill.ir import (
@@ -16,6 +17,7 @@ from shadowspill.ir import (
 )
 from shadowspill.planner.diagnostics import PressureFitDiagnostics
 from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
 from shadowspill.schema import artifact_schema
 
@@ -940,6 +942,11 @@ class PlanReport:
     execution_device: int
     transfer_capabilities: TransferCapabilities
     optimizer_ordering: str | None = None
+    #: How the step walked its microbatches, or `None` for a forward plan.
+    data_ordering: StepDataOrdering | None = None
+    #: The resolution options the plan was searched over, as exact fractions
+    #: of the flexible groups recomputing, or `None` for a forward plan.
+    resolution_options: tuple[Fraction, ...] | None = None
     initial_execution_plan: ExecutionPlan | None = None
     planned_program_cache_hits: int = 0
     planned_program_cache_misses: int = 0

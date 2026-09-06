@@ -7,6 +7,7 @@ from types import MappingProxyType
 
 import pytest
 
+from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.diagnostics.plan import PlanSummary
 from shadowspill.plots import plot_step_search
 from shadowspill.pytorch import StepSearchPoint, StepSearchReport
@@ -33,6 +34,7 @@ def _point(execution: int, spill: int, step: float) -> StepSearchPoint:
     return StepSearchPoint(
         sequences_per_microbatch=8,
         accumulation_count=4,
+        ordering=StepDataOrdering.depth_first(4),
         execution_budget_bytes=execution,
         spill_budget_bytes=spill,
         status="succeeded",
@@ -41,6 +43,29 @@ def _point(execution: int, spill: int, step: float) -> StepSearchPoint:
         error=None,
         search_seconds=0.1,
     )
+
+
+def test_the_ordering_ladder_renders_beside_the_geometry_figures(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    slow = _point(10 << 30, 1 << 30, 20.0)
+    fast = replace(slow, ordering=StepDataOrdering(2, 2), makespan_seconds=18.0)
+    report = StepSearchReport(
+        total_sequences_per_step=32,
+        sequence_length=1,
+        budgets=((10 << 30, 1 << 30),),
+        geometries=(),
+        points=(slow, fast),
+        skipped=(),
+    )
+    written = plot_step_search(report, tmp_path)
+    ladder = tmp_path / "sim" / "orderings" / "8x4.png"
+    assert ladder in written and ladder.exists()
+    rows = (tmp_path / "raw_data" / "points.csv").read_text().splitlines()
+    assert rows[0].split(",")[2] == "ordering"
+    assert {row.split(",")[2] for row in rows[1:]} == {"4x1rp", "2x2rp"}
 
 
 def test_every_figure_renders(tmp_path: Path) -> None:

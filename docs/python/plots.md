@@ -46,6 +46,9 @@ figures/
         <micro>x<accum>_shares.png      lane utilization per selection
     vs_unconstrained/
       by_geometry.png                   each geometry against its floor
+    orderings/
+      <micro>x<accum>.png               one geometry's step time under every
+                                        ordering the search tried
   real/
     throughput.png                      measured against simulated
     sim_fidelity.png                    where the prediction fell short
@@ -73,11 +76,16 @@ compared.
 lanes, and `vs_unconstrained/` is the distance from the compute floor.
 
 **What varies within a figure.** `winners.png` shows only each budget's winning
-geometry. `by_geometry.png` shows every geometry at every budget. A
-`by_graph_pair_selection/` directory goes one level deeper still: one figure per
-geometry, in which each budget's bars are the individual graph-pair selections
-the search evaluated, not only the one it answered with. So the three levels
-are *the winner*, *every geometry*, and *every selection within one geometry*.
+geometry. `by_geometry.png` shows every geometry at every budget, each at its
+best ordering there. A `by_graph_pair_selection/` directory goes one level
+deeper still: one figure per geometry, in which each budget's bars are the
+individual graph-pair selections the search evaluated, not only the one it
+answered with. `orderings/` is the other ladder behind a geometry's line: its
+step time under every microbatch ordering the search tried, labelled
+`<depth>x<breadth>` with `r` for the reversed backward walk and `p` for the
+paired loss, the best at each budget circled. So the levels are *the winner*,
+*every geometry*, *every ordering within one geometry*, and *every selection
+within one geometry*.
 
 ## Quantities
 

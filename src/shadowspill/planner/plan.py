@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from shadowspill.ir import Program, ResidencySpec
@@ -42,7 +42,7 @@ from .program import (
     PressureFitProgram,
     TransferBandwidths,
 )
-from .recomputation import Resolution, resolutions
+from .recomputation import Resolution, ShareValue, resolutions
 from .request import PressureFitOptions
 from .result import PressureFitResult
 
@@ -61,7 +61,10 @@ def _recompute_share(resolution: Resolution) -> float:
     return recomputed / len(resolution)
 
 
-def ordered_resolutions(program: Program) -> tuple[Resolution, ...]:
+def ordered_resolutions(
+    program: Program,
+    resolution_options: Sequence[ShareValue] | None = None,
+) -> tuple[Resolution, ...]:
     """Return the resolved programs to try, most recomputed first.
 
     Order is part of the algorithm, not a detail of it. A plan placed under
@@ -90,10 +93,12 @@ def ordered_resolutions(program: Program) -> tuple[Resolution, ...]:
     feasible, so being wrong costs a little work and nothing else.
 
     Ties keep the order the program listed them in, so the result is a
-    function of the program alone.
+    function of the program and the resolution options alone;
+    ``resolution_options`` has the meaning and default of
+    `recomputation.resolutions`.
     """
 
-    resolved = resolutions(program)
+    resolved = resolutions(program, resolution_options)
     if len(resolved) < 2:
         return resolved
     ranked = sorted(
@@ -114,6 +119,7 @@ def plan_program(
     placement: AdmissionFacts | None = None,
     best: BestPlaced | None = None,
     progress: Callable[[str], None] | None = None,
+    resolution_options: Sequence[ShareValue] | None = None,
 ) -> PressureFitResult:
     """Plan `program` by planning each of its resolved programs in turn.
 
@@ -121,6 +127,10 @@ def plan_program(
     one is searched against the answer the previous ones found. Passing one
     in shares that bound with a wider search; omitting it means this call
     starts from nothing and keeps its own.
+
+    `resolution_options` names which resolved programs exist: the shares of
+    flexible groups to recompute, one resolved program each, as exact
+    fractions; `None` is the library's default of every quarter.
     """
 
     validate_pressurefit_inputs(
@@ -131,7 +141,7 @@ def plan_program(
         admission,
     )
     selected_options = options or PressureFitOptions()
-    resolved = ordered_resolutions(program)
+    resolved = ordered_resolutions(program, resolution_options)
     if progress is not None:
         progress(
             "PressureFit resolutions: "
@@ -220,8 +230,13 @@ def validate_schedule_feasibility(
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     admission: AdmissionFacts | None = None,
+    resolution_options: Sequence[ShareValue] | None = None,
 ) -> None:
-    """Reject irreducible capacity failures using the planner."""
+    """Reject irreducible capacity failures using the planner.
+
+    The check runs over the same `resolution_options` `plan_program` would
+    search, so what passes here is what the search can reach.
+    """
 
     validate_pressurefit_inputs(
         program,
@@ -238,7 +253,7 @@ def validate_schedule_feasibility(
         final_residency,
         config,
         admission,
-        resolutions=resolutions(program),
+        resolutions=resolutions(program, resolution_options),
         progress=None,
     )
     preflight_problems(problems)
@@ -254,6 +269,7 @@ def pressurefit(
     admission: AdmissionFacts | None = None,
     placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
+    resolution_options: Sequence[ShareValue] | None = None,
 ) -> PressureFitResult:
     """Select a schedule for `program`.
 
@@ -271,6 +287,7 @@ def pressurefit(
         admission=admission,
         placement=placement,
         progress=progress,
+        resolution_options=resolution_options,
     )
     return replace(
         result,
@@ -299,6 +316,7 @@ def pressurefit_program(
     spill_budget: int | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
     options: PressureFitOptions | None = None,
+    resolution_options: Sequence[ShareValue] | None = None,
     artifact_store_dir: str | os.PathLike[str] | None = None,
     verbose: bool = True,
     save_plan: bool = True,
@@ -311,7 +329,10 @@ def pressurefit_program(
     ``program`` is normally ``make_step_program(...).recurrent`` or the value
     reconstructed by :meth:`PressureFitProgram.from_value`. This operation is
     model- and runtime-independent and may be repeated for a budget/bandwidth
-    frontier without capture, compilation, or profiling.
+    frontier without capture, compilation, or profiling. ``resolution_options``
+    names the resolutions to search, as for :func:`plan_program`; the program
+    itself carries none, because a Program is a problem and how to search it
+    is the caller's.
     """
 
     from .selection import select_program
@@ -332,6 +353,7 @@ def pressurefit_program(
         spill_budget_bytes=spill_budget,
         transfer_bandwidths=transfer_bandwidths,
         options=options,
+        resolution_options=resolution_options,
         artifact_store=cache,
         verbose=verbose,
     )

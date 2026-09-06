@@ -14,6 +14,7 @@ from shadowspill.ir import (
     TaskAlternativeOption,
     TaskSpec,
 )
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     OptimizerCapture,
@@ -33,7 +34,17 @@ from .artifacts import (
 
 
 class _TrainingTaskEmitter:
-    """Emit the ordered task DAG from prepared stage-local variants."""
+    """Emit the ordered task DAG from prepared stage-local variants.
+
+    Two primitives place one microbatch's stage: `_emit_forward` and
+    `_emit_backward`. Each finds what it needs in what was emitted before --
+    the previous stage's forward ids, the next stage's backward ids, the
+    gradient each destination already has -- rather than in loop state, so
+    `build()` may call them in any order that respects the data. The order
+    it uses is the `StepDataOrdering` it was given: passes of microbatches,
+    each pass stage-major forward and stage-major back, with the paired last
+    stage and the reversed backward walk as that record says.
+    """
 
     def __init__(
         self,
@@ -45,8 +56,17 @@ class _TrainingTaskEmitter:
         *,
         optimizer_phase: Literal["initial", "recurrent"],
         optimizer_ordering: Literal["stage_interleaved", "tail"],
+        ordering: StepDataOrdering,
         device_id: str,
     ) -> None:
+        if ordering.microbatches != len(prepared):
+            raise CaptureError(
+                f"ordering {ordering.label} covers {ordering.microbatches} "
+                f"microbatches, but the step has {len(prepared)}"
+            )
+        if len({len(item) for item in prepared}) > 1:
+            raise CaptureError("every microbatch must partition into the same stages")
+        self.ordering = ordering
         self.prepared = prepared
         self.metadata = metadata
         self.objects = objects
@@ -64,6 +84,9 @@ class _TrainingTaskEmitter:
         self.initial_writers: dict[str, tuple[str, ...]] = {}
         self.latest_contributors: dict[str, tuple[str, ...]] = {}
         self.object_producers: dict[str, list[str]] = {}
+        # How many microbatches' backward a stage has emitted: the stage's
+        # optimizer components follow its last one, whichever microbatch that is.
+        self.backwards_emitted_by_stage: dict[int, int] = {}
 
         self.has_lazy_optimizer_outputs = any(
             item.created_on_first_step for item in objects.optimizer_objects
@@ -76,10 +99,29 @@ class _TrainingTaskEmitter:
         )
 
     def build(self) -> TrainingTaskGraph:
-        completion_ids: tuple[str, ...] = ()
-        for position, variants in enumerate(self.prepared):
-            self._emit_forwards(position, variants, completion_ids)
-            completion_ids = self._emit_backwards(position, variants)
+        # Dependencies are data. The order of the task list is the schedule:
+        # one stage's forward follows another's because it is emitted after
+        # it, not because it depends on it, so any topological order of
+        # these tasks is a legal schedule and the ordering chooses one.
+        stage_count = len(self.prepared[0])
+        head = stage_count - 1
+        for pass_index in range(self.ordering.depth):
+            positions = self.ordering.positions(pass_index)
+            for stage_index in range(head if self.ordering.pair_loss else stage_count):
+                for position in positions:
+                    self._emit_forward(position, stage_index)
+            if self.ordering.pair_loss:
+                # The last stage's saved state is the largest per microbatch;
+                # consuming it at once keeps one copy in flight, not a pass.
+                for position in positions:
+                    self._emit_forward(position, head)
+                    self._emit_backward(position, head)
+            backward_stages = range(
+                head - 1 if self.ordering.pair_loss else head, -1, -1
+            )
+            for stage_index in backward_stages:
+                for position in self.ordering.backward_positions(pass_index):
+                    self._emit_backward(position, stage_index)
         groups = self._task_alternative_groups()
         self._emit_tail_optimizer()
         if not self.optimizer_task_ids:
@@ -91,113 +133,119 @@ class _TrainingTaskEmitter:
             tuple(self.optimizer_task_ids),
         )
 
-    def _emit_forwards(
+    def _stage_ids(
         self,
+        table: dict[tuple[int, int, str], str],
         position: int,
-        position_variants: tuple[dict[str, PreparedStageVariant], ...],
-        prior_microbatch: tuple[str, ...],
-    ) -> None:
-        previous_ids = prior_microbatch
-        metadata_digest = self.metadata[position]
-        for stage_index, variants in enumerate(position_variants):
-            current_ids: list[str] = []
-            for variant, item in variants.items():
-                task_id = f"task_{len(self.tasks):06d}"
-                self.forward_ids[(position, stage_index, variant)] = task_id
-                input_aliases = {
-                    self.objects.catalog.alias_id(slot.object_id)
-                    for slot in item.forward_inputs
-                }
-                dependencies = list(previous_ids)
-                for slot in item.forward_inputs:
-                    dependencies.extend(self.object_producers.get(slot.object_id, ()))
-                task = TaskSpec(
-                    task_id,
-                    ResourceSpec(self.device_id, ResourceKind.COMPUTE),
-                    self.profiles.profile_id(
-                        item.pair.forward,
-                        self.profiles.additional_workspace_for_outputs(
-                            item.pair.forward,
-                            self.profiles.replacement_output_leaves(item.pair.forward),
-                            metadata_digest,
-                        ),
-                        metadata_digest=metadata_digest,
-                    ),
-                    dependencies=_unique(dependencies),
-                    inputs=_unique(slot.object_id for slot in item.forward_inputs),
-                    outputs=_unique(
-                        slot.object_id
-                        for slot in item.forward_outputs
-                        if self.objects.catalog.alias_id(slot.object_id)
-                        not in input_aliases
-                    ),
-                    mutations=tuple(
-                        MutationSpec(object_id)
-                        for object_id in item.mutation_object_ids
-                    ),
-                    phase="forward",
-                )
-                self.tasks.append(task)
-                self._record_producers(task)
-                self.entrypoints.append(
-                    TrainingTaskEntrypoint(
-                        task_id,
-                        "forward",
-                        position,
-                        variant,
-                        item.pair.forward,
-                        item.forward_inputs,
-                        item.forward_outputs,
-                        public_output_count=len(item.public_output_leaves),
-                        public_output_leaves=item.public_output_leaves,
-                        stage_index=stage_index,
-                        replacement_output_leaves=(item.replacement_output_leaves),
-                        storage_handoffs=item.forward_storage_handoffs,
-                    )
-                )
-                current_ids.append(task_id)
-            previous_ids = tuple(current_ids)
-
-    def _emit_backwards(
-        self,
-        position: int,
-        position_variants: tuple[dict[str, PreparedStageVariant], ...],
+        stage_index: int,
     ) -> tuple[str, ...]:
-        downstream_ids: tuple[str, ...] = ()
+        """Every variant's task id for one microbatch's stage, or none past the ends."""
+        if not 0 <= stage_index < len(self.prepared[position]):
+            return ()
+        return tuple(
+            table[(position, stage_index, variant)]
+            for variant in self.prepared[position][stage_index]
+        )
+
+    def _emit_forward(self, position: int, stage_index: int) -> None:
+        """Emit every forward variant of one microbatch's stage.
+
+        The stage follows the previous stage's forward of the same microbatch
+        whichever variant of it runs, so the dependencies name every variant;
+        the planner keeps the one the selection activates.
+        """
+        variants = self.prepared[position][stage_index]
+        previous_ids = self._stage_ids(self.forward_ids, position, stage_index - 1)
         metadata_digest = self.metadata[position]
-        for stage_index in reversed(range(len(position_variants))):
-            variants = position_variants[stage_index]
-            stage_task_ids = tuple(
-                f"task_{len(self.tasks) + offset:06d}"
-                for offset in range(len(variants))
-            )
-            first_destinations = {
-                slot.object_id
-                for item in variants.values()
-                for slot in item.contributions
-                if slot.object_id not in self.initial_writers
+        for variant, item in variants.items():
+            task_id = f"task_{len(self.tasks):06d}"
+            self.forward_ids[(position, stage_index, variant)] = task_id
+            input_aliases = {
+                self.objects.catalog.alias_id(slot.object_id)
+                for slot in item.forward_inputs
             }
-            for (variant, item), task_id in zip(
-                variants.items(), stage_task_ids, strict=True
-            ):
-                self._emit_backward_variant(
-                    position,
-                    stage_index,
-                    variant,
+            dependencies = list(previous_ids)
+            for slot in item.forward_inputs:
+                dependencies.extend(self.object_producers.get(slot.object_id, ()))
+            task = TaskSpec(
+                task_id,
+                ResourceSpec(self.device_id, ResourceKind.COMPUTE),
+                self.profiles.profile_id(
+                    item.pair.forward,
+                    self.profiles.additional_workspace_for_outputs(
+                        item.pair.forward,
+                        self.profiles.replacement_output_leaves(item.pair.forward),
+                        metadata_digest,
+                    ),
+                    metadata_digest=metadata_digest,
+                ),
+                dependencies=_unique(dependencies),
+                inputs=_unique(slot.object_id for slot in item.forward_inputs),
+                outputs=_unique(
+                    slot.object_id
+                    for slot in item.forward_outputs
+                    if self.objects.catalog.alias_id(slot.object_id)
+                    not in input_aliases
+                ),
+                mutations=tuple(
+                    MutationSpec(object_id) for object_id in item.mutation_object_ids
+                ),
+                phase="forward",
+            )
+            self.tasks.append(task)
+            self._record_producers(task)
+            self.entrypoints.append(
+                TrainingTaskEntrypoint(
                     task_id,
-                    item,
-                    downstream_ids,
-                    first_destinations,
-                    metadata_digest,
+                    "forward",
+                    position,
+                    variant,
+                    item.pair.forward,
+                    item.forward_inputs,
+                    item.forward_outputs,
+                    public_output_count=len(item.public_output_leaves),
+                    public_output_leaves=item.public_output_leaves,
+                    stage_index=stage_index,
+                    replacement_output_leaves=(item.replacement_output_leaves),
+                    storage_handoffs=item.forward_storage_handoffs,
                 )
-            self._publish_contributors(variants, stage_task_ids)
-            downstream_ids = stage_task_ids
-            self._emit_interleaved_optimizer(
+            )
+
+    def _emit_backward(self, position: int, stage_index: int) -> None:
+        """Emit every backward variant of one microbatch's stage.
+
+        The stage follows the next stage's backward of the same microbatch,
+        publishes what it contributed to each gradient, and, once every
+        microbatch's backward for this stage is in, the optimizer components
+        the stage completes.
+        """
+        variants = self.prepared[position][stage_index]
+        downstream_ids = self._stage_ids(self.backward_ids, position, stage_index + 1)
+        metadata_digest = self.metadata[position]
+        stage_task_ids = tuple(
+            f"task_{len(self.tasks) + offset:06d}" for offset in range(len(variants))
+        )
+        first_destinations = {
+            slot.object_id
+            for item in variants.values()
+            for slot in item.contributions
+            if slot.object_id not in self.initial_writers
+        }
+        for (variant, item), task_id in zip(
+            variants.items(), stage_task_ids, strict=True
+        ):
+            self._emit_backward_variant(
                 position,
                 stage_index,
-                stage_task_ids,
+                variant,
+                task_id,
+                item,
+                downstream_ids,
+                first_destinations,
+                metadata_digest,
             )
-        return downstream_ids
+        self._publish_contributors(variants, stage_task_ids)
+        self._emit_interleaved_optimizer(stage_index, stage_task_ids)
 
     def _emit_backward_variant(
         self,
@@ -345,11 +393,14 @@ class _TrainingTaskEmitter:
 
     def _emit_interleaved_optimizer(
         self,
-        position: int,
         stage_index: int,
         dependencies: tuple[str, ...],
     ) -> None:
-        if not self.interleave_optimizer or position != len(self.prepared) - 1:
+        if not self.interleave_optimizer:
+            return
+        emitted = self.backwards_emitted_by_stage.get(stage_index, 0) + 1
+        self.backwards_emitted_by_stage[stage_index] = emitted
+        if emitted != len(self.prepared):
             return
         components = self.optimizer_by_stage.get(stage_index, ())
         if components:
@@ -464,9 +515,10 @@ def emit_training_tasks(
     *,
     optimizer_phase: Literal["initial", "recurrent"],
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    ordering: StepDataOrdering,
     device_id: str,
 ) -> TrainingTaskGraph:
-    """Emit the complete accumulated task graph in execution order."""
+    """Emit the complete accumulated task graph in the ordering's execution order."""
 
     return _TrainingTaskEmitter(
         prepared,
@@ -476,6 +528,7 @@ def emit_training_tasks(
         profiles,
         optimizer_phase=optimizer_phase,
         optimizer_ordering=optimizer_ordering,
+        ordering=ordering,
         device_id=device_id,
     ).build()
 
