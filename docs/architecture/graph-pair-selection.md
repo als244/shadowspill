@@ -1,6 +1,6 @@
 # Graph-pair selection
 
-Graph-pair selection constructs the finite family of complete Program task
+Graph-pair selection constructs the finite set of complete Program task
 selections that PressureFit evaluates. It consumes the occurrence-level
 options produced by [graph-pair construction](graph-pair-construction.md), but
 does not capture, compile, or profile graphs. It is also separate from
@@ -46,7 +46,7 @@ one fixes:
 | Graph-pair group | One occurrence-level set of mutually exclusive alternatives, `TaskAlternativeGroup`. | [Graph-pair construction](graph-pair-construction.md), one per differentiated stage occurrence |
 | Graph-pair option | One alternative in a group, `TaskAlternativeOption`: the tasks it activates and the aliases it retains. | Graph-pair construction |
 | Graph-pair choice | One option fixed for one group, `TaskAlternativeChoice`. | Selection, one per group |
-| Graph-pair selection | One option fixed for **every** group: one complete row. | Selection, as the bounded family below |
+| Graph-pair selection | One option fixed for **every** group: one complete row. | Selection, as the bounded set below |
 | Graph-pair problem | The question one selection poses to PressureFit, and the diagnostics record its answer produces. | [PressureFit](pressurefit.md), one per selection |
 
 The two that are easiest to confuse differ only in how much they fix:
@@ -129,6 +129,16 @@ and contention; PressureFit's simulator evaluates those jointly.
 
 ## The current selection policy
 
+The resolution options are the caller's to name. `plan_program()`,
+`pressurefit()`, `pressurefit_program()`, `plan_step()` and
+`plan_step_search()` take `resolution_options`, the fractions of flexible
+groups to recompute, and the selector builds one selection per option; the
+library's default, `DEFAULT_RESOLUTION_OPTIONS` in
+`shadowspill.planner.recomputation`, is every quarter. What follows is the
+mechanism that turns the options into selections. The two cases that ignore
+them — no groups, and inventories small enough to enumerate — ignore them
+because they have nothing to choose.
+
 ### No groups
 
 A Program without graph-pair groups yields one empty selection. PressureFit
@@ -143,18 +153,26 @@ enumerates every legal combination in deterministic group/option order.
 ### Large binary save/recompute products
 
 If every flexible group has exactly one `save` and one `recompute` option, the
-planner emits nine coarse selections. Among flexible groups, the target
-fractions recomputed are every eighth:
+planner emits one selection per resolution option, the option being the
+target fraction of flexible groups recomputed. The default options are every
+quarter:
 
 ```text
-0%, 12.5%, 25%, 37.5%, 50%, 62.5%, 75%, 87.5%, 100%
+0%, 25%, 50%, 75%, 100%
 ```
 
-Eighths rather than quarters because under pressure the answer sits near the
-top of the ladder, where one quarter step separates a plan from no plan at
-all.
+Finer options are the caller's to name. Eighths were measured on the
+llama3 frontier (293 points, deterministic search): the winner sat on an odd
+eighth at 67 points, beating the best quarter rung by a median of 0.00 % and
+a mean of 0.77 %, and only one frontier winner needed one (+2.1 % at 8 GiB),
+for 1.75x the search wall. Under the deterministic gate a rung answers the
+same in every set of options it belongs to, so a superset is never worse than
+its subset, only slower. Shares are exact fractions in $[0, 1]$, sorted and
+deduplicated, and the count a share selects is rounded half up, so two shares
+of a small group count can name the same selection, which is then planned
+once.
 
-For each fraction, recomputed groups are chosen at centered, evenly spaced
+For each share, recomputed groups are chosen at centered, evenly spaced
 positions in stable group order. If there are $G$ flexible groups and the
 target chooses $K$, position $j\in\{0,\ldots,K-1\}$ is
 
@@ -198,7 +216,7 @@ family, module name, stage number, or operator identity.
 ## Pseudocode
 
 ```text
-Resolutions(program):
+Resolutions(program, shares = DEFAULT_RESOLUTION_OPTIONS):
     groups = program.task_alternative_groups
     if groups is empty:
         return [empty selection]
@@ -211,7 +229,7 @@ Resolutions(program):
 
     if every group is exactly {save, recompute}:
         resolutions = []
-        for fraction in [0%, 12.5%, 25%, ..., 87.5%, 100%]:
+        for fraction in shares:
             flexible = groups not fixed by required
             chosen = centered_evenly_spaced_subset(flexible, fraction)
             resolutions.append(save_or_recompute_each_group(chosen, required))
@@ -235,13 +253,14 @@ Resolutions(program):
 ## Scope and limitations
 
 The current algorithm is intentionally bounded and fast. For large binary
-products it does not search mixed subsets beyond the five evenly distributed
-fractions, and it does not use PressureFit feedback to refine a selection.
+products it does not search mixed subsets beyond the one evenly distributed
+selection at each share it was given, and it does not use PressureFit
+feedback to refine a selection.
 Consequently, the best schedule among the emitted resolutions may be worse than a
 legal selection that was not emitted.
 
 That limitation belongs here, not inside PressureFit. A richer recomputation
-planner can generate a different finite family of resolutions without changing the
+planner can generate a different finite set of resolutions without changing the
 PressureFit Program, residency, action, simulation, or runtime contracts.
 
 Graph-pair construction and profiling are described in the dedicated

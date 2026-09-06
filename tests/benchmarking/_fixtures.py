@@ -16,6 +16,7 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionFacts,
+    StepDataOrdering,
     TaskAdmissionSpec,
 )
 from shadowspill.planner.program import (
@@ -70,6 +71,7 @@ def _fixture() -> StepProgram:
         recurrent=pre_pressurefit,
         initial=None,
         optimizer_ordering="stage_interleaved",
+        data_ordering=StepDataOrdering.depth_first(1),
         signature_digests=("0" * 64,),
         profiling_metadata=(),
         phase_timings_ns=(("fixture", 1), ("total", 1)),

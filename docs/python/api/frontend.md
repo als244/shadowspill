@@ -293,6 +293,11 @@ plan_step(
     execution_device=None,
     partition="auto",
     optimizer_ordering="stage_interleaved",
+    depth=None,
+    breadth=None,
+    reverse_breadth=True,
+    pair_loss=True,
+    resolution_options=None,
     verbose=True,
     artifact_store_dir=None,
     profiling_metadata=None,
@@ -305,8 +310,27 @@ plan_step(
 ) -> PlannedTrainStep
 ```
 
-`plan_step()` accepts one fixed example sequence per accumulation round. The
+`plan_step()` accepts one fixed example sequence per microbatch. The
 `optimizer_ordering` value is `"stage_interleaved"` or `"tail"`.
+
+`depth` and `breadth` say how the step walks those microbatches: `depth`
+passes of `breadth` microbatches each, every microbatch of a pass running one
+stage before any runs the next, so each stage's parameters are fetched once
+per pass rather than once per microbatch. Their product must be
+`len(example_inputs)`; give one and the other follows, give neither and the
+step runs depth-first, one microbatch after another. `pair_loss` runs each
+microbatch's last stage forward and backward together, so the loss's saved
+state is consumed as it is produced instead of being held for the pass, and
+`reverse_breadth` walks a pass's microbatches in reverse during backward.
+Both are on by default and vacuous at `breadth=1`. The ordering is part of
+the plan's identity and is recorded on the report as a `StepDataOrdering`.
+
+`resolution_options` names the resolutions the search plans: the shares of
+flexible groups to recompute, one resolved program each, as exact fractions
+such as `("0", "1/2", "1")`, with `None` the library's default of every
+quarter; see [`shadowspill.planner`](neutral.md). The options are part of the
+plan's identity in the store and are recorded on the report as
+`resolution_options`; naming the default is the same as naming nothing.
 
 Shared planning arguments have these meanings:
 
@@ -351,6 +375,10 @@ make_step_program(
     execution_device=None,
     partition="auto",
     optimizer_ordering="stage_interleaved",
+    depth=None,
+    breadth=None,
+    reverse_breadth=True,
+    pair_loss=True,
     verbose=True,
     artifact_store_dir=None,
     profiling_metadata=None,
@@ -380,7 +408,9 @@ returned `StepSearchReport` carries per-geometry build phase timings, one
 `PlanSummary`, and `graph_pair_selections`, one `GraphPairOutcome` per
 graph-pair selection the search evaluated rather than only the one it
 answered with, the bound-skipped
-geometries with reasons, and derived winners per budget. Running a winner afterward is one warm `plan_step()`
+geometries with reasons, the transfer calibration each geometry's program
+embeds and any override the search planned against instead, and derived
+winners per budget. Running a winner afterward is one warm `plan_step()`
 call at the chosen geometry.
 
 Failures are outcomes rather than errors. A point that proves infeasible or
@@ -411,6 +441,8 @@ plan_step_search(
     options=None,
     minimum_object_bytes_evict_eligible=1 << 20,
     optimizer_ordering="stage_interleaved",
+    orderings=None,
+    resolution_options=None,
     artifact_store_dir=None,
     verbose=False,
     progress=None,
@@ -421,16 +453,29 @@ plan_step_search(
 
 `example_microbatches(sequences, accumulation)` supplies example inputs for
 one geometry; structure matters, values do not. `transfer_bandwidths`
-overrides the calibration each step program embeds from the runtime.
+overrides the calibration each step program embeds from the runtime; the
+report records that calibration per geometry, and the override when there
+was one, so two searches can be compared or one pinned to another's.
 `verbose=True` forwards each planning call's phase progress, and `progress`
 receives one line per geometry and point boundary so a caller can tee a live
-log.
+log. `resolution_options` are the resolutions every point is searched over,
+with the meaning they have for `plan_step()`; options that are not valid are
+rejected before any geometry is built, and the report records the options it
+searched.
 Infeasible or search-exhausted points are reported outcomes, not raised
 errors. `search_geometries()` is the underlying enumeration — every divisor
 pair of the sequence total, largest microbatch first, with the bounds'
 skips and reasons — and each `StepSearchGeometryBuild` records the shared
 capture/profile/lowering wall behind one geometry with its per-phase
 seconds.
+
+`orderings` maps a geometry's accumulation count to the
+`StepDataOrdering` values to try for it. Each ordering is lowered into its own
+program, sharing the geometry's capture and profiles, and planned under every
+budget; the report's points and builds carry the ordering, and the winner at a
+budget may be any ordering of any geometry. The default, `default_orderings()`,
+is every `depth x breadth` factor pair of the accumulation count with the flags
+at their defaults; the search never toggles `reverse_breadth` or `pair_loss`.
 
 ## Inputs, objectives, and partitioning
 

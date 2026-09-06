@@ -30,6 +30,7 @@ from shadowspill.planner.diagnostics.plan import (
     PlanTaskStage,
     PlanUniqueStage,
 )
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
 from shadowspill.pytorch.capture.storage import (
     MutationBinding,
@@ -103,10 +104,13 @@ def training_stage_inventory(
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],
     profiling_metadata_digests: tuple[str, ...] | None = None,
+    *,
+    data_ordering: StepDataOrdering,
 ) -> tuple[tuple[PlanTaskStage, ...], tuple[PlanUniqueStage, ...]]:
     """Describe task occurrences and every legal structural graph pair."""
 
     index = _index_training_inventory(captures, lowered, execution_plan)
+    stage_counts = tuple(len(capture.stages) for capture in captures)
     task_map = _training_task_inventory(
         lowered,
         index,
@@ -121,6 +125,8 @@ def training_stage_inventory(
             measurements,
             manifests,
             profiling_metadata_digests,
+            data_ordering,
+            stage_counts,
         )
         for structural_key in sorted(index.stages_by_key)
     )
@@ -322,9 +328,14 @@ def _training_unique_stage(
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],
     metadata_digests: tuple[str, ...] | None,
+    data_ordering: StepDataOrdering,
+    stage_counts: tuple[int, ...],
 ) -> PlanUniqueStage:
     occurrences = index.stages_by_key[structural_key]
     microbatch, stage_index, representative = occurrences[0]
+    accumulates = not data_ordering.creates(
+        microbatch, stage_index, stage_count=stage_counts[microbatch]
+    )
     graph_pairs = tuple(
         _training_graph_pair(
             option,
@@ -335,7 +346,7 @@ def _training_unique_stage(
             manifests,
             metadata_digests,
         )
-        for option in representative.graph_pairs.options(accumulates=microbatch > 0)
+        for option in representative.graph_pairs.options(accumulates=accumulates)
     )
     return PlanUniqueStage(
         unique_stage_id=index.unique_id_by_key[structural_key],

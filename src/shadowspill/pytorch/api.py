@@ -14,6 +14,8 @@ from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.program import (
     StepProgram,
 )
+from shadowspill.planner.recomputation import ShareValue
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
@@ -242,6 +244,11 @@ def plan_step(
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    depth: int | None = None,
+    breadth: int | None = None,
+    reverse_breadth: bool = True,
+    pair_loss: bool = True,
+    resolution_options: Sequence[ShareValue] | None = None,
     verbose: bool = True,
     artifact_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
@@ -272,6 +279,25 @@ def plan_step(
     planning. A later graph-pair phase independently shares differentiation
     graph pairs across structurally equivalent stage occurrences.
 
+    ``depth`` and ``breadth`` say how the step walks its microbatches:
+    ``depth`` passes of ``breadth`` microbatches each, every microbatch of a
+    pass running one stage before any runs the next, so each stage's
+    parameters are fetched once per pass rather than once per microbatch.
+    Their product must be ``len(example_inputs)``; give one and the other
+    follows, give neither and the step runs depth-first, one microbatch after
+    another, as before. ``pair_loss`` runs each microbatch's last stage
+    forward and backward together so the loss's saved state is consumed as
+    it is produced, and ``reverse_breadth`` walks a pass's microbatches in
+    reverse during backward; both are on by default and vacuous at
+    ``breadth=1``.
+
+    ``resolution_options`` names the resolutions the search plans: the shares
+    of flexible groups to recompute, one resolved program each, as exact
+    fractions such as ``("0", "1/2", "1")``. ``None`` plans the library's
+    default of every quarter. The options are part of the plan's identity in
+    the store and are recorded on the report; naming the default is the same
+    as naming nothing.
+
     ``dynamic_scratch_reserve_bytes`` and
     ``minimum_object_bytes_evict_eligible`` and ``deterministic`` have the
     same semantics and defaults as :func:`plan_forward`.
@@ -282,6 +308,13 @@ def plan_step(
 
     from .planning.training import build_training
 
+    data_ordering = StepDataOrdering.resolve(
+        microbatches=len(example_inputs),
+        depth=depth,
+        breadth=breadth,
+        reverse_breadth=reverse_breadth,
+        pair_loss=pair_loss,
+    )
     planning_started = False
     try:
         memory = runtime._resolve_plan(
@@ -317,6 +350,7 @@ def plan_step(
                 memory=memory,
                 partition=partition,
                 optimizer_ordering=optimizer_ordering,
+                data_ordering=data_ordering,
                 verbose=verbose,
                 artifact_store=cache,
                 profiling_metadata=profiling_metadata,
@@ -326,6 +360,7 @@ def plan_step(
                     minimum_object_bytes_evict_eligible
                 ),
                 deterministic=deterministic,
+                resolution_options=resolution_options,
             )
     except BaseException as error:
         _surface_failed_plan(
@@ -351,6 +386,10 @@ def make_step_program(
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    depth: int | None = None,
+    breadth: int | None = None,
+    reverse_breadth: bool = True,
+    pair_loss: bool = True,
     verbose: bool = True,
     artifact_store_dir: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
@@ -363,6 +402,9 @@ def make_step_program(
 ) -> StepProgram:
     """Capture, profile, and lower a reusable step without running PressureFit.
 
+    ``depth``, ``breadth``, ``reverse_breadth`` and ``pair_loss`` mean what
+    they mean for :func:`plan_step`; the ordering is recorded in the program.
+
     The returned :class:`StepProgram` is a fully self-contained JSON boundary.
     It can be passed to :func:`pressurefit_program` repeatedly with different
     budgets and transfer bandwidths. Temporary compilation/materialization
@@ -372,6 +414,13 @@ def make_step_program(
 
     from .planning.training import make_training_program
 
+    data_ordering = StepDataOrdering.resolve(
+        microbatches=len(example_inputs),
+        depth=depth,
+        breadth=breadth,
+        reverse_breadth=reverse_breadth,
+        pair_loss=pair_loss,
+    )
     require_model_state_for_plan(model, runtime=runtime, pool=spill)
     planning_started = False
     try:
@@ -400,6 +449,7 @@ def make_step_program(
                 memory=memory,
                 partition=partition,
                 optimizer_ordering=optimizer_ordering,
+                data_ordering=data_ordering,
                 verbose=verbose,
                 artifact_store=cache,
                 profiling_metadata=profiling_metadata,

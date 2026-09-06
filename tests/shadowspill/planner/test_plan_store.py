@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,55 @@ def test_plan_store_preserves_the_complete_selection(tmp_path: Path) -> None:
     assert second.result.selections == first.result.selections
     assert second.result.simulation == first.result.simulation
     assert second.result.diagnostics == first.result.diagnostics
+
+
+def test_the_resolution_options_are_part_of_every_key(tmp_path: Path) -> None:
+    initial, final = exact_capacity_residency()
+    cache = PlanStore(tmp_path)
+    first = cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+    )
+    # spelling out the library's default asks the same question
+    spelled = cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+        resolution_options=[Fraction(n, 4) for n in range(5)],
+    )
+    halves = cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+        resolution_options=("0", "1/2", "1"),
+    )
+    again = cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+        resolution_options=(Fraction(1), "1/2", 0),
+    )
+
+    assert not first.from_store
+    assert spelled.from_store
+    assert not halves.from_store
+    assert again.from_store
+    records = [
+        json.loads(path.read_text()) for path in tmp_path.rglob("selection.json")
+    ]
+    assert sorted(json.dumps(item.get("resolution_options")) for item in records) == [
+        '["0", "1/2", "1"]',
+        '["0", "1/4", "1/2", "3/4", "1"]',
+    ]
 
 
 def test_plan_store_ignores_only_fresh_work_timings(tmp_path: Path) -> None:

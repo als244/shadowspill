@@ -18,6 +18,7 @@ import json
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from fractions import Fraction
 from os import PathLike
 from pathlib import Path
 from types import MappingProxyType
@@ -33,6 +34,7 @@ from shadowspill.planner import (
     PressureFitInfeasibleError,
     PressureFitOptions,
     PressureFitSearchExhaustedError,
+    StepDataOrdering,
     pressurefit_program,
 )
 from shadowspill.planner.diagnostics.plan import (
@@ -40,6 +42,7 @@ from shadowspill.planner.diagnostics.plan import (
     summarize_selected_plan,
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.planner.recomputation import ShareValue, resolution_options_or_default
 from shadowspill.planner.result import PressureFitResult
 from shadowspill.pytorch.api import make_step_program
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
@@ -263,6 +266,8 @@ class StepSearchPoint:
 
     sequences_per_microbatch: int
     accumulation_count: int
+    #: How this point's program walked its microbatches.
+    ordering: StepDataOrdering
     execution_budget_bytes: int
     spill_budget_bytes: int
     status: str
@@ -290,11 +295,15 @@ class StepSearchGeometryBuild:
 
     sequences_per_microbatch: int
     accumulation_count: int
+    ordering: StepDataOrdering
     step_program_digest: str
     build_seconds: float
     phase_seconds: Mapping[str, float] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    #: The transfer calibration this build's program embeds, which every
+    #: point of the geometry planned against unless the search overrode it.
+    transfer_bandwidths: TransferBandwidths | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +316,13 @@ class StepSearchReport:
     geometries: tuple[StepSearchGeometryBuild, ...]
     points: tuple[StepSearchPoint, ...]
     skipped: tuple[tuple[int, int, str], ...]
+    #: The resolution options every point was searched over, as exact
+    #: fractions of the flexible groups recomputing.
+    resolution_options: tuple[Fraction, ...] | None = None
+    #: The calibration every point planned against instead of its program's
+    #: own, or `None` when each program's embedded calibration was used; the
+    #: per-geometry record says what that was.
+    transfer_bandwidths: TransferBandwidths | None = None
 
     @property
     def tokens_per_step(self) -> int:
@@ -356,13 +372,30 @@ class StepSearchReport:
             "total_sequences_per_step": self.total_sequences_per_step,
             "sequence_length": self.sequence_length,
             "budgets": [list(item) for item in self.budgets],
+            "resolution_options": (
+                None
+                if self.resolution_options is None
+                else [str(share) for share in self.resolution_options]
+            ),
+            "transfer_bandwidths": (
+                None
+                if self.transfer_bandwidths is None
+                else self.transfer_bandwidths.to_dict()
+            ),
             "geometries": [
                 {
                     "sequences_per_microbatch": item.sequences_per_microbatch,
                     "accumulation_count": item.accumulation_count,
+                    "ordering": item.ordering.to_dict(),
+                    "ordering_label": item.ordering.label,
                     "step_program_digest": item.step_program_digest,
                     "build_seconds": item.build_seconds,
                     "phase_seconds": dict(item.phase_seconds),
+                    "transfer_bandwidths": (
+                        None
+                        if item.transfer_bandwidths is None
+                        else item.transfer_bandwidths.to_dict()
+                    ),
                 }
                 for item in self.geometries
             ],
@@ -370,6 +403,8 @@ class StepSearchReport:
                 {
                     "sequences_per_microbatch": item.sequences_per_microbatch,
                     "accumulation_count": item.accumulation_count,
+                    "ordering": item.ordering.to_dict(),
+                    "ordering_label": item.ordering.label,
                     "execution_budget_bytes": item.execution_budget_bytes,
                     "spill_budget_bytes": item.spill_budget_bytes,
                     "status": item.status,
@@ -397,6 +432,23 @@ class StepSearchReport:
         return target
 
 
+def default_orderings(accumulation: int) -> tuple[StepDataOrdering, ...]:
+    """Every ``depth x breadth`` factor pair of the accumulation count.
+
+    Depth-first first, so the order every step ran in before there was a
+    choice is the first program built and the bound the rest are searched
+    against; then wider and wider passes, down to one pass over every
+    microbatch. The flags stay at their defaults throughout: the search does
+    not toggle them, because pairing the loss won every cell it was measured
+    in and the reversed walk cost nothing.
+    """
+    return tuple(
+        StepDataOrdering(accumulation // breadth, breadth)
+        for breadth in range(1, accumulation + 1)
+        if accumulation % breadth == 0
+    )
+
+
 def plan_step_search(
     model: nn.Module,
     *,
@@ -415,6 +467,8 @@ def plan_step_search(
     options: PressureFitOptions | None = None,
     minimum_object_bytes_evict_eligible: int = 1 << 20,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
+    resolution_options: Sequence[ShareValue] | None = None,
     artifact_store_dir: str | PathLike[str] | None = None,
     verbose: bool = False,
     progress: Callable[[str], None] | None = None,
@@ -427,7 +481,10 @@ def plan_step_search(
     inputs for one geometry — structure is what matters, values are not.
     ``transfer_bandwidths`` overrides the calibration each step program
     embeds from the runtime; leave it unset to plan against the measured
-    routes. ``options`` selects the search policy;
+    routes. Either way the report records the calibration each geometry's
+    program embeds, and the override when there was one, so two searches
+    can be compared or one pinned to another's. ``options`` selects the
+    search policy;
     ``minimum_object_bytes_evict_eligible`` applies on top of it with the same
     meaning and default as :func:`plan_step`. Failures are outcomes, not
     errors: a geometry-budget point that
@@ -440,6 +497,17 @@ def plan_step_search(
     program. ``progress`` is called with a short line at every geometry and
     point boundary; ``verbose`` additionally forwards each planning call's
     own phase reporting.
+
+    ``orderings`` maps a geometry's accumulation count to the
+    :class:`StepDataOrdering` values to try for it; each ordering is lowered
+    into its own program, sharing the geometry's capture and profiles, and
+    planned under every budget. The default, :func:`default_orderings`, is
+    every ``depth x breadth`` factor pair with the flags at their defaults.
+
+    ``resolution_options`` names the resolutions every point is searched
+    over, with the meaning it has for :func:`plan_step`; ``None`` is the
+    library's default of every quarter. Options that are not valid are
+    rejected before any geometry is built.
     """
 
     def announce(message: str) -> None:
@@ -448,6 +516,7 @@ def plan_step_search(
 
     if not budgets:
         raise ValueError("at least one (execution, spill) budget is required")
+    chosen = resolution_options_or_default(resolution_options)
     options = replace(
         options or PressureFitOptions(),
         minimum_object_bytes_evict_eligible=minimum_object_bytes_evict_eligible,
@@ -458,124 +527,146 @@ def plan_step_search(
         min_tokens_per_microbatch=min_tokens_per_microbatch,
         max_tokens_per_microbatch=max_tokens_per_microbatch,
     )
+    orderings_for = default_orderings if orderings is None else orderings
+    per_geometry = [
+        tuple(orderings_for(accumulation)) for _sequences, accumulation in geometries
+    ]
     builds: list[StepSearchGeometryBuild] = []
     points: list[StepSearchPoint] = []
-    point_total = len(geometries) * len(budgets)
+    point_total = sum(len(item) for item in per_geometry) * len(budgets)
     point_index = 0
     for geometry_index, (sequences, accumulation) in enumerate(geometries, 1):
-        announce(
-            f"geometry {geometry_index}/{len(geometries)}: building"
-            f" {sequences} x {accumulation}"
-        )
-        build_started = time.perf_counter()
-        try:
-            examples = example_microbatches(sequences, accumulation)
-            step = make_step_program(
-                model,
-                objective=objective,
-                opt=opt,
-                example_inputs=examples,
-                runtime=runtime,
-                execution=execution,
-                spill=spill,
-                optimizer_ordering=optimizer_ordering,
-                verbose=verbose,
-                artifact_store_dir=artifact_store_dir,
-                save_plan=True,
-                force_fresh=force_fresh,
-                implementation_revision=implementation_revision,
-            )
-        except Exception as error:
-            if not _device_exhausted(error):
-                raise
+        shape = f"{sequences} x {accumulation}"
+        exhausted: Exception | None = None
+        for ordering in per_geometry[geometry_index - 1]:
+            name = f"{shape} {ordering.label}"
+            if exhausted is None:
+                announce(
+                    f"geometry {geometry_index}/{len(geometries)}: building {name}"
+                )
+                build_started = time.perf_counter()
+                try:
+                    examples = example_microbatches(sequences, accumulation)
+                    step = make_step_program(
+                        model,
+                        objective=objective,
+                        opt=opt,
+                        example_inputs=examples,
+                        runtime=runtime,
+                        execution=execution,
+                        spill=spill,
+                        optimizer_ordering=optimizer_ordering,
+                        depth=ordering.depth,
+                        breadth=ordering.breadth,
+                        reverse_breadth=ordering.reverse_breadth,
+                        pair_loss=ordering.pair_loss,
+                        verbose=verbose,
+                        artifact_store_dir=artifact_store_dir,
+                        save_plan=True,
+                        force_fresh=force_fresh,
+                        implementation_revision=implementation_revision,
+                    )
+                except Exception as error:
+                    if not _device_exhausted(error):
+                        raise
+                    # Exhaustion happens while profiling, which every ordering
+                    # of the geometry shares, so the rest would only repeat it.
+                    exhausted = error
+                    announce(
+                        f"geometry {geometry_index}/{len(geometries)}: {shape}"
+                        " exhausted the device after"
+                        f" {time.perf_counter() - build_started:.1f} s;"
+                        " every budget of every ordering is infeasible"
+                    )
+            if exhausted is not None:
+                for execution_budget, spill_budget in budgets:
+                    point_index += 1
+                    announce(
+                        f"point {point_index}/{point_total}: {name} @"
+                        f" {execution_budget >> 30} GiB -> infeasible"
+                    )
+                    points.append(
+                        StepSearchPoint(
+                            sequences_per_microbatch=sequences,
+                            accumulation_count=accumulation,
+                            ordering=ordering,
+                            execution_budget_bytes=execution_budget,
+                            spill_budget_bytes=spill_budget,
+                            status="infeasible",
+                            makespan_seconds=None,
+                            summary=None,
+                            error=str(exhausted),
+                            search_seconds=0.0,
+                        )
+                    )
+                continue
             announce(
-                f"geometry {geometry_index}/{len(geometries)}: {sequences} x"
-                f" {accumulation} exhausted the device after"
-                f" {time.perf_counter() - build_started:.1f} s;"
-                " every budget is infeasible"
+                f"geometry {geometry_index}/{len(geometries)}: built {name} in"
+                f" {time.perf_counter() - build_started:.1f} s"
+            )
+            builds.append(
+                StepSearchGeometryBuild(
+                    sequences_per_microbatch=sequences,
+                    accumulation_count=accumulation,
+                    ordering=ordering,
+                    step_program_digest=step.digest,
+                    build_seconds=time.perf_counter() - build_started,
+                    phase_seconds=MappingProxyType(
+                        {
+                            name_: duration / 1e9
+                            for name_, duration in step.phase_timings_ns
+                        }
+                    ),
+                    transfer_bandwidths=step.recurrent.transfer_bandwidths,
+                )
             )
             for execution_budget, spill_budget in budgets:
                 point_index += 1
+                search_started = time.perf_counter()
+                status, makespan, summary, failure = "succeeded", None, None, None
+                outcomes: tuple[GraphPairOutcome, ...] = ()
+                try:
+                    plan = pressurefit_program(
+                        step.recurrent,
+                        execution_budget=execution_budget,
+                        spill_budget=spill_budget,
+                        transfer_bandwidths=transfer_bandwidths,
+                        options=options,
+                        resolution_options=chosen,
+                        artifact_store_dir=artifact_store_dir,
+                        verbose=verbose,
+                        save_plan=True,
+                        force_fresh=force_fresh,
+                        overwrite_plan=False,
+                    )
+                except _EXHAUSTED as error:
+                    status, failure = "search_exhausted", str(error)
+                except _INFEASIBLE as error:
+                    status, failure = "infeasible", str(error)
+                else:
+                    makespan = plan.simulation.makespan_ns / 1e9
+                    summary = summarize_selected_plan(plan.result)
+                    outcomes = _graph_pair_outcomes(plan.result)
                 announce(
-                    f"point {point_index}/{point_total}: {sequences} x"
-                    f" {accumulation} @ {execution_budget >> 30} GiB ->"
-                    " infeasible"
+                    f"point {point_index}/{point_total}: {name} @"
+                    f" {execution_budget >> 30} GiB -> {status}"
+                    + (f" {makespan:.3f} s" if makespan is not None else "")
                 )
                 points.append(
                     StepSearchPoint(
                         sequences_per_microbatch=sequences,
                         accumulation_count=accumulation,
+                        ordering=ordering,
                         execution_budget_bytes=execution_budget,
                         spill_budget_bytes=spill_budget,
-                        status="infeasible",
-                        makespan_seconds=None,
-                        summary=None,
-                        error=str(error),
-                        search_seconds=0.0,
+                        status=status,
+                        makespan_seconds=makespan,
+                        summary=summary,
+                        error=failure,
+                        search_seconds=time.perf_counter() - search_started,
+                        graph_pair_selections=outcomes,
                     )
                 )
-            continue
-        announce(
-            f"geometry {geometry_index}/{len(geometries)}: built"
-            f" {sequences} x {accumulation} in"
-            f" {time.perf_counter() - build_started:.1f} s"
-        )
-        builds.append(
-            StepSearchGeometryBuild(
-                sequences_per_microbatch=sequences,
-                accumulation_count=accumulation,
-                step_program_digest=step.digest,
-                build_seconds=time.perf_counter() - build_started,
-                phase_seconds=MappingProxyType(
-                    {name: duration / 1e9 for name, duration in step.phase_timings_ns}
-                ),
-            )
-        )
-        for execution_budget, spill_budget in budgets:
-            point_index += 1
-            search_started = time.perf_counter()
-            status, makespan, summary, failure = "succeeded", None, None, None
-            outcomes: tuple[GraphPairOutcome, ...] = ()
-            try:
-                plan = pressurefit_program(
-                    step.recurrent,
-                    execution_budget=execution_budget,
-                    spill_budget=spill_budget,
-                    transfer_bandwidths=transfer_bandwidths,
-                    options=options,
-                    artifact_store_dir=artifact_store_dir,
-                    verbose=verbose,
-                    save_plan=True,
-                    force_fresh=force_fresh,
-                    overwrite_plan=False,
-                )
-            except _EXHAUSTED as error:
-                status, failure = "search_exhausted", str(error)
-            except _INFEASIBLE as error:
-                status, failure = "infeasible", str(error)
-            else:
-                makespan = plan.simulation.makespan_ns / 1e9
-                summary = summarize_selected_plan(plan.result)
-                outcomes = _graph_pair_outcomes(plan.result)
-            announce(
-                f"point {point_index}/{point_total}: {sequences} x"
-                f" {accumulation} @ {execution_budget >> 30} GiB -> {status}"
-                + (f" {makespan:.3f} s" if makespan is not None else "")
-            )
-            points.append(
-                StepSearchPoint(
-                    sequences_per_microbatch=sequences,
-                    accumulation_count=accumulation,
-                    execution_budget_bytes=execution_budget,
-                    spill_budget_bytes=spill_budget,
-                    status=status,
-                    makespan_seconds=makespan,
-                    summary=summary,
-                    error=failure,
-                    search_seconds=time.perf_counter() - search_started,
-                    graph_pair_selections=outcomes,
-                )
-            )
     return StepSearchReport(
         total_sequences_per_step=total_sequences_per_step,
         sequence_length=sequence_length,
@@ -583,4 +674,6 @@ def plan_step_search(
         geometries=tuple(builds),
         points=tuple(points),
         skipped=skipped,
+        resolution_options=chosen,
+        transfer_bandwidths=transfer_bandwidths,
     )

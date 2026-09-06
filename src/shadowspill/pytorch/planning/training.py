@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from typing import Any, Literal, NoReturn
 
 import torch
@@ -28,7 +29,9 @@ from shadowspill.planner import (
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.program import PressureFitProgram, StepProgram
+from shadowspill.planner.recomputation import ShareValue, resolution_options_or_default
 from shadowspill.planner.request import PressureFitOptions
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     capture_training_objective,
@@ -318,11 +321,13 @@ def _partition_training_graphs(
                 partition=partition,
                 graph_pair_store=stores.graph_pairs,
                 representative_root_inputs=root_inputs,
-                accumulating=position > 0,
+                # Which microbatch creates a stage's gradient and which add
+                # into it is decided by the step's ordering, after capture,
+                # so every microbatch of an accumulating step carries both
+                # forms; the store derives each contract's once.
+                accumulating=len(captures) > 1,
             )
-            for position, (capture, root_inputs) in enumerate(
-                zip(captures, representative_roots, strict=True)
-            )
+            for capture, root_inputs in zip(captures, representative_roots, strict=True)
         )
 
 
@@ -410,6 +415,7 @@ def materialize_training_state(
 def profile_training_tasks(
     captured: TrainingCaptureArtifacts,
     materialized: TrainingMaterializationArtifacts,
+    data_ordering: StepDataOrdering,
     *,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
@@ -433,6 +439,7 @@ def profile_training_tasks(
         )
     resolved_capture = replace(captured, partitioned=partitioned)
     inventory = _training_task_inventory(
+        data_ordering,
         resolved_capture,
         materialized.optimizer_capture,
     )
@@ -557,6 +564,7 @@ def build_training_programs(
     *,
     memory: PlanMemory,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    data_ordering: StepDataOrdering,
     timer: PlanningTimer,
 ) -> TrainingProgramArtifacts:
     """Construct canonical initial/recurrent Programs from semantic and physical IR."""
@@ -572,6 +580,7 @@ def build_training_programs(
             measurements,
             compatibility_digests,
             optimizer_ordering=optimizer_ordering,
+            data_ordering=data_ordering,
         )
         _verify_provisional_layout(captured.layout, recurrent)
         _verify_optimizer_phase_identity(initial, recurrent)
@@ -655,6 +664,7 @@ def _lower_optimizer_phases(
     compatibility_digests: dict[tuple[str, str | None], str],
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    data_ordering: StepDataOrdering,
 ) -> tuple[LoweredTrainingProgram, LoweredTrainingProgram]:
     layout_cache = CompiledLayoutIndex()
     storage_contracts = {
@@ -677,6 +687,7 @@ def _lower_optimizer_phases(
             compiled_root_allocations=root_allocations,
             optimizer_phase=phase,
             optimizer_ordering=optimizer_ordering,
+            data_ordering=data_ordering,
             layout_cache=layout_cache,
             profiling_metadata_digests=metadata_digests,
             profile_compatibility_digests=compatibility_digests,
@@ -709,6 +720,7 @@ def pressurefit_training_programs(
     options: PressureFitOptions,
     stores: PlanningStores,
     timer: PlanningTimer,
+    resolution_options: tuple[Fraction, ...] | None = None,
 ) -> TrainingSelections:
     """Resolve recurrent and, when required, lazy-state first-step selections."""
 
@@ -723,6 +735,7 @@ def pressurefit_training_programs(
                 final_residency=programs.recurrent.final_residency,
                 config=programs.simulation_config,
                 admission=programs.recurrent_admission,
+                resolution_options=resolution_options,
             )
             if needs_initial:
                 validate_schedule_feasibility(
@@ -731,6 +744,7 @@ def pressurefit_training_programs(
                     final_residency=programs.initial.final_residency,
                     config=programs.simulation_config,
                     admission=programs.initial_admission,
+                    resolution_options=resolution_options,
                 )
         except PressureFitInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
@@ -753,6 +767,7 @@ def pressurefit_training_programs(
                     final_residency=programs.recurrent.final_residency,
                     config=config,
                     options=options,
+                    resolution_options=resolution_options,
                     placement=placement_facts(
                         programs.recurrent_admission,
                         scratch_reserve_bytes=scratch_reserve,
@@ -774,6 +789,7 @@ def pressurefit_training_programs(
                         final_residency=programs.initial.final_residency,
                         config=config,
                         options=options,
+                        resolution_options=resolution_options,
                         placement=placement_facts(
                             programs.initial_admission,
                             scratch_reserve_bytes=scratch_reserve,
@@ -853,9 +869,11 @@ def admit_training_plan(
     *,
     memory: PlanMemory,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    data_ordering: StepDataOrdering,
     stores: PlanningStores,
     timer: PlanningTimer,
     started: int,
+    resolution_options: tuple[Fraction, ...] | None = None,
 ) -> PlannedTrainStep:
     """Physically admit selections and publish the training callable/report."""
 
@@ -958,10 +976,12 @@ def admit_training_plan(
             recurrent_plan,
             initial_plan,
             optimizer_ordering=optimizer_ordering,
+            data_ordering=data_ordering,
             stores=stores,
             memory=memory,
             timer=timer,
             started=started,
+            resolution_options=resolution_options,
         )
         return PlannedTrainStep(
             model,
@@ -1063,10 +1083,12 @@ def _training_plan_report(
     initial_plan: ExecutionPlan | None,
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    data_ordering: StepDataOrdering,
     stores: PlanningStores,
     memory: PlanMemory,
     timer: PlanningTimer,
     started: int,
+    resolution_options: tuple[Fraction, ...] | None = None,
 ) -> PlanReport:
     with timer.measure("diagnostic_inventory"):
         task_stage_map, unique_stages = training_stage_inventory(
@@ -1078,6 +1100,7 @@ def _training_plan_report(
             profiling_metadata_digests=tuple(
                 item.digest for item in captured.workloads
             ),
+            data_ordering=data_ordering,
         )
     hits = int(selections.recurrent.from_store) + (
         0 if selections.initial is None else int(selections.initial.from_store)
@@ -1133,6 +1156,8 @@ def _training_plan_report(
             ),
         ),
         optimizer_ordering=optimizer_ordering,
+        data_ordering=data_ordering,
+        resolution_options=resolution_options,
         memory=memory,
     )
     return publish_plan_report(
@@ -1219,6 +1244,7 @@ def make_training_program(
     memory: PlanMemory,
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    data_ordering: StepDataOrdering,
     verbose: bool,
     artifact_store: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
@@ -1252,6 +1278,7 @@ def make_training_program(
         profiled = profile_training_tasks(
             captured,
             materialized,
+            data_ordering=data_ordering,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             stores=artifacts,
@@ -1264,6 +1291,7 @@ def make_training_program(
             profiled,
             memory=memory,
             optimizer_ordering=optimizer_ordering,
+            data_ordering=data_ordering,
             timer=timer,
         )
         _release_program_build_executables(profiled, captured.installed, timer)
@@ -1273,6 +1301,7 @@ def make_training_program(
             programs,
             memory=memory,
             optimizer_ordering=optimizer_ordering,
+            data_ordering=data_ordering,
             stores=artifacts,
             timer=timer,
             started=started,
@@ -1326,6 +1355,7 @@ def _public_step_program(
     *,
     memory: PlanMemory,
     optimizer_ordering: str,
+    data_ordering: StepDataOrdering,
     stores: PlanningStores,
     timer: PlanningTimer,
     started: int,
@@ -1376,6 +1406,7 @@ def _public_step_program(
         recurrent=recurrent,
         initial=initial,
         optimizer_ordering=optimizer_ordering,
+        data_ordering=data_ordering,
         signature_digests=tuple(item.digest for item in captured.signatures),
         profiling_metadata=tuple(
             PlanProfilingMetadata(index, item.digest, item.canonical_json)
@@ -1459,6 +1490,7 @@ def build_training(
     memory: PlanMemory,
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
+    data_ordering: StepDataOrdering,
     verbose: bool,
     artifact_store: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
@@ -1466,10 +1498,14 @@ def build_training(
     allocation_probe_repetitions: int,
     minimum_object_bytes_evict_eligible: int = 0,
     deterministic: bool = False,
+    resolution_options: Sequence[ShareValue] | None = None,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries."""
 
     started = time.perf_counter_ns()
+    # Validated before any capture; the library's default when none are
+    # named, which is what the store keys and the report records.
+    chosen = resolution_options_or_default(resolution_options)
     timer = PlanningTimer(verbose=verbose)
     artifacts = open_planning_stores(artifact_store)
     captured = capture_training_graphs(
@@ -1494,6 +1530,7 @@ def build_training(
         profiled = profile_training_tasks(
             captured,
             materialized,
+            data_ordering=data_ordering,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             stores=artifacts,
@@ -1506,6 +1543,7 @@ def build_training(
             profiled,
             memory=memory,
             optimizer_ordering=optimizer_ordering,
+            data_ordering=data_ordering,
             timer=timer,
         )
         selections = pressurefit_training_programs(
@@ -1518,6 +1556,7 @@ def build_training(
             ),
             stores=artifacts,
             timer=timer,
+            resolution_options=chosen,
         )
         executable = compile_selected_training_tasks(
             profiled,
@@ -1543,13 +1582,16 @@ def build_training(
         executable,
         memory=memory,
         optimizer_ordering=optimizer_ordering,
+        data_ordering=data_ordering,
         stores=artifacts,
         timer=timer,
         started=started,
+        resolution_options=chosen,
     )
 
 
 def _training_task_inventory(
+    data_ordering: StepDataOrdering,
     captured: TrainingCaptureArtifacts,
     optimizer_capture: OptimizerCapture,
 ) -> _TrainingTaskInventory:
@@ -1557,8 +1599,11 @@ def _training_task_inventory(
     profile_by_key: dict[tuple[str, str | None], OptimizerTaskArtifact] = {}
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
-        for stage in partitioned.stages:
-            for option in stage.graph_pairs.options(accumulates=position > 0):
+        for stage_index, stage in enumerate(partitioned.stages):
+            accumulates = not data_ordering.creates(
+                position, stage_index, stage_count=len(partitioned.stages)
+            )
+            for option in stage.graph_pairs.options(accumulates=accumulates):
                 for artifact in (option.pair.forward, option.pair.backward):
                     compile_by_digest.setdefault(
                         artifact.compatibility_digest,

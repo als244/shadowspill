@@ -8,6 +8,7 @@ from typing import Literal
 import torch.nn as nn
 
 from shadowspill.errors import CaptureError
+from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.optimizer import OptimizerCapture
@@ -35,12 +36,16 @@ def lower_partitioned_training_program(
     device_ordinal: int = 0,
     optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
+    data_ordering: StepDataOrdering | None = None,
     layout_cache: CompiledLayoutIndex | None = None,
     profiling_metadata_digests: tuple[str, ...] | None = None,
     profile_compatibility_digests: Mapping[tuple[str, str | None], str] | None = None,
 ) -> LoweredTrainingProgram:
-    """Compose stage-local graph pairs into one accumulated training program."""
+    """Compose stage-local graph pairs into one accumulated training program.
 
+    ``data_ordering`` is the walk the program's task order follows; left out,
+    the step runs depth-first, one microbatch after another.
+    """
     metadata = _validate_training_lowering(
         captures,
         optimizer,
@@ -48,6 +53,17 @@ def lower_partitioned_training_program(
         optimizer_ordering=optimizer_ordering,
         profiling_metadata_digests=profiling_metadata_digests,
     )
+    ordering = (
+        StepDataOrdering.depth_first(len(captures))
+        if data_ordering is None
+        else data_ordering
+    )
+    if ordering.microbatches != len(captures):
+        raise CaptureError(
+            f"ordering {ordering.label} covers {ordering.microbatches} "
+            f"microbatches, but the step has {len(captures)}"
+        )
+
     device_id = execution_device_id(device_ordinal)
     objects = register_training_objects(
         model,
@@ -75,6 +91,7 @@ def lower_partitioned_training_program(
         boundaries,
         profiles,
         metadata,
+        ordering,
     )
     graph = emit_training_tasks(
         prepared,
@@ -84,6 +101,7 @@ def lower_partitioned_training_program(
         profiles,
         optimizer_phase=optimizer_phase,
         optimizer_ordering=optimizer_ordering,
+        ordering=ordering,
         device_id=device_id,
     )
     initial_residency, final_residency = derive_training_residency(

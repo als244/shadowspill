@@ -82,6 +82,8 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `execution_device` | Device ordinal of the execution pool. |
 | `transfer_capabilities` | The measured transfer matrix the simulator planned against. |
 | `optimizer_ordering` | How optimizer work was ordered, or `None` for a forward plan. |
+| `data_ordering` | How the step walked its microbatches (`depth`, `breadth`, `reverse_breadth`, `pair_loss`), or `None` for a forward plan. |
+| `resolution_options` | The resolutions the plan was searched over, as exact fractions of the flexible groups recomputing (the library's default is every quarter), or `None` for a forward plan. |
 | `planned_program_cache_hits`, `planned_program_cache_misses` | Whether the selected plan was read back from the store. Exactly one is 1. |
 | `fixed_slab_bytes` | The slab the fixed layout occupies. |
 | `captured_stage_count` | Stages the capture produced. |
