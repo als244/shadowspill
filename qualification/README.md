@@ -215,7 +215,12 @@ each case its own compile cache and deletes it afterwards, which is what makes
 that safe here; a tool that reuses a cache across the boundary would need to
 key it on the setting.
 
-The gate requires a checkpoint replay to agree with the uninterrupted run
+Against the reference, every weight must agree within a relative L2 of
+2.5 % (cosine at least 0.999, sign agreement at least 99 %); an optimizer
+moment gets 5 %, because it is an accumulator whose reduction order follows
+the plan, and on the MoE cell that alone moves a second-moment estimate by
+two to three percent while every weight agrees. The gate also requires a
+checkpoint replay to agree with the uninterrupted run
 within tolerance, and records whether it agreed bit for bit besides. When it
 did not, the useful question is which stage of the step is not reproducible,
 and the nondeterminism probe answers that rather than leaving it at
