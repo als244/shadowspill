@@ -73,21 +73,27 @@ class _ArtifactLedger:
 class ArtifactStore:
     """Where one planning call reads and writes its artifacts.
 
-    The four public phase directories remain stable.  Content-addressed leaf
-    paths provide identity; the ``plans`` tree is a readable index linking one
-    user request to those immutable artifacts.
+    Two trees under one versioned root. ``build`` holds what a run pays for
+    and another run can reuse: exports, Inductor caches, graph pairs,
+    profiles and lowered programs. ``planning`` holds what a run measured:
+    the requests put to PressureFit, its results, and the plans callables
+    run, the last a readable index linking one planning call to the
+    immutable artifacts behind it. Content-addressed leaf paths provide
+    identity throughout.
+
+    ``plan_store`` puts the ``planning`` tree under another directory, so
+    several runs can share one artifact store and each keep its own plans;
+    ``None`` keeps both trees under ``root``.
     """
 
     root: Path
-    pytorch: Path
-    graphpairs: Path
-    profiling: Path
-    pressurefit: Path
-    plans: Path
+    build: Path
+    planning: Path
     save_plan: bool = True
     force_fresh: bool = False
     overwrite_plan: bool = False
     implementation_revision: str | None = None
+    plan_store: Path | None = None
     _ledger: _ArtifactLedger = field(
         default_factory=_ArtifactLedger,
         repr=False,
@@ -99,6 +105,7 @@ class ArtifactStore:
         cls,
         value: Any | None,
         *,
+        plan_store_dir: Any | None = None,
         save_plan: bool = True,
         force_fresh: bool = False,
         overwrite_plan: bool = False,
@@ -121,51 +128,45 @@ class ArtifactStore:
             implementation_revision = implementation_revision.strip()
             if not implementation_revision:
                 raise ValueError("implementation_revision must be non-empty")
-        if value is not None:
-            try:
-                root = Path(value).expanduser().resolve()
-            except TypeError as exc:
-                raise TypeError("artifact_store_dir must be path-like") from exc
-            if root.exists() and not root.is_dir():
-                raise ValueError("artifact_store_dir must name a directory")
-            root = root / f"v{ARTIFACT_VERSION}"
-            return cls(
-                root,
-                root / "pytorch",
-                root / "graphpairs",
-                root / "profiling",
-                root / "pressurefit",
-                root / "plans",
-                save_plan,
-                force_fresh,
-                overwrite_plan,
-                implementation_revision,
-            )
-
-        root = (Path.home() / ".cache" / "shadowspill").resolve()
-        root = root / f"v{ARTIFACT_VERSION}"
+        root = (
+            _store_root(value, "artifact_store_dir")
+            if value is not None
+            else (Path.home() / ".cache" / "shadowspill").resolve()
+            / f"v{ARTIFACT_VERSION}"
+        )
+        plan_store = (
+            None
+            if plan_store_dir is None
+            else _store_root(plan_store_dir, "plan_store_dir")
+        )
         return cls(
             root,
-            root / "pytorch",
-            root / "graphpairs",
-            root / "profiling",
-            root / "pressurefit",
-            root / "plans",
+            root / "build",
+            (root if plan_store is None else plan_store) / "planning",
             save_plan,
             force_fresh,
             overwrite_plan,
             implementation_revision,
+            plan_store=plan_store,
         )
 
     @property
     def exports(self) -> Path:
-        return self.pytorch / "exports"
+        return self.build / "exports"
 
     @property
     def inductor(self) -> Path:
         revision = self.implementation_revision or "default"
         identity = hashlib.sha256(revision.encode()).hexdigest()[:12]
-        return self.pytorch / "inductor" / f"{_safe_label(revision)}-{identity}"
+        return self.build / "inductor" / f"{_safe_label(revision)}-{identity}"
+
+    @property
+    def graphpairs(self) -> Path:
+        return self.build / "graphpairs"
+
+    @property
+    def profiling(self) -> Path:
+        return self.build / "profiling"
 
     @property
     def profile_measurements(self) -> Path:
@@ -177,15 +178,19 @@ class ArtifactStore:
 
     @property
     def pressurefit_programs(self) -> Path:
-        return self.pressurefit / "programs"
-
-    @property
-    def pressurefit_selections(self) -> Path:
-        return self.pressurefit / "selections"
+        return self.build / "programs"
 
     @property
     def pressurefit_requests(self) -> Path:
-        return self.pressurefit / "requests"
+        return self.planning / "requests"
+
+    @property
+    def pressurefit_selections(self) -> Path:
+        return self.planning / "results"
+
+    @property
+    def plans(self) -> Path:
+        return self.planning / "plans"
 
     @property
     def read_enabled(self) -> bool:
@@ -247,35 +252,40 @@ class ArtifactStore:
                     )
 
     def initialize(self) -> None:
-        """Create only the stable top-level layout and its human guide."""
+        """Create the stable top-level layout and its human guide.
+
+        A store laid out before the ``build``/``planning`` split is moved
+        into place first, directory by directory, so nothing in it is paid
+        for again.
+        """
 
         self.root.mkdir(parents=True, exist_ok=True)
-        for directory in (
-            self.pytorch,
-            self.graphpairs,
-            self.profiling,
-            self.pressurefit,
-            self.plans,
-        ):
+        moved = _migrate_layout(self.root)
+        for directory in (self.build, self.profiling, self.planning):
             directory.mkdir(parents=True, exist_ok=True)
-        layout = self.root / "layout.json"
-        if not layout.exists():
-            _atomic_json(
-                layout,
+        _write_guides(
+            self.root,
+            moved,
+            {
+                "build": "what a run pays for and another can reuse: exports,"
+                " Inductor caches, graph pairs, profiles, lowered programs",
+                "planning": "what a run measured: PressureFit requests and"
+                " results, and the plans callables run",
+            },
+            _CACHE_README,
+        )
+        if self.plan_store is not None:
+            self.plan_store.mkdir(parents=True, exist_ok=True)
+            _write_guides(
+                self.plan_store,
+                False,
                 {
-                    "schema": _LAYOUT_SCHEMA,
-                    "directories": {
-                        "pytorch": "Export and Inductor artifacts",
-                        "graphpairs": "structural AOT graph pairs",
-                        "profiling": "hardware-specific task measurements",
-                        "pressurefit": "Programs and selected memory schedules",
-                        "plans": "human-readable request-to-artifact indexes",
-                    },
+                    "planning": "PressureFit requests and results, and the"
+                    " plans callables run"
                 },
+                _PLAN_STORE_README,
+                artifact_store=self.root,
             )
-        guide = self.root / "README.md"
-        if not guide.exists():
-            _atomic_text(guide, _CACHE_README)
 
     def record(
         self,
@@ -306,12 +316,13 @@ class ArtifactStore:
     def diagnostics(self) -> tuple[tuple[str, str], ...]:
         return (
             ("root", str(self.root)),
-            ("pytorch", str(self.pytorch)),
-            ("pytorch.inductor", str(self.inductor)),
-            ("graphpairs", str(self.graphpairs)),
-            ("profiling", str(self.profiling)),
-            ("pressurefit", str(self.pressurefit)),
-            ("plans", str(self.plans)),
+            ("build", str(self.build)),
+            ("build.inductor", str(self.inductor)),
+            ("planning", str(self.planning)),
+            (
+                "plan_store",
+                str(self.root if self.plan_store is None else self.plan_store),
+            ),
         )
 
     def archive_export(
@@ -659,6 +670,88 @@ def _files_equal(left: Path, right: Path) -> bool:
                 return True
 
 
+#: Where each directory of the layout before the build/planning split went.
+_LEGACY_MOVES = (
+    ("pytorch/exports", "build/exports"),
+    ("pytorch/inductor", "build/inductor"),
+    ("graphpairs", "build/graphpairs"),
+    ("profiling", "build/profiling"),
+    ("pressurefit/programs", "build/programs"),
+    ("pressurefit/requests", "planning/requests"),
+    ("pressurefit/selections", "planning/results"),
+    ("plans", "planning/plans"),
+)
+
+
+def _migrate_layout(root: Path) -> bool:
+    """Move a store laid out before the split into place; True if anything moved.
+
+    Renames, not copies: a store is content-addressed, so a directory that
+    already exists at the destination is merged entry by entry and an entry
+    already there is left alone.
+    """
+
+    moved = False
+    for old, new in _LEGACY_MOVES:
+        moved = _move_tree(root / old, root / new) or moved
+    for stale in ("pytorch", "pressurefit"):
+        with suppress(OSError):
+            (root / stale).rmdir()
+    return moved
+
+
+def _move_tree(source: Path, target: Path) -> bool:
+    if not source.is_dir():
+        return False
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.rename(target)
+        return True
+    for child in source.iterdir():
+        destination = target / child.name
+        if child.is_dir() and destination.is_dir():
+            _move_tree(child, destination)
+        elif not destination.exists():
+            child.rename(destination)
+    with suppress(OSError):
+        source.rmdir()
+    return True
+
+
+def _write_guides(
+    root: Path,
+    replace: bool,
+    directories: Mapping[str, str],
+    readme: str,
+    *,
+    artifact_store: Path | None = None,
+) -> None:
+    layout = root / "layout.json"
+    if replace or not layout.exists():
+        value: dict[str, object] = {
+            "schema": _LAYOUT_SCHEMA,
+            "directories": directories,
+        }
+        if artifact_store is not None:
+            value["artifact_store"] = str(artifact_store)
+        _atomic_json(layout, value)
+    guide = root / "README.md"
+    if replace or not guide.exists():
+        _atomic_text(guide, readme)
+
+
+def _store_root(value: Any, name: str) -> Path:
+    """The versioned root under a directory a caller named."""
+
+    try:
+        root = Path(value).expanduser().resolve()
+    except TypeError as exc:
+        raise TypeError(f"{name} must be path-like") from exc
+    if root.exists() and not root.is_dir():
+        raise ValueError(f"{name} must name a directory")
+    return root / f"v{ARTIFACT_VERSION}"
+
+
 def digest_directory(root: Path, digest: str) -> Path:
     """Where one content-addressed entry lives, under any store root.
 
@@ -720,16 +813,39 @@ Its name is the artifact version every file in it carries: a ShadowSpill
 update that changes any stored structure writes a fresh `v<N>` tree beside
 this one and replans.
 
-- `pytorch/exports/`: normalized Export archives and manifests.
-- `pytorch/inductor/`: files managed internally by PyTorch Inductor.
-- `graphpairs/`: structural AOT graph pairs.
-- `profiling/`: hardware/compiler-specific layouts and task measurements.
-- `pressurefit/programs/`: exact canonical Programs supplied to PressureFit.
-- `pressurefit/selections/`: selected recomputation and memory schedules.
-- `plans/`: one readable manifest and ExecutionPlan per planning request.
+`build/` is what a run pays for and another run can reuse:
+
+- `build/exports/`: normalized Export archives and manifests.
+- `build/inductor/`: files managed internally by PyTorch Inductor.
+- `build/graphpairs/`: structural AOT graph pairs.
+- `build/profiling/`: hardware/compiler-specific layouts and task measurements.
+- `build/programs/`: exact canonical Programs supplied to PressureFit.
+
+`planning/` is what a run measured:
+
+- `planning/requests/`: what each PressureFit search was asked for.
+- `planning/results/`: PressureFit's answer, the selected resolution and
+  memory schedule with the search diagnostics.
+- `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
+
+A planning call given a plan store keeps `planning/` there instead, so
+several runs can share this store and each own its plans.
 
 Every returned `PlanReport` records the absolute path and access disposition of
 the artifacts touched by that call.  Do not edit content-addressed entries.
+"""
+
+_PLAN_STORE_README = """# ShadowSpill plan store
+
+The plans one run searched, kept apart from the artifact store they were
+searched over (named in `layout.json`) so that store can be shared.
+
+- `planning/requests/`: what each PressureFit search was asked for.
+- `planning/results/`: PressureFit's answer, the selected resolution and
+  memory schedule with the search diagnostics.
+- `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
+
+Digests determine identity; do not edit content-addressed entries.
 """
 
 

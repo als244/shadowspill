@@ -49,16 +49,23 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
 
     root = tmp_path / f"v{ARTIFACT_VERSION}"
     assert cache.root == root
-    assert cache.pytorch == root / "pytorch"
-    assert cache.graphpairs == root / "graphpairs"
-    assert cache.profiling == root / "profiling"
-    assert cache.pressurefit == root / "pressurefit"
-    assert cache.plans == root / "plans"
-    assert cache.profile_measurements == root / "profiling" / "measurements"
-    assert cache.pressurefit_selections == root / "pressurefit" / "selections"
+    assert cache.build == root / "build"
+    assert cache.planning == root / "planning"
+    assert cache.exports == root / "build" / "exports"
+    assert cache.graphpairs == root / "build" / "graphpairs"
+    assert cache.profile_measurements == root / "build" / "profiling" / "measurements"
+    assert cache.compiled_manifests == (
+        root / "build" / "profiling" / "compiled_manifests"
+    )
+    assert cache.pressurefit_programs == root / "build" / "programs"
+    assert cache.pressurefit_requests == root / "planning" / "requests"
+    assert cache.pressurefit_selections == root / "planning" / "results"
+    assert cache.plans == root / "planning" / "plans"
     assert "mlops-build-17" in cache.inductor.name
+    assert cache.inductor.parent == root / "build" / "inductor"
     assert (root / "layout.json").is_file()
     assert (root / "README.md").is_file()
+    assert dict(cache.diagnostics())["build"] == str(root / "build")
 
     digest = "a" * 64
     cache.record(
@@ -78,6 +85,88 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
         schema="test/v1",
     )
     assert len(cache.artifacts()) == 1
+
+
+def test_a_plan_store_roots_the_planning_kinds_apart(tmp_path: Path) -> None:
+    cache = ArtifactStore.resolve(
+        tmp_path / "shared", plan_store_dir=tmp_path / "run" / "plan_store"
+    )
+    cache.initialize()
+
+    shared = tmp_path / "shared" / f"v{ARTIFACT_VERSION}"
+    plans = tmp_path / "run" / "plan_store" / f"v{ARTIFACT_VERSION}"
+    assert cache.root == shared
+    assert cache.plan_store == plans
+    assert cache.build == shared / "build"
+    assert cache.planning == plans / "planning"
+    # what a run pays for stays shared
+    assert cache.exports == shared / "build" / "exports"
+    assert cache.pressurefit_programs == shared / "build" / "programs"
+    # what a run measured is its own
+    assert cache.pressurefit_requests == plans / "planning" / "requests"
+    assert cache.pressurefit_selections == plans / "planning" / "results"
+    assert cache.plans == plans / "planning" / "plans"
+    assert (plans / "layout.json").is_file()
+    assert (plans / "README.md").is_file()
+    assert (shared / "layout.json").is_file()
+    assert dict(cache.diagnostics())["plan_store"] == str(plans)
+
+    single = ArtifactStore.resolve(tmp_path / "alone")
+    assert single.plan_store is None
+    assert single.planning == single.root / "planning"
+    assert dict(single.diagnostics())["plan_store"] == str(single.root)
+
+
+def test_the_home_cache_is_the_default_store() -> None:
+    cache = ArtifactStore.resolve(None)
+
+    assert cache.root == (Path.home() / ".cache" / "shadowspill").resolve() / (
+        f"v{ARTIFACT_VERSION}"
+    )
+    assert cache.plan_store is None
+
+
+def test_a_store_laid_out_before_the_split_is_moved_into_place(tmp_path: Path) -> None:
+    root = tmp_path / f"v{ARTIFACT_VERSION}"
+    for old in (
+        "pytorch/exports/ab/abcd/manifest.json",
+        "pytorch/inductor/default-1234/fx/kernel.py",
+        "graphpairs/cd/cdef/graph_pairs.pt",
+        "profiling/measurements/ef/ef01/measurement.json",
+        "pressurefit/programs/01/0123/program.json",
+        "pressurefit/requests/23/2345/request.json",
+        "pressurefit/selections/45/4567/selection.json",
+        "plans/model/capture/plan/manifest.json",
+    ):
+        (root / old).parent.mkdir(parents=True)
+        (root / old).write_text(old)
+    (root / "layout.json").write_text("{}")
+    # a destination that already exists is merged, and its entries kept
+    (root / "build" / "exports" / "ab" / "kept").mkdir(parents=True)
+    (root / "build" / "exports" / "ab" / "kept" / "manifest.json").write_text("kept")
+
+    cache = ArtifactStore.resolve(tmp_path)
+    cache.initialize()
+
+    moved = root / "build/exports/ab/abcd/manifest.json"
+    assert moved.read_text().endswith("manifest.json")
+    assert (root / "build/exports/ab/kept/manifest.json").read_text() == "kept"
+    assert (root / "build/inductor/default-1234/fx/kernel.py").is_file()
+    assert (root / "build/graphpairs/cd/cdef/graph_pairs.pt").is_file()
+    assert (root / "build/profiling/measurements/ef/ef01/measurement.json").is_file()
+    assert (root / "build/programs/01/0123/program.json").is_file()
+    assert (root / "planning/requests/23/2345/request.json").is_file()
+    assert (root / "planning/results/45/4567/selection.json").is_file()
+    assert (root / "planning/plans/model/capture/plan/manifest.json").is_file()
+    assert not (root / "pytorch").exists()
+    assert not (root / "pressurefit").exists()
+    assert not (root / "graphpairs").exists()
+    assert not (root / "plans").exists()
+    assert "build" in (root / "layout.json").read_text()
+    # a second initialization has nothing left to move and changes nothing
+    before = sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+    cache.initialize()
+    assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == before
 
 
 def test_planning_cache_policy_flags_fail_closed(tmp_path: Path) -> None:

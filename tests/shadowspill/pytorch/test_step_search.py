@@ -274,9 +274,11 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
 
     pinned = TransferBandwidths(26_000_000_000, 26_000_000_000, provenance="pin")
     seen: list[object] = []
+    plan_stores: list[object] = []
 
     def infeasible(*args: object, **kwargs: object) -> object:
         seen.append(kwargs["transfer_bandwidths"])
+        plan_stores.append(kwargs["plan_store_dir"])
         raise PressureFitInfeasibleError("stub", kind="analytic_capacity")
 
     monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
@@ -293,9 +295,11 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
         execution="execution",
         spill="spill",
         transfer_bandwidths=pinned,
+        plan_store_dir="plans-here",
     )
 
     assert seen == [pinned]
+    assert plan_stores == ["plans-here"]
     assert report.transfer_bandwidths == pinned
     assert report.geometries[0].transfer_bandwidths == Recurrent.transfer_bandwidths
     assert report.to_dict()["transfer_bandwidths"]["provenance"] == "pin"
