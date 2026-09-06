@@ -67,6 +67,12 @@ def test_failure_values_resolve_integer_optimizer_state_keys() -> None:
 def test_numerical_gate_uses_one_global_tensor_policy() -> None:
     assert _meets_tensor_tolerance(TensorMetrics(0.999, 0.025, 0.99, 1.0))
     assert not _meets_tensor_tolerance(TensorMetrics(0.998, 0.0, 1.0, 0.0))
+    # an optimizer moment may drift twice as far as a weight: it is an
+    # accumulator whose reduction order follows the plan
+    moment = TensorMetrics(0.9995, 0.04, 0.995, 0.0)
+    assert _meets_tensor_tolerance(moment, key="state/optimizer/state/0/exp_avg_sq")
+    assert not _meets_tensor_tolerance(moment, key="state/model/layers.0.weight")
+    assert not _meets_tensor_tolerance(moment)
     assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.026, 1.0, 0.0))
     assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.0, 0.98, 0.0))
 
