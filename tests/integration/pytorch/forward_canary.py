@@ -10,6 +10,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from canary_phases import phase
 
 from shadowspill.errors import (
     InputGuardError,
@@ -83,6 +84,7 @@ def main() -> int:
         reference = _ForwardModel().eval()
         reference.load_state_dict(model.state_dict())
         inputs = torch.randn(4, 256)
+        phase("runtime")
         runtime = Runtime(
             pools={
                 "execution": device(
@@ -97,6 +99,7 @@ def main() -> int:
             },
             library_path=adapter,
         )
+        phase("import")
         model = import_model_state(
             model,
             runtime=runtime,
@@ -110,6 +113,7 @@ def main() -> int:
             release_source=True,
         )
         parameter_ids = tuple(id(value) for value in model.parameters())
+        phase("plan")
         planned = plan_forward(
             model,
             example_inputs=[inputs, 16],
@@ -166,6 +170,7 @@ def main() -> int:
 
         retained: dict[str, torch.Tensor] | None = None
         for _ in range(3):
+            phase("run")
             retained = planned([inputs, 16])
             expected = reference(inputs, 16)
             torch.testing.assert_close(
@@ -177,6 +182,7 @@ def main() -> int:
         if retained is None:
             raise AssertionError("forward loop produced no output")
 
+        phase("state")
         saved = planned.state_dict()
         replacement = {name: torch.zeros_like(value) for name, value in saved.items()}
         planned.load_state_dict(replacement)
@@ -206,9 +212,11 @@ def main() -> int:
         if before_close.backend.pinned_host_registrations != 1:
             raise AssertionError("steady execution grew pinned host memory")
 
+        phase("close")
         planned.close()
         planned.close()
 
+        phase("shared")
         shared = plan_forward(
             model,
             example_inputs=[inputs, 16],
@@ -311,6 +319,7 @@ def main() -> int:
             release_runtime=True,
         )
         try:
+            phase("runtime-close")
             runtime.close()
         except RuntimeConfigurationError as error:
             if "caller-owned device outputs" not in str(error):

@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import torch
 import torch.nn as nn
+from canary_phases import phase
 from torch._inductor import config as inductor_config
 
 from shadowspill.errors import (
@@ -217,6 +218,7 @@ def _plan(
 
 def main() -> int:
     adapter = Path(sys.argv[1]).resolve()
+    phase("runtime")
     runtime = Runtime(
         pools={
             "execution": device(
@@ -234,6 +236,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as cache:
         inputs = torch.randn(2, 2048)
 
+        phase("capture")
         invalid = _imported(runtime, _DataDependentModel())
         try:
             error = _expect(
@@ -246,6 +249,7 @@ def main() -> int:
         finally:
             _release(runtime, invalid)
 
+        phase("compile")
         unsupported = _imported(runtime, _UnsupportedCompilation())
         try:
             with inductor_config.patch(implicit_fallbacks=False):
@@ -263,6 +267,7 @@ def main() -> int:
         finally:
             _release(runtime, unsupported)
 
+        phase("profile")
         broken = _imported(runtime, _MissingBackendImplementation())
         try:
             error = _expect(
@@ -285,6 +290,7 @@ def main() -> int:
         finally:
             _release(runtime, broken)
 
+        phase("oom")
         profiling_oom = _imported(runtime, _ProfilingOOM())
         try:
             error = _expect(
@@ -299,6 +305,7 @@ def main() -> int:
         finally:
             _release(runtime, profiling_oom)
 
+        phase("admission")
         constrained = _imported(runtime, _LargeStage())
         try:
             _expect(
@@ -344,6 +351,7 @@ def main() -> int:
                     "irreducible task capacity incorrectly entered PressureFit"
                 )
 
+            phase("rollback")
             planned = _plan(constrained, [inputs], runtime, cache)
             actual = planned([inputs])
             if not isinstance(actual, torch.Tensor) or not torch.isfinite(actual).all():
@@ -354,6 +362,7 @@ def main() -> int:
             torch.cuda.synchronize()
         finally:
             _release(runtime, constrained)
+    phase("close")
     runtime.close()
     return 0
 
