@@ -41,6 +41,10 @@ def _record(
     refused = failures or set()
 
     def fake_popen(command: list[str], **kwargs: Any) -> _FakeProcess:
+        if command and command[0] == "nvidia-smi":
+            # The host-state line queries the GPU before each gate; that is a
+            # diagnostic, not a gate, and the runner reports it unavailable.
+            raise OSError("no nvidia-smi under test")
         calls.append(tuple(command))
         named = next(
             (gate for gate in GATE_ORDER if gate in " ".join(command)), "suite"

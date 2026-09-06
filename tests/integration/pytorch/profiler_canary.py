@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from canary_phases import phase
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture.aot import capture_forward
@@ -40,6 +41,7 @@ class _Repeated(nn.Module):
 
 def main() -> int:
     adapter_path = Path(sys.argv[1]).resolve()
+    phase("bootstrap")
     installed = install_allocator(
         adapter_path,
         device_ordinal=0,
@@ -54,6 +56,7 @@ def main() -> int:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
     inputs = fake_device_inputs(real_inputs, mode)
+    phase("capture")
     with mode, torch.no_grad():
         capture = capture_forward(model, inputs)
         representative_roots = tuple(
@@ -70,6 +73,7 @@ def main() -> int:
     if len(artifacts) != 2:
         raise AssertionError("canary did not produce two task positions")
 
+    phase("profile")
     profiler = TaskProfiler(
         installed.library,
         runtime_handle=installed.runtime_handle,
@@ -110,6 +114,7 @@ def main() -> int:
         )
         if warm.cache_hits != 1 or warm.cache_misses != 0:
             raise AssertionError("warm profiling did not use the content cache")
+    phase("statistics")
     statistics = AdapterStatistics()
     if (
         int(
