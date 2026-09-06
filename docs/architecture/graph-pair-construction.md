@@ -68,8 +68,9 @@ possible cut of the AOT joint graph.
 
 ## Accumulating onto gradients that already exist
 
-Every microbatch after the first contributes to gradients its predecessors
-created. `options(accumulates=True)` returns each variant in the form that
+For each stage, the first backward the step's walk reaches creates the
+gradient and every later one contributes to it. `options(accumulates=True)`
+returns each variant in the form that
 takes those gradients as further arguments and adds into them, so the addition
 happens inside the backward task instead of after it, where no plan accounts
 for it. Only parameter gradients outlive a microbatch; a cotangent belongs to
@@ -80,11 +81,15 @@ argument rather than a fresh output: the running gradient keeps its storage,
 and the compiler is free to fold the add into whatever produced the
 contribution.
 
-Which form a microbatch runs follows from its position, not from planning, so
-both forms share one option ID and every microbatch is offered the same
-graph-pair choices. The accumulating form is derived on demand rather than
-captured, so a step with a single microbatch never builds, compiles, or
-profiles a form it would not run.
+Which form a microbatch's stage runs follows from the step's data ordering
+(`StepDataOrdering.creates`), not from planning, so both forms share one
+option ID and every microbatch is offered the same graph-pair choices. Under
+the depth-first walk the first microbatch creates everything; under a
+reversed walk a pass's last microbatch creates every stage but the paired
+last one. The accumulating form is derived on demand rather than captured:
+every microbatch of an accumulating step carries both forms, derived once
+per structural contract, and a step with a single microbatch never builds,
+compiles, or profiles a form it would not run.
 
 ## Differentiation roots
 

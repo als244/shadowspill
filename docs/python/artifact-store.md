@@ -175,21 +175,24 @@ taken under.
 
 ```text
 schema, program_digest, initial_residency, final_residency,
-simulation, admission, options
+simulation, admission, options, resolution_options
 ```
 
 **Selection** is the answer, keyed by that request:
 
 ```text
 schema, key_digest, program_digest, initial_residency, final_residency,
-simulation, admission_digest, options, selections, schedule,
-resident_slice, diagnostics
+simulation, admission_digest, options, resolution_options, selections,
+schedule, resident_slice, diagnostics
 ```
 
 `selections` is the task-alternative choice per group and `schedule` the memory
 schedule it implies. Reading one re-derives the request fields and rejects a
 mismatch, which is what makes a stale entry an error rather than a silent
-wrong answer.
+wrong answer. `resolution_options` are the resolutions the plan was searched
+over, as exact fractions of the flexible groups recomputing (`"1/4"`), in the
+request, in the selection and in the key, so a plan found under one set is
+never read back for another.
 
 **Plan manifest** is the readable record of one planning call, beside the
 `execution_plan.json` it produced:

@@ -13,6 +13,7 @@ from shadowspill.planner.serialization import (
     _integer,
     _list,
     _mapping,
+    _optional_integer,
     _optional_string,
     _simulation_config_from_value,
     _simulation_config_to_dict,
@@ -26,7 +27,13 @@ _PRESSUREFIT_PROGRAM_SCHEMA = artifact_schema("pressurefit_program")
 
 @dataclass(frozen=True, slots=True)
 class TransferBandwidths:
-    """Fetch/evict bandwidths consumed by planning and simulation."""
+    """The transfer calibration planning and simulation consume.
+
+    Bandwidths price every copy a plan makes. The latencies are optional so
+    a record written before they were carried still reads; ``None`` leaves
+    a program's own latency in place, which is what an override that names
+    only bandwidths should do.
+    """
 
     fetch_bytes_per_second: int
     evict_bytes_per_second: int
@@ -34,10 +41,15 @@ class TransferBandwidths:
     scale_denominator: int = 1
     calibration_digest: str | None = None
     provenance: str | None = None
+    fetch_latency_ns: int | None = None
+    evict_latency_ns: int | None = None
 
     def __post_init__(self) -> None:
         if self.fetch_bytes_per_second <= 0 or self.evict_bytes_per_second <= 0:
             raise ValueError("transfer bandwidths must be positive")
+        for latency in (self.fetch_latency_ns, self.evict_latency_ns):
+            if latency is not None and latency < 0:
+                raise ValueError("transfer latencies must be non-negative")
         if self.scale_numerator <= 0 or self.scale_denominator <= 0:
             raise ValueError("transfer bandwidth scale must be positive")
         if self.calibration_digest is not None and len(self.calibration_digest) != 64:
@@ -51,7 +63,9 @@ class TransferBandwidths:
         return {
             "calibration_digest": self.calibration_digest,
             "evict_bytes_per_second": self.evict_bytes_per_second,
+            "evict_latency_ns": self.evict_latency_ns,
             "fetch_bytes_per_second": self.fetch_bytes_per_second,
+            "fetch_latency_ns": self.fetch_latency_ns,
             "provenance": self.provenance,
             "scale_denominator": self.scale_denominator,
             "scale_numerator": self.scale_numerator,
@@ -81,6 +95,12 @@ class TransferBandwidths:
                 data.get("calibration_digest"), f"{path}.calibration_digest"
             ),
             provenance=_optional_string(data.get("provenance"), f"{path}.provenance"),
+            fetch_latency_ns=_optional_integer(
+                data.get("fetch_latency_ns"), f"{path}.fetch_latency_ns"
+            ),
+            evict_latency_ns=_optional_integer(
+                data.get("evict_latency_ns"), f"{path}.evict_latency_ns"
+            ),
         )
 
 
@@ -181,6 +201,8 @@ class PressureFitProgram:
         return TransferBandwidths(
             device.fetch_bandwidth_bytes_per_second,
             device.evict_bandwidth_bytes_per_second,
+            fetch_latency_ns=device.fetch_latency_ns,
+            evict_latency_ns=device.evict_latency_ns,
         )
 
     def pressurefit_inputs(
@@ -240,6 +262,16 @@ class PressureFitProgram:
                     ),
                     evict_bandwidth_bytes_per_second=(
                         selected_transfer.evict_bytes_per_second
+                    ),
+                    fetch_latency_ns=(
+                        source_device.fetch_latency_ns
+                        if selected_transfer.fetch_latency_ns is None
+                        else selected_transfer.fetch_latency_ns
+                    ),
+                    evict_latency_ns=(
+                        source_device.evict_latency_ns
+                        if selected_transfer.evict_latency_ns is None
+                        else selected_transfer.evict_latency_ns
                     ),
                 ),
             ),

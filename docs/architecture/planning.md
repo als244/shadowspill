@@ -25,6 +25,44 @@ not repeat capture, compilation, or profiling. Capturing a Program needs the
 frontend; planning a saved one does not, so `pressurefit_program()` lives in
 `shadowspill.planner` and a sweep never imports torch.
 
+## The walk through the microbatches
+
+An accumulated training step is one forward and one backward per microbatch,
+then one optimizer update, and the tasks of every microbatch depend only on
+their own data and on the gradients earlier microbatches created. So the
+order the step runs its microbatches in is a free choice, and it decides how
+much moves over the lanes: a step that runs one microbatch through every
+stage before starting the next fetches each stage's parameters once per
+microbatch, while a step that runs every microbatch through one stage before
+any starts the next fetches them once per pass.
+
+The choice is a `StepDataOrdering`: `depth` passes of `breadth` microbatches
+each, with `depth * breadth` the microbatch count. Within a pass the forward
+is stage-major and the backward stage-major in reverse. `pair_loss` runs each
+microbatch's last stage forward and backward together, because that stage's
+saved state -- the logits a loss keeps for its backward -- is the largest per
+microbatch, and consuming it as it is produced keeps one copy in flight
+rather than a pass's worth. `reverse_breadth` walks a pass's microbatches in
+reverse during backward, so the freshest activations go first. Both flags are
+on by default and mean nothing at `breadth = 1`, which is the microbatch-major
+order every step used before there was a choice; `plan_step()` takes all four.
+
+One consequence reaches the graph pairs. The gradient of a stage is created by
+the first backward the walk emits for it and accumulated into by every later
+one, so which microbatch runs a stage's creating form and which its
+accumulating form follows from the walk (`StepDataOrdering.creates`), not from
+the microbatch's position, and capture derives both forms for every
+microbatch of an accumulating step; see
+[graph-pair construction](graph-pair-construction.md#accumulating-onto-gradients-that-already-exist).
+
+`plan_step_search()` lowers every `depth x breadth` factor pair of a geometry
+into its own program over the geometry's one capture and profile set and
+plans each under every budget, so the winner at a budget is a walk of a
+geometry rather than a geometry alone. On the llama3 step at 6 GiB that
+choice took the frontier's winner from 20.6 s to 18.0 s and the 64-microbatch
+geometry from 133 s to 22 s; the figures guide's `orderings/` directory shows
+the ladder behind each geometry's line.
+
 ## Policy selection
 
 [Graph-pair selection](graph-pair-selection.md) constructs the finite set

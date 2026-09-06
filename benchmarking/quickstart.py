@@ -40,7 +40,9 @@ from typing import Any, cast
 import torch
 
 from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.planner import PressureFitOptions
+from shadowspill.planner import PressureFitOptions, StepDataOrdering
+from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.planner.recomputation import validate_resolution_options
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
@@ -51,6 +53,62 @@ from workloads.providers import ModelImplementation
 
 def _budget_list(value: str) -> list[float]:
     return [float(item) for item in value.split(",") if item]
+
+
+#: Named resolution options; ``None`` is the library's default of quarters.
+_NAMED_RESOLUTION_OPTIONS: dict[str, tuple[str, ...] | None] = {
+    "quarters": None,
+    "eighths": tuple(f"{numerator}/8" for numerator in range(9)),
+    "halves": ("0", "1/2", "1"),
+}
+
+
+def _named_resolution_options(value: str) -> tuple[str, ...] | None:
+    """A named set, or a comma-separated list of exact fractions."""
+
+    if value in _NAMED_RESOLUTION_OPTIONS:
+        return _NAMED_RESOLUTION_OPTIONS[value]
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def _transfer_bandwidths(value: str) -> TransferBandwidths:
+    """``FETCH,EVICT[,FETCH_US,EVICT_US]``, or a search.json to pin to."""
+
+    path = Path(value)
+    if path.suffix == ".json":
+        try:
+            report = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise argparse.ArgumentTypeError(f"{value}: {error}") from error
+        recorded = report.get("transfer_bandwidths") or next(
+            (
+                item.get("transfer_bandwidths")
+                for item in report.get("geometries", ())
+                if item.get("transfer_bandwidths")
+            ),
+            None,
+        )
+        if recorded is None:
+            raise argparse.ArgumentTypeError(f"{value} records no transfer calibration")
+        return TransferBandwidths.from_value(recorded, "transfer_bandwidths")
+    parts = [item.strip() for item in value.split(",")]
+    if len(parts) not in (2, 4):
+        raise argparse.ArgumentTypeError(
+            "expected FETCH,EVICT in GB/s, optionally followed by the fetch and"
+            " evict latencies in microseconds, or the path of a search.json"
+        )
+    try:
+        fetch, evict = (int(float(item) * 1e9) for item in parts[:2])
+        latencies = tuple(int(float(item) * 1e3) for item in parts[2:])
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{value}: {error}") from error
+    return TransferBandwidths(
+        fetch,
+        evict,
+        provenance=f"quickstart --transfer-bandwidths {value}",
+        fetch_latency_ns=latencies[0] if latencies else None,
+        evict_latency_ns=latencies[1] if latencies else None,
+    )
 
 
 IDENTITIES = (
@@ -222,7 +280,28 @@ class PlanLog:
 
 def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
     print(rule("Geometry search"))
-    print("  seqs/microbatch x accumulation, fastest simulated step wins")
+    print(
+        "  seqs/microbatch x accumulation, then the walk as depth x breadth"
+        " (r: reversed backward, p: paired loss); fastest simulated step wins"
+    )
+    lanes = report.transfer_bandwidths or next(
+        (
+            item.transfer_bandwidths
+            for item in report.geometries
+            if item.transfer_bandwidths
+        ),
+        None,
+    )
+    if lanes is not None:
+        print(
+            f"  planned against fetch {lanes.fetch_bytes_per_second / 1e9:.0f} GB/s,"
+            f" evict {lanes.evict_bytes_per_second / 1e9:.0f} GB/s"
+            + (
+                " (pinned)"
+                if report.transfer_bandwidths is not None
+                else " (calibrated)"
+            )
+        )
     for execution, spill in report.budgets:
         if len(report.budgets) > 1:
             print(f"  execution {gib(execution)}:")
@@ -234,7 +313,10 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
             ):
                 continue
             mark = "►" if point is winner else " "
-            shape = f"{point.sequences_per_microbatch} x {point.accumulation_count}"
+            shape = (
+                f"{point.sequences_per_microbatch} x {point.accumulation_count}"
+                f" {point.ordering.label}"
+            )
             if point.status == "succeeded" and point.makespan_seconds is not None:
                 outcome = (
                     f"{point.makespan_seconds:8.3f} s"
@@ -242,7 +324,7 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
                 )
             else:
                 outcome = point.status
-            print(f"  {mark} {shape:>9}   {outcome}")
+            print(f"  {mark} {shape:>16}   {outcome}")
     for sequences, accumulation, reason in report.skipped:
         print(f"    {sequences} x {accumulation:<4} skipped: {reason}")
     print(
@@ -438,6 +520,36 @@ def main() -> int:
         " search budgets, nothing executes",
     )
     parser.add_argument("--spill-gib", type=float)
+    parser.add_argument(
+        "--orderings",
+        choices=("factors", "depth-first"),
+        default="factors",
+        help="which microbatch orderings the search tries per geometry:"
+        " every depth x breadth factor pair (the default), or only the"
+        " depth-first walk. The loss stays paired and the backward walk"
+        " reversed either way; the search does not toggle those",
+    )
+    parser.add_argument(
+        "--resolution-options",
+        type=_named_resolution_options,
+        default="quarters",
+        help="which resolutions the search and the runs plan: the shares of"
+        " flexible groups to recompute, as 'quarters' (the library"
+        " default), 'eighths', 'halves', or a comma-separated list of exact"
+        " fractions such as 0,1/2,7/8,1. More shares plan more programs per"
+        " point; on the llama3 frontier eighths cost 1.75x the search for a"
+        " median gain of nothing",
+    )
+    parser.add_argument(
+        "--transfer-bandwidths",
+        type=_transfer_bandwidths,
+        default=None,
+        help="plan the search against this calibration instead of the one the"
+        " runtime measures at start: FETCH,EVICT in GB/s, optionally followed"
+        " by the fetch and evict latencies in microseconds, or the path of"
+        " another run's search.json to pin to what that run planned against."
+        " The run phase keeps the live calibration",
+    )
     parser.add_argument("--plots", action="store_true")
     parser.add_argument(
         "--force-overwrite",
@@ -476,6 +588,11 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
+    if arguments.resolution_options is not None:
+        try:
+            validate_resolution_options(arguments.resolution_options)
+        except ValueError as error:
+            parser.error(f"--resolution-options: {error}")
 
     implementation, family = arguments.model.split("_", 1)
     manifest = manifest_for(family, cast(ModelImplementation, implementation))
@@ -580,6 +697,23 @@ def main() -> int:
         f"  tokens per step     {tokens_per_step:>10,}"
         f"      spill budget     {gib(manifest.spill_budget_bytes)}"
     )
+    pinned = arguments.transfer_bandwidths
+    print(
+        "  transfer lanes      "
+        + (
+            f"pinned to fetch {pinned.fetch_bytes_per_second / 1e9:.0f} GB/s,"
+            f" evict {pinned.evict_bytes_per_second / 1e9:.0f} GB/s"
+            + (
+                f", latency {pinned.fetch_latency_ns / 1e3:.0f}/"
+                f"{pinned.evict_latency_ns / 1e3:.0f} us"
+                if pinned.fetch_latency_ns is not None
+                and pinned.evict_latency_ns is not None
+                else ""
+            )
+            if pinned is not None
+            else "calibrated at start; recorded per geometry in search.json"
+        )
+    )
     print()
 
     ledger: dict[str, float] = {}
@@ -675,6 +809,15 @@ def main() -> int:
                     progress=progress,
                     force_fresh=False,
                     options=PressureFitOptions(deterministic=arguments.deterministic),
+                    orderings=(
+                        None
+                        if arguments.orderings == "factors"
+                        else lambda accumulation: (
+                            StepDataOrdering.depth_first(accumulation),
+                        )
+                    ),
+                    resolution_options=arguments.resolution_options,
+                    transfer_bandwidths=arguments.transfer_bandwidths,
                 )
             print()
             print_search(report, tokens_per_step)
@@ -739,6 +882,10 @@ def main() -> int:
                     spill="spill",
                     execution_budget=budget,
                     optimizer_ordering="stage_interleaved",
+                    depth=ordering.depth,
+                    breadth=ordering.breadth,
+                    reverse_breadth=ordering.reverse_breadth,
+                    pair_loss=ordering.pair_loss,
                     artifact_store_dir=store,
                     save_plan=True,
                     force_fresh=False,
@@ -747,6 +894,7 @@ def main() -> int:
                     # plans the plan the search promised rather than missing
                     # the store and searching again under other options.
                     deterministic=arguments.deterministic,
+                    resolution_options=arguments.resolution_options,
                 )
             charge("run planning", marker)
             note_host_memory(plan_log, f"planned {gib(budget)}")
@@ -813,6 +961,7 @@ def main() -> int:
         for budget in run_budgets:
             if manual is not None:
                 geometry = (manual, sequences_per_step // manual)
+                ordering = StepDataOrdering.depth_first(geometry[1])
             else:
                 assert report is not None
                 winner = report.winner(budget, manifest.spill_budget_bytes)
@@ -826,10 +975,11 @@ def main() -> int:
                     winner.sequences_per_microbatch,
                     winner.accumulation_count,
                 )
+                ordering = winner.ordering
             print(rule(f"Run at execution {gib(budget)}"))
             print(
                 f"  geometry {geometry[0]} sequences per microbatch"
-                f" x {geometry[1]} accumulation rounds"
+                f" x {geometry[1]} microbatches, walked {ordering.label}"
             )
             print()
             run_entries.append(run_one_budget(budget, geometry))

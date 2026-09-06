@@ -30,6 +30,7 @@ from .result import (
     PressureFitSearchExhaustedError,
     ResidentSlice,
 )
+from .step_ordering import StepDataOrdering
 
 __all__ = [
     "AdmissionFacts",
@@ -46,6 +47,7 @@ __all__ = [
     "ReductionStep",
     "ResidentSlice",
     "ResolvedProgramDiagnostics",
+    "StepDataOrdering",
     "StorageHandoff",
     "TaskAdmissionSpec",
     "TaskAllocationStep",

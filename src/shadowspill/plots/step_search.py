@@ -102,9 +102,14 @@ def _figure(
 
 @dataclass(frozen=True, slots=True)
 class _GeometryPoint:
-    """One geometry at one budget, with the numbers every figure below reads."""
+    """One geometry at one budget, with the numbers every figure below reads.
+
+    A geometry's point at a budget is its best ordering there; which one is
+    named so the tables and CSVs can say it.
+    """
 
     budget_gib: float
+    ordering_label: str
     step_seconds: float
     summary: PlanSummary
     #: Every graph-pair selection the search evaluated at this point.
@@ -125,23 +130,88 @@ def _geometry_series(report: StepSearchReport) -> _Series:
     gap is a budget it could not fit rather than an interpolation across one.
     """
 
-    grouped: dict[tuple[int, int], list[_GeometryPoint]] = {}
+    grouped: dict[tuple[int, int], dict[float, _GeometryPoint]] = {}
     for point in report.points:
         if point.summary is None or point.makespan_seconds is None:
             continue
         key = (point.sequences_per_microbatch, point.accumulation_count)
-        grouped.setdefault(key, []).append(
-            _GeometryPoint(
-                budget_gib=point.execution_budget_bytes / _GIB,
-                step_seconds=point.makespan_seconds,
-                summary=point.summary,
-                graph_pair_selections=point.graph_pair_selections,
-            )
+        candidate = _GeometryPoint(
+            budget_gib=point.execution_budget_bytes / _GIB,
+            ordering_label=point.ordering.label,
+            step_seconds=point.makespan_seconds,
+            summary=point.summary,
+            graph_pair_selections=point.graph_pair_selections,
         )
+        standing = grouped.setdefault(key, {}).get(candidate.budget_gib)
+        # the geometry's point at a budget is its fastest ordering there
+        if standing is None or candidate.step_seconds < standing.step_seconds:
+            grouped[key][candidate.budget_gib] = candidate
     return tuple(
-        (key, tuple(sorted(grouped[key], key=lambda item: item.budget_gib)))
+        (key, tuple(item for _budget, item in sorted(grouped[key].items())))
         for key in sorted(grouped, reverse=True)
     )
+
+
+def _ordering_series(
+    report: StepSearchReport, key: tuple[int, int]
+) -> tuple[tuple[str, tuple[tuple[float, float], ...]], ...]:
+    """One geometry's orderings: label to (budget, step seconds) points."""
+    grouped: dict[str, list[tuple[float, float]]] = {}
+    for point in report.points:
+        if (point.sequences_per_microbatch, point.accumulation_count) != key:
+            continue
+        if point.makespan_seconds is None:
+            continue
+        grouped.setdefault(point.ordering.label, []).append(
+            (point.execution_budget_bytes / _GIB, point.makespan_seconds)
+        )
+    return tuple((label, tuple(sorted(grouped[label]))) for label in sorted(grouped))
+
+
+def _ordering_step_time(
+    path: Path, report: StepSearchReport, key: tuple[int, int]
+) -> Path:
+    """One geometry's step time under every ordering the search tried.
+
+    The geometry figures above show each geometry at its best ordering; this
+    is the ladder behind one of those lines, so a reader can see how much
+    the walk itself was worth at each budget and which walk it was.
+    """
+    figure = Figure(figsize=(7.6, 4.4), dpi=150)
+    axes = figure.subplots()
+    series = _ordering_series(report, key)
+    for label, points in series:
+        axes.plot(
+            [budget for budget, _step in points],
+            [step for _budget, step in points],
+            marker="o",
+            markersize=4,
+            label=label,
+        )
+    best: dict[float, tuple[float, str]] = {}
+    for label, points in series:
+        for budget, step in points:
+            if budget not in best or step < best[budget][0]:
+                best[budget] = (step, label)
+    if best:
+        axes.scatter(
+            list(best),
+            [step for step, _label in best.values()],
+            s=110,
+            facecolors="none",
+            edgecolors="black",
+            linewidths=1.2,
+            zorder=5,
+            label="Best at This Budget",
+        )
+    axes.set_title(f"Simulated Step Time by Ordering, {_label(key)}")
+    axes.set_xlabel("Execution Budget (GiB)")
+    axes.set_ylabel("Seconds")
+    axes.grid(True, alpha=0.3)
+    axes.legend(title="depth x breadth (r: reversed, p: paired loss)", fontsize=7)
+    figure.tight_layout()
+    figure.savefig(path)
+    return path
 
 
 def _geometry_colours(
@@ -582,8 +652,7 @@ def _recompute_labels(levels: Sequence[int], groups: int) -> dict[int, str]:
     if len(set(rounded.values())) != len(levels):
         rounded = {level: float(round(level / groups * 100)) for level in levels}
     return {
-        level: f"{share:g}% of Groups Recomputing"
-        for level, share in rounded.items()
+        level: f"{share:g}% of Groups Recomputing" for level, share in rounded.items()
     }
 
 
@@ -1273,6 +1342,7 @@ def _raw_data(
             [
                 point.sequences_per_microbatch,
                 point.accumulation_count,
+                point.ordering.label,
                 point.execution_budget_bytes / _GIB,
                 point.spill_budget_bytes / _GIB,
                 point.status,
@@ -1301,6 +1371,7 @@ def _raw_data(
         [
             key[0],
             key[1],
+            item.ordering_label,
             item.budget_gib,
             outcome.selection_id,
             outcome.recompute_groups,
@@ -1325,6 +1396,7 @@ def _raw_data(
             (
                 "sequences_per_microbatch",
                 "accumulation_count",
+                "ordering",
                 "execution_budget_gib",
                 "spill_budget_gib",
                 "status",
@@ -1354,6 +1426,7 @@ def _raw_data(
                 (
                     "sequences_per_microbatch",
                     "accumulation_count",
+                    "ordering",
                     "execution_budget_gib",
                     "selection_id",
                     "recompute_groups",
@@ -1399,6 +1472,7 @@ def plot_step_search(
     unconstrained = target / "vs_unconstrained"
     by_selection = overheads / "by_graph_pair_selection"
     lanes_by_selection = transfers / "by_graph_pair_selection"
+    orderings = target / "orderings"
     for directory_path in (
         target,
         throughput,
@@ -1407,6 +1481,7 @@ def plot_step_search(
         unconstrained,
         by_selection,
         lanes_by_selection,
+        orderings,
     ):
         directory_path.mkdir(parents=True, exist_ok=True)
     budgets = [point.execution_budget_bytes / _GIB for point in winners]
@@ -1427,6 +1502,7 @@ def plot_step_search(
                 f"{point.execution_budget_bytes / _GIB:.2f} GiB",
                 f"{point.sequences_per_microbatch}",
                 f"{point.accumulation_count}",
+                point.ordering.label,
                 f"{summary.recomputing_group_count}"
                 f" / {summary.task_alternative_group_count}",
             ]
@@ -1436,6 +1512,7 @@ def plot_step_search(
             "Execution Budget",
             "Sequences / Microbatch",
             "Accumulation",
+            "Ordering",
             "Groups Recomputing",
         ],
         loc="center",
@@ -1575,6 +1652,10 @@ def plot_step_search(
             )
             if lanes is not None:
                 written += (lanes,)
+        written += tuple(
+            _ordering_step_time(orderings / f"{key[0]}x{key[1]}.png", report, key)
+            for key, _points in series
+        )
         written += _raw_data(root, report, series)
         for key, points in series:
             name = f"{key[0]}x{key[1]}"

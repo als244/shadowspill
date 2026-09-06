@@ -29,6 +29,7 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     AdmissionFacts,
+    StepDataOrdering,
     TaskAdmissionSpec,
     pressurefit_program,
 )
@@ -162,6 +163,7 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
         recurrent=pressurefit_input,
         initial=None,
         optimizer_ordering="stage_interleaved",
+        data_ordering=StepDataOrdering.depth_first(1),
         signature_digests=("a" * 64,),
         profiling_metadata=(),
         phase_timings_ns=(("capture", 1), ("total", 1)),

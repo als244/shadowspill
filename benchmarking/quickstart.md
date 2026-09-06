@@ -128,6 +128,9 @@ else a run writes has a fixed name inside the run directory.
 | `--steps` | Optimizer steps per run budget; the last is traced | 5 |
 | `--seed` | Model and data seed | 0 |
 | `--artifact-store` | Compile, profile and plan cache to read and write. Point it at another run's store to skip work already paid for there | `<output-dir>/artifact_store` |
+| `--orderings` | Which microbatch orderings the search tries per geometry: `factors` (the default) lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the walk every step used before there was a choice. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
+| `--resolution-options` | Which resolutions the search and the runs plan: the shares of flexible groups to recompute, as `quarters` (the library default), `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point: on the llama3 frontier `eighths` cost 1.75x the search wall and beat the quarter rungs by a median of 0.00 % (mean 0.77 %). The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
+| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run (22 against 26 GB/s on one machine, one hour apart). The run phase keeps the live calibration | calibrated |
 | `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 
 ## What the output shows, in order
@@ -144,7 +147,8 @@ else a run writes has a fixed name inside the run directory.
    its simulated step and marks each budget's winner; skipped splits show
    their reasons, and build/search wall totals close the section. The
    full report — every point's `PlanSummary`, per-geometry build phase
-   times, statuses, and skips — is saved as `search.json` in the run directory.
+   times and the transfer calibration each geometry planned against,
+   statuses, and skips — is saved as `search.json` in the run directory.
    `--sequences-per-microbatch` replaces this phase with your choice.
 3. **Figures**, with `--plots`, written into `figures/` in the run directory.
    Everything under `sim/` reads a plan, so it is available from a search

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from fractions import Fraction
+
 import pytest
 from torch import OutOfMemoryError
 
+from shadowspill.planner import StepDataOrdering
+from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch import StepSearchPoint, StepSearchReport, search_geometries
 from shadowspill.schema import artifact_schema
 
@@ -38,6 +43,7 @@ def _point(
     return StepSearchPoint(
         sequences_per_microbatch=sequences,
         accumulation_count=12 // sequences,
+        ordering=StepDataOrdering.depth_first(12 // sequences),
         execution_budget_bytes=budget,
         spill_budget_bytes=1,
         status=status,
@@ -56,8 +62,15 @@ def test_report_totals_sum_the_work_where_it_was_paid() -> None:
         sequence_length=1024,
         budgets=((1, 1),),
         geometries=(
-            StepSearchGeometryBuild(12, 1, "d0", 2.0, {"capture_lowering": 1.5}),
-            StepSearchGeometryBuild(6, 2, "d1", 3.0),
+            StepSearchGeometryBuild(
+                12,
+                1,
+                StepDataOrdering.depth_first(1),
+                "d0",
+                2.0,
+                {"capture_lowering": 1.5},
+            ),
+            StepSearchGeometryBuild(6, 2, StepDataOrdering.depth_first(2), "d1", 3.0),
         ),
         points=(_point(12, 1, "succeeded", 4.0), _point(6, 1, "succeeded", 5.0)),
         skipped=(),
@@ -78,7 +91,14 @@ def test_the_report_serializes_for_post_hoc_analysis(tmp_path) -> None:
         sequence_length=1024,
         budgets=((1, 1),),
         geometries=(
-            StepSearchGeometryBuild(12, 1, "d0", 2.0, {"capture_lowering": 1.5}),
+            StepSearchGeometryBuild(
+                12,
+                1,
+                StepDataOrdering.depth_first(1),
+                "d0",
+                2.0,
+                {"capture_lowering": 1.5},
+            ),
         ),
         points=(_point(12, 1, "succeeded", 4.0),),
         skipped=((3, 4, "below the minimum"),),
@@ -141,13 +161,22 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
         progress=lines.append,
     )
 
+    # the 1 x 2 geometry has two orderings, and exhaustion is shared by both
     assert report.geometries == ()
-    assert [point.status for point in report.points] == ["infeasible"] * 4
+    assert [point.status for point in report.points] == ["infeasible"] * 6
+    assert [point.ordering.label for point in report.points] == [
+        "1x1rp",
+        "1x1rp",
+        "2x1rp",
+        "2x1rp",
+        "1x2rp",
+        "1x2rp",
+    ]
     assert all("out of memory" in (point.error or "") for point in report.points)
     assert report.winner(12 << 30, 1 << 30) is None
     assert sum("exhausted the device" in line for line in lines) == 2
-    assert [line for line in lines if line.startswith("point 1/4")] == [
-        "point 1/4: 2 x 1 @ 12 GiB -> infeasible"
+    assert [line for line in lines if line.startswith("point 1/6")] == [
+        "point 1/6: 2 x 1 1x1rp @ 12 GiB -> infeasible"
     ]
 
 
@@ -175,3 +204,154 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
             execution="execution",
             spill="spill",
         )
+
+
+def test_the_resolution_options_reach_every_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.planner import PressureFitInfeasibleError
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    class Recurrent:
+        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+
+    class Step:
+        recurrent = Recurrent()
+        digest = "d0"
+        phase_timings_ns = (("total", 1),)
+
+    seen: list[object] = []
+
+    def infeasible(*args: object, **kwargs: object) -> object:
+        seen.append(kwargs["resolution_options"])
+        raise PressureFitInfeasibleError("stub", kind="analytic_capacity")
+
+    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "pressurefit_program", infeasible)
+    report = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        opt=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=1,
+        sequence_length=1,
+        budgets=[(12 << 30, 1 << 30)],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+        resolution_options=("1", "0"),
+    )
+
+    assert seen == [(Fraction(0), Fraction(1))]
+    assert report.resolution_options == (Fraction(0), Fraction(1))
+    assert report.to_dict()["resolution_options"] == ["0", "1"]
+    assert [point.status for point in report.points] == ["infeasible"]
+    # the calibration the build's program embeds is on the record, and no
+    # override was given
+    assert report.geometries[0].transfer_bandwidths == Recurrent.transfer_bandwidths
+    serialized = report.to_dict()
+    recorded = serialized["geometries"][0]["transfer_bandwidths"]
+    assert recorded["fetch_bytes_per_second"] == 1_000
+    assert report.transfer_bandwidths is None
+    assert serialized["transfer_bandwidths"] is None
+
+
+def test_a_pinned_calibration_reaches_every_point_and_the_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.planner import PressureFitInfeasibleError
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    class Recurrent:
+        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+
+    class Step:
+        recurrent = Recurrent()
+        digest = "d0"
+        phase_timings_ns = (("total", 1),)
+
+    pinned = TransferBandwidths(26_000_000_000, 26_000_000_000, provenance="pin")
+    seen: list[object] = []
+
+    def infeasible(*args: object, **kwargs: object) -> object:
+        seen.append(kwargs["transfer_bandwidths"])
+        raise PressureFitInfeasibleError("stub", kind="analytic_capacity")
+
+    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "pressurefit_program", infeasible)
+    report = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        opt=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=1,
+        sequence_length=1,
+        budgets=[(12 << 30, 1 << 30)],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+        transfer_bandwidths=pinned,
+    )
+
+    assert seen == [pinned]
+    assert report.transfer_bandwidths == pinned
+    assert report.geometries[0].transfer_bandwidths == Recurrent.transfer_bandwidths
+    assert report.to_dict()["transfer_bandwidths"]["provenance"] == "pin"
+
+
+def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    def build(*args: object, **kwargs: object) -> object:
+        raise AssertionError("no geometry may be built")
+
+    monkeypatch.setattr(module, "make_step_program", build)
+    with pytest.raises(ValueError, match="outside"):
+        plan_step_search(
+            object(),  # type: ignore[arg-type]
+            objective=None,
+            opt=None,
+            example_microbatches=lambda sequences, accumulation: (),
+            total_sequences_per_step=1,
+            sequence_length=1,
+            budgets=[(12 << 30, 1 << 30)],
+            runtime=None,  # type: ignore[arg-type]
+            execution="execution",
+            spill="spill",
+            resolution_options=("3/2",),
+        )
+
+
+def test_default_orderings_are_every_factor_pair_depth_first_first() -> None:
+    from shadowspill.pytorch.step_search import default_orderings
+
+    assert [item.label for item in default_orderings(8)] == [
+        "8x1rp",
+        "4x2rp",
+        "2x4rp",
+        "1x8rp",
+    ]
+    assert [item.label for item in default_orderings(1)] == ["1x1rp"]
+    assert all(item.microbatches == 12 for item in default_orderings(12))
+
+
+def test_the_winner_may_be_any_ordering_of_a_geometry() -> None:
+    depth_first = _point(4, 10, "succeeded", 20.0)
+    breadth = replace(depth_first, ordering=StepDataOrdering(1, 3))
+    report = StepSearchReport(
+        total_sequences_per_step=12,
+        sequence_length=1,
+        budgets=((10, 1),),
+        geometries=(),
+        points=(depth_first, replace(breadth, makespan_seconds=18.0)),
+        skipped=(),
+    )
+    winner = report.winner(10, 1)
+    assert winner is not None
+    assert winner.ordering.label == "1x3rp"
+    assert report.to_dict()["points"][1]["ordering_label"] == "1x3rp"

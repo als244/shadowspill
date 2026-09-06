@@ -70,6 +70,28 @@ resolved programs exist, and the order they are searched in, belongs to
 searched, and passing them together is what lets a plan placed under one bound
 the search under the rest.
 
+Which resolved programs exist is the caller's to say. `plan_program()`,
+`pressurefit()` and `pressurefit_program()` take `resolution_options`: the
+shares of flexible graph-pair groups to recompute, as exact fractions —
+`Fraction` values, integers or strings such as `"3/8"` — sorted and
+deduplicated on the way in, one resolved program per share. `None` plans the
+library's default, every quarter from none recomputing to all, and naming
+that set explicitly is the same question as naming none. The plan store keys
+every plan by the resolution options it was searched over, so a plan found
+under one set is never read back for another. Inventories small enough to
+enumerate are planned exhaustively whatever options are named.
+
+`StepDataOrdering` records how a training step walks its microbatches:
+`depth` passes of `breadth` microbatches, each pass stage-major forward and
+stage-major back, with `pair_loss` running each microbatch's last stage
+forward and backward together and `reverse_breadth` walking a pass's
+microbatches in reverse during backward. `StepDataOrdering.resolve()` fills in
+whichever count a caller left out and refuses a product that is not the
+microbatch count; `creates()` says which microbatch's backward creates a
+stage's gradient (the first the walk reaches) and which add into it. The
+record travels with a `StepProgram` and a plan report, and its `label`
+(`2x4rp`) names the ordering in figures.
+
 `pressurefit_program()` selects and physically admits a saved
 `PressureFitProgram` under requested budgets and `TransferBandwidths`,
 without capture, compilation or profiling:
@@ -83,6 +105,7 @@ pressurefit_program(
     spill_budget=None,
     transfer_bandwidths=None,
     options=None,
+    resolution_options=None,
     artifact_store_dir=None,
     verbose=True,
     save_plan=True,
@@ -93,7 +116,8 @@ pressurefit_program(
 ```
 
 Call `validate_schedule_feasibility()` to check whether at least one legal
-Program selection satisfies the required task-by-task residency floor. Use
+Program selection, over the same `resolution_options`, satisfies the
+required task-by-task residency floor. Use
 `simulate()` to validate an explicit schedule. See the [PressureFit
 formulation and algorithm](../../architecture/pressurefit.md) and the separate
 [graph-pair selector](../../architecture/graph-pair-selection.md). The

@@ -9,7 +9,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.errors import CaptureError
 from shadowspill.ir import TaskAlternativeChoice
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import PressureFitOptions, StepDataOrdering, pressurefit
 from shadowspill.pytorch.capture.aot import capture_training
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
@@ -191,8 +191,10 @@ def _lowered(
     *,
     include_intermediate_variant: bool = False,
     microbatches: int = 2,
+    model_factory: type[nn.Module] = _Model,
+    data_ordering: StepDataOrdering | None = None,
 ) -> LoweredTrainingProgram:
-    real_model = _Model()
+    real_model = model_factory()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
     for parameter in real_model.parameters():
         parameter.grad = torch.zeros_like(parameter)
@@ -202,17 +204,17 @@ def _lowered(
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
-    examples = (
-        [torch.randn(4, 3), torch.randn(4, 2)],
-        [torch.randn(5, 3), torch.randn(5, 2)],
-    )[:microbatches]
+    examples = tuple(
+        [torch.randn(4 + position, 3), torch.randn(4 + position, 2)]
+        for position in range(microbatches)
+    )
     with mode:
         captures = tuple(
             partition_training_capture(
                 capture_training(model, _objective, fake_device_inputs(values, mode)),
-                accumulating=position > 0,
+                accumulating=microbatches > 1,
             )
-            for position, values in enumerate(examples)
+            for values in examples
         )
     if include_intermediate_variant:
         captures = tuple(
@@ -262,6 +264,7 @@ def _lowered(
         captures,
         measurements,
         optimizer_capture,
+        data_ordering=data_ordering,
     )
 
 
@@ -614,6 +617,24 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
             producers.setdefault(object_id, []).append(task.task_id)
 
 
+def test_forward_tasks_depend_only_on_data() -> None:
+    """Order is the schedule; dependencies are data.
+
+    The first forward stage of the second microbatch used to depend on the
+    first microbatch's last backward, across which no value flows. That wrote
+    the microbatch-major order into the graph and made every other order
+    illegal.
+    """
+
+    lowered = _lowered()
+    backward_ids = {
+        task.task_id for task in lowered.program.tasks if task.phase == "backward"
+    }
+    for task in lowered.program.tasks:
+        if task.phase == "forward":
+            assert not backward_ids.intersection(task.dependencies), task.task_id
+
+
 def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
     real_model = _AuxiliaryPassThroughModel()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -768,3 +789,131 @@ def test_one_microbatch_has_nothing_to_accumulate_onto() -> None:
     )
     assert backwards
     assert all(not task.mutations for task in backwards)
+
+
+def _walk(lowered: LoweredTrainingProgram) -> list[tuple[str, int, int]]:
+    """The emitted order as (phase, microbatch, stage), variants collapsed."""
+    walk: list[tuple[str, int, int]] = []
+    for entrypoint in lowered.entrypoints:
+        if entrypoint.phase not in ("forward", "backward"):
+            continue
+        assert entrypoint.microbatch is not None
+        assert entrypoint.stage_index is not None
+        item = (
+            entrypoint.phase[0].upper(),
+            entrypoint.microbatch,
+            entrypoint.stage_index,
+        )
+        if not walk or walk[-1] != item:
+            walk.append(item)
+    return walk
+
+
+def _assert_topological(lowered: LoweredTrainingProgram) -> None:
+    seen: set[str] = set()
+    for task in lowered.program.tasks:
+        missing = [item for item in task.dependencies if item not in seen]
+        assert not missing, f"{task.task_id} runs before {missing}"
+        seen.add(task.task_id)
+
+
+def _depth_first_walk(microbatches: int, head: int) -> list[tuple[str, int, int]]:
+    walk: list[tuple[str, int, int]] = []
+    for position in range(microbatches):
+        walk += [("F", position, stage) for stage in range(head + 1)]
+        walk += [("B", position, stage) for stage in range(head, -1, -1)]
+    return walk
+
+
+def test_default_ordering_is_depth_first_to_the_byte() -> None:
+    implicit = _lowered(model_factory=_MultiLinearModel, microbatches=2)
+    explicit = _lowered(
+        model_factory=_MultiLinearModel,
+        microbatches=2,
+        data_ordering=StepDataOrdering.depth_first(2),
+    )
+    assert implicit.program.digest == explicit.program.digest
+    walk = _walk(implicit)
+    head = max(stage for _, _, stage in walk)
+    assert walk == _depth_first_walk(2, head)
+
+
+def test_breadth_first_runs_every_microbatch_through_a_stage_before_the_next() -> None:
+    lowered = _lowered(
+        model_factory=_MultiLinearModel,
+        microbatches=4,
+        data_ordering=StepDataOrdering(1, 4, reverse_breadth=False, pair_loss=False),
+    )
+    walk = _walk(lowered)
+    head = max(stage for _, _, stage in walk)
+    assert walk == [("F", p, s) for s in range(head + 1) for p in range(4)] + [
+        ("B", p, s) for s in range(head, -1, -1) for p in range(4)
+    ]
+    _assert_topological(lowered)
+
+
+def test_paired_loss_and_reversed_walk_place_stages_and_creators_as_told() -> None:
+    lowered = _lowered(
+        model_factory=_MultiLinearModel,
+        microbatches=4,
+        data_ordering=StepDataOrdering(2, 2),
+    )
+    walk = _walk(lowered)
+    head = max(stage for _, _, stage in walk)
+    assert head >= 1, "the ordering tests need a model that partitions into stages"
+    expected: list[tuple[str, int, int]] = []
+    for pass_index in range(2):
+        positions = [2 * pass_index, 2 * pass_index + 1]
+        expected += [("F", p, s) for s in range(head) for p in positions]
+        for position in positions:
+            expected += [("F", position, head), ("B", position, head)]
+        expected += [
+            ("B", p, s) for s in range(head - 1, -1, -1) for p in reversed(positions)
+        ]
+    assert walk == expected
+    _assert_topological(lowered)
+
+    gradient_ids = {item.gradient_object_id for item in lowered.gradients}
+    tasks = {task.task_id: task for task in lowered.program.tasks}
+    backward = {
+        (entrypoint.microbatch, entrypoint.stage_index): tasks[entrypoint.task_id]
+        for entrypoint in lowered.entrypoints
+        if entrypoint.phase == "backward"
+    }
+
+    def creates(position: int, stage: int) -> bool:
+        task = backward[(position, stage)]
+        produced = set(task.outputs) & gradient_ids
+        added = {item.object_id for item in task.mutations} & gradient_ids
+        assert bool(produced) != bool(added), (position, stage)
+        return bool(produced)
+
+    for stage in range(head):
+        # the pass's last microbatch goes first in backward, so it creates
+        assert [creates(p, stage) for p in range(4)] == [False, True, False, False]
+    # the paired last stage walks forward, so its first microbatch creates
+    assert [creates(p, head) for p in range(4)] == [True, False, False, False]
+
+
+def test_interleaved_optimizer_follows_the_stages_last_backward() -> None:
+    lowered = _lowered(
+        model_factory=_MultiLinearModel,
+        microbatches=4,
+        data_ordering=StepDataOrdering(1, 4, reverse_breadth=False, pair_loss=False),
+    )
+    order = [task.task_id for task in lowered.program.tasks]
+    tasks = {task.task_id: task for task in lowered.program.tasks}
+    for task_id in lowered.optimizer_task_ids:
+        # the nearest task before it that is not optimizer work is a backward
+        # it depends on: the stage's last, whichever microbatch ran it
+        index = order.index(task_id) - 1
+        while tasks[order[index]].phase == "optimizer":
+            index -= 1
+        previous = tasks[order[index]]
+        assert previous.phase == "backward"
+        assert previous.task_id in tasks[task_id].dependencies
+
+
+def test_ordering_must_cover_the_step() -> None:
+    with pytest.raises(CaptureError, match="covers 4 microbatches, but the step has 2"):
+        _lowered(microbatches=2, data_ordering=StepDataOrdering(1, 4))

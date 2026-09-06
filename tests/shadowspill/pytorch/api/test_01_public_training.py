@@ -233,6 +233,85 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
+def test_public_training_breadth_first_matches_the_eager_reference(
+    tmp_path: object,
+) -> None:
+    """A stage-major walk trains the same weights as the eager, microbatch-major one.
+
+    Under ``breadth=2`` with the flags at their defaults the pass's second
+    microbatch creates every gradient but the paired last stage's, and the
+    first adds into them, so this is the test that the creator moving with
+    the walk changes nothing about what the step computes.
+    """
+    _require_adapter()
+    torch.manual_seed(43)
+    model = _TrainingNetwork()
+    reference = _TrainingNetwork()
+    reference.load_state_dict(model.state_dict())
+    examples = [
+        [torch.randn(2, 6), torch.randn(2, 3), "left"],
+        [torch.randn(4, 6), torch.randn(4, 3), "right"],
+    ]
+    steps = [
+        [
+            [torch.randn(2, 6), torch.randn(2, 3), "left"],
+            [torch.randn(4, 6), torch.randn(4, 3), "right"],
+        ]
+        for _ in range(3)
+    ]
+    reference_optimizer = torch.optim.SGD(
+        reference.parameters(), lr=0.02, foreach=False
+    )
+    expected_losses: list[tuple[torch.Tensor, ...]] = []
+    for microbatches in steps:
+        reference_optimizer.zero_grad(set_to_none=True)
+        losses: list[torch.Tensor] = []
+        for value, target, tag in microbatches:
+            result = _training_objective(reference, value, target, tag)
+            result.loss.backward()
+            losses.append(result.loss.detach())
+        reference_optimizer.step()
+        expected_losses.append(tuple(losses))
+    runtime = public_test_runtime()
+    model = import_model_state(
+        model,
+        runtime=runtime,
+        pool="spill",
+        release_source=True,
+    )
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
+        example_inputs=examples,
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        depth=1,
+        breadth=2,
+        artifact_store_dir=tmp_path,
+        profiling_metadata=(
+            {"batch_size": 2, "tag": "left"},
+            {"batch_size": 4, "tag": "right"},
+        ),
+    )
+    report = training.plan_report
+    assert report.data_ordering is not None
+    assert report.data_ordering.label == "1x2rp"
+    for microbatches, expected in zip(steps, expected_losses, strict=True):
+        outcome = training(microbatches)
+        for actual, loss in zip(outcome.objectives, expected, strict=True):
+            torch.testing.assert_close(actual.cpu(), loss, rtol=2e-5, atol=2e-6)
+    training.close()
+    export_model_state(model, runtime=runtime, release_runtime=True)
+    for actual, expected in zip(
+        model.parameters(), reference.parameters(), strict=True
+    ):
+        torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
 def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
     _require_adapter()
     torch.manual_seed(73)

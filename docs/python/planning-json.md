@@ -219,6 +219,7 @@ shadowspill.step_program/v1
 │   └── captured_stage_count
 ├── planning
 │   ├── optimizer_ordering
+│   ├── data_ordering         depth, breadth, reverse_breadth, pair_loss
 │   └── phase_timings_ns
 ├── transfer_capabilities
 └── cache_lineage
@@ -263,6 +264,10 @@ shadowspill.annotated_program_plan/v1
 `transfer_bandwidths` contains:
 
 - `fetch_bytes_per_second` and `evict_bytes_per_second`;
+- `fetch_latency_ns` and `evict_latency_ns`, the per-transfer latencies the
+  same calibration measured, or `null` in a record written before they were
+  carried and in an override that names only bandwidths, where the program's
+  own latency applies;
 - `scale_numerator` and `scale_denominator` for an exact rational benchmark
   scaling factor;
 - optional `calibration_digest` and `provenance`.
