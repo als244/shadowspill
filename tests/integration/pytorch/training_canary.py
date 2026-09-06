@@ -11,6 +11,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from canary_phases import phase
 
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
@@ -120,6 +121,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             optimizer.register_step_post_hook(count_actual_step)
             return optimizer
 
+        phase("runtime")
         runtime = Runtime(
             pools={
                 "execution": device(
@@ -134,6 +136,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             },
             library_path=adapter,
         )
+        phase("import")
         model = import_model_state(
             model,
             runtime=runtime,
@@ -141,6 +144,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             release_source=True,
         )
         parameter_ids = tuple(id(parameter) for parameter in model.parameters())
+        phase("plan")
         planned = plan_step(
             model,
             objective=_objective,
@@ -234,6 +238,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("training plan has the wrong accumulated task order")
 
         checkpoint: dict[str, object] | None = None
+        phase("steps")
         for step, microbatches in enumerate(steps):
             reference_optimizer.zero_grad(set_to_none=True)
             reference_losses: list[torch.Tensor] = []
@@ -412,6 +417,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 raise AssertionError("static objective metrics changed")
             if step == 2:
                 statistics_before_checkpoint = _statistics()
+                phase("checkpoint")
                 checkpoint = planned.state_dict()
                 statistics_after_checkpoint = _statistics()
                 if (
@@ -426,6 +432,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         if len(optimizer_calls) != 5 or checkpoint is None:
             raise AssertionError("optimizer mutation count differs from step count")
         uninterrupted = _clone_model_state(planned.state_dict())
+        phase("replay")
         planned.load_state_dict(checkpoint)
         for replay_index, microbatches in enumerate(steps[3:]):
             if replay_index == 0:
@@ -452,6 +459,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 if isinstance(value, torch.Tensor) and value.device.type != "cpu":
                     raise AssertionError("optimizer checkpoint retained CUDA storage")
 
+        phase("close")
         planned.close()
         planned.close()
         export_model_state(model, runtime=runtime, release_runtime=True)
@@ -491,6 +499,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("training grew the configured spill pool")
 
         warm_model = _Model()
+        phase("warm")
         warm_model = import_model_state(
             warm_model,
             runtime=runtime,
@@ -531,6 +540,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         del warm_result
         gc.collect()
         torch.cuda.synchronize()
+        phase("runtime-close")
         runtime.close()
     return 0
 

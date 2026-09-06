@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from canary_phases import phase
 
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
@@ -36,6 +37,7 @@ def main() -> int:
         reference = _StatefulForward().eval()
         reference.load_state_dict(model.state_dict())
         value = torch.randn(4, 64)
+        phase("runtime")
         runtime = Runtime(
             pools={
                 "execution": device(
@@ -50,12 +52,14 @@ def main() -> int:
             },
             library_path=adapter,
         )
+        phase("import")
         model = import_model_state(
             model,
             runtime=runtime,
             pool="spill",
             release_source=True,
         )
+        phase("plan")
         planned = plan_forward(
             model,
             example_inputs=[value],
@@ -83,12 +87,14 @@ def main() -> int:
         ):
             raise AssertionError("functional-mutation diagnostics are inconsistent")
         for _ in range(3):
+            phase("run")
             actual = planned([value])
             expected = reference(value)
             torch.testing.assert_close(actual.cpu(), expected, rtol=2e-5, atol=2e-6)
             del actual, expected
         state = planned.state_dict()
         torch.testing.assert_close(state["running"], reference.running)
+        phase("close")
         planned.close()
         export_model_state(model, runtime=runtime, release_runtime=True)
         runtime.close()

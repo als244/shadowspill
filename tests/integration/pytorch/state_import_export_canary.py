@@ -11,6 +11,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+from canary_phases import phase
 
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
@@ -68,6 +69,7 @@ def _snapshot(runtime: Runtime, object_id: int) -> ObjectSnapshot:
 
 def main() -> int:
     adapter = Path(sys.argv[1]).resolve()
+    phase("runtime")
     runtime = Runtime(
         pools={
             "execution": device(
@@ -91,6 +93,7 @@ def main() -> int:
     source_pointer = model.projection.weight.untyped_storage().data_ptr()
     before = _statistics(runtime)
 
+    phase("import")
     copied_model = import_model_state(
         model,
         runtime=runtime,
@@ -131,9 +134,11 @@ def main() -> int:
     if after_copy.runtime.registered_objects != before.runtime.registered_objects + 1:
         raise AssertionError("non-consuming import registered the wrong object count")
 
+    phase("export")
     export_model_state(copied_model, runtime=runtime, release_runtime=True)
     del copied
     source_reference = weakref.ref(model)
+    phase("reimport")
     imported_model = import_model_state(
         model,
         runtime=runtime,
@@ -172,6 +177,7 @@ def main() -> int:
     spill_pointer = record.pool_pointer
     spill_bytes_before_plan = int(_statistics(runtime).runtime.spill_allocated_bytes)
     with tempfile.TemporaryDirectory() as cache:
+        phase("plan")
         planned = plan_forward(
             imported_model,
             example_inputs=[value],
@@ -249,6 +255,7 @@ def main() -> int:
     if any(parameter.numel() != 0 for parameter in adopted.parameters()):
         raise AssertionError("released model state left live parameter views")
 
+    phase("close")
     runtime.close()
     return 0
 

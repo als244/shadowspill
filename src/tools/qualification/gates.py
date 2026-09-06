@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -299,7 +300,45 @@ def _default_run() -> str:
     return f"{revision}{'_dirty' if modified else ''}_{time.strftime('%m%d_%H%M')}"
 
 
-def _stream(command: Sequence[str], log: Path) -> int:
+def _host_state() -> str:
+    """One line saying what else the host was doing: load and GPU tenants.
+
+    A gate that times out or misses a floor on a busy machine looks exactly
+    like one that found a defect, and by the time anyone reads the log the
+    machine is quiet. Recording the load average and the processes holding
+    the GPU at the moment the gate starts, and again when it fails, keeps
+    the difference readable afterwards.
+    """
+    try:
+        one, five, fifteen = os.getloadavg()
+        load = f"load {one:.2f} {five:.2f} {fifteen:.2f}"
+    except OSError:
+        load = "load unavailable"
+    if shutil.which("nvidia-smi") is None:
+        return (
+            f"[{time.strftime('%H:%M:%S')}] host: {load}; "
+            "gpu tenants unknown (no nvidia-smi)"
+        )
+    try:
+        query = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_memory",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        tenants = [line.strip() for line in query.stdout.splitlines() if line.strip()]
+        gpu = f"gpu tenants {'; '.join(tenants) if tenants else 'none'}"
+    except Exception:
+        gpu = "gpu tenants unavailable"
+    return f"[{time.strftime('%H:%M:%S')}] host: {load}; {gpu}"
+
+
+def _stream(command: Sequence[str], log: Path, *, preamble: str = "") -> int:
     """Run a gate, sending every line to this stdout and to its own log.
 
     A gate is long enough that watching it matters, and its log is what the
@@ -314,6 +353,8 @@ def _stream(command: Sequence[str], log: Path) -> int:
     """
 
     with log.open("w") as handle:
+        if preamble:
+            handle.write(preamble + "\n")
         process = subprocess.Popen(
             list(command),
             stdout=subprocess.PIPE,
@@ -378,8 +419,15 @@ def run_gates(
         # gates is a line that looks like any other.
         print(f"\n\n{_banner(f'START OF {name.upper()} GATE')}\n", flush=True)
         print(f"[{time.strftime('%H:%M:%S')}] {name}: {' '.join(command)}", flush=True)
+        host = _host_state()
+        print(host, flush=True)
         started = time.perf_counter()
-        returncode = _stream(command, log)
+        returncode = _stream(command, log, preamble=host)
+        if returncode != 0:
+            host = _host_state()
+            print(host, flush=True)
+            with log.open("a") as handle:
+                handle.write(host + "\n")
         outcome = GateOutcome(
             name=name,
             command=command,
