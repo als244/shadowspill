@@ -240,3 +240,73 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
     )
     assert replanned.from_store
     assert replanned.result.schedule == first.result.schedule
+
+
+def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
+    tmp_path: Path,
+) -> None:
+    """A request handed a plan never answers worse than it, stored or not."""
+
+    initial, final = exact_capacity_residency()
+    program = exact_capacity_program()
+    every = PlanStore(tmp_path / "every").resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=PressureFitOptions(
+            minimum_object_bytes_evict_eligible=0, deterministic=True
+        ),
+    )
+    # one candidate that plans this program a fifth slower than the best
+    poor = PressureFitOptions(
+        minimum_object_bytes_evict_eligible=0,
+        residency_strategies=("headroom-stall",),
+        fetch_rules=("demand",),
+        evaluate_coalesced=False,
+        deterministic=True,
+    )
+    cache = PlanStore(tmp_path / "poor")
+    unaided = cache.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=poor,
+    )
+    assert unaided.result.simulation.makespan_ns > every.result.simulation.makespan_ns
+
+    # the store holds the poor plan; handed the better one, the request
+    # searches again and answers with it
+    handed = cache.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=poor,
+        incumbent=every.result,
+    )
+    assert not handed.from_store
+    assert handed.result.schedule == every.result.schedule
+    assert handed.result.diagnostics.selected_candidate_id == "incumbent"
+    # and the store now holds the better plan for everyone after
+    again = cache.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=poor,
+    )
+    assert again.from_store
+    assert again.result.schedule == every.result.schedule
+    # a plan no better than the one on record leaves the record alone
+    same = cache.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=poor,
+        incumbent=unaided.result,
+    )
+    assert same.from_store
+    assert same.result.schedule == every.result.schedule

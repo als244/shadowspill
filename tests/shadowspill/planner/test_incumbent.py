@@ -154,6 +154,21 @@ def test_more_memory_never_plans_worse_when_handed_the_smaller_budgets_plan() ->
     if handed.diagnostics.selected_candidate_id == INCUMBENT_CANDIDATE_ID:
         assert problem.incumbent.selected
         assert handed.schedule == small.schedule
+        # handed on again, the plan still names the candidate that first
+        # found it and the capacity it was found at, not the hand-off
+        twice = pressurefit(
+            program,
+            initial_residency=initial,
+            config=training_chain_config(1600),
+            options=EVERY_CANDIDATE,
+            incumbent=handed,
+        )
+        origin = _selected_problem(twice.diagnostics).incumbent
+        assert origin is not None
+        assert origin.found_by == small.diagnostics.selected_candidate_id
+        assert origin.found_at_capacity_bytes == (
+            training_chain_config(800).devices[0].capacity_bytes
+        )
     else:
         assert not problem.incumbent.selected
         assert handed.simulation.makespan_ns < small.simulation.makespan_ns

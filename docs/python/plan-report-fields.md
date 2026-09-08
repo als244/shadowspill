@@ -478,8 +478,8 @@ better.
 | `required_bytes` | Pool bytes its layout needed, when it was measured against a pool. |
 | `selected` | Whether it is the problem's answer. |
 | `schedule_digest` | Which plan it is. |
-| `found_by` | The candidate policy that found it, where it was found. |
-| `found_at_capacity_bytes` | The object capacity it was found at. |
+| `found_by` | The candidate policy that first found it, read through any chain of hand-offs: a plan handed on from a search that answered with its own plan in hand names the candidate that found that one. |
+| `found_at_capacity_bytes` | The object capacity it was first found at. |
 
 ## TaskAlternativeChoiceDiagnostic
 

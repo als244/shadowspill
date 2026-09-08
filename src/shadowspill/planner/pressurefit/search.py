@@ -202,19 +202,41 @@ def _incumbent_diagnostic(
     outcome = result.incumbent
     if outcome is None:
         return None
-    devices = incumbent.simulation_config.devices if incumbent is not None else ()
+    found_by, found_at = (None, None) if incumbent is None else _origin(incumbent)
     return IncumbentDiagnostic(
         status=_INCUMBENT_STATUS.get(outcome.status, "error"),
         makespan_ns=outcome.makespan_ns or None,
         required_bytes=outcome.required_bytes or None,
         selected=outcome.selected,
         schedule_digest=None if incumbent is None else incumbent.schedule.digest,
-        found_by=(
-            None if incumbent is None else incumbent.diagnostics.selected_candidate_id
-        ),
-        found_at_capacity_bytes=(
-            devices[0].capacity_bytes if len(devices) == 1 else None
-        ),
+        found_by=found_by,
+        found_at_capacity_bytes=found_at,
+    )
+
+
+def _origin(incumbent: PressureFitResult) -> tuple[str | None, int | None]:
+    """The candidate that first found the plan in hand, and at what capacity.
+
+    A plan handed on more than once was the plan to beat of the search that
+    answered with it, so its origin is read through that search's record
+    rather than stopping at the hand-off.
+    """
+
+    diagnostics = incumbent.diagnostics
+    if diagnostics.selected_candidate_id == INCUMBENT_CANDIDATE_ID:
+        for problem in diagnostics.resolved_programs:
+            if (
+                problem.selection_id == diagnostics.selected_selection_id
+                and problem.incumbent is not None
+            ):
+                return (
+                    problem.incumbent.found_by,
+                    problem.incumbent.found_at_capacity_bytes,
+                )
+    devices = incumbent.simulation_config.devices
+    return (
+        diagnostics.selected_candidate_id,
+        devices[0].capacity_bytes if len(devices) == 1 else None,
     )
 
 

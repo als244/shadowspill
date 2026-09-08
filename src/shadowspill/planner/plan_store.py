@@ -121,6 +121,12 @@ class PlanStore:
         it is about to execute, without the sweep's plan in hand, has to get
         the sweep's answer. So the key leaves it out, and the record says
         which plan the search was handed.
+
+        The promise runs the other way too: a request handed a plan never
+        answers worse than it. A store holding a plan that the plan in hand
+        claims to beat searches again with it, and keeps whichever answer is
+        better for this request, so a store filled before the plan existed
+        improves rather than shadowing it.
         """
 
         selected_options = options or PressureFitOptions()
@@ -149,7 +155,7 @@ class PlanStore:
             if self.read_enabled
             else None
         )
-        if cached is not None:
+        if cached is not None and not _claims_to_beat(incumbent, cached):
             return PlanLookup(cached, True)
         result = pressurefit(
             program,
@@ -163,6 +169,11 @@ class PlanStore:
             resolution_options=chosen,
             incumbent=incumbent,
         )
+        if cached is not None:
+            if result.simulation.makespan_ns >= cached.simulation.makespan_ns:
+                return PlanLookup(cached, True)
+            self._write(key, result, admission, chosen, incumbent, improve=True)
+            return PlanLookup(result, False)
         self._write(key, result, admission, chosen, incumbent)
         return PlanLookup(result, False)
 
@@ -264,6 +275,7 @@ class PlanStore:
         admission: AdmissionFacts | None,
         resolution_options: tuple[Fraction, ...],
         incumbent: PressureFitResult | None = None,
+        improve: bool = False,
     ) -> None:
         if not self.write_enabled:
             return
@@ -289,7 +301,7 @@ class PlanStore:
             "resident_slice": result.resident_slice.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        if path.exists() and not self.overwrite:
+        if path.exists() and not self.overwrite and not improve:
             try:
                 existing = path.read_text()
             except OSError as exc:
@@ -320,7 +332,9 @@ class PlanStore:
         finally:
             with suppress(FileNotFoundError):
                 os.unlink(temporary)
-        self._record(key, result.program.digest, path, "write")
+        self._record(
+            key, result.program.digest, path, "improved" if improve else "write"
+        )
 
     def _record(
         self,
@@ -374,6 +388,21 @@ def _key(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _claims_to_beat(
+    incumbent: PressureFitResult | None, stored: PressureFitResult
+) -> bool:
+    """Whether the plan in hand says it is faster than the plan on record.
+
+    Its claim is the makespan it was found with, which may come from another
+    calibration of the same machine; the search settles it under this one.
+    """
+
+    return (
+        incumbent is not None
+        and incumbent.simulation.makespan_ns < stored.simulation.makespan_ns
+    )
 
 
 def _without_provenance(payload: object) -> object:
