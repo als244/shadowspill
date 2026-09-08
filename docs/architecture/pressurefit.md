@@ -369,7 +369,11 @@ For every legal task-selection problem, the planner derives anchors,
 fresh-output reservations, and per-boundary capacity. At least one problem
 must fit its required anchor/output floor. This catches an individual task
 whose required inputs, outputs, and workspace cannot coexist, before any
-candidate search happens.
+candidate search happens. A resolved program that fails this derivation is
+reported as infeasible on its own result; the others are evaluated together
+as if it were absent, so a resolution that cannot fit at a capacity never
+silences the ones that can, and a program whose every resolution fails it
+is infeasible at that capacity.
 
 PressureFit then obtains the finite set of legal selections from the Program.
 The training-specific policy used to construct this set is documented

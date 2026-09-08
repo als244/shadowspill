@@ -274,6 +274,7 @@ directory.
 | opening restore | The unmodeled fetch of the schedule's initial device objects at each invocation's start. |
 | lane utilization | Simulated transfer bytes over the assumed lane bandwidth over the simulated step: the share of the step each transfer lane spends busy. |
 | infeasible / search_exhausted | A geometry the planner proved cannot fit the budget, or whose bounded candidate search ended without a feasible schedule. A geometry whose build exhausts the device reports every one of its budgets infeasible too, since profiling runs real kernels and the largest microbatch can run out of memory before any plan exists. Reported in the table, never raised. |
+| rejected | A point the planner refused, before or during its search; `error` carries its reason. The sweep goes on with the next point. |
 | artifact store | The on-disk cache of compilation, profiling, and plan artifacts, keyed by content digests — see [reusable planning](../docs/examples/reusable-planning.md). |
 
 The traced-step deltas are real minus simulated: positive start deltas

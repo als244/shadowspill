@@ -44,7 +44,7 @@ from .program import (
 )
 from .recomputation import Resolution, ShareValue, resolutions
 from .request import PressureFitOptions
-from .result import PressureFitResult
+from .result import PressureFitInfeasibleError, PressureFitResult
 
 #: What a group's alternatives are called today. Ordering only needs to
 #: recognise the two extremes; anything else falls through to the middle.
@@ -211,9 +211,13 @@ def plan_program(
                 f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
         if not valid:
-            raise RuntimeError(
-                "PressureFit rejected every selection after semantic "
-                "feasibility validation succeeded"
+            # Every resolved program failed the planner's own analytic
+            # capacity check: nothing fits at this capacity, and the caller
+            # hears that as infeasibility, as it would from any one of them.
+            raise PressureFitInfeasibleError(
+                "every resolution of the program is analytically infeasible "
+                "at this capacity",
+                kind="analytic_capacity",
             )
         # One decode across every resolved program, so the winner and the
         # diagnostics are exactly what a single batched evaluation produced.

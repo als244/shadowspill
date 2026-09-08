@@ -21,7 +21,7 @@ from shadowspill.planner import (
     validate_schedule_feasibility,
 )
 
-from ._examples import config
+from ._examples import config, recomputation_program
 
 
 def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
@@ -197,3 +197,34 @@ def test_same_task_workspace_and_objects_remain_jointly_required() -> None:
     assert caught.value.boundary_task_id == "oversized_task"
     assert caught.value.required_bytes == 80
     assert caught.value.capacity_bytes == 70
+
+
+def test_a_resolution_that_cannot_be_prepared_does_not_silence_the_others() -> None:
+    """One rung's impossibility at this capacity is its own answer, not the batch's."""
+
+    program = recomputation_program(recompute_workspace_bytes=10_000)
+    residency = (ResidencySpec("input_storage", MemoryLocation.DEVICE),)
+    options = PressureFitOptions(minimum_object_bytes_evict_eligible=0)
+
+    result = pressurefit(
+        program,
+        initial_residency=residency,
+        config=config(300),
+        options=options,
+        resolution_options=("0", "1"),
+    )
+    assert result.diagnostics.selected_selection_id == "activation_tradeoff=save"
+    assert result.diagnostics.resolved_program_count == 1
+
+    # asked for the recomputing resolution alone, the search still answers
+    # with the one that could be prepared, since the all-saving resolution is
+    # always searched
+    alone = pressurefit(
+        program,
+        initial_residency=residency,
+        config=config(300),
+        options=options,
+        resolution_options=("1",),
+    )
+    assert alone.diagnostics.selected_selection_id == "activation_tradeoff=save"
+    assert alone.diagnostics.resolved_program_count == 1
