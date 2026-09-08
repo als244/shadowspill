@@ -447,6 +447,11 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     /* Repairs spent when the plan this candidate answers with was placed;
        UINT32_MAX when it placed none. */
     uint32_t repairs_at_best;
+    /* Pressure repairs that asked for more than the shortfall because the
+       same failure had repeated, and how many of those asks no cut could
+       meet and were taken back. */
+    uint32_t pressure_escalations;
+    uint32_t escalations_taken_back;
     uint8_t schedule_digest[SHADOWSPILL_PLANNER_DIGEST_BYTES];
 
     /* When this candidate ran, in nanoseconds from the start of the call

@@ -503,6 +503,7 @@ the reusable policy: residency strategy, fetch rule, and coalescing mode.
 | `placements_attempted`, `placements_admitted` | Layouts measured for it, and how many fitted. |
 | `capacity_refinements` | How many times a plan gave back what it overran and was rebuilt. |
 | `repairs_at_best` | Repairs spent when the plan it answers with was placed; `None` when it placed none. |
+| `pressure_escalations`, `escalations_taken_back` | Pressure repairs that asked for more than the shortfall because the same failure had repeated at the same task and moment, and how many of those asks no cut could meet and were taken back. |
 | `started_ns`, `finished_ns` | When this candidate ran, from the start of the call. Two candidates ran at the same time exactly when their spans overlap. |
 | `schedule_digest` | Identity of the schedule it produced. |
 | `failure_kind`, `failure_detail` | Why it failed, when it did. |

@@ -139,6 +139,9 @@ typedef struct CandidateWorkspace {
      * not one of its readers: the plan runs on the machine the caller
      * described, so that is the capacity it is timed at. */
     uint64_t plan_capacity_given_back;
+    /* Where the last repair pressure went, so an ask that cannot be met can
+     * be taken back from the boundary it was made at. */
+    uint64_t last_pressure_position;
     uint8_t *resident;
     uint8_t *breaks;
     uint8_t *base_resident;
@@ -1737,11 +1740,28 @@ static void copy_analytic_error(
     diagnostic->error_capacity_bytes = residency->capacity_bytes;
 }
 
+/*
+ * Make room at the boundary where the plan came up short.
+ *
+ * The ask is the shortfall the simulator measured. A failure that repeats at
+ * the same task and the same moment after that ask was met says the analytic
+ * room did not become simulated room -- copies still in flight hold it, or
+ * the emitter packed the freed bytes again -- so a repeat asks for twice
+ * what the last round asked, up to the task's whole request: the same few
+ * bytes again would be the same plan again, and a trace of one such candidate
+ * showed 116 rounds at one task for the same 4.4 MiB. `escalation` is how
+ * many times in a row the failure has repeated; `asked_beyond_shortfall`
+ * reports what the ask added over the shortfall, so a reduction that cannot
+ * meet the larger ask can take exactly that back.
+ */
 static int add_repair_pressure(
     const ShadowSpillPressureFitProblem *problem,
     CandidateWorkspace *workspace,
-    const ShadowSpillSimulationResult *failure
+    const ShadowSpillSimulationResult *failure,
+    uint32_t escalation,
+    uint64_t *asked_beyond_shortfall
 ) {
+    *asked_beyond_shortfall = 0U;
     if (failure->status != SHADOWSPILL_STATUS_INITIAL_DEVICE_CAPACITY &&
         failure->status != SHADOWSPILL_STATUS_FETCH_DEVICE_CAPACITY &&
         failure->status != SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY) {
@@ -1778,6 +1798,18 @@ static int add_repair_pressure(
         total += failure->error_requested_bytes;
     }
     uint64_t excess = total > capacity ? total - capacity : 1U;
+    const uint64_t shortfall = excess;
+    const uint64_t ceiling = failure->error_requested_bytes != 0U &&
+            failure->error_requested_bytes < capacity
+        ? failure->error_requested_bytes
+        : capacity;
+    for (uint32_t step = 0U; step < escalation && excess < ceiling; ++step) {
+        excess = excess > UINT64_MAX / 2U ? UINT64_MAX : excess * 2U;
+    }
+    if (excess > ceiling && ceiling > shortfall) {
+        excess = ceiling;
+    }
+    *asked_beyond_shortfall = excess > shortfall ? excess - shortfall : 0U;
     uint32_t index = (uint32_t)(boundary + 1);
     uint64_t position =
         (uint64_t)failure->error_device * problem->residency->boundary_count +
@@ -1787,6 +1819,7 @@ static int add_repair_pressure(
     } else {
         workspace->extra_pressure[position] += excess;
     }
+    workspace->last_pressure_position = position;
     return 1;
 }
 
@@ -2141,6 +2174,11 @@ typedef struct CandidateSearch {
     uint64_t placed_makespan_ns;
     /* The plan last placed, by fingerprint: placing it again is skipped. */
     Fingerprint placed_identity;
+    /* Where the last simulation came up short, and how many times in a row
+     * it has come up short there: a repeat asks the reducer for more. */
+    uint32_t last_error_task;
+    uint64_t last_error_time_ns;
+    uint32_t failure_repeats;
 
     /* The round in hand: what the last simulation produced. */
     ShadowSpillSimulationResult simulation;
@@ -2186,6 +2224,9 @@ static void search_begin(
     search->pressure_cells = (uint64_t)problem->residency->device_count *
         problem->residency->boundary_count;
     search->need_emit = 1;
+    search->last_error_task = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    search->last_error_time_ns = 0U;
+    search->failure_repeats = 0U;
     search->plan_capacity_bytes = problem->placement == NULL
         ? 0U
         : problem->placement->object_capacity_bytes;
@@ -2626,6 +2667,10 @@ static StageOutcome search_refine_capacity(
         workspace->extra_pressure[cell] += overage;
     }
     workspace->plan_capacity_given_back += overage;
+    /* A new capacity round starts its own count of repeated failures. */
+    search->last_error_task = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    search->last_error_time_ns = 0U;
+    search->failure_repeats = 0U;
     mark_search_step(search, SHADOWSPILL_STEP_REFINED, 0U);
     /* Plan again at the smaller capacity rather than pressing further on what
      * this capacity produced. */
@@ -2852,17 +2897,53 @@ static StageOutcome search_repair(CandidateSearch *search) {
             ++diagnostic->repairs.simulation_fetch_delay_attempts;
             return STAGE_REPEAT;
         }
+        /* The same task, at the same moment, after the last ask was met:
+         * the room did not appear where the simulator looks, so ask for more
+         * this time. Anywhere else is a new failure and a plain ask. */
+        if (search->simulation.error_task == search->last_error_task &&
+            search->simulation.error_time_ns == search->last_error_time_ns) {
+            ++search->failure_repeats;
+        } else {
+            search->failure_repeats = 0U;
+        }
+        search->last_error_task = search->simulation.error_task;
+        search->last_error_time_ns = search->simulation.error_time_ns;
+        uint64_t asked_beyond_shortfall = 0U;
         if (add_repair_pressure(
-                search->problem, search->workspace, &search->simulation
+                search->problem,
+                search->workspace,
+                &search->simulation,
+                search->failure_repeats,
+                &asked_beyond_shortfall
             ) != 0) {
             ++diagnostic->repairs.simulation_pressure_boundary_attempts;
-            const int reduced = reduce_repaired_candidate(
+            if (asked_beyond_shortfall != 0U) {
+                ++diagnostic->pressure_escalations;
+            }
+            int reduced = reduce_repaired_candidate(
                 search->problem,
                 search->workspace,
                 &search->reduce_options,
                 search->strategy,
                 diagnostic
             );
+            if (reduced == 0 && asked_beyond_shortfall != 0U) {
+                /* No cut can meet the larger ask. Take the extra back and ask
+                 * for the shortfall alone: the candidate is only ever worse
+                 * off for having asked for more, never dead of it. */
+                search->workspace->extra_pressure[
+                    search->workspace->last_pressure_position
+                ] -= asked_beyond_shortfall;
+                search->failure_repeats = 0U;
+                ++diagnostic->escalations_taken_back;
+                reduced = reduce_repaired_candidate(
+                    search->problem,
+                    search->workspace,
+                    &search->reduce_options,
+                    search->strategy,
+                    diagnostic
+                );
+            }
             if (reduced < 0) {
                 return search_done(search, -1);
             }

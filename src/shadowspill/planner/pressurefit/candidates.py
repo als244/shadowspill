@@ -93,6 +93,10 @@ class CCandidateDiagnostic:
     #: Repairs spent when the plan the candidate answers with was placed;
     #: ``None`` when it placed none.
     repairs_at_best: int | None
+    #: Pressure repairs that asked for more than the shortfall because the
+    #: same failure had repeated, and how many of those no cut could meet.
+    pressure_escalations: int
+    escalations_taken_back: int
     #: When this candidate ran, in nanoseconds from the start of the call that
     #: evaluated it. ``work.sections`` is work done; these are wall clock, so
     #: two candidates ran at once exactly when their spans overlap. Both are
@@ -267,6 +271,8 @@ def _decode_candidate_status(
             placements_admitted=value.placements_admitted,
             capacity_refinements=value.capacity_refinements,
             repairs_at_best=value.repairs_at_best,
+            pressure_escalations=value.pressure_escalations,
+            escalations_taken_back=value.escalations_taken_back,
             schedule_digest=value.schedule_digest,
             repairs=value.repairs,
             work=value.work,
@@ -288,6 +294,8 @@ def _decode_candidate_status(
             placements_attempted=value.placements_attempted,
             placements_admitted=value.placements_admitted,
             capacity_refinements=value.capacity_refinements,
+            pressure_escalations=value.pressure_escalations,
+            escalations_taken_back=value.escalations_taken_back,
             repairs=value.repairs,
             work=value.work,
             steps=value.steps,
@@ -762,6 +770,8 @@ def _decode_problem_result(
                         if value.repairs_at_best == 0xFFFFFFFF
                         else int(value.repairs_at_best)
                     ),
+                    pressure_escalations=int(value.pressure_escalations),
+                    escalations_taken_back=int(value.escalations_taken_back),
                     started_ns=int(value.started_ns),
                     finished_ns=int(value.finished_ns),
                     steps=_decode_steps(value),

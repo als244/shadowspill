@@ -40,12 +40,16 @@ class PressureFitOptions:
     # relaxed-stall (byte-identical to tight-stall) and interval-entry
     # never carry a winner: a 435-point regression replay reproduced
     # every schedule digest exactly without them at ~1.25x less
-    # candidate set work. Both remain valid explicit options.
+    # candidate set work. The two transfer strategies went the same way
+    # on 2026-09-07: identical to their stall twin at 78 % of 14,672
+    # pairs on a 293-point llama3 sweep and never carrying a point by
+    # more than 0.2 %, and on a 15-program three-model corpus the search
+    # without them answered within 0.2 % on average for 0.61x the wall
+    # (0.61x on 1x64, 2x32 and 4x16 programs at flat quality). All four
+    # remain valid explicit options.
     residency_strategies: tuple[str, ...] = (
         "headroom-stall",
-        "headroom-transfer",
         "tight-stall",
-        "tight-transfer",
     )
     fetch_rules: tuple[str, ...] = (
         "packed-fifo",
