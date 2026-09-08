@@ -156,37 +156,24 @@ overlap lease `i` in time — but `r_i` is not bounded by `k_i` in either
 direction, because merging pushes it down while per-node duplication pushes it
 up.
 
-**Measured on the thirteen captured plans.** `k` is the conflict count, `r` is
-what actually got sorted:
+Three things follow, with `k` the conflict count and `r` what actually gets
+sorted:
 
-| plan | `n` | peak live | mean `k` | `Σk` | mean `r` | `Σr` |
-|---|---|---|---|---|---|---|
-| olmoe fast | 2,542 | 287 | 198 | 0.50 M | 196 | 0.50 M |
-| llama3 fast | 3,038 | 304 | 128 | 0.39 M | 151 | 0.46 M |
-| olmoe medium | 8,678 | 285 | 199 | 1.73 M | 99 | 0.86 M |
-| llama3 slow | 16,892 | 320 | 238 | 4.01 M | 84 | 1.41 M |
-| qwen35 slow | 27,234 | 388 | 226 | 6.15 M | 104 | 2.82 M |
+- **The quadratic worst case is nowhere near.** `Σk` is a small fraction of
+  `n²/2`, and the fraction *falls* as plans grow, because the peak number of
+  live leases is set by the model's working set rather than by the step's
+  length: a longer step adds leases without adding overlap.
+- **Merging is what makes it cheap, and it pays more as plans grow.** `Σr`
+  is close to `Σk` on a small layout and well below it on a large one: there
+  is little to collapse in a small layout and a lot in a large one, so `Σr`
+  grows sublinearly in `n` within one family of plans.
+- **The distribution is skewed, not flat.** The median lease gathers a
+  handful of ranges and the worst gathers thousands. A few long-lived leases,
+  the resident parameters, dominate the total, which is why the sort is
+  specialised rather than generic: most calls are tiny.
 
-Three things this shows:
-
-- **The quadratic worst case is nowhere near.** `Σk` is 15.6% of `n²/2` on the
-  smallest plan and 1.7% on the largest; it *falls* as plans grow, because
-  peak live leases stay near 300 no matter how long the step is. Peak live is
-  set by the model's working set, not by the step's length.
-- **Merging is what makes it cheap, and it pays more as plans grow.** `Σr` is
-  the same as `Σk` at 2,542 leases and a third of it at 16,892: there is
-  little to collapse in a small layout and a lot in a large one. Within one
-  family, `Σr` grows *sublinearly* in `n` — llama3 fast to slow is 5.6× the
-  leases for 3.1× the sorted volume.
-- **The distribution is skewed, not flat.** On the largest plan the median
-  lease gathers 27 ranges and the worst gathers 15,407. A handful of
-  long-lived leases — the resident parameters — dominate the total, which is
-  why the sort is specialised rather than generic: most calls are tiny.
-
-The profile agrees with the model. On llama3 slow, `sort_by_address` is 42% of
-the run, the gather 14%, the moves the sort makes 10%, and insertion under 1%.
-
-End to end, one placement call: 14.5 ms at 3,039 leases, 65 ms at 17,250.
+The sort of the gathered ranges is where a placement call spends most of its
+time, then the gather, then the moves the sort makes; insertion is negligible.
 
 ## Timings choose the offsets; causality makes them safe
 

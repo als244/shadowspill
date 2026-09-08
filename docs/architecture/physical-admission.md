@@ -61,8 +61,7 @@ how far it missed by instead of catching an exception to find out.
 `certify_fixed_layout` takes that measurement and completes it: it recovers
 the reuse dependencies, assembles the certificate, and re-simulates under
 those dependencies. This is the half that produces what the runtime enforces,
-and it costs about as much again as the measurement — measured at 106 ms
-against 82 ms on one qwen point.
+and it costs about as much again as the measurement.
 
 A caller that only wants an admitted layout or an error calls
 `build_fixed_layout_admission`, which is exactly the composition of the two.
@@ -195,10 +194,10 @@ A **pool operation** is an allocator call that *executing* the plan implies:
 admission script and are what the production `MemoryPool` policy replays.
 
 The relationship is one-to-many and the two vocabularies share no kind names.
-One llama3 step measured 3,248 actions against 10,648 operations - about 3.3
-operations per action - because a single fetch reserves its destination,
-acquires the reserved range, and later begins and completes a retirement, while
-a task also acquires and retires leases without any action at all.
+There are several operations to every action, because a single fetch
+reserves its destination, acquires the reserved range, and later begins and
+completes a retirement, while a task also acquires and retires leases without
+any action at all.
 
 Everything downstream keeps the distinction: `action_index` always identifies a
 memory action, a lease is created and retired by operations, and the reuse

@@ -58,10 +58,11 @@ microbatch of an accumulating step; see
 `plan_step_search()` lowers every `depth x breadth` factor pair of a geometry
 into its own program over the geometry's one capture and profile set and
 plans each under every budget, so the winner at a budget is a walk of a
-geometry rather than a geometry alone. On the llama3 step at 6 GiB that
-choice took the frontier's winner from 20.6 s to 18.0 s and the 64-microbatch
-geometry from 133 s to 22 s; the figures guide's `orderings/` directory shows
-the ladder behind each geometry's line.
+geometry rather than a geometry alone. Which walk wins depends on the budget:
+a breadth-first walk keeps a stage's activations together and lets a tight
+budget fetch and evict them in bulk, where the depth-first walk of the same
+geometry pays for every microbatch's round trip alone. The figures guide's
+`orderings/` directory shows the ladder behind each geometry's line.
 
 ## Policy selection
 
