@@ -232,7 +232,10 @@ schedule emissions/cache hits, simulation calls
 and cache hits, and admission calls. What placing cost and bought —
 `placements_attempted`, `placements_admitted`, `capacity_refinements` — is
 per candidate, on the candidate diagnostic, as is `repairs_at_best`, the
-repairs spent when the plan the candidate answers with was placed.
+repairs spent when the plan the candidate answers with was placed, and
+`pressure_escalations` / `escalations_taken_back`, the pressure repairs that
+asked for more than the shortfall because a failure had repeated, and how
+many of those asks no cut could meet.
 
 Time is reported separately, as `ShadowSpillPressureFitSectionTiming`. Its
 fields are **disjoint sections** rather than overlapping totals: each names

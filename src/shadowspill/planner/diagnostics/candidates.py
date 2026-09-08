@@ -53,6 +53,12 @@ class CandidateDiagnostic:
     #: Repairs spent when the plan the candidate answers with was placed;
     #: ``None`` when it placed none.
     repairs_at_best: int | None = None
+    #: Pressure repairs that asked for more than the shortfall because the
+    #: same failure had repeated at the same task and moment, and how many of
+    #: those asks no cut could meet and were taken back. Zero on records
+    #: written before there was an escalation.
+    pressure_escalations: int = 0
+    escalations_taken_back: int = 0
     #: When this candidate ran, in nanoseconds from the start of the call that
     #: evaluated it. ``work.sections`` is work done; these are wall clock, so
     #: two candidates ran at the same time exactly when their spans overlap.
@@ -94,6 +100,8 @@ class CandidateDiagnostic:
                 "placements_admitted": self.placements_admitted,
                 "capacity_refinements": self.capacity_refinements,
                 "repairs_at_best": self.repairs_at_best,
+                "pressure_escalations": self.pressure_escalations,
+                "escalations_taken_back": self.escalations_taken_back,
                 "schedule_digest": self.schedule_digest,
                 "failure_kind": self.failure_kind,
                 "failure_detail": self.failure_detail,
@@ -152,6 +160,16 @@ class CandidateDiagnostic:
                 outcome.get("repairs_at_best"),
                 f"{path}.outcome.repairs_at_best",
             ),
+            pressure_escalations=_optional_integer(
+                outcome.get("pressure_escalations"),
+                f"{path}.outcome.pressure_escalations",
+            )
+            or 0,
+            escalations_taken_back=_optional_integer(
+                outcome.get("escalations_taken_back"),
+                f"{path}.outcome.escalations_taken_back",
+            )
+            or 0,
             schedule_digest=_optional_string(
                 outcome.get("schedule_digest"),
                 f"{path}.outcome.schedule_digest",

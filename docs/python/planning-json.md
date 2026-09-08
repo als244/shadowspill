@@ -318,6 +318,8 @@ did, alongside its makespan:
 | `placements_admitted` | Measured layouts that fit the pool. The candidate answers with the best of these. |
 | `capacity_refinements` | Times the candidate gave capacity back because its layout did not fit, and planned again. |
 | `repairs_at_best` | Repairs spent when the plan the candidate answers with was placed; `null` when it placed none. |
+| `pressure_escalations` | Pressure repairs that asked for more than the shortfall because the same failure had repeated at the same task and moment. |
+| `escalations_taken_back` | Escalated asks no cut could meet, taken back for a plain ask. |
 
 A candidate whose status is `infeasible` with failure kind `unplaceable`
 reached no plan that fit, so it has no answer regardless of what it
