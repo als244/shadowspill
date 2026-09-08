@@ -133,9 +133,13 @@ order they arrive in.
 - `shadowspill_evaluate_pressurefit_problems()` evaluates all policies for one
   or more already-derived problems.
   `shadowspill_evaluate_pressurefit_program_problems()` derives those problems
-  from schedule-invariant inputs first, then does the same. Both take a count,
-  so evaluating a single problem is passing one; there is no separate
-  single-problem entry point. A candidate of a problem is
+  from schedule-invariant inputs first, then does the same. A problem whose
+  derivation fails — a resolved program that is analytically infeasible at
+  this capacity, say — carries that status on its own result, and the others
+  are evaluated together as if it were absent; the call's status is the
+  evaluation's, or the first refusal's when nothing could be derived. Both
+  take a count, so evaluating a single problem is passing one; there is no
+  separate single-problem entry point. A candidate of a problem is
   the unit of work and every candidate of every problem competes for the same
   workers, so **worker count and problem count are independent** — asking for
   eight workers gets eight threads whether there is one resolved program or

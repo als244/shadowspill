@@ -1110,29 +1110,65 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
     }
 
     /* Deriving the residency problems from their Programs, which the
-     * evaluation below never sees and so could never account for. */
+     * evaluation below never sees and so could never account for. A Program
+     * that cannot be prepared is a fact about that Program alone: its result
+     * says so, and the others are evaluated together as if it were absent, so
+     * a resolution that does not fit at this capacity never silences the ones
+     * that do. */
+    uint32_t *evaluated = calloc(problem_count, sizeof(*evaluated));
+    if (evaluated == NULL) {
+        free(prepared);
+        free(derived);
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
     const uint64_t prepare_started = shadowspill_monotonic_ns();
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
-    uint32_t ready = 0U;
-    for (; ready < problem_count; ++ready) {
-        status = prepare_problem(&problems[ready], options, &prepared[ready]);
-        if (status != SHADOWSPILL_STATUS_OK) {
-            break;
+    ShadowSpillStatus first_refusal = SHADOWSPILL_STATUS_OK;
+    uint32_t evaluated_count = 0U;
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        ShadowSpillStatus prepared_status =
+            prepare_problem(&problems[index], options, &prepared[index]);
+        if (prepared_status == SHADOWSPILL_STATUS_OK) {
+            derived[evaluated_count] = prepared[index].problem;
+            evaluated[evaluated_count] = index;
+            ++evaluated_count;
+        } else {
+            results[index].status = prepared_status;
+            if (first_refusal == SHADOWSPILL_STATUS_OK) {
+                first_refusal = prepared_status;
+            }
         }
-        derived[ready] = prepared[ready].problem;
     }
     const uint64_t prepare_ns = shadowspill_monotonic_ns() - prepare_started;
-
-    if (status == SHADOWSPILL_STATUS_OK) {
+    if (evaluated_count == problem_count) {
         status = shadowspill_evaluate_pressurefit_problems(
             derived, problem_count, options, results
         );
+    } else if (evaluated_count > 0U) {
+        /* The evaluation takes its problems and results side by side, so the
+         * prepared ones are evaluated in a compact batch and each result is
+         * put back where its Program is; a result owns its buffers, and the
+         * copy takes them with it. */
+        ShadowSpillPressureFitProblemResult *compact =
+            calloc(evaluated_count, sizeof(*compact));
+        if (compact == NULL) {
+            status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        } else {
+            status = shadowspill_evaluate_pressurefit_problems(
+                derived, evaluated_count, options, compact
+            );
+            for (uint32_t slot = 0U; slot < evaluated_count; ++slot) {
+                results[evaluated[slot]] = compact[slot];
+            }
+            free(compact);
+        }
     } else {
-        /* One Program that cannot be prepared is a fact about that Program;
-         * the caller decides whether the rest still answer. */
-        results[ready].status = status;
+        status = first_refusal;
     }
-    for (uint32_t index = 0U; index < ready; ++index) {
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        if (prepared[index].problem.residency == NULL) {
+            continue;
+        }
         results[index].evict_ineligible_aliases =
             prepared[index].evict_ineligible_aliases;
         results[index].evict_ineligible_bytes =
@@ -1144,11 +1180,11 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
         prepared[index].resident_slice_bytes = NULL;
         prepared[index].evict_eligible = NULL;
     }
-
     const uint64_t teardown_started = shadowspill_monotonic_ns();
-    for (uint32_t index = 0U; index < ready; ++index) {
+    for (uint32_t index = 0U; index < problem_count; ++index) {
         prepared_problem_destroy(&prepared[index]);
     }
+    free(evaluated);
     free(prepared);
     free(derived);
     const uint64_t teardown_ns = shadowspill_monotonic_ns() - teardown_started;
