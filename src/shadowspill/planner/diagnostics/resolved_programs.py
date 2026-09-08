@@ -32,7 +32,8 @@ class IncumbentDiagnostic:
     `unplaceable` when the layout did not, `infeasible` when it did not
     simulate or admit here, and `error` when the library could not measure
     it. `found_by` and `found_at_capacity_bytes` say where the plan came
-    from, as the caller that handed it in knew it.
+    from: the candidate policy that first found it and the capacity it was
+    found at, read through any chain of hand-offs.
     """
 
     status: str
