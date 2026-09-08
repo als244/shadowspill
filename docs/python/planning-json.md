@@ -297,6 +297,7 @@ selected resolved program
 └── selected candidate policy
 
 all resolved programs
+├── incumbent — the plan to beat, when one was handed in
 └── candidate-policy evaluations
     ├── outcome
     ├── repair counts
@@ -321,6 +322,22 @@ did, alongside its makespan:
 A candidate whose status is `infeasible` with failure kind `unplaceable`
 reached no plan that fit, so it has no answer regardless of what it
 simulated.
+
+A resolved program that was handed the plan to beat — a plan for it already in
+hand, found at a smaller budget, say — carries an `incumbent` block saying
+what became of it at this capacity. The search measures it before any
+candidate runs and answers with it unless a candidate does strictly better,
+in which case the resolved program's `selected_candidate_policy.candidate_id`
+is `incumbent`. `null` on a resolved program handed none, and absent from
+records written before there was one.
+
+| Field | Meaning |
+|---|---|
+| `status` | `valid` when it simulated and its layout fit the pool; `unplaceable` when the layout did not; `infeasible` when it did not simulate or admit here; `error` when the library could not measure it. |
+| `makespan_ns` | What it simulated to at this capacity. |
+| `required_bytes` | Pool bytes its layout needed, when it was measured against a pool. |
+| `selected` | Whether it is the resolved program's answer. |
+| `schedule_digest`, `found_by`, `found_at_capacity_bytes` | Which plan it is, the candidate policy that found it, and the object capacity it was found at. |
 
 `work` counts what the search did — residency and schedule cache hits,
 simulation calls, admission calls — and `work.sections` says where its time

@@ -106,6 +106,7 @@ pressurefit_program(
     transfer_bandwidths=None,
     options=None,
     resolution_options=None,
+    incumbent=None,
     artifact_store_dir=None,
     plan_store_dir=None,
     verbose=True,
@@ -115,6 +116,20 @@ pressurefit_program(
     implementation_revision=None,
 ) -> AnnotatedProgramPlan
 ```
+
+`incumbent` is the plan to beat: an `AnnotatedProgramPlan` for the same
+program, found under another budget. The search measures it at the requested
+budget before any candidate runs and answers with it unless a candidate does
+strictly better, so the answer is never worse than the plan in hand. A plan
+that fits in less memory fits in more, which is what lets a budget sweep hand
+each budget the best plan found below it and never plan worse with more
+memory; `plan_step_search()` does exactly that. The plan report's diagnostics
+say what became of it under each resolved program, and a plan that won is
+reported as candidate `incumbent`. `plan_program()` and `pressurefit()` take
+the same argument as a `PressureFitResult`. The plan store treats it as
+provenance rather than identity: a request reads back the plan its search
+chose, whatever that search was handed, so a run that replans the budget it is
+about to execute gets the sweep's answer.
 
 Call `validate_schedule_feasibility()` to check whether at least one legal
 Program selection, over the same `resolution_options`, satisfies the

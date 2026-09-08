@@ -888,6 +888,14 @@ def summarize_selected_plan(
     device = result.simulation_config.devices[0]
     selected: dict[str, object] = {}
     for problem in result.diagnostics.resolved_programs:
+        # The plan to beat won: the answer is the plan the search was handed,
+        # described by where it came from rather than by a candidate policy.
+        if (
+            problem.selection_id == result.diagnostics.selected_selection_id
+            and problem.incumbent is not None
+            and problem.incumbent.selected
+        ):
+            selected = {"incumbent": problem.incumbent.to_dict()}
         for candidate in problem.candidate_evaluations:
             if candidate.candidate_id == result.diagnostics.selected_candidate_id:
                 selected = {

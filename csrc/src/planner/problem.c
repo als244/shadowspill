@@ -1078,6 +1078,7 @@ static ShadowSpillStatus prepare_problem(
         .placement = source->placement,
         .alias_json_names = source->alias_json_names,
         .task_json_names = source->task_json_names,
+        .incumbent = source->incumbent,
     };
     return SHADOWSPILL_STATUS_OK;
 }

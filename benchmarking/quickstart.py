@@ -322,6 +322,8 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
                     f"{point.makespan_seconds:8.3f} s"
                     f"   {tokens_per_step / point.makespan_seconds:>10,.0f} tok/s"
                 )
+                if point.incumbent_budget_bytes is not None:
+                    outcome += f"   plan from {gib(point.incumbent_budget_bytes)}"
             else:
                 outcome = point.status
             print(f"  {mark} {shape:>16}   {outcome}")
@@ -596,6 +598,16 @@ def main() -> int:
         " the shared bound skip measuring plans that cannot win, at the"
         " cost of selections that show up or not depending on timing",
     )
+    parser.add_argument(
+        "--incumbents",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="hand each budget the best plan found at a smaller budget of the"
+        " same program as the plan to beat, so no program plans worse with"
+        " more memory; a point that did not beat it answers with it and says"
+        " which budget it came from. --no-incumbents searches every point"
+        " alone, for comparing the two",
+    )
     arguments = parser.parse_args()
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
@@ -824,6 +836,7 @@ def main() -> int:
                     progress=progress,
                     force_fresh=False,
                     options=PressureFitOptions(deterministic=arguments.deterministic),
+                    incumbents=arguments.incumbents,
                     orderings=(
                         None
                         if arguments.orderings == "factors"

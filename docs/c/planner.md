@@ -29,6 +29,20 @@ resolved program: deciding which resolved programs exist, and in what order to
 try them, belongs above this API. The shared best-placed record is the only
 object that crosses that boundary.
 
+Either problem may carry `incumbent`, the plan to beat: an indexed schedule
+for that resolved program already in hand — found at a smaller capacity, say —
+or NULL. The search measures it at this capacity before any candidate runs,
+exactly as it measures a candidate's plan (simulated, admitted, placed against
+the pool), and answers with it unless a candidate does strictly better, so a
+search handed one never answers worse than it. A plan that places is offered
+to the shared record, which in the default mode bounds every candidate's
+placements from the start; in deterministic mode it changes only the answer.
+The result says what became of it (`incumbent_given`, `incumbent_status` in
+the candidate-status vocabulary, `incumbent_makespan_ns`,
+`incumbent_required_bytes`, `incumbent_selected`); when it is the answer,
+`selected_candidate_index` is `SHADOWSPILL_PLANNER_NO_INDEX` and the selected
+schedule and makespan are its own.
+
 Both problems carry two independent sets of admission facts. `admission`
 switches on the dynamic-pool replay, which rejects a candidate whose schedule
 that policy cannot place. `placement` supplies the same topology for measuring

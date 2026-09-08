@@ -359,3 +359,113 @@ def test_the_winner_may_be_any_ordering_of_a_geometry() -> None:
     assert winner is not None
     assert winner.ordering.label == "1x3rp"
     assert report.to_dict()["points"][1]["ordering_label"] == "1x3rp"
+
+
+def test_each_budget_is_handed_the_best_plan_below_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Budgets plan ascending, carry the best plan so far, and record an
+    answer that was the handed-in plan by the budget it came from."""
+
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    class Recurrent:
+        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+
+    class Step:
+        recurrent = Recurrent()
+        digest = "d0"
+        phase_timings_ns = (("total", 1),)
+
+    class Simulation:
+        def __init__(self, makespan_ns: int) -> None:
+            self.makespan_ns = makespan_ns
+
+    class Diagnostics:
+        def __init__(self, candidate: str) -> None:
+            self.selected_candidate_id = candidate
+
+    class Result:
+        def __init__(self, makespan_ns: int, candidate: str) -> None:
+            self.simulation = Simulation(makespan_ns)
+            self.diagnostics = Diagnostics(candidate)
+
+    class Plan:
+        def __init__(self, makespan_ns: int, candidate: str) -> None:
+            self.simulation = Simulation(makespan_ns)
+            self.result = Result(makespan_ns, candidate)
+
+    # what each budget's own search finds: 8 GiB is worse than 6 GiB, so it
+    # answers with the 6 GiB plan; 10 GiB beats it
+    found = {
+        6 << 30: (100, "tight-stall/packed-fit"),
+        8 << 30: (120, "x"),
+        10 << 30: (90, "y"),
+    }
+    handed: list[tuple[int, object]] = []
+
+    def search(*args: object, **kwargs: object) -> object:
+        budget = kwargs["execution_budget"]
+        assert isinstance(budget, int)
+        incumbent = kwargs["incumbent"]
+        handed.append((budget, incumbent))
+        makespan, candidate = found[budget]
+        if incumbent is not None and incumbent.simulation.makespan_ns <= makespan:
+            return Plan(incumbent.simulation.makespan_ns, "incumbent")
+        return Plan(makespan, candidate)
+
+    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "summarize_selected_plan", lambda result: None)
+    monkeypatch.setattr(module, "_graph_pair_outcomes", lambda result: ())
+    monkeypatch.setattr(module, "pressurefit_program", search)
+    report = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        opt=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=1,
+        sequence_length=1,
+        budgets=[(10 << 30, 1 << 30), (6 << 30, 1 << 30), (8 << 30, 1 << 30)],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+    )
+
+    # ascending, the first with nothing in hand, then the best so far
+    assert [budget for budget, _ in handed] == [6 << 30, 8 << 30, 10 << 30]
+    assert handed[0][1] is None
+    assert handed[1][1] is not None and handed[1][1].simulation.makespan_ns == 100
+    assert handed[2][1] is not None and handed[2][1].simulation.makespan_ns == 100
+    points = {point.execution_budget_bytes: point for point in report.points}
+    assert points[6 << 30].incumbent_budget_bytes is None
+    assert points[8 << 30].incumbent_budget_bytes == 6 << 30
+    assert points[8 << 30].makespan_seconds == 100 / 1e9
+    assert points[10 << 30].incumbent_budget_bytes is None
+    assert points[10 << 30].makespan_seconds == 90 / 1e9
+    serialized = report.to_dict()["points"]
+    assert isinstance(serialized, list)
+    assert [item["incumbent_budget_bytes"] for item in serialized] == [
+        None,
+        6 << 30,
+        None,
+    ]
+
+    # every budget alone: nothing is handed in, and 8 GiB keeps its own answer
+    handed.clear()
+    alone = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        opt=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=1,
+        sequence_length=1,
+        budgets=[(6 << 30, 1 << 30), (8 << 30, 1 << 30)],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+        incumbents=False,
+    )
+    assert [incumbent for _, incumbent in handed] == [None, None]
+    assert [point.makespan_seconds for point in alone.points] == [100 / 1e9, 120 / 1e9]
+    assert all(point.incumbent_budget_bytes is None for point in alone.points)

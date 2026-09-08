@@ -112,6 +112,16 @@ not remove that: one record is shared by every resolved program dispatched
 concurrently within a call. A caller that needs a reproducible answer sets
 `workers=1`.
 
+A problem may carry the plan to beat: a plan for that resolved program
+already in hand, found at a smaller capacity, say. The search measures it at
+this capacity before any candidate runs — simulated, admitted, placed against
+the pool — and answers with it unless a candidate does strictly better, so a
+search handed one never answers worse than it. A plan that fits in less
+memory fits in more, which is what lets a budget sweep hand each budget the
+best plan found below it and plan monotonically in memory. In the default
+mode the plan also seeds the shared record, so every candidate measures
+against it from the start; in deterministic mode it changes only the answer.
+
 ### Workers and the unit of work
 
 The unit of work is one **(resolved program, candidate) pair**. A worker takes
@@ -548,7 +558,9 @@ no topology can be told.
 
 Whatever the shared record holds at the end is the plan the search selected:
 selection reads the record rather than ranking the candidates a second time,
-because the record already owns a copy of the plan it names. The planner
+because the record already owns a copy of the plan it names. A problem's
+winner is the plan to beat it was handed unless a candidate did strictly
+better; a tie keeps the plan in hand, so an answer changes only for a reason. The planner
 decodes that one indexed schedule, evaluates its physical admission once
 more, and materialises the full `SimulationResult` — at the caller's full
 capacity, which is the machine the plan will actually run on. A plan built
@@ -591,6 +603,10 @@ PressureFit(program, initial, final, machine, options, admission):
                   if options.initial_placement == GREEDY:
                       seed = preplace_fitting_spill_objects(seed)
         setup:    facts, workspace = schedule_facts(problem), allocate()
+        incumbent: if the caller handed in a plan for this resolved program:
+                      result = simulate(plan, admit(plan))
+                      if place_lifetimes(result) fits the pool:
+                          best_placed.offer(name, plan); winner = plan
 
         for strategy in options.residency_strategies:
             reduce:  base = reduce_until_analytic_pressure_fits(seed, strategy)

@@ -21,9 +21,10 @@ from shadowspill.simulator.diagnostics import (
 from shadowspill.simulator.indexed import IndexedSimulationTemplate
 from shadowspill.status import ABI_VERSION, Status
 
-from ..admission.indexed import IndexedAdmissionFacts
+from ..admission.indexed import EncodedIndexedSchedule, IndexedAdmissionFacts
 from ..capi import (
     NO_INDEX,
+    CIndexedSchedule,
     CPressureFitCandidateDiagnostic,
     CPressureFitPreflightResult,
     CPressureFitProblemOptions,
@@ -142,6 +143,22 @@ class CompiledIndexedSchedule:
 
 
 @dataclass(frozen=True, slots=True)
+class CIncumbentOutcome:
+    """What became of the plan to beat, as the library reported it.
+
+    `status` is a candidate status code: valid, unplaceable, or the
+    infeasibility that stopped it. `makespan_ns` is what it simulated to at
+    this problem's capacity, zero if it never simulated; `required_bytes`
+    the pool its layout needed, zero if it was never measured.
+    """
+
+    status: int
+    makespan_ns: int
+    required_bytes: int
+    selected: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CProblemResult:
     selected_candidate_index: int | None
     selected_makespan_ns: int | None
@@ -162,6 +179,10 @@ class CProblemResult:
     evict_ineligible_bytes: int
     resident_slice_bytes: int
     resident_aliases: tuple[int, ...]
+    #: The plan to beat's outcome, when the problem carried one. A selected
+    #: incumbent is the answer with no candidate index: `selected_makespan_ns`
+    #: and `selected_schedule` are its own.
+    incumbent: CIncumbentOutcome | None = None
 
     def __post_init__(self) -> None:
         repairs = PressureFitRepairDiagnostics()
@@ -463,12 +484,52 @@ def _name_arrays(
     return alias_names, task_names
 
 
+def _indexed_schedule(
+    schedule: EncodedIndexedSchedule,
+) -> tuple[CIndexedSchedule, tuple[object, ...]]:
+    """A schedule as the library reads it, with the arrays it borrows."""
+
+    def u32(values: tuple[int, ...]) -> object:
+        return (ctypes.c_uint32 * max(1, len(values)))(*values)
+
+    def u8(values: tuple[int, ...]) -> object:
+        return (ctypes.c_uint8 * max(1, len(values)))(*values)
+
+    buffers = (
+        u32(schedule.action_trigger_tasks),
+        u32(schedule.action_aliases),
+        u8(schedule.action_kinds),
+        u32(schedule.initial_aliases),
+        u8(schedule.initial_locations),
+        u32(schedule.final_aliases),
+        u8(schedule.final_locations),
+    )
+    value = CIndexedSchedule(
+        action_count=len(schedule.action_kinds),
+        action_trigger_tasks=buffers[0],
+        action_aliases=buffers[1],
+        action_kinds=buffers[2],
+        initial_count=len(schedule.initial_aliases),
+        initial_aliases=buffers[3],
+        initial_locations=buffers[4],
+        final_count=len(schedule.final_aliases),
+        final_aliases=buffers[5],
+        final_locations=buffers[6],
+    )
+    return value, buffers
+
+
 def _program_problem(
     simulation: IndexedSimulationTemplate,
     admission: IndexedAdmissionFacts | None,
     placement: IndexedAdmissionFacts | None = None,
+    incumbent: EncodedIndexedSchedule | None = None,
 ) -> tuple[CPressureFitProgramProblem, tuple[object, ...]]:
     alias_names, task_names = _name_arrays(simulation)
+    carried: tuple[object, ...] = ()
+    incumbent_value = None
+    if incumbent is not None:
+        incumbent_value, carried = _indexed_schedule(incumbent)
     device_ranks = {
         device_id: rank for rank, device_id in enumerate(sorted(simulation.device_ids))
     }
@@ -486,8 +547,11 @@ def _program_problem(
         placement=(ctypes.pointer(placement.value) if placement is not None else None),
         alias_json_names=alias_names,
         task_json_names=task_names,
+        incumbent=(
+            ctypes.pointer(incumbent_value) if incumbent_value is not None else None
+        ),
     )
-    return problem, (alias_names, task_names, priorities)
+    return problem, (alias_names, task_names, priorities, incumbent_value, carried)
 
 
 def _problem_options(
@@ -715,16 +779,25 @@ def _decode_problem_result(
                 )
             )
         selected = int(problem_result.selected_candidate_index)
+        incumbent = (
+            CIncumbentOutcome(
+                status=int(problem_result.incumbent_status),
+                makespan_ns=int(problem_result.incumbent_makespan_ns),
+                required_bytes=int(problem_result.incumbent_required_bytes),
+                selected=bool(problem_result.incumbent_selected),
+            )
+            if problem_result.incumbent_given
+            else None
+        )
+        answered = selected != NO_INDEX or (
+            incumbent is not None and incumbent.selected
+        )
         return CProblemResult(
             selected_candidate_index=None if selected == NO_INDEX else selected,
             selected_makespan_ns=(
-                None
-                if selected == NO_INDEX
-                else int(problem_result.selected_makespan_ns)
+                int(problem_result.selected_makespan_ns) if answered else None
             ),
-            selected_schedule=(
-                None if selected == NO_INDEX else _copy_schedule(problem_result)
-            ),
+            selected_schedule=_copy_schedule(problem_result) if answered else None,
             candidates=tuple(candidates),
             repairs=_decode_repairs(problem_result.repairs),
             work=_decode_work(problem_result.work),
@@ -746,6 +819,7 @@ def _decode_problem_result(
                 if problem_result.alias_evict_eligible
                 else ()
             ),
+            incumbent=incumbent,
         )
     finally:
         library.shadowspill_pressurefit_problem_result_destroy(
@@ -759,6 +833,7 @@ def evaluate_program_problems(
             IndexedSimulationTemplate,
             IndexedAdmissionFacts | None,
             IndexedAdmissionFacts | None,
+            EncodedIndexedSchedule | None,
         ],
         ...,
     ],
@@ -773,7 +848,8 @@ def evaluate_program_problems(
     independent -- `options.workers` sizes the threads whether there is one
     resolved program here or five. Sharing one call is also what shares the
     placement record between them: a plan placed under any of these bounds
-    the search under every other.
+    the search under every other. Each problem may carry the plan to beat,
+    which the library measures before any candidate runs.
     """
 
     if not problems:
@@ -786,8 +862,8 @@ def evaluate_program_problems(
     compiled = (CPressureFitProgramProblem * len(problems))()
     # Held until the call returns: the library borrows every array in them.
     buffers: list[object] = []
-    for index, (simulation, admission, placement) in enumerate(problems):
-        value, held = _program_problem(simulation, admission, placement)
+    for index, (simulation, admission, placement, incumbent) in enumerate(problems):
+        value, held = _program_problem(simulation, admission, placement, incumbent)
         compiled[index] = value
         buffers.append(held)
     results = (CPressureFitProblemResult * len(problems))()
@@ -807,12 +883,15 @@ def evaluate_program_problems(
         _decode_problem_result(
             library, int(results[index].status), results[index], simulation
         )
-        for index, (simulation, _admission, _placement) in enumerate(problems)
+        for index, (simulation, _admission, _placement, _incumbent) in enumerate(
+            problems
+        )
     )
 
 
 __all__ = [
     "CCandidateDiagnostic",
+    "CIncumbentOutcome",
     "CPreflightResult",
     "CProblemResult",
     "CompiledIndexedSchedule",
