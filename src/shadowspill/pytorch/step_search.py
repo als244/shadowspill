@@ -57,6 +57,9 @@ _INFEASIBLE = (
     SimulationInfeasibleError,
 )
 _EXHAUSTED = (PressureFitSearchExhaustedError, PlanSearchExhaustedError)
+# a point the planner refuses, for whatever reason it gives, is recorded and
+# the sweep goes on; ProblemPreparationError is one such RuntimeError
+_REJECTED = (RuntimeError,)
 
 
 def _device_exhausted(error: BaseException) -> bool:
@@ -685,6 +688,8 @@ def plan_step_search(
                     status, failure = "search_exhausted", str(error)
                 except _INFEASIBLE as error:
                     status, failure = "infeasible", str(error)
+                except _REJECTED as error:
+                    status, failure = "rejected", str(error)
                 else:
                     makespan = plan.simulation.makespan_ns / 1e9
                     summary = summarize_selected_plan(plan.result)

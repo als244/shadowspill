@@ -206,6 +206,44 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
         )
 
 
+def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch import step_search as module
+
+    class Recurrent:
+        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+
+    class Step:
+        recurrent = Recurrent()
+        digest = "d0"
+        phase_timings_ns = (("total", 1),)
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("PressureFit problem rejected the selected facts")
+
+    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "pressurefit_program", refuse)
+    report = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        opt=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=1,
+        sequence_length=1,
+        budgets=[(6 << 30, 1 << 30), (12 << 30, 1 << 30)],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+    )
+    assert [point.status for point in report.points] == ["rejected"] * len(
+        report.points
+    )
+    assert all("rejected the selected facts" in (p.error or "") for p in report.points)
+    assert report.winner_plans == {}
+
+
 def test_the_resolution_options_reach_every_point(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

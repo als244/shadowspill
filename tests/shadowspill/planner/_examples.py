@@ -123,7 +123,26 @@ def mutation_program() -> Program:
     )
 
 
-def recomputation_program() -> Program:
+def recomputation_program(recompute_workspace_bytes: int = 0) -> Program:
+    """A save-or-recompute choice; the recomputation may need its own workspace.
+
+    With a workspace, the recomputing task runs on a profile of its own, so a
+    capacity below it makes that resolution alone impossible to prepare.
+    """
+
+    recompute_profile = "forward_profile"
+    profiles = (
+        TaskProfile("forward_profile", 100, 0, "forward_abi"),
+        TaskProfile("middle_profile", 1_000, 0, "middle_abi"),
+        TaskProfile("consume_profile", 100, 0, "consume_abi"),
+    )
+    if recompute_workspace_bytes:
+        recompute_profile = "recompute_profile"
+        profiles += (
+            TaskProfile(
+                recompute_profile, 100, recompute_workspace_bytes, "forward_abi"
+            ),
+        )
     return Program(
         devices=(DEVICE,),
         alias_groups=(
@@ -136,11 +155,7 @@ def recomputation_program() -> Program:
             ObjectSpec("activation", "activation_storage", 0, 100),
             ObjectSpec("temporary", "temporary_storage", 0, 100),
         ),
-        profiles=(
-            TaskProfile("forward_profile", 100, 0, "forward_abi"),
-            TaskProfile("middle_profile", 1_000, 0, "middle_abi"),
-            TaskProfile("consume_profile", 100, 0, "consume_abi"),
-        ),
+        profiles=profiles,
         tasks=(
             TaskSpec(
                 "forward_save",
@@ -159,7 +174,7 @@ def recomputation_program() -> Program:
             TaskSpec(
                 "forward_recompute",
                 COMPUTE,
-                "forward_profile",
+                recompute_profile,
                 dependencies=("middle",),
                 inputs=("input",),
                 outputs=("activation",),
