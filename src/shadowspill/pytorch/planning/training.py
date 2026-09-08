@@ -26,6 +26,7 @@ from shadowspill.planner import (
     PressureFitSearchExhaustedError,
     validate_schedule_feasibility,
 )
+from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.program import PressureFitProgram, StepProgram
@@ -721,8 +722,13 @@ def pressurefit_training_programs(
     stores: PlanningStores,
     timer: PlanningTimer,
     resolution_options: tuple[Fraction, ...] | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> TrainingSelections:
-    """Resolve recurrent and, when required, lazy-state first-step selections."""
+    """Resolve recurrent and, when required, lazy-state first-step selections.
+
+    `incumbent` is the plan to beat for the recurrent program; the first-step
+    program, when there is one, is searched on its own.
+    """
 
     needs_initial = any(
         item.created_on_first_step for item in programs.initial.optimizer_objects
@@ -768,6 +774,7 @@ def pressurefit_training_programs(
                     config=config,
                     options=options,
                     resolution_options=resolution_options,
+                    incumbent=incumbent,
                     placement=placement_facts(
                         programs.recurrent_admission,
                         scratch_reserve_bytes=scratch_reserve,
@@ -1499,8 +1506,13 @@ def build_training(
     minimum_object_bytes_evict_eligible: int = 0,
     deterministic: bool = False,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: AnnotatedProgramPlan | None = None,
 ) -> PlannedTrainStep:
-    """Compose the independently callable training-planning boundaries."""
+    """Compose the independently callable training-planning boundaries.
+
+    `incumbent` is the plan to beat for the recurrent program, as
+    :func:`shadowspill.planner.plan_program` takes it.
+    """
 
     started = time.perf_counter_ns()
     # Validated before any capture; the library's default when none are
@@ -1557,6 +1569,7 @@ def build_training(
             stores=artifacts,
             timer=timer,
             resolution_options=chosen,
+            incumbent=None if incumbent is None else incumbent.result,
         )
         executable = compile_selected_training_tasks(
             profiled,

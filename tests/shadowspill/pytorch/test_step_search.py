@@ -451,6 +451,16 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         None,
     ]
 
+    # the winning plan of each budget is kept for the run that follows
+    assert sorted(report.winner_plans) == [
+        (6 << 30, 1 << 30),
+        (8 << 30, 1 << 30),
+        (10 << 30, 1 << 30),
+    ]
+    assert report.winner_plans[(8 << 30, 1 << 30)].simulation.makespan_ns == 100
+    assert report.winner_plans[(10 << 30, 1 << 30)].simulation.makespan_ns == 90
+    assert "winner_plans" not in report.to_dict()
+
     # every budget alone: nothing is handed in, and 8 GiB keeps its own answer
     handed.clear()
     alone = plan_step_search(
