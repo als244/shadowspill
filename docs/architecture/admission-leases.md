@@ -50,8 +50,7 @@ plainly what a repair can and cannot change.
 
 ### How the setup is built
 
-Two compilations, in order. Figures below are one llama3 step, 102 tasks and
-1,978 aliases, for scale.
+Two compilations, in order.
 
 **1. Resolve the task set.** `selected_tasks(selections)` picks one variant per
 alternative, yielding the concrete tasks. Alternatives are *not* fewer or more
@@ -175,8 +174,8 @@ aliases that no longer own anything.
 Operations, reported as indexed columns, plus two per-lease columns naming the
 operation that creates each lease and the one that retires it. Those two are
 what let a reader work lease by lease: a lease's lifetime is decided by
-exactly those operations, and most operations decide nothing. On one llama3
-step that is 17,250 leases against 57,776 operations.
+exactly those operations, and most operations decide nothing; there are
+several operations to every lease.
 
 Besides the operations, four maps, each the subset of the walk with one
 meaning:
@@ -227,9 +226,9 @@ different routes and drawing on different budgets.
 
 **Caller-owned outputs.** The frontend declares them in `final_residency`;
 admission resolves each to its final lease, excludes it from the fixed slice,
-and counts it in `dynamic_reserve_bytes`. Measured on this corpus that is one
-four-byte scalar per accumulation round - the loss the training loop reads -
-so 4 to 16 bytes per plan.
+and counts it in `dynamic_reserve_bytes`. For a training step that is
+typically the loss the training loop reads, one scalar per accumulation
+round.
 
 **Provider-owned persistent allocations.** Profiling classifies an allocation
 as provider state when it outlives its task and is not a returned tensor
