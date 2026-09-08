@@ -176,11 +176,9 @@ at every boundary, and running ahead hides whatever the lead covers. The
 field is the shortfall, not the cost of the work. It is zero wherever the
 frontend runs ahead of the device, because a task it has already reached has
 its readiness marker on the stream before the previous task ends. It is never
-*exactly* zero, because two consecutive event records on a stream sit about
-half a microsecond apart no matter what lies between them -- measured over
-one olmoe step that floor ran from 0.24 microseconds at the lowest boundary
-to 1.22 at the upper quartile -- so read a microsecond or two as nothing and
-anything above it as real. The distribution is what to read, not the total:
+*exactly* zero, because two consecutive event records on a stream sit a
+fraction of a microsecond apart no matter what lies between them, so read a
+microsecond or two as nothing and anything above it as real. The distribution is what to read, not the total:
 a rising median means the frontend is losing its lead everywhere, and a
 heavy tail means it is losing it somewhere specific, which the compute
 records say where: `compute_reached_at_seconds` minus

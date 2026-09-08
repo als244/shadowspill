@@ -161,13 +161,11 @@ quarter:
 0%, 25%, 50%, 75%, 100%
 ```
 
-Finer options are the caller's to name. Eighths were measured on the
-llama3 frontier (293 points, deterministic search): the winner sat on an odd
-eighth at 67 points, beating the best quarter rung by a median of 0.00 % and
-a mean of 0.77 %, and only one frontier winner needed one (+2.1 % at 8 GiB),
-for 1.75x the search wall. Under the deterministic gate a rung answers the
-same in every set of options it belongs to, so a superset is never worse than
-its subset, only slower. Shares are exact fractions in $[0, 1]$, sorted and
+Finer options are the caller's to name. A finer ladder can only find plans
+between the quarter rungs, and it costs a search per extra rung, so it is a
+trade of planning time for makespan that the caller makes knowingly. Under
+the deterministic gate a rung answers the same in every set of options it
+belongs to, so a superset is never worse than its subset, only slower. Shares are exact fractions in $[0, 1]$, sorted and
 deduplicated, and the count a share selects is rounded half up, so two shares
 of a small group count can name the same selection, which is then planned
 once.

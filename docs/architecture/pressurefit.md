@@ -521,9 +521,9 @@ Every change is monotonic and counts against `max_repair_attempts`, 256 by
 default. A non-capacity contradiction is rejected directly. A move the
 schedule already carries is not repeated, because repeating it would loop.
 
-The default is 256 rather than 64 on measured grounds: over the 2,520-point
-corpus, raising it changes no candidate's status and improves the mean
-makespan by 0.40%, with the wins concentrated where memory is tightest.
+The default is generous on purpose: a candidate that runs out of repairs
+answers with what it has, and the plans that need the most repairs are the
+ones where memory is tightest, which are the plans most worth finishing.
 It buys that with planning time, which is what the workers pay for.
 
 Reductions this section triggers are measured inside it, so `repair_ns`

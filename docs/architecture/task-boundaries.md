@@ -117,9 +117,10 @@ So a task whose allocations reuse ranges held by a transfer cannot leave its
 opening boundary until that trigger task has finished executing. The
 dispatcher is therefore pinned to device progress, not merely to the
 worker's, and the lead it holds over the stream stays near zero however far
-ahead the host could otherwise run. On an OLMoE step, this spin is 3.15 s of
-a 4.53 s step while the stream's wait for the same ranges is 0.03 s: the host
-absorbs the wait almost entirely.
+ahead the host could otherwise run. The spin is where the wait lands: the
+host absorbs almost all of it, and the stream's own wait for the same ranges
+stays small, because the dispatcher stops issuing before the stream would
+have to stop executing.
 
 ### `shadowspill_after_task_handle`
 
