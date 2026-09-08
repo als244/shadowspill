@@ -35,8 +35,13 @@ def select_program(
     artifact_store: ArtifactStore,
     verbose: bool,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> AnnotatedProgramPlan:
-    """Select and physically admit one reusable Program."""
+    """Select and physically admit one reusable Program.
+
+    `incumbent` is the plan to beat, a result for the same Program the
+    search answers with unless a candidate does strictly better.
+    """
 
     started = time.perf_counter_ns()
     config, facts = program.pressurefit_inputs(
@@ -62,6 +67,7 @@ def select_program(
             config=candidate_config,
             options=selected_options,
             resolution_options=resolution_options,
+            incumbent=incumbent,
             # The pool topology, so the search can measure whether a plan
             # has a layout that fits. Not passed as `admission`: that
             # switches on the dynamic-pool replay, and the fixed-layout

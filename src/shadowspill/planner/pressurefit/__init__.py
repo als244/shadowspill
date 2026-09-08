@@ -25,6 +25,7 @@ from ..best import BestPlaced
 from ..capi import planner_api
 from ..recomputation import Resolution
 from ..request import PressureFitOptions
+from ..result import PressureFitResult
 from .candidates import CProblemResult
 from .search import (
     SelectionProblem,
@@ -86,6 +87,7 @@ def evaluate_resolutions(
     placement: AdmissionFacts | None = None,
     best: BestPlaced | None = None,
     progress: Callable[[str], None] | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> tuple[tuple[SelectionProblem, CProblemResult | None], ...]:
     """Plan every resolved program: each one's candidate policies, one call.
 
@@ -114,6 +116,7 @@ def evaluate_resolutions(
             placement=placement,
             resolutions=resolutions,
             progress=progress,
+            incumbent=incumbent,
         )
     )
     results = run_problems(problems, options, best=best)

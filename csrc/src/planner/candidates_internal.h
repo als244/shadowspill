@@ -63,6 +63,12 @@ int shadowspill_schedule_storage_copy(
     const ShadowSpillScheduleStorage *source
 );
 
+/* Hold a copy of a schedule that arrived from outside the search. */
+int shadowspill_schedule_storage_assign(
+    ShadowSpillScheduleStorage *destination,
+    const ShadowSpillIndexedSchedule *source
+);
+
 /* Records `record` and keeps its own copy of `plan` if it beats what is
  * held, returning non-zero if it did. Internal because the plan it keeps is
  * an internal storage type; the rest of the gate is public. */

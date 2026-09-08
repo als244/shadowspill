@@ -33,12 +33,16 @@ from shadowspill.simulator.indexed import (
 
 from ..admission import AdmissionFacts
 from ..admission.indexed import (
+    EncodedIndexedSchedule,
     IndexedAdmissionFacts,
+    encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
 from ..best import BestPlaced
 from ..diagnostics import (
+    INCUMBENT_CANDIDATE_ID,
+    IncumbentDiagnostic,
     PressureFitDiagnostics,
     PressureFitSectionTiming,
     PressureFitWorkDiagnostics,
@@ -76,6 +80,9 @@ class SelectionProblem:
     #: the dynamic-pool replay, which rejects plans certified fixed
     #: placement accepts.
     indexed_placement: IndexedAdmissionFacts | None = None
+    #: The plan to beat, encoded against this problem, when the caller has
+    #: one for this resolution.
+    incumbent: EncodedIndexedSchedule | None = None
 
 
 def _selection_id(selections: tuple[TaskAlternativeChoice, ...]) -> str:
@@ -119,8 +126,14 @@ def build_problems(
     placement: AdmissionFacts | None = None,
     resolutions: tuple[Resolution, ...],
     progress: Callable[[str], None] | None,
+    incumbent: PressureFitResult | None = None,
 ) -> tuple[SelectionProblem, ...]:
-    """Project each resolution without Python residency matrices."""
+    """Project each resolution without Python residency matrices.
+
+    `incumbent` is a plan already in hand for this Program; it is encoded
+    against the resolution it was found for, and a search over resolutions
+    that do not include that one carries no plan to beat.
+    """
 
     problems: list[SelectionProblem] = []
     started = time.perf_counter_ns()
@@ -134,11 +147,18 @@ def build_problems(
             initial_residency=initial_residency,
             final_residency=final_residency,
         )
+        carried = (
+            encode_schedule(incumbent.schedule, indexed_template)
+            if incumbent is not None
+            and _same_resolution(incumbent.selections, selections)
+            else None
+        )
         problems.append(
             SelectionProblem(
                 selections=selections,
                 selection_id=_selection_id(selections),
                 indexed_template=indexed_template,
+                incumbent=carried,
                 indexed_admission=(
                     index_admission_facts(admission, indexed_template)
                     if admission is not None
@@ -159,6 +179,43 @@ def build_problems(
                 f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
             )
     return tuple(problems)
+
+
+def _same_resolution(
+    left: tuple[TaskAlternativeChoice, ...], right: tuple[TaskAlternativeChoice, ...]
+) -> bool:
+    """Whether two selections fix every alternative the same way."""
+
+    return {item.group_id: item.option_id for item in left} == {
+        item.group_id: item.option_id for item in right
+    }
+
+
+_INCUMBENT_STATUS = {0: "valid", 2: "infeasible", 3: "infeasible", 7: "unplaceable"}
+
+
+def _incumbent_diagnostic(
+    result: CProblemResult, incumbent: PressureFitResult | None
+) -> IncumbentDiagnostic | None:
+    """What became of the plan to beat under one problem, if it carried one."""
+
+    outcome = result.incumbent
+    if outcome is None:
+        return None
+    devices = incumbent.simulation_config.devices if incumbent is not None else ()
+    return IncumbentDiagnostic(
+        status=_INCUMBENT_STATUS.get(outcome.status, "error"),
+        makespan_ns=outcome.makespan_ns or None,
+        required_bytes=outcome.required_bytes or None,
+        selected=outcome.selected,
+        schedule_digest=None if incumbent is None else incumbent.schedule.digest,
+        found_by=(
+            None if incumbent is None else incumbent.diagnostics.selected_candidate_id
+        ),
+        found_at_capacity_bytes=(
+            devices[0].capacity_bytes if len(devices) == 1 else None
+        ),
+    )
 
 
 def _preflight_error(
@@ -258,6 +315,7 @@ def run_problems(
                 problem.indexed_template,
                 problem.indexed_admission,
                 problem.indexed_placement,
+                problem.incumbent,
             )
             for problem in problems
         ),
@@ -278,6 +336,7 @@ def finish_pressurefit(
     best: BestPlaced | None = None,
     *,
     placement: AdmissionFacts | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> PressureFitResult:
     """Decode the plan the search placed, and its diagnostics.
 
@@ -288,10 +347,15 @@ def finish_pressurefit(
     problems again here would be a second answer to a question already
     answered, and the two can disagree: a problem's own winner is the best
     plan *it* placed, which is not the best plan placed.
+
+    `incumbent` is the plan to beat the problems were built with, so its
+    outcome can say where it came from.
     """
 
     resolved_programs: list[ResolvedProgramDiagnostics] = []
-    selected: tuple[int, int, CProblemResult] | None = None
+    selected: tuple[tuple[int, int, int], int, int | None, CProblemResult] | None = (
+        None
+    )
     held = None if best is None else best.read()
     for problem_index, (problem, result) in enumerate(
         zip(problems, results, strict=True)
@@ -304,11 +368,20 @@ def finish_pressurefit(
             )
             for candidate in result.candidates
         )
+        answered_by_incumbent = (
+            result.incumbent is not None and result.incumbent.selected
+        )
         selected_candidate = (
             None
             if result.selected_candidate_index is None
             else candidates[result.selected_candidate_index]
         )
+        if answered_by_incumbent:
+            selected_id: str | None = INCUMBENT_CANDIDATE_ID
+        elif selected_candidate is not None:
+            selected_id = selected_candidate.candidate_id
+        else:
+            selected_id = None
         fetched_bytes, evicted_bytes = _selected_traffic(program, result)
         resolved_programs.append(
             ResolvedProgramDiagnostics(
@@ -317,15 +390,9 @@ def finish_pressurefit(
                     TaskAlternativeChoiceDiagnostic(item.group_id, item.option_id)
                     for item in problem.selections
                 ),
-                selected_candidate_id=(
-                    None
-                    if selected_candidate is None
-                    else selected_candidate.candidate_id
-                ),
+                selected_candidate_id=selected_id,
                 selected_makespan_ns=(
-                    None
-                    if selected_candidate is None
-                    else selected_candidate.makespan_ns
+                    None if selected_id is None else result.selected_makespan_ns
                 ),
                 candidate_evaluations=candidates,
                 work=result.work,
@@ -335,22 +402,29 @@ def finish_pressurefit(
                 evict_ineligible_bytes=result.evict_ineligible_bytes,
                 fetched_bytes=fetched_bytes,
                 evicted_bytes=evicted_bytes,
+                incumbent=_incumbent_diagnostic(result, incumbent),
             )
         )
-        if result.selected_candidate_index is None:
+        if selected_id is None:
             continue
         assert result.selected_makespan_ns is not None
-        candidate_ordinal = (
-            problem_index * len(result.candidates) + result.selected_candidate_index
-        )
         # The record decides; a problem is a candidate for decoding only
         # if it is holding the plan the record names. Ties fall to the
-        # earlier problem, so the answer does not depend on arrival order.
+        # earlier problem, so the answer does not depend on arrival order,
+        # and within a problem to the plan to beat, which came before every
+        # candidate.
         if held is not None and result.selected_makespan_ns != held.makespan_ns:
             continue
-        key = (result.selected_makespan_ns, candidate_ordinal)
-        if selected is None or key < (selected[0], selected[1]):
-            selected = (key[0], key[1], result)
+        candidate_index = (
+            None if answered_by_incumbent else result.selected_candidate_index
+        )
+        key = (
+            result.selected_makespan_ns,
+            problem_index,
+            -1 if candidate_index is None else candidate_index,
+        )
+        if selected is None or key < selected[0]:
+            selected = (key, problem_index, candidate_index, result)
 
     if selected is None:
         frozen = tuple(
@@ -386,9 +460,7 @@ def finish_pressurefit(
             diagnostics=frozen,
         )
 
-    _makespan, ordinal, result = selected
-    per_problem = len(result.candidates)
-    problem_index, candidate_index = divmod(ordinal, per_problem)
+    _key, problem_index, candidate_index, result = selected
     problem = problems[problem_index]
     indexed_schedule = result.selected_schedule
     assert indexed_schedule is not None
@@ -420,7 +492,11 @@ def finish_pressurefit(
         admission=simulation_admission,
     )
     selected_ns = time.perf_counter_ns() - selected_started
-    selected_diagnostic = result.candidates[candidate_index]
+    selected_candidate_id = (
+        INCUMBENT_CANDIDATE_ID
+        if candidate_index is None
+        else result.candidates[candidate_index].candidate_id
+    )
     aggregate_work = PressureFitWorkDiagnostics()
     for problem_result in results:
         aggregate_work += problem_result.work
@@ -434,7 +510,7 @@ def finish_pressurefit(
         ),
     )
     diagnostics = PressureFitDiagnostics(
-        selected_candidate_id=selected_diagnostic.candidate_id,
+        selected_candidate_id=selected_candidate_id,
         selected_selection_id=problem.selection_id,
         selected_makespan_ns=simulation.makespan_ns,
         resolved_programs=tuple(resolved_programs),

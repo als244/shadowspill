@@ -37,6 +37,8 @@ from shadowspill.planner import (
     StepDataOrdering,
     pressurefit_program,
 )
+from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planner.diagnostics import INCUMBENT_CANDIDATE_ID
 from shadowspill.planner.diagnostics.plan import (
     PlanSummary,
     summarize_selected_plan,
@@ -280,6 +282,10 @@ class StepSearchPoint:
     #: Named for the graph-pair choices it makes rather than "selections",
     #: which in this codebase also names a candidate policy.
     graph_pair_selections: tuple[GraphPairOutcome, ...] = ()
+    #: The smaller budget whose plan this point answered with, when the
+    #: search was handed it and did not beat it; `None` when this point's
+    #: own search won, or when no plan was handed in.
+    incumbent_budget_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +423,7 @@ class StepSearchReport:
                     "graph_pair_selections": [
                         outcome.as_dict() for outcome in item.graph_pair_selections
                     ],
+                    "incumbent_budget_bytes": item.incumbent_budget_bytes,
                 }
                 for item in self.points
             ],
@@ -469,6 +476,7 @@ def plan_step_search(
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbents: bool = True,
     artifact_store_dir: str | PathLike[str] | None = None,
     plan_store_dir: str | PathLike[str] | None = None,
     verbose: bool = False,
@@ -509,6 +517,14 @@ def plan_step_search(
     over, with the meaning it has for :func:`plan_step`; ``None`` is the
     library's default of every quarter. Options that are not valid are
     rejected before any geometry is built.
+
+    ``incumbents`` hands each point the best plan found at a smaller budget
+    of the same program, as the plan to beat: budgets are planned ascending,
+    a plan that fits in less memory fits in more, and the search answers
+    with it unless it does strictly better, so no program plans worse with
+    more memory. A point that answered with a handed-in plan records the
+    budget it came from as ``incumbent_budget_bytes``. ``False`` searches
+    every point alone, which is how the two are compared.
 
     ``plan_store_dir`` keeps every point's plan records apart from the
     artifact store, so a search can reuse another run's captures, profiles
@@ -626,11 +642,18 @@ def plan_step_search(
                     transfer_bandwidths=step.recurrent.transfer_bandwidths,
                 )
             )
-            for execution_budget, spill_budget in budgets:
+            # Budgets ascending, so the best plan found at a smaller budget
+            # is in hand for every larger one: a plan that fits in less
+            # memory fits in more, and the search answers with it unless it
+            # does strictly better. `carried` is that plan and the budget it
+            # was found at, which a point that answers with it records.
+            carried: tuple[int, AnnotatedProgramPlan] | None = None
+            for execution_budget, spill_budget in sorted(budgets):
                 point_index += 1
                 search_started = time.perf_counter()
                 status, makespan, summary, failure = "succeeded", None, None, None
                 outcomes: tuple[GraphPairOutcome, ...] = ()
+                inherited: int | None = None
                 try:
                     plan = pressurefit_program(
                         step.recurrent,
@@ -639,6 +662,9 @@ def plan_step_search(
                         transfer_bandwidths=transfer_bandwidths,
                         options=options,
                         resolution_options=chosen,
+                        incumbent=(
+                            carried[1] if incumbents and carried is not None else None
+                        ),
                         artifact_store_dir=artifact_store_dir,
                         plan_store_dir=plan_store_dir,
                         verbose=verbose,
@@ -654,6 +680,21 @@ def plan_step_search(
                     makespan = plan.simulation.makespan_ns / 1e9
                     summary = summarize_selected_plan(plan.result)
                     outcomes = _graph_pair_outcomes(plan.result)
+                    if (
+                        carried is not None
+                        and plan.result.diagnostics.selected_candidate_id
+                        == INCUMBENT_CANDIDATE_ID
+                    ):
+                        inherited = carried[0]
+                    if (
+                        carried is None
+                        or plan.simulation.makespan_ns
+                        < carried[1].simulation.makespan_ns
+                    ):
+                        carried = (
+                            execution_budget if inherited is None else inherited,
+                            plan,
+                        )
                 announce(
                     f"point {point_index}/{point_total}: {name} @"
                     f" {execution_budget >> 30} GiB -> {status}"
@@ -672,6 +713,7 @@ def plan_step_search(
                         error=failure,
                         search_seconds=time.perf_counter() - search_started,
                         graph_pair_selections=outcomes,
+                        incumbent_budget_bytes=inherited,
                     )
                 )
     return StepSearchReport(

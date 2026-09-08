@@ -586,6 +586,43 @@ static int rule_valid(uint8_t rule) {
     return rule <= SHADOWSPILL_FETCH_DEMAND;
 }
 
+/* The plan to beat indexes this problem's aliases and tasks, and names
+ * only kinds and locations the schedule vocabulary has. */
+static int incumbent_valid(const ShadowSpillPressureFitProblem *problem) {
+    const ShadowSpillIndexedSchedule *plan = problem->incumbent;
+    const uint32_t aliases = problem->residency->alias_count;
+    const uint32_t tasks = problem->simulation->task_count;
+    if ((plan->action_count != 0U &&
+         (plan->action_trigger_tasks == NULL || plan->action_aliases == NULL ||
+          plan->action_kinds == NULL)) ||
+        (plan->initial_count != 0U &&
+         (plan->initial_aliases == NULL || plan->initial_locations == NULL)) ||
+        (plan->final_count != 0U &&
+         (plan->final_aliases == NULL || plan->final_locations == NULL))) {
+        return 0;
+    }
+    for (uint32_t index = 0U; index < plan->action_count; ++index) {
+        if (plan->action_trigger_tasks[index] >= tasks ||
+            plan->action_aliases[index] >= aliases ||
+            plan->action_kinds[index] > SHADOWSPILL_MEMORY_FETCH) {
+            return 0;
+        }
+    }
+    for (uint32_t index = 0U; index < plan->initial_count; ++index) {
+        if (plan->initial_aliases[index] >= aliases ||
+            plan->initial_locations[index] > 1U) {
+            return 0;
+        }
+    }
+    for (uint32_t index = 0U; index < plan->final_count; ++index) {
+        if (plan->final_aliases[index] >= aliases ||
+            plan->final_locations[index] > 1U) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int problem_valid(
     const ShadowSpillPressureFitProblem *problem,
     const ShadowSpillPressureFitProblemOptions *options
@@ -631,7 +668,7 @@ static int problem_valid(
             return 0;
         }
     }
-    return 1;
+    return problem->incumbent == NULL || incumbent_valid(problem);
 }
 
 static int simulation_workspace_create(
@@ -3119,7 +3156,13 @@ static int worker_workspace_for(SearchWorker *worker, uint32_t index) {
     return 0;
 }
 
-/* Record a plan as this problem's answer when it beats what is held. */
+/* The plan to beat, as the winner slot names it: not a candidate, and
+ * never displaced by one that merely ties it. */
+#define INCUMBENT_CANDIDATE (SHADOWSPILL_PLANNER_NO_INDEX - 1U)
+
+/* Record a plan as this problem's answer when it beats what is held. Ties
+ * fall to the earlier candidate, so the answer does not depend on which
+ * worker finished first; the plan to beat came before every candidate. */
 static int offer_problem_winner(
     SearchedProblem *problem,
     uint32_t candidate,
@@ -3135,6 +3178,7 @@ static int offer_problem_winner(
     if (problem->selected_candidate == SHADOWSPILL_PLANNER_NO_INDEX ||
         makespan_ns < problem->selected_makespan_ns ||
         (makespan_ns == problem->selected_makespan_ns &&
+         problem->selected_candidate != INCUMBENT_CANDIDATE &&
          candidate < problem->selected_candidate)) {
         failed = shadowspill_schedule_storage_copy(
             &problem->selected, schedule
@@ -3254,6 +3298,89 @@ static int worker_evaluate_task(SearchWorker *worker, uint32_t task) {
         );
     }
     return 0;
+}
+
+/*
+ * Measure the plan to beat at this capacity, before any candidate runs.
+ *
+ * It is a plan for this resolved program that already runs elsewhere -- at
+ * a smaller capacity, say -- and it is measured exactly as a candidate's
+ * plan is: simulated, admitted, and placed against the pool. A plan that
+ * places becomes the problem's answer until a candidate does strictly
+ * better, and is offered to the shared record so that, in the default
+ * mode, every candidate measures against it from the start. A plan that
+ * does not place here is reported and not used; nothing about the search
+ * changes for it. Runs on the calling thread, so its workspace is worker
+ * zero's, which the first task resizes as it would anyway.
+ */
+static int evaluate_incumbent(SearchWorker *worker, uint32_t index) {
+    ProgramSearch *search = worker->search;
+    SearchedProblem *problem = &search->problems[index];
+    ShadowSpillPressureFitProblemResult *result = problem->result;
+    const ShadowSpillIndexedSchedule *incumbent = problem->problem->incumbent;
+    if (incumbent == NULL) {
+        return 0;
+    }
+    result->incumbent_given = 1U;
+    result->incumbent_status = SHADOWSPILL_CANDIDATE_INTERNAL_ERROR;
+    if (worker_workspace_for(worker, index) != 0) {
+        return -1;
+    }
+    CandidateWorkspace *workspace = &worker->workspace;
+    if (shadowspill_schedule_storage_assign(&workspace->schedule, incumbent) != 0) {
+        return -1;
+    }
+    ShadowSpillSimulationResult simulation;
+    ShadowSpillStatus admission_status = SHADOWSPILL_STATUS_OK;
+    ShadowSpillAdmissionReplayResult replay = {0};
+    if (simulate_schedule(
+            problem->problem,
+            &workspace->schedule.value,
+            &workspace->simulation,
+            &workspace->admission,
+            &workspace->first_violation,
+            &simulation,
+            &admission_status,
+            &replay
+        ) != 0) {
+        return -1;
+    }
+    if (admission_status == SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
+        result->incumbent_status = SHADOWSPILL_CANDIDATE_ADMISSION_INFEASIBLE;
+        return 0;
+    }
+    if (simulation.status != SHADOWSPILL_STATUS_OK || simulation.makespan_ns == 0U) {
+        result->incumbent_status = SHADOWSPILL_CANDIDATE_SIMULATION_INFEASIBLE;
+        return 0;
+    }
+    result->incumbent_makespan_ns = simulation.makespan_ns;
+    const ShadowSpillAdmissionFacts *placement = problem->problem->placement;
+    if (placement != NULL) {
+        uint64_t required_bytes = 0U;
+        if (place_plan(problem->problem, workspace, &simulation, &required_bytes) != 0) {
+            result->incumbent_status = SHADOWSPILL_CANDIDATE_UNPLACEABLE;
+            return 0;
+        }
+        result->incumbent_required_bytes = required_bytes;
+        if (required_bytes > placement->pool_capacity_bytes) {
+            result->incumbent_status = SHADOWSPILL_CANDIDATE_UNPLACEABLE;
+            return 0;
+        }
+        ShadowSpillBestPlacedRecord record = {
+            .makespan_ns = simulation.makespan_ns,
+            .object_capacity_bytes = placement->object_capacity_bytes,
+        };
+        shadowspill_schedule_digest(
+            problem->problem, &workspace->schedule.value, record.schedule_digest
+        );
+        (void)shadowspill_best_placed_offer(
+            search->options->best_placed, &record, &workspace->schedule
+        );
+    }
+    result->incumbent_status = SHADOWSPILL_CANDIDATE_VALID;
+    return offer_problem_winner(
+        problem, INCUMBENT_CANDIDATE, simulation.makespan_ns, &workspace->schedule
+    );
 }
 
 static void *worker_main(void *argument) {
@@ -3408,6 +3535,14 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problems(
         workers[index].search = &search;
         workers[index].workspace_problem = SHADOWSPILL_PLANNER_NO_INDEX;
     }
+    /* Every plan to beat is measured before the first candidate starts, so
+     * the bound it sets is there for all of them alike. */
+    for (uint32_t index = 0U; index < problem_count; ++index) {
+        if (evaluate_incumbent(&workers[0], index) != 0) {
+            program_search_destroy(&search, workers, worker_count);
+            return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
+        }
+    }
 
     /* The calling thread is one of the workers, so a single-worker run needs
      * no thread at all and the common case starts one fewer. */
@@ -3470,7 +3605,12 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_problems(
             result->status = SHADOWSPILL_STATUS_NO_FEASIBLE_CANDIDATE;
             continue;
         }
-        result->selected_candidate_index = problem->selected_candidate;
+        if (problem->selected_candidate == INCUMBENT_CANDIDATE) {
+            result->selected_candidate_index = SHADOWSPILL_PLANNER_NO_INDEX;
+            result->incumbent_selected = 1U;
+        } else {
+            result->selected_candidate_index = problem->selected_candidate;
+        }
         result->selected_makespan_ns = problem->selected_makespan_ns;
         if (adopt_selected_schedule(result, &problem->selected) != 0) {
             result->status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;

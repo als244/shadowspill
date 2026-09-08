@@ -110,8 +110,18 @@ class PlanStore:
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
         resolution_options: Sequence[ShareValue] | None = None,
+        incumbent: PressureFitResult | None = None,
     ) -> PlanLookup:
-        """Return the stored planned program when it still matches, or plan."""
+        """Return the stored planned program when it still matches, or plan.
+
+        The plan to beat is provenance, not identity. A search handed one
+        answers with it unless it does better, but what it answers is still
+        a plan for this request, and the store's promise is that a request
+        reads back the plan its search chose: a run that replans the budget
+        it is about to execute, without the sweep's plan in hand, has to get
+        the sweep's answer. So the key leaves it out, and the record says
+        which plan the search was handed.
+        """
 
         selected_options = options or PressureFitOptions()
         chosen = resolution_options_or_default(resolution_options)
@@ -151,8 +161,9 @@ class PlanStore:
             placement=placement,
             progress=progress,
             resolution_options=chosen,
+            incumbent=incumbent,
         )
-        self._write(key, result, admission, chosen)
+        self._write(key, result, admission, chosen, incumbent)
         return PlanLookup(result, False)
 
     def _read(
@@ -252,6 +263,7 @@ class PlanStore:
         result: PressureFitResult,
         admission: AdmissionFacts | None,
         resolution_options: tuple[Fraction, ...],
+        incumbent: PressureFitResult | None = None,
     ) -> None:
         if not self.write_enabled:
             return
@@ -270,6 +282,7 @@ class PlanStore:
             "options": result.options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
             **_resolution_options_field(resolution_options),
+            **_incumbent_field(incumbent),
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
             "diagnostics": result.diagnostics.to_dict(),
@@ -285,7 +298,9 @@ class PlanStore:
                 existing_payload = json.loads(existing)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"planned program {path} cannot be read") from exc
-            if without_measurements(existing_payload) != without_measurements(payload):
+            # Provenance is not the answer: the same plan found with or
+            # without a plan in hand is the same plan.
+            if _without_provenance(existing_payload) != _without_provenance(payload):
                 raise ValueError(
                     "fresh PressureFit output differs from the stored planned program; "
                     "use overwrite_plan=True or a new implementation_revision: "
@@ -353,11 +368,21 @@ def _key(
         # different question and must not read a cached answer.
         "placement_digest": placement.digest if placement is not None else None,
         # The resolution options are part of the question: a plan searched
-        # over one set is not the answer for another.
+        # over one set is not the answer for another. The plan to beat is
+        # not: see PlanStore.resolve.
         **_resolution_options_field(resolution_options),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _without_provenance(payload: object) -> object:
+    """A stored record as an answer: without measurements or the plan to beat."""
+
+    value = without_measurements(payload)
+    if isinstance(value, dict):
+        return {name: item for name, item in value.items() if name != "incumbent"}
+    return value
 
 
 def _resolution_options_field(
@@ -366,6 +391,22 @@ def _resolution_options_field(
     """The options as a record field: exact fractions, sorted, as strings."""
 
     return {"resolution_options": [str(share) for share in resolution_options]}
+
+
+def _incumbent_field(incumbent: PressureFitResult | None) -> dict[str, object]:
+    """The plan to beat as a record field: which resolution, which schedule.
+
+    Provenance for the request and the stored plan; never part of a key.
+    """
+
+    if incumbent is None:
+        return {"incumbent": None}
+    return {
+        "incumbent": {
+            "selections": [item.to_dict() for item in incumbent.selections],
+            "schedule_digest": incumbent.schedule.digest,
+        }
+    }
 
 
 def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics:
@@ -403,11 +444,12 @@ def resolve_plan(
     placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> PlanLookup:
     """Resolve one plan, planning only when the store does not have it.
 
     The request and its Program are archived first, so a plan on disk can
-    always be traced back to what was asked for.
+    always be traced back to what was asked for, the plan to beat included.
     """
 
     artifact_store.archive_program(program)
@@ -434,6 +476,7 @@ def resolve_plan(
             },
             "admission": None if admission is None else admission.to_dict(),
             **_resolution_options_field(chosen),
+            **_incumbent_field(incumbent),
         }
     )
     return plans.resolve(
@@ -446,4 +489,5 @@ def resolve_plan(
         placement=placement,
         progress=progress,
         resolution_options=chosen,
+        incumbent=incumbent,
     )

@@ -16,13 +16,17 @@ from .counters import (
     ReductionStep,
 )
 from .resolved_programs import (
+    INCUMBENT_CANDIDATE_ID,
+    IncumbentDiagnostic,
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
 from .summary import PressureFitDiagnostics
 
 __all__ = [
+    "INCUMBENT_CANDIDATE_ID",
     "CandidateDiagnostic",
+    "IncumbentDiagnostic",
     "PressureFitDiagnostics",
     "PressureFitRepairDiagnostics",
     "PressureFitSectionTiming",

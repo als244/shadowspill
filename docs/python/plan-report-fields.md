@@ -118,7 +118,7 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `transfer_bytes_fetched`, `transfer_bytes_evicted` | Traffic the simulation ran, summed from its transfer intervals. |
 | `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The per-direction bandwidth the simulator planned against. Solo calibration lives on the report's transfer profiles. |
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
-| `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, and repairs at best. |
+| `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, and repairs at best. When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 
 `recomputing_group_fraction` is derived from the two counts.
 
@@ -462,6 +462,24 @@ attempt, and on a `PressureFitResult`.
 | `started_ns`, `finished_ns` | This problem's span, on the same clock its candidates use. Problems evaluated in one call overlap, because workers take whatever task is next. |
 | `evict_ineligible_aliases`, `evict_ineligible_bytes` | How many objects the evict-eligibility threshold kept resident, and their bytes. |
 | `fetched_bytes`, `evicted_bytes` | What this problem's own best plan moves, summed over the FETCH and EVICT actions of its selected schedule. The winner's traffic is also on `PlanSummary`; these are the alternatives', which is what says whether a problem that asks for less compute pays for it on the lanes instead. Zero when it placed nothing, and on a plan read back from a store written before these were recorded. |
+| `incumbent` | What became of the plan to beat this problem was handed, or `None` when it was handed none. When that plan won, `selected_candidate_id` is `incumbent`. |
+
+## IncumbentDiagnostic
+
+The plan to beat, measured at the problem's capacity before any candidate
+ran: a plan for the same resolved program already in hand, found at a smaller
+budget, say. The search answers with it unless a candidate does strictly
+better.
+
+| Field | Meaning |
+|---|---|
+| `status` | `valid` when it simulated and its layout fit the pool; `unplaceable` when the layout did not; `infeasible` when it did not simulate or admit here; `error` when the library could not measure it. |
+| `makespan_ns` | What it simulated to at this capacity. |
+| `required_bytes` | Pool bytes its layout needed, when it was measured against a pool. |
+| `selected` | Whether it is the problem's answer. |
+| `schedule_digest` | Which plan it is. |
+| `found_by` | The candidate policy that found it, where it was found. |
+| `found_at_capacity_bytes` | The object capacity it was found at. |
 
 ## TaskAlternativeChoiceDiagnostic
 
