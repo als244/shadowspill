@@ -141,24 +141,30 @@ def test_a_store_laid_out_before_the_split_is_moved_into_place(tmp_path: Path) -
         (root / old).parent.mkdir(parents=True)
         (root / old).write_text(old)
     (root / "layout.json").write_text("{}")
-    # a destination that already exists is merged, and its entries kept
+    # a destination that already exists is merged: its entries are kept, and a
+    # source entry that already exists there is the same artifact and is dropped
     (root / "build" / "exports" / "ab" / "kept").mkdir(parents=True)
     (root / "build" / "exports" / "ab" / "kept" / "manifest.json").write_text("kept")
+    twice = root / "build" / "exports" / "ab" / "abcd"
+    twice.mkdir(parents=True)
+    (twice / "manifest.json").write_text("moved first")
 
     cache = ArtifactStore.resolve(tmp_path)
     cache.initialize()
 
     moved = root / "build/exports/ab/abcd/manifest.json"
-    assert moved.read_text().endswith("manifest.json")
+    assert moved.read_text() == "moved first"
     assert (root / "build/exports/ab/kept/manifest.json").read_text() == "kept"
-    assert (root / "build/inductor/default-1234/fx/kernel.py").is_file()
+    # the Inductor cache is not relocatable and stays where it was
+    assert (root / "pytorch/inductor/default-1234/fx/kernel.py").is_file()
+    assert not (root / "build" / "inductor").exists()
     assert (root / "build/graphpairs/cd/cdef/graph_pairs.pt").is_file()
     assert (root / "build/profiling/measurements/ef/ef01/measurement.json").is_file()
     assert (root / "build/programs/01/0123/program.json").is_file()
     assert (root / "planning/requests/23/2345/request.json").is_file()
     assert (root / "planning/results/45/4567/selection.json").is_file()
     assert (root / "planning/plans/model/capture/plan/manifest.json").is_file()
-    assert not (root / "pytorch").exists()
+    assert not (root / "pytorch" / "exports").exists()
     assert not (root / "pressurefit").exists()
     assert not (root / "graphpairs").exists()
     assert not (root / "plans").exists()

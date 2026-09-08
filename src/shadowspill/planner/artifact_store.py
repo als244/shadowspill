@@ -671,9 +671,12 @@ def _files_equal(left: Path, right: Path) -> bool:
 
 
 #: Where each directory of the layout before the build/planning split went.
+#: The Inductor cache is not among them: its entries embed the absolute paths
+#: of their kernel files, so a moved cache keeps writing to where it was.
+#: A migrated store starts a fresh one and the old stays behind as dead
+#: weight, named in the README as safe to delete.
 _LEGACY_MOVES = (
     ("pytorch/exports", "build/exports"),
-    ("pytorch/inductor", "build/inductor"),
     ("graphpairs", "build/graphpairs"),
     ("profiling", "build/profiling"),
     ("pressurefit/programs", "build/programs"),
@@ -687,8 +690,8 @@ def _migrate_layout(root: Path) -> bool:
     """Move a store laid out before the split into place; True if anything moved.
 
     Renames, not copies: a store is content-addressed, so a directory that
-    already exists at the destination is merged entry by entry and an entry
-    already there is left alone.
+    already exists at the destination is merged entry by entry, and an entry
+    already there is the same artifact, so the source copy is dropped.
     """
 
     moved = False
@@ -713,6 +716,8 @@ def _move_tree(source: Path, target: Path) -> bool:
             _move_tree(child, destination)
         elif not destination.exists():
             child.rename(destination)
+        elif child.is_file():
+            child.unlink()
     with suppress(OSError):
         source.rmdir()
     return True
@@ -830,6 +835,12 @@ this one and replans.
 
 A planning call given a plan store keeps `planning/` there instead, so
 several runs can share this store and each own its plans.
+
+A store laid out before the build/planning split was moved into place the
+first time it was opened, except its Inductor cache: Inductor's entries embed
+the absolute paths of their kernel files, so a moved cache keeps writing to
+where it was. A `pytorch/inductor/` still here is that old cache, dead
+weight that may be deleted.
 
 Every returned `PlanReport` records the absolute path and access disposition of
 the artifacts touched by that call.  Do not edit content-addressed entries.
