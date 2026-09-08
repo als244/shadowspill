@@ -329,6 +329,12 @@ class StepSearchReport:
     #: own, or `None` when each program's embedded calibration was used; the
     #: per-geometry record says what that was.
     transfer_bandwidths: TransferBandwidths | None = None
+    #: Each budget pair's winning plan, for a caller that will run the winner
+    #: and wants the replan to start from it as the plan to beat. Held in
+    #: memory only: the report on disk names the winner, the store holds it.
+    winner_plans: Mapping[tuple[int, int], AnnotatedProgramPlan] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     @property
     def tokens_per_step(self) -> int:
@@ -538,6 +544,9 @@ def plan_step_search(
 
     if not budgets:
         raise ValueError("at least one (execution, spill) budget is required")
+    # The best plan seen under each budget pair, across every geometry and
+    # ordering: what a run of the winner starts from.
+    best_by_budget: dict[tuple[int, int], tuple[int, AnnotatedProgramPlan]] = {}
     chosen = resolution_options_or_default(resolution_options)
     options = replace(
         options or PressureFitOptions(),
@@ -695,6 +704,12 @@ def plan_step_search(
                             execution_budget if inherited is None else inherited,
                             plan,
                         )
+                    held = best_by_budget.get((execution_budget, spill_budget))
+                    if held is None or plan.simulation.makespan_ns < held[0]:
+                        best_by_budget[(execution_budget, spill_budget)] = (
+                            plan.simulation.makespan_ns,
+                            plan,
+                        )
                 announce(
                     f"point {point_index}/{point_total}: {name} @"
                     f" {execution_budget >> 30} GiB -> {status}"
@@ -725,4 +740,7 @@ def plan_step_search(
         skipped=skipped,
         resolution_options=chosen,
         transfer_bandwidths=transfer_bandwidths,
+        winner_plans=MappingProxyType(
+            {budget: held[1] for budget, held in best_by_budget.items()}
+        ),
     )
