@@ -19,6 +19,73 @@ from .json import (
     _string,
 )
 
+#: The candidate id a resolved program answers with when the plan to beat
+#: won: the plan it was handed, not one its candidates reached.
+INCUMBENT_CANDIDATE_ID = "incumbent"
+
+
+@dataclass(frozen=True, slots=True)
+class IncumbentDiagnostic:
+    """What became of the plan to beat, measured at this problem's capacity.
+
+    `status` is `valid` when it simulated and its layout fit the pool,
+    `unplaceable` when the layout did not, `infeasible` when it did not
+    simulate or admit here, and `error` when the library could not measure
+    it. `found_by` and `found_at_capacity_bytes` say where the plan came
+    from, as the caller that handed it in knew it.
+    """
+
+    status: str
+    makespan_ns: int | None
+    required_bytes: int | None
+    selected: bool
+    schedule_digest: str | None = None
+    found_by: str | None = None
+    found_at_capacity_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.status not in ("valid", "unplaceable", "infeasible", "error"):
+            raise ValueError(f"unknown incumbent status {self.status!r}")
+        if self.selected and self.status != "valid":
+            raise ValueError("a plan to beat that is not valid cannot be selected")
+        if self.selected and self.makespan_ns is None:
+            raise ValueError("a selected plan to beat has a makespan")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "makespan_ns": self.makespan_ns,
+            "required_bytes": self.required_bytes,
+            "selected": self.selected,
+            "schedule_digest": self.schedule_digest,
+            "found_by": self.found_by,
+            "found_at_capacity_bytes": self.found_at_capacity_bytes,
+        }
+
+    @classmethod
+    def from_value(cls, value: object, path: str) -> IncumbentDiagnostic:
+        data = _mapping(value, path)
+        selected = data.get("selected")
+        if not isinstance(selected, bool):
+            raise ValueError(f"{path}.selected must be a boolean")
+        return cls(
+            status=_string(data.get("status"), f"{path}.status"),
+            makespan_ns=_optional_integer(
+                data.get("makespan_ns"), f"{path}.makespan_ns"
+            ),
+            required_bytes=_optional_integer(
+                data.get("required_bytes"), f"{path}.required_bytes"
+            ),
+            selected=selected,
+            schedule_digest=_optional_string(
+                data.get("schedule_digest"), f"{path}.schedule_digest"
+            ),
+            found_by=_optional_string(data.get("found_by"), f"{path}.found_by"),
+            found_at_capacity_bytes=_optional_integer(
+                data.get("found_at_capacity_bytes"), f"{path}.found_at_capacity_bytes"
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TaskAlternativeChoiceDiagnostic:
@@ -66,6 +133,10 @@ class ResolvedProgramDiagnostics:
     #: written before these were recorded.
     fetched_bytes: int = 0
     evicted_bytes: int = 0
+    #: What became of the plan to beat, when this problem was handed one;
+    #: absent on a problem that carried none, and on records written before
+    #: there was one.
+    incumbent: IncumbentDiagnostic | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -92,7 +163,20 @@ class ResolvedProgramDiagnostics:
                 raise ValueError(
                     "selected_makespan_ns requires a selected candidate policy"
                 )
+            if self.incumbent is not None and self.incumbent.selected:
+                raise ValueError("a selected plan to beat is the selected policy")
+        elif self.selected_candidate_id == INCUMBENT_CANDIDATE_ID:
+            if self.incumbent is None or not self.incumbent.selected:
+                raise ValueError(
+                    "the plan to beat is selected only when it was given and won"
+                )
+            if self.selected_makespan_ns != self.incumbent.makespan_ns:
+                raise ValueError(
+                    "problem selected makespan does not match the plan to beat"
+                )
         else:
+            if self.incumbent is not None and self.incumbent.selected:
+                raise ValueError("a selected plan to beat is the selected policy")
             selected = tuple(
                 candidate
                 for candidate in valid
@@ -157,6 +241,7 @@ class ResolvedProgramDiagnostics:
                 "evicted_bytes": self.evicted_bytes,
             },
             "repairs": self.repairs.to_dict(),
+            "incumbent": None if self.incumbent is None else self.incumbent.to_dict(),
             "candidate_policy_evaluations": [
                 item.to_dict() for item in self.candidate_evaluations
             ],
@@ -229,6 +314,13 @@ class ResolvedProgramDiagnostics:
             ),
             evicted_bytes=_span(
                 data.get("transfer"), "evicted_bytes", f"{path}.transfer"
+            ),
+            incumbent=(
+                None
+                if data.get("incumbent") is None
+                else IncumbentDiagnostic.from_value(
+                    data.get("incumbent"), f"{path}.incumbent"
+                )
             ),
         )
         expected_summary = {

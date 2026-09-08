@@ -23,6 +23,7 @@ from .json import (
     without_measurements,
 )
 from .resolved_programs import (
+    INCUMBENT_CANDIDATE_ID,
     ResolvedProgramDiagnostics,
 )
 
@@ -115,6 +116,12 @@ class PressureFitDiagnostics:
                     if candidate.candidate_id == self.selected_candidate_id
                     else candidate
                     for candidate in problem.candidate_evaluations
+                ),
+                incumbent=(
+                    replace(problem.incumbent, makespan_ns=makespan_ns)
+                    if problem.incumbent is not None
+                    and self.selected_candidate_id == INCUMBENT_CANDIDATE_ID
+                    else problem.incumbent
                 ),
             )
             if problem.selection_id == self.selected_selection_id

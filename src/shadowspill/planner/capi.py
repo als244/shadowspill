@@ -282,6 +282,7 @@ class CPressureFitProgramProblem(ctypes.Structure):
         ("placement", ctypes.POINTER(CAdmissionFacts)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
+        ("incumbent", ctypes.POINTER(CIndexedSchedule)),
     ]
 
 
@@ -403,6 +404,11 @@ class CPressureFitProblemResult(ctypes.Structure):
         ("evict_ineligible_bytes", ctypes.c_uint64),
         ("resident_slice_bytes", ctypes.POINTER(ctypes.c_uint64)),
         ("alias_evict_eligible", ctypes.POINTER(ctypes.c_uint8)),
+        ("incumbent_given", ctypes.c_uint8),
+        ("incumbent_status", ctypes.c_uint8),
+        ("incumbent_selected", ctypes.c_uint8),
+        ("incumbent_makespan_ns", ctypes.c_uint64),
+        ("incumbent_required_bytes", ctypes.c_uint64),
     ]
 
 

@@ -179,3 +179,64 @@ def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> 
             config=config(),
             options=FEW_CANDIDATES,
         )
+
+
+def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
+    """A request reads back the plan its search chose, whatever it was handed."""
+
+    from shadowspill.planner.plan_store import _key
+
+    initial, final = exact_capacity_residency()
+    program = exact_capacity_program()
+    cache = PlanStore(tmp_path / "a")
+    first = cache.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+    )
+    # the same request with a plan in hand is the same key, so it reads back
+    # the stored answer rather than searching
+    handed = cache.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+        incumbent=first.result,
+    )
+    assert not first.from_store
+    assert handed.from_store
+    assert handed.result.schedule == first.result.schedule
+    shares = tuple(Fraction(n, 4) for n in range(5))
+    key = _key(program, initial, final, config(), FEW_CANDIDATES, None, None, shares)
+    assert json.loads(cache.path(key).read_text())["incumbent"] is None
+
+    # a store that first sees the request with a plan in hand records which
+    other = PlanStore(tmp_path / "b")
+    searched = other.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+        incumbent=first.result,
+    )
+    assert not searched.from_store
+    assert searched.result.diagnostics.selected_candidate_id == "incumbent"
+    stored = json.loads(other.path(key).read_text())
+    assert stored["incumbent"] == {
+        "selections": [],
+        "schedule_digest": first.result.schedule.digest,
+    }
+    # and a search of the same request without one reads that plan back
+    replanned = other.resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        options=FEW_CANDIDATES,
+    )
+    assert replanned.from_store
+    assert replanned.result.schedule == first.result.schedule

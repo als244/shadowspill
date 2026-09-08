@@ -187,6 +187,13 @@ typedef struct ShadowSpillPressureFitProblem {
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
     const char *const *task_json_names;
+
+    /* The plan to beat: a plan for this resolved program already in hand --
+       found at a smaller capacity, say -- or NULL. The search measures it at
+       this capacity before any candidate runs and answers with it unless a
+       candidate does strictly better, so a search given one never answers
+       worse than it. Its aliases and tasks index this problem. */
+    const ShadowSpillIndexedSchedule *incumbent;
 } ShadowSpillPressureFitProblem;
 
 typedef struct ShadowSpillPressureFitProblemOptions {
@@ -250,6 +257,10 @@ typedef struct ShadowSpillPressureFitProgramProblem {
     /* JSON-escaped identifier payloads, without surrounding quotes. */
     const char *const *alias_json_names;
     const char *const *task_json_names;
+
+    /* The plan to beat, or NULL; see the same field of
+       ShadowSpillPressureFitProblem. */
+    const ShadowSpillIndexedSchedule *incumbent;
 } ShadowSpillPressureFitProgramProblem;
 
 typedef enum ShadowSpillPressureFitPreflightFailureKind {
@@ -481,6 +492,19 @@ typedef struct ShadowSpillPressureFitProblemResult {
     uint64_t evict_ineligible_bytes;
     uint64_t *resident_slice_bytes;
     uint8_t *alias_evict_eligible;
+
+    /* What became of the plan to beat, when the problem carried one:
+       whether it did, the plan's status in the candidate vocabulary (valid,
+       unplaceable, or the infeasibility that stopped it), the makespan it
+       simulated to at this capacity, the pool bytes its layout needed, and
+       whether it is the answer. When it is, `selected_candidate_index` is
+       SHADOWSPILL_PLANNER_NO_INDEX and the selected schedule and makespan
+       are its own. */
+    uint8_t incumbent_given;
+    uint8_t incumbent_status;
+    uint8_t incumbent_selected;
+    uint64_t incumbent_makespan_ns;
+    uint64_t incumbent_required_bytes;
 } ShadowSpillPressureFitProblemResult;
 
 /* Caller-owned output buffers for one selected schedule's exact admission. */

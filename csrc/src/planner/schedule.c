@@ -274,58 +274,65 @@ void shadowspill_schedule_storage_destroy(ShadowSpillScheduleStorage *storage) {
     memset(storage, 0, sizeof(*storage));
 }
 
+int shadowspill_schedule_storage_assign(
+    ShadowSpillScheduleStorage *destination,
+    const ShadowSpillIndexedSchedule *source
+) {
+    if (destination == NULL || source == NULL ||
+        destination->initial_capacity < source->initial_count ||
+        destination->final_capacity < source->final_count ||
+        reserve_schedule_actions(destination, source->action_count) != 0) {
+        return -1;
+    }
+    destination->value.action_count = source->action_count;
+    destination->value.initial_count = source->initial_count;
+    destination->value.final_count = source->final_count;
+    memcpy(
+        destination->value.action_trigger_tasks,
+        source->action_trigger_tasks,
+        (size_t)source->action_count * sizeof(*source->action_trigger_tasks)
+    );
+    memcpy(
+        destination->value.action_aliases,
+        source->action_aliases,
+        (size_t)source->action_count * sizeof(*source->action_aliases)
+    );
+    memcpy(
+        destination->value.action_kinds,
+        source->action_kinds,
+        (size_t)source->action_count * sizeof(*source->action_kinds)
+    );
+    memcpy(
+        destination->value.initial_aliases,
+        source->initial_aliases,
+        (size_t)source->initial_count * sizeof(*source->initial_aliases)
+    );
+    memcpy(
+        destination->value.initial_locations,
+        source->initial_locations,
+        (size_t)source->initial_count * sizeof(*source->initial_locations)
+    );
+    memcpy(
+        destination->value.final_aliases,
+        source->final_aliases,
+        (size_t)source->final_count * sizeof(*source->final_aliases)
+    );
+    memcpy(
+        destination->value.final_locations,
+        source->final_locations,
+        (size_t)source->final_count * sizeof(*source->final_locations)
+    );
+    return 0;
+}
+
 int shadowspill_schedule_storage_copy(
     ShadowSpillScheduleStorage *destination,
     const ShadowSpillScheduleStorage *source
 ) {
-    if (destination == NULL || source == NULL ||
-        destination->initial_capacity < source->value.initial_count ||
-        destination->final_capacity < source->value.final_count ||
-        reserve_schedule_actions(destination, source->value.action_count) != 0) {
+    if (destination == NULL || source == NULL) {
         return -1;
     }
-    destination->value.action_count = source->value.action_count;
-    destination->value.initial_count = source->value.initial_count;
-    destination->value.final_count = source->value.final_count;
-    memcpy(
-        destination->value.action_trigger_tasks,
-        source->value.action_trigger_tasks,
-        (size_t)source->value.action_count *
-            sizeof(*source->value.action_trigger_tasks)
-    );
-    memcpy(
-        destination->value.action_aliases,
-        source->value.action_aliases,
-        (size_t)source->value.action_count * sizeof(*source->value.action_aliases)
-    );
-    memcpy(
-        destination->value.action_kinds,
-        source->value.action_kinds,
-        (size_t)source->value.action_count * sizeof(*source->value.action_kinds)
-    );
-    memcpy(
-        destination->value.initial_aliases,
-        source->value.initial_aliases,
-        (size_t)source->value.initial_count *
-            sizeof(*source->value.initial_aliases)
-    );
-    memcpy(
-        destination->value.initial_locations,
-        source->value.initial_locations,
-        (size_t)source->value.initial_count *
-            sizeof(*source->value.initial_locations)
-    );
-    memcpy(
-        destination->value.final_aliases,
-        source->value.final_aliases,
-        (size_t)source->value.final_count * sizeof(*source->value.final_aliases)
-    );
-    memcpy(
-        destination->value.final_locations,
-        source->value.final_locations,
-        (size_t)source->value.final_count * sizeof(*source->value.final_locations)
-    );
-    return 0;
+    return shadowspill_schedule_storage_assign(destination, &source->value);
 }
 
 static uint32_t collect_spans(

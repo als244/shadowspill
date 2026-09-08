@@ -446,6 +446,7 @@ plan_step_search(
     optimizer_ordering="stage_interleaved",
     orderings=None,
     resolution_options=None,
+    incumbents=True,
     artifact_store_dir=None,
     plan_store_dir=None,
     verbose=False,
@@ -465,7 +466,11 @@ receives one line per geometry and point boundary so a caller can tee a live
 log. `resolution_options` are the resolutions every point is searched over,
 with the meaning they have for `plan_step()`; options that are not valid are
 rejected before any geometry is built, and the report records the options it
-searched.
+searched. `incumbents` plans each program's budgets ascending and hands every
+point the best plan found at a smaller budget as the plan to beat, so no
+program plans worse with more memory; a point that answered with the plan it
+was handed records the budget that plan came from as `incumbent_budget_bytes`.
+`False` searches every point alone, which is how the two are compared.
 Infeasible or search-exhausted points are reported outcomes, not raised
 errors. `search_geometries()` is the underlying enumeration — every divisor
 pair of the sequence total, largest microbatch first, with the bounds'

@@ -120,6 +120,7 @@ def plan_program(
     best: BestPlaced | None = None,
     progress: Callable[[str], None] | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> PressureFitResult:
     """Plan `program` by planning each of its resolved programs in turn.
 
@@ -131,6 +132,13 @@ def plan_program(
     `resolution_options` names which resolved programs exist: the shares of
     flexible groups to recompute, one resolved program each, as exact
     fractions; `None` is the library's default of every quarter.
+
+    `incumbent` is the plan to beat: a result for this same Program, found
+    elsewhere -- at a smaller capacity, say. The search measures it at this
+    capacity before any candidate runs and answers with it unless a
+    candidate does strictly better, so the answer is never worse than it.
+    It reaches the resolved program it was found for; a search over
+    resolution options that do not include that one carries none.
     """
 
     validate_pressurefit_inputs(
@@ -140,6 +148,8 @@ def plan_program(
         config,
         admission,
     )
+    if incumbent is not None and incumbent.program.digest != program.digest:
+        raise ValueError("the plan to beat is a plan for a different Program")
     selected_options = options or PressureFitOptions()
     resolved = ordered_resolutions(program, resolution_options)
     if progress is not None:
@@ -182,6 +192,7 @@ def plan_program(
                 placement=placement,
                 best=shared,
                 progress=progress,
+                incumbent=incumbent,
             )
         except ValueError:
             # Every resolved program was rejected, so the Program itself has
@@ -217,6 +228,7 @@ def plan_program(
             admission,
             shared,
             placement=placement,
+            incumbent=incumbent,
         )
     finally:
         if owned is not None:
@@ -270,12 +282,14 @@ def pressurefit(
     placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: PressureFitResult | None = None,
 ) -> PressureFitResult:
     """Select a schedule for `program`.
 
     Capacity is settled inside the search: a candidate measures its own
     plan against the pool `placement` describes and gives capacity back
     until the plan fits, so there is nothing to retry at this level.
+    `incumbent` is the plan to beat, as for :func:`plan_program`.
     """
 
     result = plan_program(
@@ -288,6 +302,7 @@ def pressurefit(
         placement=placement,
         progress=progress,
         resolution_options=resolution_options,
+        incumbent=incumbent,
     )
     return replace(
         result,
@@ -317,6 +332,7 @@ def pressurefit_program(
     transfer_bandwidths: TransferBandwidths | None = None,
     options: PressureFitOptions | None = None,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: AnnotatedProgramPlan | None = None,
     artifact_store_dir: str | os.PathLike[str] | None = None,
     plan_store_dir: str | os.PathLike[str] | None = None,
     verbose: bool = True,
@@ -333,9 +349,14 @@ def pressurefit_program(
     frontier without capture, compilation, or profiling. ``resolution_options``
     names the resolutions to search, as for :func:`plan_program`; the program
     itself carries none, because a Program is a problem and how to search it
-    is the caller's. ``plan_store_dir`` keeps this call's request, selection
-    and plan manifest apart from the artifact store, so one store can serve
-    many runs that each own their plans; ``None`` keeps them in the store.
+    is the caller's. ``incumbent`` is the plan to beat: a plan for this same
+    program found under another budget, which the search answers with unless
+    it does strictly better; a plan that fits in less memory fits in more,
+    so a sweep that plans budgets ascending hands each one the best plan
+    below it and never plans worse with more. ``plan_store_dir`` keeps this
+    call's request, selection and plan manifest apart from the artifact
+    store, so one store can serve many runs that each own their plans;
+    ``None`` keeps them in the store.
     """
 
     from .selection import select_program
@@ -358,6 +379,7 @@ def pressurefit_program(
         transfer_bandwidths=transfer_bandwidths,
         options=options,
         resolution_options=resolution_options,
+        incumbent=None if incumbent is None else incumbent.result,
         artifact_store=cache,
         verbose=verbose,
     )
