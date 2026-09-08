@@ -133,7 +133,11 @@ can share one artifact store and each own their plans, and a run that shares
 a store still plans every point itself rather than reading back a plan
 another run searched. `None` keeps both trees under one root, and the store's
 diagnostics name both. A store laid out before this split is moved into place
-the first time it is opened, directory by directory, without copying.
+the first time it is opened, directory by directory, without copying, except
+its Inductor cache: Inductor's entries embed the absolute paths of their
+kernel files, so a moved cache keeps writing to where it was. A migrated
+store starts a fresh `build/inductor/` and leaves the old `pytorch/inductor/`
+behind as dead weight that may be deleted.
 
 Two directories are deliberately not content-addressed, and both say why in
 their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch.
