@@ -372,6 +372,8 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("placements_admitted", ctypes.c_uint32),
         ("capacity_refinements", ctypes.c_uint32),
         ("repairs_at_best", ctypes.c_uint32),
+        ("pressure_escalations", ctypes.c_uint32),
+        ("escalations_taken_back", ctypes.c_uint32),
         ("schedule_digest", ctypes.c_uint8 * 32),
         ("started_ns", ctypes.c_uint64),
         ("finished_ns", ctypes.c_uint64),

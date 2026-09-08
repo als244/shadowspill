@@ -81,9 +81,15 @@ changing the former.
 
 ### Search controls
 
-The default `PressureFitOptions` evaluate four residency-strategy labels, four
-fetch-trigger rules, and ordinary/coalesced emission: 32 candidate policies
-per legal task-selection problem.
+The default `PressureFitOptions` evaluate two residency-strategy labels
+(`headroom-stall` and `tight-stall`), four fetch-trigger rules, and
+ordinary/coalesced emission: 16 candidate policies per legal task-selection
+problem. The two transfer strategies stay available and off by default: a
+transfer strategy differs from its stall twin only in how it accounts for
+transfers already in flight, and the plans the two reach are the same far
+more often than not, so the default buys half the search for the rare small
+win. Coalescing stays in: joining adjacent transfers changes what the
+simulator sees, and the coalesced twin does win on its own.
 
 `capacity_refinement_bytes` decides how much capacity a plan gives back when
 its layout does not fit the pool, 256 MiB by default. Stepping costs rounds
@@ -495,6 +501,17 @@ shortfall it recorded stands in for an error, so a plan that merely stalls
 takes the same path a plan that failed does. This is the difference that
 matters most in practice — a plan that runs while waiting is valid but not
 finished, and the waiting is time it pays.
+
+A pressure repair asks the reducer for the shortfall the simulator measured.
+When the next simulation comes up short at the same task and the same moment,
+the room the reducer made did not become room where the simulator looks —
+copies still in flight hold it, or the emitter packed the freed bytes again —
+so a repeat asks for twice what the last round asked, up to the task's whole
+request. Asking for the same few bytes again would be the same plan again: one
+traced candidate spent 116 of its 256 repairs at one task on the same 4.4 MiB.
+An ask that no cut can meet is taken back for a plain ask, so a candidate is
+only ever slower for having asked for more, never lost to it. A new capacity
+round starts its count of repeats afresh.
 
 Every change is monotonic and counts against `max_repair_attempts`, 256 by
 default. A non-capacity contradiction is rejected directly. A move the
