@@ -243,6 +243,8 @@ high-frequency atomic artifact publication.
 ## Plan diagnostics
 
 `PlanReport.diagnostics.cache_artifacts` records every managed, matched, read,
-or written artifact with its category, kind, digest, absolute path, schema,
-and dependency digests. Cache directories are also recorded, so a report is a
-complete provenance index for the planning call.
+written, or improved artifact with its category, kind, digest, absolute path,
+schema, and dependency digests. A planned program is `improved` when a request
+handed a plan faster than the one on record searched again and replaced it.
+Cache directories are also recorded, so a report is a complete provenance
+index for the planning call.

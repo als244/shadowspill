@@ -577,7 +577,12 @@ Whatever the shared record holds at the end is the plan the search selected:
 selection reads the record rather than ranking the candidates a second time,
 because the record already owns a copy of the plan it names. A problem's
 winner is the plan to beat it was handed unless a candidate did strictly
-better; a tie keeps the plan in hand, so an answer changes only for a reason. The planner
+better; a tie keeps the plan in hand, so an answer changes only for a reason.
+The plan store keeps that promise across runs: the plan in hand is provenance
+rather than part of a request's identity, so a request reads back the plan
+its search chose whatever it was handed, but a stored plan that the plan in
+hand claims to beat is searched again with it and replaced when the new
+answer is faster under this request. The planner
 decodes that one indexed schedule, evaluates its physical admission once
 more, and materialises the full `SimulationResult` — at the caller's full
 capacity, which is the machine the plan will actually run on. A plan built
