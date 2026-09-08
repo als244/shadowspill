@@ -10,6 +10,7 @@ from typing import Any, Literal, NoReturn
 import torch
 import torch.nn as nn
 
+from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.program import (
     StepProgram,
@@ -255,6 +256,7 @@ def plan_step(
     reverse_breadth: bool = True,
     pair_loss: bool = True,
     resolution_options: Sequence[ShareValue] | None = None,
+    incumbent: AnnotatedProgramPlan | None = None,
     verbose: bool = True,
     artifact_store_dir: str | os.PathLike[str] | None = None,
     plan_store_dir: str | os.PathLike[str] | None = None,
@@ -299,6 +301,11 @@ def plan_step(
     reverse during backward; both are on by default and vacuous at
     ``breadth=1``.
 
+    ``incumbent`` is the plan to beat for the recurrent program: a plan a
+    search already found for this step, which the replan here measures at
+    this budget and answers with unless it does strictly better, so a step
+    run after a sweep executes the plan the sweep chose even when the
+    calibration or the budget of the replan differs from the sweep's.
     ``resolution_options`` names the resolutions the search plans: the shares
     of flexible groups to recompute, one resolved program each, as exact
     fractions such as ``("0", "1/2", "1")``. ``None`` plans the library's
@@ -370,6 +377,7 @@ def plan_step(
                 ),
                 deterministic=deterministic,
                 resolution_options=resolution_options,
+                incumbent=incumbent,
             )
     except BaseException as error:
         _surface_failed_plan(

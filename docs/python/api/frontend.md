@@ -299,6 +299,7 @@ plan_step(
     reverse_breadth=True,
     pair_loss=True,
     resolution_options=None,
+    incumbent=None,
     verbose=True,
     artifact_store_dir=None,
     plan_store_dir=None,
@@ -414,7 +415,9 @@ answered with, the bound-skipped
 geometries with reasons, the transfer calibration each geometry's program
 embeds and any override the search planned against instead, and derived
 winners per budget. Running a winner afterward is one warm `plan_step()`
-call at the chosen geometry.
+call at the chosen geometry; `winner_plans` holds each budget pair's winning
+plan in memory so that call can take it as the plan to beat and execute what
+the search chose even when its calibration or facts differ from the search's.
 
 Failures are outcomes rather than errors. A point that proves infeasible or
 exhausts its search budget carries that status while the search continues.

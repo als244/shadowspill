@@ -41,6 +41,7 @@ import torch
 
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import PressureFitOptions, StepDataOrdering
+from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.recomputation import validate_resolution_options
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
@@ -363,7 +364,14 @@ def print_promise(report: Any, tokens: int) -> None:
         f" ({summary.recomputing_group_fraction:.0%})"
     )
     chosen = summary.selected_candidate
-    if chosen:
+    if "incumbent" in chosen:
+        # the plan in hand won: say where it came from
+        in_hand = chosen["incumbent"]
+        print(
+            f"  chosen plan        the plan in hand, found by {in_hand['found_by']}"
+            f" at {gib(in_hand['found_at_capacity_bytes'])}"
+        )
+    elif chosen:
         repairs = chosen["repairs_at_best"]
         print(
             f"  chosen candidate   {chosen['residency_strategy']} /"
@@ -882,7 +890,11 @@ def main() -> int:
                     print(f"  {path}")
                 print()
 
-        def run_one_budget(budget: int, geometry: tuple[int, int]) -> RunBudgetOutcome:
+        def run_one_budget(
+            budget: int,
+            geometry: tuple[int, int],
+            incumbent: AnnotatedProgramPlan | None = None,
+        ) -> RunBudgetOutcome:
             """Plan one budget, run its steps, close it, and own nothing after.
 
             Returns the budget beside its simulated and measured step times.
@@ -924,6 +936,11 @@ def main() -> int:
                     # the store and searching again under other options.
                     deterministic=arguments.deterministic,
                     resolution_options=arguments.resolution_options,
+                    # The search's winning plan is the plan to beat, so the
+                    # step executes what the search chose, or better, even
+                    # when the replan's calibration or facts differ from the
+                    # search's and the store cannot hand the plan back.
+                    incumbent=incumbent,
                 )
             charge("run planning", marker)
             note_host_memory(plan_log, f"planned {gib(budget)}")
@@ -988,6 +1005,7 @@ def main() -> int:
 
         run_entries: list[RunBudgetOutcome] = []
         for budget in run_budgets:
+            incumbent: AnnotatedProgramPlan | None = None
             if manual is not None:
                 geometry = (manual, sequences_per_step // manual)
                 ordering = StepDataOrdering.depth_first(geometry[1])
@@ -1005,13 +1023,16 @@ def main() -> int:
                     winner.accumulation_count,
                 )
                 ordering = winner.ordering
+                incumbent = report.winner_plans.get(
+                    (budget, manifest.spill_budget_bytes)
+                )
             print(rule(f"Run at execution {gib(budget)}"))
             print(
                 f"  geometry {geometry[0]} sequences per microbatch"
                 f" x {geometry[1]} microbatches, walked {ordering.label}"
             )
             print()
-            run_entries.append(run_one_budget(budget, geometry))
+            run_entries.append(run_one_budget(budget, geometry, incumbent))
             # The frame that owned the closed plan is gone; collect what its
             # internals hold in cycles, so the host memory that plan still
             # occupies is free before the next budget plans.
