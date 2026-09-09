@@ -52,19 +52,30 @@ def state_digest(value: object) -> str:
 def compare_states(
     reference: object,
     actual: object,
-) -> tuple[dict[str, TensorMetrics], tuple[str, ...]]:
-    """Compare matching nested states and return tensor and scalar evidence."""
+) -> tuple[dict[str, TensorMetrics], tuple[str, ...], tuple[str, ...]]:
+    """Compare matching nested states and return tensor and scalar evidence.
+
+    Structural disagreements are returned apart from value disagreements, and
+    the separation is the point rather than tidiness. Two states that do not
+    have the same shape are not two answers to the same question: whatever
+    values happen to line up are being compared across tensors that do not
+    correspond, so every metric taken over them describes nothing. Reporting
+    such a run as "outside tolerance" names the symptom of a comparison that
+    was never valid, and sends the reader looking for a numerical fault that
+    is not there.
+    """
 
     tensors: dict[str, TensorMetrics] = {}
     exact_failures: list[str] = []
+    structure_failures: list[str] = []
 
     def compare(left: object, right: object, path: str) -> None:
         if isinstance(left, torch.Tensor):
             if not isinstance(right, torch.Tensor):
-                exact_failures.append(f"{path}: expected tensor")
+                structure_failures.append(f"{path}: expected tensor")
                 return
             if left.shape != right.shape or left.dtype != right.dtype:
-                exact_failures.append(
+                structure_failures.append(
                     f"{path}: geometry {left.shape}/{left.dtype} != "
                     f"{right.shape}/{right.dtype}"
                 )
@@ -82,14 +93,14 @@ def compare_states(
             return
         if isinstance(left, dict):
             if not isinstance(right, dict) or set(left) != set(right):
-                exact_failures.append(f"{path}: mapping keys differ")
+                structure_failures.append(f"{path}: mapping keys differ")
                 return
             for key in sorted(left, key=str):
                 compare(left[key], right[key], f"{path}/{key}")
             return
         if isinstance(left, (list, tuple)):
             if not isinstance(right, type(left)) or len(left) != len(right):
-                exact_failures.append(f"{path}: sequence differs")
+                structure_failures.append(f"{path}: sequence differs")
                 return
             for index, (left_item, right_item) in enumerate(
                 zip(left, right, strict=True)
@@ -100,7 +111,7 @@ def compare_states(
             exact_failures.append(f"{path}: {left!r} != {right!r}")
 
     compare(reference, actual, "state")
-    return tensors, tuple(exact_failures)
+    return tensors, tuple(exact_failures), tuple(structure_failures)
 
 
 def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetrics:
