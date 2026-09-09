@@ -14,6 +14,7 @@ from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileStore
 
 from ..graph_pairs import GraphPairStore
+from ..optimizer.store import OptimizerCaptureStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +25,7 @@ class PlanningStores:
     profiles: ProfileStore
     plans: PlanStore
     graph_pairs: GraphPairStore
+    optimizer_captures: OptimizerCaptureStore
 
     def archive_export(
         self,
@@ -79,6 +81,13 @@ def open_planning_stores(store: ArtifactStore) -> PlanningStores:
         plans=open_plan_store(store),
         graph_pairs=GraphPairStore(
             store.graphpairs,
+            read_enabled=store.read_enabled,
+            write_enabled=store.write_enabled,
+            overwrite=store.overwrite_plan,
+            artifact_recorder=store.record,
+        ),
+        optimizer_captures=OptimizerCaptureStore(
+            store.optimizer_captures,
             read_enabled=store.read_enabled,
             write_enabled=store.write_enabled,
             overwrite=store.overwrite_plan,

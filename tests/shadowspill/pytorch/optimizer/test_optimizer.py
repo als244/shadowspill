@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 import torch
@@ -449,3 +450,52 @@ def test_optimizer_option_identity_covers_bounded_containers() -> None:
     assert identity["tuple"] == {"tuple": [1, None]}
     assert identity["list"] == {"list": [True, "value"]}
     assert identity["object"]["type"] == "object"
+
+
+def test_a_recurrent_capture_is_served_from_the_store(tmp_path: Path) -> None:
+    from shadowspill.pytorch.optimizer.store import OptimizerCaptureStore
+
+    records: list[dict[str, object]] = []
+
+    def record(**kwargs: object) -> None:
+        records.append(kwargs)
+
+    parameter, optimizer = _initialized(torch.optim.AdamW)
+    first = capture_optimizer(
+        {"weight": parameter},
+        optimizer,
+        store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
+    )
+    assert [item["access"] for item in records] == ["write"]
+    assert first.recurrent is not None
+
+    # a fresh optimizer over the same inventory reads the trace back
+    parameter, optimizer = _initialized(torch.optim.AdamW)
+    again = capture_optimizer(
+        {"weight": parameter},
+        optimizer,
+        store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
+    )
+    assert [item["access"] for item in records] == ["write", "read"]
+    assert again.recurrent is not None
+    assert again.recurrent.compatibility_digest == first.recurrent.compatibility_digest
+    assert again.recurrent.operator_targets == first.recurrent.operator_targets
+    assert [task.binding_names for task in again.recurrent_tasks] == [
+        task.binding_names for task in first.recurrent_tasks
+    ]
+    assert [binding.name for binding in again.bindings] == [
+        binding.name for binding in first.bindings
+    ]
+    assert again.mutation_names == first.mutation_names
+    assert again.created_state_names == first.created_state_names
+    assert again.first_step_is_opaque == first.first_step_is_opaque
+
+    # a different optimizer over the same tensors is another entry
+    parameter, optimizer = _initialized(torch.optim.SGD, momentum=0.9)
+    capture_optimizer(
+        {"weight": parameter},
+        optimizer,
+        store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
+    )
+    assert [item["access"] for item in records] == ["write", "read", "write"]
+
