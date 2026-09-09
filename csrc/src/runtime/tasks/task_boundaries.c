@@ -182,6 +182,13 @@ static ShadowSpillStatus reserve_action_destination(
          * destination has one compatible range. Keep reservation priority,
          * release the pool lock so the worker can reclaim those ranges, and
          * actively poll the monotonic capacity epoch. Neither thread sleeps.
+         *
+         * The release source is polled beside the epoch, because the two
+         * answer different questions: the epoch says capacity moved, and the
+         * release source says more is still coming. Work can drain without
+         * freeing a range, and a wait on the epoch alone would then never
+         * end. Giving up returns to the reservation attempt above, which
+         * re-reads whether this can ever fit and answers out-of-memory.
          */
         const uint64_t capacity_epoch = atomic_load_explicit(
             &pool->capacity_epoch, memory_order_acquire
@@ -190,7 +197,8 @@ static ShadowSpillStatus reserve_action_destination(
         status = SHADOWSPILL_STATUS_OK;
         while (atomic_load_explicit(
                    &pool->capacity_epoch, memory_order_acquire
-               ) == capacity_epoch) {
+               ) == capacity_epoch &&
+               shadowspill_memory_pool_has_release_source(pool)) {
             status = shadowspill_failure_status(runtime);
             if (status != SHADOWSPILL_STATUS_OK ||
                 atomic_load_explicit(

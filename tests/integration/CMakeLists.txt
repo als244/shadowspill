@@ -16,7 +16,10 @@ function(shadowspill_add_pytorch_canary name timeout)
     shadowspill_pytorch_${name}_canary
     PROPERTIES
       LABELS "cuda;pytorch"
-      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR}"
+      # The canary arms a watchdog from the same number CTest kills on, so a
+      # wedged canary prints every thread's stack instead of dying silently.
+      ENVIRONMENT
+        "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout}"
       TIMEOUT ${timeout}
   )
 endfunction()
