@@ -1,13 +1,22 @@
-"""Indexed one-time projection of admission facts for the C planner."""
+"""Admission facts in indexed form, and a schedule encoded against them.
+
+The pool topology a plan must fit is indexed once and reused across
+every schedule measured against it, because it does not change when a
+schedule does.
+"""
 
 from __future__ import annotations
 
 import ctypes
 from array import array
 from dataclasses import dataclass
-from typing import Protocol
 
-from shadowspill.ir import MemoryActionKind, MemoryLocation, MemorySchedule
+from shadowspill.ir import (
+    IndexedMemorySchedule,
+    MemoryActionKind,
+    MemoryLocation,
+    MemorySchedule,
+)
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     MemoryReuseDependency,
@@ -15,7 +24,7 @@ from shadowspill.simulator import (
     TaskPhysicalDelta,
 )
 from shadowspill.simulator.capi import NO_INDEX
-from shadowspill.simulator.indexed import IndexedSimulationTemplate
+from shadowspill.simulator.indexing import IndexedSimulationTemplate
 from shadowspill.status import ABI_VERSION, Status
 
 from ..capi import (
@@ -66,31 +75,6 @@ class IndexedAdmissionFacts:
     digest: str
 
 
-class IndexedSchedule(Protocol):
-    """Structural interface shared with the PressureFit winner."""
-
-    @property
-    def action_trigger_tasks(self) -> tuple[int, ...]: ...
-
-    @property
-    def action_aliases(self) -> tuple[int, ...]: ...
-
-    @property
-    def action_kinds(self) -> tuple[int, ...]: ...
-
-    @property
-    def initial_aliases(self) -> tuple[int, ...]: ...
-
-    @property
-    def initial_locations(self) -> tuple[int, ...]: ...
-
-    @property
-    def final_aliases(self) -> tuple[int, ...]: ...
-
-    @property
-    def final_locations(self) -> tuple[int, ...]: ...
-
-
 @dataclass(frozen=True, slots=True)
 class CompiledScheduleAdmission:
     """Exact physical projection for one selected indexed schedule."""
@@ -100,19 +84,6 @@ class CompiledScheduleAdmission:
     peak_allocated_bytes: int
     peak_reserved_bytes: int
     peak_fragmentation_bytes: int
-
-
-@dataclass(frozen=True, slots=True)
-class EncodedIndexedSchedule:
-    """Indexed schedule projection accepted by planner helpers."""
-
-    action_trigger_tasks: tuple[int, ...]
-    action_aliases: tuple[int, ...]
-    action_kinds: tuple[int, ...]
-    initial_aliases: tuple[int, ...]
-    initial_locations: tuple[int, ...]
-    final_aliases: tuple[int, ...]
-    final_locations: tuple[int, ...]
 
 
 _ACTION_KIND = {
@@ -132,10 +103,10 @@ _CompiledAllocationRow = tuple[tuple[int, int, int, int], ...]
 def encode_schedule(
     schedule: MemorySchedule,
     simulation: IndexedSimulationTemplate,
-) -> EncodedIndexedSchedule:
+) -> IndexedMemorySchedule:
     """Encode one public schedule against an immutable facts."""
 
-    return EncodedIndexedSchedule(
+    return IndexedMemorySchedule(
         action_trigger_tasks=tuple(
             simulation.task_index[item.trigger_task_id] for item in schedule.actions
         ),
@@ -302,7 +273,7 @@ def _compile_allocation_rows(
 def evaluate_schedule_admission(
     simulation: IndexedSimulationTemplate,
     admission: IndexedAdmissionFacts,
-    schedule: IndexedSchedule,
+    schedule: IndexedMemorySchedule,
 ) -> CompiledScheduleAdmission:
     """Evaluate one selected schedule through compiled production-pool policy."""
 
@@ -431,8 +402,8 @@ def evaluate_schedule_admission(
 
 __all__ = [
     "CompiledScheduleAdmission",
-    "EncodedIndexedSchedule",
     "IndexedAdmissionFacts",
+    "IndexedMemorySchedule",
     "encode_schedule",
     "evaluate_schedule_admission",
     "index_admission_facts",

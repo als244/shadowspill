@@ -16,7 +16,7 @@ The directory is intentionally split between task-oriented guides and the
 - [Interpreting a PlanReport](plan-report.md)
 - [PlanReport field reference](plan-report-fields.md)
 - [Interpreting StepResult diagnostics](step-diagnostics.md)
-- [Program and annotated-plan JSON](planning-json.md)
+- [program and annotated-plan JSON](planning-json.md)
 - [Figures over a step search](plots.md)
 - [Practical examples](../examples/README.md)
 

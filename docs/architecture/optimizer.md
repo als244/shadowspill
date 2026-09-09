@@ -46,9 +46,11 @@ the optimizer the caller already passes.
 
 Every declared entry is allocated in the spill pool, which is where it will
 live for the run. Nothing is allocated outside it, and there is no size below
-which an entry is treated differently: the pool is host memory, so a scalar
-counter an optimizer reads in Python behaves there exactly as it would
-anywhere else.
+which an entry is treated differently: a step counter an optimizer keeps as a
+scalar tensor is allocated there like any other entry, and reads from the
+host as it would anywhere else. An entry an optimizer keeps as a plain Python
+number is not a tensor, so it is not declared and nothing is allocated for
+it.
 
 ### Filled by the caller
 
@@ -56,7 +58,8 @@ ShadowSpill does not fill state. A default of zeros would be an assumption
 that fails silently -- an optimizer whose state starts elsewhere would train
 subtly wrong rather than fail -- and it would be ShadowSpill deciding a value.
 
-So the caller supplies an initialiser, beside the optimizer it belongs to:
+So the caller passes an initialiser as `plan_step(optimizer_state_init=...)`,
+beside the optimizer it belongs to:
 
 ```python
 def zero_state(
@@ -73,6 +76,11 @@ tensor to fill, and the parameter the entry belongs to -- so an initialiser
 that depends on the parameter can see it. Per entry rather than per state
 mapping, so an initialiser needing scratch gets it for one entry at a time and
 the transient stays bounded by construction.
+
+An optimizer that declares state with no initialiser to fill it is refused at
+planning, naming the entries it declared. Running on whatever the pool memory
+held would be the same silent wrong answer that
+[a missing `reset_parameters`](state-import.md#what-is-refused) would be.
 
 ### Or supplied whole, by the caller
 
@@ -103,8 +111,18 @@ optimizer skips parameters whose gradient is absent, and so nothing is
 declared, allocated or filled on its behalf. This needs no handling and no
 flag: it falls out of letting the optimizer declare its own state.
 
-The parameter itself still lives in the pool as model state, because it is
-read every step. What does not exist is state for an update that will not
+Both of the usual spellings work, and cost the same -- pass only the trainable
+parameters to the optimizer, or pass all of them and leave the frozen ones
+with `requires_grad=False`:
+
+```python
+model.embedding.weight.requires_grad_(False)   # keep the embedding fixed
+
+trainable = [item for item in model.parameters() if item.requires_grad]
+```
+
+The frozen parameter itself still lives in the pool as model state, because it
+is read every step. What does not exist is state for an update that will not
 happen.
 
 ## Values that change between steps
@@ -128,7 +146,7 @@ Name the values a step may set when the step is planned, and set them on every
 call:
 
 ```python
-train_step = plan_step(
+training = plan_step(
     model,
     optimizer=torch.optim.AdamW,
     hyperparams=("lr",),
@@ -140,7 +158,7 @@ train_step = plan_step(
     spill="spill",
 )
 for step in schedule:
-    train_step(step.microbatches, hyperparams={"lr": step.rate})
+    training(step.microbatches, hyperparams={"lr": step.rate})
 ```
 
 The optimizer is passed as it is -- no placeholder value, no wrapper. Planning
@@ -224,7 +242,7 @@ An entry holding several values, as `betas` does, has each of them held, and is
 written element-wise: one number sets them all, a sequence sets them in order.
 
 ```python
-train_step = plan_step(
+training = plan_step(
     model,
     optimizer=torch.optim.AdamW,
     hyperparams=("lr", "betas"),
@@ -235,7 +253,7 @@ train_step = plan_step(
     execution="device",
     spill="spill",
 )
-train_step(batches, hyperparams={"lr": 3.0e-4, "betas": (0.9, 0.95)})
+training(batches, hyperparams={"lr": 3.0e-4, "betas": (0.9, 0.95)})
 ```
 
 ### Parameter groups
@@ -247,17 +265,34 @@ all groups is the common case and reads as it means:
 training(batches, hyperparams={"lr": rate})   # every group's lr
 ```
 
-An optimizer whose groups must differ -- a lower rate for embeddings, say --
-is set by writing its tensors directly, which is the mechanism `hyperparams` uses
-underneath:
+Groups that must differ -- a lower rate for embeddings, say -- are written
+directly, which is the mechanism `hyperparams` uses underneath. Nothing here
+is a ShadowSpill concept: parameter groups and the values in them belong to
+the optimizer the caller defined, and a schedule that treats parts of a model
+differently is written exactly as it would be without ShadowSpill.
 
 ```python
-optimizer.param_groups[0]["lr"].fill_(base)
-optimizer.param_groups[1]["lr"].fill_(base * 0.1)
+decay = torch.tensor(3.0e-4)
+slow = torch.tensor(3.0e-5)
+optimizer = AdamW(
+    [
+        {"params": list(model.blocks.parameters()), "lr": decay},
+        {"params": list(model.embedding.parameters()), "lr": slow},
+    ]
+)
+
+for step in schedule:
+    decay.fill_(step.rate)
+    slow.fill_(step.rate * 0.1)
+    training(step.microbatches)
 ```
 
-Both work at once: `hyperparams` for what is uniform, direct writes for what
-is not.
+The only ShadowSpill-visible property is that both are tensors, so one capture
+serves every pair of values they take; make them host scalars, as planning
+does, because a value the update reads and passes to its kernel costs nothing
+to write there and an optimizer may require it there. The two spellings
+compose -- `hyperparams` for what is uniform, direct writes for what is not --
+because both end at the same tensors.
 
 ### Model constants, by the same mechanism
 
@@ -283,71 +318,31 @@ training(batches, hyperparams={"temperature": 0.9})
 
 A name is looked for in the optimizer's groups and in the model's buffers.
 Buffer names are the dotted paths `named_buffers()` reports, so a constant
-inside a submodule is named as it is found. A name that exists in both
-registries is refused rather than guessed at.
+inside a submodule is named as it is found.
 
 Note that such a buffer is declared empty and filled by `reset_parameters`,
 like any other derived constant -- the same contract as
 [importing state](state-import.md), for the same reason.
 
-### Advanced: different values for different parameters
-
-Nothing here is a ShadowSpill concept. Parameter groups, learning rates and
-every other hyperparameter belong to the model and optimizer the caller
-defined; ShadowSpill neither creates them nor interprets them. It only makes
-sure that a value named when the step was planned can still be written once
-the update has been captured.
-
-So a schedule that treats parts of a model differently is written exactly as
-it would be without ShadowSpill -- with parameter groups:
-
-```python
-decay = torch.tensor(3.0e-4)
-frozen_ish = torch.tensor(3.0e-5)
-optimizer = AdamW(
-    [
-        {"params": list(model.blocks.parameters()), "lr": decay},
-        {"params": list(model.embedding.parameters()), "lr": frozen_ish},
-    ]
-)
-
-for step in schedule:
-    decay.fill_(step.rate)
-    frozen_ish.fill_(step.rate * 0.1)
-    training(step.microbatches)
-```
-
-Each group holds its own tensor, and each is written independently. The only
-ShadowSpill-visible property is that both are tensors, so one capture serves
-every pair of values they take. Make them host scalars, as planning does: a
-value the update reads and passes to its kernel costs nothing to write there,
-and an optimizer may require it there.
-
-`hyperparams` is the convenience for the uniform case, and it does not replace
-this. A name it writes reaches *every* group holding that name, which is what
-a single schedule wants; groups that must differ are written directly, as
-above. The two compose -- `hyperparams` for what is uniform, direct writes for
-what is not -- because both end at the same tensors.
-
 ### What is refused
 
-Two mistakes are worth failing on rather than absorbing.
+Names are checked twice, at the two moments each mistake becomes knowable.
 
-A name found in neither registry raises `KeyError`, because a value silently
-going nowhere would look like a schedule that ran.
+When the step is **planned**, `hyperparams=(...)` refuses a name that exists
+in neither registry, a name that exists in both, and a name whose value cannot
+be held in a tensor at all -- a flag, a mode, anything that is not a number or
+a sequence of them. That is the earliest point at which any of the three is
+knowable, and planning is where a caller can still change what they asked for.
 
-A name held as a plain number raises `TypeError`, naming the fix. That value
-was fixed when the update was captured, so writing it now could not take
-effect; the message says to name it in `plan_step(hyperparams=...)`. Refusing
-here is what makes the rule discoverable at the moment it matters, rather than
-through a schedule that quietly does nothing.
-
-A name that cannot be held in a tensor at all -- a flag, a mode, anything that
-is not a number or a sequence of them -- is refused when the step is planned,
-which is the earliest point at which it is knowable.
-
-A name in both registries raises `KeyError` rather than picking one, since
-either choice would be silently wrong half the time.
+When a step is **called**, `hyperparams={...}` refuses the same first two --
+`KeyError` for a name in neither registry, because a value silently going
+nowhere would look like a schedule that ran, and `KeyError` for a name in both
+rather than picking one, since either choice would be silently wrong half the
+time. It also refuses, with `TypeError`, a name still held as a plain number:
+that value was fixed when the update was captured, so writing it now could not
+take effect, and the message says to name it in `plan_step(hyperparams=...)`.
+Refusing there is what makes the rule discoverable at the moment it matters,
+rather than through a schedule that quietly does nothing.
 
 ### What does not belong here
 

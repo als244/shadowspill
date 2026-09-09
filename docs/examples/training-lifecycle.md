@@ -4,8 +4,6 @@ This complete example creates a runtime, imports model state, trains, and
 writes a checkpoint.
 
 ```python
-from functools import partial
-
 import torch
 import torch.nn as nn
 
@@ -56,7 +54,8 @@ def zero_state(
 train_step = plan_step(
     model,
     objective=objective,
-    optimizer=partial(torch.optim.AdamW, lr=3e-4, foreach=False),
+    optimizer=torch.optim.AdamW,
+    hyperparams=("lr",),
     optimizer_state_init=zero_state,
     example_inputs=[batch(4)],
     runtime=runtime,
@@ -65,7 +64,7 @@ train_step = plan_step(
 )
 
 for _ in range(10):
-    result = train_step([batch(4)])
+    result = train_step([batch(4)], hyperparams={"lr": 3e-4})
     loss = result.objectives[0]
     print("optimizer step", result.step_number, "loss", loss)
 
@@ -76,6 +75,16 @@ train_step.close()
 Each call runs the objective and backward pass followed by one optimizer
 update. Runtime inputs must match the shapes, strides, dtypes, static values,
 and structure supplied to `plan_step()`.
+
+The optimizer is built plainly, at its defaults. Anything that varies between
+steps is named at planning instead: `hyperparams=("lr",)` declares that the
+learning rate is a value the caller supplies, and each call sets it. A value
+named this way is captured once, by geometry, so a schedule that changes it
+every step never recaptures the update. `optimizer_state_init` is required
+whenever the optimizer keeps state: the optimizer declares what state exists
+by running on meta parameters, ShadowSpill allocates it in the spill pool,
+and this fills it, because a default would be an assumption that fails
+silently.
 
 The scalar loss is `result.objectives[0]`. ShadowSpill validates and records
 this explicit objective return during capture; it does not guess which model

@@ -19,43 +19,44 @@ from dataclasses import dataclass
 
 from shadowspill.ir import (
     MemoryActionKind,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
 )
 from shadowspill.planner.result import ResidentSlice
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator.indexed import (
+from shadowspill.simulator.indexing import (
     IndexedSimulationTemplate,
     index_simulation_template,
     simulate_template,
 )
 
-from ..admission import AdmissionFacts
-from ..admission.indexed import (
-    EncodedIndexedSchedule,
+from ....admission import AdmissionFacts
+from ....admission.indexing import (
     IndexedAdmissionFacts,
+    IndexedMemorySchedule,
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from ..best import BestPlaced
-from ..diagnostics import (
+from ....diagnostics import (
     INCUMBENT_CANDIDATE_ID,
     IncumbentDiagnostic,
-    PressureFitDiagnostics,
-    PressureFitSectionTiming,
-    PressureFitWorkDiagnostics,
+    PlanningDiagnostics,
+    PlanningSectionTiming,
+    PlanningWorkDiagnostics,
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
-from ..recomputation import Resolution
-from ..request import PressureFitOptions
-from ..result import (
-    PressureFitInfeasibleError,
-    PressureFitResult,
-    PressureFitSearchExhaustedError,
+from ....request import GenericPlanningOptions
+from ....result import (
+    PlanInfeasibleError,
+    PlanSearchExhaustedError,
+    ProgramPlanResult,
 )
+from ... import SearchOptions
+from ...toolkit.resolution import Resolution
+from .best import BestPlaced
 from .candidates import (
     _ACTION_KIND,
     CPreflightResult,
@@ -65,6 +66,7 @@ from .candidates import (
     evaluate_program_problems,
     validate_program_problem,
 )
+from .options import PressureFitOptions
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +84,7 @@ class SelectionProblem:
     indexed_placement: IndexedAdmissionFacts | None = None
     #: The plan to beat, encoded against this problem, when the caller has
     #: one for this resolution.
-    incumbent: EncodedIndexedSchedule | None = None
+    incumbent: IndexedMemorySchedule | None = None
 
 
 def _selection_id(selections: tuple[TaskAlternativeChoice, ...]) -> str:
@@ -91,7 +93,9 @@ def _selection_id(selections: tuple[TaskAlternativeChoice, ...]) -> str:
     return ",".join(f"{item.group_id}={item.option_id}" for item in selections)
 
 
-def _selected_traffic(program: Program, result: CProblemResult) -> tuple[int, int]:
+def _selected_traffic(
+    program: ShadowSpillProgram, result: CProblemResult
+) -> tuple[int, int]:
     """What one problem's own best plan moves, fetched and evicted.
 
     The winner's traffic is on the plan summary. This is every other
@@ -117,7 +121,7 @@ def _selected_traffic(program: Program, result: CProblemResult) -> tuple[int, in
 
 
 def build_problems(
-    program: Program,
+    program: ShadowSpillProgram,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
@@ -126,11 +130,11 @@ def build_problems(
     placement: AdmissionFacts | None = None,
     resolutions: tuple[Resolution, ...],
     progress: Callable[[str], None] | None,
-    incumbent: PressureFitResult | None = None,
+    incumbent: ProgramPlanResult | None = None,
 ) -> tuple[SelectionProblem, ...]:
     """Project each resolution without Python residency matrices.
 
-    `incumbent` is a plan already in hand for this Program; it is encoded
+    `incumbent` is a plan already in hand for this ShadowSpillProgram; it is encoded
     against the resolution it was found for, and a search over resolutions
     that do not include that one carries no plan to beat.
     """
@@ -195,7 +199,7 @@ _INCUMBENT_STATUS = {0: "valid", 2: "infeasible", 3: "infeasible", 7: "unplaceab
 
 
 def _incumbent_diagnostic(
-    result: CProblemResult, incumbent: PressureFitResult | None
+    result: CProblemResult, incumbent: ProgramPlanResult | None
 ) -> IncumbentDiagnostic | None:
     """What became of the plan to beat under one problem, if it carried one."""
 
@@ -214,7 +218,7 @@ def _incumbent_diagnostic(
     )
 
 
-def _origin(incumbent: PressureFitResult) -> tuple[str | None, int | None]:
+def _origin(incumbent: ProgramPlanResult) -> tuple[str | None, int | None]:
     """The candidate that first found the plan in hand, and at what capacity.
 
     A plan handed on more than once was the plan to beat of the search that
@@ -243,14 +247,17 @@ def _origin(incumbent: PressureFitResult) -> tuple[str | None, int | None]:
 def _preflight_error(
     problem: SelectionProblem,
     result: CPreflightResult,
-) -> ValueError:
+) -> PlanInfeasibleError:
     """Decode one compiled preflight failure into the public exception model."""
 
     if result.failure_kind == "missing_initial_residency":
         if result.error_alias is None:
             raise RuntimeError("compiled preflight omitted its failing alias")
         alias_id = problem.indexed_template.alias_ids[result.error_alias]
-        return ValueError(f"input alias {alias_id!r} has no initial residency")
+        return PlanInfeasibleError(
+            f"input alias {alias_id!r} has no initial residency",
+            kind="missing_initial_residency",
+        )
 
     device_id = (
         None
@@ -267,7 +274,7 @@ def _preflight_error(
     required = result.required_bytes
     capacity = result.capacity_bytes
     if result.failure_kind == "workspace_capacity":
-        return PressureFitInfeasibleError(
+        return PlanInfeasibleError(
             f"task workspace {required} exceeds capacity {capacity} on {device_id!r}",
             kind="workspace_capacity",
             device_id=device_id,
@@ -276,7 +283,7 @@ def _preflight_error(
             capacity_bytes=capacity,
         )
     if result.failure_kind == "required_capacity":
-        return PressureFitInfeasibleError(
+        return PlanInfeasibleError(
             f"required inputs and outputs need {required} bytes at "
             f"{boundary_task_id or 'initialization'} on {device_id!r}, "
             f"exceeding object capacity {capacity}",
@@ -297,7 +304,7 @@ def preflight_problems(
     """Keep resolutions that satisfy the semantic-capacity preflight."""
 
     valid: list[SelectionProblem] = []
-    failures: list[ValueError] = []
+    failures: list[PlanInfeasibleError] = []
     for problem in problems:
         result = validate_program_problem(
             problem.indexed_template,
@@ -311,7 +318,7 @@ def preflight_problems(
         return tuple(valid)
     if failures:
         raise failures[0]
-    raise PressureFitInfeasibleError(
+    raise PlanInfeasibleError(
         "no resolution could be constructed",
         kind="graph_pair_selection",
     )
@@ -319,8 +326,10 @@ def preflight_problems(
 
 def run_problems(
     problems: tuple[SelectionProblem, ...],
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    algorithm_options: PressureFitOptions,
     *,
+    workers: int = 0,
     best: BestPlaced | None = None,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate every resolved program in the planner, on its worker threads.
@@ -341,25 +350,27 @@ def run_problems(
             )
             for problem in problems
         ),
-        options,
+        generic,
+        algorithm_options,
+        workers=workers,
         best_placed=0 if best is None else best.handle,
     )
 
 
 def finish_pressurefit(
-    program: Program,
+    program: ShadowSpillProgram,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
-    options: PressureFitOptions,
+    search_options: SearchOptions,
     problems: tuple[SelectionProblem, ...],
     results: tuple[CProblemResult, ...],
     admission: AdmissionFacts | None,
     best: BestPlaced | None = None,
     *,
     placement: AdmissionFacts | None = None,
-    incumbent: PressureFitResult | None = None,
-) -> PressureFitResult:
+    incumbent: ProgramPlanResult | None = None,
+) -> ProgramPlanResult:
     """Decode the plan the search placed, and its diagnostics.
 
     `best` is the authority on what won. Every candidate offers the plans it
@@ -455,7 +466,7 @@ def finish_pressurefit(
             for candidate in problem.candidate_evaluations
         )
         if any(item.status == "exhausted" for item in frozen):
-            raise PressureFitSearchExhaustedError(
+            raise PlanSearchExhaustedError(
                 "PressureFit exhausted its bounded candidate-repair budget "
                 "before proving a feasible schedule",
                 diagnostics=frozen,
@@ -467,7 +478,7 @@ def finish_pressurefit(
             for candidate in result.candidates
             if candidate.status == 3 and candidate.error_required_bytes > 0
         )
-        raise PressureFitInfeasibleError(
+        raise PlanInfeasibleError(
             "no simulator-valid PressureFit candidate satisfied the declared "
             "capacity and residency constraints",
             kind=(
@@ -519,28 +530,28 @@ def finish_pressurefit(
         if candidate_index is None
         else result.candidates[candidate_index].candidate_id
     )
-    aggregate_work = PressureFitWorkDiagnostics()
+    aggregate_work = PlanningWorkDiagnostics()
     for problem_result in results:
         aggregate_work += problem_result.work
-    aggregate_work += PressureFitWorkDiagnostics(
+    aggregate_work += PlanningWorkDiagnostics(
         simulation_calls=1,
         admission_calls=admission_calls,
-        sections=PressureFitSectionTiming(
+        sections=PlanningSectionTiming(
             total_ns=selected_ns,
             select_ns=selected_ns,
             admit_ns=admission_ns,
         ),
     )
-    diagnostics = PressureFitDiagnostics(
+    diagnostics = PlanningDiagnostics(
         selected_candidate_id=selected_candidate_id,
         selected_selection_id=problem.selection_id,
         selected_makespan_ns=simulation.makespan_ns,
         resolved_programs=tuple(resolved_programs),
         work=aggregate_work,
     )
-    return PressureFitResult(
+    return ProgramPlanResult(
         program=program,
-        options=options,
+        search_options=search_options,
         initial_residency=initial_residency,
         final_residency=final_residency,
         simulation_config=config,

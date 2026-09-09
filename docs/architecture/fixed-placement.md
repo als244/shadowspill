@@ -75,11 +75,11 @@ and they are too small for packing them on their own to be worth the
 machinery. So every lease of such an object gets a static home instead: a
 range of its own in the resident slice, which follows the main assignment at
 the end of the fixed range. The leases left out of the assignment above are
-walked in lease order, each taking the next offset that satisfies its
-alignment — 256 bytes, like every lease — and the fixed range ends past the
-last of them. Nothing in the slice is ever reused, so nothing in it needs a
-completion dependency, and the certificate's `fixed_slice_bytes` is the main
-assignment's extent plus `resident_slice_bytes`.
+walked in lease order, each taking the next offset that satisfies its own
+alignment, and the fixed range ends past the last of them. Nothing in the
+slice is ever reused, so nothing in it needs a completion dependency, and the
+certificate's `fixed_slice_bytes` is the main assignment's extent plus
+`resident_slice_bytes`.
 
 The slice's size is known before the search. At problem preparation the
 planner sums the homes such an object will need — one, plus one for every task
@@ -105,20 +105,18 @@ merge neighbours, never split them, so a node's list stays as short as the
 layout is contiguous — and that is what keeps a query cheap, because a query
 pays for the ranges each covering node holds.
 
-Three things were measured rather than assumed, and each ruled out an
-alternative that looked better on paper:
+Three choices here were settled by measurement rather than by argument, and
+each ruled out an alternative that looked better on paper:
 
 - **Sorting the gathered ranges beats sweeping them.** A sweep that jumps past
   the furthest conflicting range rescans everything once per layer, and packed
-  leases stack into many layers; it measured slower on every scenario.
+  leases stack into many layers.
 - **Merging beats de-duplicating.** An earlier design stored leases on the
   nodes and skipped the repeats a query reached through several covering nodes
-  at once — 2.1 to 2.5 of them per lease. Merging is strictly better: it
-  collapses neighbours that de-duplication cannot, and it still leaves the
-  same per-node duplication, now cheap enough not to be worth removing. That
-  duplication is why a query can return more ranges than the lease has
-  conflicts, and the [cost section](#cost) shows it losing to merging on every
-  plan above about 8,000 leases.
+  at once. Merging is strictly better: it collapses neighbours that
+  de-duplication cannot, and it leaves the same per-node duplication behind,
+  now cheap enough not to be worth removing. That duplication is why a query
+  can return more ranges than the lease has conflicts.
 - **The comparison is a single load, so an indirect comparator costs more than
   the comparison.** The sort is specialised rather than generic.
 
@@ -159,21 +157,21 @@ up.
 Three things follow, with `k` the conflict count and `r` what actually gets
 sorted:
 
-- **The quadratic worst case is nowhere near.** `Σk` is a small fraction of
-  `n²/2`, and the fraction *falls* as plans grow, because the peak number of
-  live leases is set by the model's working set rather than by the step's
-  length: a longer step adds leases without adding overlap.
-- **Merging is what makes it cheap, and it pays more as plans grow.** `Σr`
-  is close to `Σk` on a small layout and well below it on a large one: there
-  is little to collapse in a small layout and a lot in a large one, so `Σr`
-  grows sublinearly in `n` within one family of plans.
-- **The distribution is skewed, not flat.** The median lease gathers a
-  handful of ranges and the worst gathers thousands. A few long-lived leases,
-  the resident parameters, dominate the total, which is why the sort is
-  specialised rather than generic: most calls are tiny.
+- **The quadratic worst case is nowhere near, and recedes as plans grow.**
+  `Σk` stays far below `n²/2` because the peak number of live leases is set by
+  the working set rather than by the step's length: a longer step adds leases
+  without adding overlap.
+- **Merging is what makes it cheap, and it pays more as plans grow.** There is
+  little to collapse in a small layout and a great deal in a large one, so
+  `Σr` tracks `Σk` on the small one and falls well below it on the large.
+- **The distribution is skewed, not flat.** Most leases gather a few ranges;
+  the handful that stay resident for the whole step gather nearly all of them
+  and dominate the total.
 
 The sort of the gathered ranges is where a placement call spends most of its
 time, then the gather, then the moves the sort makes; insertion is negligible.
+Because most of those sorts are tiny, the comparator is specialised rather
+than generic.
 
 ## Timings choose the offsets; causality makes them safe
 

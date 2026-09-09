@@ -35,6 +35,11 @@ pool-backed *first* and then writes the file's values through, so the values
 land in the pool rather than being copied into it, and the mapped file stays
 reclaimable rather than becoming anonymous memory.
 
+A model built on `meta` is rebound in place and handed back as the same
+object, because it held no values to copy. A model that was already
+materialised is copied into a new module whose tensors point at the pool, so
+the caller keeps the return value rather than the model it passed.
+
 ## The contract
 
 Constructing into the pool asks three things of a model. They are not
@@ -198,38 +203,9 @@ work: whatever dtype the optimizer creates is the dtype that is allocated in
 the pool, because the state's shape and dtype are discovered from the
 optimizer itself rather than assumed from the parameter.
 
-### Frozen parameters carry no state
-
-A parameter that is not being trained has no optimizer state, so none is
-declared, none is allocated in the pool, and none is initialised. This is not
-a case anyone has to handle: state is discovered by letting the optimizer
-declare it, gradients are seeded only where `requires_grad` is set, and an
-optimizer skips parameters whose gradient is absent. A frozen parameter
-therefore never reaches the declaration.
-
-Both the usual spellings work, and cost the same:
-
-```python
-class PartiallyFrozen(nn.Module):
-    def __init__(self, config: object) -> None:
-        super().__init__()
-        self.embedding = nn.Embedding(config.vocabulary, config.width)
-        self.blocks = nn.ModuleList(
-            Block(config) for _ in range(config.depth)
-        )
-        # Keep the embedding fixed; train everything else.
-        self.embedding.weight.requires_grad_(False)
-
-
-def trainable(model: nn.Module) -> list[nn.Parameter]:
-    return [item for item in model.parameters() if item.requires_grad]
-```
-
-Passing only the trainable parameters to the optimizer, or passing all of them
-and leaving the frozen ones with `requires_grad=False`, both end with state
-declared for the trained parameters alone. The frozen parameter still lives in
-the pool as model state -- it is read every step -- but nothing is allocated on
-its behalf for an update that will not happen.
+A frozen parameter is still model state and still lives in the pool, because
+it is read every step; that it carries no *optimizer* state is
+[the optimizer's page](optimizer.md#frozen-parameters-carry-no-state).
 
 ### A higher-precision master copy
 
@@ -263,7 +239,7 @@ object achieves.
 
 ## See also
 
-- [Persistence](ir.md) for how long a piece of state must survive, which is a
+- [Persistence](program.md) for how long a piece of state must survive, which is a
   different question from where it lives.
 - [PressureFit](pressurefit.md) for how residency decides when state is on the
   device.

@@ -26,25 +26,22 @@ A pool can grow at an idle boundary (`shadowspill_memory_pool_grow()`): the
 runtime takes a larger arena of the same kind, copies the live bytes, releases
 the old arena, and rebases every lease.
 
-## Memory planning takes for itself
+## Memory a plan will own comes from the pool that will own it
 
 Planning creates state the plan will keep, and the largest of it is an
 optimizer's: several times the model for an ordinary adaptive optimizer. That
-state belongs in the spill pool, and it is taken from there as it is created
-rather than built in ordinary host memory and copied in, so the host is never
-asked for the whole of it beside the pool that is about to hold it. A host
-allocation made while that state is being created, and large enough to be
-worth an object, is served from the pool; anything smaller, and anything a
-plan does not keep, behaves as it always did and is given back.
+state is taken from the spill pool as it is created rather than built in
+ordinary host memory and copied in, so the host is never asked for the whole
+of it beside the pool that is about to hold it. A host allocation made while
+that state is being created, and large enough to be worth an object, is served
+from the pool; anything smaller, and anything a plan does not keep, behaves as
+it always did and is given back.
 
-This is the same rule the pools follow everywhere else, stated for planning:
-memory a plan will own comes from the pool that will own it. The rest of what
-a plan owns already obeyed it. Gradients, activations and workspaces are
-runtime objects created in a pool, and the tensors a program is lowered from
-are fake and cost nothing. Model state arrives by one of three routes, none of
-which needs a second copy: a model the caller built is imported and its host
-copy released, a checkpoint is mapped and read straight into the pool, or a
-planning call imports state the caller did not and owns it.
+The rest of what a plan owns already obeyed this rule. Gradients, activations
+and workspaces are runtime objects created in a pool, and the tensors a
+program is lowered from are fake and cost nothing. Model and optimizer state
+reaches a pool without a second copy of itself by one of the paths in
+[importing state](state-import.md).
 
 ## Construction order
 

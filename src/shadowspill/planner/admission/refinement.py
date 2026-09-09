@@ -17,9 +17,9 @@ from shadowspill.planner.admission.layout.model import (
     FixedLayoutAdmission,
     FixedLayoutInfeasibleError,
 )
-from shadowspill.planner.diagnostics import PressureFitDiagnostics
+from shadowspill.planner.diagnostics import PlanningDiagnostics
 from shadowspill.planner.plan_store import PlanLookup
-from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.result import ProgramPlanResult
 from shadowspill.simulator import SimulationConfig
 
 
@@ -32,9 +32,9 @@ class FixedLayoutAttempt:
     required_bytes: int
     pool_capacity_bytes: int
     accepted: bool
-    pressurefit_wall_time_ns: int = 0
+    search_wall_time_ns: int = 0
     physical_admission_wall_time_ns: int = 0
-    pressurefit_diagnostics: PressureFitDiagnostics | None = None
+    search_diagnostics: PlanningDiagnostics | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +48,7 @@ class FixedLayoutSelection:
     original_object_capacity_bytes: int
 
     @property
-    def result(self) -> PressureFitResult:
+    def result(self) -> ProgramPlanResult:
         return self.pressurefit.result
 
     @property
@@ -60,10 +60,10 @@ class FixedLayoutSelection:
         return self.original_object_capacity_bytes - self.facts.object_capacity_bytes
 
     @property
-    def pressurefit_wall_time_ns(self) -> int:
+    def search_wall_time_ns(self) -> int:
         """Cumulative PressureFit/cache-resolution time across refinements."""
 
-        return sum(item.pressurefit_wall_time_ns for item in self.attempts)
+        return sum(item.search_wall_time_ns for item in self.attempts)
 
     @property
     def physical_admission_wall_time_ns(self) -> int:
@@ -115,7 +115,7 @@ def resolve_fixed_layout_selection(
 
     started = time.perf_counter_ns()
     selected = resolve(config)
-    pressurefit_wall_time_ns = time.perf_counter_ns() - started
+    search_wall_time_ns = time.perf_counter_ns() - started
 
     admission_started = time.perf_counter_ns()
     effective_facts = replace(
@@ -145,7 +145,7 @@ def resolve_fixed_layout_selection(
                 error.required_bytes,
                 error.capacity_bytes,
                 False,
-                pressurefit_wall_time_ns,
+                search_wall_time_ns,
                 time.perf_counter_ns() - admission_started,
                 selected.result.diagnostics,
             )
@@ -165,7 +165,7 @@ def resolve_fixed_layout_selection(
             admitted.layout.required_bytes,
             admitted.layout.pool_capacity_bytes,
             True,
-            pressurefit_wall_time_ns,
+            search_wall_time_ns,
             time.perf_counter_ns() - admission_started,
             selected.result.diagnostics,
         )

@@ -23,12 +23,10 @@ reporting its own success. The first cause is preserved: the failure names
 what was attempted and refused, while the return value says what this call
 saw.
 
-`abort_task` exists for the case where a frontend opened a task scope and
-cannot reach `after_task`, because rebinding a storage raised, the compiled
-callable raised, or the thread was interrupted. It finalizes the task's
-retirements, clears pending handoffs, and leaves the scope, without publishing
-mutations or instantiating actions. A task that did not finish did not produce
-its outputs.
+A frontend that opened a task scope and cannot reach `after_task` closes it
+with `abort_task`, which publishes nothing; [task
+boundaries](task-boundaries.md#shadowspill_abort_task_handle) says what it
+finalizes and which cases reach it.
 
 ## A failure in a planned callable
 
@@ -38,34 +36,35 @@ program is still running and the worker is still able to make progress.
 
 ## A failure in the runtime
 
-`shadowspill_runtime_close` rejects new work, waits until both counters above
-reach zero, synchronizes both transfer lanes, joins the worker, and releases
-everything it owns. It is synchronizing and idempotent, and it returns the first latched
-failure. Draining is correct here for the same reason: the process continues,
-so outstanding transfers can still complete, and a caller may go on to use the
+`shadowspill_runtime_close` rejects new work, waits until two counters reach
+zero, synchronizes every transfer lane, joins the worker, and releases
+everything it owns. It is synchronizing and idempotent, and it returns the
+first latched failure. Draining is correct here because the process continues:
+outstanding transfers can still complete, and a caller may go on to use the
 memory they were writing into.
 
-## The process exiting
-
-This is the case that behaves differently, and it is worth stating why.
-
-A process can start exiting while a runtime still holds either of the two
-things its close waits on, and they are not the same kind of thing:
+The two counters are not the same kind of thing, which is what the next
+section turns on:
 
 | counter | what it counts | what finishing it needs |
 |---|---|---|
 | queued actions | fetches, write-backs, evictions and releases a task triggered, published to the worker and not yet complete | bytes still to move on a transfer lane, or a range still to hand back |
 | pending retirements | ranges freed inside a task, fenced against a completion event | no bytes move; the worker has to observe that event and return the range to the pool |
 
-Neither can make progress once exit handlers are running. The failing case
-that prompted this was five pending retirements and zero queued actions, so
-nothing was mid-transfer at all: five freed ranges were waiting on completion
-events that nobody would ever observe. It does not have to be ShadowSpill's
-decision, or Python's: any C code in the process can call `exit`, and one
-does. One attention library's kernel launcher prints a device error and calls
-`exit(1)` when it has no kernel image for the device, which is what happens
-when kernels built for one accelerator architecture are asked to run on
-another.
+## The process exiting
+
+This is the case that behaves differently, and it is worth stating why.
+
+A process can start exiting while a runtime still holds either counter, and
+neither can make progress once exit handlers are running. Retirements make the
+point sharpest: a runtime can have nothing mid-transfer and still hold freed
+ranges waiting on completion events that nobody will ever observe.
+
+It does not have to be ShadowSpill's decision, or Python's: any C code in the
+process can call `exit`, and some does. A kernel launcher that finds no kernel
+image for the device -- what happens when kernels built for one accelerator
+architecture are asked to run on another -- may print a device error and call
+`exit(1)` rather than return a status.
 
 `exit` runs registered handlers on the calling thread and only reaches
 `_exit`, which asks the kernel to tear the process down, after they all
@@ -80,7 +79,7 @@ can block:
 
 | skipped | why it would block |
 |---|---|
-| the drain | outstanding work cannot complete once exit handlers are running, and the loop's only escape is a latched failure that will never appear when the exit came from elsewhere |
+| the drain | outstanding work cannot complete once exit handlers are running, and the wait's only escape is a latched failure that will never appear when the exit came from elsewhere |
 | lane synchronization | waiting on the device for the work it just declined to finish |
 | aborting the open task scope | finalizing retirements takes the pool's foreground lock, which the worker may hold and may never release |
 
@@ -100,7 +99,6 @@ ShadowSpill: the process is exiting with status 1 and 0 action(s) and
 5 retirement(s) outstanding; ShadowSpill did not wait for them.
 Latched failure: none, so the exit came from outside ShadowSpill.
 ```
-
 
 A nonzero status with nothing latched is the informative case: no call of ours
 failed, so something else ended the process. That combination is otherwise

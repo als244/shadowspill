@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from shadowspill.ir import Program
+from shadowspill.ir import ShadowSpillProgram
 from shadowspill.planner.diagnostics.plan import (
     PlanCacheArtifact,
     PlanProfilingMetadata,
 )
-from shadowspill.planner.program_inputs import PressureFitProgram
+from shadowspill.planner.program_inputs import ShadowSpillPlanningProblem
 from shadowspill.planner.serialization import (
     _canonical_json,
     _digest,
@@ -28,7 +28,7 @@ from .step_ordering import StepDataOrdering
 _STEP_PROGRAM_SCHEMA = artifact_schema("step_program")
 
 
-def _data_ordering(value: object, program: Program) -> StepDataOrdering:
+def _data_ordering(value: object, program: ShadowSpillProgram) -> StepDataOrdering:
     """The record's ordering; a record from before there was one ran depth-first."""
     if value is not None:
         return StepDataOrdering.from_dict(value, "step_program.planning.data_ordering")
@@ -44,8 +44,8 @@ def _data_ordering(value: object, program: Program) -> StepDataOrdering:
 class StepProgram:
     """Public result of capture, profiling, and canonical step lowering."""
 
-    recurrent: PressureFitProgram
-    initial: PressureFitProgram | None
+    recurrent: ShadowSpillPlanningProblem
+    initial: ShadowSpillPlanningProblem | None
     optimizer_ordering: str
     data_ordering: StepDataOrdering
     signature_digests: tuple[str, ...]
@@ -160,13 +160,13 @@ class StepProgram:
         transfer = _mapping(
             data.get("transfer_capabilities"), "step_program.transfer_capabilities"
         )
-        recurrent = PressureFitProgram.from_value(
+        recurrent = ShadowSpillPlanningProblem.from_value(
             programs.get("recurrent"), "step_program.programs.recurrent"
         )
         initial = (
             None
             if initial_value is None
-            else PressureFitProgram.from_value(
+            else ShadowSpillPlanningProblem.from_value(
                 initial_value, "step_program.programs.initial"
             )
         )
@@ -288,5 +288,5 @@ class StepProgram:
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as error:
-            raise ValueError("step Program JSON is invalid") from error
+            raise ValueError("step ShadowSpillProgram JSON is invalid") from error
         return cls.from_dict(value)

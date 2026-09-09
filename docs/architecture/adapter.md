@@ -2,8 +2,8 @@
 
 The adapter is the compiled component that speaks PyTorch on one side and the
 neutral runtime on the other. It is the only place framework conventions and
-the process-global allocator live, and since the backend contract it holds no
-provider knowledge either.
+the process-global allocator live, and it holds no provider knowledge: the
+backend it loads is reached through the same flat table the runtime uses.
 
 ## Why it exists
 
@@ -48,14 +48,14 @@ torch allocator hooks     objects and storage views     task boundaries
 `csrc/adapter/pytorch/` has the runtime's shape: one `internal.h` per
 directory saying what it holds, one file per concern.
 
-- `lifecycle/` — bootstrap from a config, close, the process-exit hook, and
-  the physical-memory ledger.
+- `lifecycle/` — bootstrap from a config, loading the backend library by
+  name, close, the process-exit hook, and the physical-memory ledger.
 - `allocator/` — the three callbacks PyTorch's pluggable allocator makes, and
   the C++ wrapper that turns a failed one into a typed exception.
 - `failure/` — what a failed call latches, and the report a person reads.
 - `tasks/` — the task boundary on the dispatching thread: the range a task
-  opens, allocation scopes, before, after, abort, and the pre-task action
-  batch.
+  opens, allocation scopes, before, after, abort, and the action batch that
+  runs with no task of its own.
 - `storage/` — PyTorch storages over runtime leases: the C primitives, and
   the torch operators over them, one file per dispatch key.
 - `internal.h`, `adapter.c` and `profiler.c` at the top: the one
@@ -77,7 +77,7 @@ routes, and lanes; see [backends](backends.md).
 The C entry points in `<shadowspill/pytorch_adapter.h>`, grouped in the
 [adapter C API](../c/pytorch-adapter.md): bootstrap, physical admission and
 close; the allocator callbacks; objects and storage; task boundaries and
-allocation scopes; profiling; and failure and recovery. The Python layer wraps them in
-`shadowspill.pytorch.runtime_adapter`; anything reachable through a runtime
-handle the adapter already published is called on the neutral library
-directly rather than restated here.
+allocation scopes; profiling; and failure and recovery. The Python layer wraps
+them in `shadowspill.pytorch.runtime_adapter`; anything reachable through the
+runtime handle the adapter publishes is called on the neutral library directly
+rather than restated here.

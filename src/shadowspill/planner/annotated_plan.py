@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING
 
 from shadowspill.ir import MemorySchedule, ResidencySpec, TaskAlternativeChoice
 from shadowspill.planner.admission import AdmissionFacts
+from shadowspill.planner.diagnostics import PlanningDiagnostics
 from shadowspill.planner.program_inputs import (
     MemoryBudgets,
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
-from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.result import ProgramPlanResult
 from shadowspill.planner.serialization import (
     _boolean,
     _canonical_json,
@@ -22,9 +23,6 @@ from shadowspill.planner.serialization import (
     _integer,
     _list,
     _mapping,
-    _options_from_value,
-    _options_to_dict,
-    _pressurefit_diagnostics_from_value,
     _resident_slice_from_value,
     _simulation_admission_from_value,
     _simulation_result_from_value,
@@ -32,6 +30,8 @@ from shadowspill.planner.serialization import (
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationAdmission, SimulationResult
+
+from .search import SearchOptions
 
 if TYPE_CHECKING:
     from .admission.layout.model import FixedPhysicalLayout
@@ -44,10 +44,10 @@ _ANNOTATED_PROGRAM_PLAN_SCHEMA = artifact_schema("annotated_program_plan")
 class AnnotatedProgramPlan:
     """PressureFit winner plus exact fixed-layout and simulator evidence."""
 
-    program: PressureFitProgram
+    program: ShadowSpillPlanningProblem
     memory_budgets: MemoryBudgets
     transfer_bandwidths: TransferBandwidths
-    result: PressureFitResult
+    result: ProgramPlanResult
     effective_facts: AdmissionFacts
     fixed_layout: FixedPhysicalLayout
     simulation_admission: SimulationAdmission
@@ -82,7 +82,7 @@ class AnnotatedProgramPlan:
             {
                 key: item
                 for key, item in _mapping(attempt, "physical_admission.attempt").items()
-                if key != "pressurefit_diagnostics"
+                if key != "search_diagnostics"
             }
             for attempt in _list(physical["attempts"], "physical_admission.attempts")
         ]
@@ -91,10 +91,10 @@ class AnnotatedProgramPlan:
         return _digest(value)
 
     @property
-    def pressurefit_wall_time_ns(self) -> int:
+    def search_wall_time_ns(self) -> int:
         """Cumulative PressureFit/cache-resolution wall time."""
 
-        return sum(item.pressurefit_wall_time_ns for item in self.attempts)
+        return sum(item.search_wall_time_ns for item in self.attempts)
 
     @property
     def physical_admission_wall_time_ns(self) -> int:
@@ -106,7 +106,7 @@ class AnnotatedProgramPlan:
     def orchestration_wall_time_ns(self) -> int:
         """Selection overhead outside measured PressureFit and admission calls."""
 
-        measured = self.pressurefit_wall_time_ns + self.physical_admission_wall_time_ns
+        measured = self.search_wall_time_ns + self.physical_admission_wall_time_ns
         return max(0, self.wall_time_ns - measured)
 
     def to_dict(self) -> dict[str, object]:
@@ -124,7 +124,7 @@ class AnnotatedProgramPlan:
                 "initial_residency": [
                     item.to_dict() for item in self.result.initial_residency
                 ],
-                "options": _options_to_dict(self.result.options),
+                "search_options": self.result.search_options.to_dict(),
                 "resident_slice": self.result.resident_slice.to_dict(),
                 "schedule": self.result.schedule.to_dict(),
                 "selections": [item.to_dict() for item in self.result.selections],
@@ -148,10 +148,10 @@ class AnnotatedProgramPlan:
                         "required_bytes": item.required_bytes,
                         "pool_capacity_bytes": item.pool_capacity_bytes,
                         "accepted": item.accepted,
-                        "pressurefit_diagnostics": (
+                        "search_diagnostics": (
                             None
-                            if item.pressurefit_diagnostics is None
-                            else item.pressurefit_diagnostics.to_dict()
+                            if item.search_diagnostics is None
+                            else item.search_diagnostics.to_dict()
                         ),
                     }
                     for item in self.attempts
@@ -159,7 +159,7 @@ class AnnotatedProgramPlan:
             },
             "timing": {
                 "total_wall_time_ns": self.wall_time_ns,
-                "pressurefit_wall_time_ns": self.pressurefit_wall_time_ns,
+                "search_wall_time_ns": self.search_wall_time_ns,
                 "physical_admission_wall_time_ns": (
                     self.physical_admission_wall_time_ns
                 ),
@@ -167,7 +167,7 @@ class AnnotatedProgramPlan:
                 "refinement_attempts": [
                     {
                         "attempt_index": index,
-                        "pressurefit_wall_time_ns": item.pressurefit_wall_time_ns,
+                        "search_wall_time_ns": item.search_wall_time_ns,
                         "physical_admission_wall_time_ns": (
                             item.physical_admission_wall_time_ns
                         ),
@@ -187,7 +187,7 @@ class AnnotatedProgramPlan:
         data = _mapping(value, "annotated_program_plan")
         if data.get("schema") != _ANNOTATED_PROGRAM_PLAN_SCHEMA:
             raise ValueError("annotated_program_plan.schema: unsupported schema")
-        program = PressureFitProgram.from_value(
+        program = ShadowSpillPlanningProblem.from_value(
             data.get("source_program"), "annotated_program_plan.source_program"
         )
         budgets = MemoryBudgets.from_value(
@@ -245,7 +245,7 @@ class AnnotatedProgramPlan:
             for index, item in enumerate(selection_values)
         )
         schedule.validate(program.program, selections)
-        diagnostics = _pressurefit_diagnostics_from_value(
+        diagnostics = PlanningDiagnostics.from_value(
             selection.get("diagnostics"),
             "annotated_program_plan.selection.diagnostics",
         )
@@ -274,10 +274,14 @@ class AnnotatedProgramPlan:
             )
         )
         if initial_residency != program.initial_residency:
-            raise ValueError("annotated initial residency differs from source Program")
+            raise ValueError(
+                "annotated initial residency differs from the source program"
+            )
         if final_residency != program.final_residency:
-            raise ValueError("annotated final residency differs from source Program")
-        config, _requested_facts = program.pressurefit_inputs(
+            raise ValueError(
+                "annotated final residency differs from the source program"
+            )
+        config, _requested_facts = program.machine_inputs(
             execution_budget_bytes=budgets.execution_bytes,
             spill_budget_bytes=budgets.spill_bytes,
             transfer_bandwidths=TransferBandwidths.from_value(
@@ -286,18 +290,21 @@ class AnnotatedProgramPlan:
             ),
         )
         if layout.program_digest != program.program.digest:
-            raise ValueError("annotated layout names a different Program")
+            raise ValueError("annotated layout names a different ShadowSpillProgram")
         if layout.schedule_digest != schedule.digest:
             raise ValueError("annotated layout names a different schedule")
         if layout.facts_digest != facts.digest:
             raise ValueError("annotated layout names a different facts")
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
             raise ValueError("annotated diagnostics and simulation makespans differ")
-        result = PressureFitResult(
+        result = ProgramPlanResult(
             program=program.program,
-            options=_options_from_value(
-                selection.get("options"),
-                "annotated_program_plan.selection.options",
+            search_options=SearchOptions.from_dict(
+                _mapping(
+                    selection.get("search_options"),
+                    "annotated_program_plan.selection.search_options",
+                ),
+                "annotated_program_plan.selection.search_options",
             ),
             initial_residency=initial_residency,
             final_residency=final_residency,
@@ -363,10 +370,10 @@ class AnnotatedProgramPlan:
                     "annotated_program_plan.physical_admission."
                     f"attempts[{index}].accepted",
                 ),
-                pressurefit_wall_time_ns=_integer(
-                    timing_attempts[index].get("pressurefit_wall_time_ns"),
+                search_wall_time_ns=_integer(
+                    timing_attempts[index].get("search_wall_time_ns"),
                     "annotated_program_plan.timing."
-                    f"refinement_attempts[{index}].pressurefit_wall_time_ns",
+                    f"refinement_attempts[{index}].search_wall_time_ns",
                 ),
                 physical_admission_wall_time_ns=_integer(
                     timing_attempts[index].get("physical_admission_wall_time_ns"),
@@ -374,13 +381,13 @@ class AnnotatedProgramPlan:
                     f"refinement_attempts[{index}]."
                     "physical_admission_wall_time_ns",
                 ),
-                pressurefit_diagnostics=(
+                search_diagnostics=(
                     None
-                    if item.get("pressurefit_diagnostics") is None
-                    else _pressurefit_diagnostics_from_value(
-                        item.get("pressurefit_diagnostics"),
+                    if item.get("search_diagnostics") is None
+                    else PlanningDiagnostics.from_value(
+                        item.get("search_diagnostics"),
                         "annotated_program_plan.physical_admission."
-                        f"attempts[{index}].pressurefit_diagnostics",
+                        f"attempts[{index}].search_diagnostics",
                     )
                 ),
             )
@@ -396,9 +403,9 @@ class AnnotatedProgramPlan:
             timing.get("total_wall_time_ns"),
             "annotated_program_plan.timing.total_wall_time_ns",
         )
-        pressurefit_wall_time_ns = _integer(
-            timing.get("pressurefit_wall_time_ns"),
-            "annotated_program_plan.timing.pressurefit_wall_time_ns",
+        search_wall_time_ns = _integer(
+            timing.get("search_wall_time_ns"),
+            "annotated_program_plan.timing.search_wall_time_ns",
         )
         admission_wall_time_ns = _integer(
             timing.get("physical_admission_wall_time_ns"),
@@ -408,8 +415,8 @@ class AnnotatedProgramPlan:
             timing.get("orchestration_wall_time_ns"),
             "annotated_program_plan.timing.orchestration_wall_time_ns",
         )
-        if pressurefit_wall_time_ns != sum(
-            item.pressurefit_wall_time_ns for item in attempts
+        if search_wall_time_ns != sum(
+            item.search_wall_time_ns for item in attempts
         ):
             raise ValueError("annotated PressureFit timing total differs")
         if admission_wall_time_ns != sum(
@@ -417,7 +424,7 @@ class AnnotatedProgramPlan:
         ):
             raise ValueError("annotated physical-admission timing total differs")
         if (
-            pressurefit_wall_time_ns
+            search_wall_time_ns
             + admission_wall_time_ns
             + orchestration_wall_time_ns
             != total_wall_time_ns
@@ -449,5 +456,5 @@ class AnnotatedProgramPlan:
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as error:
-            raise ValueError("annotated Program plan JSON is invalid") from error
+            raise ValueError("annotated program plan JSON is invalid") from error
         return cls.from_dict(value)

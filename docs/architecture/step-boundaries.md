@@ -75,8 +75,8 @@ synchronization points:
    a reserved task identity outside the plan's task range — submits a
    restore for every entry in the schedule's initial device residency.
    The submitting thread records a compute-stream event that triggers the
-   batch, hands it to the worker, and returns only once the worker has
-   issued every copy onto the strict-FIFO fetch lane. The batch is not
+   batch, hands it to the worker, and returns once the worker has issued
+   every copy in it onto the strict-FIFO fetch lane. The batch is not
    part of the schedule's actions: it re-establishes the schedule's
    assumed starting state rather than executing the schedule. A restore
    requires a current spill copy and no device copy — and for a parameter
@@ -122,20 +122,20 @@ convention.
 
 ## Restore order
 
-The opening restore is a background batch on the fetch lane: it is not
-part of the schedule, so the lane dispatches it only within the configured
-window of bytes in flight and serves the plan's own transfers ahead of the
-rest of it (see [transfers](transfers.md#dispatch)). The batch — and the
-fixed-layout destinations paired with it position by position — is ordered
-by the program's first consuming task: aliases the first task reads come
-first, aliases first consumed by the same task follow that task's own
-input order, and aliases no task consumes come last in their emitted
-order. Under this order a task's inputs arrive no later than the work
-ahead of them requires, the first task waits only for its own inputs, the
-transfers the schedule triggers at the earliest boundaries — the staged
-inputs of the first microbatches among them — land behind at most one
-window of the restore rather than behind all of it, and the remainder of
-the restore streams in behind compute instead of in front of it.
+The opening restore is a background batch on the fetch lane: it is not part
+of the schedule, so the lane dispatches it only within the configured window
+of bytes in flight, and any transfer the plan schedules is served ahead of
+whatever of it is still undispatched (see
+[transfers](transfers.md#dispatch)).
+
+The batch — and the fixed-layout destinations paired with it position by
+position — is ordered by the program's first consuming task: aliases the
+first task reads come first, aliases first consumed by the same task follow
+that task's own input order, and aliases no task consumes come last in their
+emitted order. Under this order every alias arrives no later than the work
+ahead of it requires: the first task waits only for its own inputs, and the
+remainder of the restore streams in behind compute instead of in front of
+it.
 
 ## What step time means
 

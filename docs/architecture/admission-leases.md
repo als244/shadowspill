@@ -15,18 +15,21 @@ Four levels, each fixing something the level below varies:
 | level | per plan | fixed here | varies below |
 |---|---|---|---|
 | plan | 1 | program, admission topology, simulation config, pool capacity, alignment | which resolved program |
-| **resolved program** | a handful | the executing task set, its runtimes and object accesses | which candidate policy |
-| candidate | tens per resolved program | residency strategy, fetch rule, coalescing | the target capacity |
-| probe | a few per candidate | — | the repaired schedule |
+| **resolved program** | one per resolution option | the executing task set, its runtimes and object accesses | which candidate policy |
+| candidate | one per policy tuple | residency strategy, fetch rule, coalescing | the target capacity |
+| probe | one per repair round | — | the repaired schedule |
 
-A **resolved program** is the Program with every alternative fixed, leaving one
+A **resolved program** is the program with every alternative fixed, leaving one
 concrete task set. Graph-pair selection is the frontend choice that produces
 them, but the invariant is unaware of that: it plans memory for whatever tasks
-execute. A hand-authored Program with no alternatives resolves to exactly one,
+execute. A hand-authored program with no alternatives resolves to exactly one,
 and nothing below can tell the difference.
 
-Resolved programs are independent problems. Nothing flows between them; each
-is planned separately and the best result is taken.
+Each resolved program is its own problem: nothing derived here — task set,
+template, topology, floor — is shared with another. What *is* shared is the
+answer. A plan placed under any resolved program bounds the search under every
+other, so they are dispatched together and prune against one another; see
+[workers and the unit of work](pressurefit.md#workers-and-the-unit-of-work).
 
 ### The shared setup
 
@@ -43,9 +46,8 @@ every probe beneath it:
   no schedule for this resolved program can beat.
 
 Only the schedule varies below that, so a measurement is a function of the
-setup and one schedule. Building the setup per probe instead is measurably
-wasteful — template and topology compilation cost tens of milliseconds against
-calls of a few milliseconds — but the reason to hold it once is that it says
+setup and one schedule. Rebuilding the setup per probe would cost far more
+than the measurement it serves, but the reason to hold it once is that it says
 plainly what a repair can and cannot change.
 
 ### How the setup is built
@@ -77,7 +79,7 @@ per-task physical facts into arrays the walk indexes directly:
 | field | is |
 |---|---|
 | `pool_capacity_bytes`, `object_capacity_bytes` | the execution pool, and the occupancy limit presented to the planner |
-| `minimum_alignment` | the alignment every offset must satisfy (256 B here) |
+| `minimum_alignment` | the alignment every offset must satisfy, as the frontend observed it |
 | `task_workspace_offsets`, `task_workspace_extent_bytes` | each task's simultaneously-live anonymous allocations |
 | `fresh_output_offsets`, `fresh_output_aliases` | the aliases each task produces |
 | `replacement_offsets`, `replacement_aliases` | the aliases each task mutates in place |
@@ -86,11 +88,11 @@ per-task physical facts into arrays the walk indexes directly:
 | `allocation_slot_count` | how many distinct leases the allocation steps need |
 
 Every `*_offsets` array holds `task_count + 1` entries: task *t*'s rows are
-`[offsets[t], offsets[t + 1])` of the flattened arrays. On the example step
-`task_allocation_offsets` runs 0, 2, 35, 54, … to 3,401 — so 3,401 allocation
-steps across 102 tasks, needing **1,506 slots**. The gap between those two
-numbers is slot reuse, and it is why a lease is tied to its allocation step
-through the slot rather than through the operation sequence.
+`[offsets[t], offsets[t + 1])` of the flattened arrays. `allocation_slot_count`
+is smaller than the number of allocation steps, and the gap between the two is
+slot reuse — a task that frees a slot and reallocates it needs one lease, not
+two. That gap is why a lease is tied to its allocation step through the slot
+rather than through the operation sequence.
 
 **Slots are assigned once, here, not during the walk.** Compiling the
 allocation rows walks each task's steps in order: a step that allocates

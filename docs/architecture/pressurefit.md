@@ -1,43 +1,69 @@
 # PressureFit
 
-PressureFit is ShadowSpill's framework-neutral memory-policy planner. Given an
-ordered [`Program`](ir.md), required initial and final residency, memory and
-transfer capacities, and an optional physical-admission contract, it chooses:
+PressureFit is the [search](search.md) ShadowSpill ships: one implementation
+of `SearchAlgorithm`, and the only one today. Everything the planner asks of
+any search is on that page, and the contract an implementer writes against is
+in [search algorithm](search-algorithm.md); this one is about how PressureFit
+answers.
+
+Given a [program](program.md), required initial and final residency, memory
+and transfer capacities, and an optional physical-admission contract, it
+chooses:
 
 - which logical objects remain in execution memory between tasks;
 - where objects leave execution memory by release or eviction;
 - which task boundary triggers each later fetch;
 - whether a clean release/fetch pair is coalesced; and
-- the minimum-makespan valid candidate among the bounded policies it evaluates.
+- the minimum-makespan valid candidate among the bounded policies it
+  evaluates.
 
 PressureFit does not capture graphs, inspect PyTorch tensors, partition a
 model, construct graph pairs, execute numerical kernels, or advance the
-runtime worker. It consumes only Program facts and machine parameters.
+runtime worker. It consumes only program facts and machine parameters.
 
-What PressureFit is handed is a **resolved program**: a Program with one legal
-task selection already chosen. Choosing those selections is the separate
-[graph-pair selector](graph-pair-selection.md)'s job, and it usually
-produces several — so one call takes one or more resolved programs and answers
-each of them. A Program with no alternatives resolves to exactly one and is a
-normal input. Program and problem are not the same word here: the Program is
-what the caller has, and the problem is the planning question derived from it
-— residency, boundaries, capacities. One problem is one resolved program.
+## Resolved programs, and who expands them
+
+A program arrives with its [task alternatives](program.md#task-alternatives)
+still open. Fixing one option for every group gives a **resolved program**: a
+concrete task set. A program with no groups is already resolved.
+
+Expanding a program into resolved programs is PressureFit's own work, not the
+planner's, because how many ways of fixing the alternatives are worth
+planning -- and in what order -- is a judgement about the search. PressureFit
+plans several and answers with the best across them, and the order is part of
+the algorithm: a plan admitted under any resolved program bounds the search
+under every later one. Which shares to expand is
+`PressureFitOptions.resolution_options`. See [ordering the
+resolutions](#trajectories).
+
+Program and problem are not the same word here: the program is what the
+caller has, and the [problem](planning-problem.md) is the planning question
+derived from it -- residency, boundaries, capacities. One compiled problem is
+one resolved program.
+
+"PressureFit" names this search and nothing else. What surrounds it --
+turning a budget into a machine, keying the answer, holding it to a plan
+already in hand, admitting the winner -- belongs to `plan_program()` and is
+the same whichever search runs; see [plan search](search.md) and [planning
+orchestration](planning.md). The entry to the search itself is
+`shadowspill.planner.search.algorithms.pressurefit`.
 
 ## Contract at a glance
 
 | Item | Contract |
 |---|---|
-| Primary input | One or more **resolved programs**, each an immutable `Program` with one legal task selection already chosen, whose tasks are ordered and whose objects, aliases, profiles, and dependencies are valid. The order they are given is the order they are searched. |
+| Primary input | One immutable `ShadowSpillProgram`, whose tasks are ordered and whose objects, aliases, profiles, and dependencies are valid. Its alternatives are expanded here into resolved programs, in the order they are searched. |
 | Boundary conditions | `initial_residency` and `final_residency` tuples of `ResidencySpec` values. |
 | Machine input | `SimulationConfig`: execution capacities, spill capacity, directional transfer bandwidths, and latencies. |
-| Search input | `PressureFitOptions`: initial placement, residency strategies, fetch rules, coalescing, repair limit, capacity-refinement granularity, and worker count. |
+| Planner input | `SearchOptions`: worker count, determinism, and the evict-eligibility floor. What every search is told. |
+| Search input | `PressureFitOptions`: resolution options, initial placement, residency strategies, fetch rules, coalescing, repair limit, capacity-refinement granularity, and write-back splitting. PressureFit's own, opaque to the planner. |
 | Optional physical input | `AdmissionFacts`: task allocation steps, output/replacement ownership, storage handoffs, pool capacity, and alignment. |
-| Output | `PressureFitResult`: selected task alternative, `MemorySchedule`, full `SimulationResult`, and structured diagnostics. |
+| Output | `ProgramPlanResult`: selected task alternative, `MemorySchedule`, full `SimulationResult`, and structured diagnostics. |
 | Feasibility authority | The planner preflight, the simulator, and physical admission when an `AdmissionFacts` is supplied. |
 | Optimization scope | Minimum simulated makespan among the finite candidates actually generated and repaired, not a global optimum over all possible schedules. |
 
 `validate_schedule_feasibility()` performs a necessary-condition preflight on
-the Program and its legal task selections. It does not validate an already
+the program and its legal task selections. It does not validate an already
 annotated `MemorySchedule`; `simulate()` is the independent schedule validator.
 
 ## Inputs
@@ -81,10 +107,10 @@ changing the former.
 
 ### Search controls
 
-The default `PressureFitOptions` evaluate two residency-strategy labels
+The default `SearchOptions` evaluate two residency-strategy labels
 (`headroom-stall` and `tight-stall`), four fetch-trigger rules, and
-ordinary/coalesced emission: 16 candidate policies per legal task-selection
-problem. The two transfer strategies stay available and off by default: a
+ordinary/coalesced emission: 16 candidate policies per resolved program. The
+two transfer strategies stay available and off by default: a
 transfer strategy differs from its stall twin only in how it accounts for
 transfers already in flight, and the plans the two reach are the same far
 more often than not, so the default buys half the search for the rare small
@@ -121,8 +147,14 @@ Candidates place layouts and publish what they place to a shared record, so
 which plans are worth measuring depends on what has already been placed. That
 makes the search order-dependent by default. Scoping a record per search does
 not remove that: one record is shared by every resolved program dispatched
-concurrently within a call. A caller that needs a reproducible answer sets
-`workers=1`.
+concurrently within a call.
+
+`deterministic` is how a caller gets a reproducible answer without giving up
+its workers. The placement gate then consults only the candidate's own placed
+plans instead of the shared record, so every outcome is a pure function of
+that candidate's inputs and any worker count answers the same. It costs wall
+time, because the shared bound is what lets a candidate skip measuring a plan
+that cannot win. `workers=1` is reproducible too, and slower still.
 
 A problem may carry the plan to beat: a plan for that resolved program
 already in hand, found at a smaller capacity, say. The search measures it at
@@ -166,11 +198,11 @@ are the elapsed-time counterpart, and [Output](#output) describes both.
 
 ## Output
 
-`PressureFitResult` preserves all inputs needed to explain or replay the
+`ProgramPlanResult` preserves all inputs needed to explain or replay the
 decision:
 
 - `program`, `initial_residency`, `final_residency`, and `simulation_config`;
-- selected `selections` for any Program alternatives;
+- selected `selections` for any program alternatives;
 - selected `schedule` with initial placement and ordered release, offload, and
   prefetch actions;
 - full `simulation`, including makespan, task/transfer intervals, and peaks;
@@ -188,7 +220,7 @@ explanatory text, these are fetch and evict, respectively.
 
 ### Selected task sequence and boundaries
 
-Let $r\in\mathcal R(P)$ be one legal task selection exposed by Program $P$.
+Let $r\in\mathcal R(P)$ be one legal task selection exposed by program $P$.
 Most Programs have a singleton set. For one $r$, let
 
 \[
@@ -357,10 +389,11 @@ happens once, around that cycle.
 
 The sections below are that structure, and the names are load-bearing: they
 are the same names the diagnostics report, the plan JSON carries, and
-`ShadowSpillPressureFitSectionTiming` measures. A section is a disjoint span
-of work opened and closed by the function that orchestrates it, so the time
-they account for sums exactly to the time the step took. Reading a plan's
-timing and reading this page are the same activity.
+`PlanningSectionTiming` measures — `ShadowSpillPressureFitSectionTiming` across
+the C ABI. A section is a disjoint span of work opened and closed by the
+function that orchestrates it, so the time they account for sums exactly to
+the time the step took. Reading a plan's timing and reading this page are the
+same activity.
 
 ```text
 per resolved program:  prepare -> setup -> [ per strategy ] -> select -> teardown
@@ -371,9 +404,9 @@ per candidate:         ( emit -> simulate -> repair
 
 ### Before the cycle: preflight and problem construction
 
-For every legal task-selection problem, the planner derives anchors,
-fresh-output reservations, and per-boundary capacity. At least one problem
-must fit its required anchor/output floor. This catches an individual task
+For every resolved program, the planner derives anchors, fresh-output
+reservations, and per-boundary capacity. At least one problem must fit its
+required anchor/output floor. This catches an individual task
 whose required inputs, outputs, and workspace cannot coexist, before any
 candidate search happens. A resolved program that fails this derivation is
 reported as infeasible on its own result; the others are evaluated together
@@ -381,12 +414,13 @@ as if it were absent, so a resolution that cannot fit at a capacity never
 silences the ones that can, and a program whose every resolution fails it
 is infeasible at that capacity.
 
-PressureFit then obtains the finite set of legal selections from the Program.
-The training-specific policy used to construct this set is documented
-separately in [Graph-pair selection](graph-pair-selection.md). Each
-selection becomes one *resolved program*, and one resolved program is one
-call into the planner: deciding which resolved programs exist, and in what
-order to try them, belongs above the planner API.
+The resolved programs are expanded here, from the alternative groups the
+program carries: the finite set of legal selections, ordered
+most-recomputed first. The training-specific policy that constructs the
+alternatives is documented separately in [Graph-pair
+selection](graph-pair-selection.md). Each selection becomes one
+resolved program and one problem here. Deciding which resolved programs exist,
+and in what order to try them, belongs above this search and never inside it.
 
 ### Prepare — deriving the residency problem
 
@@ -403,18 +437,19 @@ cost, size, and alias order, and preplaces each one that fits initial
 capacity.
 
 The objects under `minimum_object_bytes_evict_eligible` are settled here as
-well. Each holds one lease, from the trigger of its fetch (chosen as late as
-the ideal timeline allows) or the start, to the boundary after its last
-access or the end; packing those leases on their own gives the resident
-slice, at least their high-water mark and never their total. The device
-capacity the reducer sees loses the slice, the floor and the pressure never
-count these objects, the cut index has no entries for them, greedy placement
-skips them, and the emitter issues each one's fetch at the trigger the slice
-was sized for. Placement leaves their leases out of the main assignment and
-adds the slice to every extent it measures; the final layout places them at
-the end of the fixed range at the offsets they were packed at, as
-[fixed-offset placement](fixed-placement.md#the-resident-slice) describes. A
-slice the device cannot hold is a preflight failure of its own.
+well, because everything below assumes they are already gone. Each holds one
+lease, from the trigger of its fetch — chosen once, as late as the ideal
+timeline allows — or the start, to the boundary after its last access or the
+end. Packing those leases on their own gives the resident slice, and the
+device capacity the reducer sees loses it. From there these objects are absent
+from the search: the floor and the pressure do not count them, the cut index
+has no entries for them, greedy placement skips them, and the emitter issues
+each fetch at the trigger the slice was sized for, so no fetch rule can move a
+lifetime the slice was sized without. Every extent placement measures includes
+the slice. Where the slice sits in the final layout, and why these objects get
+static homes rather than a place in the main assignment, is
+[fixed-offset placement](fixed-placement.md#the-resident-slice). A slice the
+device cannot hold is a preflight failure of its own.
 
 ### Setup — schedule facts and the candidate workspace
 
@@ -517,8 +552,8 @@ When the next simulation comes up short at the same task and the same moment,
 the room the reducer made did not become room where the simulator looks —
 copies still in flight hold it, or the emitter packed the freed bytes again —
 so a repeat asks for twice what the last round asked, up to the task's whole
-request. Asking for the same few bytes again would be the same plan again: one
-traced candidate spent 116 of its 256 repairs at one task on the same 4.4 MiB.
+request. Asking for the same bytes again would emit the same plan again, which
+is how a candidate spends its whole repair budget at one task without moving.
 An ask that no cut can meet is taken back for a plain ask, so a candidate is
 only ever slower for having asked for more, never lost to it. A new capacity
 round starts its count of repeats afresh.
@@ -601,12 +636,14 @@ never placed anything at all, and a candidate with no placed plan has no
 answer to give.
 
 A plan whose layout fits is offered to the shared record and kept as this
-candidate's answer if it beats what the candidate already placed. A plan
-whose layout overruns the pool gives back what it overran — bounded by
-`capacity_refinement_bytes`, 256 MiB by default — expresses that smaller
-capacity to the reducer as uniform pressure, and plans again from the base
-residency. Capacity is a property of the plan, so it travels with the plan
-and never changes what the simulator or the caller's budget is.
+candidate's answer if it beats what the candidate already placed. A plan whose
+layout overruns the pool gives back what it overran, bounded by
+`capacity_refinement_bytes`, expresses that smaller capacity to the reducer as
+uniform pressure, and plans again from the base residency. Capacity is a
+property of the plan, so it travels with the plan and never changes what the
+simulator or the caller's budget is. [Capacity
+refinement](physical-admission.md#capacity-refinement) is where that trade is
+laid out.
 
 ### Settle — deciding what to answer with
 
@@ -630,16 +667,17 @@ selection reads the record rather than ranking the candidates a second time,
 because the record already owns a copy of the plan it names. A problem's
 winner is the plan to beat it was handed unless a candidate did strictly
 better; a tie keeps the plan in hand, so an answer changes only for a reason.
-The plan store keeps that promise across runs: the plan in hand is provenance
-rather than part of a request's identity, so a request reads back the plan
-its search chose whatever it was handed, but a stored plan that the plan in
-hand claims to beat is searched again with it and replaced when the new
-answer is faster under this request. The planner
-decodes that one indexed schedule, evaluates its physical admission once
-more, and materialises the full `SimulationResult` — at the caller's full
-capacity, which is the machine the plan will actually run on. A plan built
-against a reduced capacity was *chosen* on how it behaves there, but the
-reported timeline and the certificate measure the real machine.
+The planner decodes that one indexed schedule, evaluates its physical
+admission once more, and materialises the full `SimulationResult` — at the
+caller's full capacity, which is the machine the plan will actually run on. A
+plan built against a reduced capacity was *chosen* on how it behaves there,
+but the reported timeline and the certificate measure the real machine.
+
+The planning store keeps the same promise across runs. The plan in hand is
+provenance rather than part of a request's identity, so a request reads back
+the plan its search chose whatever it was handed; a stored plan that the plan
+in hand claims to beat is searched again with it and replaced only when the
+new answer is faster under this request.
 
 ### Teardown
 
@@ -663,15 +701,18 @@ plan and not otherwise.
 
 ## Pseudocode
 
+The first two lines are the expansion; everything after them is the search
+over what it produced.
+
 ```text
 PressureFit(program, initial, final, machine, options, admission):
     require the planner and simulator ABIs
-    resolved = legal_task_selections(program)
+    resolved = ordered_legal_task_selections(program, options.resolution_options)
     require some selection's anchor/output floor to fit
 
     best_placed = shared record, empty
 
-    for each resolved program:                      # one planner call each
+    for each resolved program:                      # all in one call, in order
         prepare:  problem = compile_indexed_problem(resolved, machine, admission)
                   seed    = required_anchor_hulls(problem)
                   if options.initial_placement == GREEDY:
@@ -797,14 +838,14 @@ PressureFit guarantees:
 It does not guarantee:
 
 - a global minimum over arbitrary residency intervals or transfer triggers;
-- exhaustive selection of large Program-alternative products;
+- exhaustive selection of large program-alternative products;
 - feasibility after runtime behavior violates the admitted allocation
   contract.
 
-`PressureFitInfeasibleError` means a necessary-condition preflight failed, or
+`PlanInfeasibleError` means a necessary-condition preflight failed, or
 every candidate across every resolved program was rejected without a
 remaining repair path. It does not prove that no schedule outside the
-resolved programs searched exists. `PressureFitSearchExhaustedError` means at
+resolved programs searched exists. `PlanSearchExhaustedError` means at
 least one repairable path reached its configured repair ceiling, so even
 infeasibility across those resolved programs was not established.
 
@@ -812,7 +853,8 @@ infeasibility across those resolved programs was not established.
 
 | Layer | Responsibility |
 |---|---|
-| `shadowspill.planner.pressurefit()` | Input validation, deciding the order the resolved programs are searched in, and winner materialization. It hands them all to one call and owns no threads. |
+| `shadowspill.planner.search.algorithms.pressurefit` | The search object: input validation, expanding the program into resolved programs and ordering them, and the admission facts stamped onto the answer. It hands every resolution to one call and owns no threads. |
+| `shadowspill.planner.search.algorithms.pressurefit.search` | Projecting each resolution into the planner ABI, the preflight that drops the ones that cannot fit, and merging the results into one answer. |
 | `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
 | `csrc/src/planner/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
@@ -825,5 +867,5 @@ Python implementations live only under `reference/python/pressurefit` and
 `reference/python/simulator`; they are differential-test oracles and do not
 silently replace a missing or ABI-incompatible library.
 
-Previous: [Graph-pair selection](graph-pair-selection.md). Next:
+Previous: [Writing a search algorithm](search-algorithm.md). Next:
 [Physical admission and offset handling](physical-admission.md).

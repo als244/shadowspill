@@ -1,9 +1,9 @@
-"""PressureFit and physical admission for a saved pre-PressureFit Program."""
+"""PressureFit and physical admission for a saved pre-PressureFit ShadowSpillProgram."""
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import replace
 
 # The admission package also re-exports the binding half, which reaches
@@ -17,42 +17,40 @@ from shadowspill.planner.plan_store import open_plan_store, resolve_plan
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
-from shadowspill.planner.recomputation import ShareValue
-from shadowspill.planner.request import PressureFitOptions
-from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.search import SearchOptions
 
 
 def select_program(
-    program: PressureFitProgram,
+    program: ShadowSpillPlanningProblem,
     *,
     execution_budget_bytes: int | None,
     spill_budget_bytes: int | None,
     transfer_bandwidths: TransferBandwidths | None,
-    options: PressureFitOptions | None,
     artifact_store: ArtifactStore,
     verbose: bool,
-    resolution_options: Sequence[ShareValue] | None = None,
-    incumbent: PressureFitResult | None = None,
+    search_options: SearchOptions | None = None,
+    incumbent: ProgramPlanResult | None = None,
 ) -> AnnotatedProgramPlan:
-    """Select and physically admit one reusable Program.
+    """Select and physically admit one reusable problem.
 
-    `incumbent` is the plan to beat, a result for the same Program the
-    search answers with unless a candidate does strictly better.
+    `search` is which search runs and `search_options` is its own record;
+    both reach the plan key and neither is read here. `incumbent` is the
+    plan to beat, a result for the same program the answer is held to.
     """
 
     started = time.perf_counter_ns()
-    config, facts = program.pressurefit_inputs(
+    config, facts = program.machine_inputs(
         execution_budget_bytes=execution_budget_bytes,
         spill_budget_bytes=spill_budget_bytes,
         transfer_bandwidths=transfer_bandwidths,
     )
-    # Policy is the caller's, never the artifact's: a Program says what
-    # problem it is, not how to search it, so an option added later cannot
-    # change what a saved Program means.
-    selected_options = options or PressureFitOptions()
+    # Policy is the caller's, never the artifact's: a problem says what
+    # question it is, not how to search it, so an option added later cannot
+    # change what a saved problem means.
     plans = open_plan_store(artifact_store)
     progress = _progress_printer() if verbose else None
     selection = resolve_fixed_layout_selection(
@@ -65,9 +63,8 @@ def select_program(
             initial_residency=program.initial_residency,
             final_residency=program.final_residency,
             config=candidate_config,
-            options=selected_options,
-            resolution_options=resolution_options,
-            incumbent=incumbent,
+            search_options=search_options,
+                incumbent=incumbent,
             # The pool topology, so the search can measure whether a plan
             # has a layout that fits. Not passed as `admission`: that
             # switches on the dynamic-pool replay, and the fixed-layout
@@ -114,11 +111,11 @@ def select_program(
 
 
 def _with_physical_prediction(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     simulation: object,
     *,
     facts: object,
-) -> PressureFitResult:
+) -> ProgramPlanResult:
     """Replace logical timing with dependency-certified physical simulation."""
 
     from shadowspill.planner.admission import AdmissionFacts

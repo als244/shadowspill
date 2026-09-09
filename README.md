@@ -85,12 +85,12 @@ and the [examples](docs/examples/README.md) are complete workflows.
 | `csrc/` | The C library — planner, simulator, runtime — plus backends and the PyTorch adapter |
 | `tests/` | Tests mirroring Python, C, integration, and tooling boundaries |
 | `workloads/` | Model and data clients used by benchmarks and qualification |
-| `benchmarking/` | Reusable Program collection and planning evaluation |
+| `benchmarking/` | The quickstart tour, program collection, and planning evaluation |
 | `qualification/` | Numerical and performance release gates |
 | `src/tools/` | Source-tree diagnostics and acceptance tooling |
 | `reference/` | Executable reference implementations of the planner |
 | `scripts/` | One-command environment setup |
-| `docs/` | Architecture, Python, C, development, and investigation guides |
+| `docs/` | Architecture, Python, C, examples, and development guides |
 
 ## Documentation
 
@@ -104,7 +104,7 @@ and the [examples](docs/examples/README.md) are complete workflows.
 | Graph-pair selection | [Graph-pair selection](docs/architecture/graph-pair-selection.md) |
 | Physical admission | [Physical admission and offset handling](docs/architecture/physical-admission.md) |
 | Plan and step diagnostics | [Diagnostics guides](docs/python/plan-report.md) |
-| Serialized planning artifacts | [Program and annotated-plan JSON](docs/python/planning-json.md) |
+| Serialized planning artifacts | [program and annotated-plan JSON](docs/python/planning-json.md) |
 | Practical workflows | [Examples](docs/examples/README.md) |
 | Errors and cleanup | [Errors, failures, and cleanup](docs/python/failures.md) |
 | Repository development | [Development guide](docs/development/README.md) |

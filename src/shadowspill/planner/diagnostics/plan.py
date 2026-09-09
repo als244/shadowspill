@@ -4,23 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from fractions import Fraction
 from types import MappingProxyType
 
 from shadowspill.ir import (
     AliasGroupSpec,
     ExecutionPlan,
     MemoryAction,
-    Program,
+    ShadowSpillProgram,
     TaskProfile,
     shared_residency_footprint,
 )
-from shadowspill.planner.diagnostics import PressureFitDiagnostics
-from shadowspill.planner.recomputation.options import TaskAlternativeOptions
-from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.diagnostics import PlanningDiagnostics
+from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.search.toolkit.resolution import CostedAlternatives
 from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
 from shadowspill.schema import artifact_schema
+
+from ..search import SearchOptions
 
 
 @dataclass(frozen=True, slots=True)
@@ -577,9 +578,9 @@ class PlanFixedLayoutAttempt:
     required_bytes: int
     pool_capacity_bytes: int
     accepted: bool
-    pressurefit_wall_time_ns: int
+    search_wall_time_ns: int
     physical_admission_wall_time_ns: int
-    pressurefit_diagnostics: PressureFitDiagnostics | None = None
+    search_diagnostics: PlanningDiagnostics | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -588,12 +589,12 @@ class PlanFixedLayoutAttempt:
             "required_bytes": self.required_bytes,
             "pool_capacity_bytes": self.pool_capacity_bytes,
             "accepted": self.accepted,
-            "pressurefit_wall_time_ns": self.pressurefit_wall_time_ns,
+            "search_wall_time_ns": self.search_wall_time_ns,
             "physical_admission_wall_time_ns": (self.physical_admission_wall_time_ns),
-            "pressurefit_diagnostics": (
+            "search_diagnostics": (
                 None
-                if self.pressurefit_diagnostics is None
-                else self.pressurefit_diagnostics.to_dict()
+                if self.search_diagnostics is None
+                else self.search_diagnostics.to_dict()
             ),
         }
 
@@ -681,7 +682,7 @@ class PlanDiagnostics:
     store_directories: tuple[tuple[str, str], ...] = ()
     cache_artifacts: tuple[PlanCacheArtifact, ...] = ()
     profiling_metadata: tuple[PlanProfilingMetadata, ...] = ()
-    pressurefit_runs: tuple[PressureFitDiagnostics, ...] = ()
+    search_runs: tuple[PlanningDiagnostics, ...] = ()
     physical_layouts: tuple[PlanPhysicalLayout, ...] = ()
 
     @property
@@ -733,7 +734,7 @@ class PlanDiagnostics:
                     "run_index": index,
                     **item.to_dict(),
                 }
-                for index, item in enumerate(self.pressurefit_runs)
+                for index, item in enumerate(self.search_runs)
             ],
             "physical_layouts": [item.as_dict() for item in self.physical_layouts],
             "tasks": {
@@ -850,7 +851,7 @@ class PlanSummary:
 
 
 def summarize_selected_plan(
-    result: PressureFitResult,
+    result: ProgramPlanResult,
     *,
     phase_timings_ns: tuple[tuple[str, int], ...] = (),
 ) -> PlanSummary:
@@ -918,7 +919,7 @@ def summarize_selected_plan(
         terminal_writeback_seconds=(makespan_ns - span_ns) / 1e9,
         recomputing_group_count=graph_pair_selections,
         task_alternative_group_count=len(result.selections),
-        flexible_group_count=TaskAlternativeOptions.from_program(program).flexible_count,
+        flexible_group_count=CostedAlternatives.from_program(program).flexible_count,
         transfer_bytes_fetched=fetched,
         transfer_bytes_evicted=evicted,
         fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,
@@ -961,7 +962,7 @@ class PlanReport:
     data_ordering: StepDataOrdering | None = None
     #: The resolution options the plan was searched over, as exact fractions
     #: of the flexible groups recomputing, or `None` for a forward plan.
-    resolution_options: tuple[Fraction, ...] | None = None
+    search_options: SearchOptions | None = None
     initial_execution_plan: ExecutionPlan | None = None
     planned_program_cache_hits: int = 0
     planned_program_cache_misses: int = 0
@@ -970,13 +971,13 @@ class PlanReport:
     aot_unique_stage_contracts: int = 0
     aot_graph_pair_cache_hits: int = 0
     aot_graph_pair_cache_misses: int = 0
-    pressurefit_results: tuple[PressureFitResult, ...] = ()
+    search_results: tuple[ProgramPlanResult, ...] = ()
 
     @property
-    def program(self) -> Program:
-        """Canonical recurrent Program supplied directly to PressureFit.
+    def program(self) -> ShadowSpillProgram:
+        """Canonical recurrent ShadowSpillProgram supplied directly to PressureFit.
 
-        Forward plans have one Program.  Training plans expose the recurrent
+        Forward plans have one ShadowSpillProgram.  Training plans expose the recurrent
         step here; :attr:`initial_program` names the optional lazy-state first
         step separately.
         """
@@ -984,30 +985,30 @@ class PlanReport:
         return self.execution_plan.program
 
     @property
-    def initial_program(self) -> Program | None:
-        """Canonical first-step Program, when lazy optimizer state requires one."""
+    def initial_program(self) -> ShadowSpillProgram | None:
+        """Canonical first-step program, when lazy optimizer state requires one."""
 
         if self.initial_execution_plan is None:
             return None
         return self.initial_execution_plan.program
 
     @property
-    def pressurefit_result(self) -> PressureFitResult:
+    def search_result(self) -> ProgramPlanResult:
         """PressureFit call boundary and selected result for the recurrent plan."""
 
-        if not self.pressurefit_results:
+        if not self.search_results:
             raise RuntimeError("PlanReport does not contain PressureFit evidence")
-        return self.pressurefit_results[-1]
+        return self.search_results[-1]
 
     @property
-    def initial_pressurefit_result(self) -> PressureFitResult | None:
+    def initial_search_result(self) -> ProgramPlanResult | None:
         """Selected first-step PressureFit result, when one was planned."""
 
         if self.initial_execution_plan is None:
             return None
-        if len(self.pressurefit_results) < 2:
+        if len(self.search_results) < 2:
             raise RuntimeError("PlanReport is missing first-step PressureFit evidence")
-        return self.pressurefit_results[0]
+        return self.search_results[0]
 
     @property
     def predicted_device_peak_bytes(self) -> int:
@@ -1026,7 +1027,7 @@ class PlanReport:
         """The selected recurrent plan's promise as one derived object."""
 
         return summarize_selected_plan(
-            self.pressurefit_result, phase_timings_ns=self.phase_timings_ns
+            self.search_result, phase_timings_ns=self.phase_timings_ns
         )
 
     @property

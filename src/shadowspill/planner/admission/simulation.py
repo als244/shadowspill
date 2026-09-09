@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from shadowspill.ir import MemorySchedule, Program, TaskAlternativeChoice, TaskSpec
+from shadowspill.ir import (
+    MemorySchedule,
+    ShadowSpillProgram,
+    TaskAlternativeChoice,
+    TaskSpec,
+)
 from shadowspill.planner.admission.admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
@@ -20,7 +25,7 @@ from shadowspill.simulator import (
 
 def simulation_admission_from_replay(
     replay: AdmissionReplay,
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     *,
     selections: tuple[TaskAlternativeChoice, ...] = (),
@@ -32,7 +37,7 @@ def simulation_admission_from_replay(
     if len(program.devices) != 1:
         raise ValueError(
             "one AdmissionReplay currently describes exactly one execution pool; "
-            f"Program has {len(program.devices)} devices"
+            f"ShadowSpillProgram has {len(program.devices)} devices"
         )
     device_id = program.devices[0].device_id
     task_ids = {item.task_id for item in tasks}

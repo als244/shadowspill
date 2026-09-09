@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 
-from shadowspill.ir import Program, ResidencySpec, shared_residency_footprint
+from shadowspill.ir import ResidencySpec, ShadowSpillProgram, shared_residency_footprint
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.serialization import (
     _canonical_json,
@@ -22,7 +22,7 @@ from shadowspill.planner.serialization import (
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
 
-_PRESSUREFIT_PROGRAM_SCHEMA = artifact_schema("pressurefit_program")
+_PLANNING_PROBLEM_SCHEMA = artifact_schema("plan_program")
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,11 +135,11 @@ class MemoryBudgets:
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitProgram:
-    """Self-contained pre-PressureFit boundary for one Program variant."""
+class ShadowSpillPlanningProblem:
+    """A program, the boundaries it runs between, and the machine it runs on."""
 
     role: str
-    program: Program
+    program: ShadowSpillProgram
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     simulation_config: SimulationConfig
@@ -153,9 +153,9 @@ class PressureFitProgram:
 
     def __post_init__(self) -> None:
         if self.role not in {"initial", "recurrent", "forward"}:
-            raise ValueError(f"unsupported Program role {self.role!r}")
+            raise ValueError(f"unsupported problem role {self.role!r}")
         if len(self.simulation_config.devices) != 1:
-            raise ValueError("PressureFitProgram currently requires one device")
+            raise ValueError("ShadowSpillPlanningProblem currently requires one device")
         device = self.simulation_config.devices[0]
         if device.device_id != self.admission_facts.device_id:
             raise ValueError("simulation and admission devices differ")
@@ -205,14 +205,14 @@ class PressureFitProgram:
             evict_latency_ns=device.evict_latency_ns,
         )
 
-    def pressurefit_inputs(
+    def machine_inputs(
         self,
         *,
         execution_budget_bytes: int | None = None,
         spill_budget_bytes: int | None = None,
         transfer_bandwidths: TransferBandwidths | None = None,
     ) -> tuple[SimulationConfig, AdmissionFacts]:
-        """Rebase budget-dependent inputs without changing the Program."""
+        """Rebase budget-dependent inputs without changing the ShadowSpillProgram."""
 
         execution_budget = (
             self.source_execution_budget_bytes
@@ -286,7 +286,7 @@ class PressureFitProgram:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "schema": _PRESSUREFIT_PROGRAM_SCHEMA,
+            "schema": _PLANNING_PROBLEM_SCHEMA,
             "role": self.role,
             "program": {
                 "digest": self.program.digest,
@@ -312,12 +312,12 @@ class PressureFitProgram:
         return _canonical_json(self.to_dict())
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> PressureFitProgram:
+    def from_value(cls, value: object, path: str) -> ShadowSpillPlanningProblem:
         data = _mapping(value, path)
-        if data.get("schema") != _PRESSUREFIT_PROGRAM_SCHEMA:
+        if data.get("schema") != _PLANNING_PROBLEM_SCHEMA:
             raise ValueError(f"{path}.schema: unsupported schema")
         program_value = _mapping(data.get("program"), f"{path}.program")
-        program = Program.from_dict(program_value.get("value"))
+        program = ShadowSpillProgram.from_dict(program_value.get("value"))
         expected_digest = _string(program_value.get("digest"), f"{path}.program.digest")
         if program.digest != expected_digest:
             raise ValueError(f"{path}.program.digest: content digest mismatch")
@@ -367,9 +367,9 @@ class PressureFitProgram:
         )
 
     @classmethod
-    def from_json(cls, payload: str) -> PressureFitProgram:
+    def from_json(cls, payload: str) -> ShadowSpillPlanningProblem:
         try:
             value = json.loads(payload)
         except json.JSONDecodeError as error:
-            raise ValueError("PressureFit Program JSON is invalid") from error
-        return cls.from_value(value, "pressurefit_program")
+            raise ValueError("planning problem JSON is invalid") from error
+        return cls.from_value(value, "plan_program")

@@ -16,7 +16,7 @@ import ctypes
 from dataclasses import dataclass
 
 from shadowspill.simulator import SimulationResult
-from shadowspill.simulator.indexed import IntervalArrays
+from shadowspill.simulator.indexing import IntervalArrays
 from shadowspill.status import ABI_VERSION
 
 from ..capi import (
@@ -26,7 +26,7 @@ from ..capi import (
     CLeaseLifetimeResult,
     planner_api,
 )
-from .indexed import IndexedAdmissionFacts
+from .indexing import IndexedAdmissionFacts
 from .operations import AdmissionOperations
 
 

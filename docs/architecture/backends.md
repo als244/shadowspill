@@ -17,7 +17,8 @@ PyTorch  ->  adapter (libshadowspill_pytorch.so)
              neutral runtime (libshadowspill.so): pools, routes, lanes,
              event pools, calibration, tracing, the worker
                  |  allocate/free device, register host memory, streams,
-                 |  copies, events, facts, profiler names and ranges
+                 |  copies, events, capabilities/physical memory/statistics,
+                 |  profiler names and ranges
                  v
              backend (libshadowspill_backend_<provider>.so, ..._mock.so)
 ```

@@ -34,7 +34,7 @@ Physical admission consumes:
 
 | Input | Purpose |
 |---|---|
-| `PressureFitResult` | Selected tasks, residency, ordered actions, and logical simulation. |
+| `ProgramPlanResult` | Selected tasks, residency, ordered actions, and logical simulation. |
 | `AdmissionFacts` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
 | `TaskAllocationContract` values | Stable task-local invariant allocation/free identities and geometry. |
 | Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the strict core. |
@@ -45,7 +45,7 @@ It returns `FixedLayoutAdmission`, which contains:
 - a `FixedPhysicalLayout` with placements and causal reuse dependencies;
 - a `SimulationAdmission` projection of the physical certificate;
 - a new `SimulationResult` that includes the added dependencies;
-- stable digests tying the layout to its Program, schedule, and topology.
+- stable digests tying the layout to its program, schedule, and topology.
 
 ### Measuring and certifying are separate steps
 
@@ -109,12 +109,14 @@ below resolves during the search.
 `PhysicalAdmission.workspace_reserve_bytes` is a separate quantity: the
 contiguous workspace allowance the pool must be able to serve. It is validated
 against the slab and reported, but it is not subtracted from $P$ and does not
-define $C$. The current leeway is derived from it — the allowance above the
-peak task workspace, a quarter of that peak under the default 5/4 policy,
-subject to a 512 MiB floor and 2 MiB rounding, which bind instead of the
-ratio below a peak of roughly 410 MiB — which is historical rather than
-principled, since the excess it absorbs is a
-property of lifetime overlap rather than of workspace.
+define $C$.
+
+The leeway is nonetheless derived from that allowance: it is whatever the
+allowance holds above the peak task workspace — a quarter of that peak under
+the default 5/4 policy, with a 512 MiB floor and 2 MiB rounding that bind
+instead of the ratio for small peaks. That derivation is historical rather
+than principled, since the excess the leeway absorbs is a property of lifetime
+overlap and not of workspace.
 
 For one fixed layout, let:
 
@@ -171,7 +173,7 @@ are identified; returned but unretained tensors therefore remain anonymous
 workspace for their real lifetime. A nonempty workspace, fresh output, or
 replacement without corresponding allocation steps fails before PressureFit.
 
-A hand-authored logical `Program` can still use PressureFit and the simulator
+A hand-authored logical `ShadowSpillProgram` can still use PressureFit and the simulator
 without an `AdmissionFacts`. It becomes executable only after a frontend
 provides complete physical evidence. The serialized topology uses only the
 current `shadowspill.admission_facts/v1` schema; older synthetic forms are
@@ -229,8 +231,9 @@ initial execution objects
     -> validate final execution residency
 ```
 
-Every acquired or reserved range receives a stable lease ID and semantic
-purpose:
+Every acquired or reserved range receives a stable lease ID and a semantic
+purpose. [Why a lease exists](admission-leases.md#why-a-lease-exists) is the
+complete taxonomy; what matters here is how long each kind occupies bytes:
 
 | Purpose | Birth | End of physical lifetime |
 |---|---|---|
@@ -455,13 +458,13 @@ its timeline belong to a plan that will never execute, and the certificate
 below would disagree with the search that chose it.
 
 How much a plan gives back at a time is `capacity_refinement_bytes`, 256 MiB
-by default. The extent does not fall byte for byte with the capacity — on one
-measured point a 1 GiB reduction moved it 2.2 GB — so handing back everything
-a layout overran overshoots the capacity that would have fit, and the plan
-built below that capacity is materially worse than the one just under the
-line. Stepping costs rounds and buys quality. Zero hands back the whole
-shortfall and converges in the fewest rounds, which is the setting to reach
-for when planning time matters more than the last percent of makespan.
+by default. The extent does not fall byte for byte with the capacity — a cut
+in capacity can move it by more — so handing back everything a layout overran
+overshoots the capacity that would have fit, and the plan built below that
+capacity is materially worse than the one just under the line. Stepping costs
+rounds and buys quality. Zero hands back the whole shortfall and converges in
+the fewest rounds, which is the setting to reach for when planning time
+matters more than the last percent of makespan.
 
 The shared best-placed record is what keeps this affordable. Placing a plan
 costs far more than simulating one, so a plan whose makespan is already no
@@ -475,7 +478,7 @@ the same capacity and from the same timeline; a rejection there is a
 disagreement between the search's measurement and the certificate rather than
 a capacity to retry.
 
-The framework-neutral `pressurefit()` API can alternatively receive an
+The framework-neutral `pressurefit` search can alternatively receive an
 `AdmissionFacts` and evaluate the production dynamic-pool policy inside
 each candidate. The current PyTorch callable path deliberately uses the fixed
 layout builder as its final physical authority: a dynamic best-fit rejection
@@ -533,13 +536,15 @@ AdmitSelectedSchedule(selected, topology, scratch):
 
 `PlanReport.diagnostics` retains, per recurrent or initialization plan:
 
-- every fixed-layout refinement attempt;
+- the `FixedLayoutAttempt` recording the capacity certified, what the layout
+  required, and whether it was accepted — one per plan, since the search
+  settles capacity and leaves nothing here to walk;
 - pool, fixed-slice, terminal-dynamic, scratch, required, and slack bytes;
 - placement counts and bytes by semantic purpose;
 - complete placements and their relative offsets;
 - causal reuse dependencies;
 - task memory envelopes and allocation-contract digests;
-- layout, Program, schedule, and topology digests;
+- layout, program, schedule, and topology digests;
 - logical versus physically admitted simulation results;
 - PressureFit and physical-admission wall times separately.
 
