@@ -7,7 +7,8 @@ actions, and before an executable callable is published.
 
 PressureFit answers:
 
-> Which objects should be resident, and when should release, evict, and fetch
+> Which objects should be resident, and when should release, write-back,
+> evict, and fetch
 > actions trigger?
 
 Physical admission answers:
@@ -184,9 +185,11 @@ Two different things are ordered in causal order here, and keeping them apart
 matters when reading anything below.
 
 A **memory action** is a decision the *plan* makes about moving an object:
-`fetch`, `evict`, or `release`, each triggered at a task boundary. Actions
-belong to the `MemorySchedule` and are what PressureFit chooses
-([IR](ir.md#memory-schedule)).
+`fetch`, `write_back`, `evict`, or `release`, each triggered at a task
+boundary. Actions belong to the `MemorySchedule` and are what PressureFit
+chooses ([IR](ir.md#memory-schedule)). Admission accounts for the three that
+move or free execution memory; a write-back takes a spill destination and
+frees nothing, so it changes no execution lease.
 
 A **pool operation** is an allocator call that *executing* the plan implies:
 `RESERVE`, `ACQUIRE`, `ACQUIRE_RESERVED`, `BEGIN_RETIREMENT`,
@@ -221,7 +224,7 @@ initial execution objects
     -> acquire that task's allocation-core leases
     -> begin task-completion retirements for anonymous temporaries
     -> publish output, mutation-replacement, and handoff ownership
-    -> trigger release, eviction, and fetch actions in schedule order
+    -> trigger release, write-back, eviction, and fetch actions in schedule order
     -> complete pending task and transfer retirements
     -> validate final execution residency
 ```

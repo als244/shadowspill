@@ -2348,11 +2348,184 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
         }                                                                    \
     } while (0)
 
+/*
+ * A write-back refreshes the spill copy and keeps the execution copy; one
+ * that finds the spill copy current copies nothing; a release scheduled
+ * behind a write-back still on the lane frees the execution copy once the
+ * copy has landed. The evict lane is slowed so the release is scheduled
+ * while the copy is in flight. One task names an object once, so the
+ * release comes as its own batch behind the task that wrote back.
+ */
+static int write_back_keeps_execution_and_refreshes_spill(void) {
+    ShadowSpillBackend mock = {0};
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    const ShadowSpillMockBackendConfig backend_config = {
+        .fetch_delay_nanoseconds = 1000U,
+        .evict_delay_nanoseconds = 50000000U,
+    };
+    if (shadowspill_mock_backend_create(&backend_config, &mock) != 0) {
+        return -1;
+    }
+    if (shadowspill_test_create_runtime(
+            &mock, 128U, 256U, 1U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0) {
+        shadowspill_test_destroy_runtime(runtime);
+        shadowspill_backend_destroy(&mock);
+        return -1;
+    }
+    const ShadowSpillObjectDescription state = {
+        .object_id = 130U,
+        .size_bytes = 32U,
+        .retain_spill_copy = 1U,
+        .initial_pool_id = 1U,
+        .initially_resident = 1U,
+    };
+    const ShadowSpillObjectUpdate update = {
+        .object_id = state.object_id,
+        .version_delta = 1U,
+    };
+    const ShadowSpillRuntimeAction write_back = {
+        .object_id = state.object_id,
+        .kind = SHADOWSPILL_RUNTIME_WRITE_BACK,
+    };
+    const ShadowSpillRuntimeAction release = {
+        .object_id = state.object_id,
+        .kind = SHADOWSPILL_RUNTIME_RELEASE,
+    };
+    const uint64_t input = state.object_id;
+    /* Each task writes the state and writes it back at its own boundary. */
+    const ShadowSpillTaskDescription first_update = {
+        .task_id = 31U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+        .updates = &update,
+        .update_count = 1U,
+        .actions = &write_back,
+        .action_count = 1U,
+    };
+    const ShadowSpillTaskDescription second_update = {
+        .task_id = 32U,
+        .input_object_ids = &input,
+        .input_count = 1U,
+        .updates = &update,
+        .update_count = 1U,
+        .actions = &write_back,
+        .action_count = 1U,
+    };
+    ShadowSpillAllocation allocation = {0};
+    ShadowSpillObjectBinding binding = {0};
+    ShadowSpillObjectSnapshot snapshot = {0};
+    ShadowSpillRuntimeStatistics statistics = {0};
+    const char *stage = "register";
+    int failed = shadowspill_register_object(runtime, &state) !=
+        SHADOWSPILL_STATUS_OK;
+    if (!failed) {
+        stage = "allocate";
+        failed = shadowspill_memory_pool_allocate(
+            runtime, 0U, state.size_bytes, 1U, compute, &allocation
+        ) != SHADOWSPILL_STATUS_OK;
+    }
+    if (!failed) {
+        stage = "publish initial";
+        failed = shadowspill_test_publish_initial(
+            runtime, state.object_id, allocation.pointer, NULL
+        ) != SHADOWSPILL_STATUS_OK;
+    }
+    if (!failed) {
+        stage = "admit the tasks";
+        failed = shadowspill_test_admit_task(runtime, &first_update) !=
+                SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_admit_task(runtime, &second_update) !=
+                SHADOWSPILL_STATUS_OK;
+    }
+    if (!failed) {
+        /* The spill copy is current at registration: nothing to copy. */
+        stage = "write-back of a current copy";
+        failed = shadowspill_test_submit_actions(
+                runtime, 1U, compute, &write_back, 1U
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_STATUS_OK ||
+            statistics.evict_transfers != 0U;
+    }
+    if (!failed) {
+        /* Written, the state is copied back and stays resident. */
+        stage = "write-back after a write";
+        failed = shadowspill_test_before_task(
+                runtime, first_update.task_id, compute, &binding, 1U
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_after_task(
+                runtime, first_update.task_id, compute
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_object_snapshot(runtime, state.object_id, &snapshot) !=
+                SHADOWSPILL_STATUS_OK ||
+            snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
+            snapshot.execution_pointer == NULL || !snapshot.spill_current ||
+            snapshot.spill_version != snapshot.authoritative_version ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_STATUS_OK ||
+            statistics.evict_transfers != 1U;
+    }
+    if (!failed) {
+        /* Written again, the release scheduled while the write-back is on
+         * the lane frees the execution copy once the copy has landed. */
+        stage = "release behind a write-back";
+        failed = shadowspill_test_before_task(
+                runtime, second_update.task_id, compute, &binding, 1U
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_after_task(
+                runtime, second_update.task_id, compute
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_test_submit_actions(
+                runtime, 2U, compute, &release, 1U
+            ) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_object_snapshot(runtime, state.object_id, &snapshot) !=
+                SHADOWSPILL_STATUS_OK ||
+            snapshot.residency != SHADOWSPILL_OBJECT_SPILL_ONLY ||
+            snapshot.execution_pointer != NULL || !snapshot.spill_current ||
+            snapshot.spill_version != snapshot.authoritative_version ||
+            shadowspill_runtime_statistics(runtime, &statistics) !=
+                SHADOWSPILL_STATUS_OK ||
+            statistics.evict_transfers != 2U;
+    }
+    if (failed) {
+        ShadowSpillRuntimeFailure failure = {0};
+        (void)shadowspill_runtime_failure(runtime, &failure);
+        fprintf(
+            stderr,
+            "write-back mismatch at %s: status=%u object=%llu residency=%u "
+            "execution=%p spill_current=%u spill_version=%llu "
+            "authoritative=%llu evicts=%llu\n",
+            stage,
+            failure.status,
+            (unsigned long long)failure.object_id,
+            (unsigned)snapshot.residency,
+            snapshot.execution_pointer,
+            (unsigned)snapshot.spill_current,
+            (unsigned long long)snapshot.spill_version,
+            (unsigned long long)snapshot.authoritative_version,
+            (unsigned long long)statistics.evict_transfers
+        );
+    }
+    shadowspill_test_destroy_runtime(runtime);
+    if (compute.words[0] != 0U) {
+        (void)mock.destroy_stream(mock.state, compute);
+    }
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     REQUIRE_CANARY(spill_object_rekey_preserves_authoritative_lease());
     REQUIRE_CANARY(invalid_action(0U, SHADOWSPILL_RUNTIME_FETCH));
     REQUIRE_CANARY(invalid_action(1U, SHADOWSPILL_RUNTIME_RELEASE));
     REQUIRE_CANARY(invalid_action(1U, SHADOWSPILL_RUNTIME_EVICT));
+    REQUIRE_CANARY(invalid_action(0U, SHADOWSPILL_RUNTIME_WRITE_BACK));
     REQUIRE_CANARY(invalid_before_task(0U));
     REQUIRE_CANARY(invalid_before_task(1U));
     REQUIRE_CANARY(duplicate_action());
@@ -2385,5 +2558,6 @@ int main(void) {
     REQUIRE_CANARY(nonretained_fetch_then_evict_reserves_fresh_spill());
     REQUIRE_CANARY(completed_evict_preserves_later_submitted_fetch());
     REQUIRE_CANARY(consumer_waits_for_latest_queued_fetch_generation());
+    REQUIRE_CANARY(write_back_keeps_execution_and_refreshes_spill());
     return EXIT_SUCCESS;
 }

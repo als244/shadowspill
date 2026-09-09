@@ -27,6 +27,37 @@ Each `TaskInterval` records ready, start, and end time. Each
 completion. `SimulationResult` contains makespan, per-device peaks, transfer
 utilization, stalls, and task/transfer intervals.
 
+## Memory actions
+
+The four action kinds of the [IR](ir.md#memory-schedule) have one simulated
+meaning each, and the runtime's executor keeps the same contract:
+
+| action | lane | requires | leaves |
+|---|---|---|---|
+| fetch | fetch | a current spill copy and no device copy | a current device copy; the spill copy is dropped unless the alias retains it |
+| write-back | evict | a current device copy with no copy of it in flight | the spill copy current; the device copy kept, allocated and authoritative |
+| release | none | a current device copy, and a current spill copy when the value is still needed | the device copy dropped at once |
+| evict | evict | a current device copy with no copy of it in flight | the spill copy current and the device copy dropped when the copy lands |
+
+A write-back whose spill copy is already current completes at its trigger
+without occupying the lane. A release behind a pending write-back of the
+same alias waits for the copy to land, the way a fetch with nowhere to land
+waits for room, and holds the actions behind it while it waits. A value is still
+needed after a release when a later task reads it or the final residency
+names it; a release that would drop its only current copy is refused as
+an `invalid-release`, at the release rather than at the fetch, task or
+final residency that would miss the value. A value nothing needs any more
+is released freely, whatever its spill copy holds.
+
+A device-to-spill copy carries the version it started from. A task that
+writes the alias while the copy is in flight leaves the spill copy stale,
+never current by fiat, so a later fetch or the final residency reports the
+loss instead of the simulation hiding it.
+
+Each `TransferInterval` names the action kind that issued it beside its
+direction, so write-backs are distinguishable from evictions on the evict
+lane.
+
 ## Trigger-time capacity
 
 Transfer capacity is charged at the directive trigger, not when the copy

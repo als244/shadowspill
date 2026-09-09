@@ -278,8 +278,8 @@ one event per free.
 
 ## What a plan's actions do here
 
-The plan says which objects to fetch, evict or release, and which task triggers
-each. Those actions are not executed at `before_task`; they are instantiated at
+The plan says which objects to fetch, evict, write back or release, and
+which task triggers each. Those actions are not executed at `before_task`; they are instantiated at
 the `after_task` of their trigger task, against object state as it is then.
 
 An action's destination lease is reserved before the batch is published, so a

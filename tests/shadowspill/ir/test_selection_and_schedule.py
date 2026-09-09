@@ -118,7 +118,7 @@ def test_output_invalidates_a_retained_spill_copy() -> None:
         final_residency=(ResidencySpec("state_storage", MemoryLocation.SPILL),),
     )
 
-    with pytest.raises(ValidationError, match="current host residency"):
+    with pytest.raises(ValidationError, match="only current copy"):
         stale.validate(program)
 
 
@@ -145,3 +145,15 @@ def test_first_use_initial_order_follows_the_task_sequence() -> None:
         "activation_storage",
         "output_storage",
     )
+
+
+def test_a_write_back_round_trips_and_indexes_after_the_other_kinds() -> None:
+    from shadowspill.ir import MemoryAction, MemoryActionKind
+    from shadowspill.ir.indexed import MEMORY_ACTION_CODE
+
+    action = MemoryAction("update", "state_storage", MemoryActionKind.WRITE_BACK)
+    assert action.to_dict()["kind"] == "write_back"
+    assert MemoryAction.from_value(action.to_dict(), "action") == action
+    assert MEMORY_ACTION_CODE[MemoryActionKind.WRITE_BACK] == 3
+    assert sorted(MEMORY_ACTION_CODE.values()) == [0, 1, 2, 3]
+

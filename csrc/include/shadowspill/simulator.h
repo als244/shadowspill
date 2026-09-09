@@ -22,6 +22,9 @@ typedef enum ShadowSpillMemoryActionKind {
     SHADOWSPILL_MEMORY_RELEASE = 0,
     SHADOWSPILL_MEMORY_EVICT = 1,
     SHADOWSPILL_MEMORY_FETCH = 2,
+    /* A copy to spill that keeps the execution copy: the spill copy is
+       current again, so a later release costs nothing. */
+    SHADOWSPILL_MEMORY_WRITE_BACK = 3,
 } ShadowSpillMemoryActionKind;
 
 typedef enum ShadowSpillTransferDirection {
@@ -113,6 +116,9 @@ typedef struct ShadowSpillTransferInterval {
     uint32_t trigger_task;
     uint32_t device;
     uint8_t direction;
+    /* The ShadowSpillMemoryActionKind that issued the copy: a write-back
+     * shares the evict lane with evictions and is told apart by this. */
+    uint8_t kind;
     uint32_t sequence;
     uint64_t ready_ns;
     uint64_t start_ns;
@@ -142,7 +148,7 @@ typedef enum ShadowSpillCapacityViolationReason {
     SHADOWSPILL_CAPACITY_INITIAL_SPILL = 1,
     /* A fetch would not fit on the device. */
     SHADOWSPILL_CAPACITY_FETCH_DEVICE = 2,
-    /* An eviction would not fit in the spill pool. */
+    /* An eviction or write-back would not fit in the spill pool. */
     SHADOWSPILL_CAPACITY_EVICT_SPILL = 3,
     /* A task's outputs and workspace would not fit on the device. */
     SHADOWSPILL_CAPACITY_TASK_DEVICE = 4,

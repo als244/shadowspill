@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from itertools import pairwise
 
+from shadowspill.ir.indexed import MEMORY_ACTION_CODE
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming,
@@ -37,7 +38,6 @@ from .execution import (
 )
 
 _DIRECTIONS = ("fetch", "evict")
-_ACTION_KINDS = {"fetch": 2, "evict": 1}
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,7 +327,7 @@ def _transfer_lanes(
             object_number = bridge.runtime_object_id(interval.alias_group_id)
             _validate_transfer_event(interval, dispatch, task_number, object_number)
             _validate_transfer_event(interval, completion, task_number, object_number)
-            key = (task_number, object_number, _ACTION_KINDS[direction])
+            key = (task_number, object_number, MEMORY_ACTION_CODE[interval.kind])
             queued_event = queued[key].popleft() if queued[key] else None
             reserved_event = reserved[key].popleft() if reserved[key] else None
             records.append(

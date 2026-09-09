@@ -150,7 +150,7 @@ int shadowspill_validate_program(
     for (uint32_t index = 0; index < program->action_count; ++index) {
         if (program->action_trigger_tasks[index] >= program->task_count ||
             program->action_aliases[index] >= program->alias_count ||
-            program->action_kinds[index] > SHADOWSPILL_MEMORY_FETCH) {
+            program->action_kinds[index] > SHADOWSPILL_MEMORY_WRITE_BACK) {
             return 0;
         }
     }

@@ -38,7 +38,7 @@ class RuntimeTraceEventKind(IntEnum):
     FAILURE_LATCHED = 12
 
 
-_ACTION_NAMES = {0: "release", 1: "evict", 2: "fetch"}
+_ACTION_NAMES = {0: "release", 1: "evict", 2: "fetch", 3: "write_back"}
 _DIRECTION_NAMES = {0: "fetch", 1: "evict"}
 
 

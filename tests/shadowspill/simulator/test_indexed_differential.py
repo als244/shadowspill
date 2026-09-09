@@ -28,8 +28,11 @@ from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
 from shadowspill.simulator.indexed import simulate_program
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
+    release_behind_write_back_schedule,
     representative_program,
     representative_schedule,
+    write_back_program,
+    write_back_schedule,
 )
 
 from ._examples import (
@@ -58,6 +61,8 @@ pytestmark = pytest.mark.skipif(
             600,
         ),
         (overlap_program(), overlap_schedule(), (), 512),
+        (write_back_program(), write_back_schedule(), (), 512),
+        (write_back_program(), release_behind_write_back_schedule(), (), 512),
         (concurrent_lane_program(), initial_only_schedule(), (), 1024),
         (ordered_action_program(), ordered_action_schedule(), (), 1024),
     ],

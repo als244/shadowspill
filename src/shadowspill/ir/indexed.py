@@ -35,6 +35,7 @@ MEMORY_ACTION_CODE = {
     MemoryActionKind.RELEASE: 0,
     MemoryActionKind.EVICT: 1,
     MemoryActionKind.FETCH: 2,
+    MemoryActionKind.WRITE_BACK: 3,
 }
 
 

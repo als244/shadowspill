@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from shadowspill.ir import ResourceKind
+from collections.abc import Mapping
+
+from shadowspill.ir import MemoryActionKind, ResourceKind
 from shadowspill.simulator import (
     DeviceMemoryPeak,
     MemorySnapshot,
@@ -13,6 +15,21 @@ from shadowspill.simulator import (
 )
 
 from .common import _integer, _integer_pairs, _list, _mapping, _string, _string_tuple
+
+
+def _interval_kind(item: Mapping[str, object], path: str) -> MemoryActionKind:
+    """The action behind a copy. Records written before the field existed
+    carry fetches and evictions only, so the direction names the kind."""
+
+    value = item.get("kind")
+    if value is None:
+        direction = TransferDirection(
+            _string(item.get("direction"), f"{path}.direction")
+        )
+        if direction is TransferDirection.FETCH:
+            return MemoryActionKind.FETCH
+        return MemoryActionKind.EVICT
+    return MemoryActionKind(_string(value, f"{path}.kind"))
 
 
 def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
@@ -82,6 +99,7 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
                         f"{path}.transfer_intervals[{index}].direction",
                     )
                 ),
+                kind=_interval_kind(item, f"{path}.transfer_intervals[{index}]"),
                 sequence=_integer(
                     item.get("sequence"),
                     f"{path}.transfer_intervals[{index}].sequence",

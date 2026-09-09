@@ -150,6 +150,12 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_abort_task_handle()` closes that same handle-bound task scope
   when frontend execution raises before `after_task`; it does not cancel work
   already submitted to the device.
+- A task's actions are `ShadowSpillRuntimeAction` records of one of the four
+  `ShadowSpillRuntimeActionKind` values: release, evict, fetch and
+  write-back. A write-back copies the execution copy to the spill pool and
+  keeps it; one scheduled while the spill copy is already current completes
+  without a copy; a release scheduled behind a pending write-back of its
+  object frees the execution copy once that copy has landed.
 - `shadowspill_plan_admit_action_batch()` creates an action-only trigger
   handle; `shadowspill_submit_action_batch_handle()` publishes it without
   opening a task boundary.
