@@ -137,10 +137,22 @@ Read what you need before the close, or import beforehand to keep it. Only
 `make_step_program()` still requires an explicit import, because it returns
 no callable that could own the result.
 
-`import_model_state()` returns a copied module hierarchy whose registered
-tensors point at runtime spill leases. `release_source=True` means ShadowSpill
-does not retain the input model; Python releases it when no caller reference
-remains. `export_model_state()` rebinds the same registered tensor
+`import_model_state()` takes a model in either of two states, and what it
+returns follows from which.
+
+A model **on `meta`** has structure but no storage, so there is nothing to
+copy: every tensor is allocated in the pool, `reset_parameters()` writes the
+values there, and the same module is returned, rebound. No host memory
+proportional to the model is ever allocated. The model must satisfy the
+contract in [importing state](../../architecture/state-import.md) -- constructible
+on meta, dtype fixed at construction, and `reset_parameters()` on every module
+that owns state -- and is refused, naming the offenders, if it does not.
+
+A model **already materialized** is copied into the pool as it stands, and a
+copied module hierarchy is returned whose registered tensors point at runtime
+spill leases. That copy is what costs a host transient, which is why the meta
+path exists. `release_source=True` means ShadowSpill does not retain the input
+model; Python releases it when no caller reference remains. `export_model_state()` rebinds the same registered tensor
 identities to ordinary CPU storages and optionally releases runtime objects.
 `release_model_state()` releases those runtime objects without materializing
 any CPU copy: the module's registered tensors become invalid, so the module
@@ -200,16 +212,25 @@ boundary.
 Everything else a plan owns is created in the pools rather than on the host:
 gradients, activations and workspaces are runtime objects the plan's actions
 move between pools, and the tensors the lowering builds them from are fake, so
-they cost nothing while a program is being built. The optimizer's lazy state
-was the exception, and is one no longer.
+they cost nothing while a program is being built. Optimizer state is created
+there too: the optimizer declares what it keeps on meta, which allocates
+nothing, planning allocates that in the spill pool, and `optimizer_state_init` fills
+it in place.
 
 `import_optimizer_state()` and `export_optimizer_state()` apply the same
 storage policy to already materialized optimizer state, as a standalone
-ownership operation. They are not a planning input: `plan_step()` constructs
-and manages its own optimizer from the supplied factory and imports that
-optimizer's state itself, so handing it one whose state is already imported
-raises `RuntimeConfigurationError`. Resume prior state through
-`PlannedTrainStep.load_state_dict()` instead.
+ownership operation, and planning is agnostic of it. What planning looks at is
+the optimizer it is given, and that object is the reference: if *its*
+state was already imported, planning adopts it as it stands and it outlives
+the plan; if it was not, planning declares the state on meta, allocates it in
+the spill pool, and fills it through `optimizer_state_init`, and the plan owns the
+result.
+
+So importing optimizer state outside planning is always valid and never
+changes what planning does. It matters only if the caller hands that optimizer
+in. State imported for an optimizer planning is never given is invisible to
+it. `PlannedTrainStep.load_state_dict()` remains the way to resume values into
+a plan that already owns its state.
 
 ## Planning entrypoints
 
@@ -305,7 +326,9 @@ plan_step(
     model,
     *,
     objective,
-    opt,
+    optimizer,
+    optimizer_state_init=None,
+    hyperparams=(),
     example_inputs,
     runtime,
     execution,
@@ -336,6 +359,44 @@ plan_step(
     implementation_revision=None,
 ) -> PlannedTrainStep
 ```
+
+Every argument, what it takes, and what it is for:
+
+| argument | type | default | what it must be |
+|---|---|---|---|
+| `model` | `nn.Module` | required | Already imported: `import_model_state()` has run, so its state lives in a pool the plan owns. |
+| `objective` | callable | required | `(model, *microbatch) -> Tensor`, returning the scalar the step differentiates. |
+| `optimizer` | callable | required | Given the model's parameters, returns a `torch.optim.Optimizer`. The class itself does (`torch.optim.AdamW`); so does any partial or lambda over one. |
+| `optimizer_state_init` | `(name, tensor, parameter) -> None` \| `None` | `None` | Fills one declared state entry in place. Required unless the optimizer handed back already holds imported state. |
+| `hyperparams` | `Sequence[str]` | `()` | Names of values a step may set later, e.g. `("lr",)` or `("lr", "betas")`. Each must name an entry in a parameter group or a model buffer holding a number, or a sequence of them. Named entries are held in host scalars before capture -- float64 for a float, int64 for an int -- and everything else is left as the optimizer made it. A bool is refused: it selects what the update does, which is what the capture is. |
+| `example_inputs` | `Sequence[Sequence[Any]]` | required | One fixed example sequence per microbatch; its length is the step's microbatch count. |
+| `runtime` | `Runtime` | required | Constructed before model state existed, so its pools and routes are ready. |
+| `execution` | `str` | required | Name of the device pool in `runtime`. |
+| `spill` | `str` | required | Name of the spill pool in `runtime`. |
+| `execution_budget` | `int` \| `None` | `None` | Device bytes the plan may use; the pool's capacity when `None`. |
+| `spill_budget` | `int` \| `None` | `None` | Spill bytes the plan may use; the pool's capacity when `None`. |
+| `dynamic_scratch_reserve_bytes` | `int` \| `None` | `None` | Device bytes held back for allocations the plan does not own; measured when `None`. |
+| `minimum_object_bytes_evict_eligible` | `int` | `1 << 20` | Objects smaller than this are never spilled: moving them costs more than they free. |
+| `deterministic` | `bool` | `False` | Fixes the search's order, so two runs of the same problem settle on the same plan. Comparing runs needs it. |
+| `execution_device` | `int` \| `str` \| `torch.device` \| `None` | `None` | The device to plan for; the current one when `None`. |
+| `partition` | `PartitionSpec` | `"auto"` | `"auto"`, or an explicit stage partition. See [custom partitioning](../../examples/custom-partitioning.md). |
+| `optimizer_ordering` | `"stage_interleaved"` \| `"tail"` | `"stage_interleaved"` | Whether each stage updates as its gradients land, or all updates run at the end. |
+| `depth` | `int` \| `None` | `None` | Passes over the microbatches. With `breadth`, their product must be `len(example_inputs)`. |
+| `breadth` | `int` \| `None` | `None` | Microbatches per pass. Give one of the two and the other follows. |
+| `reverse_breadth` | `bool` | `True` | Walks a pass's microbatches in reverse during backward. Vacuous at `breadth=1`. |
+| `pair_loss` | `bool` | `True` | Runs each microbatch's last stage forward and backward together. Vacuous at `breadth=1`. |
+| `resolution_options` | `Sequence[ShareValue]` \| `None` | `None` | Recomputation shares to search, as fractions or `"n/m"`. A default ladder when `None`. |
+| `incumbent` | `AnnotatedProgramPlan` \| `None` | `None` | A plan already in hand; the search never answers with worse. Must be for the same program. |
+| `verbose` | `bool` | `True` | Prints the search's progress. |
+| `artifact_store_dir` | path \| `None` | `None` | Where compiled artifacts are cached and reused. |
+| `plan_store_dir` | path \| `None` | `None` | Where plans are saved and looked up. |
+| `profiling_metadata` | `Sequence[object]` \| `None` | `None` | Recorded beside the plan; it does not affect planning. |
+| `allocation_probe_seeds` | `int` | `1` | Distinct seeds used when measuring allocation behaviour. |
+| `allocation_probe_repetitions` | `int` | `2` | Repetitions per seed, which is what separates a real reservation from noise. |
+| `save_plan` | `bool` | `True` | Writes the plan to `plan_store_dir` when one is given. |
+| `force_fresh` | `bool` | `False` | Plans again rather than reusing a stored plan. |
+| `overwrite_plan` | `bool` | `False` | Replaces a stored plan for the same problem instead of keeping it. |
+| `implementation_revision` | `str` \| `None` | `None` | Marks the operation implementations a plan was measured against, so a stored plan is not reused across a kernel change. |
 
 `plan_step()` accepts one fixed example sequence per microbatch. The
 `optimizer_ordering` value is `"stage_interleaved"` or `"tail"`.
@@ -392,7 +453,9 @@ make_step_program(
     model,
     *,
     objective,
-    opt,
+    optimizer,
+    optimizer_state_init=None,
+    hyperparams=(),
     example_inputs,
     runtime,
     execution,
@@ -457,7 +520,9 @@ plan_step_search(
     model,
     *,
     objective,
-    opt,
+    optimizer,
+    optimizer_state_init=None,
+    hyperparams=(),
     example_microbatches,
     total_sequences_per_step,
     sequence_length,
@@ -568,6 +633,7 @@ PlannedForward.submit(
 PlannedTrainStep(
     inputs,
     *,
+    hyperparams=None,
     runtime_trace=False,
     profiler_annotations=False,
 ) -> StepResult
@@ -578,10 +644,36 @@ PlannedTrainStep(
 PlannedTrainStep.submit(
     inputs,
     *,
+    hyperparams=None,
     runtime_trace=False,
     profiler_annotations=False,
 ) -> InvocationResult[StepResult]
 ```
+
+`hyperparams` sets this step's tunable values: `training(batches,
+hyperparams={"lr": rate})`. Names resolve against the optimizer's parameter
+groups and the model's named buffers, the two registries of named values that
+already exist, so a learning rate and a model temperature are set the same
+way. Every optimizer group carrying the name is written, so one schedule
+reaches an optimizer with several groups; groups that must differ are written
+directly, which is the mechanism underneath. An entry holding several values,
+as `betas` does, takes one number for all of them or a sequence in order.
+
+A value can only change if it is held in a tensor, which is what `plan_step`'s
+own `hyperparams` argument arranges: it names the values a step may set, and
+planning holds exactly those in scalar tensors before the step is captured.
+Only the named ones, because an optimizer is entitled to require a number, and
+holding one behind its back would change what it computes. The scalars are
+float64 and stay on the host, so setting one copies nothing and synchronizes
+nothing.
+
+Three things are refused rather than absorbed: an unknown name raises
+`KeyError`, because a value going nowhere would look like a schedule that ran;
+a name held as a plain number raises `TypeError`, because the capture fixed
+that value when it was traced, and the message says to name it in
+`plan_step(hyperparams=...)`; and a name that exists in both registries raises
+`KeyError` rather than guessing. See
+[the optimizer](../../architecture/optimizer.md).
 
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
 `state_dict()`, `load_state_dict()`, `close()`, and context manager support.
@@ -597,7 +689,7 @@ same `Parameter` objects at device memory; closing points them back.
 ordinary CPU tensors.
 
 Optimizer state has no equivalent home today. `plan_step()` builds the
-optimizer from the factory it is given and creates its state in storage the
+optimizer from the callable it is given and creates its state in storage the
 plan owns, and planning refuses an optimizer whose state the caller already
 imported, so there is no caller-owned pool for it to be left in. That state is
 taken from the spill pool as it is created rather than built on the host and

@@ -13,10 +13,9 @@ From a fresh checkout:
 ```
 
 The script creates `.venv`, installs the supported PyTorch and device-backend
-stack, builds the C planner, simulator, runtime, the backends whose toolchains
-are installed, and the PyTorch adapter, installs the mlops operation library
-with its implementation providers, and verifies the installation. To use an existing virtual or Conda
-environment:
+stack, builds the C planner, simulator, runtime, the backends and the PyTorch
+adapter, installs the mlops operation library, and verifies it. To use an
+existing environment:
 
 ```bash
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
@@ -24,13 +23,12 @@ environment:
 
 ## Minimal example
 
-Initialize the runtime before constructing or loading model state. This lets
-the runtime register its physical pools and calibrate their real transfer
-routes before workload allocations claim host memory.
+Initialize the runtime before model state exists, so its pools and routes are
+ready first. Planning declares what exists and each step supplies the values:
+`optimizer_state_init` says what optimizer state starts at, `hyperparams` names
+the values a step may change, and each call sets them.
 
 ```python
-from functools import partial
-
 import torch
 
 from shadowspill.memory import device, pinned_host, transfer_route
@@ -58,14 +56,16 @@ train_step = plan_step(
     objective=lambda model, tokens, targets: model(
         tokens, labels=targets
     ).loss,
-    opt=partial(torch.optim.AdamW, lr=3e-4),
+    optimizer=torch.optim.AdamW,
+    hyperparams=("lr",),
+    optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
     example_inputs=[[tokens_example, targets_example]],
     runtime=runtime,
     execution="device",
     spill="spill",
 )
 
-result = train_step([[tokens, targets]])
+result = train_step([[tokens, targets]], hyperparams={"lr": 3e-4})
 print("loss", result.objectives[0])
 
 train_step.close()

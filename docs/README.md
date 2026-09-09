@@ -51,23 +51,29 @@ what is profiled, and what the planner is handed.
 4. [Graph-pair construction](architecture/graph-pair-construction.md) —
    structural forward/backward alternatives, saved-value accounting, and
    profiling.
+5. [Importing state](architecture/state-import.md) — how a caller's model
+   state comes to live in the pools without a host copy of it, the contract
+   that makes that possible, and how dtype is decided.
+6. [The optimizer](architecture/optimizer.md) — what ShadowSpill needs from an
+   optimizer and promises in return: state declared on meta and filled by the
+   caller, frozen parameters, and values that change between steps.
 
 ### Planning
 
 How a program becomes an executable plan: which tasks run, where every object
 lives at each boundary, and what address every allocation gets.
 
-5. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
+7. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
    complete selections across occurrence-level graph-pair options.
-6. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
+8. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
    inputs/outputs, bounded policy search, repair, and pseudocode.
-7. [Physical admission and offset handling](architecture/physical-admission.md)
+9. [Physical admission and offset handling](architecture/physical-admission.md)
    — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
-8. [From a resolved program to leases](architecture/admission-leases.md) —
+10. [From a resolved program to leases](architecture/admission-leases.md) —
    what a schedule allocates and when each lease is live.
-9. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
+11. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
    given addresses and what the cost of doing so depends on.
-10. [Planning orchestration](architecture/planning.md) — reusable artifacts,
+12. [Planning orchestration](architecture/planning.md) — reusable artifacts,
     transfer inputs, callable publication, and PlanReport.
 
 ### Execution
@@ -75,33 +81,33 @@ lives at each boundary, and what address every allocation gets.
 How a plan is predicted, run, and measured: the simulator, the runtime and
 its boundaries, the backend underneath, and the clocks a step is read on.
 
-11. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
+13. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
     causal-dependency replay.
-12. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
+14. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
     failure, and tracing.
-13. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+15. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-14. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
+16. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
     a failure is handled at each scope, and why a process that is exiting is
     abandoned rather than closed.
-15. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+17. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening
     restore, and what step time means.
-16. [Backends](architecture/backends.md) — the one component that knows a
+18. [Backends](architecture/backends.md) — the one component that knows a
     platform, the driver-level table it implements, and how a new provider
     plugs in.
-17. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
+19. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
     device and pinned host, as ShadowSpill objects built on the backend.
-18. [Transfers](architecture/transfers.md) — routes, the lane each owns,
+20. [Transfers](architecture/transfers.md) — routes, the lane each owns,
     dispatch order, and calibration on those lanes.
-19. [Events](architecture/events.md) — event leases and pools, sealing,
+21. [Events](architecture/events.md) — event leases and pools, sealing,
     completion tracking, and the timing pool behind traced intervals.
-20. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
+22. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
     made of, how its source is laid out, what it requires of a backend, and
     what it exposes upward.
-21. [Timelines](architecture/timelines.md) — the two clocks a traced step
+23. [Timelines](architecture/timelines.md) — the two clocks a traced step
     is measured on, the origin they share, and what an untraced step pays.
 
 ## Python
