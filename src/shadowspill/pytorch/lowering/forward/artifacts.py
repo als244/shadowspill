@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from torch.utils._pytree import TreeSpec
 
-from shadowspill.ir import Program, ResidencySpec, TaskSpec
+from shadowspill.ir import ResidencySpec, ShadowSpillProgram, TaskSpec
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
@@ -33,7 +33,7 @@ class TaskEntrypoint:
 class LoweredForwardProgram:
     """Canonical forward program plus non-serialized PyTorch bindings."""
 
-    program: Program
+    program: ShadowSpillProgram
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     entrypoints: tuple[TaskEntrypoint, ...]

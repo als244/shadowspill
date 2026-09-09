@@ -7,10 +7,9 @@ import json
 import time
 from collections import Counter
 from dataclasses import replace
-from fractions import Fraction
 
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
-from shadowspill.planner import PressureFitResult
+from shadowspill.planner import ProgramPlanResult, SearchOptions
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.profiling import ProfilingMetadata, ProfilingResult
@@ -58,7 +57,7 @@ def build_forward_report(
     started: int,
     *,
     planned_program_cache_hit: bool = False,
-    pressurefit_results: tuple[PressureFitResult, ...] = (),
+    search_results: tuple[ProgramPlanResult, ...] = (),
     captured_stage_count: int = 0,
     aot_unique_stage_contracts: int = 0,
     aot_graph_pair_cache_hits: int = 0,
@@ -95,7 +94,7 @@ def build_forward_report(
         store_directories=store_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
-        pressurefit_results=pressurefit_results,
+        search_results=search_results,
         physical_layouts=physical_layouts,
     )
     return _forward_report(
@@ -110,7 +109,7 @@ def build_forward_report(
         elapsed,
         diagnostics,
         planned_program_cache_hit=planned_program_cache_hit,
-        pressurefit_results=pressurefit_results,
+        search_results=search_results,
         captured_stage_count=captured_stage_count,
         aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
@@ -138,7 +137,7 @@ def _forward_diagnostics(
     store_directories: tuple[tuple[str, str], ...],
     touched_cache_artifacts: tuple[PlanCacheArtifact, ...],
     profiling_metadata: tuple[ProfilingMetadata, ...],
-    pressurefit_results: tuple[PressureFitResult, ...],
+    search_results: tuple[ProgramPlanResult, ...],
     physical_layouts: tuple[PlanPhysicalLayout, ...],
 ) -> PlanDiagnostics:
     return PlanDiagnostics(
@@ -171,7 +170,7 @@ def _forward_diagnostics(
             PlanProfilingMetadata(index, item.digest, item.canonical_json)
             for index, item in enumerate(profiling_metadata)
         ),
-        pressurefit_runs=tuple(item.diagnostics for item in pressurefit_results),
+        search_runs=tuple(item.diagnostics for item in search_results),
         physical_layouts=physical_layouts,
     )
 
@@ -185,7 +184,7 @@ def _forward_report(
     diagnostics: PlanDiagnostics,
     *,
     planned_program_cache_hit: bool,
-    pressurefit_results: tuple[PressureFitResult, ...],
+    search_results: tuple[ProgramPlanResult, ...],
     captured_stage_count: int,
     aot_unique_stage_contracts: int,
     aot_graph_pair_cache_hits: int,
@@ -213,7 +212,7 @@ def _forward_report(
         planned_program_cache_hits=int(planned_program_cache_hit),
         planned_program_cache_misses=int(not planned_program_cache_hit),
         fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
-        pressurefit_results=pressurefit_results,
+        search_results=search_results,
         captured_stage_count=captured_stage_count,
         aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
@@ -299,7 +298,7 @@ def build_training_report(
     aot_unique_stage_contracts: int,
     aot_graph_pair_cache_hits: int,
     aot_graph_pair_cache_misses: int,
-    pressurefit_results: tuple[PressureFitResult, ...],
+    search_results: tuple[ProgramPlanResult, ...],
     task_stage_map: tuple[PlanTaskStage, ...],
     unique_stages: tuple[PlanUniqueStage, ...],
     compiler_phase_timings_ns: tuple[tuple[str, int], ...],
@@ -313,7 +312,7 @@ def build_training_report(
     optimizer_ordering: str,
     data_ordering: StepDataOrdering,
     memory: PlanMemory,
-    resolution_options: tuple[Fraction, ...] | None = None,
+    search_options: SearchOptions | None = None,
 ) -> PlanReport:
     """Build complete accumulated-training planning evidence without writing it."""
 
@@ -324,9 +323,9 @@ def build_training_report(
         "optimizer_ordering": optimizer_ordering,
         "data_ordering": data_ordering.to_dict(),
     }
-    if resolution_options is not None:
-        # The resolution options the plan was searched over help name it.
-        identity["resolution_options"] = [str(share) for share in resolution_options]
+    if search_options is not None:
+        # What the search was told helps name the plan it produced.
+        identity["search_options"] = search_options.to_dict()
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -345,7 +344,7 @@ def build_training_report(
         store_directories=store_directories,
         touched_cache_artifacts=touched_cache_artifacts,
         profiling_metadata=profiling_metadata,
-        pressurefit_results=pressurefit_results,
+        search_results=search_results,
         physical_layouts=physical_layouts,
         memory=memory,
     )
@@ -374,11 +373,11 @@ def build_training_report(
         aot_unique_stage_contracts=aot_unique_stage_contracts,
         aot_graph_pair_cache_hits=aot_graph_pair_cache_hits,
         aot_graph_pair_cache_misses=aot_graph_pair_cache_misses,
-        pressurefit_results=pressurefit_results,
+        search_results=search_results,
         diagnostics=diagnostics,
         optimizer_ordering=optimizer_ordering,
         data_ordering=data_ordering,
-        resolution_options=resolution_options,
+        search_options=search_options,
     )
 
 
@@ -508,9 +507,9 @@ def fixed_layout_diagnostic(
                 item.required_bytes,
                 item.pool_capacity_bytes,
                 item.accepted,
-                item.pressurefit_wall_time_ns,
+                item.search_wall_time_ns,
                 item.physical_admission_wall_time_ns,
-                item.pressurefit_diagnostics,
+                item.search_diagnostics,
             )
             for item in selection.attempts
         ),

@@ -1,4 +1,4 @@
-"""Strict configuration schema for reusable Program collection."""
+"""Strict configuration schema for reusable ShadowSpillProgram collection."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+from shadowspill.planner.artifact_store import STORE_MODES, StoreMode
 
 _SCHEMA = "shadowspill.program_corpus_collection/v1"
 _SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)(B|KiB|MiB|GiB|TiB)$")
@@ -122,15 +124,18 @@ class RuntimeSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanningSpec:
-    """Planning behavior shared by all collected Programs."""
+class BuildSpec:
+    """How every ShadowSpillProgram in the corpus is built.
+
+    Nothing here is a planning setting. This harness captures, compiles,
+    profiles and lowers; what a planner later does with the result is the
+    planning harness's business, and its own store.
+    """
 
     optimizer_ordering: Literal["stage_interleaved", "tail"]
     allocation_probe_seeds: int
     allocation_probe_repetitions: int
-    save_plan: bool
-    force_fresh: bool
-    overwrite_plan: bool
+    build_store_mode: StoreMode
     implementation_revision: str | None
 
     def __post_init__(self) -> None:
@@ -138,24 +143,20 @@ class PlanningSpec:
             raise ValueError("allocation_probe_seeds must be positive")
         if self.allocation_probe_repetitions <= 0:
             raise ValueError("allocation_probe_repetitions must be positive")
-        if self.overwrite_plan and not self.force_fresh:
-            raise ValueError("overwrite_plan requires force_fresh")
 
     def to_dict(self) -> dict[str, object]:
         return {
             "optimizer_ordering": self.optimizer_ordering,
             "allocation_probe_seeds": self.allocation_probe_seeds,
             "allocation_probe_repetitions": self.allocation_probe_repetitions,
-            "save_plan": self.save_plan,
-            "force_fresh": self.force_fresh,
-            "overwrite_plan": self.overwrite_plan,
+            "build_store_mode": self.build_store_mode,
             "implementation_revision": self.implementation_revision,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class CollectionConfig:
-    """Complete immutable request for one Program corpus collection."""
+    """Complete immutable request for one ShadowSpillProgram corpus collection."""
 
     name: str
     seed: int
@@ -165,7 +166,7 @@ class CollectionConfig:
     geometry: GeometryAxes
     models: tuple[ModelSpec, ...]
     runtime: RuntimeSpec
-    planning: PlanningSpec
+    build: BuildSpec
 
     def __post_init__(self) -> None:
         if not self.name or re.search(r"[^A-Za-z0-9._-]", self.name):
@@ -200,7 +201,7 @@ class CollectionConfig:
             "geometry": self.geometry.to_dict(),
             "models": [model.to_dict() for model in self.models],
             "runtime": self.runtime.to_dict(),
-            "planning": self.planning.to_dict(),
+            "build": self.build.to_dict(),
         }
 
 
@@ -224,7 +225,7 @@ def load_collection_config(path: Path) -> CollectionConfig:
             "geometry",
             "models",
             "runtime",
-            "planning",
+            "build",
         },
         "config",
     )
@@ -236,7 +237,7 @@ def load_collection_config(path: Path) -> CollectionConfig:
         _model(item, f"config.models[{index}]") for index, item in enumerate(models_raw)
     )
     runtime = _runtime(data.get("runtime"), "config.runtime")
-    planning = _planning(data.get("planning"), "config.planning")
+    build = _build_spec(data.get("build"), "config.build")
     return CollectionConfig(
         name=_string(data.get("name"), "config.name"),
         seed=_integer(data.get("seed"), "config.seed"),
@@ -250,7 +251,7 @@ def load_collection_config(path: Path) -> CollectionConfig:
         geometry=geometry,
         models=models,
         runtime=runtime,
-        planning=planning,
+        build=build,
     )
 
 
@@ -362,7 +363,7 @@ def _runtime(value: object, path: str) -> RuntimeSpec:
     )
 
 
-def _planning(value: object, path: str) -> PlanningSpec:
+def _build_spec(value: object, path: str) -> BuildSpec:
     data = _object(value, path)
     _keys(
         data,
@@ -370,9 +371,7 @@ def _planning(value: object, path: str) -> PlanningSpec:
             "optimizer_ordering",
             "allocation_probe_seeds",
             "allocation_probe_repetitions",
-            "save_plan",
-            "force_fresh",
-            "overwrite_plan",
+            "build_store_mode",
             "implementation_revision",
         },
         path,
@@ -380,7 +379,7 @@ def _planning(value: object, path: str) -> PlanningSpec:
     ordering = _string(data.get("optimizer_ordering"), f"{path}.optimizer_ordering")
     if ordering not in {"stage_interleaved", "tail"}:
         raise ValueError(f"{path}.optimizer_ordering is unsupported")
-    return PlanningSpec(
+    return BuildSpec(
         optimizer_ordering=ordering,  # type: ignore[arg-type]
         allocation_probe_seeds=_integer(
             data.get("allocation_probe_seeds"), f"{path}.allocation_probe_seeds"
@@ -389,9 +388,9 @@ def _planning(value: object, path: str) -> PlanningSpec:
             data.get("allocation_probe_repetitions"),
             f"{path}.allocation_probe_repetitions",
         ),
-        save_plan=_boolean(data.get("save_plan"), f"{path}.save_plan"),
-        force_fresh=_boolean(data.get("force_fresh"), f"{path}.force_fresh"),
-        overwrite_plan=_boolean(data.get("overwrite_plan"), f"{path}.overwrite_plan"),
+        build_store_mode=_store_mode(
+            data.get("build_store_mode"), f"{path}.build_store_mode"
+        ),
         implementation_revision=_optional_string(
             data.get("implementation_revision"),
             f"{path}.implementation_revision",
@@ -450,6 +449,15 @@ def _optional_integer(value: object, path: str) -> int | None:
     return _integer(value, path)
 
 
+def _store_mode(value: object, path: str) -> StoreMode:
+    """One of the three things a run may do about an artifact a store lacks."""
+
+    allowed = STORE_MODES
+    if value not in allowed:
+        raise ValueError(f"{path} must be one of {', '.join(allowed)}")
+    return value  # type: ignore[return-value]
+
+
 def _boolean(value: object, path: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{path} must be a boolean")
@@ -484,10 +492,10 @@ def _optional_size(value: object, path: str) -> int | None:
 
 
 __all__ = [
+    "BuildSpec",
     "CollectionConfig",
     "GeometryAxes",
     "ModelSpec",
-    "PlanningSpec",
     "RuntimeSpec",
     "load_collection_config",
 ]

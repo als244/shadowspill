@@ -15,10 +15,6 @@ from shadowspill.errors import (
     PlanningError,
     PlanSearchExhaustedError,
 )
-from shadowspill.planner import (
-    PressureFitInfeasibleError,
-    PressureFitSearchExhaustedError,
-)
 from shadowspill.planner.quantization import (
     GIGABYTE_PER_SECOND,
     MICROSECOND_NS,
@@ -202,7 +198,7 @@ def capacity_leeway(measurements: Sequence[TaskMeasurement]) -> int:
     the capacity it is given, while physical admission must place a
     fixed-offset slice whose extent is larger whenever overlapping
     lifetimes block offset reuse. These withheld bytes are the head start
-    the capacity-refinement ladder gets against that excess: a layout
+    capacity refinement gets against that excess: a layout
     whose excess fits here is admitted without any refinement attempt.
 
     The amount is the workspace allowance above the peak task workspace
@@ -243,8 +239,8 @@ def simulation_capacity(
     capacity = usable_slab - capacity_leeway(measurements)
     if capacity <= 0:
         raise public_infeasible_plan_error(
-            PressureFitInfeasibleError(
-                "the admitted slab leaves no capacity for Program objects",
+            PlanInfeasibleError(
+                "the admitted slab leaves no capacity for ShadowSpillProgram objects",
                 kind="analytic_capacity",
                 required_bytes=1,
                 capacity_bytes=max(0, capacity),
@@ -264,7 +260,7 @@ def build_simulation_config(
     workspace_reserve_bytes_: int,
     profiles: ProfilingResult,
 ) -> SimulationConfig:
-    """Build the framework-neutral simulator input for one Program.
+    """Build the framework-neutral simulator input for one ShadowSpillProgram.
 
     Calibrated rates enter at whole GB/s and latencies at whole microseconds,
     so slightly different calibrations reuse one stored plan; the raw
@@ -294,7 +290,7 @@ def build_simulation_config(
 
 
 def public_infeasible_plan_error(
-    error: PressureFitInfeasibleError,
+    error: PlanInfeasibleError,
 ) -> PlanInfeasibleError:
     """Preserve PressureFit's structured infeasibility at the public boundary."""
 
@@ -322,7 +318,7 @@ def public_infeasible_plan_error(
 
 
 def public_search_exhausted_error(
-    error: PressureFitSearchExhaustedError,
+    error: PlanSearchExhaustedError,
 ) -> PlanSearchExhaustedError:
     """Distinguish an evaluation ceiling from proof of plan infeasibility."""
 

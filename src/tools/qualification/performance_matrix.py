@@ -257,7 +257,11 @@ def main() -> int:
         type=Path,
         default=Path("qualification/results/full_model"),
     )
-    parser.add_argument("--force-fresh", action="store_true")
+    for tree in ("build", "plan"):
+        parser.add_argument(
+            f"--{tree}-store-mode",
+            choices=("contribute", "reuse", "require", "refresh"),
+        )
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
@@ -354,11 +358,13 @@ def main() -> int:
                 manifest.family,
                 manifest.implementation,
                 str(artifact),
-                "--artifact-store-dir",
+                "--artifact-store",
                 str(output / "artifact_store" / manifest.identity),
             ]
-            if arguments.force_fresh:
-                command.append("--force-fresh")
+            for tree in ("build", "plan"):
+                mode = getattr(arguments, f"{tree}_store_mode")
+                if mode is not None:
+                    command.extend((f"--{tree}-store-mode", mode))
             if arguments.plan_only:
                 command.append("--plan-only")
             elif not arguments.checkpoint:

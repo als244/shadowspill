@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from shadowspill.ir import MemoryLocation
 from shadowspill.planner.request import InitialPlacement
-from shadowspill.planner.result import PressureFitInfeasibleError
+from shadowspill.planner.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 from .facts import PlanningFacts
@@ -101,19 +101,6 @@ def boundary_bytes(
         if facts.alias_devices[alias] == device_id and not charged(alias)
     )
     return resident + reservations
-
-
-def pressure_by_boundary(
-    facts: PlanningFacts, plan: ResidencyPlan
-) -> tuple[dict[str, int], ...]:
-    pressure = _pressure_by_device(facts, plan)
-    return tuple(
-        {
-            device_id: pressure[device_id][boundary + 1]
-            for device_id in facts.object_capacity_by_device
-        }
-        for boundary in range(-1, facts.last_boundary + 1)
-    )
 
 
 def _charged_span(
@@ -542,7 +529,7 @@ def reduce_pressure(
                 if 0 <= task_index < len(facts.tasks)
                 else None
             )
-            raise PressureFitInfeasibleError(
+            raise PlanInfeasibleError(
                 f"no legal residency cut can relieve {used} bytes at "
                 f"boundary {boundary} on {device_id!r}; capacity is "
                 f"{strategy_object_capacity(facts, device_id, strategy, boundary)}",
@@ -674,7 +661,7 @@ def assert_required_floor(facts: PlanningFacts) -> None:
                     if 0 <= task_index < len(facts.tasks)
                     else None
                 )
-                raise PressureFitInfeasibleError(
+                raise PlanInfeasibleError(
                     f"required inputs and outputs need {required} bytes at "
                     f"{task_id or 'initialization'} on {device_id!r}, exceeding "
                     f"object capacity {capacity}",
@@ -692,7 +679,6 @@ __all__ = [
     "assert_required_floor",
     "boundary_bytes",
     "extend_interval_entries",
-    "pressure_by_boundary",
     "reduce_pressure",
     "seed_residency",
     "strategy_object_capacity",

@@ -1,4 +1,4 @@
-"""Atomic per-Program journals and resume validation."""
+"""Atomic per-ShadowSpillProgram journals and resume validation."""
 
 from __future__ import annotations
 
@@ -229,7 +229,7 @@ def completed_artifact(
     directory = _resolve_artifact_directory(paths, request, raw)
     case, program = load_step_program(directory)
     if case.program_digest != raw.get("program_digest"):
-        raise ValueError(f"saved Program digest changed for {request.case_id}")
+        raise ValueError(f"saved program digest changed for {request.case_id}")
     if program.digest != raw.get("program_digest"):
         raise ValueError(f"StepProgram content changed for {request.case_id}")
     if case.artifact_digest != raw.get("artifact_digest"):
@@ -307,7 +307,7 @@ def _resolve_artifact_directory(
             return candidate
     digest = artifact.get("program_digest")
     if not isinstance(digest, str):
-        raise ValueError(f"successful case {request.case_id} has no Program digest")
+        raise ValueError(f"successful case {request.case_id} has no program digest")
     identity = ProgramCaseIdentity(
         request.model.family,
         request.model.implementation,
@@ -324,7 +324,7 @@ def _resolve_artifact_directory(
     )
     if not candidate.exists():
         raise ValueError(
-            f"saved Program directory cannot be resolved for {request.case_id}"
+            f"saved program directory cannot be resolved for {request.case_id}"
         )
     return candidate
 

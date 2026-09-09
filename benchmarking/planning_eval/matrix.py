@@ -1,4 +1,4 @@
-"""Stable point identities for one Program and planner-frontier grid."""
+"""Stable point identities for one ShadowSpillProgram and planner-frontier grid."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 
 from shadowspill.planner.program import (
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
 from shadowspill.schema import artifact_schema
@@ -17,7 +17,7 @@ from .config import BandwidthScale, FrontierGrid, TransferBandwidthBaseline
 
 @dataclass(frozen=True, slots=True)
 class FrontierAxes:
-    """Budget and scale axes before Program-specific calibration is applied."""
+    """Budget and scale axes before program-specific calibration is applied."""
 
     grid_name: str
     execution_budget_bytes: int
@@ -36,7 +36,7 @@ class FrontierAxes:
 
 @dataclass(frozen=True, slots=True)
 class FrontierPointRequest:
-    """One exact Program, budget, and calibrated-transfer planner input."""
+    """One exact ShadowSpillProgram, budget, and calibrated-transfer planner input."""
 
     axes: FrontierAxes
     program_digest: str
@@ -124,7 +124,7 @@ def expand_grid_axes(grids: tuple[FrontierGrid, ...]) -> tuple[FrontierAxes, ...
 
 
 def expand_frontier_points(
-    program: PressureFitProgram,
+    program: ShadowSpillPlanningProblem,
     grids: tuple[FrontierGrid, ...],
     *,
     transfer_baseline: TransferBandwidthBaseline,
