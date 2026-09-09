@@ -165,6 +165,10 @@ class ArtifactStore:
         return self.build / "graphpairs"
 
     @property
+    def optimizer_captures(self) -> Path:
+        return self.build / "optimizers"
+
+    @property
     def profiling(self) -> Path:
         return self.build / "profiling"
 
@@ -268,7 +272,8 @@ class ArtifactStore:
             moved,
             {
                 "build": "what a run pays for and another can reuse: exports,"
-                " Inductor caches, graph pairs, profiles, lowered programs",
+                " Inductor caches, graph pairs, optimizer captures, profiles,"
+                " lowered programs",
                 "planning": "what a run measured: PressureFit requests and"
                 " results, and the plans callables run",
             },
@@ -823,6 +828,8 @@ this one and replans.
 - `build/exports/`: normalized Export archives and manifests.
 - `build/inductor/`: files managed internally by PyTorch Inductor.
 - `build/graphpairs/`: structural AOT graph pairs.
+- `build/optimizers/`: traced recurrent optimizer updates, keyed by the
+  optimizer, the tensors it binds, its hyperparameters and its stage split.
 - `build/profiling/`: hardware/compiler-specific layouts and task measurements.
 - `build/programs/`: exact canonical Programs supplied to PressureFit.
 
