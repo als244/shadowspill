@@ -100,8 +100,15 @@ class MoE(nn.Module):
         self.w2_experts = nn.Parameter(
             torch.empty(config.n_experts, config.d_ff_expert, config.d_model)
         )
-        nn.init.normal_(self.w13_experts, std=config.d_model**-0.5)
-        nn.init.normal_(self.w2_experts, std=config.d_ff_expert**-0.5)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Initialise the parameters this module owns, in place."""
+
+        config = self.config
+        with torch.no_grad():
+            nn.init.normal_(self.w13_experts, std=config.d_model**-0.5)
+            nn.init.normal_(self.w2_experts, std=config.d_ff_expert**-0.5)
 
     def forward(
         self, hidden: torch.Tensor, residual: torch.Tensor

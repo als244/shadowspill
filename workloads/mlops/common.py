@@ -12,8 +12,16 @@ class RMSNorm(nn.Module):
 
     def __init__(self, width: int, *, epsilon: float = 1e-5) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(width))
+        self.weight = nn.Parameter(torch.empty(width))
         self.epsilon = float(epsilon)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Initialise in place, so the values land wherever the
+        parameter already lives."""
+
+        with torch.no_grad():
+            self.weight.fill_(1.0)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         return mlops.rms_norm(value, self.weight, self.epsilon)

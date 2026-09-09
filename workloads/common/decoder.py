@@ -16,8 +16,16 @@ class RMSNorm(nn.Module):
 
     def __init__(self, width: int, *, epsilon: float = 1e-5) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(width))
+        self.weight = nn.Parameter(torch.empty(width))
         self.epsilon = float(epsilon)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Initialise in place, so the values land wherever the
+        parameter already lives."""
+
+        with torch.no_grad():
+            self.weight.fill_(1.0)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
         source = value.float()
@@ -50,14 +58,36 @@ class RotaryEmbedding(nn.Module):
             raise ValueError("rotary width must be a positive even integer")
         if capacity <= 0:
             raise ValueError("rotary capacity must be positive")
+        self.width = int(width)
+        self.base = float(base)
+        self.capacity = int(capacity)
+        table = torch.empty(capacity, width, dtype=torch.float32)
+        self.register_buffer("cosine", table, persistent=False)
+        self.register_buffer("sine", table.clone(), persistent=False)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Recompute the tables into the buffers this module already owns.
+
+        The scratch below is one table wide, not one model wide, so this holds
+        whatever storage the buffers were given -- host or pool -- rather than
+        allocating a second copy of the module's state.
+        """
+
         frequency = 1.0 / (
-            float(base)
-            ** (torch.arange(0, width, 2, dtype=torch.float32) / float(width))
+            self.base
+            ** (
+                torch.arange(0, self.width, 2, dtype=torch.float32)
+                / float(self.width)
+            )
         )
-        phase = torch.outer(torch.arange(capacity, dtype=torch.float32), frequency)
+        phase = torch.outer(
+            torch.arange(self.capacity, dtype=torch.float32), frequency
+        )
         doubled = torch.cat((phase, phase), dim=-1)
-        self.register_buffer("cosine", doubled.cos(), persistent=False)
-        self.register_buffer("sine", doubled.sin(), persistent=False)
+        with torch.no_grad():
+            self.cosine.copy_(doubled.cos())
+            self.sine.copy_(doubled.sin())
 
     def _apply(self, function: object, recurse: bool = True) -> RotaryEmbedding:
         super()._apply(function, recurse=recurse)  # type: ignore[no-untyped-call]
