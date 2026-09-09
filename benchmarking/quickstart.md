@@ -235,8 +235,11 @@ directory.
    step beside the unconstrained floor, the three-way split of the
    difference, the graph-pair selection fraction, transfer traffic,
    planning capacities, and the calibrated bandwidths planning assumed —
-   then **steps** (wall time, throughput, loss; the first step may use
-   the dedicated first-step plan that initializes lazy optimizer state),
+   then **steps** (each step's cycle on the device clock, its throughput,
+   its head wait and its loss, each line appearing once the next step has
+   begun; the first step may use the dedicated first-step plan that
+   initializes lazy optimizer state, and the measured step is the median
+   of the steps after it),
    then **the traced step versus simulation**, using the fields defined
    in the [StepResult diagnostics guide](../docs/python/step-diagnostics.md).
    The boundary behavior it reports — the opening restore and the

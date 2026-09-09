@@ -568,6 +568,8 @@ PlannedTrainStep.submit(
 
 `PlannedTrainStep` returns `StepResult`. Both callables expose `plan_report`,
 `state_dict()`, `load_state_dict()`, `close()`, and context manager support.
+`PlannedTrainStep` also exposes `invocation_timings()` and `mark_cycle_end()`,
+the step's time on the device clock; see [timing](timing.md).
 
 Closing copies nothing, and it moves no weights. `import_model_state()` gave
 the model's parameters storage in the spill pool, and that one storage holds

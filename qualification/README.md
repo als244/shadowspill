@@ -166,10 +166,13 @@ against, because a prediction is only as good as the rates behind it and a
 machine whose lanes do not deliver them explains its own error, and closes
 with the same two units for the unconstrained step: every graph-pair group at
 its cheapest option and no waiting at all, which is the ceiling the budget is
-being traded against. The measured lines that follow are the whole group's wall clock
-divided by the steps in it, not a median of per-step times, so a group's
-number includes everything between submitting its first step and the device
-finishing its last.
+being traded against. The measured lines that follow are each group's
+steps on the device clock: a step is the compute stream's cycle from the
+origin it records before its first task to the next step's origin, or to the
+marker recorded after the group's last step, so a group's number is the sum
+of its steps' cycles and the cell's median step is the median cycle over
+every measured step ([timing](../docs/python/api/timing.md)). The host's own
+wall clock for the group is reported beside it and decides nothing.
 
 The performance matrix judges throughput against floors measured on one
 machine. Its `--measure-only` reports the measurement without those floors,

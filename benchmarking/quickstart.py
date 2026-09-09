@@ -907,7 +907,6 @@ def main() -> int:
             """
 
             microbatches = example_microbatches(*geometry)
-            walls: list[float] = []
             marker = time.perf_counter()
             plan_sink: Any = contextlib.redirect_stdout(plan_log)
             plan_log.note(f"run planning at execution {gib(budget)}")
@@ -947,32 +946,49 @@ def main() -> int:
             plan_report = training.plan_report
             print_promise(plan_report, tokens_per_step)
 
+            losses: dict[int, float] = {}
+            cycles: dict[int, float] = {}
+            hosts: dict[int, float] = {}
+
+            def report_cycles() -> None:
+                # A step's cycle closes when the next step begins, or at the
+                # end marker after the last one, so each line appears one
+                # step late. Through the log rather than print(), so every
+                # step time is in the run directory as well as on the
+                # terminal. Only planner phase lines are filtered out of
+                # stdout.
+                for timing in training.invocation_timings():
+                    step = timing.step_number
+                    cycles[step] = timing.cycle_seconds
+                    note = ""
+                    if step == 1 and plan_report.initial_pressurefit_result is not None:
+                        note = "   (first-step plan)"
+                    plan_log.write(
+                        f"  step {step:>3}   {timing.cycle_seconds:7.3f} s"
+                        f"   {tokens_per_step / timing.cycle_seconds:>10,.0f} tok/s"
+                        f"   head {timing.head_wait_seconds:6.3f} s"
+                        f"   loss {losses[step]:.4f}{note}\n"
+                    )
+
             def run_step(step: int, *, traced: bool) -> Any:
                 started = time.perf_counter()
                 result = training(microbatches, runtime_trace=traced)
-                loss = float(result.objectives[-1])
-                wall = time.perf_counter() - started
-                walls.append(wall)
-                note = ""
-                if step == 1 and plan_report.initial_pressurefit_result is not None:
-                    note = "   (first-step plan)"
-                # Through the log rather than print(), so every step time is
-                # in the run directory as well as on the terminal. Only
-                # planner phase lines are filtered out of stdout.
-                plan_log.write(
-                    f"  step {step:>3}   {wall:7.3f} s"
-                    f"   {tokens_per_step / wall:>10,.0f} tok/s"
-                    f"   loss {loss:.4f}{note}\n"
-                )
+                losses[step] = float(result.objectives[-1])
+                hosts[step] = time.perf_counter() - started
+                report_cycles()
                 return result
-
             if arguments.steps > 1:
                 print(rule("Steps"))
                 for step in range(1, arguments.steps):
                     result = run_step(step, traced=False)
-                print()
             print(rule("Traced step versus simulation"))
             result = run_step(arguments.steps, traced=True)
+            # Close the last step's cycle where a next step would begin, so
+            # its time reads like every other step's, then resolve the trace
+            # with that cycle in it.
+            training.mark_cycle_end()
+            report_cycles()
+            print()
             assert result.diagnostics is not None
             diagnostics = result.diagnostics.result()
             print()
@@ -983,7 +999,13 @@ def main() -> int:
                 json.dumps(diagnostics.as_dict(), indent=2, sort_keys=True)
             )
             print(f"  step diagnostics: {trace_path}")
-            ledger["steps execution"] = ledger.get("steps execution", 0.0) + sum(walls)
+            ledger["steps execution"] = ledger.get("steps execution", 0.0) + sum(
+                hosts.values()
+            )
+            walls = [cycles[step] for step in sorted(cycles)]
+            # The first step pays the plan's reconciliation of its initial
+            # state; the measured step is the median of the ones after it.
+            measured = walls[1:] if len(walls) > 1 else walls
             # The final StepResult's public outputs are caller-owned device
             # tensors; the runtime refuses to close while they are alive.
             del result
@@ -993,7 +1015,7 @@ def main() -> int:
             return RunBudgetOutcome(
                 execution_budget_bytes=budget,
                 simulated_step_seconds=plan_report.summary.simulated_step_seconds,
-                measured_step_seconds=statistics.median(walls),
+                measured_step_seconds=statistics.median(measured),
                 step_seconds=tuple(walls),
                 profiled_task_seconds=step_summary.profiled_task_seconds,
                 real_task_seconds=step_summary.real_task_event_seconds,

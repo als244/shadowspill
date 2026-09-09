@@ -81,10 +81,43 @@ reads as drift within the step, and the prologue is read once rather than
 repeated in every delta; see [step boundaries](step-boundaries.md) for what
 the boundary regions contain.
 
+## The step: origin to origin
+
+Every invocation, traced or not, records three timing events on the compute
+stream: its **origin** where it begins, before its first task; its **span
+start** where its first task's compute starts; and its **span end** where
+its last task's compute ends. The stream is in order, so the next
+invocation's origin is reached only after everything this one enqueued, and
+the **cycle** of an invocation is its origin to the next origin. That is the
+step's time: what a repeated step costs and what throughput divides by. A
+loop that stops records an end marker in the same place a next origin would
+sit, so its last step reads like every other.
+
+The cycle partitions exactly into three parts, each a difference of two of
+the events:
+
+```text
+cycle = head wait + selected span + exposed tail
+```
+
+The head wait is origin to span start: the first task's readiness waits and
+whatever the opening still held the stream for. The selected span is the
+tasks. The exposed tail is span end to the next origin: terminal work the
+stream itself still did. Transfers that drained on the lanes meanwhile are
+not in the cycle, because they cost the step nothing; a later invocation
+that has to wait for them pays in its own head, where the cost belongs.
+
+The events are created once per callable and reused round-robin, so an
+invocation creates nothing; reading a cycle waits for the closing event and
+for nothing else. The Python side of this is
+[timing](../python/api/timing.md).
+
 ## What an untraced step pays
 
-Nothing. The origin event, the task markers, and the stream intervals are
-recorded only while a trace is armed. The one instruction an untraced
+Three event records: the origin, the span start and the span end above,
+which cost the stream nothing it can measure and the host a few microseconds
+each. The task markers and the stream intervals are recorded only while a
+trace is armed. The one instruction an untraced
 transfer dispatch spends on any of this is the acquire load of the trace's
 active flag, which is the same gate the runtime's trace appends already
 pay. Timing events come from the runtime's timing pool, reserved when the

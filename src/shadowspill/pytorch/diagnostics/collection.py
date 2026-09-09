@@ -750,6 +750,18 @@ def _build_step_summary(
     ]
     optimizer = tuple(item for item in tasks if item.phase == "optimizer")
     makespan_seconds = simulation.makespan_ns / 1e9
+    cycle_seconds: float | None = None
+    exposed_tail_seconds: float | None = None
+    head_wait_seconds = (
+        float(timing.origin_event.elapsed_time(timing.start_event)) / 1e3
+    )
+    timeline = timing.timeline
+    if timeline is not None and timeline.successor is not None:
+        timeline.successor.synchronize()
+        cycle_seconds = float(timeline.origin.elapsed_time(timeline.successor)) / 1e3
+        exposed_tail_seconds = (
+            float(timeline.span_end.elapsed_time(timeline.successor)) / 1e3
+        )
     return StepTimingSummary(
         profiled_task_seconds=profiled_task_seconds,
         real_task_event_seconds=real_task_seconds,
@@ -771,6 +783,9 @@ def _build_step_summary(
         simulator_terminal_tail_seconds=max(
             0.0, makespan_seconds - simulated_end_ns / 1e9
         ),
+        cycle_seconds=cycle_seconds,
+        head_wait_seconds=head_wait_seconds,
+        exposed_tail_seconds=exposed_tail_seconds,
         call_seconds=(
             timing.dispatch_call_finished_ns - timing.dispatch_call_started_ns
         )

@@ -65,7 +65,9 @@ metric leaves remain tensors; static leaves preserve their captured values.
 `DiagnosticsHandle` for a traced step. Resolving the handle returns
 `StepDiagnostics` and may wait for recorded events.
 
-`StepDiagnostics` has six views. `StepTimingSummary` is the reconciliation:
+`StepDiagnostics` has six views. `StepTimingSummary` is the reconciliation,
+and it carries the traced step's cycle, head and exposed tail beside the
+selected span ([timing](timing.md)):
 profiled task time against real task-event time, simulated against real
 waiting, the selected span, the simulator's makespan, and the call-level
 host totals; `PhaseTimingComparison` breaks the task time down by phase.

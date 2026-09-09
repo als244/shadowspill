@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
+from shadowspill.pytorch.diagnostics.timing import InvocationTimelines
 from shadowspill.pytorch.execution.annotations import TaskBoundaryAnnotations
 from shadowspill.pytorch.execution.training import TrainingExecutor
 
@@ -208,6 +209,11 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle() -> None:
     harness = object.__new__(TrainingExecutor)
     harness._bridge = bridge  # type: ignore[assignment]
     harness._invocations = 3
+    # Every invocation records its timeline; a silent event keeps the call log
+    # to the boundary's own steps.
+    harness._timelines = InvocationTimelines(
+        lambda: SimpleNamespace(record=lambda _stream: None)
+    )
     harness._initial = None
     harness._optimizer_state_initialized = True
     harness._recurrent = run  # type: ignore[assignment]
