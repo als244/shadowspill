@@ -129,10 +129,10 @@ def select(
     if not options.groups:
         return ((),)
 
-    pinned = options.pinned
+    forced = options.forced
     if options.combination_count <= _EXHAUSTIVE_COMBINATION_LIMIT:
         per_group = tuple(
-            (pinned[index],) if index in pinned else tuple(range(len(group.options)))
+            (forced[index],) if index in forced else tuple(range(len(group.options)))
             for index, group in enumerate(options.groups)
         )
         return tuple(_resolution(options, item) for item in product(*per_group))
@@ -141,7 +141,7 @@ def select(
     if endpoints is not None:
         return tuple(
             _resolution(options, indices)
-            for indices in _group_fractions(endpoints, pinned, chosen)
+            for indices in _group_fractions(endpoints, forced, chosen)
         )
     return tuple(
         _resolution(options, item) for item in _within_group_quantiles(options)
@@ -150,12 +150,12 @@ def select(
 
 def _group_fractions(
     endpoints: tuple[tuple[int, int], ...],
-    pinned: dict[int, int],
+    forced: dict[int, int],
     resolution_options: tuple[Fraction, ...],
 ) -> tuple[tuple[int, ...], ...]:
     """Build one evenly distributed resolution per option, a share recomputing."""
 
-    flexible = tuple(index for index in range(len(endpoints)) if index not in pinned)
+    flexible = tuple(index for index in range(len(endpoints)) if index not in forced)
     result: list[tuple[int, ...]] = []
     for share in resolution_options:
         # Rounded half up, which is where the quarter rungs always landed.
@@ -166,7 +166,7 @@ def _group_fractions(
         }
         result.append(
             tuple(
-                pinned.get(index, recompute if index in recomputing else save)
+                forced.get(index, recompute if index in recomputing else save)
                 for index, (save, recompute) in enumerate(endpoints)
             )
         )
@@ -180,7 +180,7 @@ def _within_group_quantiles(
 ) -> tuple[tuple[int, ...], ...]:
     """Walk each group's own inventory, from least retained to most."""
 
-    pinned = options.pinned
+    forced = options.forced
     memory_order = tuple(group.by_retained_bytes() for group in options.groups)
     raw: list[tuple[int, ...]] = [
         tuple(0 for _group in options.groups),
@@ -198,7 +198,7 @@ def _within_group_quantiles(
     return _unique(
         [
             tuple(
-                pinned.get(index, option_index)
+                forced.get(index, option_index)
                 for index, option_index in enumerate(item)
             )
             for item in raw
