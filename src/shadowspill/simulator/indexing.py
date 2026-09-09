@@ -1,4 +1,10 @@
-"""Canonical IR projection and result decoding for the simulator."""
+"""The simulator's input in indexed form, and its result decoded back.
+
+A template is the part that does not change when a schedule changes --
+the program's geometry, indexed once -- so a caller pricing many
+schedules for one program pays for it once. Binding a schedule onto a
+template gives the simulator its complete input.
+"""
 
 from __future__ import annotations
 
@@ -10,14 +16,14 @@ from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
     MemorySchedule,
-    Program,
     ResidencySpec,
     ResourceKind,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskSpec,
     shared_residency_footprint,
 )
-from shadowspill.ir.indexed import flatten_rows
+from shadowspill.ir.indexing import flatten_rows
 from shadowspill.status import ABI_VERSION, Status
 
 from .capi import (
@@ -125,15 +131,8 @@ class IndexedSimulationTemplate:
     shared_spill_bytes: int
 
 
-@dataclass(frozen=True, slots=True)
-class IndexedSimulationSummary:
-    """Selection-only result that avoids materializing interval records."""
-
-    makespan_ns: int
-
-
 def index_simulation_template(
-    program: Program,
+    program: ShadowSpillProgram,
     selections: tuple[TaskAlternativeChoice, ...],
     config: SimulationConfig,
     *,
@@ -153,7 +152,7 @@ def index_simulation_template(
     device_ids = tuple(item.device_id for item in program.devices)
     if set(configured) != set(device_ids):
         raise ValueError(
-            "simulation devices must exactly match Program devices; "
+            "simulation devices must exactly match ShadowSpillProgram devices; "
             f"expected {sorted(device_ids)}, got {sorted(configured)}"
         )
     shared = shared_residency_footprint(program)
@@ -420,7 +419,7 @@ def _bind_schedule(
         initial_by_device = dict(admission.initial_physical_bytes)
         if set(initial_by_device) != set(template.device_ids):
             raise ValueError(
-                "simulation admission devices must exactly match Program devices; "
+                "simulation admission devices must exactly match program devices; "
                 f"expected {sorted(template.device_ids)}, "
                 f"got {sorted(initial_by_device)}"
             )
@@ -444,7 +443,7 @@ def _bind_schedule(
         physical_capacity = dict(admission.device_capacity_bytes)
         if physical_capacity and set(physical_capacity) != set(template.device_ids):
             raise ValueError(
-                "simulation admission capacities must exactly match Program "
+                "simulation admission capacities must exactly match ShadowSpillProgram "
                 f"devices; expected {sorted(template.device_ids)}, "
                 f"got {sorted(physical_capacity)}"
             )
@@ -592,7 +591,7 @@ def _bind_schedule(
 
 
 def _project(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     selections: tuple[TaskAlternativeChoice, ...],
     config: SimulationConfig,
@@ -658,14 +657,18 @@ def _raise_error(
 
 
 def simulate_program(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     *,
     selections: tuple[TaskAlternativeChoice, ...] = (),
     config: SimulationConfig,
     admission: SimulationAdmission | None = None,
 ) -> SimulationResult:
-    """Replay through `libshadowspill.so`."""
+    """Replay an explicit schedule through the simulator.
+
+    Exported as :func:`shadowspill.simulator.simulate`, which is the name a
+    caller outside the package uses.
+    """
 
     projection = _project(program, schedule, selections, config, admission)
     return _simulate_projection(projection, schedule)
@@ -840,7 +843,6 @@ def _simulate_projection(
 
 
 __all__ = [
-    "IndexedSimulationSummary",
     "IndexedSimulationTemplate",
     "IntervalArrays",
     "index_simulation_template",
