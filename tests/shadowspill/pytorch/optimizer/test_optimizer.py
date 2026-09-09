@@ -7,11 +7,12 @@ import pytest
 import torch
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.optimizer import (
+    OptimizerTensorRole,
     capture_optimizer,
     restore_optimizer_checkpoint_structure,
 )
+from shadowspill.pytorch.optimizer import capture as optimizer_module
 from shadowspill.pytorch.optimizer.artifacts import optimizer_value_identity
 
 
@@ -66,49 +67,6 @@ def test_recurrent_graph_matches_standard_optimizer(
     assert captured.recurrent.operator_targets
 
 
-def test_lazy_state_is_initialized_at_step_zero_without_parameter_mutation() -> None:
-    parameter = torch.nn.Parameter(torch.ones(8))
-    parameter.grad = torch.ones_like(parameter)
-    optimizer = torch.optim.AdamW([parameter], lr=1e-3, foreach=False)
-    captured = capture_optimizer({"weight": parameter}, optimizer)
-    assert not captured.first_step_is_opaque
-    assert captured.created_state_names == ()
-    assert captured.preinitialized_state_names == (
-        "optimizer.weight.exp_avg",
-        "optimizer.weight.exp_avg_sq",
-        "optimizer.weight.step",
-    )
-    assert captured.recurrent is not None
-    state = optimizer.state[parameter]
-    assert state["step"].item() == 0
-    torch.testing.assert_close(state["exp_avg"], torch.zeros_like(parameter))
-    torch.testing.assert_close(state["exp_avg_sq"], torch.zeros_like(parameter))
-    torch.testing.assert_close(parameter, torch.ones_like(parameter))
-
-
-def test_step_hooks_do_not_prevent_side_effect_free_state_initialization() -> None:
-    parameter = torch.nn.Parameter(torch.ones(8))
-    parameter.grad = torch.ones_like(parameter)
-    optimizer = torch.optim.AdamW([parameter], lr=1e-3, foreach=False)
-    hook_calls: list[int] = []
-    optimizer.register_step_post_hook(
-        lambda _optimizer, _args, _kwargs: hook_calls.append(1)
-    )
-
-    captured = capture_optimizer({"weight": parameter}, optimizer)
-
-    assert hook_calls == []
-    assert captured.recurrent_is_opaque
-    assert captured.created_state_names == ()
-    assert captured.preinitialized_state_names == (
-        "optimizer.weight.exp_avg",
-        "optimizer.weight.exp_avg_sq",
-        "optimizer.weight.step",
-    )
-    assert optimizer.state[parameter]["step"].item() == 0
-    torch.testing.assert_close(parameter, torch.ones_like(parameter))
-
-
 def test_device_only_registered_optimizer_uses_fake_contract() -> None:
     mlops = pytest.importorskip("mlops")
     parameter = torch.nn.Parameter(torch.ones(8))
@@ -117,18 +75,24 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
 
     captured = capture_optimizer({"weight": parameter}, optimizer)
 
-    assert not captured.first_step_is_opaque
+    # A bare optimizer's first step is opaque because its state does not exist
+    # yet. Planning avoids that by installing declared state before capture.
+    assert captured.first_step_is_opaque
     assert captured.recurrent is not None
     assert "mlops.master_adamw_.default" in captured.recurrent.operator_targets
-    assert captured.created_state_names == ()
-    assert captured.preinitialized_state_names == (
-        "optimizer.weight.exp_avg",
-        "optimizer.weight.exp_avg_sq",
-        "optimizer.weight.master_parameter",
-        "optimizer.weight.step",
-    )
-    assert optimizer.state[parameter]["step"].item() == 0
-    assert all(binding.tensor.device.type == "cuda" for binding in captured.bindings)
+    # Nothing pre-creates state now: a bare optimizer reports what it would
+    # create, and planning installs those entries in the pool before capture.
+    assert captured.created_state_names
+    # Everything the update computes with is on the device. A hyperparameter
+    # is not: it is a scalar the update reads and passes to its kernel, so it
+    # stays on the host, where writing the next step's value copies nothing.
+    for binding in captured.bindings:
+        expected = (
+            "cpu"
+            if binding.role is OptimizerTensorRole.HYPERPARAMETER
+            else "cuda"
+        )
+        assert binding.tensor.device.type == expected
 
 
 def test_device_only_discovery_inventories_every_parameter() -> None:
@@ -157,8 +121,7 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
         for name in ("first", "second")
         for suffix in expected_suffixes
     }
-    assert captured.created_state_names == ()
-    assert len(captured.preinitialized_state_names) == 8
+    assert captured.created_state_names
     assert captured.recurrent is not None
     assert (
         sum(
@@ -177,14 +140,22 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
         )
         for task in captured.recurrent_tasks
     } == {"first", "second"}
-    assert optimizer.state[first]["step"].item() == 0
-    assert optimizer.state[second]["step"].item() == 0
+    # Discovery leaves the caller's optimizer untouched: it declares what
+    # state would exist without creating any, and the parameters are unchanged.
+    assert optimizer.state == {}
     torch.testing.assert_close(first, torch.ones_like(first))
     torch.testing.assert_close(second, torch.full_like(second, 2.0))
-    assert all(
-        isinstance(binding.tensor, torch._subclasses.fake_tensor.FakeTensor)
-        for binding in captured.bindings
-    )
+    # Everything discovery had to invent is fake, so inventing it allocated
+    # nothing. A hyperparameter is the exception on purpose: it is the
+    # caller's own scalar, and it has to be, because that is the tensor a
+    # later step writes to change what the update does.
+    fake = torch._subclasses.fake_tensor.FakeTensor
+    for binding in captured.bindings:
+        if binding.role is OptimizerTensorRole.HYPERPARAMETER:
+            assert not isinstance(binding.tensor, fake)
+            assert binding.tensor.device.type == "cpu"
+        else:
+            assert isinstance(binding.tensor, fake)
 
 
 def test_output_created_lazy_state_retains_distinct_initial_plan() -> None:
@@ -196,7 +167,6 @@ def test_output_created_lazy_state_retains_distinct_initial_plan() -> None:
 
     assert captured.first_step_is_opaque
     assert captured.created_state_names == ("optimizer.weight.momentum_buffer",)
-    assert captured.preinitialized_state_names == ()
     assert captured.initial is not None
     assert captured.initial.profile_output_names == (
         "optimizer.weight.momentum_buffer",

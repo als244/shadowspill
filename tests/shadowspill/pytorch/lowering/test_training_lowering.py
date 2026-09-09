@@ -417,16 +417,28 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     assert parameter_aliases.isdisjoint(produced_aliases)
 
 
-def test_preinitialized_optimizer_uses_one_recurrent_state_flow() -> None:
+def test_state_installed_before_capture_uses_one_recurrent_state_flow() -> None:
+    """State that exists before capture needs no initial step to create it.
+
+    Planning installs declared state in the pool before capturing; this is the
+    same shape without a runtime, so the capture sees state present exactly as
+    it does in a plan.
+    """
+
     real_model = _Model()
     optimizer = torch.optim.AdamW(real_model.parameters(), lr=0.01, foreach=False)
     for parameter in real_model.parameters():
         parameter.grad = torch.zeros_like(parameter)
+        optimizer.state[parameter] = {
+            "step": torch.zeros(()),
+            "exp_avg": torch.zeros_like(parameter),
+            "exp_avg_sq": torch.zeros_like(parameter),
+        }
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
     assert not optimizer_capture.first_step_is_opaque
-    assert optimizer_capture.preinitialized_state_names
+    assert optimizer_capture.created_state_names == ()
     assert optimizer_capture.recurrent is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
