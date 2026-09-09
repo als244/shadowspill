@@ -324,6 +324,11 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         warm_diagnostics = warm_result.diagnostics.result()
         warm_seconds = time.perf_counter() - warm_started
         warm_objectives = [float(value) for value in warm_result.objectives]
+        # The warm step's cycle would otherwise close at the first measured
+        # step's origin and be counted with the group: close it here and
+        # discard it, so every group closes exactly its own steps.
+        training.mark_cycle_end()
+        training.invocation_timings()
         physical_statuses.append(check_physical_budget())
 
         restore_seconds = 0.0
@@ -358,7 +363,10 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         )
 
         group_seconds: list[float] = []
+        host_group_seconds: list[float] = []
         group_tokens_per_second: list[float] = []
+        cycle_seconds: list[float] = []
+        head_wait_seconds: list[float] = []
         selected_spans: list[float] = []
         dispatch_seconds: list[float] = []
         prior_invocation_drain_seconds: list[float] = []
@@ -367,7 +375,6 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             retained_results: list[Any] = []
             group_started = time.perf_counter()
             for step in range(arguments.steps_per_group):
-                training._arm_selected_span_timing()
                 call_started = time.perf_counter()
                 step_result = training(
                     case.microbatches,
@@ -377,15 +384,27 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 prior_invocation_drain_seconds.append(
                     training._collect_prior_invocation_drain_seconds()
                 )
-                selected_spans.append(training._collect_selected_span_seconds())
                 retained_results.append(step_result)
                 print(
                     f"{manifest.identity} group {group + 1}/{arguments.groups} "
                     f"step {step + 1}/{arguments.steps_per_group} submitted",
                     flush=True,
                 )
+            # The group's last cycle closes where a next step would begin,
+            # recorded before the drain so the drain is not inside it.
+            training.mark_cycle_end()
             _wait_idle(training)
-            elapsed = time.perf_counter() - group_started
+            host_group_seconds.append(time.perf_counter() - group_started)
+            timings = training.invocation_timings()
+            if len(timings) != arguments.steps_per_group:
+                raise AssertionError(
+                    f"group {group + 1} closed {len(timings)} cycles for "
+                    f"{arguments.steps_per_group} steps"
+                )
+            cycle_seconds.extend(item.cycle_seconds for item in timings)
+            head_wait_seconds.extend(item.head_wait_seconds for item in timings)
+            selected_spans.extend(item.selected_span_seconds for item in timings)
+            elapsed = sum(item.cycle_seconds for item in timings)
             group_seconds.append(elapsed)
             group_tokens_per_second.append(
                 manifest.tokens_per_step * arguments.steps_per_group / elapsed
@@ -412,8 +431,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         _wait_idle(training)
         execution_statistics = adapter_statistics()
         runtime_delta = _runtime_delta(execution_baseline, execution_statistics)
-        median_group_seconds = float(statistics.median(group_seconds))
-        median_step_seconds = median_group_seconds / arguments.steps_per_group
+        # The step is the compute stream's cycle, origin to origin; the host's
+        # own view of a group is reported beside it and decides nothing.
+        median_step_seconds = float(statistics.median(cycle_seconds))
         median_throughput = manifest.tokens_per_step / median_step_seconds
         predicted_seconds = predicted_step_seconds
         simulator_relative_error = (
@@ -499,6 +519,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "group_seconds": group_seconds,
             "group_tokens_per_second": group_tokens_per_second,
             "median_step_seconds": median_step_seconds,
+            "cycle_seconds": cycle_seconds,
+            "head_wait_seconds": head_wait_seconds,
+            "host_group_seconds": host_group_seconds,
             "median_tokens_per_second": median_throughput,
             "selected_task_span_seconds": selected_spans,
             "median_selected_task_span_seconds": float(

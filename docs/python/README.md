@@ -25,6 +25,7 @@ The directory is intentionally split between task-oriented guides and the
 - [Frontend and lifecycle](api/frontend.md)
 - [Reusable planning artifacts](api/artifacts.md)
 - [Planning and step diagnostics](api/diagnostics.md)
+- [Timing: the step on the device clock](api/timing.md)
 - [Framework-neutral Python APIs](api/neutral.md)
 
 The supported user entrypoints are imported from `shadowspill.memory` and

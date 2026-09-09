@@ -142,6 +142,18 @@ the restore streams in behind compute instead of in front of it.
 Three quantities describe one invocation, and they are not the same
 number:
 
+- **The measured step** is the compute stream's cycle: from the origin
+  event one invocation records before its first task to the origin the
+  next invocation records, on the device clock
+  ([timelines](timelines.md#the-step-origin-to-origin)). It contains the
+  head (the first task's readiness waits and whatever the opening still
+  held the stream for), every task, and the terminal work the stream
+  itself did; it does not contain transfers that drained on the lanes
+  while nothing waited for them. Repeated invocations divide into whole
+  cycles by construction, and a loop's last step is closed by an end
+  marker where the next origin would sit. A caller that does its own work
+  between invocations lengthens the cycle by exactly what the stream
+  waited, which is the honest cost of that work.
 - **The selected task span** is device time from after the first task's
   readiness waits to the completion of the final task's kernels. It
   excludes both boundary regions by construction and is the number that

@@ -23,10 +23,11 @@ from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming as _ArmedExecutionTiming,
 )
 from shadowspill.pytorch.diagnostics.timing import (
-    ArmedSpanTiming as _ArmedSpanTiming,
+    ArmedTaskTiming as _ArmedTaskTiming,
 )
 from shadowspill.pytorch.diagnostics.timing import (
-    ArmedTaskTiming as _ArmedTaskTiming,
+    InvocationTimelines,
+    InvocationTiming,
 )
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.training import (
@@ -216,7 +217,13 @@ class TrainingExecutor(AnnotatedExecutor):
             for item in self._recurrent.plan.program.alias_groups
         }
         self._armed_execution_timing: _ArmedExecutionTiming | None = None
-        self._armed_span_timing: _ArmedSpanTiming | None = None
+        # Every invocation records where it begins, where its first task starts
+        # and where its last task ends on the compute stream; the events are
+        # created here so no invocation creates one.
+        timing_event_factory: Any = torch.cuda.Event
+        self._timelines = InvocationTimelines(
+            lambda: timing_event_factory(enable_timing=True)
+        )
         self._task_annotations = TaskBoundaryAnnotations(self._bridge)
         # Detailed tracing is default-off and allocated lazily. Full-model
         # schedules emit several records per action plus readiness and
@@ -237,8 +244,6 @@ class TrainingExecutor(AnnotatedExecutor):
                 torch.cuda.Event,
             ],
         ] = {}
-        self._span_start_event: torch.cuda.Event | None = None
-        self._span_end_event: torch.cuda.Event | None = None
         self._completion = ReusableCompletionEvent(state.device)
 
     def _admit_run(
@@ -349,9 +354,13 @@ class TrainingExecutor(AnnotatedExecutor):
         inputs: Sequence[Sequence[Any]],
         timing: _ArmedExecutionTiming | None,
     ) -> _PlanRun:
+        stream = torch.cuda.current_stream()
         if timing is not None:
             timing.dispatch_call_started_ns = time.perf_counter_ns()
-            timing.origin_event.record(torch.cuda.current_stream())
+            timing.origin_event.record(stream)
+        timeline = self._timelines.begin(self._invocations + 1, stream)
+        if timing is not None:
+            timing.timeline = timeline
         self._prior_invocation_drain_ns = 0
         if self._invocations:
             # V1 plans have a fresh terminal state. Preserve asynchronous
@@ -535,44 +544,26 @@ class TrainingExecutor(AnnotatedExecutor):
 
         return self._prior_invocation_drain_ns / 1e9
 
-    def arm_selected_span_timing(self) -> None:
-        """Arm a two-event selected-task span without detailed tracing.
+    def mark_cycle_end(self) -> None:
+        """Close the current invocation's cycle where the next one would begin.
 
-        This qualification path does not enable runtime tracing, callbacks,
-        profiler ranges, per-task events, allocator snapshots, or Python component
-        timestamps. The reusable events are materialized before arming so the
-        measured call follows the ordinary production path.
+        Recorded on the compute stream behind everything the invocation
+        enqueued, so its cycle reads the same as if another invocation had
+        followed it at once. A loop that measures its last step calls this
+        after that step's call returns.
         """
 
-        if self._armed_execution_timing is not None:
-            raise RuntimeError("detailed execution timing is already armed")
-        if self._armed_span_timing is not None:
-            raise RuntimeError("a selected-span measurement is already armed")
-        if self._span_start_event is None or self._span_end_event is None:
-            event_factory: Any = torch.cuda.Event
-            self._span_start_event = event_factory(enable_timing=True)
-            self._span_end_event = event_factory(enable_timing=True)
-            stream = torch.cuda.current_stream()
-            self._span_start_event.record(stream)
-            self._span_end_event.record(stream)
-            stream.synchronize()
-        self._armed_span_timing = _ArmedSpanTiming(
-            self._span_start_event,
-            self._span_end_event,
-        )
+        self._timelines.mark_end(torch.cuda.current_stream())
 
-    def collect_selected_span_seconds(self) -> float:
-        """Synchronize and return an armed production-like task span."""
+    def invocation_timings(self) -> tuple[InvocationTiming, ...]:
+        """Every invocation whose cycle is complete, once each, oldest first.
 
-        timing = self._armed_span_timing
-        if timing is None or not timing.started:
-            raise RuntimeError("no selected-span measurement has started")
-        if not timing.finished:
-            raise RuntimeError("the selected-span measurement has not finished")
-        timing.end_event.synchronize()
-        result = float(timing.start_event.elapsed_time(timing.end_event)) / 1_000.0
-        self._armed_span_timing = None
-        return result
+        An invocation's cycle is complete once a later invocation began or
+        `mark_cycle_end()` closed it. Reading waits for the device to reach
+        the closing event, and for nothing else.
+        """
+
+        return self._timelines.drain()
 
     def collect_step_diagnostics(self) -> StepDiagnostics:
         """Synchronize and resolve the structured trace for one real call."""
@@ -600,10 +591,7 @@ class TrainingExecutor(AnnotatedExecutor):
     def _record_compute_start(self, stream: torch.cuda.Stream | None) -> None:
         if stream is None:
             return
-        span = self._armed_span_timing
-        if span is not None and not span.started:
-            span.start_event.record(stream)
-            span.started = True
+        self._timelines.start_span(stream)
         timing = self._armed_execution_timing
         if timing is None or timing.started:
             return
@@ -614,10 +602,7 @@ class TrainingExecutor(AnnotatedExecutor):
     def _record_compute_end(self, stream: torch.cuda.Stream | None) -> None:
         if stream is None:
             return
-        span = self._armed_span_timing
-        if span is not None and not span.finished:
-            span.end_event.record(stream)
-            span.finished = True
+        self._timelines.end_span(stream)
         timing = self._armed_execution_timing
         if timing is None or timing.finished:
             return
@@ -856,16 +841,22 @@ class TrainingExecutor(AnnotatedExecutor):
         """Acquire, rebind, and assemble one complete frontend task boundary."""
 
         timing = self._begin_task_timing(record.entrypoint)
+        # The invocation's timeline needs the stream twice: to mark where its
+        # first task's compute starts and where its last task's ends; every
+        # other task keeps the default-off fast boundary.
+        needs_span_stream = self._timelines.span_pending or (
+            record.task.task_id == run.lowered.optimizer_task_id
+        )
         if (
             timing is None
             and not self._task_annotations.enabled
-            and self._armed_span_timing is None
+            and not needs_span_stream
         ):
             return self._before_task_fast(run, record)
         runtime_scope_open = False
         try:
             with self._profile_range(f"shadowspill.before_task.{record.trace_label}"):
-                stream = self._resolve_task_stream(record, timing)
+                stream = self._resolve_task_stream(record, timing, needs_span_stream)
                 self._mark_task_readiness(timing, stream)
                 with self._profile_range(
                     f"shadowspill.storage_rebind.{record.trace_label}"
@@ -966,8 +957,9 @@ class TrainingExecutor(AnnotatedExecutor):
         self,
         record: _ExecutionTaskRecord,
         timing: _ArmedTaskTiming | None,
+        needs_span_stream: bool = False,
     ) -> torch.cuda.Stream | None:
-        needs_python_stream = timing is not None or self._armed_span_timing is not None
+        needs_python_stream = timing is not None or needs_span_stream
         return torch.cuda.current_stream() if needs_python_stream else None
 
     def _mark_task_readiness(

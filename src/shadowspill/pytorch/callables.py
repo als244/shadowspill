@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from shadowspill.planner.diagnostics.plan import PlanReport
 from shadowspill.pytorch.diagnostics.step import DiagnosticsHandle, StepResult
+from shadowspill.pytorch.diagnostics.timing import InvocationTiming
 from shadowspill.pytorch.execution import ForwardExecutor, TrainingExecutor
 from shadowspill.pytorch.guards import InputSignature, validate_training_inputs
 from shadowspill.pytorch.invocation import InvocationResult
@@ -397,15 +398,15 @@ class PlannedTrainStep:
         if self._pending_invocation is invocation:
             self._pending_invocation = None
 
-    def _arm_selected_span_timing(self) -> None:
-        """Arm production-like two-event task-span timing."""
+    def mark_cycle_end(self) -> None:
+        """Close the last invocation's cycle where the next one would begin."""
+        self._require_open("mark the cycle's end")
+        self._executor.mark_cycle_end()
 
-        self._executor.arm_selected_span_timing()
-
-    def _collect_selected_span_seconds(self) -> float:
-        """Collect production-like two-event task-span timing."""
-
-        return self._executor.collect_selected_span_seconds()
+    def invocation_timings(self) -> tuple[InvocationTiming, ...]:
+        """Completed invocations on the device clock, once each, oldest first."""
+        self._require_open("read invocation timings")
+        return self._executor.invocation_timings()
 
     def _collect_prior_invocation_drain_seconds(self) -> float:
         """How long the last call waited for the previous invocation to drain."""
