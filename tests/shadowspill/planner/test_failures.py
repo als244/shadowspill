@@ -2,23 +2,27 @@ from __future__ import annotations
 
 import pytest
 
+from shadowspill.errors import PlanInfeasibleError
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
     MemoryLocation,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
 from shadowspill.planner import (
-    PressureFitInfeasibleError,
-    PressureFitOptions,
+    GenericPlanningOptions,
     pressurefit,
     validate_schedule_feasibility,
+)
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
 )
 
 from ._examples import config, recomputation_program
@@ -26,7 +30,7 @@ from ._examples import config, recomputation_program
 
 def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("input_storage", "cuda_0", 61),),
         objects=(ObjectSpec("input", "input_storage", 0, 61),),
@@ -34,18 +38,18 @@ def test_missing_initial_residency_uses_semantic_diagnostic() -> None:
         tasks=(TaskSpec("consume", resource, "profile", inputs=("input",)),),
     )
 
-    with pytest.raises(ValueError, match="has no initial residency"):
+    with pytest.raises(PlanInfeasibleError, match="has no initial residency"):
         pressurefit(
             program,
             initial_residency=(),
             config=config(122),
-            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
         )
 
 
 def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("left_storage", "cuda_0", 61),
@@ -75,7 +79,7 @@ def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
     )
     simulation_config = config(122)
 
-    with pytest.raises(PressureFitInfeasibleError) as preflight:
+    with pytest.raises(PlanInfeasibleError) as preflight:
         validate_schedule_feasibility(
             program,
             initial_residency=initial_residency,
@@ -90,12 +94,12 @@ def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
 
     # Direct framework-neutral PressureFit callers retain the same check as a
     # defensive invariant even though public planning runs preflight first.
-    with pytest.raises(PressureFitInfeasibleError) as pressurefit_failure:
+    with pytest.raises(PlanInfeasibleError) as pressurefit_failure:
         pressurefit(
             program,
             initial_residency=initial_residency,
             config=simulation_config,
-            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
         )
     assert pressurefit_failure.value.kind == error.kind
     assert pressurefit_failure.value.required_bytes == error.required_bytes
@@ -103,7 +107,7 @@ def test_required_task_geometry_reports_the_exact_capacity_constraint() -> None:
 
 
 def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(),
         objects=(),
@@ -117,12 +121,12 @@ def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
         ),
     )
 
-    with pytest.raises(PressureFitInfeasibleError) as caught:
+    with pytest.raises(PlanInfeasibleError) as caught:
         pressurefit(
             program,
             initial_residency=(),
             config=config(122),
-            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
         )
 
     assert caught.value.kind == "workspace_capacity"
@@ -132,7 +136,7 @@ def test_workspace_larger_than_the_device_is_rejected_before_search() -> None:
 
 def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("state_storage", "cuda_0", 80),),
         objects=(ObjectSpec("state", "state_storage", 0, 80),),
@@ -158,11 +162,11 @@ def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
         initial_residency=initial,
         config=selected_config,
     )
-    result = pressurefit(
+    result = PressureFit(PressureFitOptions(resolution_options=("0", "1")))(
         program,
         initial_residency=initial,
         config=selected_config,
-        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
 
     assert result.simulation.device_peaks[0].total_bytes <= 100
@@ -170,7 +174,7 @@ def test_non_overlapping_workspace_and_object_maxima_are_not_combined() -> None:
 
 def test_same_task_workspace_and_objects_remain_jointly_required() -> None:
     resource = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("state_storage", "cuda_0", 80),),
         objects=(ObjectSpec("state", "state_storage", 0, 80),),
@@ -186,7 +190,7 @@ def test_same_task_workspace_and_objects_remain_jointly_required() -> None:
     )
     initial = (ResidencySpec("state_storage", MemoryLocation.DEVICE),)
 
-    with pytest.raises(PressureFitInfeasibleError) as caught:
+    with pytest.raises(PlanInfeasibleError) as caught:
         validate_schedule_feasibility(
             program,
             initial_residency=initial,
@@ -204,14 +208,13 @@ def test_a_resolution_that_cannot_be_prepared_does_not_silence_the_others() -> N
 
     program = recomputation_program(recompute_workspace_bytes=10_000)
     residency = (ResidencySpec("input_storage", MemoryLocation.DEVICE),)
-    options = PressureFitOptions(minimum_object_bytes_evict_eligible=0)
+    options = GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
 
     result = pressurefit(
         program,
         initial_residency=residency,
         config=config(300),
-        options=options,
-        resolution_options=("0", "1"),
+        generic=options,
     )
     assert result.diagnostics.selected_selection_id == "activation_tradeoff=save"
     assert result.diagnostics.resolved_program_count == 1
@@ -219,12 +222,11 @@ def test_a_resolution_that_cannot_be_prepared_does_not_silence_the_others() -> N
     # asked for the recomputing resolution alone, the search still answers
     # with the one that could be prepared, since the all-saving resolution is
     # always searched
-    alone = pressurefit(
+    alone = PressureFit(PressureFitOptions(resolution_options=("1",)))(
         program,
         initial_residency=residency,
         config=config(300),
-        options=options,
-        resolution_options=("1",),
+        generic=options,
     )
     assert alone.diagnostics.selected_selection_id == "activation_tradeoff=save"
     assert alone.diagnostics.resolved_program_count == 1

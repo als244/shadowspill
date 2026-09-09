@@ -5,10 +5,17 @@ import importlib
 import pytest
 
 from shadowspill.libraries import shadowspill_library_path
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import (
+    GenericPlanningOptions,
+    pressurefit,
+)
 from shadowspill.planner.request import InitialPlacement
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
 
-from ._examples import (
+from ...._examples import (
     training_chain_config,
     training_chain_initial,
     training_chain_program,
@@ -23,7 +30,9 @@ pytestmark = pytest.mark.skipif(
 def test_pressurefit_fails_closed_without_the_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    implementation = importlib.import_module("shadowspill.planner.pressurefit")
+    implementation = importlib.import_module(
+        "shadowspill.planner.search.algorithms.pressurefit"
+    )
 
     def missing_library() -> None:
         raise RuntimeError("the planner unavailable")
@@ -34,7 +43,8 @@ def test_pressurefit_fails_closed_without_the_library(
             training_chain_program(1),
             initial_residency=training_chain_initial(1),
             config=training_chain_config(224),
-            options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+            workers=1,
         )
 
 
@@ -54,22 +64,21 @@ def test_candidate_evaluation_is_deterministic(
     program = training_chain_program(layers)
     initial = training_chain_initial(layers)
     config = training_chain_config(capacity)
-    options = PressureFitOptions(
-        initial_placement=placement, workers=1, minimum_object_bytes_evict_eligible=0
-    )
+    options = GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
+    options_search = PressureFitOptions(initial_placement=placement)
 
-    indexed = pressurefit(
+    indexed = PressureFit(options_search)(
         program,
         initial_residency=initial,
         config=config,
-        options=options,
+        generic=options,
     )
 
-    repeated = pressurefit(
+    repeated = PressureFit(options_search)(
         program,
         initial_residency=initial,
         config=config,
-        options=options,
+        generic=options,
     )
 
     assert indexed.schedule == repeated.schedule

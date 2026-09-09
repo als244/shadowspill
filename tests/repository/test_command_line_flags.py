@@ -1,13 +1,13 @@
 """Every declared command-line flag must be read by the module declaring it.
 
-`argparse` turns `--artifact-store-dir` into `arguments.artifact_store_dir`.
+`argparse` turns `--build-store-mode` into `arguments.build_store_mode`.
 Rename one half and the other keeps working: the flag still parses, the
 attribute is still produced, and nothing reads it. Nothing fails until the
 command actually runs, which for the qualification drivers means a gate --
 minutes of GPU work to learn about a typo.
 
 That is not hypothetical: renaming `planning_cachedir` to
-`artifact_store_dir` left `add_argument("--planning-cachedir")` behind and
+`artifact_store` left `add_argument("--planning-cachedir")` behind and
 broke three entry points while the whole suite stayed green.
 """
 
@@ -72,7 +72,12 @@ def _cli_modules() -> list[Path]:
     candidates = [
         ROOT / f
         for f in tracked
-        if (ROOT / f).resolve() != here and "add_argument(" in (ROOT / f).read_text()
+        # A file git still tracks may already be gone from the worktree: a
+        # move is a deletion until it is committed, and the suite has to run
+        # in the tree it is being changed in.
+        if (ROOT / f).exists()
+        and (ROOT / f).resolve() != here
+        and "add_argument(" in (ROOT / f).read_text()
     ]
     return [
         path

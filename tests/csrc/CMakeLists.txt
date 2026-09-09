@@ -35,7 +35,7 @@ target_link_libraries(
 )
 add_test(NAME shadowspill_simulator_canary COMMAND shadowspill_simulator_canary)
 
-add_executable(shadowspill_planner_canary planner_canary.c)
+add_executable(shadowspill_planner_canary planner/planner_canary.c)
 target_link_libraries(
   shadowspill_planner_canary
   PRIVATE shadowspill shadowspill_build_options
@@ -131,6 +131,12 @@ foreach(runtime_test IN ITEMS abandon blocking calibration completion failure te
 endforeach()
 target_include_directories(
   shadowspill_runtime_transitions_canary
+  PRIVATE ${PROJECT_SOURCE_DIR}/csrc/src/runtime
+)
+# The blocking canary drives a pool's own release accounting, which is the
+# state a waiting allocator watches and is not public.
+target_include_directories(
+  shadowspill_runtime_blocking_canary
   PRIVATE ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
 

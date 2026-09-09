@@ -10,25 +10,31 @@ from shadowspill.ir import (
     DeviceSpec,
     MemoryLocation,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskAlternativeGroup,
     TaskAlternativeOption,
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner.recomputation import resolutions
-from shadowspill.planner.recomputation.options import TaskAlternativeOptions
+from shadowspill.planner import GenericPlanningOptions, pressurefit
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
+from shadowspill.planner.search.toolkit.resolution import (
+    DEFAULT_RESOLUTION_OPTIONS,
+    CostedAlternatives,
+    resolutions,
+    validate_resolution_options,
+)
 from shadowspill.simulator import SimulationConfig
 
 DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 
-def _binary_program(group_count: int) -> Program:
+def _binary_program(group_count: int) -> ShadowSpillProgram:
     aliases = tuple(
         AliasGroupSpec(f"saved_{index}", "cuda_0", 10) for index in range(group_count)
     )
@@ -64,7 +70,7 @@ def _binary_program(group_count: int) -> Program:
                 ),
             )
         )
-    return Program(
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=aliases,
         objects=objects,
@@ -75,8 +81,8 @@ def _binary_program(group_count: int) -> Program:
 
 
 def _option_ids(
-    program: Program,
-    shares: tuple[Fraction | int | str, ...] | None = None,
+    program: ShadowSpillProgram,
+    shares: tuple[Fraction | int | str, ...] = DEFAULT_RESOLUTION_OPTIONS,
 ) -> tuple[tuple[str, ...], ...]:
     return tuple(
         tuple(selection.option_id for selection in selections)
@@ -124,9 +130,7 @@ def test_a_large_inventory_is_bounded() -> None:
     options = _option_ids(_binary_program(64))
 
     assert len(options) == 5
-    assert tuple(item.count("recompute") for item in options) == tuple(
-        range(0, 65, 16)
-    )
+    assert tuple(item.count("recompute") for item in options) == tuple(range(0, 65, 16))
 
 
 def test_terminal_forward_group_is_always_saved() -> None:
@@ -176,7 +180,7 @@ def test_a_group_whose_options_keep_the_same_bytes_is_not_searched() -> None:
         task_alternative_groups=(settled, *program.task_alternative_groups[1:]),
     )
 
-    options = TaskAlternativeOptions.from_program(program)
+    options = CostedAlternatives.from_program(program)
     assert options.flexible_count == 3
     # forced to the cheaper of two options that keep the same bytes
     assert options.groups[0].forced_index == 0
@@ -188,15 +192,13 @@ def test_a_group_whose_options_keep_the_same_bytes_is_not_searched() -> None:
 
 
 def test_the_default_resolution_options_are_every_quarter() -> None:
-    from shadowspill.planner.recomputation import (
-        DEFAULT_RESOLUTION_OPTIONS,
-        resolution_options_or_default,
-    )
+    """The default is named, not implied: a caller wanting it asks for it."""
 
     assert tuple(Fraction(n, 4) for n in range(5)) == DEFAULT_RESOLUTION_OPTIONS
-    assert resolution_options_or_default(None) == DEFAULT_RESOLUTION_OPTIONS
+    # spelling the default out, in any order and any accepted form, is the
+    # same question as naming the constant
     spelled = ("1", "3/4", "1/2", "1/4", 0)
-    assert resolution_options_or_default(spelled) == DEFAULT_RESOLUTION_OPTIONS
+    assert validate_resolution_options(spelled) == DEFAULT_RESOLUTION_OPTIONS
     assert _option_ids(_binary_program(64), DEFAULT_RESOLUTION_OPTIONS) == _option_ids(
         _binary_program(64)
     )
@@ -207,9 +209,7 @@ def test_a_caller_names_its_own_resolution_options() -> None:
 
     eighths = _option_ids(program, tuple(f"{n}/8" for n in range(9)))
 
-    assert tuple(item.count("recompute") for item in eighths) == tuple(
-        range(0, 65, 8)
-    )
+    assert tuple(item.count("recompute") for item in eighths) == tuple(range(0, 65, 8))
     # order and repetition are the caller's spelling, not part of the options
     assert _option_ids(program, (1, "1/2", Fraction(1, 2), 0)) == _option_ids(
         program, ("0", "1/2", "1")
@@ -219,8 +219,6 @@ def test_a_caller_names_its_own_resolution_options() -> None:
 
 
 def test_resolution_options_are_validated() -> None:
-    from shadowspill.planner.recomputation import validate_resolution_options
-
     assert validate_resolution_options(("1", "1/2", "1/2", 0)) == (
         Fraction(0),
         Fraction(1, 2),
@@ -242,7 +240,7 @@ def test_resolution_options_are_validated() -> None:
         resolutions(_binary_program(64), ("2",))
 
 
-def _ladder_program(stages: int) -> Program:
+def _ladder_program(stages: int) -> ShadowSpillProgram:
     """A chain of save/recompute stages, each shaped like the one-group fixture."""
 
     aliases: list[AliasGroupSpec] = []
@@ -310,13 +308,11 @@ def _ladder_program(stages: int) -> Program:
                     TaskAlternativeOption(
                         "save", (f"forward_save_{index}",), (f"activation_{index}",)
                     ),
-                    TaskAlternativeOption(
-                        "recompute", (f"forward_recompute_{index}",)
-                    ),
+                    TaskAlternativeOption("recompute", (f"forward_recompute_{index}",)),
                 ),
             )
         )
-    return Program(
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=tuple(aliases),
         objects=tuple(objects),
@@ -351,7 +347,7 @@ def test_resolution_options_change_no_rung_and_a_superset_is_never_worse() -> No
         fetch_bandwidth_bytes_per_second=8_000_000,
         evict_bandwidth_bytes_per_second=8_000_000,
     )
-    options = PressureFitOptions(
+    options = GenericPlanningOptions(
         deterministic=True, minimum_object_bytes_evict_eligible=0
     )
 
@@ -362,15 +358,11 @@ def test_resolution_options_change_no_rung_and_a_superset_is_never_worse() -> No
         }
 
     quarters = pressurefit(
-        program, initial_residency=initial, config=config, options=options
+        program, initial_residency=initial, config=config, generic=options
     )
-    eighths = pressurefit(
-        program,
-        initial_residency=initial,
-        config=config,
-        options=options,
-        resolution_options=tuple(f"{n}/8" for n in range(9)),
-    )
+    eighths = PressureFit(
+        PressureFitOptions(resolution_options=tuple(f"{n}/8" for n in range(9)))
+    )(program, initial_residency=initial, config=config, generic=options)
 
     assert len(by_rung(eighths)) == 9
     assert len(by_rung(quarters)) == 5

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from shadowspill.ir import MemorySchedule, Program, TaskProfile, TaskSpec
+from shadowspill.ir import MemorySchedule, ShadowSpillProgram, TaskProfile, TaskSpec
 from shadowspill.planner import (
     AdmissionFacts,
     CandidateDiagnostic,
-    PressureFitDiagnostics,
-    PressureFitOptions,
-    PressureFitResult,
+    GenericPlanningOptions,
+    PlanningDiagnostics,
+    ProgramPlanResult,
     ResolvedProgramDiagnostics,
     TaskAdmissionSpec,
 )
@@ -25,7 +25,7 @@ def _selection(
     *,
     effective_capacity: int | None = None,
 ) -> PlanLookup:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(),
         objects=(),
@@ -35,16 +35,16 @@ def _selection(
     schedule = MemorySchedule((), (), ())
     simulation = simulate(program, schedule, config=config)
     return PlanLookup(
-        PressureFitResult(
+        ProgramPlanResult(
             program,
-            PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
+            GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
             (),
             (),
             config,
             schedule,
             (),
             simulation,
-            PressureFitDiagnostics(
+            PlanningDiagnostics(
                 selected_candidate_id="candidate",
                 selected_selection_id="selection",
                 selected_makespan_ns=simulation.makespan_ns,
@@ -116,7 +116,7 @@ def test_refinement_uses_pressurefit_effective_capacity() -> None:
         attempt.pool_capacity_bytes,
         attempt.accepted,
     ) == (capacity, effective, 0, capacity, True)
-    assert attempt.pressurefit_wall_time_ns > 0
+    assert attempt.search_wall_time_ns > 0
     assert attempt.physical_admission_wall_time_ns > 0
 
 

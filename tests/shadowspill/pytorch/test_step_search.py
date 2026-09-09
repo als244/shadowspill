@@ -8,8 +8,10 @@ from fractions import Fraction
 import pytest
 from torch import OutOfMemoryError
 
-from shadowspill.planner import StepDataOrdering
+from shadowspill.planner import SearchOptions, StepDataOrdering
 from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
 from shadowspill.pytorch import StepSearchPoint, StepSearchReport, search_geometries
 from shadowspill.schema import artifact_schema
 
@@ -145,7 +147,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
             f"ShadowSpill failed to profile structural contract abc123: {cause}"
         ) from cause
 
-    monkeypatch.setattr(module, "make_step_program", exhaust)
+    monkeypatch.setattr(module, "build_step_program", exhaust)
     lines: list[str] = []
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
@@ -190,7 +192,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
     def fail(*args: object, **kwargs: object) -> object:
         raise ProfilingError("an operator has no meta implementation")
 
-    monkeypatch.setattr(module, "make_step_program", fail)
+    monkeypatch.setattr(module, "build_step_program", fail)
     with pytest.raises(ProfilingError, match="meta implementation"):
         plan_step_search(
             object(),  # type: ignore[arg-type]
@@ -223,8 +225,8 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     def refuse(*args: object, **kwargs: object) -> object:
         raise RuntimeError("PressureFit problem rejected the selected facts")
 
-    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
-    monkeypatch.setattr(module, "pressurefit_program", refuse)
+    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "plan_program", refuse)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -247,7 +249,7 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
 def test_the_resolution_options_reach_every_point(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.planner import PressureFitInfeasibleError
+    from shadowspill.errors import PlanInfeasibleError
     from shadowspill.pytorch import plan_step_search
     from shadowspill.pytorch import step_search as module
 
@@ -262,11 +264,11 @@ def test_the_resolution_options_reach_every_point(
     seen: list[object] = []
 
     def infeasible(*args: object, **kwargs: object) -> object:
-        seen.append(kwargs["resolution_options"])
-        raise PressureFitInfeasibleError("stub", kind="analytic_capacity")
+        seen.append(kwargs["search_options"].algorithm.options.resolution_options)
+        raise PlanInfeasibleError("stub", kind="analytic_capacity")
 
-    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
-    monkeypatch.setattr(module, "pressurefit_program", infeasible)
+    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -278,12 +280,19 @@ def test_the_resolution_options_reach_every_point(
         runtime=None,  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
-        resolution_options=("1", "0"),
+        search_options=SearchOptions(
+            algorithm=PressureFit(PressureFitOptions(resolution_options=("1", "0")))
+        ),
     )
 
     assert seen == [(Fraction(0), Fraction(1))]
-    assert report.resolution_options == (Fraction(0), Fraction(1))
-    assert report.to_dict()["resolution_options"] == ["0", "1"]
+    assert report.search_options is not None
+    assert report.search_options.algorithm.options.resolution_options == (
+        Fraction(0),
+        Fraction(1),
+    )
+    stored = report.to_dict()["search_options"]["algorithm"]["options"]
+    assert stored["resolution_options"] == ["0", "1"]
     assert [point.status for point in report.points] == ["infeasible"]
     # the calibration the build's program embeds is on the record, and no
     # override was given
@@ -298,7 +307,7 @@ def test_the_resolution_options_reach_every_point(
 def test_a_pinned_calibration_reaches_every_point_and_the_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from shadowspill.planner import PressureFitInfeasibleError
+    from shadowspill.errors import PlanInfeasibleError
     from shadowspill.pytorch import plan_step_search
     from shadowspill.pytorch import step_search as module
 
@@ -316,11 +325,11 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
 
     def infeasible(*args: object, **kwargs: object) -> object:
         seen.append(kwargs["transfer_bandwidths"])
-        plan_stores.append(kwargs["plan_store_dir"])
-        raise PressureFitInfeasibleError("stub", kind="analytic_capacity")
+        plan_stores.append(kwargs["plan_store"])
+        raise PlanInfeasibleError("stub", kind="analytic_capacity")
 
-    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
-    monkeypatch.setattr(module, "pressurefit_program", infeasible)
+    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -333,7 +342,7 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
         execution="execution",
         spill="spill",
         transfer_bandwidths=pinned,
-        plan_store_dir="plans-here",
+        plan_store="plans-here",
     )
 
     assert seen == [pinned]
@@ -352,7 +361,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
     def build(*args: object, **kwargs: object) -> object:
         raise AssertionError("no geometry may be built")
 
-    monkeypatch.setattr(module, "make_step_program", build)
+    monkeypatch.setattr(module, "build_step_program", build)
     with pytest.raises(ValueError, match="outside"):
         plan_step_search(
             object(),  # type: ignore[arg-type]
@@ -365,7 +374,9 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
             runtime=None,  # type: ignore[arg-type]
             execution="execution",
             spill="spill",
-            resolution_options=("3/2",),
+            search_options=SearchOptions(
+                algorithm=PressureFit(PressureFitOptions(resolution_options=("3/2",)))
+            ),
         )
 
 
@@ -453,10 +464,10 @@ def test_each_budget_is_handed_the_best_plan_below_it(
             return Plan(incumbent.simulation.makespan_ns, "incumbent")
         return Plan(makespan, candidate)
 
-    monkeypatch.setattr(module, "make_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
     monkeypatch.setattr(module, "summarize_selected_plan", lambda result: None)
     monkeypatch.setattr(module, "_graph_pair_outcomes", lambda result: ())
-    monkeypatch.setattr(module, "pressurefit_program", search)
+    monkeypatch.setattr(module, "plan_program", search)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,

@@ -7,17 +7,20 @@ from shadowspill.ir import (
     AliasGroupSpec,
     MutationSpec,
     ObjectSpec,
-    Program,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
 from shadowspill.planner import (
     AdmissionFacts,
-    PressureFitOptions,
+    GenericPlanningOptions,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
-    pressurefit,
+)
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
 )
 from shadowspill.pytorch.planning.admission.bindings import (
     TaskOutputBinding,
@@ -44,17 +47,18 @@ from tests.shadowspill.planner._examples import (
 
 def _selected():  # type: ignore[no-untyped-def]
     initial, final = exact_capacity_residency()
-    return pressurefit(
+    return PressureFit(
+        PressureFitOptions(
+            residency_strategies=("relaxed-stall",),
+            fetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        )
+    )(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
-            fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
-            minimum_object_bytes_evict_eligible=0,
-        ),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
 
 
@@ -149,7 +153,7 @@ def test_admission_facts_preserve_workspace_extent_multiset() -> None:
 
 
 def test_admission_facts_derive_gradient_contribution_extents_from_trace() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec("gradient_a", "cuda_0", 32),
@@ -189,7 +193,7 @@ def test_admission_facts_derive_gradient_contribution_extents_from_trace() -> No
 
 
 def test_admission_uses_charged_bytes_for_replacement_transition() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(AliasGroupSpec("state", "cuda_0", 4096),),
         objects=(ObjectSpec("state_object", "state", 0, 4096),),

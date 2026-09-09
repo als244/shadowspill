@@ -105,7 +105,12 @@ def test_every_mirrored_constant_matches_its_c_macro() -> None:
 
 def test_the_adapter_abi_version_is_one_number() -> None:
     header = (
-        ROOT / "csrc" / "adapter" / "pytorch" / "include" / "shadowspill"
+        ROOT
+        / "csrc"
+        / "adapter"
+        / "pytorch"
+        / "include"
+        / "shadowspill"
         / "pytorch_adapter.h"
     ).read_text()
     declared = re.search(

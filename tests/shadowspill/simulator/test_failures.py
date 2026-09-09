@@ -14,10 +14,10 @@ from shadowspill.ir import (
     MemorySchedule,
     ObjectRole,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
@@ -39,7 +39,9 @@ from ._examples import calibrated_config, overlap_program, overlap_schedule
 def test_public_simulator_fails_closed_without_the_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    implementation = importlib.import_module("shadowspill.simulator")
+    # The library is loaded where the projection runs, which is the module
+    # the public name is re-exported from.
+    implementation = importlib.import_module("shadowspill.simulator.indexing")
 
     def missing_library() -> None:
         raise RuntimeError("the simulator unavailable")
@@ -71,7 +73,7 @@ def test_initial_device_capacity_failure_is_structured() -> None:
 
 
 def test_initial_spill_capacity_failure_is_structured() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("spill_storage", "cuda_0", 128),),
         objects=(
@@ -117,7 +119,7 @@ def test_pending_evict_reports_spill_capacity_root_cause() -> None:
 
 def test_pending_fetch_reports_device_capacity_root_cause() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("resident_storage", "cuda_0", 64),
@@ -161,7 +163,7 @@ def test_pending_fetch_reports_device_capacity_root_cause() -> None:
 
 def test_fetch_reserves_capacity_at_trigger_before_lane_head() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("resident_storage", "cuda_0", 64),

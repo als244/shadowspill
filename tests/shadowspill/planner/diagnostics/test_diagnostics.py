@@ -4,26 +4,26 @@ import pytest
 
 from shadowspill.planner import (
     CandidateDiagnostic,
-    PressureFitDiagnostics,
-    PressureFitRepairDiagnostics,
-    PressureFitSectionTiming,
-    PressureFitWorkDiagnostics,
+    PlanningDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningSectionTiming,
+    PlanningWorkDiagnostics,
     ReductionStep,
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
 
 
-def _diagnostics() -> PressureFitDiagnostics:
-    repairs = PressureFitRepairDiagnostics(
+def _diagnostics() -> PlanningDiagnostics:
+    repairs = PlanningRepairDiagnostics(
         admission_fetch_advance_attempts=1,
         simulation_pressure_boundary_attempts=2,
     )
-    candidate_work = PressureFitWorkDiagnostics(
+    candidate_work = PlanningWorkDiagnostics(
         schedule_emissions=1,
         simulation_calls=3,
         admission_calls=2,
-        sections=PressureFitSectionTiming(
+        sections=PlanningSectionTiming(
             total_ns=80,
             reduce_ns=10,
             emit_ns=20,
@@ -65,11 +65,11 @@ def _diagnostics() -> PressureFitDiagnostics:
         selected_candidate_id=candidate.candidate_id,
         selected_makespan_ns=1_000,
         candidate_evaluations=(candidate,),
-        work=PressureFitWorkDiagnostics(
+        work=PlanningWorkDiagnostics(
             schedule_emissions=1,
             simulation_calls=3,
             admission_calls=2,
-            sections=PressureFitSectionTiming(
+            sections=PlanningSectionTiming(
                 total_ns=90,
                 reduce_ns=10,
                 emit_ns=20,
@@ -80,16 +80,16 @@ def _diagnostics() -> PressureFitDiagnostics:
             ),
         ),
     )
-    return PressureFitDiagnostics(
+    return PlanningDiagnostics(
         selected_candidate_id=candidate.candidate_id,
         selected_selection_id=selection_id,
         selected_makespan_ns=1_000,
         resolved_programs=(problem,),
-        work=PressureFitWorkDiagnostics(
+        work=PlanningWorkDiagnostics(
             schedule_emissions=1,
             simulation_calls=4,
             admission_calls=3,
-            sections=PressureFitSectionTiming(
+            sections=PlanningSectionTiming(
                 total_ns=97,
                 reduce_ns=10,
                 emit_ns=20,
@@ -103,9 +103,9 @@ def _diagnostics() -> PressureFitDiagnostics:
     )
 
 
-def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
+def test_search_diagnostics_round_trip_preserves_hierarchy() -> None:
     source = _diagnostics()
-    restored = PressureFitDiagnostics.from_value(source.to_dict(), "diagnostics")
+    restored = PlanningDiagnostics.from_value(source.to_dict(), "diagnostics")
 
     assert restored == source
     assert restored.resolved_program_count == 1
@@ -123,7 +123,7 @@ def test_pressurefit_diagnostics_round_trip_preserves_hierarchy() -> None:
     assert sections.total_ns == sections.named_ns + sections.residual_ns
 
 
-def test_pressurefit_diagnostics_rejects_old_flat_schema() -> None:
+def test_search_diagnostics_rejects_old_flat_schema() -> None:
     source = _diagnostics()
     flat = {
         "selected_candidate_id": source.selected_candidate_id,
@@ -135,7 +135,7 @@ def test_pressurefit_diagnostics_rejects_old_flat_schema() -> None:
     }
 
     with pytest.raises(ValueError, match="unsupported schema"):
-        PressureFitDiagnostics.from_value(flat, "diagnostics")
+        PlanningDiagnostics.from_value(flat, "diagnostics")
 
 
 def test_candidate_diagnostic_rejects_old_flat_schema() -> None:

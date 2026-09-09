@@ -7,16 +7,28 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.planner import PressureFitOptions
+from shadowspill.planner import (
+    GenericPlanningOptions,
+    SearchOptions,
+)
 from shadowspill.planner.plan_store import PlanStore
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+from shadowspill.planner.store_policy import StorePolicy
 
 from ._examples import config, exact_capacity_program, exact_capacity_residency
 
-FEW_CANDIDATES = PressureFitOptions(
-    minimum_object_bytes_evict_eligible=0,
-    residency_strategies=("relaxed-stall",),
-    fetch_rules=("latest-safe",),
-    evaluate_coalesced=False,
+FEW_CANDIDATES = SearchOptions(
+    generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+    algorithm=PressureFit(
+        PressureFitOptions(
+            residency_strategies=("relaxed-stall",),
+            fetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        )
+    ),
 )
 
 
@@ -28,14 +40,14 @@ def test_plan_store_preserves_the_complete_selection(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     second = cache.resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     # Every option is part of a planned program's identity, so a search
     # configured differently in any respect is a different question and
@@ -45,12 +57,25 @@ def test_plan_store_preserves_the_complete_selection(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=replace(FEW_CANDIDATES, workers=8),
+        search_options=replace(
+            FEW_CANDIDATES, generic=replace(FEW_CANDIDATES.generic, deterministic=True)
+        ),
+    )
+    # Worker count is not one of them. It decides how long an answer takes,
+    # not which answer is right, so the same question asked with more
+    # threads reads the answer back rather than paying for it again.
+    threaded = cache.resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        search_options=replace(FEW_CANDIDATES, workers=8),
     )
 
     assert not first.from_store
     assert second.from_store
     assert not varied.from_store
+    assert threaded.from_store
     assert second.result.schedule == first.result.schedule
     assert second.result.selections == first.result.selections
     assert second.result.simulation == first.result.simulation
@@ -65,7 +90,7 @@ def test_the_resolution_options_are_part_of_every_key(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     # spelling out the library's default asks the same question
     spelled = cache.resolve(
@@ -73,24 +98,45 @@ def test_the_resolution_options_are_part_of_every_key(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
-        resolution_options=[Fraction(n, 4) for n in range(5)],
+        search_options=replace(
+            FEW_CANDIDATES,
+            algorithm=PressureFit(
+                replace(
+                    FEW_CANDIDATES.algorithm.options,
+                    resolution_options=[Fraction(n, 4) for n in range(5)],
+                )
+            ),
+        ),
     )
     halves = cache.resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
-        resolution_options=("0", "1/2", "1"),
+        search_options=replace(
+            FEW_CANDIDATES,
+            algorithm=PressureFit(
+                replace(
+                    FEW_CANDIDATES.algorithm.options,
+                    resolution_options=("0", "1/2", "1"),
+                )
+            ),
+        ),
     )
     again = cache.resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
-        resolution_options=(Fraction(1), "1/2", 0),
+        search_options=replace(
+            FEW_CANDIDATES,
+            algorithm=PressureFit(
+                replace(
+                    FEW_CANDIDATES.algorithm.options,
+                    resolution_options=(Fraction(1), "1/2", 0),
+                )
+            ),
+        ),
     )
 
     assert not first.from_store
@@ -100,7 +146,11 @@ def test_the_resolution_options_are_part_of_every_key(tmp_path: Path) -> None:
     records = [
         json.loads(path.read_text()) for path in tmp_path.rglob("selection.json")
     ]
-    assert sorted(json.dumps(item.get("resolution_options")) for item in records) == [
+    stored = sorted(
+        json.dumps(item["search_options"]["algorithm"]["options"]["resolution_options"])
+        for item in records
+    )
+    assert stored == [
         '["0", "1/2", "1"]',
         '["0", "1/4", "1/2", "3/4", "1"]',
     ]
@@ -113,14 +163,14 @@ def test_plan_store_ignores_only_fresh_work_timings(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
-    fresh = PlanStore(tmp_path, read_enabled=False).resolve(
+    fresh = PlanStore(tmp_path, policy=StorePolicy(read_enabled=False)).resolve(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
 
     assert not first.from_store
@@ -139,7 +189,7 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
@@ -152,7 +202,7 @@ def test_pressurefit_cache_rejects_corrupt_evidence(tmp_path: Path) -> None:
             initial_residency=initial,
             final_residency=final,
             config=config(),
-            options=FEW_CANDIDATES,
+            search_options=FEW_CANDIDATES,
         )
 
 
@@ -164,7 +214,7 @@ def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> 
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     path = next(cache.root.rglob("*.json"))
     value = json.loads(path.read_text())
@@ -177,7 +227,7 @@ def test_pressurefit_cache_validates_persisted_call_boundary(tmp_path: Path) -> 
             initial_residency=initial,
             final_residency=final,
             config=config(),
-            options=FEW_CANDIDATES,
+            search_options=FEW_CANDIDATES,
         )
 
 
@@ -194,7 +244,7 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     # the same request with a plan in hand is the same key, so it reads back
     # the stored answer rather than searching
@@ -203,14 +253,22 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
         incumbent=first.result,
     )
     assert not first.from_store
     assert handed.from_store
     assert handed.result.schedule == first.result.schedule
-    shares = tuple(Fraction(n, 4) for n in range(5))
-    key = _key(program, initial, final, config(), FEW_CANDIDATES, None, None, shares)
+    key = _key(
+        program,
+        initial,
+        final,
+        config(),
+        None,
+        None,
+        FEW_CANDIDATES.resolved_algorithm,
+        FEW_CANDIDATES,
+    )
     assert json.loads(cache.path(key).read_text())["incumbent"] is None
 
     # a store that first sees the request with a plan in hand records which
@@ -220,7 +278,7 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
         incumbent=first.result,
     )
     assert not searched.from_store
@@ -236,7 +294,7 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        search_options=FEW_CANDIDATES,
     )
     assert replanned.from_store
     assert replanned.result.schedule == first.result.schedule
@@ -254,17 +312,20 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=PressureFitOptions(
-            minimum_object_bytes_evict_eligible=0, deterministic=True
+        search_options=SearchOptions(
+            generic=GenericPlanningOptions(
+                minimum_object_bytes_evict_eligible=0, deterministic=True
+            )
         ),
     )
     # one candidate that plans this program a fifth slower than the best
-    poor = PressureFitOptions(
-        minimum_object_bytes_evict_eligible=0,
+    poor = GenericPlanningOptions(
+        minimum_object_bytes_evict_eligible=0, deterministic=True
+    )
+    poor_search = PressureFitOptions(
         residency_strategies=("headroom-stall",),
         fetch_rules=("demand",),
         evaluate_coalesced=False,
-        deterministic=True,
     )
     cache = PlanStore(tmp_path / "poor")
     unaided = cache.resolve(
@@ -272,7 +333,7 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=poor,
+        search_options=SearchOptions(generic=poor, algorithm=PressureFit(poor_search)),
     )
     assert unaided.result.simulation.makespan_ns > every.result.simulation.makespan_ns
 
@@ -283,7 +344,7 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=poor,
+        search_options=SearchOptions(generic=poor, algorithm=PressureFit(poor_search)),
         incumbent=every.result,
     )
     assert not handed.from_store
@@ -295,7 +356,7 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=poor,
+        search_options=SearchOptions(generic=poor, algorithm=PressureFit(poor_search)),
     )
     assert again.from_store
     assert again.result.schedule == every.result.schedule
@@ -305,7 +366,7 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=poor,
+        search_options=SearchOptions(generic=poor, algorithm=PressureFit(poor_search)),
         incumbent=unaided.result,
     )
     assert same.from_store
