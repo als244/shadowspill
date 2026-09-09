@@ -66,11 +66,14 @@ def _external_input_aliases(
     produced_aliases = {
         alias_by_object[object_id] for task in tasks for object_id in task.outputs
     }
+    # One union, not one per task input: a program of thousands of tasks
+    # over thousands of aliases made this quadratic.
+    excluded = produced_aliases | parameter_aliases
     return {
         alias_by_object[object_id]
         for task in tasks
         for object_id in task.inputs
-        if alias_by_object[object_id] not in produced_aliases | parameter_aliases
+        if alias_by_object[object_id] not in excluded
     }
 
 
