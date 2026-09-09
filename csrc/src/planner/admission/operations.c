@@ -692,7 +692,7 @@ static int check_final_residency(OperationBuild *build) {
 }
 
 int shadowspill_admission_build_operations(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     OperationTally *tally
@@ -700,8 +700,8 @@ int shadowspill_admission_build_operations(
     memset(tally, 0, sizeof(*tally));
     tally->workspace = workspace;
     OperationBuild build = {
-        .program = problem->simulation,
-        .topology = problem->admission,
+        .program = context->simulation,
+        .topology = context->admission,
         .schedule = schedule,
         .workspace = workspace,
         .tally = tally,
@@ -727,20 +727,6 @@ int shadowspill_admission_build_operations(
 
 /* ---------------------------------------------------------------- public */
 
-/* A problem carrying only what operation building reads: the resolved task
- * set and the physical ownership facts. Residency and seed tally belong to
- * candidate search, not here. */
-static ShadowSpillPressureFitProblem operations_problem(
-    const ShadowSpillSimulationProgram *simulation,
-    const ShadowSpillAdmissionFacts *admission
-) {
-    return (ShadowSpillPressureFitProblem){
-        .abi_version = SHADOWSPILL_ABI_VERSION,
-        .simulation = simulation,
-        .admission = admission,
-    };
-}
-
 ShadowSpillStatus shadowspill_admission_operation_bounds(
     const ShadowSpillSimulationProgram *simulation,
     const ShadowSpillAdmissionFacts *admission,
@@ -752,13 +738,15 @@ ShadowSpillStatus shadowspill_admission_operation_bounds(
         lease_capacity == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    const ShadowSpillPressureFitProblem problem =
-        operations_problem(simulation, admission);
-    if (!shadowspill_admission_facts_valid(&problem)) {
+    const ShadowSpillScheduleContext context = {
+        .simulation = simulation,
+        .admission = admission,
+    };
+    if (!shadowspill_admission_facts_valid(&context)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     if (shadowspill_admission_counts(
-            &problem, schedule, lease_capacity, operation_capacity) != 0) {
+            &context, schedule, lease_capacity, operation_capacity) != 0) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     return SHADOWSPILL_STATUS_OK;
@@ -778,16 +766,18 @@ ShadowSpillStatus shadowspill_build_admission_operations(
         result->lease_starts == NULL || result->lease_retires == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    const ShadowSpillPressureFitProblem problem =
-        operations_problem(simulation, admission);
-    if (!shadowspill_admission_facts_valid(&problem)) {
+    const ShadowSpillScheduleContext context = {
+        .simulation = simulation,
+        .admission = admission,
+    };
+    if (!shadowspill_admission_facts_valid(&context)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
 
     ShadowSpillCandidateAdmissionWorkspace workspace = {0};
-    if (shadowspill_candidate_admission_workspace_create(&problem, &workspace)
+    if (shadowspill_candidate_admission_workspace_create(&context, &workspace)
             != 0 ||
-        shadowspill_admission_reserve_buffers(&problem, schedule, &workspace)
+        shadowspill_admission_reserve_buffers(&context, schedule, &workspace)
             != 0) {
         shadowspill_candidate_admission_workspace_destroy(&workspace);
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
@@ -800,7 +790,7 @@ ShadowSpillStatus shadowspill_build_admission_operations(
 
     OperationTally tally;
     if (shadowspill_admission_build_operations(
-            &problem, schedule, &workspace, &tally) != 0) {
+            &context, schedule, &workspace, &tally) != 0) {
         shadowspill_candidate_admission_workspace_destroy(&workspace);
         return SHADOWSPILL_STATUS_PLANNER_INTERNAL_ERROR;
     }

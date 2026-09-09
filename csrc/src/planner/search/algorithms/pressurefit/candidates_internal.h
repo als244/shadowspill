@@ -1,10 +1,41 @@
 #ifndef SHADOWSPILL_PLANNER_CANDIDATES_INTERNAL_H
 #define SHADOWSPILL_PLANNER_CANDIDATES_INTERNAL_H
 
+#include "residency_internal.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
 #include <shadowspill/planner.h>
+#include "../../../internal.h"
+#include <shadowspill/pressurefit/pressurefit.h>
+
+typedef struct ShadowSpillPressureFitProblem {
+    uint32_t abi_version;
+    /* What any code judging this problem's schedules needs. */
+    ShadowSpillScheduleContext context;
+    const ShadowSpillPressureFitResidencyProblem *residency;
+    const uint8_t *seed_resident;
+    const uint8_t *seed_breaks;
+    /* The plan to beat: a plan for this resolved program already in hand --
+       found at a smaller capacity, say -- or NULL. The search measures it at
+       this capacity before any candidate runs and answers with it unless a
+       candidate does strictly better, so a search given one never answers
+       worse than it. Its aliases and tasks index this problem. */
+    const ShadowSpillIndexedSchedule *incumbent;
+} ShadowSpillPressureFitProblem;
+/*
+ * Evaluate several already-resolved problems together, on one set of worker
+ * threads. This is what shadowspill_pressurefit_search() runs once it has
+ * resolved its input; a caller reaches it through that.
+ */
+ShadowSpillStatus
+shadowspill_pressurefit_evaluate_resolved(
+    const ShadowSpillPressureFitProblem *problems,
+    uint32_t problem_count,
+    const ShadowSpillPressureFitOptions *options,
+    ShadowSpillPressureFitResult *results
+);
 #include <shadowspill/simulator.h>
 
 typedef struct ShadowSpillScheduleStorage {
@@ -81,11 +112,11 @@ int shadowspill_schedule_storage_assign(
  * an internal storage type; the rest of the gate is public. */
 /* The best placed makespan so far, or zero when nothing has been placed.
  * Lock-free: the default search mode consults it at every local minimum. */
-uint64_t shadowspill_best_placed_bound(const ShadowSpillBestPlaced *best);
+uint64_t shadowspill_best_placed_bound(const ShadowSpillPressureFitBestPlaced *best);
 
 int shadowspill_best_placed_offer(
-    ShadowSpillBestPlaced *best,
-    const ShadowSpillBestPlacedRecord *record,
+    ShadowSpillPressureFitBestPlaced *best,
+    const ShadowSpillPressureFitBestPlacedRecord *record,
     const ShadowSpillScheduleStorage *plan
 );
 
@@ -150,18 +181,6 @@ int shadowspill_apply_fetch_trigger_constraints(
     const ShadowSpillFetchTriggerConstraint *constraints,
     uint32_t constraint_count,
     ShadowSpillScheduleStorage *storage
-);
-
-void shadowspill_bind_indexed_schedule(
-    const ShadowSpillSimulationProgram *topology,
-    const ShadowSpillIndexedSchedule *schedule,
-    ShadowSpillSimulationProgram *program
-);
-
-void shadowspill_schedule_digest(
-    const ShadowSpillPressureFitProblem *problem,
-    const ShadowSpillIndexedSchedule *schedule,
-    uint8_t digest[SHADOWSPILL_PLANNER_DIGEST_BYTES]
 );
 
 #endif

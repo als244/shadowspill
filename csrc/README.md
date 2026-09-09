@@ -10,10 +10,16 @@ csrc/
 │   ├── common/            what all three share: the status decoder and the
 │   │                      three calls POSIX and Windows spell differently
 │   ├── simulator/         deterministic schedule evaluator
-│   ├── planner/           PressureFit candidate selection over the simulator;
-│   │   └── admission/     derives the pool operations a schedule implies,
-│   │                      replays them, resolves lease lifetimes, and places
-│   │                      the leases at fixed addresses
+│   ├── planner/           the planning question, and answering it
+│   │   ├── admission/     search-agnostic certification: derives the pool
+│   │   │                  operations a schedule implies, replays them,
+│   │   │                  resolves lease lifetimes, and places the leases at
+│   │   │                  fixed addresses
+│   │   └── search/
+│   │       ├── toolkit/   what any search may call: schedule binding and
+│   │       │              digests
+│   │       └── algorithms/
+│   │           └── pressurefit/  the search that ships, over the simulator
 │   └── runtime/           pools, leases, objects, transfers, and the worker,
 │       ├── memory/          split by subsystem: ranges, pools, leases,
 │       ├── objects/          retirement

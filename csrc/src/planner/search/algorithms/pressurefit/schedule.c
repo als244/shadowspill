@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "../../../internal.h"
 #include "candidates_internal.h"
 #include "residency_internal.h"
 
@@ -112,20 +112,20 @@ int shadowspill_schedule_facts_create(
     ShadowSpillScheduleFacts *facts
 ) {
     if (problem == NULL || facts == NULL || problem->residency == NULL ||
-        problem->simulation == NULL ||
+        problem->context.simulation == NULL ||
         problem->abi_version != SHADOWSPILL_ABI_VERSION ||
         problem->residency->abi_version != SHADOWSPILL_ABI_VERSION ||
-        problem->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
-        problem->residency->alias_count != problem->simulation->alias_count ||
-        problem->residency->device_count != problem->simulation->device_count ||
+        problem->context.simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->residency->alias_count != problem->context.simulation->alias_count ||
+        problem->residency->device_count != problem->context.simulation->device_count ||
         problem->residency->boundary_count !=
-            problem->simulation->task_count + 1U) {
+            problem->context.simulation->task_count + 1U) {
         return -1;
     }
     memset(facts, 0, sizeof(*facts));
     facts->problem = problem;
     facts->alias_count = problem->residency->alias_count;
-    facts->task_count = problem->simulation->task_count;
+    facts->task_count = problem->context.simulation->task_count;
     facts->boundary_count = problem->residency->boundary_count;
     facts->device_count = problem->residency->device_count;
 
@@ -148,7 +148,7 @@ int shadowspill_schedule_facts_create(
         facts->earliest_access_task[position] = UINT32_MAX;
     }
 
-    const ShadowSpillSimulationProgram *program = problem->simulation;
+    const ShadowSpillSimulationProgram *program = problem->context.simulation;
     for (uint32_t task = 0U; task < facts->task_count; ++task) {
         for (uint32_t offset = program->input_offsets[task];
              offset < program->input_offsets[task + 1U];
@@ -424,7 +424,7 @@ static void alias_contribution(
     uint8_t *contribution,
     Span *spans
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     memset(contribution, 0, facts->boundary_count);
     uint32_t span_count = collect_spans(
         resident,
@@ -496,7 +496,7 @@ static int build_pressure(
         free(spans);
         return -1;
     }
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         /* The resident slice holds the aliases the reducer may not cut, and
          * the capacity measured against already excludes it. */
@@ -550,7 +550,7 @@ int shadowspill_extend_interval_entries(
         free(spans);
         return -1;
     }
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         if (!shadowspill_alias_may_cut(problem, alias)) {
             continue;
@@ -628,7 +628,7 @@ static uint32_t event_max_task(
     uint32_t alias,
     const Span *span
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const uint32_t last = problem->anchor_offsets[alias + 1U];
     uint32_t selected = UINT32_MAX;
     for (uint32_t index = shadowspill_anchor_lower_bound(
@@ -728,7 +728,7 @@ static uint32_t first_active_reload(
 }
 
 static uint64_t ideal_trigger_time(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     uint32_t trigger
 ) {
     return problem->task_ideal_end_ns[trigger];
@@ -739,7 +739,7 @@ static void choose_latest_safe_triggers(
     Reload *reloads,
     uint32_t reload_count
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     for (uint32_t index = 0U; index < reload_count; ++index) {
         Reload *reload = &reloads[index];
         const uint64_t deadline = ideal_trigger_time(
@@ -762,7 +762,7 @@ static void choose_packed_triggers(
     Reload *reloads,
     uint32_t reload_count
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     qsort(reloads, reload_count, sizeof(*reloads), reload_compare_descending);
     uint64_t *packed_start = calloc(facts->device_count, sizeof(*packed_start));
     uint8_t *has_packed_start = calloc(
@@ -879,7 +879,7 @@ static void charge_fetch_windows(
     uint32_t reload_count,
     Clamp *clamp
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     for (uint32_t index = 0U; index < reload_count; ++index) {
         const Reload *reload = &reloads[index];
         clamp->ranked[index] = (ReloadRank){
@@ -956,7 +956,7 @@ static void delay_reload(
     uint32_t boundary,
     Clamp *clamp
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const uint32_t old_trigger = reload->trigger;
     uint32_t new_trigger = boundary + 1U;
     if (new_trigger > reload->latest_trigger) {
@@ -1001,7 +1001,7 @@ static void relieve_boundary(
     uint32_t boundary,
     Clamp *clamp
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const uint64_t position =
         (uint64_t)device * facts->boundary_count + boundary + 1U;
     while (clamp->used[position] >
@@ -1095,7 +1095,7 @@ static uint32_t next_input_consumer(
     uint32_t alias,
     uint32_t trigger
 ) {
-    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->context.simulation;
     for (uint32_t task = trigger + 1U; task < facts->task_count; ++task) {
         for (uint32_t offset = program->input_offsets[task];
              offset < program->input_offsets[task + 1U];
@@ -1196,7 +1196,7 @@ int shadowspill_delay_indexed_fetch(
          failure->status != SHADOWSPILL_STATUS_TASK_DEVICE_CAPACITY)) {
         return 0;
     }
-    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->context.simulation;
     uint32_t selected = UINT32_MAX;
     uint32_t selected_target = UINT32_MAX;
     uint64_t selected_size = 0U;
@@ -1455,7 +1455,7 @@ int shadowspill_split_blocking_evictions(
     if (facts == NULL || simulation == NULL || storage == NULL) {
         return -1;
     }
-    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->context.simulation;
     const uint32_t actions = storage->value.action_count;
     /* A plan answered from the simulation memo keeps its makespan but not its
      * timeline, and the timeline is the whole input here: such a plan has
@@ -1610,7 +1610,7 @@ int shadowspill_advance_indexed_fetch_to_release(
             SHADOWSPILL_MEMORY_FETCH) {
         return 0;
     }
-    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
+    const ShadowSpillSimulationProgram *program = facts->problem->context.simulation;
     const uint32_t alias = storage->value.action_aliases[action_index];
     const uint32_t current_trigger =
         storage->value.action_trigger_tasks[action_index];
@@ -1887,7 +1887,7 @@ static int plan_span_reload(
     Departure previous_departure,
     Emission *emission
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const int32_t start_boundary = (int32_t)span.start - 1;
     const int produced_at_entry =
         problem->productions[cell(alias, facts->boundary_count, span.start)] != 0U;
@@ -1947,7 +1947,7 @@ static int plan_span_departure(
     int *has_previous_departure,
     Emission *emission
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const int8_t final_location = problem->final_location[alias];
     if (!has_later_span && final_location == 0) {
         return 0;
@@ -2002,7 +2002,7 @@ static int collect_alias_transitions(
     int coalesced,
     Emission *emission
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     const uint32_t span_count = collect_spans(
         resident, breaks, alias, facts->boundary_count, emission->spans
     );
@@ -2057,19 +2057,19 @@ static int choose_triggers(
     int fetch_headroom,
     Emission *emission
 ) {
-    if (fetch_rule == SHADOWSPILL_FETCH_DEMAND) {
+    if (fetch_rule == SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND) {
         for (uint32_t index = 0U; index < emission->reload_count; ++index) {
             emission->reloads[index].trigger =
                 emission->reloads[index].latest_trigger;
         }
         return 0;
     }
-    if (fetch_rule == SHADOWSPILL_FETCH_LATEST_SAFE) {
+    if (fetch_rule == SHADOWSPILL_PRESSUREFIT_FETCH_LATEST_SAFE) {
         choose_latest_safe_triggers(facts, emission->reloads, emission->reload_count);
         return 0;
     }
     choose_packed_triggers(facts, emission->reloads, emission->reload_count);
-    if (fetch_rule != SHADOWSPILL_FETCH_PACKED_FIT) {
+    if (fetch_rule != SHADOWSPILL_PRESSUREFIT_FETCH_PACKED_FIT) {
         return 0;
     }
     return clamp_triggers_to_fit(
@@ -2136,7 +2136,7 @@ static void emit_boundary_residency(
     const uint8_t *resident,
     ShadowSpillScheduleStorage *storage
 ) {
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
         if (problem->alias_size_bytes[alias] == 0U) {
             continue;
@@ -2168,11 +2168,11 @@ int shadowspill_emit_indexed_schedule(
     ShadowSpillScheduleStorage *storage
 ) {
     if (facts == NULL || resident == NULL || breaks == NULL || storage == NULL ||
-        fetch_rule > SHADOWSPILL_FETCH_DEMAND) {
+        fetch_rule > SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND) {
         return -1;
     }
     shadowspill_schedule_storage_clear(storage);
-    const ShadowSpillResidencyProblem *problem = facts->problem->residency;
+    const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
     Emission emission = {0};
     emission.spans = malloc((size_t)facts->boundary_count * sizeof(*emission.spans));
     if (emission.spans == NULL) {
@@ -2206,22 +2206,4 @@ int shadowspill_emit_indexed_schedule(
     emit_boundary_residency(facts, resident, storage);
     emission_destroy(&emission);
     return 0;
-}
-
-void shadowspill_bind_indexed_schedule(
-    const ShadowSpillSimulationProgram *topology,
-    const ShadowSpillIndexedSchedule *schedule,
-    ShadowSpillSimulationProgram *program
-) {
-    *program = *topology;
-    program->action_count = schedule->action_count;
-    program->action_trigger_tasks = schedule->action_trigger_tasks;
-    program->action_aliases = schedule->action_aliases;
-    program->action_kinds = schedule->action_kinds;
-    program->initial_count = schedule->initial_count;
-    program->initial_aliases = schedule->initial_aliases;
-    program->initial_locations = schedule->initial_locations;
-    program->final_count = schedule->final_count;
-    program->final_aliases = schedule->final_aliases;
-    program->final_locations = schedule->final_locations;
 }

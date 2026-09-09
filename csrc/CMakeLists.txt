@@ -24,19 +24,22 @@ add_library(
   src/simulator/transfers.c
   src/simulator/validation.c
 
-  src/planner/best_placed.c
+  # Search-agnostic: admitting a plan physically, and naming or choosing one.
   src/planner/admission/candidate.c
+  src/planner/admission/facts.c
   src/planner/admission/lifetimes.c
   src/planner/admission/operations.c
   src/planner/admission/placement.c
-  src/planner/admission/facts.c
-  src/planner/problem.c
-  src/planner/digest.c
-  src/planner/candidates.c
-  src/planner/residency.c
-  src/planner/schedule.c
-  src/planner/selector.c
-  src/planner/result.c
+  src/planner/abi.c
+  src/planner/search/toolkit/digest.c
+  src/planner/search/toolkit/schedule.c
+
+  # One search.
+  src/planner/search/algorithms/pressurefit/best_placed.c
+  src/planner/search/algorithms/pressurefit/candidates.c
+  src/planner/search/algorithms/pressurefit/problem.c
+  src/planner/search/algorithms/pressurefit/residency.c
+  src/planner/search/algorithms/pressurefit/schedule.c
 
   src/runtime/failure_state.c
   src/runtime/runtime.c

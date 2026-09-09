@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "../../../internal.h"
 #include "residency_internal.h"
 
 #include <limits.h>
@@ -49,7 +49,7 @@ typedef struct {
     uint32_t device;
 } ExcessEntry;
 
-struct ShadowSpillResidencyWorkspace {
+struct ShadowSpillPressureFitResidencyWorkspace {
     uint32_t alias_count;
     uint32_t boundary_count;
     uint32_t device_count;
@@ -75,7 +75,7 @@ struct ShadowSpillResidencyWorkspace {
     uint64_t excess_count;
     uint64_t excess_capacity;
     CutIndex cut_index;
-    const ShadowSpillResidencyProblem *geometry_problem;
+    const ShadowSpillPressureFitResidencyProblem *geometry_problem;
     /* Aliases a cut touched during the current reduction; only their rows
      * need canonical breaks at the end, the rest still equal the seed. */
     uint8_t *touched_aliases;
@@ -98,7 +98,7 @@ static int excess_entry_before(const ExcessEntry *a, const ExcessEntry *b) {
 }
 
 static int excess_heap_push(
-    ShadowSpillResidencyWorkspace *workspace,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     ExcessEntry entry
 ) {
     if (workspace->excess_count == workspace->excess_capacity) {
@@ -129,7 +129,7 @@ static int excess_heap_push(
     return 0;
 }
 
-static void excess_heap_pop(ShadowSpillResidencyWorkspace *workspace) {
+static void excess_heap_pop(ShadowSpillPressureFitResidencyWorkspace *workspace) {
     ExcessEntry *entries = workspace->excess_entries;
     uint64_t count = --workspace->excess_count;
     if (count == 0U) {
@@ -218,8 +218,8 @@ static int next_span(
 
 /* The charged interval of one span, or an empty one (end < start). */
 static void span_charge(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
     uint32_t alias,
     uint32_t start,
     uint32_t end,
@@ -304,8 +304,8 @@ static void span_around(
  * with a production, and not its final boundary when nothing accesses the
  * alias later and it may leave. */
 static void span_contribution(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
     uint32_t alias,
     uint32_t start,
     uint32_t end,
@@ -321,8 +321,8 @@ static void span_contribution(
 
 /* Mark every boundary the spans of one alias within [first, last] charge. */
 static void spans_contribution(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t alias,
@@ -351,8 +351,8 @@ static void spans_contribution(
 }
 
 static void alias_contribution(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t alias,
@@ -371,13 +371,13 @@ static void alias_contribution(
 }
 
 int shadowspill_residency_pressure_at(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t device,
     uint32_t boundary,
-    ShadowSpillResidencyWorkspace *workspace,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     uint64_t *pressure_bytes
 ) {
     if (problem == NULL || options == NULL || resident == NULL ||
@@ -432,7 +432,7 @@ static int compare_score(
 }
 
 static CutScore score_cut(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     const ResidencyCut *cut,
     int minimize_transfer
 ) {
@@ -481,7 +481,7 @@ static CutScore score_cut(
 }
 
 static int candidate_cut(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     const uint8_t *resident,
     const uint8_t *breaks,
     const uint32_t *first_required,
@@ -575,7 +575,7 @@ static void destroy_cut_index(CutIndex *index) {
 }
 
 static int append_indexed_cut(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     CutIndex *index,
     ResidencyCut cut,
     uint32_t first_boundary,
@@ -622,8 +622,8 @@ static int cut_ref_compare(const void *left_value, const void *right_value) {
 }
 
 static int build_cut_index(
-    const ShadowSpillResidencyProblem *problem,
-    ShadowSpillResidencyWorkspace *workspace
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     CutIndex *index = &workspace->cut_index;
     destroy_cut_index(index);
@@ -777,7 +777,7 @@ static int build_cut_index(
 }
 
 static int select_cut(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     uint32_t device,
     int32_t boundary,
     int minimize_transfer,
@@ -806,7 +806,7 @@ static int select_cut(
 }
 
 static void refresh_alias_candidates(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     const uint8_t *resident,
     const uint8_t *breaks,
     const uint32_t *first_required,
@@ -837,7 +837,7 @@ static void refresh_alias_candidates(
 }
 
 static int append_run(
-    ShadowSpillResidencyWorkspace *workspace, uint32_t start, uint32_t end
+    ShadowSpillPressureFitResidencyWorkspace *workspace, uint32_t start, uint32_t end
 ) {
     if (workspace->run_count == workspace->run_capacity) {
         uint64_t capacity = workspace->run_capacity == 0U
@@ -862,10 +862,10 @@ static int append_run(
  * the residency: the maximal stretches of a span that no anchor touches. An
  * alias that may not be cut has neither. */
 static int build_cut_geometry(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     const uint8_t *resident,
     const uint8_t *breaks,
-    ShadowSpillResidencyWorkspace *workspace
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     uint32_t count = problem->boundary_count;
     workspace->run_count = 0U;
@@ -919,9 +919,9 @@ static int build_cut_geometry(
 }
 
 static int prepare_seed_geometry(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyWorkspace *workspace
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     if (workspace->geometry_problem == problem) {
         return 0;
@@ -945,9 +945,9 @@ static int prepare_seed_geometry(
 }
 
 static int prepare_base_pressure(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyWorkspace *workspace
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     uint32_t variant = options->fetch_headroom != 0U ? 1U : 0U;
     if (workspace->pressure_valid[variant] != 0U) {
@@ -985,7 +985,7 @@ static int prepare_base_pressure(
 }
 
 static void apply_cut(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     uint8_t *resident,
     uint8_t *breaks,
     const ResidencyCut *cut
@@ -1065,9 +1065,9 @@ void shadowspill_canonicalize_breaks(
 }
 
 static int valid_problem(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    const ShadowSpillResidencyResult *result
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyResult *result
 ) {
     if (problem == NULL || options == NULL || result == NULL ||
         problem->abi_version != SHADOWSPILL_ABI_VERSION ||
@@ -1091,8 +1091,8 @@ static int valid_problem(
 }
 
 int shadowspill_residency_workspace_create(
-    const ShadowSpillResidencyProblem *problem,
-    ShadowSpillResidencyWorkspace **workspace_output
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    ShadowSpillPressureFitResidencyWorkspace **workspace_output
 ) {
     if (problem == NULL || workspace_output == NULL ||
         problem->boundary_count == 0U || problem->device_count == 0U) {
@@ -1107,7 +1107,7 @@ int shadowspill_residency_workspace_create(
         pressure_cells > SIZE_MAX / sizeof(uint64_t)) {
         return -1;
     }
-    ShadowSpillResidencyWorkspace *workspace =
+    ShadowSpillPressureFitResidencyWorkspace *workspace =
         calloc(1U, sizeof(*workspace));
     if (workspace == NULL) {
         return -1;
@@ -1156,7 +1156,7 @@ int shadowspill_residency_workspace_create(
 }
 
 void shadowspill_residency_workspace_destroy(
-    ShadowSpillResidencyWorkspace *workspace
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     if (workspace == NULL) {
         return;
@@ -1180,8 +1180,8 @@ void shadowspill_residency_workspace_destroy(
 
 /* The caller owns every buffer the result points at, so those survive the
  * reset; everything the reduction is about to decide does not. */
-static void reset_residency_result(ShadowSpillResidencyResult *result) {
-    const ShadowSpillResidencyResult borrowed = {
+static void reset_residency_result(ShadowSpillPressureFitResidencyResult *result) {
+    const ShadowSpillPressureFitResidencyResult borrowed = {
         .resident = result->resident,
         .resident_capacity = result->resident_capacity,
         .breaks = result->breaks,
@@ -1197,9 +1197,9 @@ static void reset_residency_result(ShadowSpillResidencyResult *result) {
 /* Start from the residency the caller seeded rather than from nothing: a
  * repair reduces again from the same base its candidate began with. */
 static void seed_residency(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyResult *result
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyResult *result
 ) {
     const uint64_t cells =
         (uint64_t)problem->alias_count * problem->boundary_count;
@@ -1213,7 +1213,7 @@ static void seed_residency(
 
 /* Every cut starts available again, and the per-cell cursors that remember
  * how far each boundary has searched start over. */
-static int reset_cut_candidates(ShadowSpillResidencyWorkspace *workspace) {
+static int reset_cut_candidates(ShadowSpillPressureFitResidencyWorkspace *workspace) {
     const uint32_t cut_count = workspace->cut_index.cut_count;
     if (workspace->cut_active_capacity < cut_count) {
         uint8_t *active =
@@ -1236,13 +1236,13 @@ static int reset_cut_candidates(ShadowSpillResidencyWorkspace *workspace) {
  * is a prefix sum. Arithmetic is modulo 2^64 on the way and exact at the
  * end, because every prefix is a true, non-negative sum. */
 static uint64_t *pressure_tree(
-    ShadowSpillResidencyWorkspace *workspace, uint32_t device
+    ShadowSpillPressureFitResidencyWorkspace *workspace, uint32_t device
 ) {
     return workspace->pressure + (size_t)device * (workspace->boundary_count + 1U);
 }
 
 static void pressure_build(
-    ShadowSpillResidencyWorkspace *workspace,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     const uint64_t *base,
     uint32_t device_count
 ) {
@@ -1264,7 +1264,7 @@ static void pressure_build(
 }
 
 static uint64_t pressure_at(
-    ShadowSpillResidencyWorkspace *workspace, uint32_t device, uint32_t boundary
+    ShadowSpillPressureFitResidencyWorkspace *workspace, uint32_t device, uint32_t boundary
 ) {
     const uint64_t *tree = pressure_tree(workspace, device);
     uint64_t sum = 0U;
@@ -1275,7 +1275,7 @@ static uint64_t pressure_at(
 }
 
 static void pressure_add_from(
-    ShadowSpillResidencyWorkspace *workspace,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     uint32_t device,
     uint32_t boundary,
     uint64_t delta
@@ -1289,7 +1289,7 @@ static void pressure_add_from(
 
 /* Add `delta` (modular) to every boundary in [first, last]. */
 static void pressure_add(
-    ShadowSpillResidencyWorkspace *workspace,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     uint32_t device,
     uint32_t first,
     uint32_t last,
@@ -1304,9 +1304,9 @@ static void pressure_add(
 /* The pressure this reduction works on is a copy of the base map, so the
  * base survives for the next candidate built on the same strategy. */
 static void reset_working_pressure(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyWorkspace *workspace
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     const uint64_t pressure_cells =
         (uint64_t)problem->device_count * problem->boundary_count;
@@ -1330,9 +1330,9 @@ static void reset_working_pressure(
  * one reduction -- so stale entries are validated and corrected at pop time.
  */
 static int seed_excess_heap(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyWorkspace *workspace
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     workspace->excess_count = 0U;
     for (uint32_t device = 0U; device < problem->device_count; ++device) {
@@ -1370,9 +1370,9 @@ static int seed_excess_heap(
  * the boundary, 0 when nothing is over capacity, and -1 on failure.
  */
 static int pop_worst_boundary(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyWorkspace *workspace,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     uint32_t *device,
     uint32_t *boundary,
     uint64_t *used_bytes
@@ -1414,7 +1414,7 @@ static int pop_worst_boundary(
  * longer resident at, and starts occupying any it newly spans. A cell that
  * rose may now be over capacity itself, so it joins the heap.
  */
-static void clear_touched(ShadowSpillResidencyWorkspace *workspace) {
+static void clear_touched(ShadowSpillPressureFitResidencyWorkspace *workspace) {
     for (uint32_t index = 0U; index < workspace->touched_count; ++index) {
         workspace->touched_aliases[workspace->touched_list[index]] = 0U;
     }
@@ -1422,10 +1422,10 @@ static void clear_touched(ShadowSpillResidencyWorkspace *workspace) {
 }
 
 static int apply_cut_and_repressure(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyResult *result,
-    ShadowSpillResidencyWorkspace *workspace,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyResult *result,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     const ResidencyCut *chosen
 ) {
     const uint32_t alias = chosen->alias;
@@ -1632,8 +1632,8 @@ static int apply_cut_and_repressure(
 /* No legal cut relieves this boundary, so no residency this strategy can
  * reach fits it. That is a fact about the problem rather than a failure. */
 static ShadowSpillStatus report_analytic_infeasible(
-    const ShadowSpillResidencyProblem *problem,
-    ShadowSpillResidencyResult *result,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    ShadowSpillPressureFitResidencyResult *result,
     uint32_t device,
     uint32_t boundary,
     uint64_t used_bytes
@@ -1655,11 +1655,11 @@ static ShadowSpillStatus report_analytic_infeasible(
  * pressure map absorb the change. Repeat until nothing is over capacity, or
  * until a boundary has no legal cut left.
  */
-ShadowSpillStatus shadowspill_reduce_residency_reusing(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyResult *result,
-    ShadowSpillResidencyWorkspace *workspace
+ShadowSpillStatus shadowspill_pressurefit_reduce_residency_reusing(
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyResult *result,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 ) {
     if (!valid_problem(problem, options, result) || workspace == NULL ||
         workspace->alias_count != problem->alias_count ||
@@ -1739,7 +1739,7 @@ int shadowspill_residency_sparse_lists_build(
     const uint8_t *output_reservations,
     uint32_t alias_count,
     uint32_t boundary_count,
-    ShadowSpillResidencySparseLists *lists
+    ShadowSpillPressureFitResidencySparseLists *lists
 ) {
     const uint64_t cells = (uint64_t)alias_count * boundary_count;
     uint64_t anchor_total = 0U;
@@ -1781,7 +1781,7 @@ int shadowspill_residency_sparse_lists_build(
     return 0;
 }
 
-void shadowspill_residency_sparse_lists_destroy(ShadowSpillResidencySparseLists *lists) {
+void shadowspill_residency_sparse_lists_destroy(ShadowSpillPressureFitResidencySparseLists *lists) {
     free(lists->anchor_offsets);
     free(lists->anchor_positions);
     free(lists->anchor_tasks);
@@ -1792,74 +1792,3 @@ void shadowspill_residency_sparse_lists_destroy(ShadowSpillResidencySparseLists 
 
 /* The public entry keeps byte-per-cell arrays at the boundary: it packs the
  * caller's seeds, reduces into packed scratch, and unpacks the answer. */
-ShadowSpillStatus shadowspill_reduce_residency(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyResult *result
-) {
-    if (!valid_problem(problem, options, result)) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    ShadowSpillResidencySparseLists lists = {0};
-    if (shadowspill_residency_sparse_lists_build(
-            problem->anchors,
-            problem->latest_access_task,
-            problem->output_reservations,
-            problem->alias_count,
-            problem->boundary_count,
-            &lists
-        ) != 0) {
-        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    }
-    ShadowSpillResidencyProblem derived = *problem;
-    derived.anchor_offsets = lists.anchor_offsets;
-    derived.anchor_positions = lists.anchor_positions;
-    derived.anchor_tasks = lists.anchor_tasks;
-    derived.reserved_offsets = lists.reserved_offsets;
-    derived.reserved_positions = lists.reserved_positions;
-    problem = &derived;
-    const uint64_t cells = (uint64_t)problem->alias_count * problem->boundary_count;
-    const size_t packed = shadowspill_packed_cells(cells);
-    uint8_t *buffers = calloc(packed == 0U ? 4U : packed * 4U, 1U);
-    ShadowSpillResidencyWorkspace *workspace = NULL;
-    if (buffers == NULL ||
-        shadowspill_residency_workspace_create(problem, &workspace) != 0) {
-        free(buffers);
-        shadowspill_residency_sparse_lists_destroy(&lists);
-        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    }
-    uint8_t *seed_resident = buffers;
-    uint8_t *seed_breaks = buffers + packed;
-    for (uint64_t index = 0U; index < cells; ++index) {
-        shadowspill_cell_set(seed_resident, index, options->seed_resident[index] != 0U);
-        shadowspill_cell_set(seed_breaks, index, options->seed_breaks[index] != 0U);
-    }
-    shadowspill_canonicalize_breaks(
-        seed_breaks, seed_resident, problem->alias_count, problem->boundary_count
-    );
-    ShadowSpillResidencyOptions packed_options = *options;
-    packed_options.seed_resident = seed_resident;
-    packed_options.seed_breaks = seed_breaks;
-    ShadowSpillResidencyResult packed_result = *result;
-    packed_result.resident = buffers + 2U * packed;
-    packed_result.breaks = buffers + 3U * packed;
-    ShadowSpillStatus status = shadowspill_reduce_residency_reusing(
-        problem,
-        &packed_options,
-        &packed_result,
-        workspace
-    );
-    for (uint64_t index = 0U; index < cells; ++index) {
-        result->resident[index] =
-            (uint8_t)shadowspill_cell_get(packed_result.resident, index);
-        result->breaks[index] =
-            (uint8_t)shadowspill_cell_get(packed_result.breaks, index);
-    }
-    packed_result.resident = result->resident;
-    packed_result.breaks = result->breaks;
-    *result = packed_result;
-    shadowspill_residency_workspace_destroy(workspace);
-    free(buffers);
-    shadowspill_residency_sparse_lists_destroy(&lists);
-    return status;
-}
