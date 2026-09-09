@@ -10,10 +10,10 @@ from shadowspill.ir import (
     MemorySchedule,
     ObjectRole,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
     index_program,
@@ -65,7 +65,7 @@ def test_linear_programs_round_trip_with_stable_plan_indexs(
         )
         for index in range(count)
     )
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=aliases,
         objects=objects,
@@ -77,7 +77,7 @@ def test_linear_programs_round_trip_with_stable_plan_indexs(
         actions=(),
     )
 
-    restored = Program.from_json(program.to_json())
+    restored = ShadowSpillProgram.from_json(program.to_json())
 
     assert restored == program
     assert index_program(restored) == index_program(program)

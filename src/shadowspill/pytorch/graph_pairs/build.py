@@ -20,7 +20,7 @@ def build_default_graph_pairs(
     The returned record and every downstream consumer support an arbitrary
     ordered number of variants. Intermediate min-cut budgets can therefore be
     added here without changing partitioning, caching, lowering, diagnostics,
-    or the canonical Program representation.
+    or the canonical ShadowSpillProgram representation.
 
     PyTorch's min-cut budget ``0.0`` is the full-recompute endpoint.  Fix it
     explicitly so ambient Functorch configuration cannot alter the structural

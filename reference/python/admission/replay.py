@@ -23,7 +23,7 @@ from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
     MemorySchedule,
-    Program,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskSpec,
 )
@@ -64,7 +64,7 @@ class _AdmissionScriptBuilder:
 
     def __init__(
         self,
-        program: Program,
+        program: ShadowSpillProgram,
         schedule: MemorySchedule,
         selections: tuple[TaskAlternativeChoice, ...],
         facts: AdmissionFacts,
@@ -535,7 +535,7 @@ class _AdmissionScriptBuilder:
 
 
 def replay_admission(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     *,
     facts: AdmissionFacts,
@@ -624,7 +624,7 @@ def _resolve_dependency(
 
 
 def _compatibility_digest(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     selections: tuple[TaskAlternativeChoice, ...],
     operations: tuple[AdmissionReplayStep, ...],

@@ -171,7 +171,7 @@ def load_worker_outcome(
         directory = Path(str(raw_artifact["directory"]))
         saved, program = load_step_program(directory)
         if saved.program_digest != raw_artifact.get("program_digest"):
-            raise ValueError("worker artifact Program digest changed")
+            raise ValueError("worker artifact ShadowSpillProgram digest changed")
         if program.digest != saved.program_digest:
             raise ValueError("worker artifact content digest changed")
     except BaseException as error:

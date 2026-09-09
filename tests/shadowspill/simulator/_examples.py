@@ -11,10 +11,10 @@ from shadowspill.ir import (
     MemorySchedule,
     ObjectRole,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
@@ -35,9 +35,9 @@ def calibrated_config(
     )
 
 
-def overlap_program() -> Program:
+def overlap_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("input_storage", "cuda_0", 64),
@@ -119,10 +119,10 @@ def overlap_schedule() -> MemorySchedule:
     )
 
 
-def concurrent_lane_program() -> Program:
+def concurrent_lane_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     communication = ResourceSpec("cuda_0", ResourceKind.COMMUNICATION)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("input_storage", "cuda_0", 64),),
         objects=(ObjectSpec("input", "input_storage", 0, 64, ObjectRole.INPUT),),
@@ -154,10 +154,10 @@ def initial_only_schedule() -> MemorySchedule:
     )
 
 
-def ordered_action_program() -> Program:
+def ordered_action_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     communication = ResourceSpec("cuda_0", ResourceKind.COMMUNICATION)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("long_storage", "cuda_0", 64),

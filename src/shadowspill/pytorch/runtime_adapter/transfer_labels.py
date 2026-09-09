@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from shadowspill.ir import MemoryAction, MemoryActionKind, Program
+from shadowspill.ir import MemoryAction, MemoryActionKind, ShadowSpillProgram
 
 _UNSAFE_COMPONENT = re.compile(r"[^A-Za-z0-9_.-]+")
 
@@ -20,7 +20,7 @@ def _component(value: str) -> str:
 class TransferLabelIndex:
     """Precompute graph relationships used by worker-thread profiler labels."""
 
-    program: Program
+    program: ShadowSpillProgram
     task_labels: Mapping[str, str]
 
     def labels_for(self, actions: tuple[MemoryAction, ...]) -> tuple[str, ...]:

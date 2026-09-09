@@ -11,7 +11,7 @@ from shadowspill.ir import (
     AliasGroupSpec,
     ExecutionPlan,
     ObjectSpec,
-    Program,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
@@ -62,7 +62,7 @@ from shadowspill.pytorch.profiling import TaskMeasurement
 
 @dataclass(frozen=True, slots=True)
 class _TrainingInventoryIndex:
-    program: Program
+    program: ShadowSpillProgram
     task_by_id: Mapping[str, TaskSpec]
     profile_by_id: Mapping[str, TaskProfile]
     entrypoint_by_key: Mapping[tuple[int, int, str, str], TrainingTaskEntrypoint]
@@ -652,7 +652,7 @@ def _graph_profile(
     artifact: GraphArtifact,
     direction: str,
     task: TaskSpec,
-    program: Program,
+    program: ShadowSpillProgram,
     measurement: TaskMeasurement,
     manifest: ExecutableTaskManifest,
 ) -> PlanGraphProfile:
@@ -733,14 +733,14 @@ def _build_graph_profile(problem: _GraphProfileProblem) -> PlanGraphProfile:
     )
 
 
-def _task_profile(program: Program, task: TaskSpec) -> TaskProfile:
+def _task_profile(program: ShadowSpillProgram, task: TaskSpec) -> TaskProfile:
     return next(
         profile for profile in program.profiles if profile.profile_id == task.profile_id
     )
 
 
 def _task_footprints(
-    program: Program,
+    program: ShadowSpillProgram,
     task: TaskSpec,
 ) -> tuple[
     tuple[PlanObjectFootprint, ...],

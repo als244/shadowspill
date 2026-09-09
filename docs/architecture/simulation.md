@@ -1,12 +1,12 @@
 # Simulation
 
-The simulator deterministically replays an explicit `Program`,
+The simulator deterministically replays an explicit `ShadowSpillProgram`,
 `MemorySchedule`, graph-pair selection, device configuration, and optional
 physical admission. It never invokes the planner. [PressureFit](pressurefit.md)
 calls it while evaluating candidates, and the same public API can evaluate a
 supplied schedule independently.
 
-Runtime-global shared aliases retain their true sizes in the `Program`, but
+Runtime-global shared aliases retain their true sizes in the `ShadowSpillProgram`, but
 are projected out of the callable's movable alias set. Their execution and
 retained-spill footprints are subtracted from available capacity before the C
 simulation runs and added back to decoded physical peaks. They therefore

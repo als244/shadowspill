@@ -8,10 +8,10 @@ from shadowspill.ir import (
     MemoryLocation,
     MutationSpec,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskAlternativeGroup,
     TaskAlternativeOption,
     TaskProfile,
@@ -23,8 +23,8 @@ DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
 
 
-def exact_capacity_program() -> Program:
-    return Program(
+def exact_capacity_program() -> ShadowSpillProgram:
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec("retained", "cuda_0", 61),
@@ -82,8 +82,8 @@ def config(capacity: int = 122) -> SimulationConfig:
     )
 
 
-def mutation_program() -> Program:
-    return Program(
+def mutation_program() -> ShadowSpillProgram:
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec(
@@ -123,7 +123,7 @@ def mutation_program() -> Program:
     )
 
 
-def recomputation_program(recompute_workspace_bytes: int = 0) -> Program:
+def recomputation_program(recompute_workspace_bytes: int = 0) -> ShadowSpillProgram:
     """A save-or-recompute choice; the recomputation may need its own workspace.
 
     With a workspace, the recomputing task runs on a profile of its own, so a
@@ -143,7 +143,7 @@ def recomputation_program(recompute_workspace_bytes: int = 0) -> Program:
                 recompute_profile, 100, recompute_workspace_bytes, "forward_abi"
             ),
         )
-    return Program(
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec("input_storage", "cuda_0", 10),
@@ -210,7 +210,7 @@ def recomputation_program(recompute_workspace_bytes: int = 0) -> Program:
     )
 
 
-def training_chain_program(layers: int) -> Program:
+def training_chain_program(layers: int) -> ShadowSpillProgram:
     """Pure IR equivalent of the retained generic training-chain canary."""
 
     if layers < 1:
@@ -293,7 +293,7 @@ def training_chain_program(layers: int) -> Program:
             )
         )
         previous = f"b_{layer}"
-    return Program(
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=tuple(alias_groups),
         objects=tuple(objects),

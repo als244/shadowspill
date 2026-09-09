@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.ir import MemoryActionKind, MemorySchedule, Program
+from shadowspill.ir import MemoryActionKind, MemorySchedule, ShadowSpillProgram
 from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.layout.model import (
@@ -41,7 +41,7 @@ class DynamicTaskAllocationPolicy:
 
 def project_runtime_fixed_layout(
     layout: FixedPhysicalLayout,
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     *,
     initial_task_id: int,
@@ -50,7 +50,7 @@ def project_runtime_fixed_layout(
     """Translate one layout without changing its placement or dependency policy."""
 
     if layout.program_digest != program.digest:
-        raise ValueError("fixed layout belongs to a different Program")
+        raise ValueError("fixed layout belongs to a different ShadowSpillProgram")
     if layout.schedule_digest != schedule.digest:
         raise ValueError("fixed layout belongs to a different memory schedule")
     if initial_task_id == _NO_ID:
@@ -118,7 +118,7 @@ def project_runtime_fixed_layout(
 
 def _initial_placements(
     layout: FixedPhysicalLayout,
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     fixed_by_lease: dict[int, FixedLayoutPlacement],
     *,
@@ -306,7 +306,7 @@ def _task_allocation_identities(
 
 
 def _action_identities(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
 ) -> dict[int, _ActionIdentity]:
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}

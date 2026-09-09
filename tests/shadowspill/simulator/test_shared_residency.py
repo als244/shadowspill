@@ -8,10 +8,10 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     SharedResidencyPolicy,
     TaskProfile,
     TaskSpec,
@@ -24,8 +24,8 @@ from shadowspill.simulator import (
 )
 
 
-def _shared_input_program(*, output_bytes: int) -> Program:
-    return Program(
+def _shared_input_program(*, output_bytes: int) -> ShadowSpillProgram:
+    return ShadowSpillProgram(
         devices=(DeviceSpec("device_0", "process_0", "device", 0),),
         alias_groups=(
             AliasGroupSpec(

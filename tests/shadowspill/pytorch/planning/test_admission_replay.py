@@ -11,8 +11,8 @@ from shadowspill.ir import (
     MemorySchedule,
     MutationSpec,
     ObjectSpec,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     SharedResidencyPolicy,
     TaskProfile,
     TaskSpec,
@@ -39,8 +39,8 @@ def _program(
     *,
     workspace_bytes: int = 0,
     runtime_ns: int = 10,
-) -> Program:
-    return Program(
+) -> ShadowSpillProgram:
+    return ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=alias_groups,
         objects=objects,
@@ -92,7 +92,7 @@ def _task_admission(
     )
 
 
-def _empty_facts(program: Program, pool_bytes: int) -> AdmissionFacts:
+def _empty_facts(program: ShadowSpillProgram, pool_bytes: int) -> AdmissionFacts:
     return AdmissionFacts(
         "cuda_0",
         pool_bytes,

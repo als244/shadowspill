@@ -1,7 +1,7 @@
 """The neutral tree must not need a framework to import.
 
-Producing a Program -- capture, lowering, compilation, profiling -- is the
-frontend's work. Everything from a Program onwards is neutral, so planning a
+Producing a ShadowSpillProgram -- capture, lowering, compilation, profiling -- is the
+frontend's work. Everything from a ShadowSpillProgram onwards is neutral, so planning a
 saved one must not drag a framework in.
 
 This is checked in a fresh interpreter per case: once any test in this

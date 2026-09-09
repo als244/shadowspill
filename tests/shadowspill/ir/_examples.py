@@ -17,10 +17,10 @@ from shadowspill.ir import (
     Persistence,
     PhysicalAdmission,
     PlanPrediction,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskAlternativeGroup,
     TaskAlternativeOption,
@@ -31,10 +31,10 @@ from shadowspill.ir import (
 SAVE_SELECTION = (TaskAlternativeChoice("activation_tradeoff", "save"),)
 
 
-def representative_program() -> Program:
+def representative_program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     control = ResourceSpec("cuda_0", ResourceKind.CONTROL)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("input_storage", "cuda_0", 64),
@@ -191,12 +191,12 @@ def representative_plan() -> ExecutionPlan:
     )
 
 
-def write_back_program() -> Program:
+def write_back_program() -> ShadowSpillProgram:
     """One retained state alias: `update` writes it in place, `consume` reads
     it after a spacer long enough for a copy to land in between."""
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("state_storage", "cuda_0", 128, retain_spill_copy=True),
