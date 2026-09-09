@@ -38,8 +38,17 @@ python -m benchmarking.quickstart mlops_llama3 \
   --search-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \
   --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \
   --spill-gib 112 --steps 5 \
+  --min-tokens-per-microbatch 4096 \
   --plots
 ```
+
+The floor is what makes that command finish in reasonable time. Splitting 64
+sequences of 1024 tokens gives seven geometries, and the two narrowest --
+one sequence per microbatch across 64 rounds, and two across 32 -- run far
+longer than the rest for the same work, because a step's fixed per-task and
+per-boundary costs are paid once per round. A floor of 4096 tokens drops
+exactly those two and keeps the five that are worth comparing. Raise or
+remove it when the narrow end is the thing being studied.
 
 The low end is there on purpose. A geometry cannot plan below the largest
 amount one task must hold at once: its inputs, outputs and mutations counted
