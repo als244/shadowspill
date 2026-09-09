@@ -1,6 +1,6 @@
 # Graph-pair selection
 
-Graph-pair selection constructs the finite set of complete Program task
+Graph-pair selection constructs the finite set of complete program task
 selections that PressureFit evaluates. It consumes the occurrence-level
 options produced by [graph-pair construction](graph-pair-construction.md), but
 does not capture, compile, or profile graphs. It is also separate from
@@ -11,13 +11,13 @@ objects reside and when they move**.
 The common PyTorch training case gives each differentiated stage occurrence a
 `save` graph pair and a `recompute` graph pair. Structurally equivalent
 occurrences share graph construction and profiling, but remain separate
-Program choices because their lifetimes and surrounding pressure differ. The
+program choices because their lifetimes and surrounding pressure differ. The
 framework-neutral IR is more general: a `TaskAlternativeGroup` may expose any
 finite set of mutually exclusive `TaskAlternativeOption` values, and Programs
 may contain no groups at all.
 
 For example, two occurrences can share one set of structural graph pairs while still
-producing independent Program groups:
+producing independent program groups:
 
 ```text
 structural contract A
@@ -69,8 +69,8 @@ compute a selection spends above the cheapest option of every group.
 A graph pair is a forward graph and its backward graph, so this whole family
 is training vocabulary. The neutral tree does not use it. `shadowspill.ir`,
 `shadowspill.planner`, `shadowspill.simulator` and `shadowspill.runtime` plan
-any **resolved program** — a Program with every alternative fixed, leaving one
-concrete task set — and an inference Program resolves a forward partition with
+any **resolved program** — a program with every alternative fixed, leaving one
+concrete task set — and an inference program resolves a forward partition with
 no pair in sight. So the IR names the general case: a `TaskAlternativeGroup`
 owns mutually exclusive `TaskAlternativeOption` values, and a
 `TaskAlternativeChoice` fixes one option for one group.
@@ -83,15 +83,15 @@ program to leases](admission-leases.md) are written in terms of resolved
 programs while this page is written in terms of graph pairs: the same object,
 named from whichever side of the boundary is speaking.
 
-The serialized keys spell three of these differently — `recomputation_groups`
-in the Program JSON, `recomputation_selection` and `recomputation_problems` in
-the plan store. Those keys are identity rather than prose: `Program.digest` is
-computed over the Program's own JSON, and every plan-store key derives from
-it, so a key moves only with a schema version and a recollected corpus.
+The serialized keys spell three of these differently — `task_alternative_groups`
+in the program JSON, `resolved_program` and `resolved_programs` in
+the planning store. Those keys are identity rather than prose: `ShadowSpillProgram.digest`
+is computed over the program's own JSON, and every planning-store key derives
+from it, so a key moves only with a schema version and a recollected corpus.
 
 ## Inputs and output
 
-The planner consumes only immutable Program facts:
+The planner consumes only immutable program facts:
 
 - ordered `TaskAlternativeGroup` values;
 - each option's `option_id`, active task IDs, and retained alias IDs;
@@ -130,18 +130,19 @@ and contention; PressureFit's simulator evaluates those jointly.
 ## The current selection policy
 
 The resolution options are the caller's to name. `plan_program()`,
-`pressurefit()`, `pressurefit_program()`, `plan_step()` and
-`plan_step_search()` take `resolution_options`, the fractions of flexible
-groups to recompute, and the selector builds one selection per option; the
-library's default, `DEFAULT_RESOLUTION_OPTIONS` in
-`shadowspill.planner.recomputation`, is every quarter. What follows is the
-mechanism that turns the options into selections. The two cases that ignore
-them — no groups, and inventories small enough to enumerate — ignore them
-because they have nothing to choose.
+`pressurefit`, `plan_program()`, `plan_step()` and `plan_step_search()`
+all take `resolution_options`, the fractions of flexible groups to recompute,
+and the selector builds one selection per option; the library's default,
+`DEFAULT_RESOLUTION_OPTIONS` in `shadowspill.planner.search.toolkit`, is every
+quarter. A program carries none of this, because a program is a problem and
+how to search it is the caller's. What follows is the mechanism that turns the
+options into selections. The two cases that ignore them — no groups, and
+inventories small enough to enumerate — ignore them because they have nothing
+to choose.
 
 ### No groups
 
-A Program without graph-pair groups yields one empty selection. PressureFit
+A program without graph-pair groups yields one empty selection. PressureFit
 then operates as an ordinary residency and transfer planner.
 
 ### Small products
@@ -163,12 +164,13 @@ quarter:
 
 Finer options are the caller's to name. A finer ladder can only find plans
 between the quarter rungs, and it costs a search per extra rung, so it is a
-trade of planning time for makespan that the caller makes knowingly. Under
-the deterministic gate a rung answers the same in every set of options it
-belongs to, so a superset is never worse than its subset, only slower. Shares are exact fractions in $[0, 1]$, sorted and
-deduplicated, and the count a share selects is rounded half up, so two shares
-of a small group count can name the same selection, which is then planned
-once.
+trade of planning time for makespan that the caller makes knowingly. Under the
+deterministic gate a rung answers the same in every set of options it belongs
+to, so a superset is never worse than its subset, only slower.
+
+Shares are exact fractions in $[0, 1]$, sorted and deduplicated, and the count
+a share selects is rounded half up, so two shares of a small group count can
+name the same selection, which is then planned once.
 
 For each share, recomputed groups are chosen at centered, evenly spaced
 positions in stable group order. If there are $G$ flexible groups and the
@@ -203,10 +205,10 @@ Every graph-pair group whose forward tasks are sinks of the selected
 forward dependency graph is required to expose exactly one option named
 `save`. That option is forced in every resolution. Terminal forward
 groups are therefore not treated as recomputation degrees of freedom by the
-current policy. The rule names the `forward` phase deliberately: a Program
+current policy. The rule names the `forward` phase deliberately: a program
 that declares no forward phase forces nothing and keeps every alternative
 open.
-See [phases and sinks](ir.md#phases-and-sinks) for what sink means and why
+See [phases and sinks](program.md#phases-and-sinks) for what sink means and why
 generalising the rule would be worse than naming the phase.
 
 The rule is graph-derived: it uses task phase and dependency edges, not model
@@ -222,7 +224,7 @@ arbitrary -- which would make a plan's digest depend on nothing. Such a group
 takes its fastest option.
 
 Like the rule above, this one is stated about the options rather than about
-which stage they belong to, so it holds for any Program. `flexible_group_count`
+which stage they belong to, so it holds for any program. `flexible_group_count`
 on the plan summary counts the groups that remain a real decision, and that is
 the population a resolution share is taken of.
 
@@ -274,7 +276,7 @@ legal selection that was not emitted.
 
 That limitation belongs here, not inside PressureFit. A richer recomputation
 planner can generate a different finite set of resolutions without changing the
-PressureFit Program, residency, action, simulation, or runtime contracts.
+PressureFit program, residency, action, simulation, or runtime contracts.
 
 Graph-pair construction and profiling are described in the dedicated
 [graph-pair construction](graph-pair-construction.md) page. The IR

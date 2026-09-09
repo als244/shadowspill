@@ -10,7 +10,7 @@ from ..capi import (
     CIndexedSchedule,
     planner_api,
 )
-from .indexed import EncodedIndexedSchedule, IndexedAdmissionFacts
+from .indexing import IndexedAdmissionFacts, IndexedMemorySchedule
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +66,7 @@ _NO_OPERATION = (1 << 64) - 1
 def build_admission_operations(
     simulation: object,
     admission: IndexedAdmissionFacts,
-    schedule: EncodedIndexedSchedule,
+    schedule: IndexedMemorySchedule,
 ) -> AdmissionOperations:
     """Derive the operations `schedule` implies for this resolved program."""
 

@@ -13,7 +13,7 @@ while API pages define individual contracts.
 3. [Concurrent planned callables](concurrent-callables.md) — dispatch several
    admitted callables before synchronizing their results.
 4. [Reusable planning and budget sweeps](reusable-planning.md) — separate
-   capture/profiling from PressureFit evaluation.
+   building a program from planning it, then plan one program many times.
 5. [Diagnosing a plan and real step](diagnostics.md) — join PlanReport and
    StepResult evidence by execution ID.
 6. [Custom stage partitioning](custom-partitioning.md) — supply a validated
@@ -27,7 +27,7 @@ while API pages define individual contracts.
 - Runtime construction occurs before any accelerator allocation in the
   process.
 - Example tensors remain on CPU until ShadowSpill owns execution placement.
-- Planning caches use a fast local filesystem.
+- The artifact store lives on a fast local filesystem.
 
 The training example is self-contained. The other pages focus on the changed
 portion of the workflow and refer back to it for common model, runtime, and

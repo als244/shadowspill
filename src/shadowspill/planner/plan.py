@@ -1,388 +1,131 @@
-"""Search across resolved programs, one at a time.
+"""The one entry to planning: a question in, an admitted plan out.
 
-A Program arrives with alternatives still open: each task-alternative
-group can be saved or recomputed, so one Program expands into several
-*resolved programs*, each a concrete task set. PressureFit plans one of
-those. Deciding which ones to try, and in what order, is this layer's job.
+`plan_program` is what a caller reaches for. It fixes the machine from a
+budget, keys the answer in the planning store, hands the question to a
+search, holds that search to any plan it was given, and admits the winner
+physically.
 
-The split matters because of what will cross the boundary. A plan admitted
-under any resolved program is a real plan, so it can bound the search under
-every other one -- which is what makes the order worth choosing. PressureFit
-receives that bound as an argument and never learns where it came from, so
-it keeps knowing only tasks, runtimes, object accesses, budgets and
-bandwidths.
+Which search runs is the caller's choice and this module's ignorance:
+`search` is any :class:`~shadowspill.planner.SearchAlgorithm`, and
+`search_options` is that search's own record, carried into the plan key and
+never read here. PressureFit is the search that ships.
 
-This module is framework-neutral: it needs a Program, its resolutions and a
-budget, and nothing that belongs to a frontend.
+This module is framework-neutral: it needs a program, a budget and a
+machine, and nothing that belongs to a frontend.
 """
 
 from __future__ import annotations
 
 import os
-import time
-from collections.abc import Callable, Sequence
-from dataclasses import replace
 
-from shadowspill.ir import Program, ResidencySpec
+from shadowspill.ir import ResidencySpec, ShadowSpillProgram
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator.capi import simulator_api
 
 from .admission import AdmissionFacts
-from .artifact_store import ArtifactStore
-from .best import BestPlaced
-from .capi import planner_api
-from .pressurefit import evaluate_resolutions, validate_pressurefit_inputs
-from .pressurefit.search import (
-    build_problems,
-    finish_pressurefit,
-    preflight_problems,
-)
+from .artifact_store import ArtifactStore, StoreMode
 from .program import (
     AnnotatedProgramPlan,
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
-from .recomputation import Resolution, ShareValue, resolutions
-from .request import PressureFitOptions
-from .result import PressureFitInfeasibleError, PressureFitResult
-
-#: What a group's alternatives are called today. Ordering only needs to
-#: recognise the two extremes; anything else falls through to the middle.
-_RECOMPUTE = "recompute"
-_SAVE = "save"
-
-
-def _recompute_share(resolution: Resolution) -> float:
-    """Fraction of this resolution's groups that recompute."""
-
-    if not resolution:
-        return 0.0
-    recomputed = sum(1 for item in resolution if item.option_id == _RECOMPUTE)
-    return recomputed / len(resolution)
-
-
-def ordered_resolutions(
-    program: Program,
-    resolution_options: Sequence[ShareValue] | None = None,
-) -> tuple[Resolution, ...]:
-    """Return the resolved programs to try, most recomputed first.
-
-    Order is part of the algorithm, not a detail of it. A plan placed under
-    any resolved program bounds the search under every later one, so the order
-    decides how much work the search does — and, more sharply, whether the
-    bound exists early enough to prevent any work at all.
-
-    The rule is one sort: descending share of groups recomputed. Recomputing
-    frees the memory that is binding under pressure, so a more-recomputed
-    resolution is both likelier to place a plan at all and likelier to be the
-    one that wins. Measured across the 2,520-point corpus, win rate follows
-    that share without exception:
-
-        recomputed   97%    74%    49%    25%     0%
-        wins        68.5%  17.7%   8.7%   4.3%   2.7%
-
-    So position in this order is roughly how likely a resolution is to be the
-    answer, which is exactly what a search wants to try first: the strongest
-    bound arrives soonest, and everything after it searches against a real
-    plan rather than an empty record.
-
-    "Frees memory" is the likely case rather than a guarantee: peak working
-    space rises when recomputing, so a program could in principle fail on
-    workspace at full recompute while fitting with some saved. This is a
-    heuristic about where to look first and never a claim about what is
-    feasible, so being wrong costs a little work and nothing else.
-
-    Ties keep the order the program listed them in, so the result is a
-    function of the program and the resolution options alone;
-    ``resolution_options`` has the meaning and default of
-    `recomputation.resolutions`.
-    """
-
-    resolved = resolutions(program, resolution_options)
-    if len(resolved) < 2:
-        return resolved
-    ranked = sorted(
-        enumerate(resolved),
-        key=lambda pair: (-_recompute_share(pair[1]), pair[0]),
-    )
-    return tuple(resolution for _position, resolution in ranked)
-
-
-def plan_program(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    options: PressureFitOptions | None = None,
-    admission: AdmissionFacts | None = None,
-    placement: AdmissionFacts | None = None,
-    best: BestPlaced | None = None,
-    progress: Callable[[str], None] | None = None,
-    resolution_options: Sequence[ShareValue] | None = None,
-    incumbent: PressureFitResult | None = None,
-) -> PressureFitResult:
-    """Plan `program` by planning each of its resolved programs in turn.
-
-    `best` carries a plan already in hand across resolved programs, so each
-    one is searched against the answer the previous ones found. Passing one
-    in shares that bound with a wider search; omitting it means this call
-    starts from nothing and keeps its own.
-
-    `resolution_options` names which resolved programs exist: the shares of
-    flexible groups to recompute, one resolved program each, as exact
-    fractions; `None` is the library's default of every quarter.
-
-    `incumbent` is the plan to beat: a result for this same Program, found
-    elsewhere -- at a smaller capacity, say. The search measures it at this
-    capacity before any candidate runs and answers with it unless a
-    candidate does strictly better, so the answer is never worse than it.
-    It reaches the resolved program it was found for; a search over
-    resolution options that do not include that one carries none.
-    """
-
-    validate_pressurefit_inputs(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-    )
-    if incumbent is not None and incumbent.program.digest != program.digest:
-        raise ValueError("the plan to beat is a plan for a different Program")
-    selected_options = options or PressureFitOptions()
-    resolved = ordered_resolutions(program, resolution_options)
-    if progress is not None:
-        progress(
-            "PressureFit resolutions: "
-            f"groups={len(program.task_alternative_groups)}, "
-            f"selections={len(resolved)}"
-        )
-
-    started = time.perf_counter_ns()
-    # One record for the whole search. Every candidate under every resolved
-    # program measures against what has already been placed, which is what
-    # makes measuring affordable and what makes their order worth choosing.
-    owned = BestPlaced() if best is None else None
-    shared = best if best is not None else owned
-    try:
-        # Every resolved program, evaluated in one call.
-        #
-        # A resolved program that cannot satisfy the semantic-capacity
-        # preflight is not an answer about the Program: it says this one way
-        # of fixing the save/recompute alternatives does not fit, which is
-        # exactly the question this layer exists to ask several times. Under
-        # pressure the least-recomputed resolution routinely fails it while
-        # the recompute-heavy ones admit, so a rejection is filtered there,
-        # and only a Program with no viable resolution at all is infeasible.
-        #
-        # Threads belong to the library and to this call. Handing it every
-        # resolved program at once is what lets a worker move between them
-        # instead of idling on the slowest, and what shares the placement
-        # record across them.
-        try:
-            evaluated = evaluate_resolutions(
-                program,
-                resolutions=resolved,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=config,
-                options=selected_options,
-                admission=admission,
-                placement=placement,
-                best=shared,
-                progress=progress,
-                incumbent=incumbent,
-            )
-        except ValueError:
-            # Every resolved program was rejected, so the Program itself has
-            # no viable way to fix its alternatives.
-            raise
-        valid = tuple(
-            (problem, result) for problem, result in evaluated if result is not None
-        )
-        if progress is not None:
-            progress(
-                "PressureFit compiled problems and candidates finished: "
-                f"valid={len(valid)}/{len(evaluated)}, "
-                "candidates="
-                f"{sum(len(result.candidates) for _problem, result in valid)}, "
-                f"workers={selected_options.workers or 'auto'}, "
-                f"elapsed={(time.perf_counter_ns() - started) / 1e9:.3f}s"
-            )
-        if not valid:
-            # Every resolved program failed the planner's own analytic
-            # capacity check: nothing fits at this capacity, and the caller
-            # hears that as infeasibility, as it would from any one of them.
-            raise PressureFitInfeasibleError(
-                "every resolution of the program is analytically infeasible "
-                "at this capacity",
-                kind="analytic_capacity",
-            )
-        # One decode across every resolved program, so the winner and the
-        # diagnostics are exactly what a single batched evaluation produced.
-        return finish_pressurefit(
-            program,
-            initial_residency,
-            final_residency,
-            config,
-            selected_options,
-            tuple(problem for problem, _result in valid),
-            tuple(result for _problem, result in valid),
-            admission,
-            shared,
-            placement=placement,
-            incumbent=incumbent,
-        )
-    finally:
-        if owned is not None:
-            owned.close()
+from .search import SearchOptions
 
 
 def validate_schedule_feasibility(
-    program: Program,
+    program: ShadowSpillProgram,
     *,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     admission: AdmissionFacts | None = None,
-    resolution_options: Sequence[ShareValue] | None = None,
+    search_options: SearchOptions | None = None,
 ) -> None:
-    """Reject irreducible capacity failures using the planner.
+    """Reject an irreducible capacity failure before a search is paid for.
 
-    The check runs over the same `resolution_options` `plan_program` would
-    search, so what passes here is what the search can reach.
+    The check is the search's own -- only it knows what it could reach --
+    so this asks the one that will run. What passes here is what that
+    search can reach; it is not a promise that a plan exists.
     """
 
-    validate_pressurefit_inputs(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-    )
-    simulator_api()
-    planner_api()
-    problems = build_problems(
-        program,
-        initial_residency,
-        final_residency,
-        config,
-        admission,
-        resolutions=resolutions(program, resolution_options),
-        progress=None,
-    )
-    preflight_problems(problems)
-
-
-def pressurefit(
-    program: Program,
-    *,
-    initial_residency: tuple[ResidencySpec, ...],
-    final_residency: tuple[ResidencySpec, ...] = (),
-    config: SimulationConfig,
-    options: PressureFitOptions | None = None,
-    admission: AdmissionFacts | None = None,
-    placement: AdmissionFacts | None = None,
-    progress: Callable[[str], None] | None = None,
-    resolution_options: Sequence[ShareValue] | None = None,
-    incumbent: PressureFitResult | None = None,
-) -> PressureFitResult:
-    """Select a schedule for `program`.
-
-    Capacity is settled inside the search: a candidate measures its own
-    plan against the pool `placement` describes and gives capacity back
-    until the plan fits, so there is nothing to retry at this level.
-    `incumbent` is the plan to beat, as for :func:`plan_program`.
-    """
-
-    result = plan_program(
+    chosen = search_options if search_options is not None else SearchOptions()
+    chosen.resolved_algorithm.preflight(
         program,
         initial_residency=initial_residency,
         final_residency=final_residency,
         config=config,
-        options=options,
         admission=admission,
-        placement=placement,
-        progress=progress,
-        resolution_options=resolution_options,
-        incumbent=incumbent,
-    )
-    return replace(
-        result,
-        diagnostics=replace(
-            result.diagnostics,
-            effective_object_capacity_bytes=(
-                None if admission is None else admission.object_capacity_bytes
-            ),
-        ),
-        admission_facts=admission,
+        generic=chosen.generic,
     )
 
 
-__all__ = [
-    "ordered_resolutions",
-    "plan_program",
-    "pressurefit",
-    "validate_schedule_feasibility",
-]
+__all__ = ["plan_program", "validate_schedule_feasibility"]
 
 
-def pressurefit_program(
-    program: PressureFitProgram,
+def plan_program(
+    problem: ShadowSpillPlanningProblem,
     *,
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
-    options: PressureFitOptions | None = None,
-    resolution_options: Sequence[ShareValue] | None = None,
+    search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
-    artifact_store_dir: str | os.PathLike[str] | None = None,
-    plan_store_dir: str | os.PathLike[str] | None = None,
+    artifact_store: str | os.PathLike[str] | None = None,
+    plan_store: str | os.PathLike[str] | None = None,
     verbose: bool = True,
-    save_plan: bool = True,
-    force_fresh: bool = False,
-    overwrite_plan: bool = False,
+    plan_store_mode: StoreMode = "contribute",
     implementation_revision: str | None = None,
 ) -> AnnotatedProgramPlan:
-    """Run recomputation, PressureFit, simulation, and physical admission.
+    """Plan one problem: search, simulate, and physically admit the winner.
 
-    ``program`` is normally ``make_step_program(...).recurrent`` or the value
-    reconstructed by :meth:`PressureFitProgram.from_value`. This operation is
-    model- and runtime-independent and may be repeated for a budget/bandwidth
-    frontier without capture, compilation, or profiling. ``resolution_options``
-    names the resolutions to search, as for :func:`plan_program`; the program
-    itself carries none, because a Program is a problem and how to search it
-    is the caller's. ``incumbent`` is the plan to beat: a plan for this same
-    program found under another budget, which the search answers with unless
-    it does strictly better; a plan that fits in less memory fits in more,
-    so a sweep that plans budgets ascending hands each one the best plan
-    below it and never plans worse with more. ``plan_store_dir`` keeps this
-    call's request, selection and plan manifest apart from the artifact
-    store, so one store can serve many runs that each own their plans;
-    ``None`` keeps them in the store.
+    ``problem`` is normally ``build_step_program(...).recurrent`` or the
+    value reconstructed by :meth:`ShadowSpillPlanningProblem.from_value`. It
+    carries the program, where it must start and end, and what the machine
+    is; it carries no policy, so this call is model- and runtime-independent
+    and may be repeated for a budget/bandwidth frontier without capture,
+    compilation, or profiling.
+
+    ``execution_budget``, ``spill_budget`` and ``transfer_bandwidths``
+    override what the problem was captured under, which is how one problem
+    serves a whole frontier.
+
+    ``search_options`` is the whole of what this call is told about
+    searching: ``generic``, which any search understands, and
+    ``algorithm``, which is the search itself carrying its own options.
+    Both reach the plan key; ``search_options.workers`` does not, because
+    it says how much machine to spend rather than what to decide. Leaving
+    ``algorithm`` unset runs the search
+    that ships; a caller with a search of their own subclasses
+    :class:`~shadowspill.planner.SearchAlgorithm` and passes an instance,
+    which needs nothing registered and no name looked up.
+
+    ``incumbent`` is the plan to beat: a plan for this same program found
+    under another budget. It reaches the search as a bound, and the answer
+    is held to it here -- a plan that fits in less memory fits in more, so a
+    sweep that plans budgets ascending hands each one the best plan below it
+    and never plans worse with more, whichever search is running.
+
+    ``plan_store`` keeps this call's request, selection and plan manifest
+    apart from the artifact store, so one store can serve many runs that
+    each own their plans; ``None`` keeps them in the store.
     """
 
     from .selection import select_program
 
-    if options is not None and not isinstance(options, PressureFitOptions):
-        raise TypeError("options must be PressureFitOptions or None")
+    if search_options is not None and not isinstance(search_options, SearchOptions):
+        raise TypeError("search_options must be SearchOptions or None")
     cache = ArtifactStore.resolve(
-        artifact_store_dir,
-        plan_store_dir=plan_store_dir,
-        save_plan=save_plan,
-        force_fresh=force_fresh,
-        overwrite_plan=overwrite_plan,
+        artifact_store,
+        plan_store=plan_store,
+        plan_store_mode=plan_store_mode,
         implementation_revision=implementation_revision,
     )
     cache.initialize()
     return select_program(
-        program,
+        problem,
         execution_budget_bytes=execution_budget,
         spill_budget_bytes=spill_budget,
         transfer_bandwidths=transfer_bandwidths,
-        options=options,
-        resolution_options=resolution_options,
+        search_options=search_options,
         incumbent=None if incumbent is None else incumbent.result,
         artifact_store=cache,
         verbose=verbose,

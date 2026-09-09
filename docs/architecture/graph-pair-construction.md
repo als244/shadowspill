@@ -11,8 +11,8 @@ The three layers have deliberately different outputs:
 | Layer | Unit of work | Output |
 |---|---|---|
 | Graph-pair construction | One structural stage contract | A `TaskGraphPairs` containing named forward/backward variants |
-| Graph-pair selection | All occurrence-level `TaskAlternativeGroup` values in one Program | A bounded tuple of complete `TaskAlternativeChoice` assignments |
-| PressureFit | One complete assignment plus the Program and machine model | A residency/action schedule with simulated cost |
+| Graph-pair selection | All occurrence-level `TaskAlternativeGroup` values in one program | A bounded tuple of complete `TaskAlternativeChoice` assignments |
+| PressureFit | One complete assignment plus the program and machine model | A residency/action schedule with simulated cost |
 
 This separation lets the frontend add another legal graph-pair variant without
 changing the framework-neutral selection, PressureFit, simulator, or
@@ -27,13 +27,13 @@ runtime contracts.
 | Graph pair | One mutually compatible AOTAutograd forward graph and backward graph. |
 | Variant | A named graph pair produced by one partitioning policy, such as `save` or `recompute`. |
 | Task graph pairs | Every configured legal variant for one structural contract. |
-| Graph-pair group | The occurrence-level Program choice whose options activate one variant's forward and backward tasks. |
+| Graph-pair group | The occurrence-level program choice whose options activate one variant's forward and backward tasks. |
 
 The rest of the family — choice, selection, and problem — is named in
 [Graph-pair selection](graph-pair-selection.md).
 
 A graph pair is not a pair of chronological execution IDs. Construction
-happens before execution tasks receive their final Program identities. During
+happens before execution tasks receive their final program identities. During
 lowering, each stage occurrence gets one alternative forward task and one
 alternative backward task per variant.
 
@@ -170,7 +170,7 @@ AOT “saved values” are backward arguments, but not every saved leaf creates 
 new retained activation allocation. `saved_value_footprint()` classifies the
 saved storage roots:
 
-| Class | Meaning | New retained Program bytes |
+| Class | Meaning | New retained program bytes |
 |---|---|---:|
 | Input root | A saved leaf aliases an existing forward input. | 0 |
 | Boundary root | A saved leaf aliases a public stage output already needed by the next stage. | 0 |
@@ -204,7 +204,7 @@ Equivalent artifact/profile keys are measured once. Different graph-pair
 variants remain distinct whenever their graph, input problem, executable
 storage, or profiling metadata differs.
 
-## Lowering into Program alternatives
+## Lowering into program alternatives
 
 For every stage occurrence and every variant, `TaskBindingResolver` binds the
 pair to canonical objects and the training task emitter creates:
@@ -222,14 +222,14 @@ TaskAlternativeOption
 One occurrence-level `TaskAlternativeGroup` contains all of those options. Each
 option names exactly the forward/backward task IDs it activates and the
 internal alias groups it retains. Tasks for unselected variants remain in the
-immutable Program but are excluded by `Program.selected_tasks()`.
+immutable program but are excluded by `ShadowSpillProgram.selected_tasks()`.
 
 Structural deduplication and occurrence-level choice are both preserved:
 
 - `PlanReport.diagnostics.unique_stages` describes one structural contract and all
   profiled graph pairs;
 - the execution-task map identifies each occurrence and its selected variant;
-- the Program's task-alternative groups carry the exact occurrence-level task
+- the program's task-alternative groups carry the exact occurrence-level task
   and retained-alias identities that graph-pair selection then fixes.
 
 ## PlanReport diagnostics
@@ -324,7 +324,7 @@ from allocator pointers or FakeTensor storage identity.
 | `shadowspill.pytorch.graph_pairs.footprint` | Classify saved input, boundary, and internal storage roots. |
 | `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and occurrence rebinding. |
 | `shadowspill.pytorch.profiling` | Compile and measure each unique forward/backward artifact. |
-| `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit Program groups. |
+| `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit program groups. |
 
 Previous: [PyTorch capture and lowering](lowering.md). Next:
 [Graph-pair selection](graph-pair-selection.md).

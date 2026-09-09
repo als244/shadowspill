@@ -9,8 +9,8 @@ copy goes on which stream, in what order, and measures what it built.
 A route is a directed copy path: a source pool, a destination pool, and the
 direction their kinds imply (pinned host to device is a fetch, device to
 pinned host an evict). Routes are declared to `shadowspill_runtime_create()`
-by pool ids; the runtime refuses a route between pools of the same kind or a
-duplicate pair.
+by pool ids; the runtime refuses a route whose two pools share a kind, and a
+second route over a pair it already has.
 
 Each route owns one lane: a backend stream the runtime creates at start,
 names through the profiler, and destroys at close. The worker dispatches every

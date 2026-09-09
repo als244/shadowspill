@@ -8,6 +8,8 @@ planner has to raise and catch them without importing a framework.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class PlanningError(RuntimeError):
     """Raised before execution when a requested plan cannot be constructed."""
@@ -51,7 +53,11 @@ class AdmissionError(PlanningError):
 
 
 class PlanInfeasibleError(AdmissionError):
-    """Raised when no schedule satisfies the declared planning constraints."""
+    """Raised when no schedule satisfies the declared planning constraints.
+
+    ``diagnostics`` carries what the search rejected and why, when the caller
+    wants to know more than that nothing fit.
+    """
 
     def __init__(
         self,
@@ -62,6 +68,7 @@ class PlanInfeasibleError(AdmissionError):
         boundary_task_id: str | None = None,
         required_bytes: int | None = None,
         capacity_bytes: int | None = None,
+        diagnostics: tuple[Any, ...] = (),
     ) -> None:
         super().__init__(message)
         self.kind = kind
@@ -69,10 +76,25 @@ class PlanInfeasibleError(AdmissionError):
         self.boundary_task_id = boundary_task_id
         self.required_bytes = required_bytes
         self.capacity_bytes = capacity_bytes
+        self.diagnostics = diagnostics
 
 
 class PlanSearchExhaustedError(PlanningError):
-    """Raised when a bounded planner search stops without a proof either way."""
+    """Raised when a bounded planner search stops without a proof either way.
+
+    Deliberately distinct from :class:`PlanInfeasibleError`: a candidate that
+    reaches its evaluation ceiling has not proved that no legal schedule
+    exists, only that this search stopped looking.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: tuple[Any, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 class InputGuardError(ValueError):

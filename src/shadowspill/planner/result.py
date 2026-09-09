@@ -1,71 +1,30 @@
-"""What PressureFit gives back, including the two ways it can decline."""
+"""What a search gives back, including the two ways it can decline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.ir import (
     EntrypointSpec,
     ExecutionPlan,
     MemorySchedule,
     PhysicalAdmission,
     PlanPrediction,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
 )
 from shadowspill.simulator import SimulationConfig, SimulationResult
 
 from .diagnostics import (
-    CandidateDiagnostic,
-    PressureFitDiagnostics,
+    PlanningDiagnostics,
 )
-from .request import PressureFitOptions
 
 if TYPE_CHECKING:
     from .admission import AdmissionFacts
-
-
-class PressureFitInfeasibleError(ValueError):
-    """No candidate satisfied the declared residency and capacity constraints."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        kind: str,
-        device_id: str | None = None,
-        boundary_task_id: str | None = None,
-        required_bytes: int | None = None,
-        capacity_bytes: int | None = None,
-        diagnostics: tuple[CandidateDiagnostic, ...] = (),
-    ) -> None:
-        super().__init__(message)
-        self.kind = kind
-        self.device_id = device_id
-        self.boundary_task_id = boundary_task_id
-        self.required_bytes = required_bytes
-        self.capacity_bytes = capacity_bytes
-        self.diagnostics = diagnostics
-
-
-class PressureFitSearchExhaustedError(RuntimeError):
-    """A bounded candidate search stopped before proving feasibility.
-
-    This is deliberately distinct from ``PressureFitInfeasibleError``.  A
-    repairable candidate that reaches its evaluation ceiling has not proved
-    that no legal schedule exists.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        diagnostics: tuple[CandidateDiagnostic, ...] = (),
-    ) -> None:
-        super().__init__(message)
-        self.diagnostics = diagnostics
+    from .search import SearchOptions
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,18 +54,22 @@ class ResidentSlice:
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitResult:
+class ProgramPlanResult:
     """Selected logical schedule plus exact simulator evidence."""
 
-    program: Program
-    options: PressureFitOptions
+    program: ShadowSpillProgram
+    #: Everything the search was told: the generic options, the algorithm
+    #: that ran, and that algorithm's own options. The planner never reads
+    #: it back; a record replaying this plan needs it, and so does anything
+    #: asking why one search answered differently from another.
+    search_options: SearchOptions
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     simulation_config: SimulationConfig
     schedule: MemorySchedule
     selections: tuple[TaskAlternativeChoice, ...]
     simulation: SimulationResult
-    diagnostics: PressureFitDiagnostics
+    diagnostics: PlanningDiagnostics
     resident_slice: ResidentSlice = ResidentSlice(0, ())
     admission_facts: AdmissionFacts | None = None
     placement_facts: AdmissionFacts | None = None
@@ -170,8 +133,8 @@ class PressureFitResult:
 
 
 __all__ = [
-    "PressureFitInfeasibleError",
-    "PressureFitResult",
-    "PressureFitSearchExhaustedError",
+    "PlanInfeasibleError",
+    "PlanSearchExhaustedError",
+    "ProgramPlanResult",
     "ResidentSlice",
 ]

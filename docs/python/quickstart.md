@@ -89,7 +89,7 @@ train_step = plan_step(
     spill="spill",
     execution_budget=20 << 30,
     spill_budget=60 << 30,
-    artifact_store_dir="/local-fast-storage/shadowspill-planning",
+    artifact_store="/local-fast-storage/shadowspill-planning",
     profiling_metadata=[
         {"sequence_lengths": [4096]},
         {"sequence_lengths": [512] * 8},
@@ -102,9 +102,15 @@ runtime call must have the same outer structure and matching tensor geometry.
 ShadowSpill performs one forward/objective/backward contribution per round and
 one optimizer update per call. It does not divide accumulated gradients.
 
-`profiling_metadata` is JSON-compatible cache identity for data-dependent
+`profiling_metadata` is JSON-compatible artifact identity for data-dependent
 measurement effects. It is not passed to the model. Concrete examples still
 supply the values used for capture and isolated profiling.
+
+`artifact_store` roots the exports, compiled graphs, profiles and plans this
+call may reuse and contribute to. Point it at fast local storage. Sweeps that
+share their build work but keep their own plans root the two trees apart with
+`build_store` and `plan_store`, and `build_store_mode`/`plan_store_mode` say
+what this run does with each; see the [artifact store](artifact-store.md).
 
 ## Execute and inspect
 
@@ -203,10 +209,10 @@ runtime.close()
 Closing copies nothing, and it moves no weights. The model's parameters keep
 the spill-pool storage `import_model_state()` gave them, and that storage
 already holds every step's updates; `export_model_state()` above is what
-copies the values into ordinary CPU tensors. Optimizer state has no equivalent home -- `plan_step()` builds
-the optimizer and owns its state -- so it ends with the plan, which is why the
-checkpoint above is taken before the close, not after. Resume from one with
-`load_state_dict()`.
+copies the values into ordinary CPU tensors. Optimizer state has no equivalent
+home here: `plan_step()` built the optimizer and owns its state, so it ends
+with the plan. That is why the checkpoint above is taken before the close, not
+after. Resume from one with `load_state_dict()`.
 
 Both `Runtime` and planned callables are context managers. Explicit lifecycle
 calls make ownership and failure handling easiest to audit.

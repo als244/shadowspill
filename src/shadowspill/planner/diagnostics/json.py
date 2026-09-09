@@ -24,6 +24,9 @@ def without_measurements(value: object) -> object:
     Two runs of the same input produce the same plan and different timings, so
     anything compared or digested across runs has to leave the timings out.
     `sections` and `span` go whole: every number in them is a measurement.
+    `workers` goes for the same reason from the other direction: it is how
+    much machine was spent, not what was decided, and two runs at different
+    worker counts describe the same plan.
     """
 
     # Tuples become lists: a payload read back from JSON has lists where the
@@ -35,7 +38,8 @@ def without_measurements(value: object) -> object:
     return {
         key: without_measurements(item)
         for key, item in value.items()
-        if key not in ("sections", "span") and not key.endswith("_time_ns")
+        if key not in ("sections", "span", "workers")
+        and not key.endswith("_time_ns")
     }
 
 

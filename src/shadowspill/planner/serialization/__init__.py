@@ -17,10 +17,8 @@ from .common import (
     _string,
 )
 from .physical_layout import _fixed_layout_from_value
-from .pressurefit import (
+from .plan_result import (
     _options_from_value,
-    _options_to_dict,
-    _pressurefit_diagnostics_from_value,
     _resident_slice_from_value,
 )
 from .simulation_admission import _simulation_admission_from_value
@@ -41,9 +39,7 @@ __all__ = [
     "_optional_integer",
     "_optional_string",
     "_options_from_value",
-    "_options_to_dict",
     "_pair",
-    "_pressurefit_diagnostics_from_value",
     "_resident_slice_from_value",
     "_simulation_admission_from_value",
     "_simulation_config_from_value",

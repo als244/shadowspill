@@ -1,11 +1,10 @@
 # Artifact store
 
-`artifact_store_dir` selects one content-addressed artifact store shared by
-`plan_step()`, `plan_forward()`, `make_step_program()`, and
-`pressurefit_program()`.
+One content-addressed store, shared by `plan_step()`, `plan_forward()`,
+`build_step_program()`, and `plan_program()`. It holds two independent trees:
 
 ```text
-artifact_store_dir/
+artifact_store/
 └── v1/                   one tree per store format version
     ├── layout.json
     ├── README.md
@@ -14,22 +13,29 @@ artifact_store_dir/
     │   ├── inductor/     PyTorch Inductor and Triton caches
     │   ├── graphpairs/   structural AOT graph pairs
     │   ├── optimizers/   traced recurrent optimizer updates
-    │   ├── profiling/
-    │   │   ├── compiled_manifests/
-    │   │   └── measurements/
-    │   └── programs/     canonical PressureFit inputs
-    └── planning/         what a run measured
-        ├── requests/     what each PressureFit search was asked for
+    │   └── profiling/
+    │       ├── compiled_manifests/
+    │       └── measurements/
+    └── planning/         what a run decided
+        ├── programs/     the canonical ShadowSpillProgram each planning call was given
+        ├── requests/     what each search was asked for
         ├── results/      its answer: resolution, schedule, diagnostics
         └── plans/        the ExecutionPlan a callable runs, with its lineage
 ```
+
+A build writes nothing under `planning/`, and a planning call nothing under
+`build/`. That is what lets one build store serve many runs that each keep
+their own plans. The program archive is in the planning tree for the same
+reason: a planning call archives the program it was handed, so a plan's
+lineage points at an immutable copy of what was planned, and that copy is
+evidence about the planning rather than something a build produced.
 
 There is exactly one version for the store and everything in it:
 `shadowspill.schema.ARTIFACT_VERSION`. It names the version directory, and
 every stored file, and every structure embedded in one (programs, schedules,
 plans, graph pairs, compiled manifests, profiles, selections, requests,
 manifests), carries it in its schema string as `shadowspill.<kind>/v<N>`. It is
-bumped whenever any stored structure changes, so one `artifact_store_dir` can
+bumped whenever any stored structure changes, so one `artifact_store` can
 be kept across ShadowSpill updates: an update writes a fresh `v<N>` tree beside
 the old one and replans, and nothing inside one tree is ever read as a stale
 version. A file whose schema does not match inside a tree is corruption and
@@ -49,7 +55,7 @@ depends on the hardware and a plan depends on the bandwidths it was made for.
 
 **A key holds nothing else.** Anything a consumer chooses, rather than
 something the artifact is, stays out, or every such choice invalidates
-everything downstream of it. The clearest case is a `PressureFitProgram`: it
+everything downstream of it. The clearest case is a `ShadowSpillPlanningProblem`: it
 records a problem, so a search *policy* is not part of it. Options are passed
 by whoever plans, and the same saved program answers any of them.
 
@@ -59,9 +65,12 @@ by whoever plans, and the same saved program answers any of them.
 | Graph pair | normalized stage semantic contract, differentiation options, partition inputs | |
 | Compiled manifest | graph-pair contract, compiler and provider identity, physical storage contract | |
 | Profile | compiled manifest, hardware, representative-value policy, `profiling_metadata`, allocation-probe policy | |
-| PressureFit program | the canonical `Program` and its measured task costs, initial and final residency, admission facts, the device and its simulated capacities and calibrated transfers, the capacity contract, and the pool budgets it was profiled under | `PressureFitOptions`. A program is a problem, not a search |
-| Planned program | the program digest above, both residency lists, every device's capacity, both bandwidths and both latencies, the spill capacity, every `PressureFitOptions` field, and the admission and placement digests | nothing |
-| Plan manifest | the complete planning request and all artifact dependencies | |
+| `ShadowSpillPlanningProblem` | the canonical `ShadowSpillProgram` and its measured task costs, the role, initial and final residency, admission facts, the device and its simulated capacities and calibrated transfers, and the capacity contract | `SearchOptions`. A program is a problem, not a search |
+| Planned program | the canonical `ShadowSpillProgram` digest, both residency lists, every device's capacity, both bandwidths and both latencies, the spill capacity, every `SearchOptions` field, the admission and placement digests, and the resolution options searched over | the plan handed in as the one to beat, which is provenance rather than the question |
+
+The plan manifest is the one document not found by a key. It is filed by the
+callable it was planned for, and it names the whole request and every artifact
+the call depended on, so it is where a plan is read rather than looked up.
 
 The planned-program key is built from the inputs *resolved for that call*, not
 from what a saved program happens to record. A caller that overrides budgets or
@@ -81,22 +90,19 @@ A stored artifact carries more than its key. The extra fields are provenance:
 they record how the artifact came to exist, and they are never read back as
 inputs, so adding one cannot invalidate anything.
 
-- A `PressureFitProgram` records the budget and machine model in effect when
+- A `ShadowSpillPlanningProblem` records the budget and machine model in effect when
   it was collected. Planning it uses what the caller passes.
 - A program corpus records, in each case manifest, the collection's runtime
   configuration, model, geometry, and seed, beside the program itself.
 - A planned program records the options and resolved inputs it was searched
   under, which is what makes a stale entry detectable rather than silently
-  reused: reading one re-derives the same fields and rejects a mismatch.
+  reused: reading one re-derives the same fields and rejects a mismatch. It
+  also records the plan the search was handed to beat, which never enters the
+  key: a run that replans a budget without that plan in hand must still read
+  back the answer the sweep chose.
 
 The distinction is worth keeping deliberately. A field that is hashed is a
 question; a field that is only saved is a note about the answer.
-
-`profiling_metadata` describes data-dependent measurement effects that are not
-fully expressed by tensor geometry. For packed variable-length workloads, for
-example, the same `[T, D]` activation can use metadata that distinguishes one
-sequence from several shorter sequences. The value participates in profile
-and downstream plan identity but is never passed into execution.
 
 ## Where each artifact lands
 
@@ -113,45 +119,102 @@ path through the same helper, `digest_directory`.
 
 | Kind | Path under `v<N>/` |
 |---|---|
-| Export | `build/exports/<2>/<digest>/` |
+| Export | `build/exports/<2>/<digest>/exported_program.pt2` |
 | Graph pair | `build/graphpairs/<2>/<digest>/graph_pairs.pt` |
+| Optimizer capture | `build/optimizers/<2>/<digest>/optimizer_capture.pt` |
 | Compiled manifest | `build/profiling/compiled_manifests/<2>/<digest>/manifest.json` |
 | Profile measurement | `build/profiling/measurements/<2>/<digest>/measurement.json` |
-| PressureFit program | `build/programs/<2>/<digest>/program.json` |
-| PressureFit request | `planning/requests/<2>/<digest>/request.json` |
-| PressureFit result | `planning/results/<2>/<digest>/selection.json` |
+| Canonical program | `planning/programs/<2>/<digest>/program.json` |
+| Selection request | `planning/requests/<2>/<digest>/request.json` |
+| Planned program | `planning/results/<2>/<digest>/selection.json` |
 
 The digest in a path is the key described above, so a path is a question and
-its contents are the answer. A graph pair is the only entry that is not JSON,
-because it holds compiled graphs; its key covers the structural contract and
-the differentiation options together, so one entry is one digest like
-everything else.
-
-`build/` is what a run paid for and another run can reuse; `planning/` is
-what a run measured. A planning call given a `plan_store_dir` keeps the
-`planning/` tree under that directory's own `v<N>/` instead, so several runs
-can share one artifact store and each own their plans, and a run that shares
-a store still plans every point itself rather than reading back a plan
-another run searched. `None` keeps both trees under one root, and the store's
-diagnostics name both. A store laid out before this split is moved into place
-the first time it is opened, directory by directory, without copying, except
-its Inductor cache: Inductor's entries embed the absolute paths of their
-kernel files, so a moved cache keeps writing to where it was. A migrated
-store starts a fresh `build/inductor/` and leaves the old `pytorch/inductor/`
-behind as dead weight that may be deleted.
+its contents are the answer. The program archive is the one entry keyed by
+something it wraps rather than by a composite: its digest is `ShadowSpillProgram.digest`,
+because the archive's job is to hold one immutable copy of each distinct
+program a plan can be traced back to. Graph pairs and optimizer captures are
+the entries that are not JSON, because they hold compiled graphs and traced
+tensors; a graph pair's key covers the structural contract and the
+differentiation options together, so one entry is one digest like everything
+else.
 
 Two directories are deliberately not content-addressed, and both say why in
-their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch.
-`planning/plans/<qualified callable>/<program digest>/<plan digest>/` groups
+their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch and
+subdivided by `implementation_revision`.
+`planning/plans/<qualified callable>/<capture identity>/<plan digest>/` groups
 plan manifests under the callable they were planned for, because a person
 reading a store wants the plans for one model rather than a digest they would
 have to compute.
 
+## Rooting the two trees apart
+
+| Argument | Effect |
+|---|---|
+| `artifact_store` | Roots both trees under one directory's own `v<N>/`. `None` uses a user cache location. |
+| `build_store` | Roots `build/` elsewhere, overriding `artifact_store` for that tree. |
+| `plan_store` | Roots `planning/` elsewhere, overriding `artifact_store` for that tree. |
+
+The common shape is a build store several runs read and a plan store each run
+keeps to itself, so runs share the capture, compilation and profiling they
+paid for while each searches every point itself rather than reading back a
+plan another run found. A plan store gets its own `layout.json` naming the
+artifact store it was searched over.
+
+`build_step_program()` takes only `artifact_store` and `build_store`: it
+produces a program and plans nothing. `plan_program()` takes only
+`artifact_store` and `plan_store`: it plans a program it is given and builds
+nothing.
+
+Long-running or reproducible work should pass an explicit local-filesystem
+directory. Network filesystems are unsuitable for compiler caches and
+high-frequency atomic artifact publication.
+
+## Store modes
+
+`build_store_mode` and `plan_store_mode` each say what this run does with one
+tree: whether it reads what is there, and what it does about what is not.
+
+| Mode | Reads a hit | On a miss |
+|---|---|---|
+| `contribute` (default) | yes | builds it and writes it back |
+| `reuse` | yes | builds it and persists nothing |
+| `require` | yes | refuses |
+| `refresh` | no | rebuilds and replaces what was there |
+
+The two trees are held apart because they are shared for different reasons. A
+build artifact is what a run *paid for* and any run may reuse; a plan is what a
+run *decided*, and two runs comparing planners must not read each other's. One
+switch for both meant a run that kept its plans to itself also stopped
+contributing the builds it had paid for.
+
+`reuse` is what makes a shared store safe to read from many runs at once, and
+`require` is what makes one a fixed reference: two results compared against a
+`require` store are known to have stood on the same artifacts rather than on
+whatever each rebuilt.
+
+`build_store_mode` also decides where PyTorch compiles. Only `contribute`
+points Inductor and Triton at the store's own cache. Every other mode runs
+them in a private temporary directory, with the process-local compiler caches
+cleared on the way in and out, so an earlier plan in this process cannot
+serve an entry the mode was told not to read. `refresh` publishes what it
+built there back into the store afterwards; `reuse` and `require` discard it.
+
+`implementation_revision` is the other invalidation control. It marks the
+lower-level implementations a build was measured against, so a kernel change
+that does not change the exported graph still gives compiler and profile
+artifacts a new identity. It also names the Inductor cache subdirectory, so a
+fresh revision starts a fresh compiler cache. It reaches a plan only through
+the profiles behind it: a planned program's key does not name it.
+
+Export runs on every planning call, so Python objective and signature
+semantics are freshly validated. A matching Export archive is retained as
+evidence; it is not permission to skip capture.
+
 ## What each record contains
 
-The four planning documents -- canonical `Program`, `PressureFitProgram`,
+The four planning documents -- canonical `ShadowSpillProgram`, `ShadowSpillPlanningProblem`,
 `StepProgram`, and `AnnotatedProgramPlan` -- are specified field by field in
-[Program and annotated-plan JSON](planning-json.md). The rest of the store is
+[program and annotated-plan JSON](planning-json.md). The rest of the store is
 summarized here.
 
 Every record names its own schema and, where it is content-addressed by a key
@@ -174,78 +237,78 @@ against; `compatibility_digest` is what a task is matched by.
 
 ```text
 schema, key_digest, measurement{
-  runtime_ns, samples_ns, timing_half_drift,
+  runtime_ns, samples_ns,
+  timing_relative_mad, timing_half_drift, timing_unstable,
+  workspace_requested_bytes, workspace_charged_bytes, workspace_extent_bytes,
+  persistent_extent_bytes,
   allocation_contract, allocation_trace, allocation_path_observations,
-  persistent_extent_bytes, output_input_bindings,
-  representative_inputs, provenance, phase_timings_ns, profiling_wall_time_ns }
+  output_input_bindings, representative_inputs,
+  provenance, phase_timings_ns, profiling_wall_time_ns }
 ```
 
 `runtime_ns` with its samples is the measured cost the planner schedules
-against. The allocation contract and trace are what physical admission
-replays, and `provenance` records the hardware and policy the measurement was
-taken under.
+against, and the three `timing_*` fields say how much to trust it. The
+allocation contract and trace are what physical admission replays, and
+`provenance` records the hardware and policy the measurement was taken under.
 
-**Selection request** is the question put to PressureFit:
+**Selection request** is the question a search was put:
 
 ```text
 schema, program_digest, initial_residency, final_residency,
-simulation, admission, options, resolution_options
+simulation, options, admission, resolution_options, incumbent
 ```
 
-**Selection** is the answer, keyed by that request:
+**Planned program** is the answer, keyed by that request:
 
 ```text
 schema, key_digest, program_digest, initial_residency, final_residency,
-simulation, admission_digest, options, resolution_options, selections,
-schedule, resident_slice, diagnostics
+simulation, options, admission_digest, resolution_options, incumbent,
+schedule, selections, resident_slice, diagnostics
 ```
 
 `selections` is the task-alternative choice per group and `schedule` the memory
 schedule it implies. Reading one re-derives the request fields and rejects a
 mismatch, which is what makes a stale entry an error rather than a silent
 wrong answer. `resolution_options` are the resolutions the plan was searched
-over, as exact fractions of the flexible groups recomputing (`"1/4"`), in the
-request, in the selection and in the key, so a plan found under one set is
-never read back for another.
+over, as exact fractions of the flexible groups recomputing (`"1/4"`), and
+appear in the request, in the record and in the key, so a plan found under one
+set is never read back for another. `incumbent` is provenance in both
+documents and in neither key: it names the plan the search was handed to beat.
 
 **Plan manifest** is the readable record of one planning call, beside the
 `execution_plan.json` it produced:
 
 ```text
 schema, mode, model, capture_identity,
-execution_device, execution_pool, execution_budget_bytes,
+execution_device, execution_pool, spill_pool,
+execution_budget_bytes, spill_budget_bytes,
+requested_dynamic_scratch_reserve_bytes,
 allocation_probe_seeds, allocation_probe_repetitions,
-implementation_revision, execution_plan_digest, initial_execution_plan,
+implementation_revision, execution_plan_digest,
+execution_plan, initial_execution_plan,
 artifacts, phase_timings_ns
 ```
+
+`execution_plan` and `initial_execution_plan` are the filenames beside the
+manifest, the second `null` when the plan has no distinct first step.
 
 `artifacts` lists every store entry the call depended on, which is how a plan
 is traced back to the profiles and programs behind it.
 
-## Cache policy
-
-| Argument | Behavior |
-|---|---|
-| `plan_store_dir=None` | Keep the `planning/` tree (requests, results, plans) under this directory instead of the artifact store. |
-| `save_plan=True` | Persist artifacts and readable manifests. |
-| `force_fresh=True` | Do not read cached artifacts; use isolated compiler caches. |
-| `overwrite_plan=True` | Replace matching saved artifacts; requires both `save_plan=True` and `force_fresh=True`. |
-| `implementation_revision="..."` | Invalidate compiler/profile identity when an implementation changes without changing graph semantics. |
-
-Export is performed on each planning call so Python objective and signature
-semantics are freshly validated. A matching Export archive is retained as
-evidence; it is not treated as permission to skip capture.
-
-When `artifact_store_dir` is omitted, the package uses a user cache location.
-Long-running or reproducible work should pass an explicit local-filesystem
-directory. Network filesystems are unsuitable for compiler caches and
-high-frequency atomic artifact publication.
-
 ## Plan diagnostics
 
-`PlanReport.diagnostics.cache_artifacts` records every managed, matched, read,
-written, or improved artifact with its category, kind, digest, absolute path,
-schema, and dependency digests. A planned program is `improved` when a request
-handed a plan faster than the one on record searched again and replaced it.
-Cache directories are also recorded, so a report is a complete provenance
-index for the planning call.
+`PlanReport.diagnostics.store_directories` names the roots this call used as
+name/path pairs -- `root`, `build`, `build.inductor`, `planning`, `plan_store`
+-- and `cache_artifacts` records every artifact it touched with its category,
+kind, digest, absolute path, schema, and dependency digests. Each carries one
+disposition:
+
+| Access | Meaning |
+|---|---|
+| `read` | Its bytes were loaded and used as planning authority. |
+| `matched` | It agreed with a freshly produced in-memory value, which was used instead. |
+| `write` | This call produced it. |
+| `improved` | A planned program this call replaced: a request handed a plan faster than the one on record searched again and won. |
+| `managed` | A directory owned by another component, such as the Inductor cache. |
+
+Together they make a report a complete provenance index for the planning call.

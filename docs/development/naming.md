@@ -9,7 +9,13 @@
 - `fetch` means spill to execution; `evict` means execution to spill.
 - `worker` names the C background thread; `handle_*` names its processing
   operations.
-- `recomputation` names graph alternatives; `PressureFit` names planner policy.
+- `recomputation` names graph alternatives; `PressureFit` names the search
+  algorithm and nothing else.
+- an artifact store has a `build` tree and a `planning` tree: `artifact_store`
+  roots both, `build_store` and `plan_store` override either, and
+  `build_store_mode` and `plan_store_mode` say what a run does with each.
+- a store mode is one of `contribute`, `reuse`, `require`, `refresh`, and the
+  same four words mean the same four things on every surface.
 - `execution_XXXXXX` is the primary chronological task identity; semantic task
   name and canonical IR task ID are separate fields.
 - `profiling_metadata` is cache identity for value-sensitive task measurement,
@@ -47,6 +53,10 @@ provider spelling required by the framework hook.
 - `h2d`/`d2h` for schedule or lane policy; use `fetch`/`evict`.
 - model-family or provider names in framework-neutral policy.
 - `utils`, `helpers`, or `common` modules without one precise domain.
+- `cache` for a store that is planning evidence; the planning tree is the
+  *plan store*, and what a run does with it is a mode, not a temperature.
+- a `_dir` suffix on a store argument; it is `artifact_store` and
+  `--artifact-store`.
 - strategy names in public types when selection is an internal implementation
   detail.
 

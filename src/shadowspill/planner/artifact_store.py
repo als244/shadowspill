@@ -14,18 +14,41 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
-from shadowspill.ir import ExecutionPlan, Program
+from shadowspill.ir import ExecutionPlan, ShadowSpillProgram
 from shadowspill.ir.program import PROGRAM_SCHEMA
 from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
+
+from .store_policy import STORE_MODES, StoreMode, StorePolicy
+
+#: What a run does with one tree of a store: whether it reads what is there,
+#: and what it does about what is not.
+#:
+#: ``contribute`` reads what the store holds and writes back what it does not,
+#: which is how a store fills up, and is the default. ``reuse`` reads it and
+#: persists nothing, so a store shared by several runs is never changed by any
+#: of them. ``require`` reads it and refuses a miss, which is what makes a
+#: store a fixed reference: two runs compared against it are then known to have
+#: stood on the same artifacts rather than on whatever each rebuilt. ``refresh``
+#: ignores what is there and writes over it, which is how a stale entry is
+#: replaced without discarding the rest of the store.
+#:
+#: These are the whole policy. Reading, writing and overwriting were three
+#: separate switches with combinations that meant nothing -- overwriting
+#: without rebuilding, requiring a hit while ignoring hits -- and one mode per
+#: tree says all of it without a contradiction to guard against.
+
 
 _PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
 _CACHE_ENVIRONMENT_LOCK = threading.RLock()
 _LAYOUT_SCHEMA = artifact_schema("artifact_store")
 _EXPORT_SCHEMA = artifact_schema("pytorch.export")
 _PLAN_MANIFEST_SCHEMA = artifact_schema("plan_manifest")
-_ACCESS_KINDS = {"managed", "matched", "read", "write"}
+#: How a run touched an artifact. "improved" is a write that replaced a
+#: stored plan the answer beat, kept distinct from a first write so the
+#: ledger says which plans a run displaced.
+_ACCESS_KINDS = {"improved", "managed", "matched", "read", "write"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,12 +97,14 @@ class ArtifactStore:
     """Where one planning call reads and writes its artifacts.
 
     Two trees under one versioned root. ``build`` holds what a run pays for
-    and another run can reuse: exports, Inductor caches, graph pairs,
-    profiles and lowered programs. ``planning`` holds what a run measured:
-    the requests put to PressureFit, its results, and the plans callables
-    run, the last a readable index linking one planning call to the
-    immutable artifacts behind it. Content-addressed leaf paths provide
-    identity throughout.
+    and another run can reuse: exports, Inductor caches, graph pairs and
+    profiles. ``planning`` holds what a run decided: the program it was given,
+    the requests put to the planner, its results, and the plans callables run,
+    the last a readable index linking one planning call to the immutable
+    artifacts behind it. Nothing under ``planning`` is written by a build, and
+    nothing under ``build`` by a planning call, which is what lets one build
+    store serve many runs that each keep their own plans. Content-addressed
+    leaf paths provide identity throughout.
 
     ``plan_store`` puts the ``planning`` tree under another directory, so
     several runs can share one artifact store and each keep its own plans;
@@ -89,11 +114,11 @@ class ArtifactStore:
     root: Path
     build: Path
     planning: Path
-    save_plan: bool = True
-    force_fresh: bool = False
-    overwrite_plan: bool = False
+    build_store_mode: StoreMode = "contribute"
+    plan_store_mode: StoreMode = "contribute"
     implementation_revision: str | None = None
     plan_store: Path | None = None
+    build_store: Path | None = None
     _ledger: _ArtifactLedger = field(
         default_factory=_ArtifactLedger,
         repr=False,
@@ -105,23 +130,19 @@ class ArtifactStore:
         cls,
         value: Any | None,
         *,
-        plan_store_dir: Any | None = None,
-        save_plan: bool = True,
-        force_fresh: bool = False,
-        overwrite_plan: bool = False,
+        build_store: Any | None = None,
+        plan_store: Any | None = None,
+        build_store_mode: StoreMode = "contribute",
+        plan_store_mode: StoreMode = "contribute",
         implementation_revision: str | None = None,
     ) -> ArtifactStore:
-        for name, selected in (
-            ("save_plan", save_plan),
-            ("force_fresh", force_fresh),
-            ("overwrite_plan", overwrite_plan),
+        for name, mode in (
+            ("build_store_mode", build_store_mode),
+            ("plan_store_mode", plan_store_mode),
         ):
-            if not isinstance(selected, bool):
-                raise TypeError(f"{name} must be a bool")
-        if overwrite_plan and (not save_plan or not force_fresh):
-            raise ValueError(
-                "overwrite_plan=True requires save_plan=True and force_fresh=True"
-            )
+            if mode not in get_args(StoreMode.__value__):
+                allowed = ", ".join(get_args(StoreMode.__value__))
+                raise ValueError(f"{name} must be one of {allowed}: got {mode!r}")
         if implementation_revision is not None:
             if not isinstance(implementation_revision, str):
                 raise TypeError("implementation_revision must be a string or None")
@@ -129,25 +150,29 @@ class ArtifactStore:
             if not implementation_revision:
                 raise ValueError("implementation_revision must be non-empty")
         root = (
-            _store_root(value, "artifact_store_dir")
+            _store_root(value, "artifact_store")
             if value is not None
             else (Path.home() / ".cache" / "shadowspill").resolve()
             / f"v{ARTIFACT_VERSION}"
         )
-        plan_store = (
-            None
-            if plan_store_dir is None
-            else _store_root(plan_store_dir, "plan_store_dir")
+        # Either tree may be rooted somewhere of its own, and a specific root
+        # wins over the shared one. The common shape is a build store several
+        # runs read and a plan store each run keeps to itself.
+        plan_root = (
+            None if plan_store is None else _store_root(plan_store, "plan_store")
+        )
+        build_root = (
+            None if build_store is None else _store_root(build_store, "build_store")
         )
         return cls(
             root,
-            root / "build",
-            (root if plan_store is None else plan_store) / "planning",
-            save_plan,
-            force_fresh,
-            overwrite_plan,
+            (root if build_root is None else build_root) / "build",
+            (root if plan_root is None else plan_root) / "planning",
+            build_store_mode,
+            plan_store_mode,
             implementation_revision,
-            plan_store=plan_store,
+            plan_store=plan_root,
+            build_store=build_root,
         )
 
     @property
@@ -181,15 +206,19 @@ class ArtifactStore:
         return self.profiling / "compiled_manifests"
 
     @property
-    def pressurefit_programs(self) -> Path:
-        return self.build / "programs"
+    def programs_archive(self) -> Path:
+        # In the planning tree, not the build tree. A planning call archives
+        # the program it was given so a plan's lineage points at an immutable
+        # copy of what was planned -- that copy is evidence about the planning,
+        # and planning writes nothing under `build` by design.
+        return self.planning / "programs"
 
     @property
-    def pressurefit_requests(self) -> Path:
+    def plan_requests(self) -> Path:
         return self.planning / "requests"
 
     @property
-    def pressurefit_selections(self) -> Path:
+    def plan_selections(self) -> Path:
         return self.planning / "results"
 
     @property
@@ -197,23 +226,45 @@ class ArtifactStore:
         return self.planning / "plans"
 
     @property
-    def read_enabled(self) -> bool:
-        return not self.force_fresh
+    def build_policy(self) -> StorePolicy:
+        """What this run may do with the build tree.
+
+        Held apart from the planning tree because the two are shared for
+        different reasons. A build artifact is what a run *paid for* and any
+        run may reuse; a plan is what a run *decided*, and two runs comparing
+        planners must not read each other's.
+        """
+
+        return StorePolicy.for_mode(self.build_store_mode)
 
     @property
-    def write_enabled(self) -> bool:
-        return self.save_plan
+    def plan_policy(self) -> StorePolicy:
+        """What this run may do with the planning tree."""
+
+        return StorePolicy.for_mode(self.plan_store_mode)
+
+    @property
+    def build_reads_enabled(self) -> bool:
+        """Whether this run uses build entries the store already holds."""
+
+        return self.build_policy.read_enabled
+
+    @property
+    def build_writes_enabled(self) -> bool:
+        """Whether this run may add to the build tree."""
+
+        return self.build_policy.write_enabled
 
     @contextmanager
     def activate_pytorch(self) -> Iterator[None]:
         """Route process-global Inductor cache lookups for one planning call."""
 
-        if self.save_plan:
+        if self.build_writes_enabled or self.plan_policy.write_enabled:
             self.initialize()
         with _CACHE_ENVIRONMENT_LOCK:
             previous = os.environ.get(_PYTORCH_CACHE_ENVIRONMENT)
             previous_triton = os.environ.get("TRITON_CACHE_DIR")
-            isolated = self.force_fresh or not self.save_plan
+            isolated = not self.build_reads_enabled or not self.build_writes_enabled
             with tempfile.TemporaryDirectory(
                 prefix="shadowspill-plan-",
             ) as temporary:
@@ -239,13 +290,13 @@ class ArtifactStore:
                     else:
                         os.environ["TRITON_CACHE_DIR"] = previous_triton
 
-                if completed and self.save_plan and isolated:
+                if completed and self.build_writes_enabled and isolated:
                     _publish_cache_tree(
                         active,
                         self.inductor,
-                        overwrite=self.overwrite_plan,
+                        overwrite=self.build_policy.overwrite,
                     )
-                if self.save_plan:
+                if self.build_writes_enabled:
                     self.record(
                         category="pytorch",
                         kind="inductor_cache",
@@ -256,26 +307,20 @@ class ArtifactStore:
                     )
 
     def initialize(self) -> None:
-        """Create the stable top-level layout and its human guide.
-
-        A store laid out before the ``build``/``planning`` split is moved
-        into place first, directory by directory, so nothing in it is paid
-        for again.
-        """
+        """Create the stable top-level layout and its human guide."""
 
         self.root.mkdir(parents=True, exist_ok=True)
-        moved = _migrate_layout(self.root)
         for directory in (self.build, self.profiling, self.planning):
             directory.mkdir(parents=True, exist_ok=True)
         _write_guides(
             self.root,
-            moved,
+            False,
             {
                 "build": "what a run pays for and another can reuse: exports,"
-                " Inductor caches, graph pairs, optimizer captures, profiles,"
-                " lowered programs",
-                "planning": "what a run measured: PressureFit requests and"
-                " results, and the plans callables run",
+                " Inductor caches, graph pairs, optimizer captures, profiles",
+                "planning": "what a run decided: the programs it was given,"
+                " the requests put to the planner, its results, and the plans"
+                " callables run",
             },
             _CACHE_README,
         )
@@ -344,10 +389,10 @@ class ArtifactStore:
         archive alone never guesses Python objective semantics.
         """
 
-        directory = _digest_directory(self.exports, digest)
+        directory = digest_directory(self.exports, digest)
         artifact_path = directory / "exported_program.pt2"
         manifest_path = directory / "manifest.json"
-        if not self.save_plan:
+        if not self.build_writes_enabled:
             return artifact_path
         if self._match_export_archive(
             directory,
@@ -376,7 +421,7 @@ class ArtifactStore:
         if (
             not artifact_path.exists()
             or not manifest_path.exists()
-            or self.overwrite_plan
+            or self.build_policy.overwrite
         ):
             return False
         manifest = _read_json(manifest_path)
@@ -452,24 +497,26 @@ class ArtifactStore:
             schema=_EXPORT_SCHEMA,
         )
 
-    def archive_program(self, program: Program) -> Path:
-        """Persist the exact canonical Program supplied to PressureFit."""
+    def archive_program(self, program: ShadowSpillProgram) -> Path:
+        """Persist the exact canonical ShadowSpillProgram supplied to PressureFit."""
 
         path = (
-            _digest_directory(self.pressurefit_programs, program.digest)
+            digest_directory(self.programs_archive, program.digest)
             / "program.json"
         )
-        if not self.save_plan:
+        if not self.plan_policy.write_enabled:
             return path
         encoded = program.to_json()
         operation = "matched" if path.exists() else "write"
-        if path.exists() and not self.overwrite_plan:
+        if path.exists() and not self.plan_policy.overwrite:
             try:
                 existing = path.read_text()
             except OSError as exc:
-                raise ValueError(f"Program cache entry {path} cannot be read") from exc
+                raise ValueError(
+                    f"program store entry {path} cannot be read"
+                ) from exc
             if existing != encoded:
-                raise ValueError(f"Program cache entry {path} is corrupt")
+                raise ValueError(f"ShadowSpillProgram cache entry {path} is corrupt")
         else:
             _atomic_text(path, encoded)
             operation = "write"
@@ -483,7 +530,7 @@ class ArtifactStore:
         )
         return path
 
-    def archive_pressurefit_request(
+    def archive_plan_request(
         self,
         value: Mapping[str, object],
     ) -> tuple[str, Path]:
@@ -491,11 +538,11 @@ class ArtifactStore:
 
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        path = _digest_directory(self.pressurefit_requests, digest) / "request.json"
-        if not self.save_plan:
+        path = digest_directory(self.plan_requests, digest) / "request.json"
+        if not self.plan_policy.write_enabled:
             return digest, path
         operation = "matched" if path.exists() else "write"
-        if path.exists() and not self.overwrite_plan:
+        if path.exists() and not self.plan_policy.overwrite:
             try:
                 existing = path.read_text()
             except OSError as exc:
@@ -513,7 +560,7 @@ class ArtifactStore:
             digest=digest,
             path=path,
             access=operation,
-            schema=artifact_schema("pressurefit_request"),
+            schema=artifact_schema("plan_request"),
             dependencies=(str(value["program_digest"]),),
         )
         return digest, path
@@ -535,7 +582,7 @@ class ArtifactStore:
             / capture_identity[:16]
             / execution_plan.digest[:16]
         )
-        if not self.save_plan:
+        if not self.plan_policy.write_enabled:
             return directory / "manifest.json"
         plan_path = directory / "execution_plan.json"
         _atomic_text(plan_path, execution_plan.to_json())
@@ -593,7 +640,7 @@ def _clear_pytorch_compiler_caches() -> None:
 
     # ShadowSpill's PyTorch frontend is version-pinned.  This private helper is
     # deliberately confined here; it prevents an earlier plan in this process
-    # from violating force_fresh's no-read contract.
+    # from reading entries a refresh was told to ignore.
     from torch._inductor.utils import clear_caches
 
     clear_caches()
@@ -627,7 +674,7 @@ def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> 
             if not overwrite:
                 raise ValueError(
                     "fresh PyTorch compiler artifact conflicts with an existing "
-                    "entry; use overwrite_plan=True or a new "
+                    "entry; use a 'refresh' store mode or a new "
                     f"implementation_revision: {destination_path}"
                 )
         temporary = destination_path.with_name(
@@ -673,59 +720,6 @@ def _files_equal(left: Path, right: Path) -> bool:
                 return False
             if not left_chunk:
                 return True
-
-
-#: Where each directory of the layout before the build/planning split went.
-#: The Inductor cache is not among them: its entries embed the absolute paths
-#: of their kernel files, so a moved cache keeps writing to where it was.
-#: A migrated store starts a fresh one and the old stays behind as dead
-#: weight, named in the README as safe to delete.
-_LEGACY_MOVES = (
-    ("pytorch/exports", "build/exports"),
-    ("graphpairs", "build/graphpairs"),
-    ("profiling", "build/profiling"),
-    ("pressurefit/programs", "build/programs"),
-    ("pressurefit/requests", "planning/requests"),
-    ("pressurefit/selections", "planning/results"),
-    ("plans", "planning/plans"),
-)
-
-
-def _migrate_layout(root: Path) -> bool:
-    """Move a store laid out before the split into place; True if anything moved.
-
-    Renames, not copies: a store is content-addressed, so a directory that
-    already exists at the destination is merged entry by entry, and an entry
-    already there is the same artifact, so the source copy is dropped.
-    """
-
-    moved = False
-    for old, new in _LEGACY_MOVES:
-        moved = _move_tree(root / old, root / new) or moved
-    for stale in ("pytorch", "pressurefit"):
-        with suppress(OSError):
-            (root / stale).rmdir()
-    return moved
-
-
-def _move_tree(source: Path, target: Path) -> bool:
-    if not source.is_dir():
-        return False
-    if not target.exists():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        source.rename(target)
-        return True
-    for child in source.iterdir():
-        destination = target / child.name
-        if child.is_dir() and destination.is_dir():
-            _move_tree(child, destination)
-        elif not destination.exists():
-            child.rename(destination)
-        elif child.is_file():
-            child.unlink()
-    with suppress(OSError):
-        source.rmdir()
-    return True
 
 
 def _write_guides(
@@ -776,8 +770,6 @@ def digest_directory(root: Path, digest: str) -> Path:
         raise ValueError("content-addressed cache key must be SHA-256")
     return root / digest[:2] / digest
 
-
-_digest_directory = digest_directory
 
 
 def _safe_label(value: str) -> str:
@@ -831,17 +823,22 @@ this one and replans.
 - `build/optimizers/`: traced recurrent optimizer updates, keyed by the
   optimizer, the tensors it binds, its hyperparameters and its stage split.
 - `build/profiling/`: hardware/compiler-specific layouts and task measurements.
-- `build/programs/`: exact canonical Programs supplied to PressureFit.
 
-`planning/` is what a run measured:
+`planning/` is what a run decided:
 
-- `planning/requests/`: what each PressureFit search was asked for.
-- `planning/results/`: PressureFit's answer, the selected resolution and
+- `planning/programs/`: the exact canonical ShadowSpillProgram each planning call was
+  given, so a plan's lineage points at an immutable copy of what was planned.
+- `planning/requests/`: what each search was asked for.
+- `planning/results/`: the planner's answer, the selected resolution and
   memory schedule with the search diagnostics.
 - `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
 
-A planning call given a plan store keeps `planning/` there instead, so
-several runs can share this store and each own its plans.
+The two trees are written by different halves of the work and never by each
+other: a build contributes nothing under `planning/`, and a planning call
+nothing under `build/`. That is what lets one build store serve many runs
+while each keeps its own plans -- point `--build-store` at the shared one and
+`--plan-store` at your own, or give a single `--artifact-store` and get both
+under it.
 
 A store laid out before the build/planning split was moved into place the
 first time it was opened, except its Inductor cache: Inductor's entries embed
@@ -867,4 +864,11 @@ Digests determine identity; do not edit content-addressed entries.
 """
 
 
-__all__ = ["ArtifactStore", "PlanningArtifact", "digest_directory"]
+__all__ = [
+    "STORE_MODES",
+    "ArtifactStore",
+    "PlanningArtifact",
+    "StoreMode",
+    "StorePolicy",
+    "digest_directory",
+]

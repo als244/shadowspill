@@ -6,42 +6,44 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass
-from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
 
 from shadowspill.ir import (
     MemorySchedule,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
 )
 from shadowspill.planner.artifact_store import ArtifactStore, digest_directory
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig, simulate
-from shadowspill.simulator.indexed import (
+from shadowspill.simulator.indexing import (
     index_simulation_template,
     simulate_template,
 )
 
 from .admission import AdmissionFacts
-from .admission.indexed import (
+from .admission.indexing import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
 )
-from .diagnostics import PressureFitDiagnostics
+from .diagnostics import PlanningDiagnostics
 from .diagnostics.json import without_measurements
-from .plan import pressurefit
-from .recomputation import ShareValue, resolution_options_or_default
-from .request import PressureFitOptions
-from .result import PressureFitResult
+from .result import ProgramPlanResult
+from .search import (
+    SearchAlgorithm,
+    SearchOptions,
+    answer_no_worse_than,
+)
 from .serialization import _resident_slice_from_value
+from .store_policy import CONTRIBUTE, StorePolicy
 
-_SCHEMA = artifact_schema("pressurefit_selection")
+_SCHEMA = artifact_schema("plan_selection")
 
 
 class _ArtifactRecorder(Protocol):
@@ -62,7 +64,7 @@ class _ArtifactRecorder(Protocol):
 class PlanLookup:
     """One selected plan, and whether it was read back or planned now."""
 
-    result: PressureFitResult
+    result: ProgramPlanResult
     #: True when the plan was read back rather than planned now.
     from_store: bool
 
@@ -70,19 +72,24 @@ class PlanLookup:
 class PlanStore:
     """Selected plans on disk, keyed by the request that produced them.
 
-    The key excludes worker concurrency, which changes how the search is
-    scheduled but not which plan it may answer with, and names the resolution
-    options the plan was searched over, so a plan found under one set is never
-    read back for another, whatever the library's default is that day.
+    The key covers the whole question: the program, where it starts and ends,
+    the machine, the planner's own options, which search ran, and what that
+    search was told. Change any of them and it is a different question with a
+    different answer -- a plan searched over one candidate space is never
+    read back for another, whatever the library's defaults are that day.
+
+    Worker count is part of it. It changes no candidate's identity and breaks
+    no tie, but candidates measure a layout only when the shared record says
+    it could win, so which worker places first decides which candidates are
+    ever measured, and two searches at different worker counts can answer
+    with different plans.
     """
 
     def __init__(
         self,
         root: str | Path | None = None,
         *,
-        read_enabled: bool = True,
-        write_enabled: bool = True,
-        overwrite: bool = False,
+        policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: _ArtifactRecorder | None = None,
     ) -> None:
         self.root = (
@@ -90,9 +97,7 @@ class PlanStore:
             if root is not None
             else Path.home() / ".cache" / "shadowspill" / "recomputation"
         )
-        self.read_enabled = read_enabled
-        self.write_enabled = write_enabled
-        self.overwrite = overwrite
+        self.policy = policy
         self.artifact_recorder = artifact_recorder
 
     def path(self, key: str) -> Path:
@@ -100,17 +105,16 @@ class PlanStore:
 
     def resolve(
         self,
-        program: Program,
+        program: ShadowSpillProgram,
         *,
         initial_residency: tuple[ResidencySpec, ...],
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
-        options: PressureFitOptions | None = None,
-        admission: AdmissionFacts | None = None,
+        search_options: SearchOptions | None = None,
+            admission: AdmissionFacts | None = None,
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
-        resolution_options: Sequence[ShareValue] | None = None,
-        incumbent: PressureFitResult | None = None,
+        incumbent: ProgramPlanResult | None = None,
     ) -> PlanLookup:
         """Return the stored planned program when it still matches, or plan.
 
@@ -129,16 +133,16 @@ class PlanStore:
         improves rather than shadowing it.
         """
 
-        selected_options = options or PressureFitOptions()
-        chosen = resolution_options_or_default(resolution_options)
+        chosen = search_options if search_options is not None else SearchOptions()
+        algorithm = chosen.resolved_algorithm
         key = _key(
             program,
             initial_residency,
             final_residency,
             config,
-            selected_options,
             admission,
             placement,
+            algorithm,
             chosen,
         )
         cached = (
@@ -148,46 +152,54 @@ class PlanStore:
                 initial_residency,
                 final_residency,
                 config,
-                selected_options,
                 admission,
+                algorithm,
                 chosen,
             )
-            if self.read_enabled
+            if self.policy.read_enabled
             else None
         )
         if cached is not None and not _claims_to_beat(incumbent, cached):
             return PlanLookup(cached, True)
-        result = pressurefit(
-            program,
-            initial_residency=initial_residency,
-            final_residency=final_residency,
-            config=config,
-            options=selected_options,
-            admission=admission,
-            placement=placement,
-            progress=progress,
-            resolution_options=chosen,
+        if cached is None:
+            self.policy.refuse_miss("plan", key)
+        result = answer_no_worse_than(
+            algorithm(
+                program,
+                initial_residency=initial_residency,
+                final_residency=final_residency,
+                config=config,
+                generic=chosen.generic,
+                        admission=admission,
+                placement=placement,
+                progress=progress,
+                incumbent=incumbent,
+            ),
             incumbent=incumbent,
+            config=config,
+            placement=placement,
         )
         if cached is not None:
             if result.simulation.makespan_ns >= cached.simulation.makespan_ns:
                 return PlanLookup(cached, True)
-            self._write(key, result, admission, chosen, incumbent, improve=True)
+            self._write(
+                key, result, admission, algorithm, chosen, incumbent, improve=True
+            )
             return PlanLookup(result, False)
-        self._write(key, result, admission, chosen, incumbent)
+        self._write(key, result, admission, algorithm, chosen, incumbent)
         return PlanLookup(result, False)
 
     def _read(
         self,
         key: str,
-        program: Program,
+        program: ShadowSpillProgram,
         initial_residency: tuple[ResidencySpec, ...],
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
-        options: PressureFitOptions,
         admission: AdmissionFacts | None,
-        resolution_options: tuple[Fraction, ...],
-    ) -> PressureFitResult | None:
+        algorithm: SearchAlgorithm,
+        search_options: SearchOptions,
+    ) -> ProgramPlanResult | None:
         path = self.path(key)
         try:
             value = json.loads(path.read_text())
@@ -200,7 +212,7 @@ class PlanStore:
         if value.get("key_digest") != key:
             raise ValueError(f"planned program {path} has the wrong identity")
         if value.get("program_digest") != program.digest:
-            raise ValueError(f"planned program {path} has the wrong Program")
+            raise ValueError(f"planned program {path} has the wrong ShadowSpillProgram")
         expected_boundary = {
             "initial_residency": [item.to_dict() for item in initial_residency],
             "final_residency": [item.to_dict() for item in final_residency],
@@ -208,9 +220,9 @@ class PlanStore:
                 "devices": [asdict(item) for item in config.devices],
                 "spill_capacity_bytes": config.spill_capacity_bytes,
             },
-            "options": options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
-            **_resolution_options_field(resolution_options),
+            "search": algorithm.name,
+            "search_options": search_options.to_dict(),
         }
         normalized_boundary = json.loads(
             json.dumps(expected_boundary, sort_keys=True, separators=(",", ":"))
@@ -250,9 +262,9 @@ class PlanStore:
         diagnostics = _diagnostics_from_value(value.get("diagnostics"), path)
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
             raise ValueError(f"planned program {path} has stale simulator evidence")
-        result = PressureFitResult(
+        result = ProgramPlanResult(
             program=program,
-            options=options,
+            search_options=search_options,
             initial_residency=initial_residency,
             final_residency=final_residency,
             simulation_config=config,
@@ -271,13 +283,14 @@ class PlanStore:
     def _write(
         self,
         key: str,
-        result: PressureFitResult,
+        result: ProgramPlanResult,
         admission: AdmissionFacts | None,
-        resolution_options: tuple[Fraction, ...],
-        incumbent: PressureFitResult | None = None,
+        algorithm: SearchAlgorithm,
+        search_options: SearchOptions,
+        incumbent: ProgramPlanResult | None = None,
         improve: bool = False,
     ) -> None:
-        if not self.write_enabled:
+        if not self.policy.write_enabled:
             return
         path = self.path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,9 +304,9 @@ class PlanStore:
                 "devices": [asdict(item) for item in result.simulation_config.devices],
                 "spill_capacity_bytes": result.simulation_config.spill_capacity_bytes,
             },
-            "options": result.options.to_dict(),
             "admission_digest": admission.digest if admission is not None else None,
-            **_resolution_options_field(resolution_options),
+            "search": algorithm.name,
+            "search_options": search_options.to_dict(),
             **_incumbent_field(incumbent),
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
@@ -301,7 +314,7 @@ class PlanStore:
             "resident_slice": result.resident_slice.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        if path.exists() and not self.overwrite and not improve:
+        if path.exists() and not self.policy.overwrite and not improve:
             try:
                 existing = path.read_text()
             except OSError as exc:
@@ -315,7 +328,7 @@ class PlanStore:
             if _without_provenance(existing_payload) != _without_provenance(payload):
                 raise ValueError(
                     "fresh PressureFit output differs from the stored planned program; "
-                    "use overwrite_plan=True or a new implementation_revision: "
+                    "use a 'refresh' store mode or a new implementation_revision: "
                     f"{path}"
                 )
             self._record(key, result.program.digest, path, "matched")
@@ -357,14 +370,14 @@ class PlanStore:
 
 
 def _key(
-    program: Program,
+    program: ShadowSpillProgram,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
-    options: PressureFitOptions,
     admission: AdmissionFacts | None,
     placement: AdmissionFacts | None,
-    resolution_options: tuple[Fraction, ...],
+    algorithm: SearchAlgorithm,
+    search_options: SearchOptions,
 ) -> str:
     payload = {
         "schema": _SCHEMA,
@@ -375,23 +388,25 @@ def _key(
             "devices": [asdict(device) for device in config.devices],
             "spill_capacity_bytes": config.spill_capacity_bytes,
         },
-        "options": options.to_dict(),
         "admission_digest": admission.digest if admission is not None else None,
         # Part of the identity: the search measures layouts against this
         # topology, so the same program under a different pool is a
         # different question and must not read a cached answer.
         "placement_digest": placement.digest if placement is not None else None,
-        # The resolution options are part of the question: a plan searched
-        # over one set is not the answer for another. The plan to beat is
-        # not: see PlanStore.resolve.
-        **_resolution_options_field(resolution_options),
+        # Which search, and what it was told. Both are part of the
+        # question: a plan one search chose is not the answer another would
+        # give, and a plan searched over one candidate space is not the
+        # answer for a different one. The plan to beat is not part of it:
+        # see PlanStore.resolve.
+        "search": algorithm.name,
+        "search_options": search_options.to_dict(),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _claims_to_beat(
-    incumbent: PressureFitResult | None, stored: PressureFitResult
+    incumbent: ProgramPlanResult | None, stored: ProgramPlanResult
 ) -> bool:
     """Whether the plan in hand says it is faster than the plan on record.
 
@@ -414,15 +429,7 @@ def _without_provenance(payload: object) -> object:
     return value
 
 
-def _resolution_options_field(
-    resolution_options: tuple[Fraction, ...],
-) -> dict[str, list[str]]:
-    """The options as a record field: exact fractions, sorted, as strings."""
-
-    return {"resolution_options": [str(share) for share in resolution_options]}
-
-
-def _incumbent_field(incumbent: PressureFitResult | None) -> dict[str, object]:
+def _incumbent_field(incumbent: ProgramPlanResult | None) -> dict[str, object]:
     """The plan to beat as a record field: which resolution, which schedule.
 
     Provenance for the request and the stored plan; never part of a key.
@@ -438,9 +445,9 @@ def _incumbent_field(incumbent: PressureFitResult | None) -> dict[str, object]:
     }
 
 
-def _diagnostics_from_value(value: object, path: Path) -> PressureFitDiagnostics:
+def _diagnostics_from_value(value: object, path: Path) -> PlanningDiagnostics:
     try:
-        return PressureFitDiagnostics.from_value(value, "cache.diagnostics")
+        return PlanningDiagnostics.from_value(value, "cache.diagnostics")
     except (TypeError, ValueError) as exc:
         raise ValueError(f"planned program {path} has invalid diagnostics") from exc
 
@@ -452,10 +459,8 @@ def open_plan_store(artifact_store: ArtifactStore) -> PlanStore:
     """Open the plan store one artifact-store policy implies."""
 
     return PlanStore(
-        artifact_store.pressurefit_selections,
-        read_enabled=artifact_store.read_enabled,
-        write_enabled=artifact_store.write_enabled,
-        overwrite=artifact_store.overwrite_plan,
+        artifact_store.plan_selections,
+        policy=artifact_store.plan_policy,
         artifact_recorder=artifact_store.record,
     )
 
@@ -463,30 +468,29 @@ def open_plan_store(artifact_store: ArtifactStore) -> PlanStore:
 def resolve_plan(
     artifact_store: ArtifactStore,
     plans: PlanStore,
-    program: Program,
+    program: ShadowSpillProgram,
     *,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
-    options: PressureFitOptions | None = None,
+    search_options: SearchOptions | None = None,
     admission: AdmissionFacts | None = None,
     placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
-    resolution_options: Sequence[ShareValue] | None = None,
-    incumbent: PressureFitResult | None = None,
+    incumbent: ProgramPlanResult | None = None,
 ) -> PlanLookup:
     """Resolve one plan, planning only when the store does not have it.
 
-    The request and its Program are archived first, so a plan on disk can
+    The request and its ShadowSpillProgram are archived first, so a plan on disk can
     always be traced back to what was asked for, the plan to beat included.
     """
 
     artifact_store.archive_program(program)
-    selected_options = options or PressureFitOptions()
-    chosen = resolution_options_or_default(resolution_options)
-    artifact_store.archive_pressurefit_request(
+    chosen = search_options if search_options is not None else SearchOptions()
+    algorithm = chosen.resolved_algorithm
+    artifact_store.archive_plan_request(
         {
-            "schema": artifact_schema("pressurefit_request"),
+            "schema": artifact_schema("plan_request"),
             "program_digest": program.digest,
             "initial_residency": [item.to_dict() for item in initial_residency],
             "final_residency": [item.to_dict() for item in final_residency],
@@ -494,17 +498,13 @@ def resolve_plan(
                 "devices": [asdict(item) for item in config.devices],
                 "spill_capacity_bytes": config.spill_capacity_bytes,
             },
-            "options": {
-                "initial_placement": selected_options.initial_placement.value,
-                "residency_strategies": list(selected_options.residency_strategies),
-                "fetch_rules": list(selected_options.fetch_rules),
-                "evaluate_coalesced": selected_options.evaluate_coalesced,
-                "max_repair_attempts": selected_options.max_repair_attempts,
-                "workers": selected_options.workers,
-                "deterministic": selected_options.deterministic,
-            },
+            # Both records in full, derived from the option types
+            # themselves: an option added later is archived without a
+            # second edit, and a request never records less than the key
+            # it produced.
+            "search": algorithm.name,
+            "search_options": chosen.to_dict(),
             "admission": None if admission is None else admission.to_dict(),
-            **_resolution_options_field(chosen),
             **_incumbent_field(incumbent),
         }
     )
@@ -513,10 +513,9 @@ def resolve_plan(
         initial_residency=initial_residency,
         final_residency=final_residency,
         config=config,
-        options=selected_options,
+        search_options=chosen,
         admission=admission,
         placement=placement,
         progress=progress,
-        resolution_options=chosen,
         incumbent=incumbent,
     )

@@ -13,13 +13,16 @@ does not depend on doing so.
 
 ## Exception taxonomy
 
-All public exceptions below are exported by `shadowspill.pytorch`.
+The planning exceptions are framework-free and live in `shadowspill.errors`,
+because the planner raises and catches them without importing a framework. The
+two runtime exceptions come from `shadowspill.pytorch`.
 
 | Boundary | Exception | Meaning |
 |---|---|---|
 | Runtime construction or lifecycle | `RuntimeConfigurationError` | Pool configuration, allocator installation, calibration, ownership, or close is invalid. |
 | Planning | `PlanningError` | Base class for failures before a callable is published. |
 | Capture | `CaptureError` | Export, AOTAutograd, partitioning, or semantic-contract extraction cannot represent the requested fixed graph. |
+| One task in one phase | `TaskPhaseError` | Base class for the two failures that name the task they happened on. |
 | Compilation | `CompilationError` | A captured structural task cannot be compiled into the required executable contract. |
 | Profiling | `ProfilingError` | Isolated task timing, workspace measurement, or allocation-path validation fails. |
 | Physical admission | `AdmissionError` | Runtime pools cannot admit the selected execution plan. |
@@ -29,11 +32,21 @@ All public exceptions below are exported by `shadowspill.pytorch`.
 | Call input validation | `InputGuardError` | Runtime inputs differ from the fixed planning template. No task has run and no state was mutated. |
 | Planned execution | `RuntimeExecutionError` | The runtime, allocator, worker, or a task-specific execution contract rejected the step. |
 
-`CompilationError` and `ProfilingError` retain `structural_contract`, `task_kind`,
-and `operators` when that problem is available. `PlanInfeasibleError` retains
-the failure `kind`, device, boundary task, required bytes, and capacity bytes.
-The original PyTorch exception remains the cause, so its traceback identifies
-the operator and model code that led to a capture or compilation failure.
+Everything from `CaptureError` down to `ObjectiveError` derives from
+`PlanningError`, so a caller that only wants "planning did not produce a plan"
+catches that one. Two nestings inside it are worth knowing: `CompilationError`
+and `ProfilingError` share `TaskPhaseError`, and `PlanInfeasibleError` derives
+from `AdmissionError`, so catching admission also catches infeasibility.
+`InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
+raised at a call, not during planning.
+
+A `TaskPhaseError` retains `structural_contract`, `task_kind`, and `operators`
+when the failing task is known. `PlanInfeasibleError` retains the failure
+`kind`, `device_id`, `boundary_task_id`, `required_bytes`, and
+`capacity_bytes`; it and `PlanSearchExhaustedError` both retain `diagnostics`,
+the search evidence behind the refusal. The original PyTorch exception remains
+the cause, so its traceback identifies the operator and model code that led to
+a capture or compilation failure.
 
 ## Planning failures
 
@@ -45,12 +58,12 @@ runtime resolution
   -> capture and partition
   -> structural compilation
   -> isolated profiling
-  -> Program construction and PressureFit
+  -> ShadowSpillProgram construction and PressureFit
   -> physical admission
   -> callable publication
 ```
 
-If any phase fails, `plan_step()`, `plan_forward()`, or `make_step_program()`:
+If any phase fails, `plan_step()`, `plan_forward()`, or `build_step_program()`:
 
 1. retains the original exception and traceback;
 2. records any allocator failure already latched by the C adapter;
@@ -100,8 +113,8 @@ The runtime status names are:
 | `task_allocation_envelope_exceeded` | A request or task-local live total exceeded the admitted profiled envelope. |
 | `task_allocation_contract_mismatch` | Allocation operation, order, geometry, or ownership differed from the admitted task contract. |
 
-`is_allocator_oom`, `is_recoverable_no_progress`, and
-`is_shadowspill_contract_failure` provide stable classifications without
+`RuntimeFailureDiagnostics.is_allocator_oom`, `.is_recoverable_no_progress`,
+and `.is_shadowspill_contract_failure` classify one of those statuses without
 requiring applications to parse exception text.
 
 ## No-progress OOM
@@ -188,7 +201,8 @@ uninstalled; it remains installed in a permanently closed state and rejects
 future allocations. Registered process-exit cleanup invokes the same
 idempotent teardown only as a last resort.
 
-See the [frontend API](api/frontend.md) for exported exception classes, the
+See the [framework-neutral API](api/neutral.md) for the planning exception
+classes, the [frontend API](api/frontend.md) for the runtime ones, the
 [allocator guide](allocator.md) for callback behavior, and the [memory runtime
 architecture](../architecture/memory-runtime.md) for native ownership and
 teardown.

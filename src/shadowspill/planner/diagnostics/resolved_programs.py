@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 
 from .candidates import CandidateDiagnostic
 from .counters import (
-    PressureFitRepairDiagnostics,
-    PressureFitWorkDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningWorkDiagnostics,
 )
 from .json import (
     _list,
@@ -116,7 +116,7 @@ class ResolvedProgramDiagnostics:
     selected_candidate_id: str | None
     selected_makespan_ns: int | None
     candidate_evaluations: tuple[CandidateDiagnostic, ...]
-    work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
+    work: PlanningWorkDiagnostics = field(default_factory=PlanningWorkDiagnostics)
     #: This problem's span on the same clock its candidates use: from the first
     #: candidate a worker started to the last one it finished. Several problems
     #: evaluated in one call overlap, because workers take whatever task is
@@ -207,17 +207,17 @@ class ResolvedProgramDiagnostics:
         )
 
     @property
-    def repairs(self) -> PressureFitRepairDiagnostics:
-        result = PressureFitRepairDiagnostics()
+    def repairs(self) -> PlanningRepairDiagnostics:
+        result = PlanningRepairDiagnostics()
         for candidate in self.candidate_evaluations:
             result += candidate.repairs
         return result
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "recomputation_selection": {
+            "resolved_program": {
                 "selection_id": self.selection_id,
-                "graph_pair_choices": [item.to_dict() for item in self.choices],
+                "task_alternative_choices": [item.to_dict() for item in self.choices],
             },
             "selected_candidate_policy": {
                 "candidate_id": self.selected_candidate_id,
@@ -252,8 +252,8 @@ class ResolvedProgramDiagnostics:
     def from_value(cls, value: object, path: str) -> ResolvedProgramDiagnostics:
         data = _mapping(value, path)
         selection = _mapping(
-            data.get("recomputation_selection"),
-            f"{path}.recomputation_selection",
+            data.get("resolved_program"),
+            f"{path}.resolved_program",
         )
         selected = _mapping(
             data.get("selected_candidate_policy"),
@@ -262,7 +262,7 @@ class ResolvedProgramDiagnostics:
         summary = _mapping(data.get("summary"), f"{path}.summary")
         selection_id = _string(
             selection.get("selection_id"),
-            f"{path}.recomputation_selection.selection_id",
+            f"{path}.resolved_program.selection_id",
         )
         raw_candidates = _list(
             data.get("candidate_policy_evaluations"),
@@ -281,12 +281,12 @@ class ResolvedProgramDiagnostics:
             choices=tuple(
                 TaskAlternativeChoiceDiagnostic.from_value(
                     item,
-                    f"{path}.recomputation_selection.graph_pair_choices[{index}]",
+                    f"{path}.resolved_program.task_alternative_choices[{index}]",
                 )
                 for index, item in enumerate(
                     _list(
-                        selection.get("graph_pair_choices"),
-                        f"{path}.recomputation_selection.graph_pair_choices",
+                        selection.get("task_alternative_choices"),
+                        f"{path}.resolved_program.task_alternative_choices",
                     )
                 )
             ),
@@ -299,7 +299,7 @@ class ResolvedProgramDiagnostics:
                 f"{path}.selected_candidate_policy.makespan_ns",
             ),
             candidate_evaluations=candidates,
-            work=PressureFitWorkDiagnostics.from_value(
+            work=PlanningWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
             started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),
@@ -333,7 +333,7 @@ class ResolvedProgramDiagnostics:
             if summary.get(name) != expected:
                 raise ValueError(f"{path}.summary.{name} does not reconcile")
         if (
-            PressureFitRepairDiagnostics.from_value(
+            PlanningRepairDiagnostics.from_value(
                 data.get("repairs"), f"{path}.repairs"
             )
             != result.repairs

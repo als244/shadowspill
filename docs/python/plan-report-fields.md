@@ -36,7 +36,7 @@ PlanReport
 ├── task_profiles[]                           TaskProfile (IR)
 ├── transfer_actions[]                        MemoryAction (IR)
 ├── transfer_capabilities                     TransferCapabilities → TransferProfile[]
-├── pressurefit_results[]                     PressureFitResult → ResidentSlice
+├── pressurefit_results[]                     ProgramPlanResult → ResidentSlice
 ├── summary            (property)             PlanSummary
 └── diagnostics                               PlanDiagnostics
     ├── phases[]                              PlanPhaseTiming
@@ -46,14 +46,15 @@ PlanReport
     ├── task_stage_map[] / tasks[]            PlanTaskStage
     ├── unique_stages[]                       PlanUniqueStage → PlanGraphPair → PlanGraphProfile
     ├── physical_layouts[]                    PlanPhysicalLayout
-    │   ├── attempts[]                        PlanFixedLayoutAttempt → PressureFitDiagnostics
+    │   ├── attempts[]                        PlanFixedLayoutAttempt → PlanningDiagnostics
     │   └── task_memory_envelopes[]           PlanTaskMemoryEnvelope
-    └── pressurefit_runs[]                    PressureFitDiagnostics
-        └── resolved_programs[]          ResolvedProgramDiagnostics
+    └── pressurefit_runs[]                    PlanningDiagnostics
+        └── resolved_programs[]               ResolvedProgramDiagnostics
             ├── choices[]                     TaskAlternativeChoiceDiagnostic
-            ├── work                          PressureFitWorkDiagnostics → PressureFitSectionTiming
+            ├── incumbent                     IncumbentDiagnostic
+            ├── work                          PlanningWorkDiagnostics → PlanningSectionTiming
             └── candidate_evaluations[]       CandidateDiagnostic
-                ├── repairs                   PressureFitRepairDiagnostics
+                ├── repairs                   PlanningRepairDiagnostics
                 └── steps[]                   ReductionStep
 ```
 
@@ -81,8 +82,12 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `execution_device` | Device ordinal of the execution pool. |
 | `transfer_capabilities` | The measured transfer matrix the simulator planned against. |
 | `optimizer_ordering` | How optimizer work was ordered, or `None` for a forward plan. |
-| `data_ordering` | How the step walked its microbatches (`depth`, `breadth`, `reverse_breadth`, `pair_loss`), or `None` for a forward plan. |
-| `resolution_options` | The resolutions the plan was searched over, as exact fractions of the flexible groups recomputing (the library's default is every quarter), or `None` for a forward plan. |
+| `data_ordering` | The `StepDataOrdering` the step walked its microbatches under -- its `depth`, `breadth`, `reverse_breadth`, and `pair_loss` -- or `None` for a forward plan. |
+| `search` | Which search produced this plan. The key its own diagnostics section is written under. |
+| `workers` | How many threads the search was given. Recorded for visibility; excluded from anything compared across runs, because it changes how long an answer took and not which answer was right. |
+| `search_runs` | Per-role search invocations, each with its wall time and diagnostics. |
+| `search_results` | The selected plan for each role the report covers. |
+| `search_options` | What the search was told, as its own serialized record -- for PressureFit, the candidate space and the `resolution_options` the plan was searched over, as exact fractions of the flexible groups recomputing (the default is every quarter). `None` for a forward plan. |
 | `planned_program_cache_hits`, `planned_program_cache_misses` | Whether the selected plan was read back from the store. Exactly one is 1. |
 | `fixed_slab_bytes` | The slab the fixed layout occupies. |
 | `captured_stage_count` | Stages the capture produced. |
@@ -144,10 +149,10 @@ can never disagree.
 | `unique_stages` | The deduplicated stages and their legal choices. |
 | `compiler_phase_timings_ns` | Compiler phases across the whole call, as name and elapsed pairs. |
 | `compiler_profiles` | The same, per structural contract. |
-| `store_directories` | Which artifact store directory each category used. |
+| `store_directories` | The roots this call used, as name/path pairs: `root`, `build`, `build.inductor`, `planning`, `plan_store`. |
 | `cache_artifacts` | Every persistent artifact this call touched. |
 | `profiling_metadata` | Canonical planning-only workload metadata per input position. |
-| `pressurefit_runs` | One `PressureFitDiagnostics` per search this call ran. |
+| `pressurefit_runs` | One `PlanningDiagnostics` per search this call ran. |
 | `physical_layouts` | One admission summary per execution phase. |
 
 ## PlanPhaseTiming
@@ -176,7 +181,7 @@ in-memory result; Inductor's private directory is reported as `managed`.
 | `kind` | What kind of document it is. |
 | `digest` | Its content digest, or `None` for a directory. |
 | `path` | Where it is on disk. |
-| `access` | Read, written, matched, or managed. |
+| `access` | `read`, `write`, `matched`, `improved`, or `managed`; the [artifact store](artifact-store.md#plan-diagnostics) defines each. |
 | `schema` | The document's own schema, when it declares one. |
 | `dependencies` | Digests this artifact was derived from. |
 
@@ -196,7 +201,7 @@ tasks and `task_stage_map` for all of them.
 
 | Field | Meaning |
 |---|---|
-| `task_id` | The Program's own task identity. |
+| `task_id` | The program's own task identity. |
 | `execution_ordinal` | Chronological position in the step, or `None` when not selected. |
 | `execution_task_id` | The chronological identity, `execution_NNNNNN`, shared with step diagnostics. |
 | `semantic_name` | The module path the stage came from. |
@@ -414,9 +419,9 @@ gave back is `original_object_capacity_bytes` minus
 | `required_bytes` | What the resulting layout spans. |
 | `pool_capacity_bytes` | The pool it had to fit inside. |
 | `accepted` | Whether this trial's layout is the one admitted. |
-| `pressurefit_wall_time_ns` | Search and cache-resolution time, cumulative across refinements rather than this trial alone. |
+| `search_wall_time_ns` | Search and cache-resolution time, cumulative across refinements rather than this trial alone. |
 | `physical_admission_wall_time_ns` | Time spent admitting the layout. |
-| `pressurefit_diagnostics` | The search evidence behind it, when it was recorded. |
+| `search_diagnostics` | The search evidence behind it, when it was recorded. |
 
 ## PlanTaskMemoryEnvelope
 
@@ -434,11 +439,11 @@ the ceilings the runtime enforces on what is live at once.
 | `allocation_contract_operation_count` | How many operations it has. |
 | `allocation_path_digests` | The allocation paths admitted for it. |
 
-## PressureFitDiagnostics
+## PlanningDiagnostics
 
 One PressureFit search: its problems, the policies it evaluated, and the
 totals. Reachable as `diagnostics.pressurefit_runs[...]`, on an admission
-attempt, and on a `PressureFitResult`.
+attempt, and on a `ProgramPlanResult`.
 
 | Field | Meaning |
 |---|---|
@@ -448,6 +453,12 @@ attempt, and on a `PressureFitResult`.
 | `resolved_programs` | Every resolved program this search evaluated. |
 | `work` | Exact operation counts and where the time went. |
 | `effective_object_capacity_bytes` | The capacity it finally planned against. |
+
+Derived on access, not stored: `resolved_program_count`,
+`valid_resolved_program_count`, `candidate_policy_count`,
+`candidate_evaluation_count`, `valid_candidate_evaluation_count`,
+`candidate_status_counts`, and `repairs`, the run's repairs summed over every
+candidate.
 
 ## ResolvedProgramDiagnostics
 
@@ -463,6 +474,10 @@ attempt, and on a `PressureFitResult`.
 | `evict_ineligible_aliases`, `evict_ineligible_bytes` | How many objects the evict-eligibility threshold kept resident, and their bytes. |
 | `fetched_bytes`, `evicted_bytes` | What this problem's own best plan moves, summed over the FETCH and EVICT actions of its selected schedule. The winner's traffic is also on `PlanSummary`; these are the alternatives', which is what says whether a problem that asks for less compute pays for it on the lanes instead. Zero when it placed nothing, and on a plan read back from a store written before these were recorded. |
 | `incumbent` | What became of the plan to beat this problem was handed, or `None` when it was handed none. When that plan won, `selected_candidate_id` is `incumbent`. |
+
+Derived on access, not stored: `candidate_policy_count`,
+`valid_candidate_policy_count`, `candidate_status_counts`, and `repairs`, this
+problem's repairs summed over its candidates.
 
 ## IncumbentDiagnostic
 
@@ -512,7 +527,7 @@ the reusable policy: residency strategy, fetch rule, and coalescing mode.
 | `steps` | Every plan it held, in order. Empty unless a trajectory was asked for. |
 | `residency_strategy`, `fetch_rule`, `coalesced` | The policy, parsed back out of `candidate_id`. |
 
-## PressureFitWorkDiagnostics
+## PlanningWorkDiagnostics
 
 Exact search operations, and the sections the time went to. Invocation-level
 values include work done before or across candidates, so they need not equal
@@ -527,7 +542,9 @@ the sum of the candidates'.
 | `admission_calls` | Admission checks run. |
 | `sections` | Where the time went. |
 
-## PressureFitSectionTiming
+`simulation_requests` is derived: calls plus cache hits.
+
+## PlanningSectionTiming
 
 Disjoint spans of one planning step, as its orchestrator measured them.
 Exactly one section is open at a time. `admit_ns` is nested inside
@@ -550,7 +567,10 @@ admission.
 | `admit_ns` | Admitting the schedule into the pool, inside `simulate_ns`. |
 | `residual_ns` | `total_ns` less every named section above. |
 
-## PressureFitRepairDiagnostics
+`named_ns` is derived: what every named section claimed, nested ones excluded.
+`total_ns` equals it plus `residual_ns` at every level.
+
+## PlanningRepairDiagnostics
 
 Categorized monotonic changes made while repairing one search path. Each
 category names what refused the plan and what the repair did about it.
@@ -583,7 +603,7 @@ search itself. Recorded only when the caller asks for a trajectory.
 | `capacity_violations` | Places it came up short of capacity and waited. |
 | `simulated`, `measured`, `placed`, `refined`, `best`, `answer` | What became of it, in flag order: simulated at all, measured for a layout, placed, refined, best so far, and the one the candidate answered with. |
 
-## PressureFitResult
+## ProgramPlanResult
 
 `report.pressurefit_results[...]`. The selected logical schedule and the
 simulator evidence behind it.
@@ -591,13 +611,13 @@ simulator evidence behind it.
 | Field | Meaning |
 |---|---|
 | `program` | The program the schedule is for. |
-| `options` | The search options it was produced under. |
+| `search_options` | Everything the search was told: the generic options, the algorithm that ran, and that algorithm's own options. `workers` is absent from the archived form, since two runs at different worker counts ask the same question. |
 | `initial_residency`, `final_residency` | Where each object sits when the step begins and ends. |
 | `simulation_config` | The device and capacity model the simulation ran against. |
 | `schedule` | The memory actions themselves. |
 | `selections` | The task-alternative choice per group. |
 | `simulation` | The simulator's evidence. Not persisted: a stored plan replays it and cross-checks the makespan, so a stale plan is caught rather than trusted. |
-| `diagnostics` | The search evidence, as `PressureFitDiagnostics`. |
+| `diagnostics` | The search evidence, as `PlanningDiagnostics`. |
 | `resident_slice` | The slice reserved for objects kept resident. |
 | `admission_facts` | The capacity facts the plan was admitted against. |
 | `placement_facts` | The placement topology it was measured under. |
