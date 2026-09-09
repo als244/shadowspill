@@ -93,7 +93,7 @@ def seal_physical_budget(
     """Seal provider headroom and complete steady-state record inventories."""
 
     if fixed_layout.program_digest != execution_plan.program.digest:
-        raise AdmissionError("fixed layout belongs to a different Program")
+        raise AdmissionError("fixed layout belongs to a different ShadowSpillProgram")
     if fixed_layout.schedule_digest != execution_plan.schedule.digest:
         raise AdmissionError("fixed layout belongs to a different memory schedule")
 

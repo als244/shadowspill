@@ -252,7 +252,7 @@ class TaskAllocationContract:
 
         Isolated profiling destroys every returned tensor after inspecting its
         storage.  Repeated execution instead promotes only the leaves declared
-        by the selected Program.  Retaining any view keeps its complete root
+        by the selected ShadowSpillProgram.  Retaining any view keeps its complete root
         allocation alive; terminal frees for that allocation are removed.
         Input-backed output leaves do not appear in this allocator contract and are
         intentionally ignored here.

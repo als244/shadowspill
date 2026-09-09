@@ -1,4 +1,4 @@
-"""Registered model construction for Program-corpus workers."""
+"""Registered model construction for ShadowSpillProgram-corpus workers."""
 
 from __future__ import annotations
 

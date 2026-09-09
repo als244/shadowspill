@@ -32,7 +32,7 @@ class TaskRecord:
     """One selected task, simulated beside measured."""
 
     #: Identity. `execution_task_id` is the chronological join key shared
-    #: with `PlanReport.diagnostics.tasks`; `task_id` names the Program task.
+    #: with `PlanReport.diagnostics.tasks`; `task_id` names the ShadowSpillProgram task.
     execution_task_id: str
     task_id: str
     execution_ordinal: int

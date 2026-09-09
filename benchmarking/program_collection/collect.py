@@ -1,4 +1,4 @@
-"""Collect the configured reusable pre-PressureFit Program corpus."""
+"""Collect the configured reusable pre-PressureFit ShadowSpillProgram corpus."""
 
 from benchmarking.program_collection.cli import main
 
