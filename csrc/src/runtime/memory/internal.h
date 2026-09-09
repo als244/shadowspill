@@ -527,6 +527,23 @@ const ShadowSpillMemoryPool *shadowspill_runtime_pool_const(
     uint32_t pool_id
 );
 
+/* Whether anything is still on its way to freeing capacity in this pool.
+ *
+ * This is what a thread waiting for room must watch. The capacity epoch says
+ * capacity *moved*; this says capacity is *still coming*. They are not the
+ * same, because work can drain without freeing a range -- and a wait that
+ * watches only the epoch then waits for an event that has already happened.
+ */
+static inline int shadowspill_memory_pool_has_release_source(
+    const ShadowSpillMemoryPool *pool
+) {
+    return atomic_load_explicit(
+        &pool->pending_retirements, memory_order_acquire
+    ) != 0U || atomic_load_explicit(
+        &pool->pending_capacity_actions, memory_order_acquire
+    ) != 0U;
+}
+
 ShadowSpillMemoryPool *shadowspill_execution_pool(ShadowSpillRuntime *runtime);
 
 const ShadowSpillMemoryPool *shadowspill_execution_pool_const(

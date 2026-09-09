@@ -216,14 +216,6 @@ ShadowSpillMemoryLease *shadowspill_find_execution_lease_by_pointer(
     return NULL;
 }
 
-static int has_release_source(const ShadowSpillMemoryPool *pool) {
-    return atomic_load_explicit(
-        &pool->pending_retirements, memory_order_acquire
-    ) != 0U || atomic_load_explicit(
-        &pool->pending_capacity_actions, memory_order_acquire
-    ) != 0U;
-}
-
 ShadowSpillStatus shadowspill_publish_task_retirement_event(
     ShadowSpillRuntime *runtime,
     uint64_t task_id,
@@ -1111,7 +1103,7 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
         if (status != SHADOWSPILL_STATUS_OUT_OF_MEMORY) {
             break;
         }
-        if (!has_release_source(pool)) {
+        if (!shadowspill_memory_pool_has_release_source(pool)) {
             shadowspill_latch_pool_failure_locked(
                 runtime,
                 pool,
@@ -1155,9 +1147,22 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
                 );
             }
         }
+        /*
+         * Wait for the capacity this pool was told to expect. The epoch is
+         * what says capacity moved, but it is not what says capacity is
+         * still coming: a retirement can drain without freeing a range, and
+         * then the epoch never moves again. Waiting on the epoch alone is
+         * therefore a wait for an event that has already happened, and the
+         * only exits left were a runtime failure and a closing worker --
+         * neither of which an allocation failure raises. So the release
+         * source is re-read every turn, and the loop gives up the moment
+         * there is nothing left to wait for. The retry above then finds the
+         * pool still full with no release source and latches NO_PROGRESS,
+         * which is the answer this wait exists to reach.
+         */
         while (status == SHADOWSPILL_STATUS_OK && atomic_load_explicit(
                    &pool->capacity_epoch, memory_order_acquire
-               ) == capacity_epoch) {
+               ) == capacity_epoch && shadowspill_memory_pool_has_release_source(pool)) {
             status = shadowspill_failure_status(runtime);
             if (status == SHADOWSPILL_STATUS_OK && atomic_load_explicit(
                     &runtime->worker_stop, memory_order_acquire
