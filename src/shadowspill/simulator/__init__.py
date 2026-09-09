@@ -1,9 +1,6 @@
 """Standalone deterministic execution and memory simulation."""
 
-from shadowspill.ir import MemorySchedule, Program, TaskAlternativeChoice
-
-from .capi import simulator_api
-from .indexed import simulate_program
+from .indexing import simulate_program as simulate
 from .model import (
     ActionPhysicalDelta,
     CapacityViolation,
@@ -20,27 +17,6 @@ from .model import (
     TransferDirection,
     TransferInterval,
 )
-
-
-def simulate(
-    program: Program,
-    schedule: MemorySchedule,
-    *,
-    selections: tuple[TaskAlternativeChoice, ...] = (),
-    config: SimulationConfig,
-    admission: SimulationAdmission | None = None,
-) -> SimulationResult:
-    """Replay an explicit schedule through the simulator."""
-
-    simulator_api()
-    return simulate_program(
-        program,
-        schedule,
-        selections=selections,
-        config=config,
-        admission=admission,
-    )
-
 
 __all__ = [
     "ActionPhysicalDelta",

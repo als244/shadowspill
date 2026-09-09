@@ -6,7 +6,7 @@ from .execution import (
     PhysicalAdmission,
     PlanPrediction,
 )
-from .indexed import (
+from .indexing import (
     IndexedExecutionPlan,
     IndexedMemorySchedule,
     IndexedProgram,
@@ -21,9 +21,9 @@ from .program import (
     ObjectRole,
     ObjectSpec,
     Persistence,
-    Program,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     SharedResidencyPolicy,
     TaskAlternativeChoice,
     TaskAlternativeGroup,
@@ -59,10 +59,10 @@ __all__ = [
     "Persistence",
     "PhysicalAdmission",
     "PlanPrediction",
-    "Program",
     "ResidencySpec",
     "ResourceKind",
     "ResourceSpec",
+    "ShadowSpillProgram",
     "SharedResidencyFootprint",
     "SharedResidencyPolicy",
     "TaskAlternativeChoice",
