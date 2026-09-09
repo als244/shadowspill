@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -42,7 +42,6 @@ def import_tensors(
     pool: str,
     release_source: bool,
     owning_plan: int | None = None,
-    pool_backed: Mapping[int, PersistentStorage] | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
     """Copy unique CPU storages into authoritative runtime-pool objects.
@@ -66,7 +65,6 @@ def import_tensors(
             tensors,
             runtime=runtime,
             pool=pool,
-            pool_backed=pool_backed,
             _allow_in_progress_plan=_allow_in_progress_plan,
         )
     )
@@ -174,14 +172,13 @@ def register_tensor_storages(
     *,
     runtime: Runtime,
     pool: str,
-    pool_backed: Mapping[int, PersistentStorage] | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> tuple[PersistentStorage, ...]:
     """Copy unique source storages into newly registered runtime objects.
 
-    ``pool_backed`` names storages that already are pool objects, by storage
-    identity: those are adopted as they stand, because planning took them
-    from this pool in the first place.
+    A storage that already presents pool memory is adopted as it stands
+    rather than copied: the runtime knows which those are, so no caller has
+    to say so.
     """
 
     selected_pool = _validate_pool(
@@ -193,11 +190,16 @@ def register_tensor_storages(
     # A root whose bytes are already a pool object is adopted where it is:
     # it was taken from the pool to begin with, so importing it would copy
     # the pool into itself under a second name.
+    registry = registry_for(runtime)
     adopted = {
-        index: pool_backed[int(anchor.untyped_storage()._cdata)]
+        index: allocation
         for index, (anchor, _views) in enumerate(roots)
-        if pool_backed is not None
-        and int(anchor.untyped_storage()._cdata) in pool_backed
+        if (
+            allocation := registry.pool_allocation(
+                int(anchor.untyped_storage()._cdata)
+            )
+        )
+        is not None
     }
     object_ids = runtime._reserve_persistent_object_ids(
         len(roots) - len(adopted),
@@ -211,6 +213,10 @@ def register_tensor_storages(
             if taken is not None:
                 # Planning took these bytes from this pool, so the object
                 # exists: the import only records which tensors view it.
+                # It now belongs to a state, so stop offering it.
+                registry.forget_pool_allocation(
+                    int(anchor.untyped_storage()._cdata)
+                )
                 taken.anchor = anchor
                 taken.views = views
                 created.append(taken)
@@ -658,6 +664,7 @@ class PoolTensorFactory(TorchFunctionMode):
             if identity in kept:
                 continue
             del self._allocations[identity]
+            registry_for(self._runtime).forget_pool_allocation(identity)
             allocation.anchor = torch.empty(0, dtype=torch.uint8, device="cpu")
             unregister_tensor_storages((allocation,), runtime=self._runtime)
 
@@ -768,7 +775,11 @@ class PoolTensorFactory(TorchFunctionMode):
             torch.Size(shape),
             _contiguous_stride(shape),
         )
-        self._allocations[int(view.untyped_storage()._cdata)] = allocation
+        identity = int(view.untyped_storage()._cdata)
+        self._allocations[identity] = allocation
+        # Offer it to any import that meets this storage later, so adopting it
+        # needs no argument threaded from here to there.
+        registry_for(self._runtime).note_pool_allocation(allocation)
         if kwargs.get("requires_grad"):
             view.requires_grad_(True)
         return view

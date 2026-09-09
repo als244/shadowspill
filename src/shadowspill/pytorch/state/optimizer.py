@@ -9,7 +9,6 @@ import torch
 
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
-from .records import PersistentStorage
 from .storage import (
     NamedTensor,
     export_tensors,
@@ -100,7 +99,6 @@ def adopt_optimizer_state_for_plan(
     runtime: Runtime,
     pool: str,
     owning_plan: int,
-    pool_backed: Mapping[int, PersistentStorage] | None = None,
 ) -> bool:
     """Give one plan the optimizer state it needs, and say whether it owns it.
 
@@ -108,7 +106,6 @@ def adopt_optimizer_state_for_plan(
     state the caller imported is adopted as it stands and outlives the plan,
     state the caller did not import is imported here and belongs to the plan.
 
-    ``pool_backed`` names state that already lives in this pool because
     planning took it from there, by storage identity; that state is adopted
     where it is instead of being copied into a second object.
     """
@@ -127,7 +124,6 @@ def adopt_optimizer_state_for_plan(
         pool=pool,
         release_source=True,
         owning_plan=owning_plan,
-        pool_backed=pool_backed,
         _allow_in_progress_plan=True,
     )
     return True
