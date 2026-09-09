@@ -53,11 +53,20 @@ class RunBudgetOutcome:
 
     @property
     def relative_error(self) -> float:
-        """How far the prediction fell from the measurement, signed."""
+        """How far the measurement fell from the prediction, signed.
+
+        Positive means the step ran **slower** than the simulator said it
+        would, negative that it ran faster. The sign is worth stating because
+        it is the direction that carries the meaning: an optimistic prediction
+        is time the plan spends somewhere the simulator does not model, and
+        that is a thing to go and find. This is the same convention the
+        performance gate reports, so a number here and a number there mean the
+        same thing.
+        """
 
         return (
-            self.simulated_step_seconds - self.measured_step_seconds
-        ) / self.measured_step_seconds
+            self.measured_step_seconds - self.simulated_step_seconds
+        ) / self.simulated_step_seconds
 
 
 def plot_step_run(
@@ -232,8 +241,8 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     # never so tight that the bands become invisible slivers.
     reach = max(0.13, max(abs(value) for value in errors) * 1.35)
     error.set_ylim(-reach, reach)
-    error.set_title("Simulator Fidelity")
-    error.set_ylabel("Simulated Minus Measured")
+    error.set_title("Simulator Fidelity (positive = ran slower than predicted)")
+    error.set_ylabel("Measured Minus Simulated")
     error.yaxis.set_major_formatter(lambda value, _pos: f"{value:+.0%}")
     error.grid(True, axis="y", alpha=0.3)
     error.set_axisbelow(True)
