@@ -366,7 +366,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         host_group_seconds: list[float] = []
         group_tokens_per_second: list[float] = []
         cycle_seconds: list[float] = []
-        head_wait_seconds: list[float] = []
+        opening_delay_seconds: list[float] = []
         selected_spans: list[float] = []
         dispatch_seconds: list[float] = []
         prior_invocation_drain_seconds: list[float] = []
@@ -402,7 +402,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                     f"{arguments.steps_per_group} steps"
                 )
             cycle_seconds.extend(item.cycle_seconds for item in timings)
-            head_wait_seconds.extend(item.head_wait_seconds for item in timings)
+            opening_delay_seconds.extend(item.opening_delay_seconds for item in timings)
             selected_spans.extend(item.selected_span_seconds for item in timings)
             elapsed = sum(item.cycle_seconds for item in timings)
             group_seconds.append(elapsed)
@@ -520,7 +520,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "group_tokens_per_second": group_tokens_per_second,
             "median_step_seconds": median_step_seconds,
             "cycle_seconds": cycle_seconds,
-            "head_wait_seconds": head_wait_seconds,
+            "opening_delay_seconds": opening_delay_seconds,
             "host_group_seconds": host_group_seconds,
             "median_tokens_per_second": median_throughput,
             "selected_task_span_seconds": selected_spans,

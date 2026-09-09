@@ -752,7 +752,7 @@ def _build_step_summary(
     makespan_seconds = simulation.makespan_ns / 1e9
     cycle_seconds: float | None = None
     exposed_tail_seconds: float | None = None
-    head_wait_seconds = (
+    opening_delay_seconds = (
         float(timing.origin_event.elapsed_time(timing.start_event)) / 1e3
     )
     timeline = timing.timeline
@@ -784,7 +784,7 @@ def _build_step_summary(
             0.0, makespan_seconds - simulated_end_ns / 1e9
         ),
         cycle_seconds=cycle_seconds,
-        head_wait_seconds=head_wait_seconds,
+        opening_delay_seconds=opening_delay_seconds,
         exposed_tail_seconds=exposed_tail_seconds,
         call_seconds=(
             timing.dispatch_call_finished_ns - timing.dispatch_call_started_ns

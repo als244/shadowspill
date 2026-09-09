@@ -92,7 +92,7 @@ def _diagnostics() -> StepDiagnostics:
         simulator_makespan_seconds=1.0,
         simulator_terminal_tail_seconds=0.0,
         cycle_seconds=1.05,
-        head_wait_seconds=0.02,
+        opening_delay_seconds=0.02,
         exposed_tail_seconds=0.03,
         call_seconds=1.1,
         prior_invocation_drain_seconds=0.0,

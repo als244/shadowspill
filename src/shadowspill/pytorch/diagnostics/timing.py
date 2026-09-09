@@ -107,9 +107,9 @@ class InvocationTiming:
     """One completed invocation on the device clock: what its step cost.
 
     The four parts partition the cycle exactly:
-    ``cycle_seconds == head_wait_seconds + selected_span_seconds +
-    exposed_tail_seconds``. The head is the stream's wait from the origin to
-    the first task's compute, which is the first task's readiness waits and
+    ``cycle_seconds == opening_delay_seconds + selected_span_seconds +
+    exposed_tail_seconds``. The opening delay is the stream's wait from the
+    origin to the first task's compute, which is the first task's readiness waits and
     whatever the opening restore and staging still held it for. The span is
     first task start to last task end. The exposed tail is the stream time
     after the last task before the next invocation's origin (or the end
@@ -119,7 +119,7 @@ class InvocationTiming:
 
     step_number: int
     cycle_seconds: float
-    head_wait_seconds: float
+    opening_delay_seconds: float
     selected_span_seconds: float
     exposed_tail_seconds: float
 
@@ -127,7 +127,7 @@ class InvocationTiming:
         return {
             "step_number": self.step_number,
             "cycle_seconds": self.cycle_seconds,
-            "head_wait_seconds": self.head_wait_seconds,
+            "opening_delay_seconds": self.opening_delay_seconds,
             "selected_span_seconds": self.selected_span_seconds,
             "exposed_tail_seconds": self.exposed_tail_seconds,
         }
@@ -239,7 +239,7 @@ class InvocationTimelines:
                 InvocationTiming(
                     step_number=timeline.step_number,
                     cycle_seconds=float(timeline.origin.elapsed_time(successor)) / 1e3,
-                    head_wait_seconds=(
+                    opening_delay_seconds=(
                         float(timeline.origin.elapsed_time(timeline.span_start)) / 1e3
                     ),
                     selected_span_seconds=(
