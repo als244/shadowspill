@@ -775,23 +775,35 @@ def main() -> int:
     vocabulary = int(manifest.model_config.vocab_size)
 
     def example_microbatches(
-        sequences: int, accumulation: int
+        sequences: int,
+        accumulation: int,
+        *,
+        generator: torch.Generator | None = None,
     ) -> tuple[tuple[object, ...], ...]:
         shape = (1, sequences * sequence_length)
         lengths = (sequence_length,) * sequences
         return tuple(
             (
-                torch.randint(vocabulary, shape),
-                torch.randint(vocabulary, shape),
+                torch.randint(vocabulary, shape, generator=generator),
+                torch.randint(vocabulary, shape, generator=generator),
                 lengths,
             )
             for _ in range(accumulation)
         )
 
+    def step_microbatches(
+        sequences: int, accumulation: int, step: int
+    ) -> tuple[tuple[object, ...], ...]:
+        """The tokens of one step, the same for every budget and geometry."""
+
+        generator = torch.Generator().manual_seed(arguments.seed * 1_000_003 + step)
+        return example_microbatches(sequences, accumulation, generator=generator)
+
     with case.implementations():
         marker = time.perf_counter()
         case = import_case_model(case, runtime=runtime)
         charge("model import into the spill pool", marker)
+        trained = False
         note_host_memory(None, "model imported into the spill pool")
         report = None
         # Opened before the branch: a run that chose its geometry by hand still
@@ -906,6 +918,20 @@ def main() -> int:
             frame, so returning is what releases them.
             """
 
+            nonlocal case, trained
+            if trained:
+                # Every budget starts from the same weights and a fresh
+                # optimizer, on the same tokens per step, so its losses agree
+                # with every other budget's bar reduction order: the run is a
+                # correctness check as well as a measurement.
+                marker = time.perf_counter()
+                release_case_model(case, runtime=runtime)
+                case = import_case_model(
+                    build_case(manifest, seed=arguments.seed), runtime=runtime
+                )
+                charge("model construction", marker)
+                plan_log.note("model and optimizer state reset for a comparable run")
+            trained = True
             microbatches = example_microbatches(*geometry)
             marker = time.perf_counter()
             plan_sink: Any = contextlib.redirect_stdout(plan_log)
@@ -972,8 +998,12 @@ def main() -> int:
 
             def run_step(step: int, *, traced: bool) -> Any:
                 started = time.perf_counter()
-                result = training(microbatches, runtime_trace=traced)
-                losses[step] = float(result.objectives[-1])
+                result = training(
+                    step_microbatches(*geometry, step), runtime_trace=traced
+                )
+                losses[step] = statistics.fmean(
+                    float(value) for value in result.objectives
+                )
                 hosts[step] = time.perf_counter() - started
                 report_cycles()
                 return result
