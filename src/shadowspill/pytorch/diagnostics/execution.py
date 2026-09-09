@@ -498,6 +498,20 @@ class StepTimingSummary:
     selected_span_delta_seconds: float
     simulator_makespan_seconds: float
     simulator_terminal_tail_seconds: float
+    #: The step on the device clock: this invocation's origin on the compute
+    #: stream to the next invocation's, or to the end marker the caller
+    #: recorded, whichever the stream reached first. It is the time a
+    #: repeated step costs and what throughput divides by; it contains the
+    #: head, the span and the exposed tail exactly, and excludes the part of
+    #: the previous invocation's tail that overlapped it. `None` when the
+    #: trace was resolved before anything closed the cycle.
+    cycle_seconds: float | None
+    #: Origin to the first task's compute start: the first task's readiness
+    #: waits and whatever the opening still held the stream for.
+    head_wait_seconds: float
+    #: Last task's compute end to the cycle's end: terminal work the stream
+    #: itself still did. `None` with `cycle_seconds`.
+    exposed_tail_seconds: float | None
     #: The step as the caller saw it, on the host clock: the whole planned
     #: call, the wait for the previous invocation to drain at its start, the
     #: submission of the opening placement batch, and the trace's one-time
@@ -542,6 +556,9 @@ class StepTimingSummary:
             "selected_span_delta_seconds": self.selected_span_delta_seconds,
             "simulator_makespan_seconds": self.simulator_makespan_seconds,
             "simulator_terminal_tail_seconds": self.simulator_terminal_tail_seconds,
+            "cycle_seconds": self.cycle_seconds,
+            "head_wait_seconds": self.head_wait_seconds,
+            "exposed_tail_seconds": self.exposed_tail_seconds,
             "call_seconds": self.call_seconds,
             "prior_invocation_drain_seconds": self.prior_invocation_drain_seconds,
             "initial_actions_seconds": self.initial_actions_seconds,
