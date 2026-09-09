@@ -167,6 +167,13 @@ typedef struct ShadowSpillRuntimeConfig {
     const ShadowSpillTransferRouteDescription *routes;
     uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
+    /* How far a lane may run ahead with background transfers: copies the
+       plan did not schedule (an opening restore, a reconciliation) are
+       dispatched only while the lane holds fewer than this many of their
+       bytes in flight, so a transfer the plan did schedule never waits
+       behind more than this. Zero removes the bound. A single background
+       copy larger than the window runs alone. */
+    uint64_t background_transfer_window_bytes;
 } ShadowSpillRuntimeConfig;
 
 /*

@@ -37,7 +37,7 @@ extern "C" {
  * compiled separately against a contract, and can genuinely differ from the
  * library they load into.
  */
-#define SHADOWSPILL_ABI_VERSION 1U
+#define SHADOWSPILL_ABI_VERSION 2U
 
 /* The one version every stored artifact carries; mirrored by
  * shadowspill.schema.ARTIFACT_VERSION and embedded in the digests below. */

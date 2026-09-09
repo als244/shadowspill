@@ -8,7 +8,7 @@ from typing import Any, Final
 
 from shadowspill.libraries import load_shadowspill_library
 
-ADAPTER_ABI_VERSION: Final = 2
+ADAPTER_ABI_VERSION: Final = 3
 
 #: Ids the frontend synthesises for work that is not a planned task, copied
 #: from the adapter header, which decodes them in its failure report.
@@ -45,6 +45,7 @@ class AdapterConfig(ctypes.Structure):
         ("routes", ctypes.POINTER(RouteConfig)),
         ("route_count", ctypes.c_uint32),
         ("worker_poll_nanoseconds", ctypes.c_uint64),
+        ("background_transfer_window_bytes", ctypes.c_uint64),
         ("backend_library", ctypes.c_char_p),
     ]
 
