@@ -81,10 +81,18 @@ class GatedDeltaNet(nn.Module):
             groups=config.convolution_width,
             bias=False,
         )
-        self.A_log = nn.Parameter(torch.zeros(config.lin_v_heads))
-        self.dt_bias = nn.Parameter(torch.zeros(config.lin_v_heads))
+        self.A_log = nn.Parameter(torch.empty(config.lin_v_heads))
+        self.dt_bias = nn.Parameter(torch.empty(config.lin_v_heads))
         self.lin_norm = GatedRMSNorm(config.lin_v_head_dim)
         self.w_out = nn.Linear(config.linear_value_width, config.d_model, bias=False)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        """Initialise the parameters this module owns, in place."""
+
+        with torch.no_grad():
+            self.A_log.zero_()
+            self.dt_bias.zero_()
 
     def forward(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
@@ -172,20 +173,9 @@ class FullModelCase:
             ),
         )
 
-    @staticmethod
-    def optimizer(parameters: Iterator[nn.Parameter]) -> torch.optim.Optimizer:
-        values = list(parameters)
-        groups = (
-            {
-                "params": [item for item in values if item.ndim >= 2],
-                "weight_decay": 0.1,
-            },
-            {
-                "params": [item for item in values if item.ndim < 2],
-                "weight_decay": 0.0,
-            },
-        )
-        return cast(torch.optim.Optimizer, mlops.optim.AdamW(groups, lr=3e-4))
+    #: AdamW at its defaults. The rate is named in ``hyperparams`` when the
+    #: step is planned and given a value on every step, so it is not set here.
+    optimizer = mlops.optim.AdamW
 
 
 def _head_chunk_size(vocabulary: int, scratch_bytes: int) -> int:
@@ -241,10 +231,40 @@ def manifests() -> tuple[FullModelManifest, ...]:
     )
 
 
-def build_case(manifest: FullModelManifest, *, seed: int) -> FullModelCase:
-    """Build one CPU-resident model and deterministic packed microbatches."""
+@contextlib.contextmanager
+def meta_construction(dtype: torch.dtype) -> Iterator[None]:
+    """Declare structure without allocating: no storage, no values.
 
-    torch.manual_seed(seed)
+    The dtype is chosen here rather than cast afterwards. A cast allocates,
+    which is what makes a model impossible to place anywhere but where it was
+    built.
+    """
+
+    previous = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        with torch.device("meta"):
+            yield
+    finally:
+        torch.set_default_dtype(previous)
+
+
+def initialize_model(model: nn.Module) -> None:
+    """Let every module fill the storage it owns.
+
+    One traversal, used by every materialisation path, so a model built into
+    the spill pool draws exactly what the same model built on the host draws.
+    """
+
+    for module in model.modules():
+        reset = getattr(module, "reset_parameters", None)
+        if callable(reset):
+            reset()
+
+
+def build_model(manifest: FullModelManifest) -> nn.Module:
+    """Return this manifest's model on `meta`: structure only, no storage."""
+
     model_types: dict[tuple[str, ModelImplementation], type[nn.Module]] = {
         ("llama3", "pytorch"): PyTorchLlama3,
         ("llama3", "mlops"): MlopsLlama3,
@@ -259,7 +279,40 @@ def build_case(manifest: FullModelManifest, *, seed: int) -> FullModelCase:
             "unsupported full-model cell "
             f"{(manifest.family, manifest.implementation)!r}"
         ) from exc
-    model = model_type(manifest.model_config).to(torch.bfloat16)
+    with meta_construction(torch.bfloat16):
+        return model_type(manifest.model_config)
+
+
+def build_case(
+    manifest: FullModelManifest,
+    *,
+    seed: int,
+    runtime: object | None,
+) -> FullModelCase:
+    """Build one model and its deterministic packed microbatches.
+
+    With a `runtime`, the model's state is materialised directly in that
+    runtime's spill pool and never exists on the host -- which is the path to
+    take, and the only one whose cost does not scale with the model.
+
+    `runtime=None` materialises on the host instead. The argument has no
+    default, so that is something a caller states rather than gets by
+    omission: it is for callers with no runtime to place the model in, such as
+    unit tests and the reference a gate compares against.
+    """
+
+    torch.manual_seed(seed)
+    model = build_model(manifest)
+    if runtime is not None:
+        from shadowspill.pytorch.state.model import import_model_state
+
+        # Materialises in the pool and initialises there: the values are
+        # written where they will live, so no host memory proportional to the
+        # model is ever allocated.
+        model = import_model_state(model, runtime=runtime, pool="spill")
+    else:
+        model.to_empty(device="cpu")
+        initialize_model(model)
     model.train()
     shape = (1, manifest.tokens_per_microbatch)
     lengths = (manifest.sequence_length,) * manifest.sequences_per_microbatch
