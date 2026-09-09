@@ -30,7 +30,9 @@ header; see [backends](../architecture/backends.md).
 ## Vocabulary and descriptions
 
 `ShadowSpillPytorchAdapterConfig` is what bootstrap takes: the pools and
-directed routes, the device budget and the provider's headroom, the worker's
+directed routes as `ShadowSpillPytorchPoolConfig` and
+`ShadowSpillPytorchRouteConfig` arrays, which id and name what the runtime
+will build, the device budget and the provider's headroom, the worker's
 poll interval and the background transfer window it passes through to the
 runtime, and the backend library by path. The adapter hands back
 `ShadowSpillPytorchPhysicalAdmission` (the ledger as sealed),
@@ -52,11 +54,15 @@ frontend copies both.
   process-owned runtime from explicit pool and directed-route registries.
 - `shadowspill_pytorch_allocator_close()` permanently closes the installed
   runtime, joins its worker, releases its routes, pools, and backend, and
-  closes the backend library. The PyTorch allocator shim remains installed and
-  rejects future allocations. Close is deterministic and idempotent; the
-  adapter also registers the same close at process exit as a last resort,
-  without waiting. Python callables must still be closed explicitly so errors
-  and ownership violations are reported at the correct boundary.
+  closes the backend library. It refuses while any caller-owned allocation is
+  still outstanding. The PyTorch allocator shim remains installed and
+  rejects future allocations. Close is deterministic and idempotent.
+  Bootstrap also registers a process-exit handler as a last resort, which
+  closes the same way except that it waits for nothing and refuses nothing:
+  outstanding transfers cannot complete once exit handlers run, and it reports
+  on `stderr` what was still outstanding. Python callables must still be
+  closed explicitly so errors and ownership violations are reported at the
+  correct boundary.
 - `shadowspill_pytorch_adapter_capabilities()` reports the adapter contract.
 - `shadowspill_pytorch_runtime_handle()` publishes the neutral runtime this
   process bound. Everything reachable with that handle alone is called on the
@@ -65,8 +71,12 @@ frontend copies both.
   `shadowspill_pytorch_physical_admission()`,
   `shadowspill_pytorch_check_physical_budget()`, and
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
-  Sealing also reserves both neutral event records and backend event handles;
-  a later callable may explicitly grow both inventories during plan adoption.
+  Sealing confirms the profiled provider reserve fits the bootstrap
+  reservation; it never resizes or weakens the budget. Its second argument is
+  a record reserve it passes straight through to the neutral runtime, sealing
+  the event leases, the retirement records, and every pool's memory-lease
+  records in one call, so no steady-state step allocates one. A later callable
+  may grow any of those inventories again during plan adoption.
 - Transfer calibration is the neutral runtime's:
   `shadowspill_runtime_calibrate_transfer_capabilities()` and
   `shadowspill_runtime_transfer_profiles()`, called with the handle.
@@ -85,6 +95,13 @@ that says which allocation a pointer belongs to, used to classify profiled
 task outputs.
 
 ## Objects and storage
+
+Only the three `shadowspill_pytorch_` entries below are this library's; they
+are here because each wraps a provider stream or a PyTorch storage view. The
+rest of the object vocabulary is the neutral runtime's, listed here for the
+shape of the workflow and specified in the [Runtime API](runtime.md#object-api);
+the frontend calls those with the handle from
+`shadowspill_pytorch_runtime_handle()`.
 
 - `shadowspill_register_object()` creates runtime objects, resident in a pool
   or as placeholders, and `shadowspill_write_object()` populates them.
