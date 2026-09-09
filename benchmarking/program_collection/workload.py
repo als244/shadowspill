@@ -36,7 +36,9 @@ def build_program_case(request: ProgramRequest) -> FullModelCase:
             else request.model.head_scratch_bytes
         ),
     )
-    return build_case(manifest, seed=request.seed)
+    # No Runtime here: this builds programs, and the model is only needed
+    # on the host long enough to lower it.
+    return build_case(manifest, seed=request.seed, runtime=None)
 
 
 def profiling_metadata(case: FullModelCase) -> tuple[object, ...]:

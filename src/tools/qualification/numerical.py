@@ -31,6 +31,7 @@ from tools.qualification.runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
 )
+from workloads.common.training import LEARNING_RATE, optimizer_state_init
 from workloads.numerical import (
     DEFAULT_DEVICE_BUDGETS,
     ModelImplementation,
@@ -406,6 +407,10 @@ def _reference_worker(
     model = case.model.to(DEVICE_TYPE)
     microbatches = _device_microbatches(case.microbatches)
     optimizer = case.optimizer(model.parameters())
+    # The planned arm is handed this rate on every step, so the reference has
+    # to train at it too; comparing two arms trained differently says nothing.
+    for group in optimizer.param_groups:
+        group["lr"] = LEARNING_RATE
 
     def reference_objective(*microbatch: Any) -> torch.Tensor:
         return case.objective(model, *microbatch)
@@ -589,7 +594,9 @@ def _planned_worker(
         training = plan_step(
             model,
             objective=case.objective,
-            opt=case.optimizer,
+            optimizer=case.optimizer,
+            optimizer_state_init=optimizer_state_init,
+            hyperparams=("lr",),
             example_inputs=case.microbatches,
             runtime=runtime,
             execution="execution",
@@ -654,7 +661,11 @@ def _planned_worker(
         expected_replay: list[list[float]] = []
         for step in range(steps):
             started = time.perf_counter()
-            step_result = training(case.microbatches, runtime_trace=True)
+            step_result = training(
+                case.microbatches,
+                hyperparams={"lr": LEARNING_RATE},
+                runtime_trace=True,
+            )
             if step_result.diagnostics is None:
                 raise AssertionError("runtime_trace=True omitted execution diagnostics")
             diagnostics = step_result.diagnostics.result()
@@ -688,7 +699,11 @@ def _planned_worker(
         replay_steps = steps - checkpoint_step
         for replay_step in range(replay_steps):
             replay_started = time.perf_counter()
-            step_result = training(case.microbatches, runtime_trace=True)
+            step_result = training(
+                case.microbatches,
+                hyperparams={"lr": LEARNING_RATE},
+                runtime_trace=True,
+            )
             if step_result.diagnostics is None:
                 raise AssertionError("runtime_trace=True omitted replay diagnostics")
             step_result.diagnostics.result()
@@ -753,7 +768,7 @@ def _planned_worker(
         "optimizer state against the reference, tensor by tensor",
         flush=True,
     )
-    tensor_results, exact_failures = compare_states(
+    tensor_results, exact_failures, structure_failures = compare_states(
         {"model": reference["model"], "optimizer": reference["optimizer"]},
         {"model": final_state["model"], "optimizer": final_state["optimizer"]},
     )
@@ -790,12 +805,17 @@ def _planned_worker(
     # every kernel under it is, and the mlops path's are not on every
     # accelerator. Hold the replay to the same per-tensor tolerance the
     # reference comparison uses, and keep the bitwise answer as evidence.
-    replay_results, replay_exact_failures = compare_states(
-        {
-            "model": uninterrupted_state["model"],
-            "optimizer": uninterrupted_state["optimizer"],
-        },
-        {"model": final_state["model"], "optimizer": final_state["optimizer"]},
+    replay_results, replay_exact_failures, replay_structure_failures = (
+        compare_states(
+            {
+                "model": uninterrupted_state["model"],
+                "optimizer": uninterrupted_state["optimizer"],
+            },
+            {
+                "model": final_state["model"],
+                "optimizer": final_state["optimizer"],
+            },
+        )
     )
     replay_metric_failures = [
         name
@@ -894,6 +914,7 @@ def _planned_worker(
         "metric_failure_keys": metric_failures,
         "metric_failures_by_state": _failures_by_state(metric_failures),
         "exact_failures_by_state": _failures_by_state(exact_failures),
+        "structure_failures_by_state": _failures_by_state(structure_failures),
         "metric_failures": {
             name: asdict(tensor_results[name]) for name in metric_failures
         },
@@ -903,6 +924,7 @@ def _planned_worker(
             {"model": final_state["model"], "optimizer": final_state["optimizer"]},
         ),
         "exact_failures": exact_failures,
+        "structure_failures": structure_failures,
         "checkpoint_replay_bitwise": (
             uninterrupted_digest == replay_digest and expected_replay == replay_losses
         ),
@@ -1088,6 +1110,18 @@ def _planned_worker(
     # budget are different problems with different owners.
     checks: tuple[tuple[str, object, str], ...] = (
         ("reference", not loss_failures, f"{len(loss_failures)} losses differ"),
+        # First, because it decides whether the rest means anything. States
+        # that do not have the same shape are not two answers to one question,
+        # so the tolerance numbers below are taken over tensors that do not
+        # correspond and describe nothing.
+        (
+            "reference",
+            not structure_failures,
+            f"{len(structure_failures)} tensors do not match the reference's "
+            f"structure [{_state_split(structure_failures)}]: the reference "
+            "records a different shape, so the comparison is not a numerical "
+            f"one -- first is {structure_failures[0] if structure_failures else ''}",
+        ),
         (
             "reference",
             not metric_failures,
@@ -1102,6 +1136,13 @@ def _planned_worker(
             not exact_failures,
             f"{len(exact_failures)} tensors differ that must match exactly "
             f"[{_state_split(exact_failures)}]",
+        ),
+        (
+            "replay",
+            not replay_structure_failures,
+            f"{len(replay_structure_failures)} tensors do not match the "
+            "replay's structure "
+            f"[{_state_split(replay_structure_failures)}]",
         ),
         (
             "replay",
