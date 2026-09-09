@@ -11,7 +11,7 @@ shadowspill/
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── reference/             executable reference implementations
-├── benchmarking/          reusable Program datasets and planning evaluation
+├── benchmarking/          the quickstart tour, ShadowSpillProgram corpora, and planning evaluation
 ├── qualification/         thin numerical and performance release gates
 ├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
@@ -23,9 +23,13 @@ shadowspill/
 logic lives under `src/tools/qualification/`, and product behavior remains
 under `src/shadowspill/`.
 
-`benchmarking/` has two independent phases: Program collection performs
-capture/compilation/profiling once, while planning evaluation consumes saved
-Programs across budgets and transfer bandwidths.
+`benchmarking/` holds the quickstart, which takes one model end to end, and
+two harnesses that split that job so its expensive half is paid once: program
+collection builds programs -- capture, compilation, profiling, lowering --
+and planning evaluation plans saved programs across budgets and transfer
+bandwidths. The separation is enforced by the arguments each accepts:
+collection takes no planning arguments, and evaluation takes no build
+arguments beyond its corpus path.
 
 ## Python package
 
@@ -47,7 +51,7 @@ src/shadowspill/
     ├── graph_pairs/       differentiation alternatives by structural contract
     ├── compilation/       Inductor adapter and executable storage manifests
     ├── profiling/         representative inputs, timing, allocation contract, workspace
-    ├── lowering/          ObjectCatalog and task binding into Program
+    ├── lowering/          ObjectCatalog and task binding into ShadowSpillProgram
     ├── optimizer/         optimizer graph capture and ordering
     ├── planning/          forward/training orchestration and physical admission
     ├── materialization/   selected callable and runtime state publication

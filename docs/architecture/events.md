@@ -21,9 +21,9 @@ front, then seals it. After sealing, a request that finds no free lease is
 refused and counted rather than served by creating an event, and a lease
 record made outside the pool is never used on the task or worker path. The
 runtime statistics expose the pool's capacity, current and peak use,
-rejections, `event_lease_driver_creates`, and `event_lease_sealed`; a driver
-create after sealing is the signal the numerical gate watches for, because it
-means a steady-state step paid a cost the plan did not reserve.
+rejections, `event_lease_driver_creates`, and `event_lease_sealed`. A driver
+create after sealing is the signal worth watching: it means a steady-state
+step paid a cost the plan did not reserve.
 
 ## Completion tracking
 

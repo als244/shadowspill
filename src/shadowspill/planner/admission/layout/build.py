@@ -20,14 +20,14 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from shadowspill.planner.admission import AdmissionFacts
-from shadowspill.planner.admission.indexed import encode_schedule
+from shadowspill.planner.admission.indexing import encode_schedule
 from shadowspill.planner.admission.operations import (
     AdmissionOperations,
     build_admission_operations,
 )
 from shadowspill.planner.admission.placement import place_records
 from shadowspill.planner.capi import NO_INDEX
-from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.result import ProgramPlanResult
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     SimulationAdmission,
@@ -90,7 +90,7 @@ class FixedLayoutMeasurement:
 
 
 def measure_fixed_layout(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     facts: AdmissionFacts,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
@@ -169,7 +169,7 @@ def measure_fixed_layout(
 
 
 def certify_fixed_layout(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     facts: AdmissionFacts,
     measurement: FixedLayoutMeasurement,
 ) -> FixedLayoutAdmission:
@@ -231,7 +231,7 @@ def certify_fixed_layout(
 
 
 def build_fixed_layout_admission(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     facts: AdmissionFacts,
     *,
     dynamic_alias_group_ids: frozenset[str] = frozenset(),
@@ -269,7 +269,7 @@ def _validate_dynamic_lifetimes(lifetimes: tuple[LeaseLifetime, ...]) -> None:
 
 
 def _simulation_input(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     layout: FixedPhysicalLayout,
 ) -> SimulationAdmission:
     device_id = selected.program.devices[0].device_id

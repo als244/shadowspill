@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .counters import (
-    PressureFitRepairDiagnostics,
-    PressureFitWorkDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningWorkDiagnostics,
     ReductionStep,
 )
 from .json import (
@@ -67,10 +67,10 @@ class CandidateDiagnostic:
     schedule_digest: str | None = None
     failure_kind: str | None = None
     failure_detail: str | None = None
-    repairs: PressureFitRepairDiagnostics = field(
-        default_factory=PressureFitRepairDiagnostics
+    repairs: PlanningRepairDiagnostics = field(
+        default_factory=PlanningRepairDiagnostics
     )
-    work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
+    work: PlanningWorkDiagnostics = field(default_factory=PlanningWorkDiagnostics)
     #: Every plan this candidate held, in the order it held them. Empty
     #: unless the caller asked for a trajectory.
     steps: tuple[ReductionStep, ...] = ()
@@ -180,10 +180,10 @@ class CandidateDiagnostic:
             failure_detail=_optional_string(
                 outcome.get("failure_detail"), f"{path}.outcome.failure_detail"
             ),
-            repairs=PressureFitRepairDiagnostics.from_value(
+            repairs=PlanningRepairDiagnostics.from_value(
                 data.get("repairs"), f"{path}.repairs"
             ),
-            work=PressureFitWorkDiagnostics.from_value(
+            work=PlanningWorkDiagnostics.from_value(
                 data.get("work"), f"{path}.work"
             ),
             started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),

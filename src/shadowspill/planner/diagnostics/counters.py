@@ -38,7 +38,7 @@ def _nonnegative(name: str, value: int) -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitRepairDiagnostics:
+class PlanningRepairDiagnostics:
     """Categorized monotonic changes made while repairing one search path."""
 
     unclassified_attempts: int = 0
@@ -64,11 +64,11 @@ class PressureFitRepairDiagnostics:
         )
 
     def __add__(
-        self, other: PressureFitRepairDiagnostics
-    ) -> PressureFitRepairDiagnostics:
-        if not isinstance(other, PressureFitRepairDiagnostics):
+        self, other: PlanningRepairDiagnostics
+    ) -> PlanningRepairDiagnostics:
+        if not isinstance(other, PlanningRepairDiagnostics):
             return NotImplemented
-        return PressureFitRepairDiagnostics(
+        return PlanningRepairDiagnostics(
             **{
                 name: getattr(self, name) + getattr(other, name)
                 for name in self.__dataclass_fields__
@@ -97,8 +97,8 @@ class PressureFitRepairDiagnostics:
 
     @classmethod
     def from_value(
-        cls, value: object, path: str = "pressurefit_repairs"
-    ) -> PressureFitRepairDiagnostics:
+        cls, value: object, path: str = "search_repairs"
+    ) -> PlanningRepairDiagnostics:
         data = _mapping(value, path)
         admission = _mapping(data.get("admission_failure"), f"{path}.admission_failure")
         simulation = _mapping(
@@ -146,7 +146,7 @@ class PressureFitRepairDiagnostics:
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitSectionTiming:
+class PlanningSectionTiming:
     """Disjoint spans of one planning step, as its orchestrator measured them.
 
     Sections do not overlap: exactly one is open at a time, and the function
@@ -200,10 +200,10 @@ class PressureFitSectionTiming:
 
         return sum(getattr(self, name) for name in SECTION_NAMES)
 
-    def __add__(self, other: PressureFitSectionTiming) -> PressureFitSectionTiming:
-        if not isinstance(other, PressureFitSectionTiming):
+    def __add__(self, other: PlanningSectionTiming) -> PlanningSectionTiming:
+        if not isinstance(other, PlanningSectionTiming):
             return NotImplemented
-        return PressureFitSectionTiming(
+        return PlanningSectionTiming(
             **{
                 name: getattr(self, name) + getattr(other, name)
                 for name in self.__dataclass_fields__
@@ -216,7 +216,7 @@ class PressureFitSectionTiming:
     @classmethod
     def from_value(
         cls, value: object, path: str = "sections"
-    ) -> PressureFitSectionTiming:
+    ) -> PlanningSectionTiming:
         data = _mapping(value, path)
         return cls(
             **{
@@ -227,7 +227,7 @@ class PressureFitSectionTiming:
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitWorkDiagnostics:
+class PlanningWorkDiagnostics:
     """Exact search operations, and the sections the time went to.
 
     Invocation-level values include shared work performed before or across
@@ -241,7 +241,7 @@ class PressureFitWorkDiagnostics:
     simulation_calls: int = 0
     simulation_cache_hits: int = 0
     admission_calls: int = 0
-    sections: PressureFitSectionTiming = field(default_factory=PressureFitSectionTiming)
+    sections: PlanningSectionTiming = field(default_factory=PlanningSectionTiming)
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
@@ -252,10 +252,10 @@ class PressureFitWorkDiagnostics:
     def simulation_requests(self) -> int:
         return self.simulation_calls + self.simulation_cache_hits
 
-    def __add__(self, other: PressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
-        if not isinstance(other, PressureFitWorkDiagnostics):
+    def __add__(self, other: PlanningWorkDiagnostics) -> PlanningWorkDiagnostics:
+        if not isinstance(other, PlanningWorkDiagnostics):
             return NotImplemented
-        return PressureFitWorkDiagnostics(
+        return PlanningWorkDiagnostics(
             **{
                 name: getattr(self, name) + getattr(other, name)
                 for name in self.__dataclass_fields__
@@ -279,8 +279,8 @@ class PressureFitWorkDiagnostics:
 
     @classmethod
     def from_value(
-        cls, value: object, path: str = "pressurefit_work"
-    ) -> PressureFitWorkDiagnostics:
+        cls, value: object, path: str = "search_work"
+    ) -> PlanningWorkDiagnostics:
         data = _mapping(value, path)
         schedule = _mapping(data.get("schedule"), f"{path}.schedule")
         simulation = _mapping(data.get("simulation"), f"{path}.simulation")
@@ -301,7 +301,7 @@ class PressureFitWorkDiagnostics:
             admission_calls=_integer(
                 admission.get("calls", 0), f"{path}.admission.calls"
             ),
-            sections=PressureFitSectionTiming.from_value(
+            sections=PlanningSectionTiming.from_value(
                 data.get("sections", {}), f"{path}.sections"
             ),
         )

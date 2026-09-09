@@ -17,7 +17,7 @@ Pick the entry that matches what you came to do; each path stands on its own.
   and [StepResult diagnostics](python/step-diagnostics.md) guides.
 - To understand failure propagation and cleanup, read [Errors, failures, and
   cleanup](python/failures.md).
-- To consume saved planning data, use the [Program and annotated-plan JSON
+- To consume saved planning data, use the [program and annotated-plan JSON
   guide](python/planning-json.md).
 - To understand the system, follow the ordered path in the [architecture
   overview](architecture/overview.md).
@@ -38,8 +38,8 @@ What ShadowSpill is for, and the vocabulary every later page uses.
 
 1. [Architecture overview](architecture/overview.md) — vocabulary, artifacts,
    ownership, invariants, and supported scope.
-2. [Intermediate representation](architecture/ir.md) — logical Programs,
-   task alternatives, phases and sinks, schedules, and execution plans.
+2. [Intermediate representation](architecture/ir.md) — the four neutral
+   types and how they relate, then schedules and execution plans.
 
 ### PyTorch lowering
 
@@ -63,17 +63,25 @@ what is profiled, and what the planner is handed.
 How a program becomes an executable plan: which tasks run, where every object
 lives at each boundary, and what address every allocation gets.
 
-7. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
-   complete selections across occurrence-level graph-pair options.
-8. [PressureFit](architecture/pressurefit.md) — mathematical formulation,
-   inputs/outputs, bounded policy search, repair, and pseudocode.
-9. [Physical admission and offset handling](architecture/physical-admission.md)
-   — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
-10. [From a resolved program to leases](architecture/admission-leases.md) —
-   what a schedule allocates and when each lease is live.
-11. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
-   given addresses and what the cost of doing so depends on.
-12. [Planning orchestration](architecture/planning.md) — reusable artifacts,
+7. [The ShadowSpillProgram](architecture/program.md) — what the system plans
+   for: tasks over objects, alternatives, phases and sinks, and identity.
+8. [The planning problem](architecture/planning-problem.md) — the question
+   asked about a program: boundaries, machine, budget, and what it omits.
+9. [Plan search](architecture/search.md) — what the planner asks of a search
+   and promises in return, and what a search is free to decide.
+10. [Writing a search algorithm](architecture/search-algorithm.md) — the
+    methods to implement, every argument, the defaults, and a worked example.
+11. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
+    complete selections across occurrence-level graph-pair options.
+12. [PressureFit](architecture/pressurefit.md) — the search that ships:
+    formulation, bounded policy search, repair, and pseudocode.
+13. [Physical admission and offset handling](architecture/physical-admission.md)
+    — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
+14. [From a resolved program to leases](architecture/admission-leases.md) —
+    what a schedule allocates and when each lease is live.
+15. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
+    given addresses and what the cost of doing so depends on.
+16. [Planning orchestration](architecture/planning.md) — reusable artifacts,
     transfer inputs, callable publication, and PlanReport.
 
 ### Execution
@@ -81,33 +89,33 @@ lives at each boundary, and what address every allocation gets.
 How a plan is predicted, run, and measured: the simulator, the runtime and
 its boundaries, the backend underneath, and the clocks a step is read on.
 
-13. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
+17. [Simulation](architecture/simulation.md) — compute, transfer, capacity, and
     causal-dependency replay.
-14. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
+18. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
     failure, and tracing.
-15. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+19. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-16. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
+20. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
     a failure is handled at each scope, and why a process that is exiting is
     abandoned rather than closed.
-17. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+21. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening
     restore, and what step time means.
-18. [Backends](architecture/backends.md) — the one component that knows a
+22. [Backends](architecture/backends.md) — the one component that knows a
     platform, the driver-level table it implements, and how a new provider
     plugs in.
-19. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
+23. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
     device and pinned host, as ShadowSpill objects built on the backend.
-20. [Transfers](architecture/transfers.md) — routes, the lane each owns,
+24. [Transfers](architecture/transfers.md) — routes, the lane each owns,
     dispatch order, and calibration on those lanes.
-21. [Events](architecture/events.md) — event leases and pools, sealing,
+25. [Events](architecture/events.md) — event leases and pools, sealing,
     completion tracking, and the timing pool behind traced intervals.
-22. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
+26. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
     made of, how its source is laid out, what it requires of a backend, and
     what it exposes upward.
-23. [Timelines](architecture/timelines.md) — the two clocks a traced step
+27. [Timelines](architecture/timelines.md) — the two clocks a traced step
     is measured on, the origin they share, and what an untraced step pays.
 
 ## Python
@@ -122,19 +130,20 @@ Task-oriented pages: how to do something, and how to read what comes back.
 
 - [Python quickstart](python/quickstart.md) — constructing the runtime,
   importing model state, planning a step, and the callable lifecycle.
-- [Artifact store](python/artifact-store.md) — the content-addressed store
-  through which planning artifacts are shared and reused.
+- [Artifact store](python/artifact-store.md) — the content-addressed store,
+  its build and planning trees, and what each mode does with them.
 - [PyTorch allocator integration](python/allocator.md) — how the ShadowSpill
   allocator sits under PyTorch and what it accounts for.
 - [Interpreting a PlanReport](python/plan-report.md) — planning time, task and
-  graph-pair selection, profiles, PressureFit, caches, and physical admission.
+  graph-pair selection, profiles, PressureFit, store use, and physical
+  admission.
 - [PlanReport field reference](python/plan-report-fields.md) — every field of
   every record the planning report carries, and what it holds.
 - [Interpreting StepResult diagnostics](python/step-diagnostics.md) — task and
   transfer instants, host boundaries, allocator evidence, and simulator
   reconciliation, with a complete field reference.
-- [Program and annotated-plan JSON](python/planning-json.md) — canonical Program,
-  PressureFitProgram, StepProgram, and AnnotatedProgramPlan schemas.
+- [program and annotated-plan JSON](python/planning-json.md) — canonical program,
+  ShadowSpillPlanningProblem, StepProgram, and AnnotatedProgramPlan schemas.
 - [Figures over a step search](python/plots.md) — the figure tree, what each
   plot represents, the conventions they share, and how `raw_data/` redraws
   them.
@@ -156,6 +165,9 @@ and the contract behind it.
 - [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.ir`,
   `shadowspill.planner`, `shadowspill.simulator`, and `shadowspill.runtime`,
   for tooling and independent planning.
+- [Timing: the step on the device clock](python/api/timing.md) — the events
+  every invocation records, the cycle they define, and the API that reads
+  it.
 
 ## C
 
@@ -212,14 +224,16 @@ corpus, and the release gates that check numerics and full-model throughput.
 These pages live beside the code they describe, outside `docs/`.
 
 - [Benchmarking](../benchmarking/README.md) — the self-contained,
-  reproducible planning benchmark tree.
+  reproducible planning benchmark tree, and how its three entry points
+  divide.
 - [Quickstart script](../benchmarking/quickstart.md) — one model end to end:
   geometry search over execution budgets, figures, and a run of the winning
   plan.
-- [Program collection](../benchmarking/program_collection/README.md) —
-  building a corpus of pre-PressureFit step programs.
-- [Planning evaluation](../benchmarking/planning_eval/README.md) —
-  PressureFit, simulation, and physical admission over that corpus.
+- [program collection](../benchmarking/program_collection/README.md) — the
+  harness that builds a corpus of step programs and runs no planner.
+- [Planning evaluation](../benchmarking/planning_eval/README.md) — the
+  harness that plans that corpus: PressureFit, simulation, and physical
+  admission across budgets and bandwidths.
 - [Qualification](../qualification/README.md) — the release-acceptance
   protocols and their launchers, including the one command that runs every
   gate in order and reports what each found.

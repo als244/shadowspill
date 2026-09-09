@@ -3,7 +3,7 @@
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import (
     MemoryBudgets,
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
 from shadowspill.planner.step_program import StepProgram
@@ -11,7 +11,7 @@ from shadowspill.planner.step_program import StepProgram
 __all__ = [
     "AnnotatedProgramPlan",
     "MemoryBudgets",
-    "PressureFitProgram",
+    "ShadowSpillPlanningProblem",
     "StepProgram",
     "TransferBandwidths",
 ]

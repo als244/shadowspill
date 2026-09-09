@@ -61,11 +61,12 @@ _PUBLIC_C_REFERENCES = {
 }
 
 _REQUIRED_SIGNATURES = {
-    "src/shadowspill/pytorch/api.py:make_step_program",
+    "src/shadowspill/pytorch/api.py:build_step_program",
     "src/shadowspill/pytorch/step_search.py:plan_step_search",
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
-    "src/shadowspill/planner/plan.py:pressurefit_program",
+    "src/shadowspill/planner/plan.py:plan_program",
+    "src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedForward.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedForward.submit",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__",
@@ -393,8 +394,8 @@ def test_examples_cover_complete_public_workflows() -> None:
         ),
         "forward-only.md": ("plan_forward(", "run_forward.close()"),
         "reusable-planning.md": (
-            "make_step_program(",
-            "pressurefit_program(",
+            "build_step_program(",
+            "plan_program(",
             "StepProgram.from_json(",
             "annotated.to_json()",
         ),
@@ -543,11 +544,11 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Mathematical formulation",
         "## Current algorithm",
         "## Pseudocode",
-        "PressureFitOptions",
-        "PressureFitResult",
+        "SearchOptions",
+        "ProgramPlanResult",
         "AdmissionFacts",
-        "PressureFitInfeasibleError",
-        "PressureFitSearchExhaustedError",
+        "PlanInfeasibleError",
+        "PlanSearchExhaustedError",
     ):
         assert required in reference
 
@@ -567,7 +568,7 @@ def test_pressurefit_architecture_covers_the_algorithm_contract() -> None:
         "## Inputs and output",
         "## Saved-value accounting",
         "## Compilation and profiling",
-        "## Lowering into Program alternatives",
+        "## Lowering into program alternatives",
         "TaskGraphPairs",
         "GraphPairVariant",
         "TaskAlternativeOption",
@@ -618,12 +619,12 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
     serialization = (DOCS / "python" / "planning-json.md").read_text()
     for required in (
         "## Program format",
-        "## PressureFitProgram format",
+        "## ShadowSpillPlanningProblem format",
         "## StepProgram format",
         "## AnnotatedProgramPlan format",
         "## Loading and validation",
         artifact_schema("program"),
-        artifact_schema("pressurefit_program"),
+        artifact_schema("plan_program"),
         artifact_schema("step_program"),
         artifact_schema("annotated_program_plan"),
         artifact_schema("fixed_physical_layout"),

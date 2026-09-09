@@ -203,12 +203,9 @@ the transfer lane and its readiness event exists — not that any byte has moved
 That is enough for the next task, because the next `before_task` will insert a
 stream wait on that readiness event rather than waiting on the CPU.
 
-Everything else is the worker's, and the dispatcher never waits for it. The
-wait itself is an active atomic poll; neither thread enters a condition wait,
-a sleep, or a scheduler yield, because the dispatcher is on the critical path
-of a step.
-
-`shadowspill_plan_wait_idle` is the only call that waits for all of it.
+Everything else is the worker's, and the dispatcher never waits for it.
+`shadowspill_plan_wait_idle` is the call that waits for all of one plan's;
+`shadowspill_runtime_wait_idle` waits for the whole runtime's.
 
 ### Who owns what
 
@@ -238,10 +235,12 @@ something; it does not go and retire leases itself. This is why a stalled
 worker shows up as a blocked allocator rather than as a dispatcher that
 silently took over.
 
-The handshake itself is an active atomic poll on both sides. Neither thread
-enters a condition wait, a sleep, or a scheduler yield, because both are on the
-critical path of a step and a scheduler round trip is longer than the work
-being waited for.
+The handshake is an active atomic poll on both sides. Neither thread enters a
+condition wait, a sleep, or a scheduler yield, because both are on the critical
+path of a step and a scheduler round trip is longer than the work being waited
+for. The same is true of `shadowspill_plan_wait_idle`; the runtime-wide
+`shadowspill_runtime_wait_idle`, which is not on that path, does use a
+condition variable.
 
 ## How allocations find their task
 
@@ -292,14 +291,15 @@ that comes up short is slower rather than rejected.
 
 ## Failure
 
-Both boundaries return a `ShadowSpillStatus`. A failure latched anywhere -
-including on the worker - reaches the caller at the next boundary:
-`before_task` refuses to start, and `after_task` folds the latch into its
-return rather than reporting its own success. The first cause is preserved:
-`shadowspill_runtime_failure()` reports the failure that stopped the runtime,
-with the reason naming what was attempted and refused, while the return value
-reports what this call saw.
+Both boundaries return a `ShadowSpillStatus`, and a failure latched anywhere -
+including on the worker - reaches the caller at the next one. The first cause
+is preserved separately: `shadowspill_runtime_failure()` reports the failure
+that stopped the runtime, while the return value reports what this call saw.
 
 `after_task` cleans up whether or not it succeeded. It is never correct to skip
 it because an earlier call failed; the scope stays open and the task's leases
 keep their claim until it runs.
+
+How each scope handles a failure, and why a process that is exiting is
+abandoned rather than closed, is in [failure, abort, and process
+exit](failure-and-exit.md).

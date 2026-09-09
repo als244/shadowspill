@@ -3,7 +3,7 @@
 ShadowSpill separates semantic identity from compiled allocation geometry.
 This prevents incidental FakeTensor storage or allocator callback identity
 from merging or splitting logical objects. The output is the canonical
-[framework-neutral Program](ir.md), not a PyTorch execution trace.
+[framework-neutral program](program.md), not a PyTorch execution trace.
 
 For training, stage partitioning is followed by the dedicated
 [graph-pair construction](graph-pair-construction.md) phase. That phase creates
@@ -27,7 +27,7 @@ compiled physical profile
 ObjectCatalog + TaskBindingResolver
         |
         v
-canonical Program
+canonical ShadowSpillProgram
 ```
 
 ## Semantic contract
@@ -102,5 +102,5 @@ operations work when their fake/meta behavior and alias/mutation schemas are
 correct. Opaque external workspace may still require measurement because it
 is not fully represented in FX or Inductor's visible buffer graph.
 
-Previous: [Intermediate representation](ir.md). Next:
+Previous: [The ShadowSpillProgram](program.md). Next:
 [Graph-pair construction](graph-pair-construction.md).

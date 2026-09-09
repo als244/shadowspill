@@ -9,10 +9,10 @@ to any stored structure moves them all together.
 
 | Python value | Schema | Boundary |
 |---|---|---|
-| `Program` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
-| `PressureFitProgram` | `shadowspill.pressurefit_program/v1` | One Program plus residency, machine inputs, and admission topology. It carries no search options: a Program is a problem, and how to search it is the caller's. |
+| `ShadowSpillProgram` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
+| `ShadowSpillPlanningProblem` | `shadowspill.plan_program/v1` | One program plus residency, machine inputs, and admission topology. It carries no search options: a program is a problem, and how to search it is the caller's. |
 | `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
-| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | PressureFit winner, physical admission, and simulator evidence for one budget/bandwidth point. |
+| `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | The winning plan, physical admission, and simulator evidence for one budget/bandwidth point. |
 
 The ordinary reusable workflow is:
 
@@ -40,20 +40,23 @@ for tasks, actions, allocation operations, and attempts.
 
 Three identity rules matter:
 
-1. A `Program.digest` covers the complete logical Program.
+1. A `ShadowSpillProgram.digest` covers the complete logical program.
 2. A `StepProgram.digest` excludes phase time and cache paths, so the same
    planning content has one identity regardless of where or how long it took
    to construct.
-3. An `AnnotatedProgramPlan.digest` excludes whether the plan came from the store, diagnostic work
-   time, and orchestration wall time, while retaining selected schedule,
-   budgets, transfer bandwidths, and the physical certificate.
+3. An `AnnotatedProgramPlan.digest` covers what was planned, not how it was
+   found: it excludes `selection.from_store`, the search diagnostics at both
+   levels (`selection.diagnostics` and each attempt's
+   `search_diagnostics`), and the whole `timing` block, while retaining
+   the source program, budgets, transfer bandwidths, selected schedule and
+   residency, the simulation, and the physical certificate.
 
 Never edit a digest independently of its value. `from_json()` recomputes and
 validates embedded identities and rejects inconsistent content.
 
 ## Program format
 
-An abridged `Program` has this shape:
+An abridged `ShadowSpillProgram` has this shape:
 
 ```json
 {
@@ -80,11 +83,11 @@ An abridged `Program` has this shape:
      "outputs": ["activation_0"], "mutations": [], "phase": "forward",
      "requires_entrypoint": true}
   ],
-  "recomputation_groups": []
+  "task_alternative_groups": []
 }
 ```
 
-### Top-level Program keys
+### Top-level program keys
 
 | Key | Value |
 |---|---|
@@ -94,7 +97,7 @@ An abridged `Program` has this shape:
 | `objects` | Named tensor views into alias groups. |
 | `profiles` | Deduplicated task runtime/workspace measurements. |
 | `tasks` | Topologically ordered executable/control tasks. |
-| `recomputation_groups` | Mutually exclusive task/retention alternatives. |
+| `task_alternative_groups` | Mutually exclusive task/retention alternatives. The Python attribute is `ShadowSpillProgram.task_alternative_groups`; the serialized key keeps its original spelling so an existing corpus stays readable. |
 
 ### Device, alias, and object records
 
@@ -146,13 +149,13 @@ Exactly one option must be selected from every group before schedule
 validation. Graph-pair construction may emit save/recompute alternatives, but
 the IR permits more than two options.
 
-## PressureFitProgram format
+## ShadowSpillPlanningProblem format
 
-`PressureFitProgram` packages a `Program` for independent calls to
-`pressurefit_program()`:
+`ShadowSpillPlanningProblem` packages a `ShadowSpillProgram` for independent calls to
+`plan_program()`:
 
 ```text
-shadowspill.pressurefit_program/v1
+shadowspill.plan_program/v1
 ├── role
 ├── program
 │   ├── digest
@@ -211,8 +214,8 @@ shadowspill.step_program/v1
 │   ├── recurrent_program_digest
 │   └── initial_program_digest
 ├── programs
-│   ├── recurrent             PressureFitProgram
-│   └── initial               PressureFitProgram or null
+│   ├── recurrent             ShadowSpillPlanningProblem
+│   └── initial               ShadowSpillPlanningProblem or null
 ├── profiling
 │   ├── metadata
 │   ├── unique_profile_count
@@ -229,7 +232,7 @@ shadowspill.step_program/v1
 
 `profiling.metadata` is planning identity for data-dependent measurement
 effects; it is not a runtime model input. `transfer_capabilities` is the
-runtime calibration matrix captured during Program construction.
+runtime calibration matrix captured during program construction.
 `cache_lineage` explains where artifacts came from but does not participate in
 `StepProgram.digest`.
 
@@ -252,13 +255,13 @@ shadowspill.annotated_program_plan/v1
 
 | Key | Meaning |
 |---|---|
-| `source_program` | Complete `PressureFitProgram` from which the point was selected. |
+| `source_program` | Complete `ShadowSpillPlanningProblem` from which the point was selected. |
 | `memory_budgets` | Requested physical execution and spill capacities. |
 | `transfer_bandwidths` | Exact fetch/evict rates and calibration identity used for the point. |
-| `selection` | PressureFit problem/policy winner, schedule, residency, and search diagnostics. |
+| `selection` | The winning resolved program and candidate, schedule, residency, and search diagnostics. |
 | `simulation` | Final admitted simulation result and physical deltas/dependencies consumed by it. |
 | `physical_admission` | Effective topology, fixed layout, layout digest, and all refinement attempts. |
-| `timing` | Separate PressureFit, admission, orchestration, and total planning wall time. |
+| `timing` | Separate search, admission, orchestration, and total planning wall time. |
 
 `memory_budgets` contains `execution_bytes` and `spill_bytes`.
 `transfer_bandwidths` contains:
@@ -279,7 +282,7 @@ shadowspill.annotated_program_plan/v1
 | `from_store` | Whether the selected plan was read back from the plan store rather than planned during this call. |
 | `diagnostics` | Full resolved-program and candidate-policy search evidence. |
 | `initial_residency`, `final_residency` | Selected boundary state. |
-| `options` | Effective `PressureFitOptions`, every field of it. |
+| `search_options` | Everything the search was told: `generic`, and the `algorithm` that ran with its own `options`. `workers` is absent, since it changes how long an answer takes rather than which answer is right. |
 | `resident_slice` | The slice reserved for the objects `minimum_object_bytes_evict_eligible` kept resident: its `bytes`, the sum of the static homes their leases take, and the `aliases` it holds; empty when it kept none. |
 | `schedule` | `shadowspill.memory_schedule/v1` with ordered actions. |
 | `selections` | One chosen option per task-alternative group. |
@@ -288,7 +291,7 @@ The schedule contains `initial_residency`, ordered `actions`, and
 `final_residency`. An action records its kind (`release`, `evict`,
 `fetch` or `write_back`), trigger task, and alias group. Array order is the directive order
 at equal or increasing trigger boundaries; the alias group identifies its
-device through the Program.
+device through the program.
 
 The diagnostics hierarchy is:
 
@@ -349,7 +352,7 @@ went. The sections are disjoint spans named for the stage that produced them:
 |---|---|
 | `prepare_ns` | Deriving the residency problem. Problem level only. |
 | `setup_ns` | Schedule facts and the candidate workspace. |
-| `reduce_ns` | A strategy's base reduction. |
+| `reduce_ns` | Choosing what stays resident, before any candidate repairs it. |
 | `emit_ns` | Turning residency gaps into an ordered schedule. |
 | `simulate_ns` | Replaying the schedule for a makespan. |
 | `repair_ns` | Moving a transfer or making room for one, including the reduction that takes. |
@@ -406,7 +409,12 @@ meaning of a problem versus a policy.
   and stall reasons;
 - per-device object/workspace/total peaks;
 - spill peak;
-- optional memory timeline.
+- optional memory timeline;
+- `capacity_violations`, each an instant where the plan wanted more than its
+  budget allowed, with the reason, location, capacities and excess, and
+  `capacity_violation_count`. A violation is stall the plan paid for, not a
+  rejection; a count larger than the recorded list means the list was
+  truncated.
 
 `simulation.admission` records timing-independent physical facts: initial
 physical bytes, device capacities, task start/completion deltas, action
@@ -421,7 +429,7 @@ trigger/completion deltas, and cross-lane memory-reuse dependencies.
 | `fixed_layout_digest` | Integrity identity of that certificate. |
 | `attempts` | Ordered capacity-refinement trials and optional PressureFit diagnostics. |
 
-The fixed-layout certificate binds Program, schedule, and topology digests. It
+The fixed-layout certificate binds program, schedule, and topology digests. It
 records pool/fixed/dynamic/scratch/required bytes, every placement, causal
 reuse dependencies, dynamic lifetimes, initial-object leases, task-allocation
 leases, and transfer-action destination leases. Offsets are relative to the
@@ -434,8 +442,8 @@ pool capacity, accepted status, and the PressureFit evidence for that trial.
 
 | Key | Meaning |
 |---|---|
-| `total_wall_time_ns` | Complete `pressurefit_program()` wall time. |
-| `pressurefit_wall_time_ns` | Sum of PressureFit/cache-resolution intervals across attempts. |
+| `total_wall_time_ns` | Complete `plan_program()` wall time. |
+| `search_wall_time_ns` | Sum of PressureFit/cache-resolution intervals across attempts. |
 | `physical_admission_wall_time_ns` | Sum of physical-layout construction intervals. |
 | `orchestration_wall_time_ns` | Remaining validated orchestration time. |
 | `refinement_attempts` | Per-attempt PressureFit and physical-admission timing. |
@@ -452,7 +460,7 @@ artifact they validate:
 
 - schema labels and field types;
 - Program cross-references and topological order;
-- embedded Program, schedule, topology, and layout digests;
+- embedded program, schedule, topology, and layout digests;
 - one legal task-alternative option per group;
 - residency and memory-action legality;
 - physical-layout identity and capacity;
@@ -466,8 +474,8 @@ strip validation evidence to make an artifact load.
 
 | Goal | Use |
 |---|---|
-| Inspect or hand-author a framework-neutral workload | `Program` |
-| Sweep budgets or bandwidths for one recurrent/forward role | `PressureFitProgram` |
+| Inspect or hand-author a framework-neutral workload | `ShadowSpillProgram` |
+| Sweep budgets or bandwidths for one recurrent/forward role | `ShadowSpillPlanningProblem` |
 | Preserve all capture/profile work for a PyTorch training step | `StepProgram` |
 | Preserve one selected, simulated, physically admitted point | `AnnotatedProgramPlan` |
 | Preserve one planning call's explanatory tree | `PlanReport.diagnostics.as_dict()` |

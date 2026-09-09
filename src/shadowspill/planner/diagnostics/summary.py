@@ -10,8 +10,8 @@ from shadowspill.schema import artifact_schema
 
 from .candidates import CandidateDiagnostic
 from .counters import (
-    PressureFitRepairDiagnostics,
-    PressureFitWorkDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningWorkDiagnostics,
     _nonnegative,
 )
 from .json import (
@@ -29,17 +29,36 @@ from .resolved_programs import (
 
 
 @dataclass(frozen=True, slots=True)
-class PressureFitDiagnostics:
-    """Complete problem, policy-evaluation, and aggregate PressureFit evidence."""
+class PlanningDiagnostics:
+    """What a search did, and what it answered with.
 
-    SCHEMA: ClassVar[str] = artifact_schema("pressurefit_diagnostics")
+    The record has two halves, and the split is what lets a second search
+    arrive without this type changing. The **generic** half is what any
+    search must say: which plan won, and at what cost. The **search** half
+    is whatever that search has to report about how it got there, written
+    under its own name and read by nothing here.
+
+    Everything below `search` today is PressureFit's -- resolved programs,
+    repairs, capacity refinement, section timings -- because PressureFit is
+    the only search. The contract is deliberately loose: a search reports
+    what it has, and a reader that does not recognise the name reads the
+    generic half and stops.
+    """
+
+    SCHEMA: ClassVar[str] = artifact_schema("search_diagnostics")
 
     selected_candidate_id: str
     selected_selection_id: str
     selected_makespan_ns: int
     resolved_programs: tuple[ResolvedProgramDiagnostics, ...]
-    work: PressureFitWorkDiagnostics = field(default_factory=PressureFitWorkDiagnostics)
+    work: PlanningWorkDiagnostics = field(default_factory=PlanningWorkDiagnostics)
     effective_object_capacity_bytes: int | None = None
+    #: Which search produced this. The key its own half is written under.
+    search: str = "pressurefit"
+    #: How many threads the search was given. Recorded for visibility and
+    #: excluded from anything compared across runs, because it changes how
+    #: long an answer took and not which answer was right.
+    workers: int = 0
 
     def __post_init__(self) -> None:
         problem_ids = tuple(item.selection_id for item in self.resolved_programs)
@@ -89,8 +108,8 @@ class PressureFitDiagnostics:
         )
 
     @property
-    def repairs(self) -> PressureFitRepairDiagnostics:
-        result = PressureFitRepairDiagnostics()
+    def repairs(self) -> PlanningRepairDiagnostics:
+        result = PlanningRepairDiagnostics()
         for candidate in self._candidate_evaluations():
             result += candidate.repairs
         return result
@@ -103,7 +122,7 @@ class PressureFitDiagnostics:
             )
         )
 
-    def replace_selected_makespan(self, makespan_ns: int) -> PressureFitDiagnostics:
+    def replace_selected_makespan(self, makespan_ns: int) -> PlanningDiagnostics:
         """Replace the selected policy's admission-aware timing consistently."""
 
         _nonnegative("makespan_ns", makespan_ns)
@@ -137,14 +156,20 @@ class PressureFitDiagnostics:
     def to_dict(self) -> dict[str, object]:
         return {
             "schema": self.SCHEMA,
+            # The generic half: which plan won, and which search found it.
+            # A reader that knows no search at all can read this much.
+            "search_name": self.search,
+            "workers": self.workers,
             "selection": {
                 "candidate_id": self.selected_candidate_id,
                 "selection_id": self.selected_selection_id,
                 "makespan_ns": self.selected_makespan_ns,
             },
-            "summary": {
-                "recomputation_problem_count": self.resolved_program_count,
-                "valid_recomputation_problem_count": (
+            # The search's own half, under its name. Nothing generic reads
+            # inside it, so a search may put whatever it has here.
+            "search": {"summary": {
+                "resolved_program_count": self.resolved_program_count,
+                "valid_resolved_program_count": (
                     self.valid_resolved_program_count
                 ),
                 "candidate_policy_count": self.candidate_policy_count,
@@ -161,9 +186,10 @@ class PressureFitDiagnostics:
                     self.effective_object_capacity_bytes
                 ),
             },
-            "recomputation_problems": [
+            "resolved_programs": [
                 item.to_dict() for item in self.resolved_programs
             ],
+            },
         }
 
     def stable_dict(self) -> dict[str, object]:
@@ -174,23 +200,24 @@ class PressureFitDiagnostics:
         return value
 
     @classmethod
-    def from_value(cls, value: object, path: str) -> PressureFitDiagnostics:
+    def from_value(cls, value: object, path: str) -> PlanningDiagnostics:
         data = _mapping(value, path)
         if data.get("schema") != cls.SCHEMA:
             raise ValueError(f"{path}.schema: unsupported schema")
         selection = _mapping(data.get("selection"), f"{path}.selection")
-        summary = _mapping(data.get("summary"), f"{path}.summary")
+        search = _mapping(data.get("search"), f"{path}.search")
+        summary = _mapping(search.get("summary"), f"{path}.search.summary")
         refinement = _mapping(
-            data.get("capacity_refinement"), f"{path}.capacity_refinement"
+            search.get("capacity_refinement"), f"{path}.search.capacity_refinement"
         )
         problems = tuple(
             ResolvedProgramDiagnostics.from_value(
-                item, f"{path}.resolved_programs[{index}]"
+                item, f"{path}.search.resolved_programs[{index}]"
             )
             for index, item in enumerate(
                 _list(
-                    data.get("recomputation_problems"),
-                    f"{path}.resolved_programs",
+                    search.get("resolved_programs"),
+                    f"{path}.search.resolved_programs",
                 )
             )
         )
@@ -205,22 +232,25 @@ class PressureFitDiagnostics:
                 selection.get("makespan_ns"), f"{path}.selection.makespan_ns"
             ),
             resolved_programs=problems,
-            work=PressureFitWorkDiagnostics.from_value(
-                data.get("work"), f"{path}.work"
+            work=PlanningWorkDiagnostics.from_value(
+                search.get("work"), f"{path}.search.work"
             ),
+            search=_string(data.get("search_name"), f"{path}.search_name"),
+            workers=_integer(data.get("workers", 0), f"{path}.workers"),
             effective_object_capacity_bytes=_optional_integer(
                 refinement.get("effective_object_capacity_bytes"),
-                f"{path}.capacity_refinement.effective_object_capacity_bytes",
+                f"{path}.search.capacity_refinement"
+                ".effective_object_capacity_bytes",
             ),
         )
-        declared_repairs = PressureFitRepairDiagnostics.from_value(
-            data.get("repairs"), f"{path}.repairs"
+        declared_repairs = PlanningRepairDiagnostics.from_value(
+            search.get("repairs"), f"{path}.search.repairs"
         )
         if declared_repairs != result.repairs:
-            raise ValueError(f"{path}.repairs does not match candidate repairs")
+            raise ValueError(f"{path}.search.repairs does not match candidate repairs")
         expected_summary = {
-            "recomputation_problem_count": result.resolved_program_count,
-            "valid_recomputation_problem_count": (result.valid_resolved_program_count),
+            "resolved_program_count": result.resolved_program_count,
+            "valid_resolved_program_count": (result.valid_resolved_program_count),
             "candidate_policy_count": result.candidate_policy_count,
             "candidate_evaluation_count": result.candidate_evaluation_count,
             "valid_candidate_evaluation_count": (

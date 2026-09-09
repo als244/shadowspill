@@ -1,5 +1,12 @@
 # PyTorch allocator integration
 
+What happens underneath a planned callable, between PyTorch's allocator and the
+neutral C runtime. The API this page describes is not called directly: it is
+reached by constructing a [`Runtime`](api/frontend.md#runtime) and running a
+planned callable. Read it to understand a failure, a trace, or a profiler
+timeline. The compiled boundary itself is specified in [the PyTorch adapter C
+API](../c/pytorch-adapter.md).
+
 `Runtime` installs the ShadowSpill allocator through the compiled PyTorch
 adapter. Allocator selection is process-global and cannot be reversed after
 PyTorch initializes the accelerator, so construct exactly one runtime before
@@ -18,7 +25,8 @@ PyTorch allocation callbacks enter the adapter and then the neutral C runtime:
 A nonzero allocation failure raises `RuntimeExecutionError` from the adapter.
 No nonzero request returns a null pointer to compiled code. Structured
 diagnostics distinguish no-progress OOM, task-envelope violation,
-allocation-contract mismatch, worker failure, and backend failure.
+allocation-contract mismatch, worker failure, and backend failure, and the
+first of them is retained on `Runtime.last_failure`.
 
 Zero-byte requests are tracked separately in diagnostics. They do not acquire
 a physical lease and are not counted as ordinary allocations requiring a
@@ -50,7 +58,7 @@ can satisfy the request; otherwise the runtime reports no progress.
 `profiler_annotations=True` enables backend profiler ranges such as task,
 compiled-call, fetch, evict, and allocation labels. It is independent of
 `runtime_trace=True`, which records the structured data returned through
-`StepDiagnostics`. Both are off by default.
+`StepDiagnostics`. Both are off by default, and both are per invocation.
 
 The C worker is a provider-independent native thread and does not execute
 Python or acquire the GIL.

@@ -17,98 +17,6 @@ from shadowspill.simulator.capi import (
 NO_INDEX = (1 << 32) - 1
 
 
-class CPlanCandidate(ctypes.Structure):
-    _fields_ = [
-        ("program", ctypes.POINTER(CProgram)),
-        ("candidate_id", ctypes.c_uint32),
-        ("selection_id", ctypes.c_uint32),
-    ]
-
-
-class CCandidateResult(ctypes.Structure):
-    _fields_ = [
-        ("simulation_status", ctypes.c_uint32),
-        ("valid", ctypes.c_uint8),
-        ("makespan_ns", ctypes.c_uint64),
-    ]
-
-
-class CSelectionResult(ctypes.Structure):
-    _fields_ = [
-        ("status", ctypes.c_uint32),
-        ("selected_index", ctypes.c_uint32),
-        ("selected_candidate_id", ctypes.c_uint32),
-        ("selected_selection_id", ctypes.c_uint32),
-        ("valid_candidate_count", ctypes.c_uint32),
-        ("first_failure_index", ctypes.c_uint32),
-        ("first_failure_status", ctypes.c_uint32),
-        ("selected_makespan_ns", ctypes.c_uint64),
-        ("candidate_results", ctypes.POINTER(CCandidateResult)),
-        ("candidate_result_capacity", ctypes.c_uint32),
-        ("candidate_result_count", ctypes.c_uint32),
-    ]
-
-
-class CResidencyProblem(ctypes.Structure):
-    _fields_ = [
-        ("abi_version", ctypes.c_uint32),
-        ("alias_count", ctypes.c_uint32),
-        ("boundary_count", ctypes.c_uint32),
-        ("device_count", ctypes.c_uint32),
-        ("alias_size_bytes", ctypes.POINTER(ctypes.c_uint64)),
-        ("alias_device", ctypes.POINTER(ctypes.c_uint32)),
-        ("alias_retain_spill_copy", ctypes.POINTER(ctypes.c_uint8)),
-        ("initial_location", ctypes.POINTER(ctypes.c_int8)),
-        ("final_location", ctypes.POINTER(ctypes.c_int8)),
-        ("anchors", ctypes.POINTER(ctypes.c_uint8)),
-        ("productions", ctypes.POINTER(ctypes.c_uint8)),
-        ("latest_access_task", ctypes.POINTER(ctypes.c_uint32)),
-        ("output_reservations", ctypes.POINTER(ctypes.c_uint8)),
-        ("write_prefix", ctypes.POINTER(ctypes.c_uint8)),
-        ("first_input_task", ctypes.POINTER(ctypes.c_uint32)),
-        ("fetch_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
-        ("evict_runtime_ns", ctypes.POINTER(ctypes.c_uint64)),
-        ("task_ideal_end_ns", ctypes.POINTER(ctypes.c_uint64)),
-        ("device_capacity_bytes", ctypes.POINTER(ctypes.c_uint64)),
-        ("boundary_capacity_bytes", ctypes.POINTER(ctypes.c_uint64)),
-        ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
-        ("anchor_offsets", ctypes.POINTER(ctypes.c_uint32)),
-        ("anchor_positions", ctypes.POINTER(ctypes.c_uint32)),
-        ("anchor_tasks", ctypes.POINTER(ctypes.c_uint32)),
-        ("reserved_offsets", ctypes.POINTER(ctypes.c_uint32)),
-        ("reserved_positions", ctypes.POINTER(ctypes.c_uint32)),
-        ("alias_evict_eligible", ctypes.POINTER(ctypes.c_uint8)),
-        ("fixed_fetch_trigger", ctypes.POINTER(ctypes.c_uint32)),
-    ]
-
-
-class CResidencyOptions(ctypes.Structure):
-    _fields_ = [
-        ("minimize_transfer", ctypes.c_uint8),
-        ("fetch_headroom", ctypes.c_uint8),
-        ("seed_resident", ctypes.POINTER(ctypes.c_uint8)),
-        ("seed_breaks", ctypes.POINTER(ctypes.c_uint8)),
-        ("extra_pressure_bytes", ctypes.POINTER(ctypes.c_uint64)),
-    ]
-
-
-class CResidencyResult(ctypes.Structure):
-    _fields_ = [
-        ("status", ctypes.c_uint32),
-        ("error_device", ctypes.c_uint32),
-        ("error_boundary", ctypes.c_int32),
-        ("required_bytes", ctypes.c_uint64),
-        ("capacity_bytes", ctypes.c_uint64),
-        ("resident", ctypes.POINTER(ctypes.c_uint8)),
-        ("resident_capacity", ctypes.c_uint64),
-        ("breaks", ctypes.POINTER(ctypes.c_uint8)),
-        ("break_capacity", ctypes.c_uint64),
-        ("cut_aliases", ctypes.POINTER(ctypes.c_uint32)),
-        ("cut_capacity", ctypes.c_uint64),
-        ("cut_count", ctypes.c_uint64),
-    ]
-
-
 class CIndexedSchedule(ctypes.Structure):
     _fields_ = [
         ("action_count", ctypes.c_uint32),
@@ -242,7 +150,7 @@ class CPlacementResult(ctypes.Structure):
     ]
 
 
-class CBestPlacedRecord(ctypes.Structure):
+class CPressureFitBestPlacedRecord(ctypes.Structure):
     _fields_ = [
         ("makespan_ns", ctypes.c_uint64),
         ("object_capacity_bytes", ctypes.c_uint64),
@@ -254,7 +162,7 @@ class CBestPlacedRecord(ctypes.Structure):
     ]
 
 
-class CPressureFitProblemOptions(ctypes.Structure):
+class CPressureFitOptions(ctypes.Structure):
     _fields_ = [
         ("residency_strategies", ctypes.POINTER(ctypes.c_uint8)),
         ("residency_strategy_count", ctypes.c_uint32),
@@ -274,15 +182,23 @@ class CPressureFitProblemOptions(ctypes.Structure):
     ]
 
 
-class CPressureFitProgramProblem(ctypes.Structure):
+class CScheduleContext(ctypes.Structure):
+    """The part of a problem that is not about how it is searched."""
+
     _fields_ = [
-        ("abi_version", ctypes.c_uint32),
         ("simulation", ctypes.POINTER(CProgram)),
-        ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
         ("admission", ctypes.POINTER(CAdmissionFacts)),
         ("placement", ctypes.POINTER(CAdmissionFacts)),
         ("alias_json_names", ctypes.POINTER(ctypes.c_char_p)),
         ("task_json_names", ctypes.POINTER(ctypes.c_char_p)),
+    ]
+
+
+class CIndexedProblem(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("context", CScheduleContext),
+        ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
         ("incumbent", ctypes.POINTER(CIndexedSchedule)),
     ]
 
@@ -391,7 +307,7 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
     ]
 
 
-class CPressureFitProblemResult(ctypes.Structure):
+class CPressureFitResult(ctypes.Structure):
     _fields_ = [
         ("status", ctypes.c_uint32),
         ("selected_candidate_index", ctypes.c_uint32),
@@ -453,16 +369,14 @@ def _check_struct_layout(library: ctypes.CDLL) -> None:
     """
 
     mirrored = (
-        (0, "CPressureFitProblemOptions", CPressureFitProblemOptions),
-        (1, "CPressureFitWorkDiagnostics", CPressureFitWorkDiagnostics),
-        (2, "CPressureFitCandidateDiagnostic", CPressureFitCandidateDiagnostic),
-        (3, "CPressureFitSectionTiming", CPressureFitSectionTiming),
-        (4, "CPressureFitReductionStep", CPressureFitReductionStep),
-        (5, "CAdmissionFacts", CAdmissionFacts),
-        (6, "CBestPlacedRecord", CBestPlacedRecord),
-        (7, "CResidencyProblem", CResidencyProblem),
-        (8, "CResidencyResult", CResidencyResult),
-        (9, "CPressureFitProblemResult", CPressureFitProblemResult),
+        (0, "CAdmissionFacts", CAdmissionFacts),
+        (1, "CPressureFitOptions", CPressureFitOptions),
+        (2, "CPressureFitWorkDiagnostics", CPressureFitWorkDiagnostics),
+        (3, "CPressureFitCandidateDiagnostic", CPressureFitCandidateDiagnostic),
+        (4, "CPressureFitSectionTiming", CPressureFitSectionTiming),
+        (5, "CPressureFitReductionStep", CPressureFitReductionStep),
+        (6, "CPressureFitBestPlacedRecord", CPressureFitBestPlacedRecord),
+        (7, "CPressureFitResult", CPressureFitResult),
     )
     for which, name, structure in mirrored:
         expected = library.shadowspill_planner_struct_size(which)
@@ -477,42 +391,30 @@ def _check_struct_layout(library: ctypes.CDLL) -> None:
 @cache
 def planner_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
-    library.shadowspill_select_plan.argtypes = [
-        ctypes.POINTER(CPlanCandidate),
+    library.shadowspill_pressurefit_search.argtypes = [
+        ctypes.POINTER(CIndexedProblem),
         ctypes.c_uint32,
-        ctypes.POINTER(CSelectionResult),
+        ctypes.POINTER(CPressureFitOptions),
+        ctypes.POINTER(CPressureFitResult),
     ]
-    library.shadowspill_select_plan.restype = ctypes.c_uint32
-    library.shadowspill_reduce_residency.argtypes = [
-        ctypes.POINTER(CResidencyProblem),
-        ctypes.POINTER(CResidencyOptions),
-        ctypes.POINTER(CResidencyResult),
-    ]
-    library.shadowspill_reduce_residency.restype = ctypes.c_uint32
-    library.shadowspill_evaluate_pressurefit_program_problems.argtypes = [
-        ctypes.POINTER(CPressureFitProgramProblem),
-        ctypes.c_uint32,
-        ctypes.POINTER(CPressureFitProblemOptions),
-        ctypes.POINTER(CPressureFitProblemResult),
-    ]
-    library.shadowspill_evaluate_pressurefit_program_problems.restype = ctypes.c_uint32
+    library.shadowspill_pressurefit_search.restype = ctypes.c_uint32
     library.shadowspill_planner_struct_size.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_struct_size.restype = ctypes.c_uint64
     _check_struct_layout(library)
-    library.shadowspill_best_placed_create.argtypes = []
-    library.shadowspill_best_placed_create.restype = ctypes.c_void_p
-    library.shadowspill_best_placed_destroy.argtypes = [ctypes.c_void_p]
-    library.shadowspill_best_placed_destroy.restype = None
-    library.shadowspill_best_placed_read.argtypes = [
+    library.shadowspill_pressurefit_best_placed_create.argtypes = []
+    library.shadowspill_pressurefit_best_placed_create.restype = ctypes.c_void_p
+    library.shadowspill_pressurefit_best_placed_destroy.argtypes = [ctypes.c_void_p]
+    library.shadowspill_pressurefit_best_placed_destroy.restype = None
+    library.shadowspill_pressurefit_best_placed_read.argtypes = [
         ctypes.c_void_p,
-        ctypes.POINTER(CBestPlacedRecord),
+        ctypes.POINTER(CPressureFitBestPlacedRecord),
     ]
-    library.shadowspill_best_placed_read.restype = None
-    library.shadowspill_validate_pressurefit_program_problem.argtypes = [
-        ctypes.POINTER(CPressureFitProgramProblem),
+    library.shadowspill_pressurefit_best_placed_read.restype = None
+    library.shadowspill_pressurefit_preflight.argtypes = [
+        ctypes.POINTER(CIndexedProblem),
         ctypes.POINTER(CPressureFitPreflightResult),
     ]
-    library.shadowspill_validate_pressurefit_program_problem.restype = ctypes.c_uint32
+    library.shadowspill_pressurefit_preflight.restype = ctypes.c_uint32
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionFacts),
@@ -520,10 +422,10 @@ def planner_api() -> ctypes.CDLL:
         ctypes.POINTER(CScheduleAdmissionResult),
     ]
     library.shadowspill_evaluate_schedule_admission.restype = ctypes.c_uint32
-    library.shadowspill_pressurefit_problem_result_destroy.argtypes = [
-        ctypes.POINTER(CPressureFitProblemResult),
+    library.shadowspill_pressurefit_result_destroy.argtypes = [
+        ctypes.POINTER(CPressureFitResult),
     ]
-    library.shadowspill_pressurefit_problem_result_destroy.restype = None
+    library.shadowspill_pressurefit_result_destroy.restype = None
     library.shadowspill_admission_operation_bounds.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionFacts),
@@ -558,7 +460,7 @@ __all__ = [
     "NO_INDEX",
     "CAdmissionFacts",
     "CAdmissionOperations",
-    "CCandidateResult",
+    "CIndexedProblem",
     "CIndexedSchedule",
     "CLeaseIdentity",
     "CLeaseLifetime",
@@ -566,18 +468,12 @@ __all__ = [
     "CLeaseLifetimeResult",
     "CPlacementProblem",
     "CPlacementResult",
-    "CPlanCandidate",
     "CPressureFitCandidateDiagnostic",
+    "CPressureFitOptions",
     "CPressureFitPreflightResult",
-    "CPressureFitProblemOptions",
-    "CPressureFitProblemResult",
-    "CPressureFitProgramProblem",
     "CPressureFitRepairDiagnostics",
+    "CPressureFitResult",
     "CPressureFitWorkDiagnostics",
-    "CResidencyOptions",
-    "CResidencyProblem",
-    "CResidencyResult",
     "CScheduleAdmissionResult",
-    "CSelectionResult",
     "planner_api",
 ]

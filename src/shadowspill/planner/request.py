@@ -1,11 +1,12 @@
-"""What a caller asks PressureFit for."""
+"""What a caller asks the planner for, and how an option record is written."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from enum import Enum, StrEnum
-from typing import Any
+from fractions import Fraction
+from typing import Any, ClassVar, Self
 
 
 class InitialPlacement(StrEnum):
@@ -15,73 +16,112 @@ class InitialPlacement(StrEnum):
     GREEDY = "greedy"
 
 
-@dataclass(frozen=True, slots=True)
-class PressureFitOptions:
-    """Bounded heuristic candidate configuration.
+class OptionRecord:
+    """Serialization shared by every option record.
 
-    Every field here is part of a planned program's identity, worker count
-    included. Worker count enters no candidate's identity and breaks no tie
-    between two candidates, but candidates measure a layout only when the
-    shared best-placed record says it could win, so which worker places
-    first decides which candidates are ever measured, and two searches over
-    the same problem at different worker counts can answer with different
-    plans. Zero selects all available logical CPUs; one forces serial
-    evaluation.
+    Both halves are derived from the dataclass's own fields rather than a
+    written-out list, so an option added later is carried by this and by
+    everything built on it -- the plan key included -- without a second
+    edit. Subclasses are frozen slotted dataclasses; this base holds no
+    state of its own.
 
-    ``deterministic`` is how a search reproduces without giving up its
-    workers: the placement gate consults only the candidate's own placed
-    plans instead of the shared record, so every outcome is a pure function
-    of that candidate's inputs and any worker count answers the same. It
-    costs wall time, because the shared bound is what lets a candidate skip
-    measuring a plan that cannot win.
+    Each subclass names a `KIND`, and records itself under it. A nested
+    record therefore says on the wire what it is, and reads back as the
+    type it was written as -- which is what lets a second search store its
+    own options inside a `SearchOptions` without this module hearing about
+    it.
     """
 
-    initial_placement: InitialPlacement = InitialPlacement.GREEDY
-    # relaxed-stall (byte-identical to tight-stall) and interval-entry
-    # never carry a winner: a 435-point regression replay reproduced
-    # every schedule digest exactly without them at ~1.25x less
-    # candidate set work. The two transfer strategies went the same way
-    # on 2026-09-07: identical to their stall twin at 78 % of 14,672
-    # pairs on a 293-point llama3 sweep and never carrying a point by
-    # more than 0.2 %, and on a 15-program three-model corpus the search
-    # without them answered within 0.2 % on average for 0.61x the wall
-    # (0.61x on 1x64, 2x32 and 4x16 programs at flat quality). All four
-    # remain valid explicit options.
-    residency_strategies: tuple[str, ...] = (
-        "headroom-stall",
-        "tight-stall",
-    )
-    fetch_rules: tuple[str, ...] = (
-        "packed-fifo",
-        "packed-fit",
-        "latest-safe",
-        "demand",
-    )
-    evaluate_coalesced: bool = True
-    #: How many monotonic repairs one candidate may make before it answers
-    #: with the best plan it reached. Measured over the 2,520-point corpus,
-    #: 256 changes no candidate's status against 64 and improves the mean
-    #: makespan by 0.40%, with the wins concentrated where memory is
-    #: tightest; it costs planning time, which the workers are what pays for.
-    max_repair_attempts: int = 256
-    #: How much capacity a plan gives back at a time when its layout does
-    #: not fit. The extent does not fall byte for byte with the capacity, so
-    #: handing back the whole overage overshoots the capacity that would have
-    #: fit, and the plan built below that capacity is materially worse than
-    #: the one just under the line. Stepping instead costs rounds and buys
-    #: quality: across a 45-point slice, stepping here rather than handing
-    #: back the shortfall moved the median 0.4 points and the worst point
-    #: 1.2, for about 40% more planning time. Zero hands back the whole
-    #: shortfall, which converges in the fewest rounds and is the setting to
-    #: reach for when planning time matters more than the last percent.
-    capacity_refinement_bytes: int = 256 * 1024 * 1024
-    #: Record what each candidate's search actually did: one step per plan it
-    #: held, with the objects the reducer cut to reach it and what became of
-    #: it. Off by default because it costs an allocation per candidate that
-    #: grows with the search -- worth paying to attribute planner time or
-    #: explain a plan, and not worth paying in a sweep.
-    record_reduction_steps: bool = False
-    workers: int = 0
+    __slots__ = ()
+
+    KIND: ClassVar[str] = ""
+    _KINDS: ClassVar[dict[str, type[OptionRecord]]] = {}
+
+    def __init_subclass__(cls, **keywords: object) -> None:
+        super().__init_subclass__(**keywords)
+        if cls.KIND:
+            OptionRecord._KINDS[cls.KIND] = cls
+
+    @staticmethod
+    def record_from_value(value: object) -> OptionRecord | None:
+        """Rebuild a nested record from what :meth:`to_dict` wrote."""
+
+        if value is None:
+            return None
+        if not isinstance(value, Mapping):
+            raise ValueError("an option record must be an object")
+        kind = value.get("kind")
+        if not isinstance(kind, str) or kind not in OptionRecord._KINDS:
+            raise ValueError(f"unknown option record kind {kind!r}")
+        return OptionRecord._KINDS[kind].from_dict(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Every option, in declaration order, as JSON-compatible values."""
+
+        record: dict[str, Any] = {"kind": self.KIND} if self.KIND else {}
+        for option in fields(self):  # type: ignore[arg-type]
+            value = getattr(self, option.name)
+            if isinstance(value, OptionRecord):
+                value = value.to_dict()
+            elif isinstance(value, Enum):
+                value = value.value
+            elif isinstance(value, tuple):
+                value = [
+                    str(item) if isinstance(item, Fraction) else item for item in value
+                ]
+            record[option.name] = value
+        return record
+
+    @classmethod
+    def from_dict(cls, record: Mapping[str, Any]) -> Self:
+        """Rebuild what :meth:`to_dict` wrote. Every option must be present.
+
+        A record missing an option is a record from a different version of
+        this type, and reading it as though the absent options held their
+        current defaults is how a replay silently plans a different problem
+        than the run it replays.
+        """
+
+        missing = sorted(
+            option.name
+            for option in fields(cls)  # type: ignore[arg-type]
+            if option.name not in record
+        )
+        if missing:
+            raise ValueError(f"options omit {', '.join(missing)}")
+        values: dict[str, Any] = {}
+        for option in fields(cls):  # type: ignore[arg-type]
+            value = record[option.name]
+            default = option.default
+            if isinstance(default, Enum):
+                value = type(default)(value)
+            elif isinstance(default, tuple):
+                if default and isinstance(default[0], Fraction):
+                    value = tuple(Fraction(item) for item in value)
+                else:
+                    value = tuple(value)
+            values[option.name] = value
+        return cls(**values)
+
+
+@dataclass(frozen=True, slots=True)
+class GenericPlanningOptions(OptionRecord):
+    """What every search understands, whichever search it is.
+
+    Held apart from any one search's own options so that adding a search
+    changes nothing here, and so a caller can see at a glance which half of
+    a request is universal.
+
+    How much of the machine to spend is not here: that is `workers`, an
+    argument to the call, because it changes how long an answer takes
+    rather than which answer is right.
+
+    Every field here is part of a planned program's identity: change one
+    and the question changes, so the answer is keyed separately.
+    """
+
+    KIND: ClassVar[str] = "generic"
+
     #: Make every candidate's outcome a pure function of its inputs, so
     #: parallel planning reproduces exactly run to run. The placement gate
     #: then consults only the candidate's own placed plans, never the shared
@@ -99,108 +139,12 @@ class PressureFitOptions:
     #: candidate, a dispatch, and an event. Zero makes every object
     #: eligible, which is what a caller planning byte-sized objects wants.
     minimum_object_bytes_evict_eligible: int = 1 << 20
-    #: Let a plan that has simulated split an eviction whose copy fits in
-    #: idle evict-lane time: a write-back where the lane is free, and a
-    #: release where the eviction was, which costs nothing. The plan is
-    #: simulated again and the split kept only if it got faster, so this
-    #: widens what the search may consider rather than deciding anything.
-    #: Off until the corpora say what it is worth.
-    split_write_backs: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        """Every option, in declaration order, as JSON-compatible values.
-
-        Derived from the dataclass rather than a written-out list, so an
-        option added later is carried by this and by everything built on
-        it without a second edit.
-        """
-
-        record: dict[str, Any] = {}
-        for option in fields(self):
-            value = getattr(self, option.name)
-            if isinstance(value, Enum):
-                value = value.value
-            elif isinstance(value, tuple):
-                value = list(value)
-            record[option.name] = value
-        return record
-
-    @classmethod
-    def from_dict(cls, record: Mapping[str, Any]) -> PressureFitOptions:
-        """Rebuild what :meth:`to_dict` wrote. Every option must be present.
-
-        A record missing an option is a record from a different version of
-        this type, and reading it as though the absent options held their
-        current defaults is how a replay silently plans a different
-        problem than the run it replays.
-        """
-
-        missing = sorted(
-            option.name for option in fields(cls) if option.name not in record
-        )
-        if missing:
-            raise ValueError(f"options omit {', '.join(missing)}")
-        values: dict[str, Any] = {}
-        for option in fields(cls):
-            value = record[option.name]
-            if isinstance(option.default, Enum):
-                value = type(option.default)(value)
-            elif isinstance(option.default, tuple):
-                value = tuple(value)
-            values[option.name] = value
-        return cls(**values)
 
     def __post_init__(self) -> None:
-        if self.capacity_refinement_bytes < 0:
-            raise ValueError("capacity_refinement_bytes is invalid")
         if self.minimum_object_bytes_evict_eligible < 0:
             raise ValueError("minimum_object_bytes_evict_eligible is invalid")
-        if not isinstance(self.initial_placement, InitialPlacement):
-            raise ValueError("initial_placement is invalid")
-        if not self.residency_strategies:
-            raise ValueError("residency_strategies must not be empty")
-        if not self.fetch_rules:
-            raise ValueError("fetch_rules must not be empty")
-        if len(set(self.residency_strategies)) != len(self.residency_strategies):
-            raise ValueError("residency_strategies contains duplicates")
-        if len(set(self.fetch_rules)) != len(self.fetch_rules):
-            raise ValueError("fetch_rules contains duplicates")
-        known_strategies = {
-            "headroom-stall",
-            "headroom-transfer",
-            "tight-stall",
-            "tight-transfer",
-            "relaxed-stall",
-        }
-        known_fetch = {
-            "packed-fifo",
-            "packed-fit",
-            "interval-entry",
-            "latest-safe",
-            "demand",
-        }
-        unknown_strategies = set(self.residency_strategies) - known_strategies
-        unknown_fetch = set(self.fetch_rules) - known_fetch
-        if unknown_strategies:
-            raise ValueError(
-                f"unknown residency strategies: {sorted(unknown_strategies)}"
-            )
-        if unknown_fetch:
-            raise ValueError(f"unknown fetch rules: {sorted(unknown_fetch)}")
-        if (
-            isinstance(self.max_repair_attempts, bool)
-            or not isinstance(self.max_repair_attempts, int)
-            or self.max_repair_attempts < 0
-        ):
-            raise ValueError("max_repair_attempts must be a non-negative integer")
-        if not isinstance(self.record_reduction_steps, bool):
-            raise ValueError("record_reduction_steps must be a boolean")
-        if (
-            isinstance(self.workers, bool)
-            or not isinstance(self.workers, int)
-            or self.workers < 0
-        ):
-            raise ValueError("workers must be a non-negative integer")
+        if not isinstance(self.deterministic, bool):
+            raise ValueError("deterministic must be a boolean")
 
 
-__all__ = ["InitialPlacement", "PressureFitOptions"]
+__all__ = ["GenericPlanningOptions", "InitialPlacement", "OptionRecord"]

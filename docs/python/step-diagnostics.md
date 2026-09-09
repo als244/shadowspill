@@ -93,7 +93,7 @@ the frontend's lead is `compute_reached_at_seconds` minus
 
 ### Clocks
 
-Every time is in seconds, on one of the two clocks
+Every measured time is in seconds, on one of the two clocks
 [timelines](../architecture/timelines.md) defines. Fields on the device
 timeline are named `compute_*` for the compute stream and `lane_*` for a
 transfer lane; fields on the host clock sit under `host` in the records and
@@ -199,7 +199,7 @@ a selected-task simulator interval without accounting for those boundaries;
 
 `diagnostics.tasks` maps chronological `execution_XXXXXX` ids, matching
 `PlanReport.diagnostics.tasks`, to one `TaskRecord` each; `task_id` names
-the Program task. Every record carries the same groups -- identity,
+the program task. Every record carries the same groups -- identity,
 simulated, stream, delta, host -- so a task reads like a transfer.
 
 | Group | Fields | Meaning |
@@ -382,10 +382,11 @@ with open("step-diagnostics.json", "w", encoding="utf-8") as stream:
 ```
 
 `tasks` is keyed by execution task id and `transfers` holds `fetch` and
-`evict`, each keyed by transfer id. Under `timelines`, `clocks` restates the
-three clocks and the first task's start, `compute` is the list of execution
-task ids in stream order, and `fetch` and `evict` each hold `summary` and
-`order`, so a lane plots by walking its order through the records. The dictionary is an observation of one real
+`evict`, each keyed by transfer id. Under `timelines`, `clocks` states the
+origin of each of the three -- `stream`, `simulated`, `host` -- and the first
+task's start; `compute` is the list of execution task ids in stream order; and
+`fetch` and `evict` each hold `summary` and `order`, so a lane plots by walking
+its order through the records. The dictionary is an observation of one real
 call. It is not an execution plan and has no `from_json()` planning
 constructor.
 
@@ -395,7 +396,7 @@ constructor.
 |---|---|
 | Real span is slower than simulated | `summary`: task-event delta versus inter-task-idle delta. |
 | One task is slower than profiled | Its task record's duration delta, then allocator events within that task. |
-| Device execution has gaps between graph tasks | Task records' waits and `frontend_lead_seconds`, then their host costs. |
+| Device execution has gaps between graph tasks | Task records' waits, then each task's frontend lead (`compute_reached_at_seconds` minus `before_task_exited_at_seconds`) and its host costs. |
 | Fetch appears late | Its transfer record: simulated versus stream start, host queued/reserved/dispatched, and the records before it on the lane. |
 | Simulated waiting exceeds real waiting | Lane summaries: effective bandwidth against the assumed bandwidth in the plan summary. |
 | Memory unexpectedly fills | Charged allocator events, peak bytes, largest free range, pending retirements, and each transfer's `next_access`. |

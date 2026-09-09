@@ -1,6 +1,6 @@
 """The best plan a search has actually placed, shared by whoever is searching.
 
-PressureFit plans one resolved program. A Program has several, and a plan
+PressureFit plans one resolved program. A ShadowSpillProgram has several, and a plan
 that fits under any one of them is a real plan -- so it can bound the search
 under every other. This is the object that carries that bound across the
 boundary, and its scope is the caller's decision:
@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import TracebackType
 
-from .capi import CBestPlacedRecord, planner_api
+from ....capi import CPressureFitBestPlacedRecord, planner_api
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +50,7 @@ class BestPlaced:
     """A placed plan to beat, readable by a running search."""
 
     def __init__(self) -> None:
-        handle = planner_api().shadowspill_best_placed_create()
+        handle = planner_api().shadowspill_pressurefit_best_placed_create()
         if not handle:
             raise MemoryError("could not allocate the shared best-placed record")
         self._handle: int | None = handle
@@ -66,8 +66,8 @@ class BestPlaced:
 
         if self._handle is None:
             return None
-        record = CBestPlacedRecord()
-        planner_api().shadowspill_best_placed_read(self._handle, record)
+        record = CPressureFitBestPlacedRecord()
+        planner_api().shadowspill_pressurefit_best_placed_read(self._handle, record)
         if record.makespan_ns == 0:
             return None
         return PlacedPlan(
@@ -79,7 +79,7 @@ class BestPlaced:
 
     def close(self) -> None:
         if self._handle is not None:
-            planner_api().shadowspill_best_placed_destroy(self._handle)
+            planner_api().shadowspill_pressurefit_best_placed_destroy(self._handle)
             self._handle = None
 
     def __enter__(self) -> BestPlaced:

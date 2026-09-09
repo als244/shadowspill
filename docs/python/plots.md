@@ -12,11 +12,13 @@ plot_step_search(report, "figures")
 plot_step_run(outcomes, "figures", tokens_per_step=65536)
 ```
 
-`plot_step_search()` writes everything under `sim/`, which needs only a plan.
-`plot_step_run()` writes `real/`, which needs a step to have executed. Both
-write into the directory they are given and key nothing themselves, so what
-distinguishes one run from another is the caller's to choose: point a second
-run at a second directory.
+`plot_step_search()` takes a `StepSearchReport` and writes everything under
+`sim/`, which needs only a plan. `plot_step_run()` takes one
+`RunBudgetOutcome` per executed budget -- the prediction and the measurement
+side by side, each split into task compute, stall, the opening restore and the
+terminal tail -- and writes `real/`. Both write into the directory they are
+given and key nothing themselves, so what distinguishes one run from another
+is the caller's to choose: point a second run at a second directory.
 
 ## The tree
 
@@ -51,7 +53,8 @@ figures/
                                         ordering the search tried
   real/
     throughput.png                      measured against simulated
-    sim_fidelity.png                    where the prediction fell short
+    sim_fidelity.png                    the signed error, and which part of
+                                        the step it came from
   raw_data/
     search.json                         the report itself, lossless
     points.csv                          one row per geometry and budget
@@ -131,6 +134,19 @@ top and the full range hides them.
 
 **A gap is data.** A geometry-budget point that never planned is still a row in
 the CSVs and still a gap in the line. Nothing is dropped for being infeasible.
+
+**Simulator error is measured minus simulated.** Positive means the step ran
+*slower* than the plan predicted, negative that it ran faster. The direction is
+what carries the meaning: an optimistic prediction is time the step spends
+somewhere the simulator does not model, and that is a thing to go and find.
+This is the convention the performance gate reports, so a number here and a
+number there mean the same thing. `real/sim_fidelity.png` draws it in two
+panels: the signed error per budget against the 5% and 10% bands above, and
+below it the two step breakdowns side by side, so an error can be attributed
+to compute, to stall, or to the opening restore. The terminal writeback sits
+inside the simulated makespan and is part of that bar's stall; the opening
+restore sits on the measured bar alone, because the simulator assumes the
+step's initial objects are already resident.
 
 ## Redrawing from `raw_data/`
 

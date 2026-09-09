@@ -57,9 +57,8 @@ record.
 The interval is a generic runtime type, `ShadowSpillStreamInterval` in the
 synchronization layer: open on a stream, close on the stream, read from an
 origin, discard. It goes through the backend's event calls -- timing events
-and `elapsed_nanoseconds` -- and knows nothing about
-transfers, so anything else the runtime wants placed on the device timeline
-can use it.
+and `elapsed_nanoseconds` -- and knows nothing about transfers, so anything
+else the runtime wants placed on the device timeline can use it.
 
 The host clock still records the worker's own observations of each
 transfer: when the action was queued, when its destination was reserved,
@@ -114,17 +113,17 @@ for nothing else. The Python side of this is
 
 ## What an untraced step pays
 
-Three event records: the origin, the span start and the span end above,
-which cost the stream nothing it can measure and the host a few microseconds
-each. The task markers and the stream intervals are recorded only while a
-trace is armed. The one instruction an untraced
-transfer dispatch spends on any of this is the acquire load of the trace's
-active flag, which is the same gate the runtime's trace appends already
-pay. Timing events come from the runtime's timing pool, reserved when the
-trace is prepared and kept apart from the dependency pool
+Three event records: the origin, the span start and the span end above, each
+one enqueue on the stream and one host call. The task markers and the stream
+intervals are recorded only while a trace is armed. The one instruction an
+untraced transfer dispatch spends on any of this is the acquire load of the
+trace's active flag, which is the same gate the runtime's trace appends
+already pay. Timing events come from the runtime's timing pool, reserved when
+the trace is prepared and kept apart from the dependency pool
 ([events](events.md#the-timing-pool)), so a traced step cannot exhaust the
 events an untraced step relies on.
 
 The step-level result of all this is described field by field in
-[StepResult diagnostics](../python/step-diagnostics.md); the backend
-contract the intervals rest on is in [Backends](../c/backends.md).
+[StepResult diagnostics](../python/step-diagnostics.md); the event and stream
+calls the intervals rest on are in the [backend
+contract](../c/backends.md).

@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+import torch
 import torch.nn as nn
 from torch.fx import GraphModule
 
@@ -51,14 +52,15 @@ def zero_state(
 train_step = plan_step(
     model,
     objective=objective,
-    optimizer=build_optimizer,
+    optimizer=torch.optim.AdamW,
+    hyperparams=("lr",),
     optimizer_state_init=zero_state,
     example_inputs=example_inputs,
     runtime=runtime,
     execution="execution",
     spill="spill",
     partition=EveryNNodes(nodes_per_stage=12),
-    artifact_store_dir=artifact_store,
+    artifact_store=artifact_store,
 )
 ```
 

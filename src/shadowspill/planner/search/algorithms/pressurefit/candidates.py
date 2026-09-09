@@ -18,32 +18,34 @@ from shadowspill.simulator.diagnostics import (
     simulation_failure_detail,
     simulation_status_kind,
 )
-from shadowspill.simulator.indexed import IndexedSimulationTemplate
+from shadowspill.simulator.indexing import IndexedSimulationTemplate
 from shadowspill.status import ABI_VERSION, Status
 
-from ..admission.indexed import EncodedIndexedSchedule, IndexedAdmissionFacts
-from ..capi import (
+from ....admission.indexing import IndexedAdmissionFacts, IndexedMemorySchedule
+from ....capi import (
     NO_INDEX,
+    CIndexedProblem,
     CIndexedSchedule,
     CPressureFitCandidateDiagnostic,
+    CPressureFitOptions,
     CPressureFitPreflightResult,
-    CPressureFitProblemOptions,
-    CPressureFitProblemResult,
-    CPressureFitProgramProblem,
     CPressureFitRepairDiagnostics,
+    CPressureFitResult,
     CPressureFitSectionTiming,
     CPressureFitWorkDiagnostics,
+    CScheduleContext,
     planner_api,
 )
-from ..diagnostics import (
+from ....diagnostics import (
     CandidateDiagnostic,
-    PressureFitRepairDiagnostics,
-    PressureFitSectionTiming,
-    PressureFitWorkDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningSectionTiming,
+    PlanningWorkDiagnostics,
     ReductionStep,
 )
-from ..diagnostics.counters import STEP_OUTCOMES
-from ..request import PressureFitOptions
+from ....diagnostics.counters import STEP_OUTCOMES
+from ....request import GenericPlanningOptions
+from .options import PressureFitOptions
 
 _STRATEGY_CODE = {
     "headroom-stall": 0,
@@ -81,8 +83,8 @@ class CCandidateDiagnostic:
     strategy: str
     rule: str
     coalesced: bool
-    repairs: PressureFitRepairDiagnostics
-    work: PressureFitWorkDiagnostics
+    repairs: PlanningRepairDiagnostics
+    work: PlanningWorkDiagnostics
     simulation_status: int
     makespan_ns: int
     #: Places the accepted plan came up short of capacity and waited.
@@ -130,24 +132,6 @@ class CCandidateDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledIndexedSchedule:
-    """Copied contiguous indices for one problem winner.
-
-    Keeping the problem-local winner indexed avoids constructing and validating
-    thousands of Python IR records that will be discarded when a different
-    resolved program wins overall.
-    """
-
-    action_trigger_tasks: tuple[int, ...]
-    action_aliases: tuple[int, ...]
-    action_kinds: tuple[int, ...]
-    initial_aliases: tuple[int, ...]
-    initial_locations: tuple[int, ...]
-    final_aliases: tuple[int, ...]
-    final_locations: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class CIncumbentOutcome:
     """What became of the plan to beat, as the library reported it.
 
@@ -167,10 +151,10 @@ class CIncumbentOutcome:
 class CProblemResult:
     selected_candidate_index: int | None
     selected_makespan_ns: int | None
-    selected_schedule: CompiledIndexedSchedule | None
+    selected_schedule: IndexedMemorySchedule | None
     candidates: tuple[CCandidateDiagnostic, ...]
-    repairs: PressureFitRepairDiagnostics
-    work: PressureFitWorkDiagnostics
+    repairs: PlanningRepairDiagnostics
+    work: PlanningWorkDiagnostics
     #: This problem's span on the same clock its candidates use: from the first
     #: candidate a worker started to the last one it finished. With several
     #: problems in one call these overlap, because workers take whatever task
@@ -190,8 +174,8 @@ class CProblemResult:
     incumbent: CIncumbentOutcome | None = None
 
     def __post_init__(self) -> None:
-        repairs = PressureFitRepairDiagnostics()
-        candidate_work = PressureFitWorkDiagnostics()
+        repairs = PlanningRepairDiagnostics()
+        candidate_work = PlanningWorkDiagnostics()
         for candidate in self.candidates:
             repairs += candidate.repairs
             candidate_work += candidate.work
@@ -207,7 +191,7 @@ class CProblemResult:
         # Every candidate section is a delta of the same workspace counter the
         # problem totals, so a candidate can never hold more of one than the
         # problem it ran inside.
-        for name in PressureFitSectionTiming.__dataclass_fields__:
+        for name in PlanningSectionTiming.__dataclass_fields__:
             if getattr(candidate_work.sections, name) > getattr(
                 self.work.sections, name
             ):
@@ -403,8 +387,8 @@ def _decode_candidate_status(
 
 def _decode_repairs(
     value: CPressureFitRepairDiagnostics,
-) -> PressureFitRepairDiagnostics:
-    return PressureFitRepairDiagnostics(
+) -> PlanningRepairDiagnostics:
+    return PlanningRepairDiagnostics(
         admission_fetch_advance_attempts=int(value.admission_fetch_advance_attempts),
         admission_fetch_delay_attempts=int(value.admission_fetch_delay_attempts),
         admission_pressure_boundary_attempts=int(
@@ -423,14 +407,14 @@ _SECTION_FIELDS = tuple(name for name, *_ in CPressureFitSectionTiming._fields_)
 
 def _decode_sections(
     value: CPressureFitSectionTiming,
-) -> PressureFitSectionTiming:
-    return PressureFitSectionTiming(
+) -> PlanningSectionTiming:
+    return PlanningSectionTiming(
         **{name: int(getattr(value, name)) for name in _SECTION_FIELDS}
     )
 
 
-def _decode_work(value: CPressureFitWorkDiagnostics) -> PressureFitWorkDiagnostics:
-    return PressureFitWorkDiagnostics(
+def _decode_work(value: CPressureFitWorkDiagnostics) -> PlanningWorkDiagnostics:
+    return PlanningWorkDiagnostics(
         schedule_emissions=int(value.schedule_emissions),
         schedule_cache_hits=int(value.schedule_cache_hits),
         simulation_calls=int(value.simulation_calls),
@@ -494,7 +478,7 @@ def _name_arrays(
 
 
 def _indexed_schedule(
-    schedule: EncodedIndexedSchedule,
+    schedule: IndexedMemorySchedule,
 ) -> tuple[CIndexedSchedule, tuple[object, ...]]:
     """A schedule as the library reads it, with the arrays it borrows."""
 
@@ -532,8 +516,8 @@ def _program_problem(
     simulation: IndexedSimulationTemplate,
     admission: IndexedAdmissionFacts | None,
     placement: IndexedAdmissionFacts | None = None,
-    incumbent: EncodedIndexedSchedule | None = None,
-) -> tuple[CPressureFitProgramProblem, tuple[object, ...]]:
+    incumbent: IndexedMemorySchedule | None = None,
+) -> tuple[CIndexedProblem, tuple[object, ...]]:
     alias_names, task_names = _name_arrays(simulation)
     carried: tuple[object, ...] = ()
     incumbent_value = None
@@ -545,17 +529,23 @@ def _program_problem(
     priorities = (ctypes.c_uint32 * max(1, len(simulation.device_ids)))(
         *(device_ranks[value] for value in simulation.device_ids)
     )
-    problem = CPressureFitProgramProblem(
+    problem = CIndexedProblem(
         abi_version=ABI_VERSION,
-        simulation=ctypes.pointer(simulation.program),
+        context=CScheduleContext(
+            simulation=ctypes.pointer(simulation.program),
+            admission=(
+                ctypes.pointer(admission.value) if admission is not None else None
+            ),
+            # Placement measures layouts during the search; it does not
+            # prefilter through the dynamic-pool replay, which `admission`
+            # above would switch on.
+            placement=(
+                ctypes.pointer(placement.value) if placement is not None else None
+            ),
+            alias_json_names=alias_names,
+            task_json_names=task_names,
+        ),
         device_priority=priorities,
-        admission=ctypes.pointer(admission.value) if admission is not None else None,
-        # Placement measures layouts during the search; it does not
-        # prefilter through the dynamic-pool replay, which `admission`
-        # above would switch on.
-        placement=(ctypes.pointer(placement.value) if placement is not None else None),
-        alias_json_names=alias_names,
-        task_json_names=task_names,
         incumbent=(
             ctypes.pointer(incumbent_value) if incumbent_value is not None else None
         ),
@@ -564,12 +554,13 @@ def _program_problem(
 
 
 def _problem_options(
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    search_options: PressureFitOptions,
     *,
     best_placed: int = 0,
-) -> tuple[CPressureFitProblemOptions, tuple[object, ...]]:
-    strategy_names = tuple(options.residency_strategies)
-    rule_names = tuple(options.fetch_rules)
+) -> tuple[CPressureFitOptions, tuple[object, ...]]:
+    strategy_names = tuple(search_options.residency_strategies)
+    rule_names = tuple(search_options.fetch_rules)
     strategies = (ctypes.c_uint8 * len(strategy_names))(
         *(_STRATEGY_CODE[value] for value in strategy_names)
     )
@@ -578,23 +569,23 @@ def _problem_options(
     )
     # The library takes the modes as a list like the other two axes; the
     # option a caller sets is the bool.
-    mode_values = (0, 1) if options.evaluate_coalesced else (0,)
+    mode_values = (0, 1) if search_options.evaluate_coalesced else (0,)
     modes = (ctypes.c_uint8 * len(mode_values))(*mode_values)
-    compiled = CPressureFitProblemOptions(
+    compiled = CPressureFitOptions(
         residency_strategies=strategies,
         residency_strategy_count=len(strategy_names),
         fetch_rules=rules,
         fetch_rule_count=len(rule_names),
         coalescing_modes=modes,
         coalescing_mode_count=len(mode_values),
-        max_repair_attempts=options.max_repair_attempts,
-        initial_placement=_INITIAL_PLACEMENT[options.initial_placement.value],
-        capacity_refinement_bytes=options.capacity_refinement_bytes,
-        record_reduction_steps=int(options.record_reduction_steps),
+        max_repair_attempts=search_options.max_repair_attempts,
+        initial_placement=_INITIAL_PLACEMENT[search_options.initial_placement.value],
+        capacity_refinement_bytes=search_options.capacity_refinement_bytes,
+        record_reduction_steps=int(search_options.record_reduction_steps),
         best_placed=best_placed or None,
-        deterministic=int(options.deterministic),
-        split_write_backs=int(options.split_write_backs),
-        minimum_object_bytes_evict_eligible=options.minimum_object_bytes_evict_eligible,
+        deterministic=int(generic.deterministic),
+        split_write_backs=int(search_options.split_write_backs),
+        minimum_object_bytes_evict_eligible=generic.minimum_object_bytes_evict_eligible,
     )
     return compiled, (strategies, rules, modes)
 
@@ -610,7 +601,7 @@ def validate_program_problem(
     result = CPressureFitPreflightResult()
     library = planner_api()
     status = int(
-        library.shadowspill_validate_pressurefit_program_problem(
+        library.shadowspill_pressurefit_preflight(
             ctypes.byref(problem),
             ctypes.byref(result),
         )
@@ -653,9 +644,9 @@ def validate_program_problem(
     )
 
 
-def _copy_schedule(result: CPressureFitProblemResult) -> CompiledIndexedSchedule:
+def _copy_schedule(result: CPressureFitResult) -> IndexedMemorySchedule:
     value = result.selected_schedule
-    return CompiledIndexedSchedule(
+    return IndexedMemorySchedule(
         action_trigger_tasks=tuple(
             int(value.action_trigger_tasks[index])
             for index in range(int(value.action_count))
@@ -684,7 +675,7 @@ def _copy_schedule(result: CPressureFitProblemResult) -> CompiledIndexedSchedule
 
 
 def decode_schedule(
-    value: CompiledIndexedSchedule,
+    value: IndexedMemorySchedule,
     simulation: IndexedSimulationTemplate,
 ) -> MemorySchedule:
     return MemorySchedule(
@@ -729,7 +720,7 @@ def decode_schedule(
 def _decode_problem_result(
     library: ctypes.CDLL,
     status: int,
-    problem_result: CPressureFitProblemResult,
+    problem_result: CPressureFitResult,
     simulation: IndexedSimulationTemplate,
 ) -> CProblemResult | None:
     """Copy one evaluation out of planner-owned memory and release it."""
@@ -834,7 +825,7 @@ def _decode_problem_result(
             incumbent=incumbent,
         )
     finally:
-        library.shadowspill_pressurefit_problem_result_destroy(
+        library.shadowspill_pressurefit_result_destroy(
             ctypes.byref(problem_result)
         )
 
@@ -845,19 +836,21 @@ def evaluate_program_problems(
             IndexedSimulationTemplate,
             IndexedAdmissionFacts | None,
             IndexedAdmissionFacts | None,
-            EncodedIndexedSchedule | None,
+            IndexedMemorySchedule | None,
         ],
         ...,
     ],
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    search_options: PressureFitOptions,
     *,
+    workers: int = 0,
     best_placed: int = 0,
 ) -> tuple[CProblemResult | None, ...]:
     """Evaluate several resolved programs on one set of worker threads.
 
     The library owns the threads and hands a candidate of a problem to
     whichever worker is free, so worker count and problem count are
-    independent -- `options.workers` sizes the threads whether there is one
+    independent -- `workers` sizes the threads whether there is one
     resolved program here or five. Sharing one call is also what shares the
     placement record between them: a plan placed under any of these bounds
     the search under every other. Each problem may carry the plan to beat,
@@ -868,19 +861,19 @@ def evaluate_program_problems(
         return ()
     library = planner_api()
     problem_options, _option_buffers = _problem_options(
-        options, best_placed=best_placed
+        generic, search_options, best_placed=best_placed
     )
-    problem_options.workers = options.workers
-    compiled = (CPressureFitProgramProblem * len(problems))()
+    problem_options.workers = workers
+    compiled = (CIndexedProblem * len(problems))()
     # Held until the call returns: the library borrows every array in them.
     buffers: list[object] = []
     for index, (simulation, admission, placement, incumbent) in enumerate(problems):
         value, held = _program_problem(simulation, admission, placement, incumbent)
         compiled[index] = value
         buffers.append(held)
-    results = (CPressureFitProblemResult * len(problems))()
+    results = (CPressureFitResult * len(problems))()
     status = int(
-        library.shadowspill_evaluate_pressurefit_program_problems(
+        library.shadowspill_pressurefit_search(
             compiled,
             len(problems),
             ctypes.byref(problem_options),
@@ -906,7 +899,7 @@ __all__ = [
     "CIncumbentOutcome",
     "CPreflightResult",
     "CProblemResult",
-    "CompiledIndexedSchedule",
+    "IndexedMemorySchedule",
     "ProblemPreparationError",
     "decode_candidate_diagnostic",
     "decode_schedule",

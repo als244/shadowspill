@@ -14,13 +14,14 @@ defines it. This page is the API that reads it.
 PlannedTrainStep.invocation_timings() -> tuple[InvocationTiming, ...]
 ```
 
-Every invocation whose cycle is complete, once each, oldest first. A cycle
-is complete once a later invocation began or `mark_cycle_end()` closed it.
+Takes no arguments and returns one `InvocationTiming` for every invocation
+whose cycle is complete, once each, oldest first. A cycle is complete once a
+later invocation began or `mark_cycle_end()` closed it.
 Reading waits for the device to reach the closing event and for nothing
 else, so a loop may read the previous step's timing after each call without
 draining the stream. The callable keeps the timelines of the sixteen most
 recent invocations; a loop that never reads loses the oldest completed ones
-past that, never a running one.
+past that, never a running one. Reading a closed callable raises.
 
 ## `PlannedTrainStep.mark_cycle_end()`
 
@@ -28,12 +29,12 @@ past that, never a running one.
 PlannedTrainStep.mark_cycle_end() -> None
 ```
 
-Closes the last invocation's cycle where the next one would begin: the
-marker is recorded on the compute stream behind everything the invocation
-enqueued, before any wait the caller performs. A loop that measures its
-last step calls this after that step's call returns and before it
-synchronizes, so the step reads like every other rather than including the
-drain.
+Takes no arguments and returns `None`. It closes the last invocation's cycle
+where the next one would begin: the marker is recorded on the compute stream
+behind everything the invocation enqueued, before any wait the caller
+performs. A loop that measures its last step calls this after that step's call
+returns and before it synchronizes, so the step reads like every other rather
+than including the drain.
 
 ## `InvocationTiming`
 

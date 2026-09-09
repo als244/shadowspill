@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from .candidates import CandidateDiagnostic
 from .counters import (
-    PressureFitRepairDiagnostics,
-    PressureFitSectionTiming,
-    PressureFitWorkDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningSectionTiming,
+    PlanningWorkDiagnostics,
     ReductionStep,
 )
 from .resolved_programs import (
@@ -21,16 +21,16 @@ from .resolved_programs import (
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
-from .summary import PressureFitDiagnostics
+from .summary import PlanningDiagnostics
 
 __all__ = [
     "INCUMBENT_CANDIDATE_ID",
     "CandidateDiagnostic",
     "IncumbentDiagnostic",
-    "PressureFitDiagnostics",
-    "PressureFitRepairDiagnostics",
-    "PressureFitSectionTiming",
-    "PressureFitWorkDiagnostics",
+    "PlanningDiagnostics",
+    "PlanningRepairDiagnostics",
+    "PlanningSectionTiming",
+    "PlanningWorkDiagnostics",
     "ReductionStep",
     "ResolvedProgramDiagnostics",
     "TaskAlternativeChoiceDiagnostic",
