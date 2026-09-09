@@ -2,7 +2,8 @@
 
 The three gates answer different questions and are usually wanted together:
 the unit suite says the tree is coherent, the numerical matrix says a planned
-step still computes what the same step computes unplanned, and the
+step still computes what the same step computes under PyTorch alone,
+compiled fullgraph without ShadowSpill, and the
 performance matrix says throughput has not regressed and the simulator still
 predicts it. Running
 them by hand means three commands, three output directories to name
