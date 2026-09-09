@@ -97,7 +97,10 @@ static int index_intervals(
         if (kind == SHADOWSPILL_MEMORY_RELEASE) {
             continue;
         }
-        const uint8_t direction = kind == SHADOWSPILL_MEMORY_EVICT
+        /* A write-back shares the evict lane with evictions, so it takes the
+         * next transfer measured on that lane rather than the next fetch. */
+        const uint8_t direction = (kind == SHADOWSPILL_MEMORY_EVICT ||
+                                   kind == SHADOWSPILL_MEMORY_WRITE_BACK)
             ? SHADOWSPILL_TRANSFER_EVICT
             : SHADOWSPILL_TRANSFER_FETCH;
         const uint32_t wanted = sequence[direction]++;

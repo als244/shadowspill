@@ -607,7 +607,7 @@ static int incumbent_valid(const ShadowSpillPressureFitProblem *problem) {
     for (uint32_t index = 0U; index < plan->action_count; ++index) {
         if (plan->action_trigger_tasks[index] >= tasks ||
             plan->action_aliases[index] >= aliases ||
-            plan->action_kinds[index] > SHADOWSPILL_MEMORY_FETCH) {
+            plan->action_kinds[index] > SHADOWSPILL_MEMORY_WRITE_BACK) {
             return 0;
         }
     }
