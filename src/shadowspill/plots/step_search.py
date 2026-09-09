@@ -525,18 +525,33 @@ def _geometry_waste_bars(
     for offset, (key, points) in enumerate(ordered):
         for item in points:
             scale = item.step_seconds if share else 1.0
+            # The three partition the step exactly: the cheapest graphs with
+            # no waiting, the compute recomputation adds, and everything the
+            # step was not computing -- stalls and the terminal writeback,
+            # which the simulator prices inside the same makespan.
+            effective = item.summary.unconstrained_step_seconds / scale
             recompute = item.summary.recomputation_overhead_seconds / scale
-            idle = item.summary.idle_seconds / scale
-            drawn += [recompute, recompute + idle]
+            idle = (
+                item.summary.idle_seconds + item.summary.terminal_writeback_seconds
+            ) / scale
+            drawn += [effective, effective + recompute, effective + recompute + idle]
             centre = centres[(item.budget_gib, offset)]
-            axes.bar(centre, recompute, width=width, color=colours[key], alpha=1.0)
+            axes.bar(centre, effective, width=width, color=colours[key], alpha=1.0)
+            axes.bar(
+                centre,
+                recompute,
+                width=width,
+                bottom=effective,
+                color=colours[key],
+                alpha=0.62,
+            )
             axes.bar(
                 centre,
                 idle,
                 width=width,
-                bottom=recompute,
+                bottom=effective + recompute,
                 color=colours[key],
-                alpha=0.45,
+                alpha=0.30,
             )
             if best_geometry.get(item.budget_gib) == key:
                 # One outline around the whole bar rather than around each
@@ -544,7 +559,7 @@ def _geometry_waste_bars(
                 # them and read as a third division.
                 axes.bar(
                     centre,
-                    recompute + idle,
+                    effective + recompute + idle,
                     width=width,
                     fill=False,
                     edgecolor="black",
@@ -554,26 +569,37 @@ def _geometry_waste_bars(
             labels.append(
                 (
                     centre,
-                    recompute,
+                    effective,
                     0.0,
+                    item.summary.unconstrained_step_seconds,
+                )
+            )
+            labels.append(
+                (
+                    centre,
+                    effective + recompute,
+                    effective,
                     item.summary.recomputation_overhead_seconds,
                 )
             )
             labels.append(
                 (
                     centre,
-                    recompute + idle,
-                    recompute,
-                    item.summary.idle_seconds,
+                    effective + recompute + idle,
+                    effective + recompute,
+                    item.summary.idle_seconds
+                    + item.summary.terminal_writeback_seconds,
                 )
             )
-            totals.append((centre, recompute + idle))
-            makespans.append((centre, recompute + idle, item.step_seconds))
+            totals.append((centre, effective + recompute + idle))
+            makespans.append(
+                (centre, effective + recompute + idle, item.step_seconds)
+            )
 
     axes.set_title(
-        "Recomputation and Stalls, Share of the Step"
+        "Where the Step Goes, Share of the Step"
         if share
-        else "Recomputation and Stalls"
+        else "Where the Step Goes"
     )
     axes.set_xlabel("Execution Budget (GiB)")
     axes.set_ylabel("Share of Simulated Step" if share else "Seconds")
@@ -594,25 +620,29 @@ def _geometry_waste_bars(
     axes.grid(True, axis="y", alpha=0.3, which="major")
     axes.set_axisbelow(True)
     _label_segments(axes, labels, width)
-    for centre, total in totals:
-        axes.annotate(
-            f"{total * 100:.0f}%" if share else f"{total:.1f}",
-            (centre, total),
-            textcoords="offset points",
-            xytext=(0, 4),
-            ha="center",
-            va="bottom",
-            fontsize=10.0,
-            color="0.1",
-        )
+    # As a share the total is 100 % on every bar, by construction: the three
+    # parts partition the step. Only the seconds are worth annotating.
+    if not share:
+        for centre, total in totals:
+            axes.annotate(
+                f"{total:.1f}",
+                (centre, total),
+                textcoords="offset points",
+                xytext=(0, 4),
+                ha="center",
+                va="bottom",
+                fontsize=10.0,
+                color="0.1",
+            )
     _annotate_makespans(axes, makespans, width)
 
     handles: list[Patch] = [
         Patch(facecolor=colours[key], label=_label(key)) for key, _points in ordered
     ]
     handles += [
-        Patch(facecolor="0.35", alpha=0.45, label="Stalled (Upper)"),
-        Patch(facecolor="0.35", alpha=1.0, label="Recompute (Lower)"),
+        Patch(facecolor="0.35", alpha=1.0, label="Effective Compute (Lower)"),
+        Patch(facecolor="0.35", alpha=0.62, label="Recomputation (Middle)"),
+        Patch(facecolor="0.35", alpha=0.30, label="Stalled (Upper)"),
         Patch(facecolor="none", edgecolor="none", label="Makespan"),
         Patch(
             facecolor="none",
@@ -822,8 +852,9 @@ def _selection_waste(
         for index, level in enumerate(levels)
     ]
     handles += [
-        Patch(facecolor="0.35", alpha=0.45, label="Stalled (Upper)"),
-        Patch(facecolor="0.35", alpha=1.0, label="Recompute (Lower)"),
+        Patch(facecolor="0.35", alpha=1.0, label="Effective Compute (Lower)"),
+        Patch(facecolor="0.35", alpha=0.62, label="Recomputation (Middle)"),
+        Patch(facecolor="0.35", alpha=0.30, label="Stalled (Upper)"),
         Patch(facecolor="none", edgecolor="none", label="Makespan"),
     ]
     legend = axes.legend(
@@ -1541,36 +1572,38 @@ def plot_step_search(
         ),
         _figure(
             overheads / "winners.png",
-            "Recomputation and Stalls",
+            "Where the Step Goes",
             "Seconds",
             budgets,
             {
-                "Extra Recomputation": [
+                "Effective Compute": [
+                    item.unconstrained_step_seconds for item in summaries
+                ],
+                "Recomputation": [
                     item.recomputation_overhead_seconds for item in summaries
                 ],
-                "Stalled Between Tasks": [item.idle_seconds for item in summaries],
-                "Recomputation and Stalls (Sum)": [
-                    item.recomputation_overhead_seconds + item.idle_seconds
+                "Stalled": [
+                    item.idle_seconds + item.terminal_writeback_seconds
                     for item in summaries
                 ],
             },
         ),
         _figure(
             overheads / "winners_shares.png",
-            "Recomputation and Stalls, Share of the Step",
+            "Where the Step Goes, Share of the Step",
             "Share of Simulated Step",
             budgets,
             {
-                "Extra Recomputation": [
+                "Effective Compute": [
+                    item.unconstrained_step_seconds / step
+                    for item, step in zip(summaries, steps, strict=True)
+                ],
+                "Recomputation": [
                     item.recomputation_overhead_seconds / step
                     for item, step in zip(summaries, steps, strict=True)
                 ],
-                "Stalled Between Tasks": [
-                    item.idle_seconds / step
-                    for item, step in zip(summaries, steps, strict=True)
-                ],
-                "Recomputation and Stalls (Sum)": [
-                    (item.recomputation_overhead_seconds + item.idle_seconds) / step
+                "Stalled": [
+                    (item.idle_seconds + item.terminal_writeback_seconds) / step
                     for item, step in zip(summaries, steps, strict=True)
                 ],
             },

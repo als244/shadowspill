@@ -43,10 +43,14 @@ from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import PressureFitOptions, StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
-from shadowspill.planner.recomputation import validate_resolution_options
+from shadowspill.planner.recomputation import (
+    DEFAULT_RESOLUTION_OPTIONS,
+    validate_resolution_options,
+)
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
+from shadowspill.pytorch.step_search import search_geometries
 from tools.qualification.model_state import import_case_model, release_case_model
 from workloads.full_model import build_case, manifest_for
 from workloads.providers import ModelImplementation
@@ -120,6 +124,7 @@ IDENTITIES = (
     "pytorch_qwen35",
 )
 _GIB = 1 << 30
+_GB = 1_000_000_000
 
 
 def rule(title: str) -> str:
@@ -163,8 +168,10 @@ def gib(value: float) -> str:
     return f"{value / _GIB:.2f} GiB"
 
 
-def gib_s(value: float) -> str:
-    return f"{value / _GIB:.1f} GiB/s"
+def gb_s(value: float) -> str:
+    """Bandwidth in decimal GB/s, which is how the planner rounds rates."""
+
+    return f"{value / _GB:.1f} GB/s"
 
 
 def host_memory() -> tuple[int, int]:
@@ -338,11 +345,11 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
     print()
 
 
-def print_promise(report: Any, tokens: int) -> None:
+def print_breakdown(report: Any, tokens: int) -> None:
     summary = report.summary
     simulated = summary.simulated_step_seconds
     extra = simulated - summary.unconstrained_step_seconds
-    print(rule("The chosen plan's promise"))
+    print(rule("The chosen plan's breakdown"))
     print(f"  simulated step   {simulated:8.3f} s   {tokens / simulated:>10,.0f} tok/s")
     print(
         f"  unconstrained    {summary.unconstrained_step_seconds:8.3f} s"
@@ -350,18 +357,22 @@ def print_promise(report: Any, tokens: int) -> None:
         "   (cheapest graphs, no waiting)"
     )
     print()
-    print(f"  where the extra {extra:.3f} s goes")
+    print(f"  where the extra {extra:.3f} s goes, as shares of the step")
     for label, value in (
-        ("extra recomputation", summary.recomputation_overhead_seconds),
-        ("stalled", summary.idle_seconds),
-        ("terminal writeback", summary.terminal_writeback_seconds),
+        ("recomputation", summary.recomputation_overhead_seconds),
+        (
+            "stalled",
+            summary.idle_seconds + summary.terminal_writeback_seconds,
+        ),
     ):
-        share = value / extra if extra > 0 else 0.0
+        share = value / simulated if simulated > 0 else 0.0
         print(f"    {label:<22}{value:+8.3f} s  {bar(share)}  {share:6.1%}")
+    forced = summary.task_alternative_group_count - summary.flexible_group_count
     print(
         f"  recomputation chosen for {summary.recomputing_group_count}"
-        f" of {summary.task_alternative_group_count} groups"
+        f" of {summary.flexible_group_count} groups"
         f" ({summary.recomputing_group_fraction:.0%})"
+        + (f", with {forced} more forced" if forced else "")
     )
     chosen = summary.selected_candidate
     if "incumbent" in chosen:
@@ -390,15 +401,14 @@ def print_promise(report: Any, tokens: int) -> None:
         f"  planning capacity  execution {gib(report.execution_budget_bytes)}"
         f"   spill {gib(report.spill_budget_bytes)}"
     )
-    print("                     (execution is the budget after fixed reservations)")
     fetch, evict = report.fetch_profile, report.evict_profile
     print(
-        f"  fetch bandwidth    {gib_s(fetch.bandwidth_bytes_per_second)} assumed"
-        f"   ({gib_s(fetch.solo_bandwidth_bytes_per_second)} solo)"
+        f"  fetch bandwidth    {gb_s(fetch.bandwidth_bytes_per_second)} assumed"
+        f"   ({gb_s(fetch.solo_bandwidth_bytes_per_second)} solo)"
     )
     print(
-        f"  evict bandwidth    {gib_s(evict.bandwidth_bytes_per_second)} assumed"
-        f"   ({gib_s(evict.solo_bandwidth_bytes_per_second)} solo)"
+        f"  evict bandwidth    {gb_s(evict.bandwidth_bytes_per_second)} assumed"
+        f"   ({gb_s(evict.solo_bandwidth_bytes_per_second)} solo)"
     )
     print()
 
@@ -480,7 +490,7 @@ def print_epilogue(diagnostics: Any) -> None:
             f" lane busy real {lane_summary.lane_busy_seconds:.3f} s"
             f" simulated {lane_summary.simulated_busy_seconds:.3f} s"
             + (
-                f"; effective {effective / 2**30:.1f} GiB/s"
+                f"; effective {gb_s(effective)}"
                 if effective is not None
                 else ""
             )
@@ -716,40 +726,9 @@ def main() -> int:
     store = arguments.artifact_store or (run_root / "artifact_store")
     plan_store = arguments.plan_store or (run_root / "plan_store")
 
-    print("═" * 68)
-    print(f"  ShadowSpill quickstart — {arguments.model}")
-    print("═" * 68)
-    searched = ", ".join(gib(item) for item in search_budgets)
-    ran = ", ".join(gib(item) for item in run_budgets) or "none (search only)"
-    print(
-        f"  sequence length     {sequence_length:>10,}      search budgets   {searched}"
-    )
-    print(
-        f"  sequences per step  {sequences_per_step:>10,}      run budgets      {ran}"
-    )
-    print(
-        f"  tokens per step     {tokens_per_step:>10,}"
-        f"      spill budget     {gib(manifest.spill_budget_bytes)}"
-    )
-    pinned = arguments.transfer_bandwidths
-    print(
-        "  transfer lanes      "
-        + (
-            f"pinned to fetch {pinned.fetch_bytes_per_second / 1e9:.0f} GB/s,"
-            f" evict {pinned.evict_bytes_per_second / 1e9:.0f} GB/s"
-            + (
-                f", latency {pinned.fetch_latency_ns / 1e3:.0f}/"
-                f"{pinned.evict_latency_ns / 1e3:.0f} us"
-                if pinned.fetch_latency_ns is not None
-                and pinned.evict_latency_ns is not None
-                else ""
-            )
-            if pinned is not None
-            else "calibrated at start; recorded per geometry in search.json"
-        )
-    )
-    print()
-
+    # Built before the banner so the banner can state the calibrated rates as
+    # measurements rather than a promise. Calibration happens once here and is
+    # reused by every geometry.
     ledger: dict[str, float] = {}
     command_started = time.perf_counter()
 
@@ -768,6 +747,84 @@ def main() -> int:
         },
     )
     charge("runtime construction and calibration", marker)
+
+    print("═" * 68)
+    print(f"  ShadowSpill quickstart — {arguments.model}")
+    print("═" * 68)
+    searched = ", ".join(gib(item) for item in search_budgets)
+    ran = ", ".join(gib(item) for item in run_budgets) or "none (search only)"
+    print(
+        f"  sequence length     {sequence_length:>10,}      search budgets   {searched}"
+    )
+    print(
+        f"  sequences per step  {sequences_per_step:>10,}      run budgets      {ran}"
+    )
+    print(
+        f"  tokens per step     {tokens_per_step:>10,}"
+        f"      spill budget     {gib(manifest.spill_budget_bytes)}"
+    )
+    admitted, skipped = search_geometries(
+        sequences_per_step,
+        sequence_length=sequence_length,
+        min_tokens_per_microbatch=arguments.min_tokens_per_microbatch,
+        max_tokens_per_microbatch=arguments.max_tokens_per_microbatch,
+    )
+    print(
+        f"  geometries          {len(admitted):>10}      "
+        + ", ".join(f"{item[0]}x{item[1]}" for item in admitted)
+        + (f"   ({len(skipped)} skipped by the token bounds)" if skipped else "")
+    )
+    print(
+        f"  orderings           {arguments.orderings:>10}      "
+        + (
+            "every depth x breadth factor pair"
+            if arguments.orderings == "factors"
+            else "the depth-first walk only"
+        )
+        + "; loss paired, backward reversed"
+    )
+    shares = arguments.resolution_options or DEFAULT_RESOLUTION_OPTIONS
+    print(
+        "  resolutions         "
+        + f"{len(shares):>10}      "
+        + ", ".join(str(item) for item in shares)
+        + " of the flexible groups recomputing"
+    )
+
+    # One calibration serves every geometry, so it is a property of the run.
+    # The planned rate is the concurrent one rounded to whole GB/s, which is
+    # what the simulator is built with; solo is what a copy gets alone.
+    pinned = arguments.transfer_bandwidths
+    if pinned is not None:
+        print(
+            "  transfer lanes      "
+            f"pinned to fetch {pinned.fetch_bytes_per_second / 1e9:.0f} GB/s,"
+            f" evict {pinned.evict_bytes_per_second / 1e9:.0f} GB/s"
+            + (
+                f", latency {pinned.fetch_latency_ns / 1e3:.0f}/"
+                f"{pinned.evict_latency_ns / 1e3:.0f} us"
+                if pinned.fetch_latency_ns is not None
+                and pinned.evict_latency_ns is not None
+                else ""
+            )
+        )
+    else:
+        capabilities = runtime.transfer_capabilities
+        for name, source, destination in (
+            ("fetch", "spill", "execution"),
+            ("evict", "execution", "spill"),
+        ):
+            profile = capabilities.route(source, destination)
+            planned = round(profile.bandwidth_bytes_per_second / _GB)
+            print(
+                f"  {name + ' lane':<19} "
+                f"{planned:>3} GB/s planned"
+                f"   (concurrent {gb_s(profile.concurrent_bandwidth_bytes_per_second)},"
+                f" solo {gb_s(profile.solo_bandwidth_bytes_per_second)},"
+                f" latency {profile.latency_nanoseconds / 1e3:.0f} us)"
+            )
+    print()
+
     note_host_memory(None, "runtime pools registered")
     marker = time.perf_counter()
     case = build_case(manifest, seed=arguments.seed)
@@ -792,11 +849,18 @@ def main() -> int:
         )
 
     def step_microbatches(
-        sequences: int, accumulation: int, step: int
+        sequences: int, accumulation: int
     ) -> tuple[tuple[object, ...], ...]:
-        """The tokens of one step, the same for every budget and geometry."""
+        """The same tokens for every step, budget and geometry.
 
-        generator = torch.Generator().manual_seed(arguments.seed * 1_000_003 + step)
+        Every step trains on one batch, so the five steps overfit it and the
+        loss visibly falls -- five steps of fresh data show nothing. It also
+        makes the loss curve identical across budgets, so a divergence between
+        two of them is a difference in what was computed rather than in what
+        was sampled.
+        """
+
+        generator = torch.Generator().manual_seed(arguments.seed * 1_000_003)
         return example_microbatches(sequences, accumulation, generator=generator)
 
     with case.implementations():
@@ -970,7 +1034,7 @@ def main() -> int:
             charge("run planning", marker)
             note_host_memory(plan_log, f"planned {gib(budget)}")
             plan_report = training.plan_report
-            print_promise(plan_report, tokens_per_step)
+            print_breakdown(plan_report, tokens_per_step)
 
             losses: dict[int, float] = {}
             cycles: dict[int, float] = {}
@@ -992,14 +1056,14 @@ def main() -> int:
                     plan_log.write(
                         f"  step {step:>3}   {timing.cycle_seconds:7.3f} s"
                         f"   {tokens_per_step / timing.cycle_seconds:>10,.0f} tok/s"
-                        f"   head {timing.head_wait_seconds:6.3f} s"
+                        f"   opening {timing.opening_delay_seconds:6.3f} s"
                         f"   loss {losses[step]:.4f}{note}\n"
                     )
 
             def run_step(step: int, *, traced: bool) -> Any:
                 started = time.perf_counter()
                 result = training(
-                    step_microbatches(*geometry, step), runtime_trace=traced
+                    step_microbatches(*geometry), runtime_trace=traced
                 )
                 losses[step] = statistics.fmean(
                     float(value) for value in result.objectives

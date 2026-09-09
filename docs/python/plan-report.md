@@ -30,7 +30,7 @@ A `PlanReport` has five groups of fields, listed in the table below: the
 plan's identity, the selected plans and their prediction, the capacities
 and transfer assumptions planning worked under, the profiling and selection
 evidence, and the detailed `diagnostics`. Its `summary` is a derived
-`PlanSummary`, the plan's promise in a dozen numbers:
+`PlanSummary`, the plan's breakdown in a dozen numbers:
 
 | `PlanSummary` field | Meaning |
 |---|---|
