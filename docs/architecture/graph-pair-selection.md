@@ -201,15 +201,30 @@ deduplication.
 
 Every graph-pair group whose forward tasks are sinks of the selected
 forward dependency graph is required to expose exactly one option named
-`save`. That option is pinned in every resolution. Terminal forward
+`save`. That option is forced in every resolution. Terminal forward
 groups are therefore not treated as recomputation degrees of freedom by the
 current policy. The rule names the `forward` phase deliberately: a Program
-that declares no forward phase pins nothing and keeps every alternative open.
+that declares no forward phase forces nothing and keeps every alternative
+open.
 See [phases and sinks](ir.md#phases-and-sinks) for what sink means and why
 generalising the rule would be worse than naming the phase.
 
 The rule is graph-derived: it uses task phase and dependency edges, not model
 family, module name, stage number, or operator identity.
+
+## Groups that are not a decision
+
+A group is also forced when its options retain the same bytes. An alternative
+trades runtime for retained bytes, so options that retain the same amount
+trade nothing: they are one plan spelled twice, and searching them costs a
+dimension whose ends are indistinguishable and whose outcome is therefore
+arbitrary -- which would make a plan's digest depend on nothing. Such a group
+takes its fastest option.
+
+Like the rule above, this one is stated about the options rather than about
+which stage they belong to, so it holds for any Program. `flexible_group_count`
+on the plan summary counts the groups that remain a real decision, and that is
+the population a resolution share is taken of.
 
 ## Pseudocode
 

@@ -21,6 +21,7 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import PressureFitOptions, pressurefit
 from shadowspill.planner.recomputation import resolutions
+from shadowspill.planner.recomputation.options import TaskAlternativeOptions
 from shadowspill.simulator import SimulationConfig
 
 DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
@@ -152,6 +153,38 @@ def test_terminal_forward_group_is_always_saved() -> None:
     assert len(options) == 5
     assert tuple(item.count("recompute") for item in options) == (0, 2, 4, 5, 7)
     assert all(item[-1] == "save" for item in options)
+
+
+def test_a_group_whose_options_keep_the_same_bytes_is_not_searched() -> None:
+    """An alternative trades runtime for retained bytes. One that retains the
+    same either way trades nothing, so it is one plan spelled twice and the
+    search should not carry it as a dimension."""
+
+    program = _binary_program(4)
+    # strip the first group's saved alias, so both of its options retain
+    # nothing while the other three still choose between 10 bytes and none
+    first = program.task_alternative_groups[0]
+    settled = replace(
+        first,
+        options=(
+            replace(first.options[0], retained_alias_group_ids=()),
+            first.options[1],
+        ),
+    )
+    program = replace(
+        program,
+        task_alternative_groups=(settled, *program.task_alternative_groups[1:]),
+    )
+
+    options = TaskAlternativeOptions.from_program(program)
+    assert options.flexible_count == 3
+    # forced to the cheaper of two options that keep the same bytes
+    assert options.groups[0].forced_index == 0
+    assert all(group.forced_index is None for group in options.groups[1:])
+
+    # and the resolutions never recompute it, at any share
+    for selections in _option_ids(program):
+        assert selections[0] == "save"
 
 
 def test_the_default_resolution_options_are_every_quarter() -> None:

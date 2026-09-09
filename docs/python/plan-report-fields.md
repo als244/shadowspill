@@ -114,7 +114,8 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `idle_seconds` | Time the step spends waiting rather than computing. |
 | `terminal_writeback_seconds` | The tail after the last task, writing back what the step produced. |
 | `recomputing_group_count` | Groups whose chosen option costs strictly more compute than that group's cheapest. |
-| `task_alternative_group_count` | Task-alternative groups in the program. |
+| `task_alternative_group_count` | Task-alternative groups in the program, forced ones included. |
+| `flexible_group_count` | Groups that are a real decision, which is what a resolution share is taken of and so the denominator `recomputing_group_fraction` uses. A group is forced instead when structure leaves one option -- a sink of the forward phase has to keep its value -- or when its options retain the same bytes, which is one plan spelled twice. |
 | `transfer_bytes_fetched`, `transfer_bytes_evicted` | Traffic the simulation ran, summed from its transfer intervals. |
 | `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The per-direction bandwidth the simulator planned against. Solo calibration lives on the report's transfer profiles. |
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
