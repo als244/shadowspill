@@ -37,6 +37,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TransferProfile as RuntimeTransferProfile,
 )
 from shadowspill.pytorch.runtime_adapter.allocator import (
+    DEFAULT_BACKGROUND_WINDOW_BYTES,
     InstalledAllocator,
     PoolBootstrap,
     RouteBootstrap,
@@ -109,6 +110,7 @@ class Runtime:
         library_path: str | Path | None = None,
         calibrate: bool = True,
         worker_poll_nanoseconds: int = 1_000,
+        background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
         backend: str | None = None,
     ) -> None:
         normalized, normalized_routes = _validate_topology(pools, routes)
@@ -156,6 +158,7 @@ class Runtime:
                 pools=pool_bootstrap,
                 routes=route_bootstrap,
                 worker_poll_nanoseconds=worker_poll_nanoseconds,
+                background_transfer_window_bytes=background_transfer_window_bytes,
                 backend=backend,
             )
             self._installed = installed

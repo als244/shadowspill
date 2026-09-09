@@ -571,6 +571,10 @@ static ShadowSpillTaskRecord *create_record(
                     : plan->evict_route,
             .trace_label = trace_label,
             .admitted = 1U,
+            .background = record->boundary_kind ==
+                    SHADOWSPILL_BOUNDARY_ACTION_BATCH
+                ? 1U
+                : 0U,
         };
         if (description->actions[index].kind ==
             SHADOWSPILL_RUNTIME_RELEASE) {

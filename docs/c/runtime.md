@@ -13,10 +13,13 @@ worker, trace buffers, and first-failure state.
   backend table it copies, pools as `ShadowSpillMemoryPoolDescription`
   (`pool_id`, `kind`, capacity, alignment), and routes as
   `ShadowSpillTransferRouteDescription` (`route_id`, name, source and
-  destination pool ids, whose kinds must differ). It validates the table and
-  the topology, allocates or maps each pool's arena, creates one lane per
-  route, and starts the worker; see [memory pools](../architecture/memory-pools.md)
-  and [transfers](../architecture/transfers.md).
+  destination pool ids, whose kinds must differ), the worker's poll interval,
+  and `background_transfer_window_bytes`, how far a lane may run ahead with
+  transfers the plan did not schedule (zero removes the bound). It validates
+  the table and the topology, allocates or maps each pool's arena, creates one
+  lane per route, and starts the worker; see
+  [memory pools](../architecture/memory-pools.md) and
+  [transfers](../architecture/transfers.md).
 - `shadowspill_runtime_reserve_event_leases()` grows and seals the event-lease
   inventory at an idle cold-plan boundary, creating the backend events up
   front so a steady-state step makes no driver calls; see

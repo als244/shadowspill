@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import torch
 
@@ -100,6 +100,12 @@ def _function_pointer(library: Any, name: str) -> int:
     return pointer
 
 
+#: How far a lane may run ahead with transfers the plan did not schedule (the
+#: opening restore, a reconciliation): a plan transfer never waits behind more
+#: than this many background bytes. Zero removes the bound.
+DEFAULT_BACKGROUND_WINDOW_BYTES: Final = 64 << 20
+
+
 def install_allocator(
     library_path: str | Path,
     *,
@@ -110,6 +116,7 @@ def install_allocator(
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int = 1_000,
+    background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
 ) -> InstalledAllocator:
     """Install the process-global allocator before PyTorch initializes the accelerator.
@@ -133,6 +140,7 @@ def install_allocator(
         pools,
         routes,
         worker_poll_nanoseconds,
+        background_transfer_window_bytes,
     )
     path = _adapter_path(library_path)
     backend_library = _backend_path(backend)
@@ -173,6 +181,7 @@ def install_allocator(
         routes=route_values,
         route_count=len(routes),
         worker_poll_nanoseconds=worker_poll_nanoseconds,
+        background_transfer_window_bytes=background_transfer_window_bytes,
         backend_library=str(backend_library).encode("utf-8"),
     )
     _bootstrap_allocator(library, config)
@@ -355,6 +364,7 @@ def _validate_install_request(
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int,
+    background_transfer_window_bytes: int,
 ) -> None:
     if device_ordinal < 0:
         raise AllocatorInstallError("device ordinal must be non-negative")
@@ -385,6 +395,10 @@ def _validate_install_request(
         raise AllocatorInstallError("route endpoints must name distinct known pools")
     if worker_poll_nanoseconds < 0:
         raise AllocatorInstallError("worker poll interval must be non-negative")
+    if background_transfer_window_bytes < 0:
+        raise AllocatorInstallError(
+            "background transfer window must be non-negative"
+        )
     if _installed is not None:
         raise AllocatorInstallError("ShadowSpill's allocator is already installed")
 

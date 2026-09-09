@@ -127,7 +127,12 @@ One C-owned worker services completions, releases, and both transfer lanes. It
 is named `shadowspill_worker` in profiler traces (`shadowspill.wkr` is the
 OS-level shortened name). The hot loop visits each
 completion frontier, drains immediately completed FIFO successors, handles
-retirements, and dispatches queued actions. The default incomplete-head query
+retirements, and dispatches queued actions. A queued transfer is dispatched
+when it is the head of its lane queue and its preconditions hold; a lane
+keeps the plan's transfers and background transfers in separate queues and
+admits a background transfer only within the configured window of bytes in
+flight, so the plan's transfers are never held behind a background batch
+(see [transfers](transfers.md#dispatch)). The default incomplete-head query
 cadence is one microsecond; an already-complete head is followed immediately
 without an artificial delay.
 

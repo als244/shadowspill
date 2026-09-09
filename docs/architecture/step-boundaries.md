@@ -122,30 +122,26 @@ convention.
 
 ## Restore order
 
-The fetch lane is strictly first-in, first-out, so the order of the
-opening restore decides how long the earliest tasks wait. The batch — and
-the fixed-layout destinations paired with it position by position — is
-ordered by the program's first consuming task: aliases the first task
-reads come first, aliases first consumed by the same task follow that
-task's own input order, and aliases no task consumes come last in their
-emitted order. Under this order a task's inputs arrive no later than the
-work ahead of them requires, the first task waits only for its own
-inputs, and the remainder of the restore streams in behind compute
-instead of in front of it.
+The opening restore is a background batch on the fetch lane: it is not
+part of the schedule, so the lane dispatches it only within the configured
+window of bytes in flight and serves the plan's own transfers ahead of the
+rest of it (see [transfers](transfers.md#dispatch)). The batch — and the
+fixed-layout destinations paired with it position by position — is ordered
+by the program's first consuming task: aliases the first task reads come
+first, aliases first consumed by the same task follow that task's own
+input order, and aliases no task consumes come last in their emitted
+order. Under this order a task's inputs arrive no later than the work
+ahead of them requires, the first task waits only for its own inputs, the
+transfers the schedule triggers at the earliest boundaries — the staged
+inputs of the first microbatches among them — land behind at most one
+window of the restore rather than behind all of it, and the remainder of
+the restore streams in behind compute instead of in front of it.
 
 ## What step time means
 
 Three quantities describe one invocation, and they are not the same
 number:
 
-- **The measured step** is the wall time of one full cycle: the plan-idle
-  wait, staging, the opening restore, every task, and the terminal
-  writeback. Repeated timed invocations measure this cycle — each step's
-  closing drain is paid inside the next step's opening wait, so a
-  contiguous sequence of invocations divides cleanly into whole cycles.
-  A caller that does its own work between invocations absorbs part of
-  the drain into that work; a back-to-back loop exposes nearly all of
-  it.
 - **The selected task span** is device time from after the first task's
   readiness waits to the completion of the final task's kernels. It
   excludes both boundary regions by construction and is the number that
