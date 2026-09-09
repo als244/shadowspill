@@ -30,8 +30,9 @@ header; see [backends](../architecture/backends.md).
 ## Vocabulary and descriptions
 
 `ShadowSpillPytorchAdapterConfig` is what bootstrap takes: the pools and
-directed routes, the device budget and the provider's headroom, and the
-backend library by path. The adapter hands back
+directed routes, the device budget and the provider's headroom, the worker's
+poll interval and the background transfer window it passes through to the
+runtime, and the backend library by path. The adapter hands back
 `ShadowSpillPytorchPhysicalAdmission` (the ledger as sealed),
 `ShadowSpillPytorchAdapterCapabilities` (the three contract versions and
 whether the storage operators were built), `ShadowSpillPytorchAdapterStatistics`

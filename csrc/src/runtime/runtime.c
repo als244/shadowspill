@@ -265,6 +265,8 @@ ShadowSpillStatus shadowspill_runtime_create(
             config->pools[route->source_pool_id].kind == SHADOWSPILL_POOL_PINNED_HOST;
     }
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
+    runtime->background_transfer_window_bytes =
+        config->background_transfer_window_bytes;
     atomic_init(&runtime->next_allocation_id, 1U);
     atomic_init(&runtime->next_generation, 1U);
     atomic_init(&runtime->next_event_generation, 1U);
@@ -395,6 +397,8 @@ ShadowSpillStatus shadowspill_runtime_create(
             status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
             goto fail;
         }
+        route->transfers.background_window_bytes =
+            runtime->background_transfer_window_bytes;
         if (runtime->backend.create_stream(
                 runtime->backend.state, &route->lane
             ) != 0) {

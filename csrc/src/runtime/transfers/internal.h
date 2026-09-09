@@ -16,12 +16,25 @@
 typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
 typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
+/*
+ * One lane serves two queues. The plan's transfers are dispatched in the
+ * order their boundaries triggered them; background transfers (those the
+ * plan did not schedule: an opening restore, a reconciliation) are dispatched
+ * in their own order and only while the lane holds fewer than
+ * `background_window_bytes` of them in flight, so a plan transfer never
+ * waits behind more than the window. In flight, the lane is one FIFO in
+ * dispatch order, which is the stream's order and what completion follows.
+ */
 typedef struct ShadowSpillTransferLane {
     pthread_mutex_t lock;
     ShadowSpillQueuedAction *pending_head;
     ShadowSpillQueuedAction *pending_tail;
+    ShadowSpillQueuedAction *background_head;
+    ShadowSpillQueuedAction *background_tail;
     ShadowSpillQueuedAction *inflight_head;
     ShadowSpillQueuedAction *inflight_tail;
+    uint64_t background_window_bytes;
+    uint64_t background_inflight_bytes;
     uint8_t lock_initialized;
 } ShadowSpillTransferLane;
 

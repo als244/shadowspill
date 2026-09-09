@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 2U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 3U
 
 /* Ids the frontend synthesises for work that is not a planned task: the
    profiling allocation scopes, and the pre-task placement batch. The
@@ -62,6 +62,8 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     const ShadowSpillPytorchRouteConfig *routes;
     uint32_t route_count;
     uint64_t worker_poll_nanoseconds;
+    /* Passed through to the runtime; see ShadowSpillRuntimeConfig. */
+    uint64_t background_transfer_window_bytes;
     /* Path of the backend shared object to load: the library exporting
        shadowspill_backend_create() and shadowspill_backend_destroy(). */
     const char *backend_library;

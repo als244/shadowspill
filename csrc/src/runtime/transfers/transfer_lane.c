@@ -20,8 +20,11 @@ void shadowspill_transfer_lane_destroy(ShadowSpillTransferLane *lane) {
     }
     lane->pending_head = NULL;
     lane->pending_tail = NULL;
+    lane->background_head = NULL;
+    lane->background_tail = NULL;
     lane->inflight_head = NULL;
     lane->inflight_tail = NULL;
+    lane->background_inflight_bytes = 0U;
     pthread_mutex_destroy(&lane->lock);
     lane->lock_initialized = 0U;
 }
@@ -46,16 +49,30 @@ void shadowspill_transfer_lane_enqueue(
         return;
     }
     pthread_mutex_lock(&lane->lock);
-    action->lane_previous = lane->pending_tail;
+    ShadowSpillQueuedAction **head = action->background
+        ? &lane->background_head : &lane->pending_head;
+    ShadowSpillQueuedAction **tail = action->background
+        ? &lane->background_tail : &lane->pending_tail;
+    action->lane_previous = *tail;
     action->lane_next = NULL;
     action->lane_state = SHADOWSPILL_LANE_PENDING;
-    if (lane->pending_tail == NULL) {
-        lane->pending_head = action;
+    if (*tail == NULL) {
+        *head = action;
     } else {
-        lane->pending_tail->lane_next = action;
+        (*tail)->lane_next = action;
     }
-    lane->pending_tail = action;
+    *tail = action;
     pthread_mutex_unlock(&lane->lock);
+}
+
+/* Whether the window admits one more background copy of this size: always
+   when the lane holds none, so a copy larger than the window runs alone. */
+static int background_window_admits(
+    const ShadowSpillTransferLane *lane, uint64_t bytes
+) {
+    return lane->background_window_bytes == 0U ||
+        lane->background_inflight_bytes == 0U ||
+        lane->background_inflight_bytes + bytes <= lane->background_window_bytes;
 }
 
 int shadowspill_transfer_lane_claim(
@@ -66,16 +83,23 @@ int shadowspill_transfer_lane_claim(
         return 0;
     }
     pthread_mutex_lock(&lane->lock);
-    if (lane->pending_head != action ||
-        action->lane_state != SHADOWSPILL_LANE_PENDING) {
+    ShadowSpillQueuedAction **head = action->background
+        ? &lane->background_head : &lane->pending_head;
+    ShadowSpillQueuedAction **tail = action->background
+        ? &lane->background_tail : &lane->pending_tail;
+    if (*head != action || action->lane_state != SHADOWSPILL_LANE_PENDING ||
+        (action->background &&
+         !background_window_admits(
+             lane, action->object == NULL ? 0U : action->object->size_bytes
+         ))) {
         pthread_mutex_unlock(&lane->lock);
         return 0;
     }
-    lane->pending_head = action->lane_next;
-    if (lane->pending_head == NULL) {
-        lane->pending_tail = NULL;
+    *head = action->lane_next;
+    if (*head == NULL) {
+        *tail = NULL;
     } else {
-        lane->pending_head->lane_previous = NULL;
+        (*head)->lane_previous = NULL;
     }
     action->lane_previous = NULL;
     action->lane_next = NULL;
@@ -101,6 +125,10 @@ void shadowspill_transfer_lane_publish_inflight(
         lane->inflight_tail->lane_next = action;
     }
     lane->inflight_tail = action;
+    if (action->background) {
+        lane->background_inflight_bytes +=
+            action->object == NULL ? 0U : action->object->size_bytes;
+    }
     pthread_mutex_unlock(&lane->lock);
 }
 
@@ -140,6 +168,12 @@ int shadowspill_transfer_lane_complete(
     action->lane_previous = NULL;
     action->lane_next = NULL;
     action->lane_state = SHADOWSPILL_LANE_NONE;
+    if (action->background) {
+        const uint64_t bytes = action->object == NULL
+            ? 0U : action->object->size_bytes;
+        lane->background_inflight_bytes = bytes > lane->background_inflight_bytes
+            ? 0U : lane->background_inflight_bytes - bytes;
+    }
     pthread_mutex_unlock(&lane->lock);
     return 0;
 }

@@ -40,3 +40,15 @@ becomes reusable only through that completion, which is what keeps later task
 allocations from overtaking planned transfer capacity while the lane stays
 FIFO. The worker loop itself is described in
 [memory runtime](memory-runtime.md#worker).
+
+Each lane serves two queues. Transfers the plan scheduled are dispatched in
+the order their boundaries triggered them. Transfers the plan did not
+schedule — the opening restore of an initial device set, a reconciliation —
+are background transfers: they are dispatched in their own order, and only
+while the lane holds fewer than the configured window of their bytes in
+flight, so a scheduled transfer never waits behind more than that window
+however large the background batch is. A single background copy larger than
+the window runs alone. Once dispatched, a lane is one FIFO in dispatch
+order, which is the stream's order and what completion follows. The window
+is `ShadowSpillRuntimeConfig.background_transfer_window_bytes`; zero removes
+the bound.

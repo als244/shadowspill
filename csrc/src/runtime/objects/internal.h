@@ -129,6 +129,10 @@ struct ShadowSpillQueuedAction {
     struct ShadowSpillQueuedAction *lane_previous;
     struct ShadowSpillQueuedAction *lane_next;
     uint8_t lane_state;
+    /* Set when the action came from an action-batch boundary rather than a
+       task boundary: a transfer the plan did not schedule, which the lane
+       serves in the background. */
+    uint8_t background;
 };
 
 typedef struct ShadowSpillActionQueue {

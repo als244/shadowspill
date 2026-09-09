@@ -29,9 +29,16 @@ Runtime(
     library_path: str | Path | None = None,
     calibrate: bool = True,
     worker_poll_nanoseconds: int = 1_000,
+    background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
 )
 ```
+
+`background_transfer_window_bytes` bounds how far a lane runs ahead with
+transfers the plan did not schedule, such as the opening restore of a step's
+initial device set: a transfer the plan did schedule never waits behind more
+than this many background bytes. The default is 64 MiB; zero removes the
+bound. See [transfers](../../architecture/transfers.md#dispatch).
 
 `Runtime` owns the installed allocator, initialized `MemoryPool` and
 `RuntimeRoute` registries, transfer calibration, active callable count,

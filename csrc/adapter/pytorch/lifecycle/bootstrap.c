@@ -122,6 +122,8 @@ static ShadowSpillStatus build_runtime_topology(
         .routes = routes,
         .route_count = config->route_count,
         .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
+        .background_transfer_window_bytes =
+            config->background_transfer_window_bytes,
     };
     const ShadowSpillStatus status = shadowspill_runtime_create(
         &runtime_config, runtime
