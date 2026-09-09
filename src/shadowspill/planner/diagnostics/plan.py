@@ -16,6 +16,7 @@ from shadowspill.ir import (
     shared_residency_footprint,
 )
 from shadowspill.planner.diagnostics import PressureFitDiagnostics
+from shadowspill.planner.recomputation.options import TaskAlternativeOptions
 from shadowspill.planner.result import PressureFitResult
 from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
@@ -797,6 +798,10 @@ class PlanSummary:
     terminal_writeback_seconds: float
     recomputing_group_count: int
     task_alternative_group_count: int
+    #: Groups that are a real decision. A resolution share is taken of these,
+    #: so this is the denominator a recomputation count is against; the rest
+    #: are forced, by structure or by their options keeping the same bytes.
+    flexible_group_count: int
     #: Scheduled transfer traffic, summed from the simulation's transfer
     #: intervals, and the per-direction bandwidths the simulator planned
     #: against, from the result's simulation config. Solo calibration lives
@@ -820,9 +825,9 @@ class PlanSummary:
 
     @property
     def recomputing_group_fraction(self) -> float:
-        if self.task_alternative_group_count == 0:
+        if self.flexible_group_count == 0:
             return 0.0
-        return self.recomputing_group_count / self.task_alternative_group_count
+        return self.recomputing_group_count / self.flexible_group_count
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -833,6 +838,7 @@ class PlanSummary:
             "terminal_writeback_seconds": self.terminal_writeback_seconds,
             "recomputing_group_count": self.recomputing_group_count,
             "task_alternative_group_count": self.task_alternative_group_count,
+            "flexible_group_count": self.flexible_group_count,
             "recomputing_group_fraction": self.recomputing_group_fraction,
             "transfer_bytes_fetched": self.transfer_bytes_fetched,
             "transfer_bytes_evicted": self.transfer_bytes_evicted,
@@ -912,6 +918,7 @@ def summarize_selected_plan(
         terminal_writeback_seconds=(makespan_ns - span_ns) / 1e9,
         recomputing_group_count=graph_pair_selections,
         task_alternative_group_count=len(result.selections),
+        flexible_group_count=TaskAlternativeOptions.from_program(program).flexible_count,
         transfer_bytes_fetched=fetched,
         transfer_bytes_evicted=evicted,
         fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,

@@ -130,6 +130,7 @@ def test_recompute_fraction_is_guarded_against_empty_selections() -> None:
         terminal_writeback_seconds=0.0,
         recomputing_group_count=0,
         task_alternative_group_count=0,
+        flexible_group_count=0,
     )
     assert empty.recomputing_group_fraction == 0.0
     assert dict(empty.planning_phase_seconds) == {}

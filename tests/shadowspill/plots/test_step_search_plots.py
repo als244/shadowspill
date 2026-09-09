@@ -22,6 +22,7 @@ def _summary(step: float) -> PlanSummary:
         terminal_writeback_seconds=step * 0.05,
         recomputing_group_count=2,
         task_alternative_group_count=4,
+        flexible_group_count=4,
         transfer_bytes_fetched=int(4e9),
         transfer_bytes_evicted=int(3e9),
         fetch_bandwidth_bytes_per_second=int(20e9),

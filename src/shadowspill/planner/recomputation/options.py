@@ -40,9 +40,11 @@ class TaskAlternativeGroup:
 
     group_id: str
     options: tuple[TaskAlternativeOption, ...]
-    #: The one index structure leaves, when the choice is not free. A forward
-    #: sink has to keep its value: nothing downstream would recompute it.
-    pinned_index: int | None
+    #: The one index left when the choice is not free, or None when the group
+    #: is a real decision. Two things force a group: a forward sink has to keep
+    #: its value, because nothing downstream would recompute it; and options
+    #: that keep the same bytes are the same plan spelled twice.
+    forced_index: int | None
 
     @property
     def binary_endpoints(self) -> tuple[int, int] | None:
@@ -96,51 +98,65 @@ class TaskAlternativeOptions:
         }
         profiles = {profile.profile_id: profile for profile in program.profiles}
         tasks = {task.task_id: task for task in program.tasks}
-        pinned = _forward_sink_saves(program)
-        return cls(
-            groups=tuple(
+        structural = _forward_sink_saves(program)
+        groups: list[TaskAlternativeGroup] = []
+        for group_index, group in enumerate(program.task_alternative_groups):
+            options = tuple(
+                TaskAlternativeOption(
+                    option_id=option.option_id,
+                    retained_bytes=sum(
+                        alias_bytes[alias_id]
+                        for alias_id in option.retained_alias_group_ids
+                    ),
+                    runtime_ns=sum(
+                        profiles[tasks[task_id].profile_id].runtime_ns
+                        for task_id in option.active_task_ids
+                    ),
+                )
+                for option in group.options
+            )
+            forced = structural.get(group_index)
+            if forced is None:
+                forced = _forced_by_equal_retention(options)
+            groups.append(
                 TaskAlternativeGroup(
                     group_id=group.group_id,
-                    options=tuple(
-                        TaskAlternativeOption(
-                            option_id=option.option_id,
-                            retained_bytes=sum(
-                                alias_bytes[alias_id]
-                                for alias_id in option.retained_alias_group_ids
-                            ),
-                            runtime_ns=sum(
-                                profiles[tasks[task_id].profile_id].runtime_ns
-                                for task_id in option.active_task_ids
-                            ),
-                        )
-                        for option in group.options
-                    ),
-                    pinned_index=pinned.get(group_index),
+                    options=options,
+                    forced_index=forced,
                 )
-                for group_index, group in enumerate(program.task_alternative_groups)
             )
-        )
+        return cls(groups=tuple(groups))
 
     def __len__(self) -> int:
         return len(self.groups)
 
     @property
-    def pinned(self) -> dict[int, int]:
-        """Group index to the option index structure leaves it."""
+    def forced(self) -> dict[int, int]:
+        """Group index to the one option index left, for groups with no choice."""
 
         return {
-            index: group.pinned_index
+            index: group.forced_index
             for index, group in enumerate(self.groups)
-            if group.pinned_index is not None
+            if group.forced_index is not None
         }
 
     @property
+    def flexible_count(self) -> int:
+        """How many groups are a real decision.
+
+        This is the population a resolution share is taken of, so it is also
+        the honest denominator for reporting how many groups recompute.
+        """
+
+        return sum(1 for group in self.groups if group.forced_index is None)
+
+    @property
     def combination_count(self) -> int:
-        """How many distinct selections exist once pinning is applied."""
+        """How many distinct selections exist once forced groups are settled."""
 
         total = 1
         for group in self.groups:
-            total *= 1 if group.pinned_index is not None else len(group.options)
+            total *= 1 if group.forced_index is not None else len(group.options)
         return total
 
     @property
@@ -157,7 +173,7 @@ class TaskAlternativeOptions:
 
 
 def _forward_sink_saves(program: Program) -> dict[int, int]:
-    """Pin every sink of the forward phase to its ``save`` option.
+    """Force every sink of the forward phase to its ``save`` option.
 
     A task is a **sink of a phase** when no other task in that same phase
     consumes it, reading the graph the way values travel: producer to
@@ -165,13 +181,14 @@ def _forward_sink_saves(program: Program) -> dict[int, int]:
     read that field literally and a sink looks like a source.) A group whose
     forward tasks are forward sinks is producing a value the backward pass
     will read, and recomputing it would mean recomputing it from nothing, so
-    the choice is not free and the group is pinned.
+    the choice is not free and the group is forced.
 
     The rule deliberately names one phase rather than generalising to "sinks
     of whatever phase the group enters first". That generalisation is not
     behaviour-preserving: a Program whose tasks carry no ``forward`` phase
-    pins nothing here and keeps every alternative open, and phrasing the rule
-    in the abstract would instead pin all of its terminal groups and delete
+    forces nothing here and keeps every alternative open, and phrasing the
+    rule in the abstract would instead force all of its terminal groups and
+    delete
     its recomputation search entirely. Scoping to ``forward`` is what confines
     this piece of training knowledge to programs that declare they are
     training. See the phases-and-sinks section of the IR architecture page.
@@ -187,7 +204,7 @@ def _forward_sink_saves(program: Program) -> dict[int, int]:
         for dependency in task.dependencies
         if dependency in forward_task_ids
     }
-    pinned: dict[int, int] = {}
+    forced: dict[int, int] = {}
     for group_index, group in enumerate(program.task_alternative_groups):
         group_forward_tasks = {
             task_id
@@ -209,8 +226,33 @@ def _forward_sink_saves(program: Program) -> dict[int, int]:
                 "a group that is a sink of the forward phase must expose "
                 f"exactly one 'save' option: {group.group_id!r}"
             )
-        pinned[group_index] = save_indices[0]
-    return pinned
+        forced[group_index] = save_indices[0]
+    return forced
+
+
+def _forced_by_equal_retention(
+    options: tuple[TaskAlternativeOption, ...],
+) -> int | None:
+    """Force a group whose options keep the same bytes, to its fastest.
+
+    An alternative trades runtime for retained bytes. When every option keeps
+    the same bytes there is nothing to trade, so the group is not a decision:
+    the search would carry a dimension whose two ends are one plan spelled
+    twice, and resolve it arbitrarily -- which also makes the plan digest
+    depend on nothing. Taking the fastest costs nothing and removes it.
+
+    Named by what is true of the options rather than by which stage they
+    belong to, so it holds for any Program.
+    """
+
+    if len(options) < 2:
+        return 0 if options else None
+    if len({option.retained_bytes for option in options}) != 1:
+        return None
+    return min(
+        range(len(options)),
+        key=lambda index: (options[index].runtime_ns, index),
+    )
 
 
 __all__ = ["TaskAlternativeGroup", "TaskAlternativeOption", "TaskAlternativeOptions"]
