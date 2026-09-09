@@ -150,7 +150,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
-        opt=None,
+        optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
         total_sequences_per_step=2,
         sequence_length=1,
@@ -195,7 +195,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
         plan_step_search(
             object(),  # type: ignore[arg-type]
             objective=None,
-            opt=None,
+            optimizer=None,
             example_microbatches=lambda sequences, accumulation: (),
             total_sequences_per_step=1,
             sequence_length=1,
@@ -228,7 +228,7 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
-        opt=None,
+        optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
         total_sequences_per_step=1,
         sequence_length=1,
@@ -270,7 +270,7 @@ def test_the_resolution_options_reach_every_point(
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
-        opt=None,
+        optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
         total_sequences_per_step=1,
         sequence_length=1,
@@ -324,7 +324,7 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
-        opt=None,
+        optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
         total_sequences_per_step=1,
         sequence_length=1,
@@ -357,7 +357,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
         plan_step_search(
             object(),  # type: ignore[arg-type]
             objective=None,
-            opt=None,
+            optimizer=None,
             example_microbatches=lambda sequences, accumulation: (),
             total_sequences_per_step=1,
             sequence_length=1,
@@ -460,7 +460,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
-        opt=None,
+        optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
         total_sequences_per_step=1,
         sequence_length=1,
@@ -504,7 +504,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     alone = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
-        opt=None,
+        optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
         total_sequences_per_step=1,
         sequence_length=1,
