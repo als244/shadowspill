@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Literal, NoReturn
 
 import torch
@@ -238,7 +238,10 @@ def plan_step(
     model: nn.Module,
     *,
     objective: Any,
-    opt: Any,
+    optimizer: Any,
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None = None,
+    hyperparams: Sequence[str] = (),
     example_inputs: Sequence[Sequence[Any]],
     runtime: Runtime,
     execution: str,
@@ -279,6 +282,24 @@ def plan_step(
     ``verbose=True`` reports each planning phase and unique structural contract as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
     retained in :attr:`PlannedTrainStep.plan_report` either way.
+
+    ``optimizer_state_init`` fills one declared optimizer-state entry in place,
+    given the entry's name, the pool-backed tensor, and the parameter the
+    entry belongs to. The optimizer declares what state exists by being run on
+    meta parameters, which costs nothing; ShadowSpill allocates that in the
+    spill pool; and this supplies the values, because a default would be an
+    assumption that fails silently. It is not needed when ``optimizer``
+    returns an optimizer whose state the caller has already imported:
+    planning adopts the state of the optimizer it is handed, and that object
+    is the reference. State imported for some other optimizer is invisible to
+    planning, which neither knows nor cares about it.
+
+    A value that varies between steps -- a scheduled learning rate, say --
+    is passed to the optimizer as a **tensor** rather than a float, and
+    written in place between steps. A tensor enters the captured update's
+    identity by geometry alone, so one capture serves every value it takes,
+    while a float enters by value and would capture again for each one. See
+    :doc:`the optimizer </architecture/optimizer>`.
 
     ``profiling_metadata`` has one JSON-compatible entry per example
     microbatch. It only distinguishes value-sensitive task measurements and
@@ -361,7 +382,9 @@ def plan_step(
             return build_training(
                 model,
                 objective=objective,
-                opt=opt,
+                build_optimizer=optimizer,
+                optimizer_state_init=optimizer_state_init,
+                hyperparams=hyperparams,
                 example_inputs=example_inputs,
                 memory=memory,
                 partition=partition,
@@ -392,7 +415,10 @@ def make_step_program(
     model: nn.Module,
     *,
     objective: Any,
-    opt: Any,
+    optimizer: Any,
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None = None,
+    hyperparams: Sequence[str] = (),
     example_inputs: Sequence[Sequence[Any]],
     runtime: Runtime,
     execution: str,
@@ -461,7 +487,9 @@ def make_step_program(
             result = make_training_program(
                 model,
                 objective=objective,
-                opt=opt,
+                build_optimizer=optimizer,
+                optimizer_state_init=optimizer_state_init,
+                hyperparams=hyperparams,
                 example_inputs=example_inputs,
                 memory=memory,
                 partition=partition,

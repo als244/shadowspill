@@ -75,9 +75,10 @@ from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
 from shadowspill.pytorch.state.optimizer import (
     adopt_optimizer_state_for_plan,
+    declare_varying_hyperparams,
+    install_declared_optimizer_state,
     release_optimizer_state_from_plan,
 )
-from shadowspill.pytorch.state.storage import PoolTensorFactory, persistent_state
 from shadowspill.simulator import SimulationConfig
 
 from ..callables import PlannedTrainStep
@@ -159,7 +160,7 @@ def capture_training_graphs(
     model: nn.Module,
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
-    opt: Callable[[Any], torch.optim.Optimizer],
+    build_optimizer: Callable[[Any], torch.optim.Optimizer],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
     partition: PartitionSpec,
@@ -173,7 +174,7 @@ def capture_training_graphs(
         signatures, cpu_inputs, workloads = _prepare_training_inputs(
             model,
             objective,
-            opt,
+            build_optimizer,
             example_inputs,
             memory,
             profiling_metadata,
@@ -221,7 +222,7 @@ def capture_training_graphs(
 def _prepare_training_inputs(
     model: nn.Module,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
-    opt: Callable[[Any], torch.optim.Optimizer],
+    build_optimizer: Callable[[Any], torch.optim.Optimizer],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
     profiling_metadata: Sequence[object] | None,
@@ -234,8 +235,11 @@ def _prepare_training_inputs(
     validate_budgets(memory.execution_budget, memory.spill_budget)
     if not callable(objective):
         raise TypeError("objective must be callable")
-    if not callable(opt):
-        raise TypeError("opt must be an optimizer factory")
+    if not callable(build_optimizer):
+        raise TypeError(
+            "optimizer must be callable: it is given the model's parameters "
+            "and returns a torch.optim.Optimizer"
+        )
     signatures = capture_training_signatures(example_inputs)
     cpu_inputs = tuple(
         tuple(representative_cpu_inputs(microbatch)) for microbatch in example_inputs
@@ -337,7 +341,10 @@ def materialize_training_state(
     model: nn.Module,
     captured: TrainingCaptureArtifacts,
     *,
-    opt: Callable[[Any], torch.optim.Optimizer],
+    build_optimizer: Callable[[Any], torch.optim.Optimizer],
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None,
+    hyperparams: Sequence[str],
     memory: PlanMemory,
     stores: PlanningStores,
     timer: PlanningTimer,
@@ -365,30 +372,38 @@ def materialize_training_state(
                 runtime=runtime,
                 device_ordinal=captured.device_ordinal,
             )
-        # State this plan creates is state the plan will keep, so it is taken
-        # from the pool it will live in: an optimizer's lazy state is several
-        # times the model, and materialising it on the host first would mean
-        # holding all of it there before copying it in.
-        planning_memory = PoolTensorFactory(runtime, memory.spill)
         with timer.measure("optimizer_capture"):
-            optimizer = opt(model.parameters())
+            optimizer = build_optimizer(model.parameters())
             if not isinstance(optimizer, torch.optim.Optimizer):
-                raise PlanningError("optimizer factory must return Optimizer")
+                raise PlanningError("optimizer must return a torch.optim.Optimizer")
+            # The values a step is allowed to set are held in tensors before
+            # anything is captured, so the capture takes them as inputs rather
+            # than folding them in. Only the named ones are touched.
+            declare_varying_hyperparams(model, optimizer, hyperparams)
             state.restore_model_cpu_for_optimizer_capture()
-            with planning_memory:
-                optimizer_capture = capture_optimizer(
+            # State this plan creates is state the plan will keep, so it is
+            # taken from the pool it will live in. The optimizer declares what
+            # it keeps on meta, which allocates nothing; each entry is then
+            # allocated here and filled by the caller. Capture below finds the
+            # state already present and does not create any of its own.
+            installed_entries = install_declared_optimizer_state(
+                model,
+                optimizer,
+                runtime=runtime,
+                pool=memory.spill,
+                initialize=optimizer_state_init,
+            )
+            optimizer_capture = capture_optimizer(
+                dict(model.named_parameters()),
+                optimizer,
+                parameter_stage_owners=training_parameter_stage_owners(
+                    captured.partitioned,
                     dict(model.named_parameters()),
-                    optimizer,
-                    parameter_stage_owners=training_parameter_stage_owners(
-                        captured.partitioned,
-                        dict(model.named_parameters()),
-                    ),
-                    store=stores.optimizer_captures,
-                )
-                if optimizer_capture.initialized_state_dict is not None:
-                    optimizer.load_state_dict(
-                        optimizer_capture.initialized_state_dict
-                    )
+                ),
+                store=stores.optimizer_captures,
+            )
+            if optimizer_capture.initialized_state_dict is not None:
+                optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
         with timer.measure("optimizer_state_import"):
             adopt_optimizer_state_for_plan(
                 optimizer,
@@ -396,13 +411,7 @@ def materialize_training_state(
                 pool=memory.spill.name,
                 owning_plan=memory.plan_handle,
             )
-            # Whatever planning took and the optimizer did not keep goes back.
-            adopted = persistent_state(runtime, optimizer)
-            planning_memory.release_all_but(
-                frozenset()
-                if adopted is None
-                else frozenset(item.storage_identity for item in adopted.storages)
-            )
+
         with timer.measure("model_placeholder_restoration"):
             state.restore_device_placeholders_after_optimizer_capture()
         if optimizer_capture.recurrent is None:
@@ -410,7 +419,9 @@ def materialize_training_state(
                 "the optimizer state/update cannot be bounded: "
                 f"{optimizer_capture.opaque_reason}"
             )
-        return TrainingMaterializationArtifacts(state, optimizer, optimizer_capture)
+        return TrainingMaterializationArtifacts(
+            state, optimizer, optimizer_capture, installed_entries
+        )
     except BaseException as error:
         if state is not None:
 
@@ -986,9 +997,11 @@ def admit_training_plan(
                 recurrent_memory_envelopes=(
                     admitted.recurrent_admission.envelopes_by_task()
                 ),
+                # State planning installed is already initialized, so there
+                # is nothing for an initial step to create.
                 optimizer_state_preinitialized=(
                     materialized.optimizer_capture.initialized_state_dict is not None
-                    or bool(materialized.optimizer_capture.preinitialized_state_names)
+                    or materialized.installed_state_entries > 0
                 ),
                 optimizer_state_was_lazy=bool(
                     materialized.optimizer_capture.created_state_names
@@ -1267,7 +1280,10 @@ def make_training_program(
     model: nn.Module,
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
-    opt: Callable[[Any], torch.optim.Optimizer],
+    build_optimizer: Callable[[Any], torch.optim.Optimizer],
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None,
+    hyperparams: Sequence[str],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
     partition: PartitionSpec,
@@ -1287,7 +1303,7 @@ def make_training_program(
     captured = capture_training_graphs(
         model,
         objective=objective,
-        opt=opt,
+        build_optimizer=build_optimizer,
         example_inputs=example_inputs,
         memory=memory,
         partition=partition,
@@ -1298,7 +1314,9 @@ def make_training_program(
     materialized = materialize_training_state(
         model,
         captured,
-        opt=opt,
+        build_optimizer=build_optimizer,
+        optimizer_state_init=optimizer_state_init,
+        hyperparams=hyperparams,
         memory=memory,
         stores=artifacts,
         timer=timer,
@@ -1513,7 +1531,10 @@ def build_training(
     model: nn.Module,
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
-    opt: Callable[[Any], torch.optim.Optimizer],
+    build_optimizer: Callable[[Any], torch.optim.Optimizer],
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None,
+    hyperparams: Sequence[str],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
     partition: PartitionSpec,
@@ -1544,7 +1565,7 @@ def build_training(
     captured = capture_training_graphs(
         model,
         objective=objective,
-        opt=opt,
+        build_optimizer=build_optimizer,
         example_inputs=example_inputs,
         memory=memory,
         partition=partition,
@@ -1555,7 +1576,9 @@ def build_training(
     materialized = materialize_training_state(
         model,
         captured,
-        opt=opt,
+        build_optimizer=build_optimizer,
+        optimizer_state_init=optimizer_state_init,
+        hyperparams=hyperparams,
         memory=memory,
         stores=artifacts,
         timer=timer,

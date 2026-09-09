@@ -96,11 +96,15 @@ class TrainingCaptureArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class TrainingMaterializationArtifacts:
-    """Allocator-owned model state and one captured optimizer factory result."""
+    """Allocator-owned model state and the optimizer captured over it."""
 
     state: TrainingMaterializedState
     optimizer: torch.optim.Optimizer
     optimizer_capture: OptimizerCapture
+    #: How many optimizer-state entries planning declared, allocated in the
+    #: pool and had the caller fill. Non-zero means the state exists and is
+    #: initialized, so no separate initial step is needed to create it.
+    installed_state_entries: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -28,7 +28,6 @@ from .artifacts import (
     OptimizerTensorBinding,
     OptimizerTensorRole,
 )
-from .initialization import initialize_lazy_optimizer_state
 from .store import OptimizerCaptureStore, recurrent_capture_identity
 
 
@@ -90,6 +89,55 @@ class _DisjointSets:
             self._parents[right_root] = left_root
 
 
+@dataclass(frozen=True, slots=True)
+class DeclaredStateEntry:
+    """One optimizer-state tensor an optimizer says it will keep."""
+
+    parameter_name: str
+    entry_name: str
+    shape: tuple[int, ...]
+    dtype: torch.dtype
+
+
+def declare_optimizer_state(
+    named_parameters: Mapping[str, torch.nn.Parameter],
+    optimizer: torch.optim.Optimizer,
+) -> tuple[DeclaredStateEntry, ...]:
+    """Ask the optimizer what state it will keep, without allocating any.
+
+    The optimizer is run on a storage-free copy whose payload tensors are meta
+    geometry, so it names every entry, fixes every shape, and chooses every
+    dtype at no cost. Nothing is assumed about which entries exist, how many
+    there are, whether they are parameter-shaped, or whether their dtype
+    matches the parameter's -- the optimizer says, and this reports.
+
+    A parameter that is not trained is not given a gradient in the copy, so an
+    optimizer skips it and declares nothing for it.
+    """
+
+    inventory = _validate_optimizer_inputs(named_parameters, optimizer)
+    discovery = _discover_optimizer_state(inventory, optimizer)
+    if isinstance(discovery, OptimizerCapture):
+        return ()
+    declared: list[DeclaredStateEntry] = []
+    for parameter, entries in discovery.sandbox.state.items():
+        name = discovery.name_by_sandbox_id.get(id(parameter))
+        if name is None or not isinstance(entries, Mapping):
+            continue
+        for entry_name, value in entries.items():
+            if not isinstance(value, torch.Tensor):
+                continue
+            declared.append(
+                DeclaredStateEntry(
+                    parameter_name=name,
+                    entry_name=str(entry_name),
+                    shape=tuple(value.shape),
+                    dtype=value.dtype,
+                )
+            )
+    return tuple(declared)
+
+
 def capture_optimizer(
     named_parameters: Mapping[str, torch.nn.Parameter],
     optimizer: torch.optim.Optimizer,
@@ -113,19 +161,6 @@ def capture_optimizer(
     discovery = _discover_optimizer_state(inventory, optimizer)
     if isinstance(discovery, OptimizerCapture):
         return discovery
-    preinitialized_state_names: tuple[str, ...] = ()
-    if discovery.created_state_names and initialize_lazy_optimizer_state(
-        inventory.canonical_parameters,
-        optimizer,
-        discovery.created_state_names,
-    ):
-        preinitialized_state_names = discovery.created_state_names
-        discovery = _discover_optimizer_state(inventory, optimizer)
-        if isinstance(discovery, OptimizerCapture):
-            return replace(
-                discovery,
-                preinitialized_state_names=preinitialized_state_names,
-            )
     captured = _capture_recurrent_optimizer(
         discovery,
         optimizer,
@@ -150,11 +185,6 @@ def capture_optimizer(
             ),
         )
         captured = replace(captured, initial=initial)
-    if preinitialized_state_names:
-        captured = replace(
-            captured,
-            preinitialized_state_names=preinitialized_state_names,
-        )
     return captured
 
 
@@ -1218,7 +1248,11 @@ def _tensor_bindings(
         # Device-side control tensors belong in the physical plan even when
         # scalar. Ordinary PyTorch optimizers intentionally keep some scalar
         # counters on the CPU; those remain bounded host-side task inputs.
-        spillable = (
+        # A hyperparameter is neither: it is a handful of bytes the update
+        # reads and the caller writes between steps, so placing it would cost
+        # more than it could ever free, and moving it would put the value
+        # somewhere the caller's next write would not reach.
+        spillable = role is not OptimizerTensorRole.HYPERPARAMETER and (
             role
             in {
                 OptimizerTensorRole.PARAMETER,
@@ -1250,11 +1284,16 @@ def _tensor_bindings(
         for path, tensor in _tensor_leaves(
             {key: value for key, value in group.items() if key != "params"}
         ):
+            # Read by the update, never written by it. Saying so matters:
+            # a mutable binding joins every task that touches it, and a
+            # hyperparameter is touched by every parameter's update, so
+            # calling it mutable would fuse updates that share nothing else
+            # into a single task.
             add(
                 f"optimizer_group.{group_index}.{path}",
                 OptimizerTensorRole.HYPERPARAMETER,
                 tensor,
-                True,
+                False,
             )
     return tuple(bindings)
 

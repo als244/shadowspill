@@ -13,7 +13,14 @@ from typing import Any
 import torch
 
 
-def _contiguous_stride(shape: tuple[int, ...]) -> tuple[int, ...]:
+def contiguous_stride(shape: tuple[int, ...]) -> tuple[int, ...]:
+    """The stride PyTorch gives a contiguous tensor of this shape.
+
+    A zero-length dimension contributes nothing to the running product,
+    which is why the product takes ``max(dimension, 1)``: the stride of a
+    dimension outside an empty one is still the size of a full row.
+    """
+
     stride = 1
     result: list[int] = []
     for dimension in reversed(shape):
@@ -50,7 +57,7 @@ class TensorSpec:
     def resolved_stride(self) -> tuple[int, ...]:
         """Return the authored stride or the standard contiguous geometry."""
 
-        return self.stride or _contiguous_stride(self.shape)
+        return self.stride or contiguous_stride(self.shape)
 
     @property
     def storage_nbytes(self) -> int:
