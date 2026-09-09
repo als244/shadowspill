@@ -45,7 +45,8 @@ microbatch, and consuming it as it is produced keeps one copy in flight
 rather than a pass's worth. `reverse_breadth` walks a pass's microbatches in
 reverse during backward, so the freshest activations go first. Both flags are
 on by default and mean nothing at `breadth = 1`, which is the microbatch-major
-order every step used before there was a choice; `plan_step()` takes all four.
+order: one microbatch start to finish before the next. `plan_step()` takes all
+four.
 
 One consequence reaches the graph pairs. The gradient of a stage is created by
 the first backward the walk emits for it and accumulated into by every later

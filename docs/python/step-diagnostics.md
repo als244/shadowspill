@@ -84,8 +84,8 @@ tells you what kind of number it is.
 
 No record stores a value that is the difference of two of its own fields, so
 there is one place to read each measurement and no second copy to disagree
-with it. The quantities that used to have fields are the obvious
-subtractions: a task's kernel time is `compute_finished_at_seconds` minus
+with it. The obvious subtractions are these: a task's kernel time is
+`compute_finished_at_seconds` minus
 `compute_started_at_seconds`, the opening boundary's cost is
 `before_task_exited_at_seconds` minus `before_task_entered_at_seconds`, and
 the frontend's lead is `compute_reached_at_seconds` minus

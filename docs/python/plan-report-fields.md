@@ -20,8 +20,7 @@ different clocks.
 
 No record stores a value that is the difference of two of its own fields.
 Where such a number is useful it is a subtraction at the point of use, so
-there is one place to read each measurement. The three that used to be stored
-are named where they were removed.
+there is one place to read each measurement.
 
 Two names carry a trap worth stating. `semantic_contract_capture_ns` and
 `executable_contract_capture_ns` are durations, not instants: they are how

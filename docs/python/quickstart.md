@@ -66,10 +66,20 @@ def objective(model, tokens, targets):
     return model(tokens, labels=targets).loss
 
 
+def zero_state(
+    name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter
+) -> None:
+    """Moment-based optimizers start at zero; ShadowSpill never assumes it."""
+
+    with torch.no_grad():
+        tensor.zero_()
+
+
 train_step = plan_step(
     model,
     objective=objective,
-    opt=partial(torch.optim.AdamW, lr=3e-4, weight_decay=0.1),
+    optimizer=partial(torch.optim.AdamW, lr=3e-4, weight_decay=0.1),
+    optimizer_state_init=zero_state,
     example_inputs=[
         [tokens_example_0, targets_example_0],
         [tokens_example_1, targets_example_1],
