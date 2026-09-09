@@ -17,8 +17,8 @@ from shadowspill.ir import (
     ObjectSpec,
     PhysicalAdmission,
     PlanPrediction,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskAlternativeGroup,
     TaskAlternativeOption,
@@ -410,14 +410,14 @@ def test_execution_prediction_must_fit_public_budgets(
 @pytest.mark.parametrize(
     ("record", "value", "path"),
     [
-        (Program, {}, "program.schema"),
-        (Program, {"schema": "unknown"}, "program.schema"),
+        (ShadowSpillProgram, {}, "program.schema"),
+        (ShadowSpillProgram, {"schema": "unknown"}, "program.schema"),
         (MemorySchedule, {"schema": "unknown"}, "schedule.schema"),
         (ExecutionPlan, {"schema": "unknown"}, "plan.schema"),
     ],
 )
 def test_wire_records_reject_missing_or_unknown_schemas(
-    record: type[Program] | type[MemorySchedule] | type[ExecutionPlan],
+    record: type[ShadowSpillProgram] | type[MemorySchedule] | type[ExecutionPlan],
     value: object,
     path: str,
 ) -> None:
@@ -428,7 +428,7 @@ def test_wire_records_report_nested_type_errors() -> None:
     value = representative_program().to_dict()
     value["devices"] = "not-an-array"
 
-    assert_invalid("program.devices", lambda: Program.from_dict(value))
+    assert_invalid("program.devices", lambda: ShadowSpillProgram.from_dict(value))
 
 
 def test_admission_from_wire_rejects_boolean_integer() -> None:

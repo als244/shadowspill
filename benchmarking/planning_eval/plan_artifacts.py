@@ -41,7 +41,7 @@ def save_annotated_plan(
     if step_program is None:
         saved_case, selected_program = load_step_program(case.directory)
         if saved_case != case:
-            raise ValueError("saved Program case identity changed on disk")
+            raise ValueError("saved ShadowSpillProgram case identity changed on disk")
     else:
         selected_program = step_program
         if selected_program.digest != case.program_digest:

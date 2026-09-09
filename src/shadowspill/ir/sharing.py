@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .program import Program, SharedResidencyPolicy
+from .program import ShadowSpillProgram, SharedResidencyPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +16,7 @@ class SharedResidencyFootprint:
     alias_group_ids: tuple[str, ...]
 
     def for_device(self, device_id: str) -> int:
-        """Return shared execution-resident bytes for one Program device."""
+        """Return shared execution-resident bytes for one ShadowSpillProgram device."""
 
         for candidate, size_bytes in self.device_bytes:
             if candidate == device_id:
@@ -24,7 +24,7 @@ class SharedResidencyFootprint:
         raise KeyError(device_id)
 
 
-def shared_residency_footprint(program: Program) -> SharedResidencyFootprint:
+def shared_residency_footprint(program: ShadowSpillProgram) -> SharedResidencyFootprint:
     """Summarize shared leases without changing semantic object sizes."""
 
     by_device = {device.device_id: 0 for device in program.devices}

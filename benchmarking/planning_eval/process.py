@@ -1,4 +1,4 @@
-"""Stream and monitor one Program worker with a per-active-point timeout."""
+"""Stream and monitor one ShadowSpillProgram worker with a per-active-point timeout."""
 
 from __future__ import annotations
 

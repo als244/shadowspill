@@ -13,10 +13,10 @@ from shadowspill.ir import (
     MemorySchedule,
     ObjectRole,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
@@ -28,9 +28,9 @@ from shadowspill.simulator import (
 )
 
 
-def _program() -> Program:
+def _program() -> ShadowSpillProgram:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("resident_model_state", "cuda_0", 20),

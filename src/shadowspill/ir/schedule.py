@@ -7,7 +7,7 @@ from enum import StrEnum
 
 from shadowspill.schema import artifact_schema
 
-from .program import Program, TaskAlternativeChoice, TaskSpec
+from .program import ShadowSpillProgram, TaskAlternativeChoice, TaskSpec
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
     expect_list,
@@ -26,7 +26,7 @@ SCHEDULE_SCHEMA = artifact_schema("memory_schedule")
 
 class MemoryLocation(StrEnum):
     DEVICE = "device"
-    # The serialized value stays "host": the saved-Program corpus is verified
+    # The serialized value stays "host": the saved-ShadowSpillProgram corpus is verified
     # against digests taken over it.
     SPILL = "host"
 
@@ -194,14 +194,14 @@ class MemorySchedule:
 
     def validate(
         self,
-        program: Program,
+        program: ShadowSpillProgram,
         selections: tuple[TaskAlternativeChoice, ...] = (),
     ) -> None:
         self._validate_selected(program, program.selected_tasks(selections))
 
     def _validate_selected(
         self,
-        program: Program,
+        program: ShadowSpillProgram,
         active_tasks: tuple[TaskSpec, ...],
     ) -> None:
         """Validate against an already-validated recomputation projection."""
@@ -399,7 +399,7 @@ class MemorySchedule:
 
 
 def first_use_initial_order(
-    program: Program, schedule: MemorySchedule
+    program: ShadowSpillProgram, schedule: MemorySchedule
 ) -> tuple[str, ...]:
     """The schedule's initial device aliases, ordered by first consuming task.
 

@@ -1131,7 +1131,7 @@ def opaque_optimizer_outputs(
     An opaque optimizer does not return its lazily created state from
     ``step()``.  The initial structural profile nevertheless needs those
     tensors as explicit persistent outputs so allocator ordinals can be
-    reconciled with Program objects.  Names come from optimizer discovery;
+    reconciled with ShadowSpillProgram objects.  Names come from optimizer discovery;
     values come only from the real isolated first step.
     """
 

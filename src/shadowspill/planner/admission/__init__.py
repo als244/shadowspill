@@ -1,6 +1,6 @@
 """Schedule-invariant physical facts consumed by admission-aware planning.
 
-The logical :class:`~shadowspill.ir.Program` deliberately does not encode how
+The logical :class:`~shadowspill.ir.ShadowSpillProgram` deliberately does not encode how
 a compiled task returns storage.  This module carries the small additional
 physical contract needed to evaluate dynamic slab admission without importing
 PyTorch or consulting runtime allocator telemetry in the candidate loop.
@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass
 from enum import StrEnum
 
-from shadowspill.ir import Program
+from shadowspill.ir import ShadowSpillProgram
 from shadowspill.schema import artifact_schema
 
 _SCHEMA = artifact_schema("admission_facts")
@@ -32,7 +32,7 @@ class TaskAllocationStep:
 
     ``allocation_ordinal`` relates a release to its earlier allocation.  An
     output alias is present only when that allocation becomes a persistent
-    Program object after the task.  The trace is admission evidence, not a
+    ShadowSpillProgram object after the task.  The trace is admission evidence, not a
     runtime callback-order contract.
     """
 
@@ -384,7 +384,7 @@ class AdmissionFacts:
             raise ValueError("admission JSON is invalid") from exc
         return cls.from_dict(value)
 
-    def validate(self, program: Program) -> None:
+    def validate(self, program: ShadowSpillProgram) -> None:
         """Validate exact task and alias coverage against ``program``."""
 
         devices = {item.device_id for item in program.devices}
@@ -393,13 +393,13 @@ class AdmissionFacts:
         if len(program.devices) != 1:
             raise ValueError(
                 "one AdmissionFacts currently describes exactly one execution "
-                f"pool; Program has {len(program.devices)} devices"
+                f"pool; ShadowSpillProgram has {len(program.devices)} devices"
             )
         expected_tasks = tuple(item.task_id for item in program.tasks)
         actual_tasks = tuple(item.task_id for item in self.tasks)
         if actual_tasks != expected_tasks:
             raise ValueError(
-                "admission tasks must exactly follow Program task order: "
+                "admission tasks must exactly follow ShadowSpillProgram task order: "
                 f"expected={expected_tasks!r}, actual={actual_tasks!r}"
             )
         aliases = {item.alias_group_id for item in program.alias_groups}
