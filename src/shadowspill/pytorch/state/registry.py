@@ -7,7 +7,7 @@ import weakref
 
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 
-from .records import PersistentState
+from .records import PersistentState, PersistentStorage
 
 
 class PersistentStateRegistry:
@@ -17,6 +17,29 @@ class PersistentStateRegistry:
         self.runtime = runtime
         self._lock = threading.RLock()
         self._states: dict[int, PersistentState] = {}
+        #: Pool memory handed to a caller that no state owns yet, by the
+        #: identity of the storage presenting it. An import consults this to
+        #: adopt what is already in the pool instead of copying the pool into
+        #: itself under a second name, so no caller has to say so.
+        self._pool_allocations: dict[int, PersistentStorage] = {}
+
+    def note_pool_allocation(self, allocation: PersistentStorage) -> None:
+        """Record pool memory presented as a host storage."""
+
+        with self._lock:
+            self._pool_allocations[allocation.storage_identity] = allocation
+
+    def pool_allocation(self, identity: int) -> PersistentStorage | None:
+        """The pool allocation this storage presents, if it is one."""
+
+        with self._lock:
+            return self._pool_allocations.get(identity)
+
+    def forget_pool_allocation(self, identity: int) -> None:
+        """Stop offering an allocation, once a state owns it or it is given back."""
+
+        with self._lock:
+            self._pool_allocations.pop(identity, None)
 
     def get(self, target: object) -> PersistentState | None:
         with self._lock:
