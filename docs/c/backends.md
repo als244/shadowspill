@@ -17,7 +17,8 @@ reference.
 - `ShadowSpillBackendConfig`: `abi_version`, `device_ordinal`.
 - `ShadowSpillBackendCapabilities`: `device_ordinal`, `minimum_alignment` for
   device allocations, and `provider`, the platform's short lowercase name for
-  diagnostics (`"mock"` for the mock).
+  diagnostics (`"mock"` for the mock), in a fixed
+  `SHADOWSPILL_BACKEND_PROVIDER_NAME_CAPACITY` buffer.
 - `ShadowSpillBackendPhysicalMemory`: `process_bytes`, `device_used_bytes`,
   `device_total_bytes` as the platform accounts for them now.
 - `ShadowSpillBackendStatistics`: counters of the calls made through the
@@ -40,8 +41,8 @@ nonzero on failure unless noted.
 | streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `wrap_stream(framework_stream_handle)` returning a token |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
 | events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
-| facts | `capabilities(&out)`, `physical_memory(&out)`, `statistics(&out)` |
-| profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)`, `range_end(range)` |
+| facts | `capabilities(&out)`, `physical_memory(&out)`, `statistics(&out)`, which returns nothing |
+| profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)` returning a range, `range_end(range)` |
 
 Memory: device memory is the backend's to allocate; host memory is
 ShadowSpill's, mapped by the pinned-host pool and registered here so the
