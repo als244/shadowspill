@@ -1,4 +1,4 @@
-"""Isolated worker that captures exactly one reusable planning Program."""
+"""Isolated worker that captures exactly one reusable planning ShadowSpillProgram."""
 
 from __future__ import annotations
 
@@ -13,14 +13,15 @@ from benchmarking.program_collection.corpus import (
     save_step_program,
 )
 from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.planner.artifact_store import STORE_MODES
 from shadowspill.planner.program import (
     StepProgram,
 )
 from shadowspill.pytorch import (
     Runtime,
+    build_step_program,
     export_model_state,
     import_model_state,
-    make_step_program,
 )
 from workloads.common.training import optimizer_state_init
 
@@ -37,8 +38,9 @@ def collect_program(
     *,
     output_root: Path,
     artifact_store: Path,
+    build_store: Path | None,
     verbose: bool,
-    force_fresh: bool,
+    build_store_mode: str | None,
 ) -> dict[str, object]:
     """Build, cleanly release, and atomically persist one StepProgram."""
 
@@ -91,7 +93,7 @@ def collect_program(
             imported = True
             print("PROGRAM PHASE import_model complete", flush=True)
             print("PROGRAM PHASE capture_compile_profile_lower start", flush=True)
-            program = make_step_program(
+            program = build_step_program(
                 case.model,
                 objective=case.objective,
                 optimizer=case.optimizer,
@@ -107,18 +109,17 @@ def collect_program(
                     request.runtime.dynamic_scratch_reserve_bytes
                 ),
                 execution_device=request.runtime.execution_device,
-                optimizer_ordering=request.planning.optimizer_ordering,
+                optimizer_ordering=request.build.optimizer_ordering,
                 verbose=verbose,
-                artifact_store_dir=artifact_store,
+                artifact_store=artifact_store,
                 profiling_metadata=profiling_metadata(case),
-                allocation_probe_seeds=request.planning.allocation_probe_seeds,
+                allocation_probe_seeds=request.build.allocation_probe_seeds,
                 allocation_probe_repetitions=(
-                    request.planning.allocation_probe_repetitions
+                    request.build.allocation_probe_repetitions
                 ),
-                save_plan=request.planning.save_plan,
-                force_fresh=force_fresh or request.planning.force_fresh,
-                overwrite_plan=force_fresh or request.planning.overwrite_plan,
-                implementation_revision=request.planning.implementation_revision,
+                build_store=build_store,
+                build_store_mode=build_store_mode or request.build.build_store_mode,
+                implementation_revision=request.build.implementation_revision,
             )
             print("PROGRAM PHASE capture_compile_profile_lower complete", flush=True)
     except BaseException as error:
@@ -153,7 +154,7 @@ def collect_program(
                 cleanup_error.add_note(f"additional cleanup failure: {cleanup_detail}")
             raise cleanup_error
     if program is None:
-        raise AssertionError("Program collection completed without a StepProgram")
+        raise AssertionError("collection completed without a StepProgram")
     print("PROGRAM PHASE save_artifact start", flush=True)
     saved = save_step_program(
         output_root,
@@ -176,10 +177,10 @@ def collect_program(
             "model": request.model.to_dict(),
             "geometry": request.to_dict()["geometry"],
             "seed": request.seed,
-            # Provenance, deliberately outside the Program: what the runtime
-            # was configured with when these costs were measured. A Program
+            # Provenance, deliberately outside the ShadowSpillProgram: what the runtime
+            # was configured with when these costs were measured. A ShadowSpillProgram
             # says what problem it is, so none of this is part of its
-            # identity, and none of it is read back when the Program is
+            # identity, and none of it is read back when the ShadowSpillProgram is
             # planned.
             "runtime": request.runtime.to_dict(),
         },
@@ -220,9 +221,13 @@ def main() -> int:
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--artifact-store", type=Path, required=True)
+    parser.add_argument("--build-store", type=Path)
+    parser.add_argument(
+        "--build-store-mode",
+        choices=STORE_MODES,
+    )
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--quiet-plan", action="store_true")
-    parser.add_argument("--force-fresh", action="store_true")
     arguments = parser.parse_args()
     try:
         config = load_collection_config(arguments.config)
@@ -232,7 +237,8 @@ def main() -> int:
             output_root=arguments.output_dir.expanduser().resolve(),
             artifact_store=arguments.artifact_store.expanduser().resolve(),
             verbose=not arguments.quiet_plan,
-            force_fresh=arguments.force_fresh,
+            build_store=arguments.build_store,
+            build_store_mode=arguments.build_store_mode,
         )
     except BaseException as error:
         result = {

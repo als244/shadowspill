@@ -7,7 +7,7 @@
   "point_timeout_seconds": 300,
   "max_point_attempts": 1,
   "max_worker_restarts_per_program": 64,
-  "pressurefit_cache_mode": "cold",
+  "plan_store_mode": "refresh",
   "transfer_bandwidths": {
     "fetch_bytes_per_second": 51826499510,
     "evict_bytes_per_second": 49953192514,

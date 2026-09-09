@@ -1,4 +1,4 @@
-"""Command-line interface for resumable Program corpus collection."""
+"""Command-line interface for resumable ShadowSpillProgram corpus collection."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import fnmatch
 import json
 import subprocess
 from pathlib import Path
+
+from shadowspill.planner.artifact_store import STORE_MODES
 
 from .config import load_collection_config
 from .controller import ControllerOptions, run_collection
@@ -60,7 +62,7 @@ def main() -> int:
         timeout_seconds=timeout,
         max_attempts=max_attempts,
         quiet_plan=arguments.quiet_plan,
-        force_fresh=arguments.force_fresh,
+        build_store_mode=arguments.build_store_mode,
     )
     try:
         summary = run_collection(
@@ -120,9 +122,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-attempts", type=int)
     parser.add_argument("--quiet-plan", action="store_true")
     parser.add_argument(
-        "--force-fresh",
-        action="store_true",
-        help="bypass and replace planning-cache artifacts for worker cases",
+        "--build-store-mode",
+        choices=STORE_MODES,
+        help="override the config: what a worker does about a build artifact"
+        " the store does not hold, or holds staleley",
     )
     parser.add_argument(
         "--dry-run",
@@ -146,7 +149,7 @@ def _select_requests(
         or any(fnmatch.fnmatchcase(request.case_id, pattern) for pattern in patterns)
     )
     if patterns and not selected:
-        raise ValueError("--case patterns selected no Program requests")
+        raise ValueError("--case patterns selected no ShadowSpillProgram requests")
     if start_at is not None:
         indices = tuple(
             index
@@ -161,7 +164,7 @@ def _select_requests(
             raise ValueError("--limit must be positive")
         selected = selected[:limit]
     if not selected:
-        raise ValueError("no Program requests remain after filtering")
+        raise ValueError("no ShadowSpillProgram requests remain after filtering")
     return selected
 
 

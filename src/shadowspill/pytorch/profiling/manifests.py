@@ -118,9 +118,7 @@ def _manifest_cache(
 ) -> CompiledManifestStore:
     return CompiledManifestStore(
         profile_cache.compiled_manifest_root,
-        read_enabled=profile_cache.read_enabled,
-        write_enabled=profile_cache.write_enabled,
-        overwrite=profile_cache.overwrite,
+        policy=profile_cache.policy,
         artifact_recorder=profile_cache.artifact_recorder,
     )
 

@@ -19,13 +19,20 @@ optimizer step:
 | Qwen 3.5 9B | 16,384 | 4 |
 | OLMoE 7B | 32,768 | 2 |
 
-Run one cell with fresh planning artifacts:
+Run one cell:
 
 ```bash
 python -m qualification.performance.run llama3 mlops \
   qualification/results/full_model/mlops_llama3.json \
-  --force-fresh
+  --artifact-store qualification/results/full_model/artifact_store/mlops_llama3
 ```
+
+`--artifact-store` roots both trees of the store, and `--build-store` and
+`--plan-store` override either. `--build-store-mode` and `--plan-store-mode`
+say what this cell does with each: `contribute` (the default) reads what is
+there and writes back what is not, `reuse` reads and persists nothing, and
+`require` refuses a miss. Omitting the store entirely puts it in the user
+cache root, shared with every other run on the machine.
 
 A host cannot hold both the full pinned spill arena and an anonymous
 checkpoint copy. `--skip-checkpoint` runs the throughput protocol without that
@@ -33,9 +40,9 @@ copy, and the resulting artifact records that checkpoint qualification was
 skipped. A single-cell `run` invocation still checkpoints and restores by
 default; checkpoint/replay release coverage lives in the numerical matrix.
 
-`--plan-only` plans every cell and writes its PressureFit fixture without
+`--plan-only` plans and writes the cell's PressureFit fixtures without
 running a step, which is how placement-bearing fixtures are produced for
-replay.
+replay. It is also a matrix option, and covers every selected cell there.
 
 `--spill-budget-gib` changes the configured runtime spill-pool capacity.
 `--planning-spill-budget-gib` may set a smaller budget for PressureFit without
@@ -47,7 +54,6 @@ Run the matrix with:
 ```bash
 python -m qualification.performance.matrix \
   --output-directory qualification/results/full_model \
-  --force-fresh \
   --keep-going \
   --planning-spill-budget-gib mlops_qwen35=100
 ```
@@ -120,7 +126,6 @@ measurement instead of judging it:
 ```bash
 python -m qualification.performance.matrix \
   --output-directory qualification/results/<machine-name> \
-  --force-fresh \
   --keep-going \
   --measure-only
 ```

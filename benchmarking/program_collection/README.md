@@ -1,11 +1,16 @@
 # Program collection
 
-This package builds reusable pre-PressureFit `StepProgram` inputs. It owns
-model construction, Export/AOT/Inductor compilation, structural profiling,
-Program lowering, crash isolation, and the collection journal. It does not run
-PressureFit.
+This harness **builds programs**. It constructs each model, exports and
+compiles it, profiles real kernels, and lowers the result into one reusable
+`StepProgram` per case. It never runs the planner, and it takes no planning
+arguments: what a planner later does with a program is
+[planning evaluation](../planning_eval/README.md)'s business, and its own
+store.
 
-The obvious launcher is:
+A collection needs an execution device and a working provider backend,
+because it profiles real kernels. A full matrix takes hours.
+
+## Running it
 
 ```bash
 python -m benchmarking.program_collection.collect \
@@ -14,16 +19,7 @@ python -m benchmarking.program_collection.collect \
   --artifact-store benchmarking/program_collection/planning_caches/full_model_program_corpus_<rev>
 ```
 
-The v1 configuration expands model providers and `DataGeometry` axes into one
-Program per point. In user-facing text, the third geometry axis is **gradient
-accumulation rounds**. The schema-v1 internal field name `accumulation_steps`
-is retained on write to keep digests stable, and accepted on read.
-
-Every Program runs in a fresh subprocess. Python exceptions, timeouts, signals,
-and process exits are attributed to one case, recorded, and do not prevent later
-cases from running. Successful artifacts are atomically published immediately.
-
-Resume and validate an existing dataset without rebuilding completed Programs:
+Resume, validating and skipping the Programs already collected:
 
 ```bash
 python -m benchmarking.program_collection.collect \
@@ -33,13 +29,55 @@ python -m benchmarking.program_collection.collect \
   --resume
 ```
 
-`--dry-run` prints the expanded matrix. `--case GLOB`, `--start-at CASE_ID`, and
-`--limit N` select development subsets. `--revision`, `--timeout-seconds`,
-`--max-attempts`, `--quiet-plan`, and `--force-fresh` control provenance,
-per-case limits, and cache reuse. Active compiler/profile caches should
-reside on a local filesystem.
+`--config`, `--output-dir`, and `--artifact-store` are required; the rest
+select subsets or override the config for one run:
 
-## Dataset layout
+| Argument | Meaning |
+|---|---|
+| `--resume` | Validate completed Programs, skip them, and retry the incomplete cases. Without it, an output directory that already holds case state is refused. |
+| `--dry-run` | Print the expanded matrix and exit. |
+| `--case GLOB` | Collect only matching case IDs; repeatable. |
+| `--start-at CASE_ID` | Start at one exact case ID after filtering. |
+| `--limit N` | Keep the first N selected cases. |
+| `--timeout-seconds`, `--max-attempts` | Override the config's per-case limits. |
+| `--quiet-plan` | Silence each build's own phase reporting. |
+| `--build-store-mode` | Override `build.build_store_mode` for this run: `contribute`, `reuse`, `require`, or `refresh`. |
+| `--revision SHA` | The revision recorded on every case this run produces; defaults to HEAD. It labels the run and checks nothing out. |
+
+`--build-store-mode` says what a worker does about a build artifact the store
+does not hold, or holds stale: `contribute` reads what is there and writes
+back what is not, `reuse` reads and persists nothing, `require` refuses a
+miss, and `refresh` ignores what is there and rebuilds over it. Keep the
+store on a local filesystem; it is written throughout a collection.
+
+Every case runs in a fresh subprocess. Python exceptions, timeouts, signals,
+and process exits are attributed to one case, recorded, and do not prevent
+later cases from running. A successful program is published atomically as
+soon as it exists.
+
+## The configuration
+
+One JSON file, validated strictly — an unknown or missing key is an error.
+Beside its `schema`, the collection's `name`, `seed`, `expected_programs`,
+`case_timeout_seconds`, and `max_attempts`, it has four sections:
+`geometry`, `models`, `runtime`, and `build`.
+
+`geometry` gives the three axes — `tokens_per_microbatch`,
+`sequence_lengths`, and `accumulation_rounds` — expanded into one program per
+divisible combination, per model. In user-facing text the third axis is
+**gradient accumulation rounds**; the schema-v1 field name
+`accumulation_steps` is still written and accepted, to keep collected digests
+stable.
+
+`build` is the `BuildSpec`: `optimizer_ordering`, `allocation_probe_seeds`,
+`allocation_probe_repetitions`, `build_store_mode` (`contribute`, `reuse`, or
+`require` here; `refresh` is a per-run override only), and
+`implementation_revision`. Nothing in it is a planning setting.
+
+`runtime` names the pool capacities and the budgets the build sees. They are
+recorded as provenance on each case, not planned against here.
+
+## What it writes
 
 ```text
 <output>/
@@ -47,7 +85,7 @@ reside on a local filesystem.
 ├── layout.json
 ├── cases/<provider-model>/<data-geometry>/<program-digest>/
 │   ├── manifest.json      identity and collection provenance
-│   └── step_program.json  the Program itself, named by its digest
+│   └── step_program.json  the ShadowSpillProgram itself, named by its digest
 └── _collections/<name>-<config-digest>/
     ├── collection.lock
     ├── config.json
@@ -60,10 +98,10 @@ reside on a local filesystem.
         └── logs/attempt-NNNN.log
 ```
 
-A case manifest records what produced the Program beside it: the collection
+A case manifest records what produced the program beside it: the collection
 name and config, the model, the data geometry, the seed, and the runtime
 configuration the costs were measured under. None of it is part of the
-Program's digest and none of it is read back when the Program is planned, so
+program's digest and none of it is read back when the program is planned, so
 a field added here cannot invalidate a corpus. What the digest does cover is
 in [the artifact store guide](../../docs/python/artifact-store.md#identity).
 
@@ -73,10 +111,6 @@ a dataset was collected is recorded in its own collection log under
 `_collections/` and on every case manifest, not here.
 
 ## Collecting on another machine
-
-Collection needs an execution device and a working provider backend: it
-builds each model, compiles it, and profiles real kernels, so a full matrix
-takes hours.
 
 The measured task costs are written into each `StepProgram`, so a corpus
 describes the machine that collected it. That is what makes a corpus reusable

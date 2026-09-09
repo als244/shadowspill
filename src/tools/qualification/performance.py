@@ -24,7 +24,7 @@ from shadowspill.pytorch import (
 )
 from shadowspill.schema import artifact_schema
 from tools.qualification.model_state import release_case_model
-from tools.qualification.pressurefit_fixtures import write_pressurefit_fixtures
+from tools.qualification.plan_record import write_plan_records
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
@@ -203,8 +203,8 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
     output = arguments.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     cache = (
-        arguments.artifact_store_dir.expanduser().resolve()
-        if arguments.artifact_store_dir is not None
+        arguments.artifact_store.expanduser().resolve()
+        if arguments.artifact_store is not None
         else output.parent / "artifact_store" / manifest.identity
     )
     # The runtime owns its physical capacities.  Register and calibrate those
@@ -257,11 +257,12 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             spill_budget=planning_spill_budget,
             optimizer_ordering="stage_interleaved",
             verbose=True,
-            artifact_store_dir=cache,
+            artifact_store=cache,
+            build_store=arguments.build_store,
+            plan_store=arguments.plan_store,
+            build_store_mode=arguments.build_store_mode,
+            plan_store_mode=arguments.plan_store_mode,
             profiling_metadata=_profile_metadata(case.microbatches),
-            save_plan=True,
-            force_fresh=arguments.force_fresh,
-            overwrite_plan=arguments.force_fresh,
             implementation_revision=arguments.implementation_revision,
         )
         planning_seconds = time.perf_counter() - planning_started
@@ -269,8 +270,8 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         phases = _phase_seconds(report)
         plan_path = output.with_name(f"{output.stem}_plan_report.pt")
         torch.save(report, plan_path)
-        fixtures = write_pressurefit_fixtures(
-            results=report.pressurefit_results,
+        fixtures = write_plan_records(
+            results=report.search_results,
             directory=output.parent / f"{output.stem}_pressurefit",
         )
         print(
@@ -278,7 +279,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             f"lowering={phases.get('capture_lowering', 0.0):.3f}s "
             f"compilation={phases.get('compiled_entrypoint_construction', 0.0):.3f}s "
             f"profiling={phases.get('unique_stage_warmup_profiling', 0.0):.3f}s "
-            f"pressurefit={phases.get('pressurefit_simulation', 0.0):.3f}s",
+            f"pressurefit={phases.get('search', 0.0):.3f}s",
             flush=True,
         )
 
@@ -297,7 +298,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 "transfer_bytes_evicted": report.transfer_bytes_evicted,
                 "transfer_bytes_fetched": report.transfer_bytes_fetched,
                 "plan_report_artifact": _artifact_identity(plan_path),
-                "pressurefit_fixtures": fixtures,
+                "plan_records": fixtures,
                 "physical_budget_statuses": physical_statuses,
                 "planning_spill_budget_bytes": planning_spill_budget,
                 "runtime_transfer_capabilities": runtime_transfer_capabilities,
@@ -552,7 +553,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "runtime_statistics": statistics_dict(execution_statistics),
             "runtime_transfer_capabilities": runtime_transfer_capabilities,
             "plan_report_artifact": _artifact_identity(plan_path),
-            "pressurefit_fixtures": fixtures,
+            "plan_records": fixtures,
         }
         training.close()
         # Qualification never reuses the model; an export copy would stack an
@@ -596,8 +597,15 @@ def main() -> int:
             "external profiler can attribute time to the task that spent it"
         ),
     )
-    parser.add_argument("--force-fresh", action="store_true")
-    parser.add_argument("--artifact-store-dir", type=Path)
+    parser.add_argument("--artifact-store", type=Path)
+    parser.add_argument("--build-store", type=Path)
+    parser.add_argument("--plan-store", type=Path)
+    for tree in ("build", "plan"):
+        parser.add_argument(
+            f"--{tree}-store-mode",
+            choices=("contribute", "reuse", "require"),
+            default="contribute",
+        )
     parser.add_argument("--implementation-revision")
     parser.add_argument(
         "--spill-budget-gib",

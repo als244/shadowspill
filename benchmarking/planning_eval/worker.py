@@ -1,4 +1,4 @@
-"""One-process evaluation of every frontier point for one saved Program."""
+"""One-process evaluation of every frontier point for one saved ShadowSpillProgram."""
 
 from __future__ import annotations
 
@@ -10,19 +10,16 @@ from benchmarking.program_collection.corpus import (
     SavedProgramCase,
     load_step_program,
 )
-from shadowspill.errors import (
-    PlanInfeasibleError,
-    PlanSearchExhaustedError,
-)
 from shadowspill.planner import (
-    PressureFitInfeasibleError,
-    PressureFitOptions,
-    PressureFitSearchExhaustedError,
-    pressurefit_program,
+    SearchOptions,
+    plan_program,
 )
 from shadowspill.planner.program import (
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     StepProgram,
+)
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
@@ -44,19 +41,25 @@ from .storage import (
     write_active_point,
 )
 
-_EXPECTED_INFEASIBLE = (
-    PressureFitInfeasibleError,
-    PlanInfeasibleError,
-    SimulationInfeasibleError,
-)
-_EXPECTED_EXHAUSTED = (
-    PressureFitSearchExhaustedError,
-    PlanSearchExhaustedError,
-)
+_EXPECTED_INFEASIBLE = (SimulationInfeasibleError,)
+_EXPECTED_EXHAUSTED = ()
 
 
-def _planner_options(config: FrontierConfig) -> PressureFitOptions | None:
-    """The planner settings this config names, or None for the defaults."""
+def _planner_options(config: FrontierConfig) -> SearchOptions | None:
+    """What every search is told, or None for the defaults."""
+
+    named = {
+        name: value
+        for name, value in (("deterministic", config.deterministic),)
+        if value is not None
+    }
+    return SearchOptions(**named) if named else None
+
+
+def _search_options(config: FrontierConfig) -> PressureFitOptions | None:
+    """What this search is told. Held apart from the planner's own settings,
+    because a field here is PressureFit's candidate space and means nothing
+    to another search."""
 
     named = {
         name: value
@@ -64,7 +67,6 @@ def _planner_options(config: FrontierConfig) -> PressureFitOptions | None:
             ("capacity_refinement_bytes", config.capacity_refinement_bytes),
             ("max_repair_attempts", config.max_repair_attempts),
             ("split_write_backs", config.split_write_backs),
-            ("deterministic", config.deterministic),
         )
         if value is not None
     }
@@ -77,12 +79,13 @@ def evaluate_case(
     baseline_directory: Path,
     case_directory: Path,
     artifact_store: Path,
-    verbose_pressurefit: bool,
+    plan_store: Path | None,
+    verbose_search: bool,
     global_point_base: int,
     global_point_count: int,
     revision: str,
 ) -> dict[str, object]:
-    """Load one Program once, then independently persist every point."""
+    """Load one ShadowSpillProgram once, then independently persist every point."""
 
     saved_case, step_program = load_step_program(case_directory)
     program = _select_program(step_program, config.program_role)
@@ -103,7 +106,7 @@ def evaluate_case(
     if global_point_base < 0:
         raise ValueError("global point base must be nonnegative")
     if global_point_base + len(requests) > global_point_count:
-        raise ValueError("Program points exceed the global frontier size")
+        raise ValueError("ShadowSpillProgram points exceed the global frontier size")
     case_run_directory = paths.case_directory(case)
     case_run_directory.mkdir(parents=True, exist_ok=True)
     atomic_json(
@@ -135,7 +138,8 @@ def evaluate_case(
                 request=request,
                 directory=directory,
                 artifact_store=artifact_store,
-                verbose_pressurefit=verbose_pressurefit,
+                plan_store=plan_store,
+                verbose_search=verbose_search,
                 ordinal=ordinal,
                 point_count=len(requests),
                 global_ordinal=global_point_base + ordinal,
@@ -164,11 +168,12 @@ def _evaluate_point(
     case: CorpusProgramCase,
     saved_case: SavedProgramCase,
     step_program: StepProgram,
-    program: PressureFitProgram,
+    program: ShadowSpillPlanningProblem,
     request: FrontierPointRequest,
     directory: Path,
     artifact_store: Path,
-    verbose_pressurefit: bool,
+    plan_store: Path | None,
+    verbose_search: bool,
     ordinal: int,
     point_count: int,
     global_ordinal: int,
@@ -191,17 +196,17 @@ def _evaluate_point(
         revision=revision,
     )
     try:
-        plan = pressurefit_program(
+        plan = plan_program(
             program,
             execution_budget=request.axes.execution_budget_bytes,
             spill_budget=request.axes.spill_budget_bytes,
             transfer_bandwidths=request.transfer_bandwidths,
             options=_planner_options(config),
-            artifact_store_dir=artifact_store,
-            verbose=verbose_pressurefit,
-            save_plan=config.pressurefit_cache_mode == "warm",
-            force_fresh=config.pressurefit_cache_mode == "cold",
-            overwrite_plan=False,
+            search_options=_search_options(config),
+            artifact_store=artifact_store,
+            verbose=verbose_search,
+            plan_store=plan_store,
+            plan_store_mode=config.plan_store_mode,
         )
         annotated_directory = save_annotated_plan(
             saved_case,
@@ -419,7 +424,7 @@ def _print_point_stop(
     print(flush=True)
 
 
-def _select_program(step: StepProgram, role: str) -> PressureFitProgram:
+def _select_program(step: StepProgram, role: str) -> ShadowSpillPlanningProblem:
     if role == "recurrent":
         return step.recurrent
     if role == "initial":
@@ -462,10 +467,11 @@ def main() -> int:
     parser.add_argument("--baseline-dir", type=Path, required=True)
     parser.add_argument("--case-dir", type=Path, required=True)
     parser.add_argument("--artifact-store", type=Path, required=True)
+    parser.add_argument("--plan-store", type=Path)
     parser.add_argument("--global-point-base", type=int, required=True)
     parser.add_argument("--global-point-count", type=int, required=True)
     parser.add_argument("--revision", required=True)
-    parser.add_argument("--verbose-pressurefit", action="store_true")
+    parser.add_argument("--verbose-search", action="store_true")
     arguments = parser.parse_args()
     config = load_frontier_config(arguments.config)
     result = evaluate_case(
@@ -473,7 +479,12 @@ def main() -> int:
         baseline_directory=arguments.baseline_dir,
         case_directory=arguments.case_dir,
         artifact_store=arguments.artifact_store.expanduser().resolve(),
-        verbose_pressurefit=arguments.verbose_pressurefit,
+        plan_store=(
+            None
+            if arguments.plan_store is None
+            else arguments.plan_store.expanduser().resolve()
+        ),
+        verbose_search=arguments.verbose_search,
         global_point_base=arguments.global_point_base,
         global_point_count=arguments.global_point_count,
         revision=arguments.revision,

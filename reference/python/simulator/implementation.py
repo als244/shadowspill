@@ -11,8 +11,8 @@ from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
     MemorySchedule,
-    Program,
     ResourceKind,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskSpec,
 )
@@ -90,7 +90,7 @@ class _TaskWait:
 class _Simulator:
     def __init__(
         self,
-        program: Program,
+        program: ShadowSpillProgram,
         schedule: MemorySchedule,
         selections: tuple[TaskAlternativeChoice, ...],
         config: SimulationConfig,
@@ -123,15 +123,13 @@ class _Simulator:
                 *(mutation.object_id for mutation in task.mutations),
             ):
                 self.alias_last_reader[self.object_alias[object_id]] = task.task_id
-        self.final_aliases = {
-            item.alias_group_id for item in schedule.final_residency
-        }
+        self.final_aliases = {item.alias_group_id for item in schedule.final_residency}
         self.device_config = {item.device_id: item for item in config.devices}
         if admission is not None and admission.device_capacity_bytes:
             capacities = dict(admission.device_capacity_bytes)
             if set(capacities) != set(self.device_config):
                 raise ValueError(
-                    "simulation admission capacities must exactly match Program "
+                    "simulation admission capacities must exactly match program "
                     f"devices; expected {sorted(self.device_config)}, "
                     f"got {sorted(capacities)}"
                 )
@@ -217,7 +215,7 @@ class _Simulator:
         configured_devices = set(self.device_config)
         if configured_devices != program_devices:
             raise ValueError(
-                "simulation devices must exactly match Program devices; "
+                "simulation devices must exactly match ShadowSpillProgram devices; "
                 f"expected {sorted(program_devices)}, got {sorted(configured_devices)}"
             )
         self.schedule.validate(self.program, self.selections)
@@ -581,8 +579,7 @@ class _Simulator:
             # loss, reported here rather than at the fetch, task or final
             # residency that would miss it.
             raise SimulationInfeasibleError(
-                f"release of {action.alias_group_id!r} drops the only current "
-                "copy",
+                f"release of {action.alias_group_id!r} drops the only current copy",
                 kind="invalid-release",
                 time_ns=self.now_ns,
                 task_id=action.trigger_task_id,
@@ -1111,7 +1108,7 @@ class _Simulator:
 
 
 def simulate_python(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     *,
     selections: tuple[TaskAlternativeChoice, ...] = (),

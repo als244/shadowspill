@@ -20,6 +20,7 @@ import torch
 from shadowspill.ir import TaskAlternativeChoice, TaskAlternativeGroup
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import StepDataOrdering
+from shadowspill.planner.store_policy import StorePolicy
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
@@ -39,7 +40,7 @@ from workloads.numerical import (
 )
 
 from .numerical_metrics import compare_states, cpu_state, state_digest
-from .pressurefit_fixtures import write_pressurefit_fixtures
+from .plan_record import write_plan_records
 from .references import (
     DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
     REFERENCE_SCHEMA,
@@ -352,7 +353,7 @@ def _planning_breakdown(
         "profile_cache_and_entrypoint_orchestration", 0.0
     )
     program_lowering = phase_seconds.get("program_lowering", 0.0)
-    pressurefit = phase_seconds.get("pressurefit_simulation", 0.0)
+    pressurefit = phase_seconds.get("search", 0.0)
     admission = (
         phase_seconds.get("admission_facts", 0.0)
         + phase_seconds.get("spill_admission", 0.0)
@@ -531,11 +532,12 @@ def _planned_worker(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
-    artifact_store_dir: Path | None,
+    artifact_store: Path | None,
+    build_store: Path | None,
+    plan_store: Path | None,
     profiling_metadata: list[object] | None,
-    save_plan: bool,
-    force_fresh: bool,
-    overwrite_plan: bool,
+    build_store_mode: str,
+    plan_store_mode: str,
     implementation_revision: str | None,
     detailed_artifacts: bool,
 ) -> None:
@@ -603,11 +605,12 @@ def _planned_worker(
             spill="spill",
             optimizer_ordering=optimizer_ordering,
             **_data_ordering_arguments(data_ordering),
-            artifact_store_dir=artifact_store_dir,
+            artifact_store=artifact_store,
+            build_store=build_store,
+            plan_store=plan_store,
             profiling_metadata=workload_metadata,
-            save_plan=save_plan,
-            force_fresh=force_fresh,
-            overwrite_plan=overwrite_plan,
+            build_store_mode=build_store_mode,
+            plan_store_mode=plan_store_mode,
             implementation_revision=implementation_revision,
             # One plan per tree: the search's shared placement gate would
             # otherwise settle on a different plan run to run, and a plan is
@@ -628,11 +631,11 @@ def _planned_worker(
             "profiling="
             f"{planning_phases.get('unique_stage_warmup_profiling', 0.0):.3f}s, "
             "pressurefit="
-            f"{planning_phases.get('pressurefit_simulation', 0.0):.3f}s",
+            f"{planning_phases.get('search', 0.0):.3f}s",
             flush=True,
         )
         plan_report_artifact: dict[str, object] | None = None
-        pressurefit_fixtures: list[dict[str, object]] = []
+        plan_records: list[dict[str, object]] = []
         if detailed_artifacts:
             plan_report_path = result_path.with_name(
                 f"{result_path.stem}_plan_report.pt"
@@ -641,8 +644,8 @@ def _planned_worker(
             # are intentionally comprehensive and can dwarf the compact
             # numerical qualification result.
             torch.save(training.plan_report, plan_report_path)
-            pressurefit_fixtures = write_pressurefit_fixtures(
-                results=training.plan_report.pressurefit_results,
+            plan_records = write_plan_records(
+                results=training.plan_report.search_results,
                 directory=result_path.parent / f"{result_path.stem}_pressurefit",
             )
             plan_report_artifact = {
@@ -805,6 +808,13 @@ def _planned_worker(
     # every kernel under it is, and the mlops path's are not on every
     # accelerator. Hold the replay to the same per-tensor tolerance the
     # reference comparison uses, and keep the bitwise answer as evidence.
+    stage_started = time.perf_counter()
+    print(
+        f"shadowspill {model_implementation}/{family} comparing the "
+        "checkpoint-replayed state against the uninterrupted run, tensor by "
+        "tensor",
+        flush=True,
+    )
     replay_results, replay_exact_failures, replay_structure_failures = (
         compare_states(
             {
@@ -817,11 +827,23 @@ def _planned_worker(
             },
         )
     )
+    print(
+        f"shadowspill {model_implementation}/{family} compared "
+        f"{len(replay_results)} replayed tensors: "
+        f"{time.perf_counter() - stage_started:.3f}s",
+        flush=True,
+    )
     replay_metric_failures = [
         name
         for name, metric in replay_results.items()
         if not _meets_tensor_tolerance(metric, key=name)
     ]
+    stage_started = time.perf_counter()
+    print(
+        f"shadowspill {model_implementation}/{family} assembling the case "
+        "artifact: diagnostics, plan records, and the state digests",
+        flush=True,
+    )
     selections = tuple(
         (item.group_id, item.option_id) for item in report.execution_plan.selections
     )
@@ -868,12 +890,11 @@ def _planned_worker(
         "planning_cache_request": {
             "directory": (
                 None
-                if artifact_store_dir is None
-                else str(artifact_store_dir.resolve())
+                if artifact_store is None
+                else str(artifact_store.resolve())
             ),
-            "save_plan": save_plan,
-            "force_fresh": force_fresh,
-            "overwrite_plan": overwrite_plan,
+            "build_store_mode": build_store_mode,
+            "plan_store_mode": plan_store_mode,
             "implementation_revision": implementation_revision,
         },
         "device_budget_bytes": device_budget,
@@ -891,7 +912,7 @@ def _planned_worker(
             phase_seconds, planning_seconds=planning_seconds
         ),
         "artifact_detail": "detailed" if detailed_artifacts else "compact",
-        "pressurefit_seconds": phase_seconds.get("pressurefit_simulation", 0.0),
+        "search_seconds": phase_seconds.get("search", 0.0),
         "planned_step_seconds": timings,
         "planned_compute_seconds": compute_timings,
         "planned_step_summaries": step_summaries,
@@ -1070,8 +1091,9 @@ def _planned_worker(
         "aot_graph_pair_cache_misses": report.aot_graph_pair_cache_misses,
         "planned_program_cache_hits": report.planned_program_cache_hits,
         "planned_program_cache_misses": report.planned_program_cache_misses,
-        "cold_cache_requested": force_fresh,
-        "pressurefit_fixtures": pressurefit_fixtures,
+        "build_store_mode": build_store_mode,
+        "plan_store_mode": plan_store_mode,
+        "plan_records": plan_records,
         "plan_report_artifact": plan_report_artifact,
         "reference_state_digest": state_digest(
             {"model": reference["model"], "optimizer": reference["optimizer"]}
@@ -1087,14 +1109,22 @@ def _planned_worker(
         qualification_result["reference_state_digest"]
         == qualification_result["planned_state_digest"]
     )
-    qualification_result["cold_cache_confirmed"] = bool(
-        not qualification_result["cold_cache_requested"]
-        or (
-            qualification_result["profile_cache_hits"] == 0
-            and qualification_result["aot_graph_pair_cache_misses"]
-            == qualification_result["aot_unique_stage_contracts"]
-            and qualification_result["planned_program_cache_hits"] == 0
+    # A store mode that disables reads must actually have served nothing. The
+    # policy the mode implies is the authority on whether reads were allowed,
+    # so there is no second flag to disagree with it; a tree that was allowed
+    # to read is not asked to prove anything.
+    build_reads = StorePolicy.for_mode(build_store_mode).read_enabled
+    plan_reads = StorePolicy.for_mode(plan_store_mode).read_enabled
+    qualification_result["store_modes_honoured"] = bool(
+        (
+            build_reads
+            or (
+                qualification_result["profile_cache_hits"] == 0
+                and qualification_result["aot_graph_pair_cache_misses"]
+                == qualification_result["aot_unique_stage_contracts"]
+            )
         )
+        and (plan_reads or qualification_result["planned_program_cache_hits"] == 0)
     )
     qualification_result["graph_pair_selection_required"] = False
     transfer_pressure_passed = _transfer_pressure_gate_passed(
@@ -1228,9 +1258,9 @@ def _planned_worker(
         ),
         ("runtime", qualification_result["event_pool_sealed"], "event pool not sealed"),
         (
-            "cache",
-            qualification_result["cold_cache_confirmed"],
-            "cold cache not confirmed",
+            "store",
+            qualification_result["store_modes_honoured"],
+            "a store whose mode disables reads still served a hit",
         ),
     )
     failures = [
@@ -1245,6 +1275,12 @@ def _planned_worker(
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
         json.dumps(qualification_result, indent=2, sort_keys=True) + "\n"
+    )
+    print(
+        f"shadowspill {model_implementation}/{family} wrote "
+        f"{result_path.name}, {len(failures)} failure(s): "
+        f"{time.perf_counter() - stage_started:.3f}s",
+        flush=True,
     )
     if not qualification_result["passed"]:
         raise AssertionError(
@@ -1273,11 +1309,12 @@ def _orchestrate(
     steps: int,
     checkpoint_step: int,
     require_pressure: bool,
-    artifact_store_dir: Path | None,
+    artifact_store: Path | None,
+    build_store: Path | None,
+    plan_store: Path | None,
     profiling_metadata_argument: str | None,
-    save_plan: bool,
-    force_fresh: bool,
-    overwrite_plan: bool,
+    build_store_mode: str,
+    plan_store_mode: str,
     implementation_revision: str | None,
     reference_directory: Path,
     regenerate_reference: bool,
@@ -1329,14 +1366,14 @@ def _orchestrate(
             env=environment,
         )
     planned_options: list[str] = []
-    selected_cache = artifact_store_dir or result_directory / "artifact_store"
-    planned_options.extend(("--artifact-store-dir", str(selected_cache)))
-    if not save_plan:
-        planned_options.append("--no-save-plan")
-    if force_fresh:
-        planned_options.append("--force-fresh")
-    if overwrite_plan:
-        planned_options.append("--overwrite-plan")
+    selected_cache = artifact_store or result_directory / "artifact_store"
+    planned_options.extend(("--artifact-store", str(selected_cache)))
+    for flag, path in (("--build-store", build_store), ("--plan-store", plan_store)):
+        if path is not None:
+            planned_options.extend((flag, str(path)))
+    for tree, mode in (("build", build_store_mode), ("plan", plan_store_mode)):
+        if mode != "contribute":
+            planned_options.extend((f"--{tree}-store-mode", mode))
     if implementation_revision is not None:
         planned_options.extend(("--implementation-revision", implementation_revision))
     if detailed_artifacts:
@@ -1414,25 +1451,21 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--artifact-store-dir",
+        "--artifact-store",
         type=Path,
-        help="shared planning artifact root (run mode defaults below the result dir)",
+        help="roots both stores (run mode defaults below the result dir)",
     )
-    parser.add_argument(
-        "--no-save-plan",
-        action="store_true",
-        help="do not write reusable planning artifacts",
-    )
-    parser.add_argument(
-        "--force-fresh",
-        action="store_true",
-        help="bypass every planning-cache read",
-    )
-    parser.add_argument(
-        "--overwrite-plan",
-        action="store_true",
-        help="replace matching artifacts; requires --force-fresh",
-    )
+    parser.add_argument("--build-store", type=Path)
+    parser.add_argument("--plan-store", type=Path)
+    for tree in ("build", "plan"):
+        parser.add_argument(
+            f"--{tree}-store-mode",
+            choices=("contribute", "reuse", "require"),
+            default="contribute",
+            help=f"what this run may do about a {tree} artifact the store does"
+            " not hold: contribute writes it back, reuse persists nothing,"
+            " require refuses",
+        )
     parser.add_argument(
         "--implementation-revision",
         help="explicit implementation identity for custom-kernel invalidation",
@@ -1501,12 +1534,6 @@ def main() -> int:
             if not isinstance(decoded_metadata, list):
                 raise ValueError("profiling metadata must decode to a list")
             profiling_metadata_value = decoded_metadata
-        if arguments.overwrite_plan and (
-            arguments.no_save_plan or not arguments.force_fresh
-        ):
-            raise ValueError(
-                "--overwrite-plan requires saved artifacts and --force-fresh"
-            )
         case_options_value = _case_options(arguments.case_option)
     except ValueError as exc:
         parser.error(str(exc))
@@ -1532,11 +1559,12 @@ def main() -> int:
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
-            artifact_store_dir=arguments.artifact_store_dir,
+            artifact_store=arguments.artifact_store,
+            build_store=arguments.build_store,
+            plan_store=arguments.plan_store,
             profiling_metadata_argument=arguments.profiling_metadata,
-            save_plan=not arguments.no_save_plan,
-            force_fresh=arguments.force_fresh,
-            overwrite_plan=arguments.overwrite_plan,
+            build_store_mode=arguments.build_store_mode,
+            plan_store_mode=arguments.plan_store_mode,
             implementation_revision=arguments.implementation_revision,
             reference_directory=arguments.reference_dir,
             regenerate_reference=arguments.regenerate_reference,
@@ -1576,11 +1604,12 @@ def main() -> int:
             steps=arguments.steps,
             checkpoint_step=checkpoint_step,
             require_pressure=not arguments.allow_fully_resident,
-            artifact_store_dir=arguments.artifact_store_dir,
+            artifact_store=arguments.artifact_store,
+            build_store=arguments.build_store,
+            plan_store=arguments.plan_store,
             profiling_metadata=profiling_metadata_value,
-            save_plan=not arguments.no_save_plan,
-            force_fresh=arguments.force_fresh,
-            overwrite_plan=arguments.overwrite_plan,
+            build_store_mode=arguments.build_store_mode,
+            plan_store_mode=arguments.plan_store_mode,
             implementation_revision=arguments.implementation_revision,
             detailed_artifacts=arguments.detailed_artifacts,
         )

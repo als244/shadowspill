@@ -1,4 +1,4 @@
-"""Sequential, crash-isolated orchestration of all Program frontier workers."""
+"""Sequential, crash-isolated orchestration of every frontier worker."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from .summary import write_frontier_summary
 class ControllerOptions:
     artifact_store: Path
     resume: bool
-    verbose_pressurefit: bool
+    verbose_search: bool
     #: The revision every point started under this run records.
     revision: str
 
@@ -198,7 +198,7 @@ def _run_case_until_complete(
             paths,
             case,
             artifact_store=options.artifact_store,
-            verbose_pressurefit=options.verbose_pressurefit,
+            verbose_search=options.verbose_search,
             global_point_base=global_point_base,
             global_point_count=global_point_count,
             revision=options.revision,
@@ -234,7 +234,7 @@ def _run_case_until_complete(
             f"return_code={outcome.return_code} reason={reason}",
         )
     raise RuntimeError(
-        "Program worker exceeded max restarts before completing its points: "
+        "ShadowSpillProgram worker exceeded max restarts before completing its points: "
         f"{case.case_id}"
     )
 
@@ -327,7 +327,7 @@ def _worker_command(
     case: CorpusProgramCase,
     *,
     artifact_store: Path,
-    verbose_pressurefit: bool,
+    verbose_search: bool,
     global_point_base: int,
     global_point_count: int,
     revision: str,
@@ -351,8 +351,8 @@ def _worker_command(
         "--revision",
         revision,
     ]
-    if verbose_pressurefit:
-        command.append("--verbose-pressurefit")
+    if verbose_search:
+        command.append("--verbose-search")
     return command
 
 
@@ -430,7 +430,7 @@ def _log(paths: BaselinePaths, message: str) -> None:
 
 
 def _program_separator(paths: BaselinePaths) -> None:
-    """Make Program boundaries obvious in both the terminal and main log."""
+    """Make ShadowSpillProgram boundaries obvious in both the terminal and main log."""
 
     append_log(paths.log_path, "\n\n")
     print("\n\n", end="", flush=True)

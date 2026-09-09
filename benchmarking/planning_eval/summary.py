@@ -31,7 +31,7 @@ _CSV_FIELDS = (
     "makespan_ns",
     "tokens_per_second",
     "total_selection_wall_time_ns",
-    "pressurefit_wall_time_ns",
+    "search_wall_time_ns",
     "physical_admission_wall_time_ns",
     "orchestration_wall_time_ns",
     "task_duration_sum_ns",
@@ -40,8 +40,8 @@ _CSV_FIELDS = (
     "evict_bytes",
     "device_peak_bytes",
     "spill_peak_bytes",
-    "recomputation_problem_count",
-    "valid_recomputation_problem_count",
+    "resolved_program_count",
+    "valid_resolved_program_count",
     "candidate_policy_count",
     "candidate_evaluation_count",
     "valid_candidate_evaluation_count",
@@ -160,15 +160,15 @@ def _csv_row(
     evict = _mapping(transfers.get("evict"))
     throughput = _mapping(result.get("throughput"))
     selection = _mapping(result.get("selection"))
-    pressurefit = _mapping(selection.get("pressurefit_diagnostics"))
+    pressurefit = _mapping(selection.get("search_diagnostics"))
     pressurefit_summary = _mapping(pressurefit.get("summary"))
-    pressurefit_repairs = _mapping(pressurefit.get("repairs"))
-    pressurefit_work = _mapping(pressurefit.get("work"))
-    residency_work = _mapping(pressurefit_work.get("residency"))
-    schedule_work = _mapping(pressurefit_work.get("schedule"))
-    simulation_work = _mapping(pressurefit_work.get("simulation"))
-    admission_work = _mapping(pressurefit_work.get("admission"))
-    sections = _mapping(pressurefit_work.get("sections"))
+    search_repairs = _mapping(pressurefit.get("repairs"))
+    search_work = _mapping(pressurefit.get("work"))
+    residency_work = _mapping(search_work.get("residency"))
+    schedule_work = _mapping(search_work.get("schedule"))
+    simulation_work = _mapping(search_work.get("simulation"))
+    admission_work = _mapping(search_work.get("admission"))
+    sections = _mapping(search_work.get("sections"))
     schedule = _mapping(result.get("schedule"))
     admission = _mapping(result.get("physical_admission"))
     plan = _mapping(result.get("annotated_plan"))
@@ -202,7 +202,7 @@ def _csv_row(
         "makespan_ns": simulation.get("makespan_ns"),
         "tokens_per_second": throughput.get("tokens_per_second"),
         "total_selection_wall_time_ns": timing.get("total_selection_wall_time_ns"),
-        "pressurefit_wall_time_ns": timing.get("pressurefit_wall_time_ns"),
+        "search_wall_time_ns": timing.get("search_wall_time_ns"),
         "physical_admission_wall_time_ns": timing.get(
             "physical_admission_wall_time_ns"
         ),
@@ -213,11 +213,11 @@ def _csv_row(
         "evict_bytes": evict.get("bytes"),
         "device_peak_bytes": _mapping(simulation.get("device_peak")).get("total_bytes"),
         "spill_peak_bytes": simulation.get("spill_peak_bytes"),
-        "recomputation_problem_count": pressurefit_summary.get(
-            "recomputation_problem_count"
+        "resolved_program_count": pressurefit_summary.get(
+            "resolved_program_count"
         ),
-        "valid_recomputation_problem_count": pressurefit_summary.get(
-            "valid_recomputation_problem_count"
+        "valid_resolved_program_count": pressurefit_summary.get(
+            "valid_resolved_program_count"
         ),
         "candidate_policy_count": pressurefit_summary.get("candidate_policy_count"),
         "candidate_evaluation_count": pressurefit_summary.get(
@@ -226,8 +226,8 @@ def _csv_row(
         "valid_candidate_evaluation_count": pressurefit_summary.get(
             "valid_candidate_evaluation_count"
         ),
-        "repair_attempt_count": pressurefit_repairs.get("total_attempts"),
-        "pressure_boundary_repair_attempt_count": pressurefit_repairs.get(
+        "repair_attempt_count": search_repairs.get("total_attempts"),
+        "pressure_boundary_repair_attempt_count": search_repairs.get(
             "pressure_boundary_attempts"
         ),
         "residency_evaluations": residency_work.get("evaluations"),

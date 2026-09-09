@@ -17,7 +17,9 @@ from shadowspill.errors import (
     AdmissionError,
     CaptureError,
     CompilationError,
+    PlanInfeasibleError,
     PlanningError,
+    PlanSearchExhaustedError,
 )
 from shadowspill.ir import (
     EntrypointSpec,
@@ -27,14 +29,12 @@ from shadowspill.ir import (
     SharedResidencyPolicy,
 )
 from shadowspill.planner import (
-    PressureFitInfeasibleError,
-    PressureFitResult,
-    PressureFitSearchExhaustedError,
+    ProgramPlanResult,
     validate_schedule_feasibility,
 )
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
-from shadowspill.planner.request import PressureFitOptions
+from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
@@ -388,7 +388,7 @@ def build_forward_program(
     memory: PlanMemory,
     timer: PlanningTimer,
 ) -> ForwardProgramArtifacts:
-    """Lower physical evidence into one canonical forward Program."""
+    """Lower physical evidence into one canonical forward ShadowSpillProgram."""
 
     with timer.measure("program_lowering"):
         measurements = {
@@ -455,14 +455,19 @@ def build_forward_program(
     )
 
 
-def pressurefit_forward_program(
+def plan_forward_program(
     program: ForwardProgramArtifacts,
     *,
-    options: PressureFitOptions,
+    search_options: SearchOptions | None,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> FixedLayoutSelection:
-    """Resolve the exact PressureFit result for a canonical forward Program."""
+    """Resolve the exact plan for a canonical forward program.
+
+    `search_options` reaches both the preflight and the search, so a forward
+    plan is searched under what the caller asked for rather than under the
+    defaults.
+    """
 
     with timer.measure("feasibility_preflight"):
         try:
@@ -472,16 +477,17 @@ def pressurefit_forward_program(
                 final_residency=program.lowered.final_residency,
                 config=program.simulation_config,
                 admission=program.admission,
+                search_options=search_options,
             )
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
-        except PressureFitSearchExhaustedError as error:
+        except PlanSearchExhaustedError as error:
             raise public_search_exhausted_error(error) from error
     scratch_reserve = dynamic_scratch_reserve_bytes(
         program.measurements_by_profile,
         minimum_bytes=program.dynamic_scratch_reserve_bytes,
     )
-    with timer.measure("pressurefit_simulation"):
+    with timer.measure("search"):
         try:
             return resolve_fixed_layout_selection(
                 program.simulation_config,
@@ -493,7 +499,7 @@ def pressurefit_forward_program(
                     initial_residency=program.lowered.initial_residency,
                     final_residency=program.lowered.final_residency,
                     config=config,
-                    options=options,
+                    search_options=search_options,
                     placement=placement_facts(
                         program.admission,
                         scratch_reserve_bytes=scratch_reserve,
@@ -502,9 +508,9 @@ def pressurefit_forward_program(
                 scratch_reserve_bytes=scratch_reserve,
                 progress=timer.progress,
             )
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
-        except PressureFitSearchExhaustedError as error:
+        except PlanSearchExhaustedError as error:
             raise public_search_exhausted_error(error) from error
         except FixedLayoutInfeasibleError as error:
             raise AdmissionError(f"fixed slab admission failed: {error}") from error
@@ -659,7 +665,7 @@ def _rollback_forward_failure(
 
 def _forward_execution_plan(
     lowered: LoweredForwardProgram,
-    selection: PressureFitResult,
+    selection: ProgramPlanResult,
     admission: PhysicalAdmission,
 ) -> ExecutionPlan:
     entrypoints = tuple(
@@ -684,7 +690,7 @@ def _forward_plan_report(
     program: ForwardProgramArtifacts,
     selection: FixedLayoutSelection,
     selected_admission: SelectedAdmission,
-    admitted_result: PressureFitResult,
+    admitted_result: ProgramPlanResult,
     execution_plan: ExecutionPlan,
     *,
     stores: PlanningStores,
@@ -707,7 +713,7 @@ def _forward_plan_report(
         tuple(timer.values),
         started,
         planned_program_cache_hit=selection.from_store,
-        pressurefit_results=(admitted_result,),
+        search_results=(admitted_result,),
         captured_stage_count=len(captured.partitioned.stages),
         aot_unique_stage_contracts=profiled.profiles.unique_keys,
         task_stage_map=task_stage_map,
@@ -750,6 +756,7 @@ def build_forward(
     shared_outputs: Sequence[SharedOutput] = (),
     minimum_object_bytes_evict_eligible: int = 0,
     deterministic: bool = False,
+    search_options: SearchOptions | None = None,
 ) -> PlannedForward:
     """Compose the independently callable forward-planning boundaries."""
 
@@ -774,12 +781,9 @@ def build_forward(
         timer=timer,
     )
     program = build_forward_program(captured, profiled, memory=memory, timer=timer)
-    selected = pressurefit_forward_program(
+    selected = plan_forward_program(
         program,
-        options=PressureFitOptions(
-            minimum_object_bytes_evict_eligible=minimum_object_bytes_evict_eligible,
-            deterministic=deterministic,
-        ),
+        search_options=search_options,
         stores=artifacts,
         timer=timer,
     )
@@ -861,7 +865,7 @@ def _shared_input_residency(
     captured: ForwardCaptureArtifacts,
     memory: PlanMemory,
 ) -> dict[int, tuple[SharedResidencyPolicy, bool]]:
-    """Project guaranteed execution residency into the canonical Program."""
+    """Project guaranteed execution residency into the canonical ShadowSpillProgram."""
 
     result: dict[int, tuple[SharedResidencyPolicy, bool]] = {}
     for item in captured.shared_inputs:
@@ -889,6 +893,6 @@ __all__ = [
     "build_forward",
     "build_forward_program",
     "capture_forward_graph",
-    "pressurefit_forward_program",
+    "plan_forward_program",
     "profile_forward_tasks",
 ]

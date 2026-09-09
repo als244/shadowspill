@@ -12,7 +12,7 @@ from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
 )
-from shadowspill.planner.result import PressureFitInfeasibleError
+from shadowspill.planner.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 from .facts import PlanningFacts
@@ -49,7 +49,7 @@ def _departure_task(facts: PlanningFacts, alias: int, span: Span) -> int:
     if events:
         return max(task for _boundary, task in events)
     if not facts.tasks:
-        raise PressureFitInfeasibleError(
+        raise PlanInfeasibleError(
             f"alias {facts.alias_ids[alias]!r} requires a pre-task departure, "
             "but the program has no task boundary",
             kind="missing_action_boundary",
@@ -340,7 +340,7 @@ def emit_schedule(
                     ):
                         earliest = previous_departure.trigger
                 if latest < earliest:
-                    raise PressureFitInfeasibleError(
+                    raise PlanInfeasibleError(
                         f"alias {facts.alias_ids[alias]!r} has no legal fetch "
                         f"boundary between tasks {earliest} and {latest}",
                         kind="fetch_window",

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from shadowspill.ir import DeviceSpec, Program, TaskAlternativeGroup, TaskSpec
+from shadowspill.ir import (
+    DeviceSpec,
+    ShadowSpillProgram,
+    TaskAlternativeGroup,
+    TaskSpec,
+)
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
 
 from .catalog import ObjectCatalog
@@ -22,11 +27,11 @@ def publish_program(
     *,
     device_ordinal: int,
     task_alternative_groups: tuple[TaskAlternativeGroup, ...] = (),
-) -> Program:
+) -> ShadowSpillProgram:
     """Freeze shared object, profile, and task inventories into canonical IR."""
 
     device_id = execution_device_id(device_ordinal)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec(device_id, "process_0", DEVICE_TYPE, device_ordinal),),
         alias_groups=catalog.alias_groups(),
         objects=catalog.objects(),
@@ -40,11 +45,11 @@ def publish_storage_program(
     catalog: ObjectCatalog,
     *,
     device_ordinal: int,
-) -> Program:
+) -> ShadowSpillProgram:
     """Freeze the pre-optimizer model/input storage inventory."""
 
     device_id = execution_device_id(device_ordinal)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec(device_id, "process_0", DEVICE_TYPE, device_ordinal),),
         alias_groups=catalog.alias_groups(),
         objects=catalog.objects(),

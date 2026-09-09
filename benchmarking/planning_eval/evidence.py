@@ -68,7 +68,7 @@ def successful_point_evidence(
     selection_value = [item.to_dict() for item in plan.result.selections]
     selection_digest = _digest(selection_value)
     option_counts = Counter(item.option_id for item in plan.result.selections)
-    pressurefit_diagnostics = plan.result.diagnostics
+    search_diagnostics = plan.result.diagnostics
     peak = simulation.device_peaks[0]
     manifest = json.loads((annotated_plan_directory / "manifest.json").read_text())
     artifact = manifest["annotated_program_plan"]
@@ -87,7 +87,7 @@ def successful_point_evidence(
             "completed_at": completed_at,
             "attempt_elapsed_seconds": elapsed_seconds,
             "total_selection_wall_time_ns": plan.wall_time_ns,
-            "pressurefit_wall_time_ns": plan.pressurefit_wall_time_ns,
+            "search_wall_time_ns": plan.search_wall_time_ns,
             "physical_admission_wall_time_ns": (plan.physical_admission_wall_time_ns),
             "orchestration_wall_time_ns": plan.orchestration_wall_time_ns,
         },
@@ -121,30 +121,30 @@ def successful_point_evidence(
                 "option_counts": dict(sorted(option_counts.items())),
                 "selections": selection_value,
                 "selected_candidate_id": (
-                    pressurefit_diagnostics.selected_candidate_id
+                    search_diagnostics.selected_candidate_id
                 ),
                 "selected_selection_id": (
-                    pressurefit_diagnostics.selected_selection_id
+                    search_diagnostics.selected_selection_id
                 ),
-                "recomputation_problem_count": (
-                    pressurefit_diagnostics.resolved_program_count
+                "resolved_program_count": (
+                    search_diagnostics.resolved_program_count
                 ),
-                "valid_recomputation_problem_count": (
-                    pressurefit_diagnostics.valid_resolved_program_count
+                "valid_resolved_program_count": (
+                    search_diagnostics.valid_resolved_program_count
                 ),
                 "candidate_policy_count": (
-                    pressurefit_diagnostics.candidate_policy_count
+                    search_diagnostics.candidate_policy_count
                 ),
                 "candidate_evaluation_count": (
-                    pressurefit_diagnostics.candidate_evaluation_count
+                    search_diagnostics.candidate_evaluation_count
                 ),
                 "valid_candidate_evaluation_count": (
-                    pressurefit_diagnostics.valid_candidate_evaluation_count
+                    search_diagnostics.valid_candidate_evaluation_count
                 ),
                 "candidate_status_counts": (
-                    pressurefit_diagnostics.candidate_status_counts
+                    search_diagnostics.candidate_status_counts
                 ),
-                "pressurefit_diagnostics": pressurefit_diagnostics.to_dict(),
+                "search_diagnostics": search_diagnostics.to_dict(),
             },
             "schedule": {
                 "digest": plan.result.schedule.digest,
@@ -173,14 +173,14 @@ def successful_point_evidence(
                         "required_bytes": item.required_bytes,
                         "pool_capacity_bytes": item.pool_capacity_bytes,
                         "accepted": item.accepted,
-                        "pressurefit_wall_time_ns": (item.pressurefit_wall_time_ns),
+                        "search_wall_time_ns": (item.search_wall_time_ns),
                         "physical_admission_wall_time_ns": (
                             item.physical_admission_wall_time_ns
                         ),
-                        "pressurefit_diagnostics": (
+                        "search_diagnostics": (
                             None
-                            if item.pressurefit_diagnostics is None
-                            else item.pressurefit_diagnostics.to_dict()
+                            if item.search_diagnostics is None
+                            else item.search_diagnostics.to_dict()
                         ),
                     }
                     for item in plan.attempts

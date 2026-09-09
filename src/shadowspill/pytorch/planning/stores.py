@@ -66,31 +66,32 @@ class PlanningStores:
 
 
 def open_planning_stores(store: ArtifactStore) -> PlanningStores:
-    """Open the stores one artifact-store policy implies."""
+    """Open the stores one artifact-store policy implies.
+
+    Profiles, graph pairs and optimizer captures live in the build tree and
+    follow ``build_store_mode``; plans live in the planning tree and follow
+    ``plan_store_mode``. They were one switch until the two trees could be
+    rooted apart, and one switch meant a run that kept its plans to itself
+    also stopped contributing the builds it had paid for.
+    """
 
     return PlanningStores(
         store=store,
         profiles=ProfileStore(
             store.profile_measurements,
             compiled_manifest_root=store.compiled_manifests,
-            read_enabled=store.read_enabled,
-            write_enabled=store.write_enabled,
-            overwrite=store.overwrite_plan,
+            policy=store.build_policy,
             artifact_recorder=store.record,
         ),
         plans=open_plan_store(store),
         graph_pairs=GraphPairStore(
             store.graphpairs,
-            read_enabled=store.read_enabled,
-            write_enabled=store.write_enabled,
-            overwrite=store.overwrite_plan,
+            policy=store.build_policy,
             artifact_recorder=store.record,
         ),
         optimizer_captures=OptimizerCaptureStore(
             store.optimizer_captures,
-            read_enabled=store.read_enabled,
-            write_enabled=store.write_enabled,
-            overwrite=store.overwrite_plan,
+            policy=store.build_policy,
             artifact_recorder=store.record,
         ),
     )

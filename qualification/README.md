@@ -1,7 +1,7 @@
 # Qualification
 
 `qualification/` is ShadowSpill's thin release-acceptance surface. It owns the
-protocol descriptions and four launchers, but no alternate implementation of
+protocol descriptions and five launchers, but no alternate implementation of
 planning, execution, diagnostics, serialization, or model state.
 
 ```text
@@ -136,21 +136,31 @@ python -m qualification.numerical.matrix \
   --keep-going
 ```
 
-Compact correctness evidence is the default. A `--cold` run uses temporary
-compiler and planning caches and removes them afterward. Use
+Compact correctness evidence is the default. An `--empty-caches` run starts
+every reference and planned subprocess with an empty artifact store and empty
+Inductor and Triton caches, in a temporary directory removed afterwards, so a
+case cannot be served anything an earlier run or another case left behind. Use
 `--detailed-artifacts` only for an investigation that needs full PlanReports,
-PressureFit fixtures, and per-task runtime traces. Use
-`--regenerate-reference` only when intentionally replacing the canonical
-compiled references and input sidecars.
+plan records, and per-task runtime traces. Use `--regenerate-reference` only when intentionally
+replacing the canonical compiled references and input sidecars.
 
 Run the full-model matrix:
 
 ```bash
 python -m qualification.performance.matrix \
   --output-directory qualification/results/full_model \
-  --force-fresh \
   --keep-going
 ```
+
+Both matrices give each cell its own artifact store under the output
+directory, and both take `--build-store-mode` and `--plan-store-mode` to say
+what a cell does with each tree of it: `contribute` reads what is there and
+writes back what is not, `reuse` reads and persists nothing, and `require`
+refuses a miss. `contribute` is the default, which is what a gate run wants:
+it reuses whatever matches by digest and keeps what it had to build. The
+numerical matrix asks for `reuse` on its planning tree unless
+`--detailed-artifacts` is given, because there is nothing to keep from a cell
+that only has to agree.
 
 Both matrix launchers follow the planning-evaluation logging protocol: every
 cell opens with a labeled START block (model, data geometry, budgets), the

@@ -19,7 +19,7 @@ from .forward import (
     admit_forward_plan,
     build_forward_program,
     capture_forward_graph,
-    pressurefit_forward_program,
+    plan_forward_program,
     profile_forward_tasks,
 )
 from .stores import PlanningStores, open_planning_stores
@@ -29,7 +29,7 @@ from .training import (
     capture_training_graphs,
     compile_selected_training_tasks,
     materialize_training_state,
-    pressurefit_training_programs,
+    plan_training_programs,
     profile_training_tasks,
     rollback_training_materialization,
 )
@@ -57,8 +57,8 @@ __all__ = [
     "compile_selected_training_tasks",
     "materialize_training_state",
     "open_planning_stores",
-    "pressurefit_forward_program",
-    "pressurefit_training_programs",
+    "plan_forward_program",
+    "plan_training_programs",
     "profile_forward_tasks",
     "profile_training_tasks",
     "rollback_training_materialization",

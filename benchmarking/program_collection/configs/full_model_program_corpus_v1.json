@@ -44,13 +44,11 @@
     "dynamic_scratch_reserve": null,
     "execution_device": null
   },
-  "planning": {
+  "build": {
     "optimizer_ordering": "stage_interleaved",
     "allocation_probe_seeds": 1,
     "allocation_probe_repetitions": 2,
-    "save_plan": true,
-    "force_fresh": false,
-    "overwrite_plan": false,
+    "build_store_mode": "contribute",
     "implementation_revision": null
   }
 }

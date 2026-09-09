@@ -1,4 +1,4 @@
-"""Sequential subprocess controller for long-running Program collection."""
+"""Sequential subprocess controller for long-running ShadowSpillProgram collection."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from .state import (
 
 @dataclass(frozen=True, slots=True)
 class ControllerOptions:
-    """Invocation-level controls that do not affect Program identity."""
+    """Invocation-level controls that do not affect ShadowSpillProgram identity."""
 
     #: The revision every case this run produces records.
     revision: str
@@ -34,7 +34,7 @@ class ControllerOptions:
     timeout_seconds: int
     max_attempts: int
     quiet_plan: bool
-    force_fresh: bool
+    build_store_mode: str | None
 
 
 def run_collection(
@@ -45,7 +45,7 @@ def run_collection(
     output_root: Path,
     options: ControllerOptions,
 ) -> dict[str, object]:
-    """Collect every selected Program, recording failures and continuing."""
+    """Collect every selected ShadowSpillProgram, recording failures and continuing."""
 
     paths = CollectionPaths.initialize(output_root, config)
     options.artifact_store.mkdir(parents=True, exist_ok=True)
@@ -217,8 +217,8 @@ def _worker_command(
     ]
     if options.quiet_plan:
         command.append("--quiet-plan")
-    if options.force_fresh:
-        command.append("--force-fresh")
+    if options.build_store_mode is not None:
+        command.extend(("--build-store-mode", options.build_store_mode))
     return command
 
 

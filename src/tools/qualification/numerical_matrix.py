@@ -99,7 +99,7 @@ def _run_case(
     case_options: list[str],
     optimizer_ordering: str,
     data_ordering: str | None,
-    cold: bool,
+    empty_caches: bool,
     cache_directory: Path | None,
     detailed_artifacts: bool,
     console: MatrixConsole,
@@ -167,9 +167,9 @@ def _run_case(
             else cache_directory.expanduser().resolve() / prefix
         )
         cache_root: Path | None = None
-        if cold:
+        if empty_caches:
             cache_parent = (
-                output_directory / ".cold_work"
+                output_directory / ".empty_caches"
                 if cache_directory is None
                 else cache_directory.expanduser().resolve()
             )
@@ -184,13 +184,13 @@ def _run_case(
             )
             command_environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
         if not is_reference:
-            command.extend(("--artifact-store-dir", str(plan_cache)))
-            if not detailed_artifacts:
-                command.append("--no-save-plan")
+            command.extend(("--artifact-store", str(plan_cache)))
             if detailed_artifacts:
                 command.append("--detailed-artifacts")
-            if cold:
-                command.append("--force-fresh")
+            else:
+                # Nothing to keep from a cell that only has to agree, so it
+                # reads what is there and leaves the store as it found it.
+                command.extend(("--plan-store-mode", "reuse"))
         phase = (
             "compiled reference generation"
             if is_reference
@@ -313,11 +313,13 @@ def main() -> int:
     )
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument(
-        "--cold",
+        "--empty-caches",
         action="store_true",
         help=(
-            "give every reference and planned subprocess fresh ShadowSpill, "
-            "Inductor, and Triton cache roots"
+            "start every subprocess with an empty artifact store and empty "
+            "Inductor and Triton caches, in a temporary directory removed "
+            "afterwards, so nothing is reused from an earlier run or another "
+            "case"
         ),
     )
     parser.add_argument("--seed", type=int, default=20_260_811)
@@ -375,7 +377,7 @@ def main() -> int:
         action="store_true",
         help=(
             "retain full PlanReports and per-task traces; compact correctness "
-            "evidence and ephemeral cold caches are the default"
+            "evidence is the default"
         ),
     )
     arguments = parser.parse_args()
@@ -434,7 +436,7 @@ def main() -> int:
                     f"{implementation}_{family}"
                     for family, implementation in selected_cases
                 ),
-                f"COLD CACHES: {arguments.cold}",
+                f"EMPTY CACHES: {arguments.empty_caches}",
                 f"SEED: {arguments.seed}",
             ],
         )
@@ -482,7 +484,7 @@ def main() -> int:
                 case_options=arguments.case_option,
                 optimizer_ordering=arguments.optimizer_ordering,
                 data_ordering=arguments.data_ordering,
-                cold=arguments.cold,
+                empty_caches=arguments.empty_caches,
                 cache_directory=arguments.cache_dir,
                 detailed_artifacts=arguments.detailed_artifacts,
                 console=console,
@@ -512,7 +514,7 @@ def main() -> int:
             "schema": artifact_schema("model_correctness_matrix"),
             "passed": len(results) == len(selected_cases)
             and all(item.passed for item in results),
-            "cold": arguments.cold,
+            "empty_caches": arguments.empty_caches,
             "cases": [
                 {
                     "family": item.family,

@@ -1,10 +1,21 @@
 # Planning evaluation
 
-This package consumes immutable `StepProgram` inputs and evaluates PressureFit,
-simulation, and physical admission. It never constructs a model, captures a
-graph, compiles a task, or profiles a kernel.
+This harness **plans**. It reads a frozen corpus of `StepProgram` inputs
+built by [program collection](../program_collection/README.md) and runs
+graph-pair selection, PressureFit, simulation, and physical admission over a
+grid of budgets and transfer bandwidths. It constructs no model, captures no
+graph, compiles no task, and profiles no kernel, so it takes no build
+arguments beyond `--corpus-dir`, the path the corpus lives at.
 
-Run a complete frontier over a corpus:
+It needs no GPU. The task costs it plans against were measured when the
+corpus was collected and are carried in each `StepProgram`, so a run measures
+the planner on the machine it runs on against costs recorded on the machine
+that collected the corpus, and those need not be the same machine. The
+frontier config names no worker count, so the planner's default applies and
+the search uses every logical CPU; wall time is dominated by selection, so a
+host with more cores finishes sooner.
+
+## Running it
 
 ```bash
 PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
@@ -15,85 +26,75 @@ PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
 ```
 
 A corpus is named for the revision that collected it, and it holds whole
-Programs, so it stops loading when the Program schema moves on: point a run
+Programs, so it stops loading when the program schema moves on: point a run
 at a corpus collected at or after the current schema, read from
 `input_programs/` rather than from a name copied from here. Give the output
 directory the revision being measured, so two baselines can be told apart
 later.
 
-The v1 matrix evaluates 15 budget/bandwidth points per Program, over three
-global bidirectional-concurrent transfer pairs: 1/2x, 1x, and 2x the
-calibrated fetch/evict bandwidths. PressureFit is cold by default; the
-saved artifact store is used only where the configuration explicitly permits
-it.
+`--config`, `--corpus-dir`, `--output-dir`, and `--artifact-store` are
+required. The rest select subsets or describe the run:
 
-This package needs no GPU. It constructs no model and profiles no kernel: the
-task costs it plans against were measured when the corpus was collected and
-are carried in each `StepProgram`. So a run measures the planner on the
-machine it runs on, against costs recorded on the machine that collected the
-corpus, and those need not be the same machine. Planner worker count is
-resolved from the logical CPU count when `workers` is left at its default of
-auto, so parallelism follows the host without configuration. Wall time is
-dominated by selection, so a host with more cores finishes sooner.
+| Argument | Meaning |
+|---|---|
+| `--resume` | Continue an existing baseline: validate every terminal point and start at the first pending one. Without it, a baseline directory that already holds case state is refused. |
+| `--dry-run` | Print the expanded matrix, including the resume relationship, and exit. |
+| `--case GLOB` | Evaluate only matching case IDs; repeatable. |
+| `--start-at CASE_ID` | Start at one exact case ID after filtering. |
+| `--limit N` | Keep the first N selected Programs. |
+| `--verbose-search` | Forward each planning call's own phase reporting. |
+| `--revision SHA` | The revision recorded on every point this run produces; on `--resume`, the baseline recorded under it. It labels the run and checks nothing out. |
 
-Each point log contains:
+`--artifact-store` is where a point's planning artifacts land: the selection
+request, the result, the plan manifest, and an archived copy of the program
+that was planned. What the run may do with what is already there is the
+config's `plan_store_mode`.
 
-- `[program/N]` and `[point/M]` progress;
-- model/provider identity;
-- one grouped `DATA GEOMETRY` block (sequence length, tokens and sequences per
-  microbatch, gradient accumulation rounds, and tokens per optimizer step);
-- execution and spill budgets;
-- fetch and evict bandwidths;
-- UTC `START`, `STOP`, and `DURATION: <seconds>` records.
+## The configuration
 
-Blank lines separate points and Programs. Output is line-buffered to stdout and
-duplicated in `collection.log`, so the same command is easy to follow in tmux.
+One JSON file, validated strictly — an unknown or missing key is an error.
 
-Every point is journaled before PressureFit begins and atomically publishes one
-of `succeeded`, `infeasible`, `search_exhausted`, or `error`. A worker exit or
-active-point timeout is attributed to that point; there is no point
-retry. The controller advances to the next point/Program and preserves the
-failure evidence. Use `--resume` only when intentionally continuing an existing
-baseline.
+| Field | Meaning |
+|---|---|
+| `name` | Names the baseline, with the config digest and revision. |
+| `expected_programs` | The corpus size this config is written for; a corpus of another size is refused. |
+| `expected_points_per_program` | Must equal the expanded grid size, so a grid edit that changes the point count fails at load rather than mid-sweep. |
+| `program_role` | Which program in each `StepProgram` is planned: `recurrent`, `initial`, or `forward`. |
+| `point_timeout_seconds` | Required, with no default; the shipped configs set 300. |
+| `max_point_attempts`, `max_worker_restarts_per_program` | How often a point may be retried, and how often its worker may be restarted. |
+| `plan_store_mode` | `contribute`, `reuse`, `require`, or `refresh`. |
+| `transfer_bandwidths` | One global fetch/evict pair, with its provenance, frozen across the corpus so points from different Programs are comparable. |
+| `grids` | Cartesian products of execution budgets, spill budgets, and exact rational bandwidth scales. |
 
-`point_timeout_seconds` is a required configuration field with no default;
-the shipped configs set it to 300. `--case GLOB`, `--start-at CASE_ID`,
-`--limit N`, `--verbose-pressurefit`, and `--dry-run` select or preview
-subsets without changing what a completed baseline means.
+Four optional fields reach the planner and are part of the config digest, so
+two runs that differ only in one of them are told apart:
+`capacity_refinement_bytes`, `max_repair_attempts`, `split_write_backs`, and
+`deterministic`. Absent means the planner's own default.
 
-Resume uses the same launch command plus `--resume`. It locates the incomplete
-baseline from the config and corpus identities, validates every terminal point,
-and starts at the first pending point.
+The v1 grids expand to 15 points per program: four execution budgets at one
+spill budget across three bandwidth scales — half, one, and twice the frozen
+calibration — plus three spill budgets at one execution budget and the
+unscaled rates. The shipped configs set `plan_store_mode` to `refresh`, so
+every point is searched afresh and its plan written over whatever the store
+held: a baseline measures the planner, not the store.
 
-The repository revision does not gate it. A run that was stopped days and many
-commits ago resumes and finishes, because finishing it is the point; requiring
-a matching revision only means replaying hours of planning to learn the same
-thing. What does gate resume is what is being measured: the frontier config and
-the corpus manifest must match, and a baseline whose either differs is not the
-same baseline.
+## What a run prints
 
-Instead of refusing, the baseline records what changed. Every point carries the
-revision that produced it, so a mixed-revision run says so per point rather
-than looking uniform. The resume record classifies the relationship as
-`exact_source`, `harness_only`, `planner_changed`, `unrelated_revision`, or
-`dirty_worktree`, and lists the files that differ. Resume commands and those
-relationships are appended to `resume-commands.log` and `resume-history.jsonl`.
+Each point logs `[program/N]` and `[point/M]` progress, the model and
+provider, one grouped `DATA GEOMETRY` block (sequence length, tokens and
+sequences per microbatch, gradient accumulation rounds, and tokens per
+optimizer step), the execution and spill budgets, the fetch and evict
+bandwidths, and UTC `START`, `STOP`, and `DURATION: <seconds>` records.
+Blank lines separate points and Programs. Output is line-buffered to stdout
+and duplicated in `collection.log`, so the same command is easy to follow in
+tmux.
 
-Read that before comparing a resumed baseline's wall times against another:
-points from different revisions were produced by different code.
+Every point is journaled before PressureFit begins and atomically publishes
+one of `succeeded`, `infeasible`, `search_exhausted`, or `error`. A worker
+exit or an active-point timeout is attributed to that point; the controller
+then advances and preserves the failure evidence.
 
-`--revision <sha>` names the revision a run records, and on `--resume` selects
-the baseline recorded under it - which is how you pick one when several
-baselines share a config and corpus. It labels the run; it does not check
-anything out, so the code that runs is whatever is in the worktree. The corpus
-collector takes the same option, and records the revision on every case.
-
-If the controller was interrupted while a point was running, that attempt stays
-in the journal with status `interrupted` but does not consume the point's attempt
-budget. Timeouts, worker failures, and completed planner errors remain charged
-and are never silently retried.
-
-## Result layout
+## What it writes
 
 ```text
 <output>/<baseline-identity>/
@@ -115,12 +116,43 @@ and are never silently retried.
     └── logs/worker-NNNN.log
 ```
 
-Complete annotated plans include the source Program, selections, schedule,
+Complete annotated plans include the source program, selections, schedule,
 simulator timeline, PressureFit diagnostics, admission refinements, and the
-PressureFit/admission/orchestration wall-time split. Compact CSV/JSONL rows link
-back to those canonical artifacts.
+PressureFit/admission/orchestration wall-time split. Compact CSV/JSONL rows
+link back to those canonical artifacts.
 
-`plan_digest` excludes wall-clock/cache-hit observations and identifies a
+`plan_digest` excludes wall-clock and store-hit observations and identifies a
 semantic planner decision. `artifact_sha256` covers the full measured JSON,
-including timing and diagnostics. A new planner revision creates a new baseline
-identity and can be compared row-for-row with prior results.
+including timing and diagnostics. A new planner revision creates a new
+baseline identity and can be compared row-for-row with prior results.
+
+## Resuming
+
+Resume uses the same launch command plus `--resume`. It locates the
+incomplete baseline from the config and corpus identities and starts at the
+first pending point.
+
+The repository revision does not gate it. A run that was stopped days and
+many commits ago resumes and finishes, because finishing it is the point;
+requiring a matching revision only means replaying hours of planning to learn
+the same thing. What does gate resume is what is being measured: the frontier
+config and the corpus manifest must match, and a baseline whose either
+differs is not the same baseline.
+
+Instead of refusing, the baseline records what changed. Every point carries
+the revision that produced it, so a mixed-revision run says so per point
+rather than looking uniform. The resume record classifies the relationship as
+`exact_source`, `harness_only`, `planner_changed`, `unrelated_revision`, or
+`dirty_worktree`, and lists the files that differ. Resume commands and those
+relationships are appended to `resume-commands.log` and
+`resume-history.jsonl`. Read that before comparing a resumed baseline's wall
+times against another: points from different revisions were produced by
+different code.
+
+`--revision <sha>` is also how one baseline is picked when several share a
+config and corpus.
+
+If the controller was interrupted while a point was running, that attempt
+stays in the journal with status `interrupted` but does not consume the
+point's attempt budget. Timeouts, worker failures, and completed planner
+errors remain charged and are never silently retried.

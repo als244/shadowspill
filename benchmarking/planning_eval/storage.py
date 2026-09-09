@@ -486,18 +486,18 @@ def _canonical(value: object) -> str:
 _README = """# PressureFit frontier baseline
 
 This directory is an immutable planner-implementation identity plus resumable
-per-Program journals. `config.json` defines the exact budget/bandwidth matrix;
-`manifest.json` freezes the Program corpus and source revision; `planner.patch`
+per-program journals. `config.json` defines the exact budget/bandwidth matrix;
+`manifest.json` freezes the program corpus and source revision; `planner.patch`
 freezes tracked uncommitted changes. `frontier.csv` and `summary.json` are the
 compact comparison index.
 
 Each `cases/<case>/points/<point>/point.json` is the compact outcome for one
-Program/budget/bandwidth input. Successful points link to a complete canonical
+program/budget/bandwidth input. Successful points link to a complete canonical
 `AnnotatedProgramPlan` under the corresponding baseline case's
 `annotated-plans/` tree. The frozen source corpus is never modified by a
 frontier run. Each plan artifact contains the selected schedule, simulator
 intervals and memory timeline, physical admission certificate, diagnostics,
-and source Program.
+and source ShadowSpillProgram.
 """
 
 

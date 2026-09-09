@@ -20,22 +20,31 @@ python -m qualification.numerical.run run llama3 qualification/results/numerical
   --model-implementation mlops
 ```
 
-Both modes use `mlops.optim.AdamW`; the model implementation changes only the
-forward/backward operation provider. The default reference root is
+Both modes build `mlops.optim.AdamW` at its defaults, naming the learning
+rate in `hyperparams` at planning and supplying it on every step; the model
+implementation changes only the forward/backward operation provider. The
+default reference root is
 `qualification/results/references/approximately_1b/`, with one
 identity-checked final state plus an exact-input `inputs.pt` sidecar under each
 model/provider directory.
 Pass `--reference-dir` to read that canonical set from elsewhere, or
 `--regenerate-reference` to record it instead of reusing it. A reference is
 specific to what produced it -- the machine, and the kernels that machine
-selects -- so a set recorded elsewhere belongs in a directory named for what
-recorded it, and the gate is pointed at the one that matches. Through the
-gates wrapper these go in the `numerical` section of its config rather than on
-its own command line; see [../README.md](../README.md).
+selects. Through the gates wrapper these go in the `numerical` section of its
+config rather than on its own command line, and
+[`../README.md`](../README.md) covers how a per-machine reference set is
+named and pointed at.
 
 Optimizer updates are grouped by captured training stage and placed immediately
 after that stage's final-microbatch backward task by default. Pass
 `--optimizer-ordering tail` only for an explicit ordering comparison.
+
+The store flags are the ones every surface uses: `--artifact-store` roots
+both trees, `--build-store` and `--plan-store` override either, and
+`--build-store-mode`/`--plan-store-mode` say what the run does with each --
+`contribute` (the default) reads what is there and writes back what is not,
+`reuse` reads and persists nothing, `require` refuses a miss. Run mode
+defaults the store below the result directory.
 
 The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint whose replay agrees with the

@@ -15,6 +15,7 @@ import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.planner.artifact_store import digest_directory
+from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 from shadowspill.schema import artifact_schema
@@ -40,16 +41,12 @@ class GraphPairStore:
         self,
         root: str | Path | None = None,
         *,
-        read_enabled: bool = True,
-        write_enabled: bool = True,
-        overwrite: bool = False,
+        policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
         self._pairs: dict[tuple[str, tuple[int, ...], bool], TaskGraphPairs] = {}
         self._root = None if root is None else Path(root).expanduser()
-        self._read_enabled = read_enabled
-        self._write_enabled = write_enabled
-        self._overwrite = overwrite
+        self._policy = policy
         self._artifact_recorder = artifact_recorder
         self._keys_seen: set[tuple[str, tuple[int, ...], bool]] = set()
         self.hits = 0
@@ -84,6 +81,7 @@ class GraphPairStore:
                 return rebind_task_graph_pairs(
                     self._with_accumulating(key, existing, accumulating), example
                 )
+            self._policy.refuse_miss("graph pair", str(key[0]))
             existing = build_default_graph_pairs(
                 example,
                 roots,
@@ -141,7 +139,7 @@ class GraphPairStore:
 
     def _read(self, key: tuple[str, tuple[int, ...], bool]) -> TaskGraphPairs | None:
         path = self._path(key)
-        if path is None or not self._read_enabled:
+        if path is None or not self._policy.read_enabled:
             return None
         try:
             payload = torch.load(path, map_location="cpu", weights_only=False)
@@ -191,7 +189,7 @@ class GraphPairStore:
         pairs: TaskGraphPairs,
     ) -> None:
         path = self._path(key)
-        if path is None or not self._write_enabled:
+        if path is None or not self._policy.write_enabled:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         cached = tuple(
@@ -202,7 +200,7 @@ class GraphPairStore:
             )
             for item in pairs.variants
         )
-        if path.exists() and not self._overwrite:
+        if path.exists() and not self._policy.overwrite:
             self._record(key, path, "matched", pairs)
             return
         descriptor, temporary = tempfile.mkstemp(

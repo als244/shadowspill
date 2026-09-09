@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from itertools import pairwise
 
-from shadowspill.ir.indexed import MEMORY_ACTION_CODE
+from shadowspill.ir.indexing import MEMORY_ACTION_CODE
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming,
