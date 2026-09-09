@@ -1143,7 +1143,9 @@ SHADOWSPILL_API void shadowspill_allocation_scope_abort(
 /*
  * Starts one bounded allocation-lifetime capture. Storage is allocated before
  * capture begins, so allocator callbacks only append fixed-size records. A
- * full buffer latches ALLOCATION_FAILURE rather than silently losing evidence.
+ * full buffer stops recording and counts what it could not keep, so the gap
+ * is visible in the read-back rather than silently lost; the step itself is
+ * never affected.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_telemetry_start(
@@ -1236,11 +1238,11 @@ SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_recover_no_progress(ShadowSpillRuntime *runtime);
 
 /*
- * Planning-only growth of the one pinned-host arena. The runtime must be idle;
- * existing object offsets and payloads are preserved. The backend host pointer
- * is CPU-addressable by contract. Shrinkage is rejected. This operation owns
- * both arenas briefly, so callers must include that transient in host-budget
- * admission. It is forbidden after frontend physical admission is sealed.
+ * Planning-only growth of the pool `pool_id` names. The runtime must be idle
+ * and hold no in-flight actions or pending retirements; existing object
+ * offsets and payloads are preserved, and shrinkage is rejected. The old and
+ * new arenas are both held while the payload is copied across, so a caller
+ * must include that transient in its own budget.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_memory_pool_grow(
