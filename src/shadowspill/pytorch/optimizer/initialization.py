@@ -25,6 +25,11 @@ def initialize_lazy_optimizer_state(
     a one-use compiler backend stops at graph entry.  Optimizers that return
     persistent state from the numerical graph are intentionally left for the
     distinct initial/recurrent-plan path.
+
+    The optimizer allocates this state itself, with its own values.  Where it
+    is allocated is the caller's to decide: a planning call runs this inside a
+    mode that serves large host allocations from the pool the state will live
+    in, so the values are written there rather than copied there afterwards.
     """
 
     if not expected_state_names:

@@ -77,6 +77,7 @@ from shadowspill.pytorch.state.optimizer import (
     adopt_optimizer_state_for_plan,
     release_optimizer_state_from_plan,
 )
+from shadowspill.pytorch.state.storage import PoolTensorFactory, persistent_state
 from shadowspill.simulator import SimulationConfig
 
 from ..callables import PlannedTrainStep
@@ -364,28 +365,44 @@ def materialize_training_state(
                 runtime=runtime,
                 device_ordinal=captured.device_ordinal,
             )
+        # State this plan creates is state the plan will keep, so it is taken
+        # from the pool it will live in: an optimizer's lazy state is several
+        # times the model, and materialising it on the host first would mean
+        # holding all of it there before copying it in.
+        planning_memory = PoolTensorFactory(runtime, memory.spill)
         with timer.measure("optimizer_capture"):
             optimizer = opt(model.parameters())
             if not isinstance(optimizer, torch.optim.Optimizer):
                 raise PlanningError("optimizer factory must return Optimizer")
             state.restore_model_cpu_for_optimizer_capture()
-            optimizer_capture = capture_optimizer(
-                dict(model.named_parameters()),
-                optimizer,
-                parameter_stage_owners=training_parameter_stage_owners(
-                    captured.partitioned,
+            with planning_memory:
+                optimizer_capture = capture_optimizer(
                     dict(model.named_parameters()),
-                ),
-                store=stores.optimizer_captures,
-            )
-            if optimizer_capture.initialized_state_dict is not None:
-                optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
+                    optimizer,
+                    parameter_stage_owners=training_parameter_stage_owners(
+                        captured.partitioned,
+                        dict(model.named_parameters()),
+                    ),
+                    store=stores.optimizer_captures,
+                )
+                if optimizer_capture.initialized_state_dict is not None:
+                    optimizer.load_state_dict(
+                        optimizer_capture.initialized_state_dict
+                    )
         with timer.measure("optimizer_state_import"):
             adopt_optimizer_state_for_plan(
                 optimizer,
                 runtime=runtime,
                 pool=memory.spill.name,
                 owning_plan=memory.plan_handle,
+                pool_backed=planning_memory.allocations,
+            )
+            # Whatever planning took and the optimizer did not keep goes back.
+            adopted = persistent_state(runtime, optimizer)
+            planning_memory.release_all_but(
+                frozenset()
+                if adopted is None
+                else frozenset(item.storage_identity for item in adopted.storages)
             )
         with timer.measure("model_placeholder_restoration"):
             state.restore_device_placeholders_after_optimizer_capture()

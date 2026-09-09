@@ -186,6 +186,23 @@ runtime's back, and they stop being current the next time the plan runs. A
 storage root whose pool copy is not the authoritative one is copied either
 way.
 
+There are three ways model state comes to live in a pool, and a build never
+needs the host to hold it twice. `import_model_state()` takes a model the
+caller built and releases the host copy as it goes.
+`import_model_state_from_file()` fills the pool from a checkpoint by mapping
+the file, so the values land in pool memory and the only host memory involved
+is reclaimable page cache. A planning call that returns a callable imports
+state the caller did not, and that state belongs to the callable and is
+released with it. What the host still holds in the first case is the model the
+caller constructed there, which is the caller's own object and outside this
+boundary.
+
+Everything else a plan owns is created in the pools rather than on the host:
+gradients, activations and workspaces are runtime objects the plan's actions
+move between pools, and the tensors the lowering builds them from are fake, so
+they cost nothing while a program is being built. The optimizer's lazy state
+was the exception, and is one no longer.
+
 `import_optimizer_state()` and `export_optimizer_state()` apply the same
 storage policy to already materialized optimizer state, as a standalone
 ownership operation. They are not a planning input: `plan_step()` constructs
@@ -580,9 +597,16 @@ same `Parameter` objects at device memory; closing points them back.
 ordinary CPU tensors.
 
 Optimizer state has no equivalent home today. `plan_step()` builds the
-optimizer from the factory it is given and imports its state into storage the
+optimizer from the factory it is given and creates its state in storage the
 plan owns, and planning refuses an optimizer whose state the caller already
-imported, so there is no caller-owned pool for it to be left in. Releasing the
+imported, so there is no caller-owned pool for it to be left in. That state is
+taken from the spill pool as it is created rather than built on the host and
+copied in: while the optimizer initializes, a host allocation large enough to
+be worth an object is served from the pool, so the values are written where
+they will live. On a model with a state several times its own size that is the
+difference between a build that needs the pool and one that needs the pool
+again beside it. State the caller imported is untouched by this, because
+nothing is created for it. Releasing the
 plan therefore releases the state with it: a training callable's
 `state_dict()` and `load_state_dict()` answer only while it is open, and both
 raise afterwards rather than reporting an empty optimizer. Take the checkpoint
