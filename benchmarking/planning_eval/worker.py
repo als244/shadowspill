@@ -63,6 +63,8 @@ def _planner_options(config: FrontierConfig) -> PressureFitOptions | None:
         for name, value in (
             ("capacity_refinement_bytes", config.capacity_refinement_bytes),
             ("max_repair_attempts", config.max_repair_attempts),
+            ("split_write_backs", config.split_write_backs),
+            ("deterministic", config.deterministic),
         )
         if value is not None
     }
