@@ -93,17 +93,9 @@ class NumericalCase:
         ):
             yield
 
-    @staticmethod
-    def optimizer(parameters: Any) -> torch.optim.Optimizer:
-        values = list(parameters)
-        groups = (
-            {
-                "params": [item for item in values if item.ndim >= 2],
-                "weight_decay": 0.1,
-            },
-            {"params": [item for item in values if item.ndim < 2], "weight_decay": 0.0},
-        )
-        return cast(torch.optim.Optimizer, mlops.optim.AdamW(groups, lr=3e-4))
+    #: AdamW at its defaults. The rate is named in ``hyperparams`` when the
+    #: step is planned and given a value on every step, so it is not set here.
+    optimizer = mlops.optim.AdamW
 
 
 def build_case(
