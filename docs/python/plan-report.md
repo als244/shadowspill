@@ -67,7 +67,7 @@ The top-level fields are grouped below.
 | Area | Important fields | Meaning |
 |---|---|---|
 | Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
-| Selected plan | `execution_plan`, `initial_execution_plan` | Recurrent/forward plan and optional first-step plan for lazy state. |
+| Selected plan | `execution_plan`, `initial_execution_plan` | Recurrent/forward plan, and a first-step plan when an optimizer creates state on its first step rather than having it installed beforehand. |
 | Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_spill_peak_bytes` | Simulator result after physical admission. |
 | Promise | `summary` | One derived `PlanSummary`: the simulated step against its cheapest-graphs floor, split into recomputation overhead, waiting inside the span, and the terminal writeback, with the graph-pair selection count and fraction, plus the scheduled fetch/evict traffic, the per-direction bandwidths the simulator planned against, per-phase planning seconds as an ordered mapping, and `selected_candidate` — the chosen candidate's residency strategy, fetch rule, coalescing, and `repairs_at_best`, the repairs it had spent when it placed the selected plan. The parts identify: floor + overhead + idle + writeback equals the simulated step. |
 | Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |

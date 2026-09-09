@@ -31,7 +31,7 @@ from shadowspill.pytorch import make_step_program
 step_program = make_step_program(
     model,
     objective=objective,
-    opt=optimizer_factory,
+    optimizer=build_optimizer,
     example_inputs=example_inputs,
     runtime=runtime,
     execution="device",

@@ -14,10 +14,20 @@ from shadowspill.planner import pressurefit_program
 from shadowspill.planner.program import StepProgram, TransferBandwidths
 from shadowspill.pytorch import make_step_program
 
+def zero_state(
+    name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter
+) -> None:
+    """Moment-based optimizers start at zero; ShadowSpill never assumes it."""
+
+    with torch.no_grad():
+        tensor.zero_()
+
+
 step_program = make_step_program(
     model,
     objective=objective,
-    opt=optimizer_factory,
+    optimizer=build_optimizer,
+    optimizer_state_init=zero_state,
     example_inputs=example_inputs,
     runtime=runtime,
     execution="execution",
