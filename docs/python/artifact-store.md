@@ -13,6 +13,7 @@ artifact_store_dir/
     │   ├── exports/      normalized Export archives and manifests
     │   ├── inductor/     PyTorch Inductor and Triton caches
     │   ├── graphpairs/   structural AOT graph pairs
+    │   ├── optimizers/   traced recurrent optimizer updates
     │   ├── profiling/
     │   │   ├── compiled_manifests/
     │   │   └── measurements/

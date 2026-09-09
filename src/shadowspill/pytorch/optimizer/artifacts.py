@@ -16,6 +16,26 @@ from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
 
+def optimizer_type_name(optimizer: torch.optim.Optimizer) -> str:
+    return f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
+
+
+def optimizer_step_identity(
+    optimizer: torch.optim.Optimizer,
+) -> dict[str, Any] | None:
+    """What the optimizer's step does, as its code: bytecode, constants, names."""
+
+    step = inspect.unwrap(type(optimizer).step)
+    code = getattr(step, "__code__", None)
+    if code is None:
+        return None
+    return {
+        "bytecode": code.co_code.hex(),
+        "constants": tuple(repr(value) for value in code.co_consts),
+        "names": code.co_names,
+    }
+
+
 class OptimizerTensorRole(StrEnum):
     PARAMETER = "parameter"
     GRADIENT = "gradient"
@@ -67,18 +87,8 @@ class OpaqueOptimizerArtifact:
         *,
         profile_output_names: tuple[str, ...] = (),
     ) -> OpaqueOptimizerArtifact:
-        optimizer_type = f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
-        step = inspect.unwrap(type(optimizer).step)
-        code = getattr(step, "__code__", None)
-        code_identity = (
-            None
-            if code is None
-            else {
-                "bytecode": code.co_code.hex(),
-                "constants": tuple(repr(value) for value in code.co_consts),
-                "names": code.co_names,
-            }
-        )
+        optimizer_type = optimizer_type_name(optimizer)
+        code_identity = optimizer_step_identity(optimizer)
         parameter_name_by_id = {
             id(binding.tensor): binding.name
             for binding in bindings

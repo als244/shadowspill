@@ -338,6 +338,7 @@ def materialize_training_state(
     *,
     opt: Callable[[Any], torch.optim.Optimizer],
     memory: PlanMemory,
+    stores: PlanningStores,
     timer: PlanningTimer,
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once."""
@@ -375,6 +376,7 @@ def materialize_training_state(
                     captured.partitioned,
                     dict(model.named_parameters()),
                 ),
+                store=stores.optimizer_captures,
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
@@ -416,14 +418,17 @@ def materialize_training_state(
 def profile_training_tasks(
     captured: TrainingCaptureArtifacts,
     materialized: TrainingMaterializationArtifacts,
-    data_ordering: StepDataOrdering,
     *,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
-    """Compile/profile each unique graph-pair and optimizer structural contract."""
+    """Compile/profile each unique graph-pair and optimizer structural contract.
+
+    Independent of the walk the step will take: every form a stage can run
+    is profiled, so one profiling serves every ordering of these inputs.
+    """
 
     profiler = TaskProfiler(
         captured.installed.library,
@@ -440,7 +445,6 @@ def profile_training_tasks(
         )
     resolved_capture = replace(captured, partitioned=partitioned)
     inventory = _training_task_inventory(
-        data_ordering,
         resolved_capture,
         materialized.optimizer_capture,
     )
@@ -1279,13 +1283,13 @@ def make_training_program(
         captured,
         opt=opt,
         memory=memory,
+        stores=artifacts,
         timer=timer,
     )
     try:
         profiled = profile_training_tasks(
             captured,
             materialized,
-            data_ordering=data_ordering,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             stores=artifacts,
@@ -1536,13 +1540,13 @@ def build_training(
         captured,
         opt=opt,
         memory=memory,
+        stores=artifacts,
         timer=timer,
     )
     try:
         profiled = profile_training_tasks(
             captured,
             materialized,
-            data_ordering=data_ordering,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             stores=artifacts,
@@ -1604,19 +1608,25 @@ def build_training(
 
 
 def _training_task_inventory(
-    data_ordering: StepDataOrdering,
     captured: TrainingCaptureArtifacts,
     optimizer_capture: OptimizerCapture,
 ) -> _TrainingTaskInventory:
+    """Every structurally unique task a step of this size can run.
+
+    Which microbatch creates a stage's gradient and which add into it is
+    the ordering's decision, made when a program is lowered; every form the
+    step can ask for is inventoried here, so profiling depends on the model,
+    the inputs and the optimizer alone and no ordering profiles what another
+    already did. The store keys compiled tasks and profiles by structural
+    contract, so a form seen before, by any ordering or any run, is a lookup.
+    """
+
     compile_by_digest: dict[str, OptimizerTaskArtifact] = {}
     profile_by_key: dict[tuple[str, str | None], OptimizerTaskArtifact] = {}
     for position, partitioned in enumerate(captured.partitioned):
         metadata_digest = captured.workloads[position].digest
-        for stage_index, stage in enumerate(partitioned.stages):
-            accumulates = not data_ordering.creates(
-                position, stage_index, stage_count=len(partitioned.stages)
-            )
-            for option in stage.graph_pairs.options(accumulates=accumulates):
+        for stage in partitioned.stages:
+            for option in stage.graph_pairs.variants:
                 for artifact in (option.pair.forward, option.pair.backward):
                     compile_by_digest.setdefault(
                         artifact.compatibility_digest,
