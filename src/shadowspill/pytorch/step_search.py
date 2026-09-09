@@ -572,12 +572,15 @@ def plan_step_search(
     for geometry_index, (sequences, accumulation) in enumerate(geometries, 1):
         shape = f"{sequences} x {accumulation}"
         exhausted: Exception | None = None
-        for ordering in per_geometry[geometry_index - 1]:
+        orderings_here = per_geometry[geometry_index - 1]
+        for ordering_index, ordering in enumerate(orderings_here, 1):
             name = f"{shape} {ordering.label}"
+            where = (
+                f"geometry {geometry_index}/{len(geometries)};"
+                f" ordering {ordering_index}/{len(orderings_here)}"
+            )
             if exhausted is None:
-                announce(
-                    f"geometry {geometry_index}/{len(geometries)}: building {name}"
-                )
+                announce(f"{where}: building {name}")
                 build_started = time.perf_counter()
                 try:
                     examples = example_microbatches(sequences, accumulation)
@@ -635,7 +638,7 @@ def plan_step_search(
                     )
                 continue
             announce(
-                f"geometry {geometry_index}/{len(geometries)}: built {name} in"
+                f"{where}: built {name} in"
                 f" {time.perf_counter() - build_started:.1f} s"
             )
             builds.append(

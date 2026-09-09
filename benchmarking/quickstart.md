@@ -237,7 +237,12 @@ directory.
    planning capacities, and the calibrated bandwidths planning assumed —
    then **steps** (each step's cycle on the device clock, its throughput,
    its head wait and its loss, each line appearing once the next step has
-   begun; the first step may use the dedicated first-step plan that
+   begun. The loss is the step's mean over its microbatches, and every
+   budget runs from the same initial weights and a fresh optimizer on the
+   same seeded tokens per step, so the losses of one budget agree with
+   every other budget's bar reduction order: a run that disagrees is a
+   correctness signal, not a measurement. The first step may use the
+   dedicated first-step plan that
    initializes lazy optimizer state, and the measured step is the median
    of the steps after it),
    then **the traced step versus simulation**, using the fields defined
