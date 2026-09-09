@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import ctypes
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import torch
+from torch.overrides import TorchFunctionMode
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectLocationSnapshot,
@@ -41,6 +42,7 @@ def import_tensors(
     pool: str,
     release_source: bool,
     owning_plan: int | None = None,
+    pool_backed: Mapping[int, PersistentStorage] | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> PersistentState:
     """Copy unique CPU storages into authoritative runtime-pool objects.
@@ -64,19 +66,23 @@ def import_tensors(
             tensors,
             runtime=runtime,
             pool=pool,
+            pool_backed=pool_backed,
             _allow_in_progress_plan=_allow_in_progress_plan,
         )
     )
     try:
-        if release_source and created:
+        # Only a storage that still stands apart from its object is copied
+        # into it; one adopted from the pool is already where it belongs.
+        separate = [item for item in created if item.frontend_storage_is_separate]
+        if release_source and separate:
             torch.ops.shadowspill._import_cpu_storages(
-                [item.anchor for item in created],
-                [item.pool_id for item in created],
-                [item.pool_pointer for item in created],
-                [item.current_object_id for item in created],
-                [item.size_bytes for item in created],
+                [item.anchor for item in separate],
+                [item.pool_id for item in separate],
+                [item.pool_pointer for item in separate],
+                [item.current_object_id for item in separate],
+                [item.size_bytes for item in separate],
             )
-            for item in created:
+            for item in separate:
                 item.frontend_storage_is_separate = False
         state = PersistentState(
             target=target,
@@ -168,9 +174,15 @@ def register_tensor_storages(
     *,
     runtime: Runtime,
     pool: str,
+    pool_backed: Mapping[int, PersistentStorage] | None = None,
     _allow_in_progress_plan: bool = False,
 ) -> tuple[PersistentStorage, ...]:
-    """Copy unique source storages into newly registered runtime objects."""
+    """Copy unique source storages into newly registered runtime objects.
+
+    ``pool_backed`` names storages that already are pool objects, by storage
+    identity: those are adopted as they stand, because planning took them
+    from this pool in the first place.
+    """
 
     selected_pool = _validate_pool(
         runtime,
@@ -178,13 +190,32 @@ def register_tensor_storages(
         allow_in_progress_plan=_allow_in_progress_plan,
     )
     roots = _storage_roots(tensors)
+    # A root whose bytes are already a pool object is adopted where it is:
+    # it was taken from the pool to begin with, so importing it would copy
+    # the pool into itself under a second name.
+    adopted = {
+        index: pool_backed[int(anchor.untyped_storage()._cdata)]
+        for index, (anchor, _views) in enumerate(roots)
+        if pool_backed is not None
+        and int(anchor.untyped_storage()._cdata) in pool_backed
+    }
     object_ids = runtime._reserve_persistent_object_ids(
-        len(roots),
+        len(roots) - len(adopted),
         allow_in_progress_plan=_allow_in_progress_plan,
     )
     created: list[PersistentStorage] = []
     try:
-        for object_id, (anchor, views) in zip(object_ids, roots, strict=True):
+        pending = iter(object_ids)
+        for index, (anchor, views) in enumerate(roots):
+            taken = adopted.get(index)
+            if taken is not None:
+                # Planning took these bytes from this pool, so the object
+                # exists: the import only records which tensors view it.
+                taken.anchor = anchor
+                taken.views = views
+                created.append(taken)
+                continue
+            object_id = next(pending)
             size_bytes = int(anchor.untyped_storage().nbytes())
             _require_status(
                 runtime._register_object(
@@ -529,6 +560,246 @@ def restore_persistent_object_ids(runtime: Runtime) -> None:
             item.current_object_id = item.persistent_object_id
 
 
+# --- planning memory --------------------------------------------------------
+#: Below this, planning takes host memory the ordinary way: a pool object
+#: costs more bookkeeping than the memory it saves, and planning makes many
+#: small temporaries.
+PLANNING_MEMORY_MINIMUM_BYTES = 1 << 20
+
+
+
+def take_pool_memory(
+    runtime: Runtime,
+    pool: MemoryPool,
+    *,
+    size_bytes: int,
+) -> PersistentStorage:
+    """Take ``size_bytes`` from ``pool`` as host memory the caller may write.
+
+    The object is registered without a source, so nothing is copied: the
+    caller writes the values it wants where they will stay. The result is an
+    ordinary persistent storage with no views yet, which is what an import
+    fills in when this memory becomes some object's state.
+    """
+
+    if size_bytes <= 0:
+        raise ValueError("planning memory needs a positive size")
+    object_id = runtime._reserve_persistent_object_ids(
+        1, allow_in_progress_plan=True
+    )[0]
+    _require_status(
+        runtime._register_object(
+            object_id,
+            size_bytes,
+            pool_id=pool.pool_id,
+            retain_spill_copy=True,
+            initially_resident=True,
+        ),
+        f"take {size_bytes} bytes of planning memory from pool {pool.name!r}",
+    )
+    pointer = pool_object_pointer(runtime, object_id, pool.pool_id)
+    dispatch = torch.empty(0, dtype=torch.uint8, device="cpu")
+    anchor = cast(
+        torch.Tensor,
+        torch.ops.shadowspill._make_runtime_cpu_storage(
+            dispatch, pool.pool_id, pointer, object_id, size_bytes
+        ),
+    )
+    if int(anchor.untyped_storage().data_ptr()) != pointer:
+        raise RuntimeError("planning memory from the pool has the wrong address")
+    return PersistentStorage(
+        persistent_object_id=object_id,
+        current_object_id=object_id,
+        pool_id=pool.pool_id,
+        size_bytes=size_bytes,
+        pool_pointer=pointer,
+        anchor=anchor,
+        views=(),
+        frontend_storage_is_separate=False,
+    )
+
+
+class PoolTensorFactory(TorchFunctionMode):
+    """Serve host tensor factories from the spill pool while this is active.
+
+    Only ordinary host tensors are served, and only above ``minimum_bytes``:
+    a fake or meta tensor costs nothing to begin with, and a small one is not
+    worth an object. Anything else falls through to PyTorch untouched, so a
+    call this does not understand behaves exactly as it always did.
+    """
+
+    #: Factories whose result this can produce directly, with how to fill it.
+    _FILLED_FROM_SHAPE = ("zeros", "ones", "empty", "full")
+    _FILLED_FROM_TENSOR = ("zeros_like", "ones_like", "empty_like", "full_like")
+
+    def __init__(
+        self,
+        runtime: Runtime,
+        pool: MemoryPool,
+        *,
+        minimum_bytes: int = PLANNING_MEMORY_MINIMUM_BYTES,
+    ) -> None:
+        super().__init__()
+        self._runtime = runtime
+        self._pool = pool
+        self._minimum_bytes = minimum_bytes
+        self._allocations: dict[int, PersistentStorage] = {}
+
+    @property
+    def allocations(self) -> dict[int, PersistentStorage]:
+        """Every allocation still held, by the identity of its storage."""
+
+        return dict(self._allocations)
+
+    def release_all_but(self, kept: frozenset[int]) -> None:
+        """Give back every allocation whose storage is not in ``kept``."""
+
+        for identity, allocation in tuple(self._allocations.items()):
+            if identity in kept:
+                continue
+            del self._allocations[identity]
+            allocation.anchor = torch.empty(0, dtype=torch.uint8, device="cpu")
+            unregister_tensor_storages((allocation,), runtime=self._runtime)
+
+    def __torch_function__(
+        self,
+        func: Any,
+        types: Any,
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        kwargs = kwargs or {}
+        served = self._serve(func, args, kwargs)
+        if served is not None:
+            return served
+        return func(*args, **kwargs)
+
+    def _serve(
+        self,
+        func: Any,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> torch.Tensor | None:
+        name = getattr(func, "__name__", "")
+        if name in self._FILLED_FROM_TENSOR:
+            return self._like(name, args, kwargs)
+        if name in self._FILLED_FROM_SHAPE:
+            return self._shaped(name, args, kwargs)
+        return None
+
+    def _like(
+        self,
+        name: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> torch.Tensor | None:
+        if not args or not isinstance(args[0], torch.Tensor):
+            return None
+        source = args[0]
+        dtype = kwargs.get("dtype") or source.dtype
+        device = torch.device(kwargs.get("device") or source.device)
+        result = self._tensor(tuple(source.shape), dtype, device, kwargs)
+        if result is None:
+            return None
+        if name == "zeros_like":
+            return result.zero_()
+        if name == "ones_like":
+            return result.fill_(1)
+        if name == "full_like":
+            value = kwargs.get("fill_value", args[1] if len(args) > 1 else 0)
+            return result.fill_(value)
+        return result
+
+    def _shaped(
+        self,
+        name: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> torch.Tensor | None:
+        shape = _requested_shape(name, args)
+        if shape is None:
+            return None
+        dtype = kwargs.get("dtype") or torch.get_default_dtype()
+        device = torch.device(kwargs.get("device") or "cpu")
+        result = self._tensor(shape, dtype, device, kwargs)
+        if result is None:
+            return None
+        if name == "zeros":
+            return result.zero_()
+        if name == "ones":
+            return result.fill_(1)
+        if name == "full":
+            value = kwargs.get("fill_value", args[1] if len(args) > 1 else 0)
+            return result.fill_(value)
+        return result
+
+    def _tensor(
+        self,
+        shape: tuple[int, ...],
+        dtype: torch.dtype,
+        device: torch.device,
+        kwargs: dict[str, Any],
+    ) -> torch.Tensor | None:
+        if device.type != "cpu" or kwargs.get("out") is not None:
+            return None
+        if kwargs.get("layout") not in (None, torch.strided):
+            return None
+        if kwargs.get("pin_memory"):
+            # Pool memory is pinned already, but saying so is the caller's
+            # contract with PyTorch, not ours to reinterpret.
+            return None
+        elements = 1
+        for size in shape:
+            if size < 0:
+                return None
+            elements *= size
+        size_bytes = elements * torch.empty(0, dtype=dtype).element_size()
+        if size_bytes < self._minimum_bytes:
+            return None
+        # PyTorch pops this mode while `__torch_function__` runs, so the
+        # calls below are ordinary allocations, not another visit here.
+        allocation = take_pool_memory(
+            self._runtime, self._pool, size_bytes=size_bytes
+        )
+        view = torch.empty(0, dtype=dtype, device="cpu")
+        view.set_(
+            allocation.anchor.untyped_storage(),
+            0,
+            torch.Size(shape),
+            _contiguous_stride(shape),
+        )
+        self._allocations[int(view.untyped_storage()._cdata)] = allocation
+        if kwargs.get("requires_grad"):
+            view.requires_grad_(True)
+        return view
+
+
+def _contiguous_stride(shape: tuple[int, ...]) -> tuple[int, ...]:
+    stride: list[int] = []
+    running = 1
+    for size in reversed(shape):
+        stride.append(running)
+        running *= size
+    return tuple(reversed(stride))
+
+
+def _requested_shape(name: str, args: tuple[Any, ...]) -> tuple[int, ...] | None:
+    """The shape a size-taking factory was asked for, or None if it is unclear."""
+
+    if not args:
+        return None
+    first = args[0]
+    if isinstance(first, torch.Size | list | tuple):
+        values = tuple(first)
+    else:
+        values = tuple(
+            item for item in (args[:-1] if name == "full" else args) if item is not None
+        )
+    if not values or any(not isinstance(item, int) for item in values):
+        return None
+    return tuple(int(item) for item in values)
+
+
 def _storage_roots(
     tensors: Iterable[NamedTensor],
 ) -> tuple[tuple[torch.Tensor, tuple[TensorView, ...]], ...]:
@@ -599,6 +870,26 @@ def _validate_pool(
             "the current PyTorch state import path requires a pinned-host pool"
         )
     return selected
+
+
+def pool_object_pointer(runtime: Runtime, object_id: int, pool_id: int) -> int:
+    """Where one registered object's bytes live in its pool."""
+
+    snapshot = _snapshot(runtime._runtime_handle, object_id, pool_id)
+    if not snapshot.has_lease or not snapshot.current:
+        raise RuntimeError(f"persistent object {object_id} has no authoritative lease")
+    return int(snapshot.pointer or 0)
+
+
+def unregister_pool_object(runtime: Runtime, object_id: int) -> None:
+    """Give one registered object back to its pool."""
+
+    _require_status(
+        runtime_library().shadowspill_unregister_object(
+            runtime._runtime_handle, object_id
+        ),
+        f"release persistent object {object_id}",
+    )
 
 
 def _snapshot(
