@@ -91,6 +91,12 @@ more often than not, so the default buys half the search for the rare small
 win. Coalescing stays in: joining adjacent transfers changes what the
 simulator sees, and the coalesced twin does win on its own.
 
+`split_write_backs` lets a plan that has simulated split an eviction that
+held something up, described under
+[split](#split-clean-early-release-late). It widens what the search may
+consider rather than deciding anything: the split plan is simulated and kept
+only if it is faster and still places.
+
 `capacity_refinement_bytes` decides how much capacity a plan gives back when
 its layout does not fit the pool, 256 MiB by default. Stepping costs rounds
 and buys plan quality; zero hands back the whole shortfall and converges in
@@ -529,6 +535,48 @@ It buys that with planning time, which is what the workers pay for.
 Reductions this section triggers are measured inside it, so `repair_ns`
 answers what the repair machinery actually costs rather than what its
 bookkeeping costs.
+
+### Split — clean early, release late
+
+An eviction does two things at one boundary: it copies the object to spill and
+it drops the device copy. The copy has to happen somewhere, but not
+necessarily there.
+
+An eviction only costs time when something is waiting for the room it frees,
+and the room is not free until the copy has landed. A simulated plan says
+exactly where that happened: every task and transfer interval carries the time
+it was ready, the time it started, and a mask naming what it waited for. An
+eviction whose copy overlaps a wait for device capacity is split in two: a
+`WRITE_BACK` at the boundary where the object was last written, and a
+`RELEASE` where the eviction was, which costs nothing because the spill copy
+is already current by then.
+
+The last write is where the copy goes because it is the earliest boundary at
+which the copy is correct, and so the furthest from the boundary that was
+waiting for it. Nothing here chooses a time on the lane. The simulator owns
+the lane, and when several copies move at once it is the simulator that prices
+the queue they form -- a pass that fitted copies into idle time it had
+measured before the split would be reading a lane that no longer exists.
+
+Residency is untouched, so the device copy lives exactly as long as it did and
+device capacity does not move. What does move is when the spill copy is
+written, which is why the split is a proposal rather than a decision: the plan
+is simulated again, and it is kept only if the makespan improved. A plan that
+did not improve is put back as it was, which the simulation memo prices
+without work. So is a plan a configured pool then refuses to place, because a
+faster schedule that does not fit is not an answer, and it must not cost the
+candidate the answer it had.
+
+Evictions nothing waited on are left alone. Moving such a copy spends lane
+time and holds spill capacity longer to buy nothing, and the plan carries an
+extra action for it. Two more are never split whatever waited: one whose
+object keeps no spill copy, because releasing such an object frees the spill
+copy as well, so the split would throw away exactly what the write-back wrote;
+and one whose object no task wrote before it, because then the spill copy was
+already current and the emitter would have released rather than evicted.
+
+`split_write_backs` selects this, off by default until the corpora say what it
+is worth.
 
 ### Digest — naming the schedule
 

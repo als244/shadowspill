@@ -99,6 +99,13 @@ class PressureFitOptions:
     #: candidate, a dispatch, and an event. Zero makes every object
     #: eligible, which is what a caller planning byte-sized objects wants.
     minimum_object_bytes_evict_eligible: int = 1 << 20
+    #: Let a plan that has simulated split an eviction whose copy fits in
+    #: idle evict-lane time: a write-back where the lane is free, and a
+    #: release where the eviction was, which costs nothing. The plan is
+    #: simulated again and the split kept only if it got faster, so this
+    #: widens what the search may consider rather than deciding anything.
+    #: Off until the corpora say what it is worth.
+    split_write_backs: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Every option, in declaration order, as JSON-compatible values.

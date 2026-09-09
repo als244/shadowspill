@@ -269,6 +269,7 @@ class CPressureFitProblemOptions(ctypes.Structure):
         ("best_placed", ctypes.c_void_p),
         ("workers", ctypes.c_uint32),
         ("deterministic", ctypes.c_uint8),
+        ("split_write_backs", ctypes.c_uint8),
         ("minimum_object_bytes_evict_eligible", ctypes.c_uint64),
     ]
 

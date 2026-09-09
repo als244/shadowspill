@@ -593,6 +593,7 @@ def _problem_options(
         record_reduction_steps=int(options.record_reduction_steps),
         best_placed=best_placed or None,
         deterministic=int(options.deterministic),
+        split_write_backs=int(options.split_write_backs),
         minimum_object_bytes_evict_eligible=options.minimum_object_bytes_evict_eligible,
     )
     return compiled, (strategies, rules, modes)
