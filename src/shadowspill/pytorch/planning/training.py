@@ -590,6 +590,7 @@ def build_training_programs(
         _verify_provisional_layout(captured.layout, recurrent)
         _verify_optimizer_phase_identity(initial, recurrent)
         _report_training_program_inventory(recurrent, timer)
+    with timer.measure("admission_facts"):
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
         execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(

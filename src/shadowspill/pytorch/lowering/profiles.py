@@ -26,6 +26,16 @@ class CompiledLayoutIndex:
 
     def __init__(self) -> None:
         self._layouts: dict[tuple[str, str], CompiledTaskLayout] = {}
+        # Answered by artifact, contract and measurement, the inputs kept
+        # referenced so their identities cannot be reused while an entry lives.
+        self._resolved: dict[
+            tuple[str, str, int, int],
+            tuple[
+                TaskMeasurement,
+                tuple[ExecutableRootAllocation, ...] | None,
+                CompiledTaskLayout,
+            ],
+        ] = {}
 
     def resolve(
         self,
@@ -34,6 +44,18 @@ class CompiledLayoutIndex:
         measurement: TaskMeasurement,
         root_allocations: tuple[ExecutableRootAllocation, ...] | None = None,
     ) -> CompiledTaskLayout:
+        # Every occurrence of a task asks for the same layout; the inputs
+        # decide it, so an occurrence already answered costs a lookup, not
+        # a reconciliation.
+        asked = (
+            artifact.compatibility_digest,
+            contract.compatibility_digest,
+            id(measurement),
+            id(root_allocations),
+        )
+        answered = self._resolved.get(asked)
+        if answered is not None:
+            return answered[2]
         candidate = reconcile_compiled_task_layout(
             contract,
             measurement,
@@ -43,9 +65,10 @@ class CompiledLayoutIndex:
         existing = self._layouts.get(key)
         if existing is None:
             self._layouts[key] = candidate
-            return candidate
-        if existing.contract_digest != contract.compatibility_digest:
+            existing = candidate
+        elif existing.contract_digest != contract.compatibility_digest:
             raise CaptureError("one physical profile resolved to several contracts")
+        self._resolved[asked] = (measurement, root_allocations, existing)
         return existing
 
 
