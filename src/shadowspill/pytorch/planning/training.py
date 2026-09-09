@@ -395,7 +395,6 @@ def materialize_training_state(
                 runtime=runtime,
                 pool=memory.spill.name,
                 owning_plan=memory.plan_handle,
-                pool_backed=planning_memory.allocations,
             )
             # Whatever planning took and the optimizer did not keep goes back.
             adopted = persistent_state(runtime, optimizer)

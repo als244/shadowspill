@@ -50,6 +50,7 @@ from shadowspill.planner.recomputation import (
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
+from shadowspill.pytorch.state.storage import PoolTensorFactory
 from shadowspill.pytorch.step_search import search_geometries
 from tools.qualification.model_state import import_case_model, release_case_model
 from workloads.full_model import build_case, manifest_for
@@ -827,7 +828,11 @@ def main() -> int:
 
     note_host_memory(None, "runtime pools registered")
     marker = time.perf_counter()
-    case = build_case(manifest, seed=arguments.seed)
+    # Built inside the pool it will live in, so the parameters are written
+    # where they stay rather than allocated on the host and copied in. The
+    # import below then adopts them instead of moving ~30 GiB.
+    with PoolTensorFactory(runtime, runtime.pools["spill"]):
+        case = build_case(manifest, seed=arguments.seed)
     charge("model construction", marker)
     vocabulary = int(manifest.model_config.vocab_size)
 
