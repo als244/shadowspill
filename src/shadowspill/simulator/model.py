@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from shadowspill.ir import ResourceKind
+from shadowspill.ir import MemoryActionKind, ResourceKind
 
 
 def _require_non_negative(value: int, name: str) -> None:
@@ -234,6 +234,9 @@ class TransferInterval:
     trigger_task_id: str
     device_id: str
     direction: TransferDirection
+    # The action behind the copy; a write-back shares the evict lane with
+    # evictions and is told apart by this.
+    kind: MemoryActionKind
     sequence: int
     ready_ns: int
     start_ns: int

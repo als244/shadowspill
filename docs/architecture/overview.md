@@ -12,7 +12,8 @@ into an ordered, inspectable `Program`. It then:
 
 1. measures the compiled tasks and their memory behavior;
 2. chooses which intermediate values to save or recompute;
-3. schedules object residency, fetches, evictions, and releases;
+3. schedules object residency, fetches, write-backs, evictions, and
+   releases;
 4. proves that the selected step fits the configured physical pools; and
 5. returns a normal Python callable that repeatedly executes that admitted
    plan.
@@ -258,7 +259,7 @@ causal completion fence before a successor can reuse its bytes.
 | Graph-pair selection | One complete choice of graph-pair option for every occurrence-level group. |
 | Storage root | One semantic allocation identity shared by all of its views. |
 | Program object | One logical alias bundle with size, role, persistence, and task dependencies. |
-| Action trigger | The task boundary at which a fetch, eviction, or release becomes ordered and destination capacity is reserved. |
+| Action trigger | The task boundary at which a fetch, write-back, eviction, or release becomes ordered and destination capacity is reserved. |
 | Physical admission | Proof that task allocations, object generations, transfers, and causal reuse fit the selected pools. |
 | Memory lease | Ownership of one pool range for one residency generation. |
 

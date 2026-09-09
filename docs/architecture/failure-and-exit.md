@@ -54,7 +54,7 @@ things its close waits on, and they are not the same kind of thing:
 
 | counter | what it counts | what finishing it needs |
 |---|---|---|
-| queued actions | fetches, evictions and releases a task triggered, published to the worker and not yet complete | bytes still to move on a transfer lane, or a range still to hand back |
+| queued actions | fetches, write-backs, evictions and releases a task triggered, published to the worker and not yet complete | bytes still to move on a transfer lane, or a range still to hand back |
 | pending retirements | ranges freed inside a task, fenced against a completion event | no bytes move; the worker has to observe that event and return the range to the pool |
 
 Neither can make progress once exit handlers are running. The failing case

@@ -20,6 +20,7 @@ typedef struct ShadowSpillAliasState {
     uint8_t spill_ready;
     uint8_t fetch_pending;
     uint8_t evict_pending;
+    uint8_t write_back_pending;
     uint64_t device_version;
     uint64_t spill_version;
 } ShadowSpillAliasState;
@@ -41,6 +42,8 @@ typedef struct ShadowSpillTransferState {
     uint32_t device;
     uint32_t sequence;
     uint32_t stall_mask;
+    /* The device version a device-to-spill copy carries. */
+    uint64_t version;
     uint64_t ready_ns;
     uint64_t start_ns;
     uint64_t end_ns;
@@ -54,6 +57,11 @@ typedef struct ShadowSpillSimulationWork {
     uint64_t *active_tasks;
     uint32_t task_word_count;
     ShadowSpillTransferState *transfers;
+    /* Where a value is still needed after a release: the last task that
+     * reads each alias (NO_INDEX when none) and whether the final residency
+     * names it. */
+    uint32_t *alias_last_reader;
+    uint8_t *alias_final_required;
     int32_t *active_fetch;
     int32_t *active_evict;
     uint32_t *fetch_cursor;

@@ -133,6 +133,13 @@ struct ShadowSpillQueuedAction {
        task boundary: a transfer the plan did not schedule, which the lane
        serves in the background. */
     uint8_t background;
+    /* A write-back scheduled while the spill copy was already current:
+       nothing to copy, so it never enters the lane. */
+    uint8_t skips_copy;
+    /* A release scheduled behind a pending write-back of its object: the
+       copy still reads the source, so the worker retires it when it
+       reaches the release rather than at the trigger. */
+    uint8_t retires_when_processed;
 };
 
 typedef struct ShadowSpillActionQueue {

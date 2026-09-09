@@ -32,9 +32,19 @@ class MemoryLocation(StrEnum):
 
 
 class MemoryActionKind(StrEnum):
+    """What a memory action does to an alias group's two copies.
+
+    `FETCH` copies spill to execution. `WRITE_BACK` copies execution to spill
+    and keeps the execution copy, so the spill copy is current again and a
+    later `RELEASE` costs nothing. `RELEASE` drops the execution copy, which
+    requires the spill copy to be current. `EVICT` is the two in one: a
+    write-back where the spill copy is stale, then the release.
+    """
+
     RELEASE = "release"
     EVICT = "evict"
     FETCH = "fetch"
+    WRITE_BACK = "write_back"
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +247,17 @@ class MemorySchedule:
                 spill_resident.add(residency.alias_group_id)
                 spill_current.add(residency.alias_group_id)
 
+        # Where a value is still needed after a release: the last task that
+        # reads each alias, and the aliases the final residency names.
+        last_reader: dict[str, int] = {}
+        for index, task in enumerate(active_tasks):
+            for object_id in (
+                *task.inputs,
+                *(mutation.object_id for mutation in task.mutations),
+            ):
+                last_reader[object_alias[object_id]] = index
+        final_aliases = {item.alias_group_id for item in self.final_residency}
+
         actions_by_task: dict[str, list[tuple[int, MemoryAction]]] = {}
         previous_trigger = -1
         for index, action in enumerate(self.actions):
@@ -301,6 +322,17 @@ class MemorySchedule:
                         path,
                         "release requires device residency",
                     )
+                    require(
+                        alias_id in spill_current
+                        or (
+                            alias_id not in final_aliases
+                            and last_reader.get(alias_id, -1)
+                            <= task_order[task.task_id]
+                        ),
+                        path,
+                        "release drops the only current copy of a value still "
+                        "needed",
+                    )
                     device_resident.remove(alias_id)
                     if not alias_by_id[alias_id].retain_spill_copy:
                         spill_resident.discard(alias_id)
@@ -314,6 +346,14 @@ class MemorySchedule:
                     spill_resident.add(alias_id)
                     spill_current.add(alias_id)
                     device_resident.remove(alias_id)
+                elif action.kind is MemoryActionKind.WRITE_BACK:
+                    require(
+                        alias_id in device_resident,
+                        path,
+                        "write-back requires device residency",
+                    )
+                    spill_resident.add(alias_id)
+                    spill_current.add(alias_id)
                 else:
                     require(
                         alias_id in spill_resident and alias_id in spill_current,

@@ -71,6 +71,11 @@ ShadowSpillStatus shadowspill_simulate(
                 changed |= submitted;
             }
         }
+        if (!shadowspill_has_pending_work(program, &work)) {
+            /* The last action went through on a retry, with nothing left
+             * to wait for. */
+            break;
+        }
         uint64_t next = shadowspill_next_event_time(program, &work);
         if (next == UINT64_MAX) {
             shadowspill_report_deadlock(program, &work, result);

@@ -285,8 +285,8 @@ shadowspill.annotated_program_plan/v1
 | `selections` | One chosen option per task-alternative group. |
 
 The schedule contains `initial_residency`, ordered `actions`, and
-`final_residency`. An action records its kind (`release`, `evict`, or
-`fetch`), trigger task, and alias group. Array order is the directive order
+`final_residency`. An action records its kind (`release`, `evict`,
+`fetch` or `write_back`), trigger task, and alias group. Array order is the directive order
 at equal or increasing trigger boundaries; the alias group identifies its
 device through the Program.
 

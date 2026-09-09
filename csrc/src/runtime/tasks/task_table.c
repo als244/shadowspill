@@ -28,7 +28,9 @@ char *shadowspill_copy_action_trace_label(
     }
     const char *operation = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? "fetch"
-        : action->kind == SHADOWSPILL_RUNTIME_EVICT ? "evict" : "release";
+        : action->kind == SHADOWSPILL_RUNTIME_EVICT ? "evict"
+        : action->kind == SHADOWSPILL_RUNTIME_WRITE_BACK ? "write_back"
+        : "release";
     char fallback[256];
     const int written = snprintf(
         fallback,
@@ -523,7 +525,8 @@ static ShadowSpillTaskRecord *create_record(
         };
     }
     for (uint32_t index = 0U; index < record->action_count; ++index) {
-        if (description->actions[index].kind > SHADOWSPILL_RUNTIME_FETCH) {
+        if (description->actions[index].kind >
+            SHADOWSPILL_RUNTIME_WRITE_BACK) {
             destroy_record(record);
             return NULL;
         }

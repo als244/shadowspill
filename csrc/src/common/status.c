@@ -42,6 +42,8 @@ const char *shadowspill_status_string(ShadowSpillStatus status) {
             return "final residency unsatisfied";
         case SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR:
             return "simulator internal error";
+        case SHADOWSPILL_STATUS_INVALID_WRITE_BACK:
+            return "invalid write-back";
 
         case SHADOWSPILL_STATUS_OUT_OF_MEMORY:
             return "out of memory";

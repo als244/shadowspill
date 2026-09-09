@@ -31,6 +31,8 @@ from ._examples import (
     representative_plan,
     representative_program,
     representative_schedule,
+    write_back_program,
+    write_back_schedule,
 )
 
 
@@ -287,6 +289,19 @@ def test_schedule_rejects_invalid_residency_transitions(
         path,
         lambda: schedule.validate(representative_program(), SAVE_SELECTION),
     )
+
+
+def test_a_release_of_a_written_retained_alias_needs_a_write_back_first() -> None:
+    program = write_back_program()
+    write_back_schedule().validate(program)
+    dropped = replace(
+        write_back_schedule(),
+        actions=(
+            MemoryAction("update", "state_storage", MemoryActionKind.RELEASE),
+            MemoryAction("spacer", "state_storage", MemoryActionKind.FETCH),
+        ),
+    )
+    assert_invalid("schedule.actions[0]", lambda: dropped.validate(program))
 
 
 def test_schedule_checks_inputs_and_final_residency() -> None:

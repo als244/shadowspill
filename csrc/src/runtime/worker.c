@@ -450,7 +450,7 @@ static int dispatch_evict_locked(
             ) != SHADOWSPILL_STATUS_OK)) {
         backend_failed = 1;
     }
-    if (!backend_failed) {
+    if (!backend_failed && action->kind == SHADOWSPILL_RUNTIME_EVICT) {
         pthread_mutex_lock(&allocation->pool->lock);
         if (shadowspill_memory_pool_publish_retirement_dependency_locked(
                 allocation, completion_event
@@ -491,7 +491,10 @@ static int dispatch_evict_locked(
     action->completion_event = completion_event;
     action->has_completion_event = 1U;
     action->state = SHADOWSPILL_ACTION_IN_FLIGHT;
-    object->residency = SHADOWSPILL_OBJECT_EVICTING;
+    if (action->kind == SHADOWSPILL_RUNTIME_EVICT) {
+        /* A write-back leaves the object readable while it copies. */
+        object->residency = SHADOWSPILL_OBJECT_EVICTING;
+    }
     (void)atomic_fetch_add_explicit(
         &runtime->evict_transfers, 1U, memory_order_acq_rel
     );
@@ -802,6 +805,25 @@ static int handle_action(
                         pthread_mutex_unlock(&object->lock);
                         return -1;
                     }
+                    if (action->retires_when_processed &&
+                        shadowspill_memory_pool_begin_retirement_locked(
+                            allocation, NULL, 0
+                        ) != 0) {
+                        shadowspill_memory_pool_unlock_reclamation(
+                            action->plan_owner->execution_pool
+                        );
+                        latch_action_failure(
+                            runtime,
+                            action,
+                            SHADOWSPILL_STATUS_INVALID_STATE,
+                            SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED,
+                            object->object_id,
+                            allocation->allocation_id,
+                            allocation->requested_bytes
+                        );
+                        pthread_mutex_unlock(&object->lock);
+                        return -1;
+                    }
                     object->retired_generation = object->generation;
                     object->retired_execution_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;
@@ -832,10 +854,13 @@ static int handle_action(
                     shadowspill_plan_spill_location(
                         action->plan_owner, object
                     );
+                const int copies_to_spill =
+                    action->kind == SHADOWSPILL_RUNTIME_EVICT ||
+                    (action->kind == SHADOWSPILL_RUNTIME_WRITE_BACK &&
+                     !action->skips_copy);
                 if ((action->kind == SHADOWSPILL_RUNTIME_FETCH &&
                      action->destination_lease == NULL) ||
-                    (action->kind == SHADOWSPILL_RUNTIME_EVICT &&
-                     spill->lease == NULL &&
+                    (copies_to_spill && spill->lease == NULL &&
                      action->destination_lease == NULL)) {
                     latch_action_failure(
                         runtime,
@@ -849,7 +874,7 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return -1;
                 }
-                if (action->kind == SHADOWSPILL_RUNTIME_EVICT &&
+                if (copies_to_spill &&
                     object->residency == SHADOWSPILL_OBJECT_FETCHING) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;
@@ -874,6 +899,14 @@ static int handle_action(
                 if (!trigger_complete) {
                     pthread_mutex_unlock(&object->lock);
                     return 0;
+                }
+                if (action->kind == SHADOWSPILL_RUNTIME_WRITE_BACK &&
+                    action->skips_copy) {
+                    /* The spill copy already held this version when the
+                     * action was scheduled: nothing to copy. */
+                    pthread_mutex_unlock(&object->lock);
+                    complete_action(runtime, action);
+                    return 2;
                 }
                 /*
                  * A causal destination owns capacity from the trigger, but it
@@ -966,9 +999,9 @@ static int handle_action(
                     pthread_mutex_unlock(&object->lock);
                     return 0;
                 }
-                int dispatched = action->kind == SHADOWSPILL_RUNTIME_EVICT
-                    ? dispatch_evict_locked(runtime, action)
-                    : dispatch_fetch_locked(runtime, action);
+                int dispatched = action->kind == SHADOWSPILL_RUNTIME_FETCH
+                    ? dispatch_fetch_locked(runtime, action)
+                    : dispatch_evict_locked(runtime, action);
                 if (dispatched < 0) {
                     pthread_mutex_unlock(&object->lock);
                     return -1;
@@ -1022,7 +1055,8 @@ static int handle_action(
                 }
                 if (action->kind == SHADOWSPILL_RUNTIME_EVICT) {
                     release_pool = action->plan_owner->execution_pool;
-                } else if (caller_handoff || !object->retain_spill_copy) {
+                } else if (action->kind == SHADOWSPILL_RUNTIME_FETCH &&
+                           (caller_handoff || !object->retain_spill_copy)) {
                     release_pool = action->plan_owner->spill_pool;
                 }
                 if (release_pool != NULL &&
@@ -1075,6 +1109,15 @@ static int handle_action(
                     spill->current = 1U;
                     spill->version = object->authoritative_version;
                     object->residency = SHADOWSPILL_OBJECT_SPILL_ONLY;
+                } else if (action->kind == SHADOWSPILL_RUNTIME_WRITE_BACK) {
+                    /* The copy carries the version the action was scheduled
+                     * at; the execution copy stays, and stays authoritative. */
+                    ShadowSpillObjectLocation *spill =
+                        shadowspill_plan_spill_location(
+                            action->plan_owner, object
+                        );
+                    spill->current = 1U;
+                    spill->version = action->scheduled_version;
                 } else {
                     ShadowSpillObjectLocation *execution =
                         shadowspill_plan_execution_location(
@@ -1152,9 +1195,9 @@ static int handle_action(
                         ? action->caller_handoff_lease->allocation_id
                         : object->allocation_id,
                     object->size_bytes,
-                    action->kind == SHADOWSPILL_RUNTIME_EVICT
-                        ? SHADOWSPILL_TRANSFER_EVICT
-                        : SHADOWSPILL_TRANSFER_FETCH,
+                    action->kind == SHADOWSPILL_RUNTIME_FETCH
+                        ? SHADOWSPILL_TRANSFER_FETCH
+                        : SHADOWSPILL_TRANSFER_EVICT,
                     atomic_load_explicit(
                         &runtime->actions.count, memory_order_acquire
                     ),

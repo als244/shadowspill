@@ -455,9 +455,12 @@ static ShadowSpillStatus instantiate_actions_locked(
          * while the dispatcher runs ahead, but it cannot serve a later
          * eviction.  Reserve the next spill generation at this trigger.
          */
+        const int copies_to_spill =
+            action->kind == SHADOWSPILL_RUNTIME_EVICT ||
+            action->kind == SHADOWSPILL_RUNTIME_WRITE_BACK;
         const int destination_required =
             action->kind == SHADOWSPILL_RUNTIME_FETCH ||
-            (action->kind == SHADOWSPILL_RUNTIME_EVICT &&
+            (copies_to_spill &&
              (shadowspill_plan_spill_location(
                   record->plan_owner, object
               )->lease == NULL ||
@@ -490,7 +493,16 @@ static ShadowSpillStatus instantiate_actions_locked(
                 action->kind == SHADOWSPILL_RUNTIME_RELEASE &&
                 queued->handoff_lease == source &&
                 queued->handoff_generation == source->generation;
-            if (!keeps_lease_for_handoff) {
+            /*
+             * A write-back reads the source and keeps it. A release behind
+             * a pending write-back leaves the source in use too: the copy
+             * is still reading it, so the worker retires it when it reaches
+             * the release, after the copy has landed.
+             */
+            const int retires_here =
+                action->kind != SHADOWSPILL_RUNTIME_WRITE_BACK &&
+                !queued->retires_when_processed && !keeps_lease_for_handoff;
+            if (retires_here) {
                 pthread_mutex_lock(
                     &record->plan_owner->execution_pool->lock
                 );

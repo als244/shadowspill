@@ -168,6 +168,7 @@ int shadowspill_try_launch_tasks(
                 alias_state->device_ready = 0U;
                 alias_state->fetch_pending = 0U;
                 alias_state->evict_pending = 0U;
+                alias_state->write_back_pending = 0U;
                 alias_state->spill_ready = 0U;
             }
             work->device_workspace_bytes[device] +=
