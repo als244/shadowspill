@@ -218,7 +218,7 @@ These pages live beside the code they describe, outside `docs/`.
   protocols and their launchers, including the one command that runs every
   gate in order and reports what each found.
 - [Numerical qualification](../qualification/numerical/README.md) — planned
-  steps checked against the eager reference.
+  steps checked against PyTorch alone, compiled fullgraph without ShadowSpill.
 - [Full-model performance qualification](../qualification/performance/README.md)
   — throughput floors and simulator error on the large models.
 - [Workloads](../workloads/README.md) — the model and data definitions the

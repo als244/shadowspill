@@ -1,10 +1,16 @@
 # Numerical qualification
 
-Run the five-step, two-microbatch gate in fresh eager and planned processes:
+Run the five-step, two-microbatch gate in fresh reference and planned
+processes:
 
 ```bash
 python -m qualification.numerical.run run llama3 qualification/results/numerical
 ```
+
+The reference is the same model and optimizer run by PyTorch alone, compiled
+with `torch.compile` in Inductor fullgraph mode and with no part of ShadowSpill
+involved: no planner, no runtime, no pools. It is not an eager run. What the
+gate asserts is that planning a step does not change what that step computes.
 
 Pure PyTorch is the default and formal numerical authority. The optional
 external implementation is selected explicitly:

@@ -94,7 +94,8 @@ pointed at the one that matches. Record a set once, then read it:
 
 then drop `--regenerate-reference` from every run after. A run that records
 its own baseline minutes before comparing against it still checks that the
-planned step agrees with the unplanned one, but it cannot notice that either
+planned step agrees with the reference one, which is PyTorch alone compiled
+fullgraph, but it cannot notice that either
 has changed since the baseline was blessed.
 
 `--budget FAMILY=BYTES` in the numerical section is how to ask whether moving
