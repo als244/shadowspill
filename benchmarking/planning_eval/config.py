@@ -125,6 +125,15 @@ class FrontierConfig:
     #: How many repairs one candidate may spend. Absent means the planner's
     #: own default.
     max_repair_attempts: int | None = None
+    #: Whether a plan that has simulated may split an eviction that held
+    #: something up. Absent means the planner's own default, which is off.
+    split_write_backs: bool | None = None
+    #: Whether every candidate is measured against its own bound rather than
+    #: the best plan any worker has placed so far. Absent means the planner's
+    #: own default, which is off -- so two runs of the same points can settle
+    #: on different plans, and a comparison of two options has to set this or
+    #: it measures the search's order as much as the option.
+    deterministic: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.name or _SAFE_NAME.fullmatch(self.name) is None:
@@ -162,6 +171,8 @@ class FrontierConfig:
             "pressurefit_cache_mode": self.pressurefit_cache_mode,
             "capacity_refinement_bytes": self.capacity_refinement_bytes,
             "max_repair_attempts": self.max_repair_attempts,
+            "split_write_backs": self.split_write_backs,
+            "deterministic": self.deterministic,
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),
             "grids": [grid.to_dict() for grid in self.grids],
         }
@@ -191,7 +202,12 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             "grids",
         },
         "config",
-        optional={"capacity_refinement_bytes", "max_repair_attempts"},
+        optional={
+            "capacity_refinement_bytes",
+            "max_repair_attempts",
+            "split_write_backs",
+            "deterministic",
+        },
     )
     if data.get("schema") != _SCHEMA:
         raise ValueError(f"config.schema must be {_SCHEMA!r}")
@@ -250,6 +266,16 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             None
             if data.get("max_repair_attempts") is None
             else _integer(data.get("max_repair_attempts"), "config.max_repair_attempts")
+        ),
+        split_write_backs=(
+            None
+            if data.get("split_write_backs") is None
+            else bool(data.get("split_write_backs"))
+        ),
+        deterministic=(
+            None
+            if data.get("deterministic") is None
+            else bool(data.get("deterministic"))
         ),
     )
     from .matrix import expand_grid_axes
