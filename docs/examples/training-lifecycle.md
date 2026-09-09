@@ -44,10 +44,20 @@ model = nn.Sequential(
 )
 model = import_model_state(model, runtime=runtime, pool="spill")
 
+def zero_state(
+    name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter
+) -> None:
+    """Moment-based optimizers start at zero; ShadowSpill never assumes it."""
+
+    with torch.no_grad():
+        tensor.zero_()
+
+
 train_step = plan_step(
     model,
     objective=objective,
-    opt=partial(torch.optim.AdamW, lr=3e-4, foreach=False),
+    optimizer=partial(torch.optim.AdamW, lr=3e-4, foreach=False),
+    optimizer_state_init=zero_state,
     example_inputs=[batch(4)],
     runtime=runtime,
     execution="execution",
