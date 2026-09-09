@@ -123,6 +123,9 @@ def _register_gradients(
         if not parameter.requires_grad:
             continue
         parameter_id = parameter_objects[live_view_key(parameter)]
+        # A program is lowered from fake tensors, so this describes the
+        # gradient's geometry and allocates nothing; the object it becomes
+        # is created in a pool when the plan runs.
         gradient = torch.empty_like(parameter, memory_format=torch.preserve_format)
         gradient_id = inventory.add(
             gradient, role=ObjectRole.GRADIENT, persistence=Persistence.STEP
