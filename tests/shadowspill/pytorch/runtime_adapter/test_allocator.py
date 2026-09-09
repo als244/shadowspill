@@ -264,6 +264,7 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(failures_module, "runtime_library", _IdleRuntime)
+
     class _StatisticsLibrary:
         allocated = 16
         free = 112

@@ -12,10 +12,10 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
     ValidationError,
@@ -65,8 +65,8 @@ def test_schedule_reaches_declared_final_residency() -> None:
     )
 
 
-def _retained_spill_output_program() -> Program:
-    return Program(
+def _retained_spill_output_program() -> ShadowSpillProgram:
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("state_storage", "cuda_0", 64, retain_spill_copy=True),
@@ -149,11 +149,10 @@ def test_first_use_initial_order_follows_the_task_sequence() -> None:
 
 def test_a_write_back_round_trips_and_indexes_after_the_other_kinds() -> None:
     from shadowspill.ir import MemoryAction, MemoryActionKind
-    from shadowspill.ir.indexed import MEMORY_ACTION_CODE
+    from shadowspill.ir.indexing import MEMORY_ACTION_CODE
 
     action = MemoryAction("update", "state_storage", MemoryActionKind.WRITE_BACK)
     assert action.to_dict()["kind"] == "write_back"
     assert MemoryAction.from_value(action.to_dict(), "action") == action
     assert MEMORY_ACTION_CODE[MemoryActionKind.WRITE_BACK] == 3
     assert sorted(MEMORY_ACTION_CODE.values()) == [0, 1, 2, 3]
-

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -12,15 +10,21 @@ from shadowspill.ir import (
     MutationSpec,
     ObjectRole,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import (
+    GenericPlanningOptions,
+)
 from shadowspill.planner.admission import AdmissionFacts, TaskAdmissionSpec
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
 from shadowspill.simulator import SimulationConfig
 
 #: A copy of the state takes about 3.9 ms at the bandwidth below, which is
@@ -29,11 +33,11 @@ _LONG_TASK_NS = 40_000_000
 _SHORT_TASK_NS = 1_000_000
 
 
-def _program(*, retained: bool = True) -> Program:
+def _program(*, retained: bool = True) -> ShadowSpillProgram:
     """One object written early, needed again late, evicted in between."""
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    return Program(
+    return ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("state_storage", "cuda_0", 4096, retain_spill_copy=retained),
@@ -85,7 +89,7 @@ _INITIAL = (
     ResidencySpec("state_storage", MemoryLocation.DEVICE),
     ResidencySpec("other_storage", MemoryLocation.SPILL),
 )
-_OPTIONS = PressureFitOptions(
+_GENERIC = GenericPlanningOptions(
     minimum_object_bytes_evict_eligible=0, deterministic=True
 )
 
@@ -102,12 +106,15 @@ def _machine(device_capacity_bytes: int = 8000) -> SimulationConfig:
     )
 
 
-def _plan(program: Program, *, split: bool, **kwargs):
-    return pressurefit(
+def _plan(program: ShadowSpillProgram, *, split: bool, **kwargs):
+    # The option lives on the search, so varying it means a search built
+    # with it rather than an argument passed beside one.
+    search = PressureFit(PressureFitOptions(split_write_backs=split))
+    return search(
         program,
         initial_residency=_INITIAL,
         config=kwargs.pop("config", None) or _machine(),
-        options=replace(_OPTIONS, split_write_backs=split),
+        generic=_GENERIC,
         **kwargs,
     )
 
@@ -183,7 +190,7 @@ def test_an_object_that_keeps_no_spill_copy_is_left_whole() -> None:
     assert _kinds(split) == _kinds(whole)
 
 
-def _pool(program: Program, pool_bytes: int = 1 << 20) -> AdmissionFacts:
+def _pool(program: ShadowSpillProgram, pool_bytes: int = 1 << 20) -> AdmissionFacts:
     return AdmissionFacts(
         "cuda_0",
         pool_bytes,

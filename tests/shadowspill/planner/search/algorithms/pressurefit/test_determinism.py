@@ -15,10 +15,10 @@ from reference.python.pressurefit.residency import (
     reduce_pressure,
     seed_residency,
 )
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import GenericPlanningOptions, pressurefit
 from shadowspill.planner.request import InitialPlacement
 
-from ._examples import (
+from ...._examples import (
     config,
     exact_capacity_program,
     exact_capacity_residency,
@@ -31,14 +31,15 @@ from ._examples import (
 @pytest.mark.parametrize("workers", [1, 2, 0])
 def test_candidate_parallelism_preserves_the_complete_result(workers: int) -> None:
     initial, final = exact_capacity_residency()
-    options = PressureFitOptions(workers=workers, minimum_object_bytes_evict_eligible=0)
+    options = GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
 
     result = pressurefit(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=options,
+        generic=options,
+        workers=workers,
     )
 
     assert (
@@ -63,14 +64,16 @@ def test_names_do_not_affect_schedule_geometry_or_makespan() -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+        workers=1,
     )
     other = pressurefit(
         renamed,
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+        workers=1,
     )
 
     assert original.schedule == other.schedule
@@ -206,7 +209,8 @@ def test_training_chain_schedule_artifacts_are_frozen(
         training_chain_program(layers),
         initial_residency=training_chain_initial(layers),
         config=training_chain_config(capacity),
-        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+        workers=1,
     )
 
     assert result.schedule.digest == digest

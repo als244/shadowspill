@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from reference.python.admission import replay_admission
+from shadowspill.errors import PlanSearchExhaustedError
 from shadowspill.ir import (
     AliasGroupSpec,
     DeviceSpec,
@@ -11,34 +12,37 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
 from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner import (
     AdmissionFacts,
-    PressureFitOptions,
-    PressureFitSearchExhaustedError,
+    GenericPlanningOptions,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
     pressurefit,
 )
-from shadowspill.planner.admission.indexed import (
+from shadowspill.planner.admission.indexing import (
     encode_schedule,
     evaluate_schedule_admission,
     index_admission_facts,
+)
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
 )
 from shadowspill.pytorch.planning.admission import (
     simulation_admission_from_replay,
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig
-from shadowspill.simulator.indexed import index_simulation_template
+from shadowspill.simulator.indexing import index_simulation_template
 from tests.shadowspill.planner._examples import (
     training_chain_config,
     training_chain_initial,
@@ -144,7 +148,7 @@ def test_compiled_selected_admission_matches_python_oracle() -> None:
 
 def test_compiled_after_task_release_to_fetch_matches_python_oracle() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(
             AliasGroupSpec("released", "cuda_0", 64),
@@ -254,7 +258,8 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
         initial_residency=training_chain_initial(2),
         config=training_chain_config(224),
         admission=facts,
-        options=PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+        workers=1,
     )
 
     assert result.simulation.device_peak("cuda_0").total_bytes > 224
@@ -264,7 +269,7 @@ def test_pressurefit_publishes_the_same_admission_aware_selected_result() -> Non
 
 def test_compiled_admission_places_workspace_across_fragmented_ranges() -> None:
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=tuple(
             AliasGroupSpec(alias, "cuda_0", 32) for alias in ("a", "b", "c")
@@ -329,7 +334,7 @@ def test_compiled_admission_sizes_reuse_results_independently_of_events() -> Non
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     aliases = ("first", "second", "third")
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=tuple(AliasGroupSpec(alias, "cuda_0", 8) for alias in aliases),
         objects=tuple(ObjectSpec(alias, alias, 0, 8) for alias in aliases),
@@ -401,7 +406,7 @@ def test_compiled_admission_preserves_profiled_task_allocation_order() -> None:
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     sizes = {"hole_6": 6, "separator": 2, "hole_10": 10, "tail": 2, "out": 6}
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=tuple(
             AliasGroupSpec(alias, "cuda_0", size) for alias, size in sizes.items()
@@ -534,7 +539,7 @@ def test_admission_facts_use_only_the_current_physical_schema() -> None:
         AdmissionFacts.from_dict(payload)
 
 
-def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
+def test_search_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     """Physical admission repairs one candidate without shrinking globally.
 
     The first repair delays ``d`` until ``before_d`` because releasing ``b``
@@ -545,7 +550,7 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
 
     compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
     sizes = {"a": 64, "b": 32, "c": 32, "d": 64}
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=tuple(
             AliasGroupSpec(
@@ -606,20 +611,21 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
         tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
     )
 
-    with pytest.raises(PressureFitSearchExhaustedError) as exhausted:
-        pressurefit(
-            program,
-            initial_residency=initial,
-            config=config,
-            admission=facts,
-            options=PressureFitOptions(
+    with pytest.raises(PlanSearchExhaustedError) as exhausted:
+        PressureFit(
+            PressureFitOptions(
                 residency_strategies=("tight-stall",),
                 fetch_rules=("latest-safe",),
                 evaluate_coalesced=False,
                 max_repair_attempts=1,
-                workers=1,
-                minimum_object_bytes_evict_eligible=0,
-            ),
+            )
+        )(
+            program,
+            initial_residency=initial,
+            config=config,
+            admission=facts,
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+            workers=1,
         )
     exhausted_candidates = tuple(
         item for item in exhausted.value.diagnostics if item.status == "exhausted"
@@ -628,18 +634,19 @@ def test_pressurefit_repairs_fragmented_fetch_at_its_trigger_boundary() -> None:
     assert exhausted_candidates[0].failure_kind == "repair_budget_exhausted"
     assert exhausted_candidates[0].repairs.total_attempts == 1
 
-    result = pressurefit(
+    result = PressureFit(
+        PressureFitOptions(
+            residency_strategies=("tight-stall",),
+            fetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        )
+    )(
         program,
         initial_residency=initial,
         config=config,
         admission=facts,
-        options=PressureFitOptions(
-            residency_strategies=("tight-stall",),
-            fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
-            workers=1,
-            minimum_object_bytes_evict_eligible=0,
-        ),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+        workers=1,
     )
 
     diagnostic = result.diagnostics.resolved_programs[0].candidate_evaluations[0]

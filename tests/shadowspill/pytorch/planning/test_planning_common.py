@@ -15,9 +15,7 @@ from shadowspill.errors import (
 )
 from shadowspill.planner import (
     CandidateDiagnostic,
-    PressureFitInfeasibleError,
-    PressureFitRepairDiagnostics,
-    PressureFitSearchExhaustedError,
+    PlanningRepairDiagnostics,
 )
 from shadowspill.pytorch import (
     TensorSpec,
@@ -100,7 +98,7 @@ def test_planning_admission_helpers_reject_invalid_values() -> None:
 
 
 def test_pressurefit_infeasibility_is_structured_for_plan_callers() -> None:
-    internal = PressureFitInfeasibleError(
+    internal = PlanInfeasibleError(
         "task cannot fit",
         kind="task_footprint",
         device_id="cuda_0",
@@ -122,7 +120,7 @@ def test_pressurefit_infeasibility_is_structured_for_plan_callers() -> None:
 
 
 def test_pressurefit_search_exhaustion_is_not_reported_as_infeasibility() -> None:
-    internal = PressureFitSearchExhaustedError(
+    internal = PlanSearchExhaustedError(
         "bounded search stopped",
         diagnostics=(
             CandidateDiagnostic(
@@ -130,7 +128,7 @@ def test_pressurefit_search_exhaustion_is_not_reported_as_infeasibility() -> Non
                 selection_id="selection_0",
                 status="exhausted",
                 failure_kind="repair_budget_exhausted",
-                repairs=PressureFitRepairDiagnostics(unclassified_attempts=25),
+                repairs=PlanningRepairDiagnostics(unclassified_attempts=25),
             ),
         ),
     )

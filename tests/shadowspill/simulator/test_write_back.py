@@ -12,7 +12,7 @@ from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
     MemorySchedule,
-    Program,
+    ShadowSpillProgram,
 )
 from shadowspill.simulator import (
     SimulationConfig,
@@ -29,17 +29,19 @@ from tests.shadowspill.ir._examples import (
 
 from ._examples import calibrated_config
 
-Simulate = Callable[[Program, MemorySchedule, SimulationConfig], SimulationResult]
+Simulate = Callable[
+    [ShadowSpillProgram, MemorySchedule, SimulationConfig], SimulationResult
+]
 
 
 def _compiled(
-    program: Program, schedule: MemorySchedule, config: SimulationConfig
+    program: ShadowSpillProgram, schedule: MemorySchedule, config: SimulationConfig
 ) -> SimulationResult:
     return simulate(program, schedule, config=config)
 
 
 def _reference(
-    program: Program, schedule: MemorySchedule, config: SimulationConfig
+    program: ShadowSpillProgram, schedule: MemorySchedule, config: SimulationConfig
 ) -> SimulationResult:
     return simulate_python(program, schedule, config=config)
 

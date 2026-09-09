@@ -16,16 +16,16 @@ from shadowspill.ir import (
     MemorySchedule,
     ObjectRole,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
 from shadowspill.libraries import shadowspill_library_path
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
-from shadowspill.simulator.indexed import simulate_program
+from shadowspill.simulator.indexing import simulate_program
 from tests.shadowspill.ir._examples import (
     SAVE_SELECTION,
     release_behind_write_back_schedule,
@@ -68,7 +68,7 @@ pytestmark = pytest.mark.skipif(
     ],
 )
 def test_compiled_and_python_results_are_identical(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     selections: tuple,
     capacity: int,
@@ -143,7 +143,7 @@ def test_large_integer_transfer_runtime_does_not_overflow() -> None:
     size = (1 << 63) + 17
     bandwidth = (1 << 63) + 101
     resource = ResourceSpec("cuda_0", ResourceKind.CONTROL)
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("storage", "cuda_0", size),),
         objects=(ObjectSpec("object", "storage", 0, size),),
@@ -235,7 +235,7 @@ def test_random_linear_programs_match(
         )
         for index in range(count)
     )
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=aliases,
         objects=objects,
@@ -267,7 +267,7 @@ def test_simulation_result_leaves_its_interval_arrays_behind_when_written_out() 
     from dataclasses import asdict
 
     from shadowspill.simulator.capi import CTaskInterval, CTransferInterval
-    from shadowspill.simulator.indexed import IntervalArrays
+    from shadowspill.simulator.indexing import IntervalArrays
     from shadowspill.simulator.model import SimulationResult
 
     result = SimulationResult(

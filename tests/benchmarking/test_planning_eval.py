@@ -129,7 +129,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         point_timeout_seconds=10,
         max_point_attempts=2,
         max_worker_restarts_per_program=4,
-        pressurefit_cache_mode="cold",
+        plan_store_mode="refresh",
         transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
         grids=(
             FrontierGrid(
@@ -215,7 +215,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
         point_timeout_seconds=300,
         max_point_attempts=1,
         max_worker_restarts_per_program=1,
-        pressurefit_cache_mode="cold",
+        plan_store_mode="refresh",
         transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
         grids=(
             FrontierGrid(
@@ -283,7 +283,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         point_timeout_seconds=300,
         max_point_attempts=1,
         max_worker_restarts_per_program=2,
-        pressurefit_cache_mode="cold",
+        plan_store_mode="refresh",
         transfer_bandwidths=TransferBandwidthBaseline(100, 80, "test"),
         grids=(
             FrontierGrid(

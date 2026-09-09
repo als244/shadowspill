@@ -20,10 +20,10 @@ from shadowspill.ir import (
     DeviceSpec,
     MemoryLocation,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
@@ -31,20 +31,20 @@ from shadowspill.planner import (
     AdmissionFacts,
     StepDataOrdering,
     TaskAdmissionSpec,
-    pressurefit_program,
+    plan_program,
 )
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     StepProgram,
     TransferBandwidths,
 )
 from shadowspill.simulator import SimulationConfig
 
 
-def _pressurefit_program() -> PressureFitProgram:
-    program = Program(
+def _pressurefit_program() -> ShadowSpillPlanningProblem:
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
         objects=(ObjectSpec("state_object", "state", 0, 64),),
@@ -58,7 +58,7 @@ def _pressurefit_program() -> PressureFitProgram:
             ),
         ),
     )
-    return PressureFitProgram(
+    return ShadowSpillPlanningProblem(
         role="recurrent",
         program=program,
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
@@ -90,23 +90,24 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     tmp_path: Path,
 ) -> None:
     source = _pressurefit_program()
-    assert PressureFitProgram.from_json(source.to_json()).digest == source.digest
+    restored = ShadowSpillPlanningProblem.from_json(source.to_json())
+    assert restored.digest == source.digest
     transfer_bandwidths = TransferBandwidths(
         1_000_000,
         2_000_000,
         provenance="test calibration",
     )
 
-    selected = pressurefit_program(
+    selected = plan_program(
         source,
         transfer_bandwidths=transfer_bandwidths,
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
         verbose=False,
     )
-    cached = pressurefit_program(
+    cached = plan_program(
         _pressurefit_program(),
         transfer_bandwidths=transfer_bandwidths,
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
         verbose=False,
     )
     encoded = json.loads(selected.to_json())
@@ -121,19 +122,19 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
     assert restored.memory_budgets == MemoryBudgets(224, 1_024)
     assert restored.transfer_bandwidths == transfer_bandwidths
     assert restored.result.diagnostics == selected.result.diagnostics
-    assert tuple(item.pressurefit_diagnostics for item in restored.attempts) == tuple(
-        item.pressurefit_diagnostics for item in selected.attempts
+    assert tuple(item.search_diagnostics for item in restored.attempts) == tuple(
+        item.search_diagnostics for item in selected.attempts
     )
     assert restored.digest == selected.digest
-    assert selected.pressurefit_wall_time_ns > 0
+    assert selected.search_wall_time_ns > 0
     assert selected.physical_admission_wall_time_ns > 0
     assert (
-        selected.pressurefit_wall_time_ns
+        selected.search_wall_time_ns
         + selected.physical_admission_wall_time_ns
         + selected.orchestration_wall_time_ns
         == selected.wall_time_ns
     )
-    assert restored.pressurefit_wall_time_ns == selected.pressurefit_wall_time_ns
+    assert restored.search_wall_time_ns == selected.search_wall_time_ns
     assert (
         restored.physical_admission_wall_time_ns
         == selected.physical_admission_wall_time_ns
@@ -203,10 +204,10 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
             metadata={"purpose": "smoke"},
         )
     loaded_case, loaded_program = load_step_program(saved.directory)
-    selected = pressurefit_program(
+    selected = plan_program(
         loaded_program.recurrent,
         transfer_bandwidths=TransferBandwidths(1_000_000, 2_000_000),
-        artifact_store_dir=tmp_path / "store",
+        artifact_store=tmp_path / "store",
         verbose=False,
     )
     selection_directory = save_annotated_plan(

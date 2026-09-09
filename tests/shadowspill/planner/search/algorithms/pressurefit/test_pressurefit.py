@@ -12,21 +12,26 @@ from shadowspill.ir import (
     MemoryLocation,
     MutationSpec,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
 from shadowspill.planner import (
+    GenericPlanningOptions,
     InitialPlacement,
-    PressureFitOptions,
     ResidentSlice,
+    SearchOptions,
     pressurefit,
 )
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
 
-from ._examples import (
+from ...._examples import (
     config,
     exact_capacity_program,
     exact_capacity_residency,
@@ -34,11 +39,15 @@ from ._examples import (
     recomputation_program,
 )
 
-FEW_CANDIDATES = PressureFitOptions(
-    minimum_object_bytes_evict_eligible=0,
-    residency_strategies=("relaxed-stall",),
-    fetch_rules=("latest-safe",),
-    evaluate_coalesced=False,
+FEW_CANDIDATES = SearchOptions(
+    generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
+    algorithm=PressureFit(
+        PressureFitOptions(
+            residency_strategies=("relaxed-stall",),
+            fetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        )
+    ),
 )
 
 DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
@@ -51,12 +60,12 @@ def test_default_repair_budget_covers_deep_monotonic_repairs() -> None:
 
 def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
     initial, final = exact_capacity_residency()
-    result = pressurefit(
+    result = FEW_CANDIDATES.resolved_algorithm(
         exact_capacity_program(),
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        generic=FEW_CANDIDATES.generic,
     )
 
     assert tuple(
@@ -74,7 +83,7 @@ def test_exact_capacity_schedule_uses_one_legal_round_trip() -> None:
 
 
 def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec("retained", "cuda_0", 61),
@@ -92,20 +101,21 @@ def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
             TaskSpec("task3", COMPUTE, "profile", inputs=("later_object",)),
         ),
     )
-    result = pressurefit(
+    result = PressureFit(
+        PressureFitOptions(
+            initial_placement=InitialPlacement.REQUIRED,
+            residency_strategies=("relaxed-stall",),
+            fetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        )
+    )(
         program,
         initial_residency=(
             ResidencySpec("retained", MemoryLocation.DEVICE),
             ResidencySpec("later", MemoryLocation.SPILL),
         ),
         config=config(61),
-        options=PressureFitOptions(
-            initial_placement=InitialPlacement.REQUIRED,
-            residency_strategies=("relaxed-stall",),
-            fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
-            minimum_object_bytes_evict_eligible=0,
-        ),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
 
     assert tuple(
@@ -120,7 +130,7 @@ def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
 
 
 def test_demand_fetch_uses_final_legal_boundary() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec("retained", "cuda_0", 61),
@@ -138,20 +148,21 @@ def test_demand_fetch_uses_final_legal_boundary() -> None:
             TaskSpec("task3", COMPUTE, "profile", inputs=("later_object",)),
         ),
     )
-    result = pressurefit(
+    result = PressureFit(
+        PressureFitOptions(
+            initial_placement=InitialPlacement.REQUIRED,
+            residency_strategies=("relaxed-stall",),
+            fetch_rules=("demand",),
+            evaluate_coalesced=False,
+        )
+    )(
         program,
         initial_residency=(
             ResidencySpec("retained", MemoryLocation.DEVICE),
             ResidencySpec("later", MemoryLocation.SPILL),
         ),
         config=config(61),
-        options=PressureFitOptions(
-            initial_placement=InitialPlacement.REQUIRED,
-            residency_strategies=("relaxed-stall",),
-            fetch_rules=("demand",),
-            evaluate_coalesced=False,
-            minimum_object_bytes_evict_eligible=0,
-        ),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
 
     assert tuple(
@@ -178,12 +189,12 @@ def test_zero_size_alias_is_omitted_from_physical_schedule() -> None:
             for item in program.objects
         ),
     )
-    result = pressurefit(
+    result = FEW_CANDIDATES.resolved_algorithm(
         program,
         initial_residency=(ResidencySpec("later", MemoryLocation.DEVICE),),
         final_residency=(ResidencySpec("retained", MemoryLocation.DEVICE),),
         config=config(122),
-        options=FEW_CANDIDATES,
+        generic=FEW_CANDIDATES.generic,
     )
 
     assert all(
@@ -197,11 +208,11 @@ def test_zero_size_alias_is_omitted_from_physical_schedule() -> None:
 
 
 def test_dirty_mutation_requires_writeback_before_reuse() -> None:
-    result = pressurefit(
+    result = FEW_CANDIDATES.resolved_algorithm(
         mutation_program(),
         initial_residency=(ResidencySpec("weight_storage", MemoryLocation.DEVICE),),
         config=config(61),
-        options=FEW_CANDIDATES,
+        generic=FEW_CANDIDATES.generic,
     )
 
     weight_actions = tuple(
@@ -217,11 +228,11 @@ def test_dirty_mutation_requires_writeback_before_reuse() -> None:
 
 
 def test_recomputation_competes_with_evict_among_the_same_candidates() -> None:
-    result = pressurefit(
+    result = FEW_CANDIDATES.resolved_algorithm(
         recomputation_program(),
         initial_residency=(ResidencySpec("input_storage", MemoryLocation.DEVICE),),
         config=config(110),
-        options=FEW_CANDIDATES,
+        generic=FEW_CANDIDATES.generic,
     )
 
     assert tuple((item.group_id, item.option_id) for item in result.selections) == (
@@ -233,12 +244,12 @@ def test_recomputation_competes_with_evict_among_the_same_candidates() -> None:
 def test_result_builds_the_canonical_execution_plan() -> None:
     program = exact_capacity_program()
     initial, final = exact_capacity_residency()
-    result = pressurefit(
+    result = FEW_CANDIDATES.resolved_algorithm(
         program,
         initial_residency=initial,
         final_residency=final,
         config=config(),
-        options=FEW_CANDIDATES,
+        generic=FEW_CANDIDATES.generic,
     )
     entrypoints = tuple(
         EntrypointSpec(
@@ -263,7 +274,7 @@ def test_result_builds_the_canonical_execution_plan() -> None:
     assert plan.prediction.device_peak_bytes == 122
 
 
-def small_object_program(later_bytes: int) -> Program:
+def small_object_program(later_bytes: int) -> ShadowSpillProgram:
     """The exact-capacity program with `later` shrunk to `later_bytes`."""
 
     program = exact_capacity_program()
@@ -287,7 +298,7 @@ def small_object_program(later_bytes: int) -> Program:
 def test_a_mutated_resident_object_reserves_a_home_per_generation() -> None:
     # The task that mutates `small` in place holds both generations, so the
     # slice reserves two homes for what is one object.
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(AliasGroupSpec("small", "cuda_0", 8),),
         objects=(ObjectSpec("small_object", "small", 0, 8),),
@@ -307,7 +318,7 @@ def test_a_mutated_resident_object_reserves_a_home_per_generation() -> None:
         initial_residency=(ResidencySpec("small", MemoryLocation.DEVICE),),
         final_residency=(ResidencySpec("small", MemoryLocation.DEVICE),),
         config=config(64),
-        options=replace(FEW_CANDIDATES, minimum_object_bytes_evict_eligible=9),
+        generic=replace(FEW_CANDIDATES.generic, minimum_object_bytes_evict_eligible=9),
     )
     assert result.resident_slice == ResidentSlice(bytes=16, aliases=("small",))
 
@@ -318,12 +329,12 @@ def test_objects_under_the_eligibility_threshold_are_never_cut() -> None:
     # holding all three, the cheapest cut is the small object's round trip.
     initial, final = exact_capacity_residency()
     program = small_object_program(8)
-    unrestricted = pressurefit(
+    unrestricted = FEW_CANDIDATES.resolved_algorithm(
         program,
         initial_residency=initial,
         final_residency=final,
         config=config(129),
-        options=FEW_CANDIDATES,
+        generic=FEW_CANDIDATES.generic,
     )
     moved = {
         (action.alias_group_id, action.kind)
@@ -338,7 +349,7 @@ def test_objects_under_the_eligibility_threshold_are_never_cut() -> None:
         initial_residency=initial,
         final_residency=final,
         config=config(129),
-        options=replace(FEW_CANDIDATES, minimum_object_bytes_evict_eligible=9),
+        generic=replace(FEW_CANDIDATES.generic, minimum_object_bytes_evict_eligible=9),
     )
     # The small object keeps its boundary contract, a release after its last
     # read, and nothing else; the cut moves to an eligible object.
@@ -362,6 +373,6 @@ def test_objects_under_the_eligibility_threshold_are_never_cut() -> None:
 
 
 def test_eligibility_threshold_is_validated() -> None:
-    assert PressureFitOptions().minimum_object_bytes_evict_eligible == 1 << 20
+    assert GenericPlanningOptions().minimum_object_bytes_evict_eligible == 1 << 20
     with pytest.raises(ValueError):
-        PressureFitOptions(minimum_object_bytes_evict_eligible=-1)
+        GenericPlanningOptions(minimum_object_bytes_evict_eligible=-1)

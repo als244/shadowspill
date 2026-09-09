@@ -184,7 +184,7 @@ def main() -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            artifact_store_dir=cache,
+            artifact_store=cache,
             verbose=False,
         )
         adopted = _snapshot(runtime, record.current_object_id)

@@ -9,23 +9,24 @@ from shadowspill.ir import (
     MemoryLocation,
     MemorySchedule,
     ObjectSpec,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
 from shadowspill.planner import (
     AdmissionFacts,
     CandidateDiagnostic,
-    PressureFitDiagnostics,
-    PressureFitOptions,
-    PressureFitResult,
+    GenericPlanningOptions,
+    PlanningDiagnostics,
+    ProgramPlanResult,
     ResidentSlice,
     ResolvedProgramDiagnostics,
     TaskAdmissionSpec,
     TaskAllocationStep,
     TaskAllocationStepKind,
 )
+from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.planning.admission import (
     DynamicTaskAllocationPolicy,
     build_fixed_layout_admission,
@@ -37,21 +38,23 @@ from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 
 
 def _selected(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
     config: SimulationConfig,
-) -> PressureFitResult:
+) -> ProgramPlanResult:
     simulation = simulate(program, schedule, config=config)
-    return PressureFitResult(
+    return ProgramPlanResult(
         program=program,
-        options=PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
+        search_options=SearchOptions(
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
+        ),
         initial_residency=schedule.initial_residency,
         final_residency=schedule.final_residency,
         simulation_config=config,
         schedule=schedule,
         selections=(),
         simulation=simulation,
-        diagnostics=PressureFitDiagnostics(
+        diagnostics=PlanningDiagnostics(
             selected_candidate_id="fixture",
             selected_selection_id="fixture",
             selected_makespan_ns=simulation.makespan_ns,
@@ -76,7 +79,7 @@ def _selected(
 
 
 def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
         objects=(ObjectSpec("state_object", "state", 0, 64),),
@@ -136,7 +139,7 @@ def test_fixed_layout_reuses_completed_eviction_without_changing_makespan() -> N
 def test_fixed_layout_gives_resident_leases_static_homes_after_the_assignment() -> None:
     # `big` is placed; `small` was kept resident by the planner, so its lease
     # takes the next aligned home past the assignment instead of a place in it.
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec("big", "cuda_0", 64, retain_spill_copy=True),
@@ -198,7 +201,7 @@ def test_fixed_layout_gives_resident_leases_static_homes_after_the_assignment() 
 
 
 def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(),
         objects=(),
@@ -256,7 +259,7 @@ def test_fixed_layout_maps_same_task_allocator_reuse_to_one_lease() -> None:
 
 
 def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(AliasGroupSpec("alias_000000", "cuda_0", 8),),
         objects=(ObjectSpec("object_000000", "alias_000000", 0, 8),),
@@ -338,7 +341,7 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
 
 
 def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec(
@@ -451,7 +454,7 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
 
 
 def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DEVICE,),
         alias_groups=(
             AliasGroupSpec(

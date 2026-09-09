@@ -57,9 +57,9 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.compiled_manifests == (
         root / "build" / "profiling" / "compiled_manifests"
     )
-    assert cache.pressurefit_programs == root / "build" / "programs"
-    assert cache.pressurefit_requests == root / "planning" / "requests"
-    assert cache.pressurefit_selections == root / "planning" / "results"
+    assert cache.programs_archive == root / "planning" / "programs"
+    assert cache.plan_requests == root / "planning" / "requests"
+    assert cache.plan_selections == root / "planning" / "results"
     assert cache.plans == root / "planning" / "plans"
     assert "mlops-build-17" in cache.inductor.name
     assert cache.inductor.parent == root / "build" / "inductor"
@@ -89,7 +89,7 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
 
 def test_a_plan_store_roots_the_planning_kinds_apart(tmp_path: Path) -> None:
     cache = ArtifactStore.resolve(
-        tmp_path / "shared", plan_store_dir=tmp_path / "run" / "plan_store"
+        tmp_path / "shared", plan_store=tmp_path / "run" / "plan_store"
     )
     cache.initialize()
 
@@ -101,10 +101,11 @@ def test_a_plan_store_roots_the_planning_kinds_apart(tmp_path: Path) -> None:
     assert cache.planning == plans / "planning"
     # what a run pays for stays shared
     assert cache.exports == shared / "build" / "exports"
-    assert cache.pressurefit_programs == shared / "build" / "programs"
+    # the program a plan was for follows the plans, not the builds
+    assert cache.programs_archive == plans / "planning" / "programs"
     # what a run measured is its own
-    assert cache.pressurefit_requests == plans / "planning" / "requests"
-    assert cache.pressurefit_selections == plans / "planning" / "results"
+    assert cache.plan_requests == plans / "planning" / "requests"
+    assert cache.plan_selections == plans / "planning" / "results"
     assert cache.plans == plans / "planning" / "plans"
     assert (plans / "layout.json").is_file()
     assert (plans / "README.md").is_file()
@@ -126,73 +127,67 @@ def test_the_home_cache_is_the_default_store() -> None:
     assert cache.plan_store is None
 
 
-def test_a_store_laid_out_before_the_split_is_moved_into_place(tmp_path: Path) -> None:
-    root = tmp_path / f"v{ARTIFACT_VERSION}"
-    for old in (
-        "pytorch/exports/ab/abcd/manifest.json",
-        "pytorch/inductor/default-1234/fx/kernel.py",
-        "graphpairs/cd/cdef/graph_pairs.pt",
-        "profiling/measurements/ef/ef01/measurement.json",
-        "pressurefit/programs/01/0123/program.json",
-        "pressurefit/requests/23/2345/request.json",
-        "pressurefit/selections/45/4567/selection.json",
-        "plans/model/capture/plan/manifest.json",
-    ):
-        (root / old).parent.mkdir(parents=True)
-        (root / old).write_text(old)
-    (root / "layout.json").write_text("{}")
-    # a destination that already exists is merged: its entries are kept, and a
-    # source entry that already exists there is the same artifact and is dropped
-    (root / "build" / "exports" / "ab" / "kept").mkdir(parents=True)
-    (root / "build" / "exports" / "ab" / "kept" / "manifest.json").write_text("kept")
-    twice = root / "build" / "exports" / "ab" / "abcd"
-    twice.mkdir(parents=True)
-    (twice / "manifest.json").write_text("moved first")
-
-    cache = ArtifactStore.resolve(tmp_path)
-    cache.initialize()
-
-    moved = root / "build/exports/ab/abcd/manifest.json"
-    assert moved.read_text() == "moved first"
-    assert (root / "build/exports/ab/kept/manifest.json").read_text() == "kept"
-    # the Inductor cache is not relocatable and stays where it was
-    assert (root / "pytorch/inductor/default-1234/fx/kernel.py").is_file()
-    assert not (root / "build" / "inductor").exists()
-    assert (root / "build/graphpairs/cd/cdef/graph_pairs.pt").is_file()
-    assert (root / "build/profiling/measurements/ef/ef01/measurement.json").is_file()
-    assert (root / "build/programs/01/0123/program.json").is_file()
-    assert (root / "planning/requests/23/2345/request.json").is_file()
-    assert (root / "planning/results/45/4567/selection.json").is_file()
-    assert (root / "planning/plans/model/capture/plan/manifest.json").is_file()
-    assert not (root / "pytorch" / "exports").exists()
-    assert not (root / "pressurefit").exists()
-    assert not (root / "graphpairs").exists()
-    assert not (root / "plans").exists()
-    assert "build" in (root / "layout.json").read_text()
-    # a second initialization has nothing left to move and changes nothing
-    before = sorted(str(p.relative_to(root)) for p in root.rglob("*"))
-    cache.initialize()
-    assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == before
-
-
 def test_planning_cache_policy_flags_fail_closed(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="requires"):
-        ArtifactStore.resolve(tmp_path, overwrite_plan=True)
     with pytest.raises(ValueError, match="non-empty"):
         ArtifactStore.resolve(tmp_path, implementation_revision=" ")
 
+    with pytest.raises(ValueError, match="must be one of"):
+        ArtifactStore.resolve(tmp_path, build_store_mode="readonly")  # type: ignore[arg-type]
+
+    # A run that contributes to neither tree leaves nothing behind at all.
     transient_root = tmp_path / "transient"
-    transient = ArtifactStore.resolve(transient_root, save_plan=False)
+    transient = ArtifactStore.resolve(
+        transient_root, build_store_mode="reuse", plan_store_mode="reuse"
+    )
     with transient.activate_pytorch():
         assert not transient_root.exists()
 
 
-def test_force_fresh_publishes_a_write_enabled_isolated_pytorch_cache(
+def test_the_two_trees_are_rooted_and_permitted_apart(tmp_path: Path) -> None:
+    """A build store several runs share, and a plan store each keeps.
+
+    The two were one switch until they could be rooted apart, and one switch
+    meant a run keeping its plans to itself also stopped contributing the
+    builds it had paid for.
+    """
+
+    shared, mine = tmp_path / "shared", tmp_path / "mine"
+    store = ArtifactStore.resolve(
+        None,
+        build_store=shared,
+        plan_store=mine,
+        build_store_mode="require",
+        plan_store_mode="contribute",
+    )
+    # each tree under its own root, versioned as a store always is
+    assert store.build_store is not None and shared in store.build_store.parents
+    assert store.plan_store is not None and mine in store.plan_store.parents
+    assert store.build == store.build_store / "build"
+    assert store.planning == store.plan_store / "planning"
+    assert not store.build_policy.write_enabled
+    assert store.build_policy.require_hit
+    assert store.plan_policy.write_enabled
+    assert not store.plan_policy.require_hit
+
+    # Keeping plans to itself no longer silences the build tree.
+    keeps_plans = ArtifactStore.resolve(tmp_path / "both", plan_store_mode="reuse")
+    assert keeps_plans.build_policy.write_enabled
+    assert not keeps_plans.plan_policy.write_enabled
+
+
+def test_a_refreshing_build_store_publishes_an_isolated_pytorch_cache(
     tmp_path: Path,
 ) -> None:
+    """A refresh ignores what is there, works apart, and publishes at the end.
+
+    The isolation is what makes `refresh` safe to run beside a store others
+    are reading: nothing lands in it until the run has finished and is ready
+    to replace what was there.
+    """
+
     cache = ArtifactStore.resolve(
         tmp_path,
-        force_fresh=True,
+        build_store_mode="refresh",
         implementation_revision="fresh-cache-test",
     )
     previous = os.environ.get("TORCHINDUCTOR_CACHE_DIR")

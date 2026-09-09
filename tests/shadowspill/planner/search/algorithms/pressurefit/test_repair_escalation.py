@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from shadowspill.planner import PressureFitOptions, pressurefit
-from shadowspill.planner.diagnostics import CandidateDiagnostic, PressureFitDiagnostics
+from shadowspill.planner import GenericPlanningOptions, pressurefit
+from shadowspill.planner.diagnostics import CandidateDiagnostic, PlanningDiagnostics
 
-from ._examples import (
+from ...._examples import (
     training_chain_config,
     training_chain_initial,
     training_chain_program,
 )
 
 
-def _candidates(diagnostics: PressureFitDiagnostics) -> list[CandidateDiagnostic]:
+def _candidates(diagnostics: PlanningDiagnostics) -> list[CandidateDiagnostic]:
     return [
         candidate
         for problem in diagnostics.resolved_programs
@@ -25,7 +25,7 @@ def test_escalations_are_counted_and_never_exceed_what_was_asked() -> None:
         training_chain_program(10),
         initial_residency=training_chain_initial(10),
         config=training_chain_config(500),
-        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
 
     candidates = _candidates(result.diagnostics)
@@ -37,7 +37,7 @@ def test_escalations_are_counted_and_never_exceed_what_was_asked() -> None:
         )
         assert candidate.escalations_taken_back <= candidate.pressure_escalations
     # the counters travel with the record
-    restored = PressureFitDiagnostics.from_value(result.diagnostics.to_dict(), "d")
+    restored = PlanningDiagnostics.from_value(result.diagnostics.to_dict(), "d")
     assert [
         (c.pressure_escalations, c.escalations_taken_back)
         for c in _candidates(restored)
@@ -46,7 +46,9 @@ def test_escalations_are_counted_and_never_exceed_what_was_asked() -> None:
 
 def test_records_written_before_escalation_read_as_none() -> None:
     value = CandidateDiagnostic(
-        candidate_id="tight-stall/packed-fit", selection_id="none", status="valid",
+        candidate_id="tight-stall/packed-fit",
+        selection_id="none",
+        status="valid",
         makespan_ns=1,
     ).to_dict()
     del value["outcome"]["pressure_escalations"]
