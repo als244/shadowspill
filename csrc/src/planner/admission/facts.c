@@ -198,6 +198,11 @@ static int admission_counts(
             if (checked_add(*operation_count, 2U, operation_count) != 0) {
                 return -1;
             }
+        } else if (kind == SHADOWSPILL_MEMORY_WRITE_BACK) {
+            /* A write-back copies the object out and keeps the device copy,
+             * so it needs no lease of its own, retires nothing, and adds no
+             * operation. The release that follows it ends the lease. */
+            continue;
         } else {
             return -1;
         }
