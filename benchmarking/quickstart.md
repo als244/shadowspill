@@ -5,7 +5,7 @@ it a model, a sequence length, and how many sequences one optimizer step
 must consume; it searches every way of splitting that total into
 microbatches and accumulation rounds, across every execution budget you
 name, then optionally renders figures over the results and runs the
-winning plan — reporting what the plan promised, what each step
+winning plan — reporting how the plan breaks down, what each step
 delivered, and how a traced step reconciles with the simulator.
 
 ## Three ways to use it
@@ -29,7 +29,7 @@ python -m benchmarking.quickstart mlops_olmoe \
 ```
 
 **Search, then run.** Run budgets must appear among the search budgets;
-each one gets the full treatment — plan promise, steps, and the
+each one gets the full treatment — the plan's breakdown, steps, and the
 traced-step reconciliation — at that budget's winning geometry.
 
 ```bash
@@ -239,7 +239,7 @@ directory.
    outlined in the bars, and a geometry keeps one colour throughout.
 
 4. **Per run budget**: the chosen geometry, then
-   **the chosen plan's promise** — from
+   **the chosen plan's breakdown** — from
    [`PlanReport.summary`](../docs/python/plan-report.md): the simulated
    step beside the unconstrained floor, the three-way split of the
    difference, the graph-pair selection fraction, transfer traffic,

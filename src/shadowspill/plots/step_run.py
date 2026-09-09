@@ -189,8 +189,14 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     the bounds the performance gate holds the simulator to. The lower panel
     is the answer to "which part", because a step is compute plus stall and
     the two are modelled by different things -- the profiles and the transfer
-    pricing. The opening restore sits on the measured bar alone, since the
-    simulator assumes the step's initial objects are already resident.
+    pricing.
+
+    The terminal writeback is inside the simulated makespan, so it is part of
+    that bar's stall rather than a category of its own. The opening restore is
+    not: the simulator assumes the step's initial objects are already
+    resident, so it sits on the measured bar alone and is the one part of the
+    difference the model does not attempt. A cycle that hides the restore
+    under the previous step should drive it to nothing.
     """
 
     labels = [f"{item.execution_budget_bytes / _GIB:g}" for item in ordered]
@@ -241,13 +247,16 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     )
 
     width = 0.38
-    for offset, (name, compute, idle, prologue) in enumerate(
+    for offset, (name, compute, idle, unmodelled) in enumerate(
         (
             (
                 "Simulated",
                 [item.profiled_task_seconds for item in ordered],
-                [item.simulated_idle_seconds for item in ordered],
-                [item.terminal_tail_seconds for item in ordered],
+                [
+                    item.simulated_idle_seconds + item.terminal_tail_seconds
+                    for item in ordered
+                ],
+                [0.0 for _ in ordered],
             ),
             (
                 "Measured",
@@ -269,13 +278,13 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
         )
         parts.bar(
             centres,
-            prologue,
+            unmodelled,
             width=width * 0.92,
             bottom=[a + b for a, b in zip(compute, idle, strict=True)],
             color="tab:green",
             alpha=0.7,
         )
-        for centre, a, b, c in zip(centres, compute, idle, prologue, strict=True):
+        for centre, a, b, c in zip(centres, compute, idle, unmodelled, strict=True):
             parts.annotate(
                 f"{name}\n{a + b + c:.2f} s",
                 (centre, a + b + c),
@@ -306,11 +315,11 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     parts.legend(
         handles=[
             Patch(facecolor="tab:blue", label="Task Compute"),
-            Patch(facecolor="tab:orange", alpha=0.85, label="Stalled Between Tasks"),
+            Patch(facecolor="tab:orange", alpha=0.85, label="Stalled"),
             Patch(
                 facecolor="tab:green",
                 alpha=0.7,
-                label="Terminal Writeback / Opening Restore",
+                label="Opening Restore (measured; unmodelled)",
             ),
         ],
         fontsize="x-small",
