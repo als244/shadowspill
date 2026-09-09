@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include <shadowspill/planner.h>
+#include <shadowspill/simulator.h>
 
 typedef struct ShadowSpillScheduleStorage {
     ShadowSpillIndexedSchedule value;
@@ -27,6 +28,12 @@ typedef struct ShadowSpillScheduleFacts {
     uint32_t device_count;
     uint32_t *earliest_access_task;
     uint8_t *write_events;
+    /* The same write events, indexed for the passes that ask when an object
+     * was written last rather than whether it was written here: the
+     * boundaries alias `a` is written at are
+     * `write_boundaries[write_offsets[a] .. write_offsets[a + 1])`, ascending. */
+    uint32_t *write_offsets;
+    uint32_t *write_boundaries;
 } ShadowSpillScheduleFacts;
 
 /*
@@ -103,6 +110,32 @@ int shadowspill_delay_indexed_fetch(
     const ShadowSpillSimulationResult *failure,
     ShadowSpillScheduleStorage *storage,
     ShadowSpillFetchTriggerConstraint *constraint
+);
+
+/*
+ * Split the evictions that held something up: a `WRITE_BACK` at the boundary
+ * where the object was last written, and a `RELEASE` where the eviction was.
+ *
+ * An eviction exists to free device memory, and the memory is only free once
+ * its copy has landed, so an eviction costs time exactly when something was
+ * waiting for room while it ran. `simulation` -- a simulation of this
+ * schedule as it stands -- says which ones those were. The rest are left
+ * alone: moving a copy nothing waited on spends lane time and holds spill
+ * capacity longer to buy nothing.
+ *
+ * Where the copy actually runs is not decided here. The write-back is
+ * triggered at the last write because that is the earliest boundary at which
+ * the copy is correct; the simulator owns the lane and prices the queue that
+ * forms when several copies move at once. Residency is untouched, so the
+ * device copy lives exactly as long as it did.
+ *
+ * The caller simulates again and keeps the result only if the plan got
+ * faster. Returns how many evictions were split, or -1.
+ */
+int shadowspill_split_blocking_evictions(
+    const ShadowSpillScheduleFacts *facts,
+    const ShadowSpillSimulationResult *simulation,
+    ShadowSpillScheduleStorage *storage
 );
 
 int shadowspill_advance_indexed_fetch_to_release(

@@ -155,6 +155,9 @@ typedef struct CandidateWorkspace {
     /* The best plan this candidate has reached, kept because repairing
      * past a success can make it worse before it makes it better. */
     ShadowSpillScheduleStorage best;
+    /* The plan as it stood before the write-back split, to put back when the
+     * split does not pay. */
+    ShadowSpillScheduleStorage unsplit;
     SimulationWorkspace simulation;
     /* Where a plan first came up short, which is what repair aims at
      * when the plan simulates but waits for memory. */
@@ -1170,6 +1173,10 @@ static int candidate_workspace_create(
             problem->residency->alias_count,
             &workspace->best
         ) != 0 ||
+        shadowspill_schedule_storage_create(
+            problem->residency->alias_count,
+            &workspace->unsplit
+        ) != 0 ||
         simulation_workspace_create(
             problem,
             &workspace->simulation
@@ -1206,6 +1213,7 @@ static void candidate_workspace_destroy(CandidateWorkspace *workspace) {
     shadowspill_schedule_storage_destroy(&workspace->schedule);
     shadowspill_schedule_storage_destroy(&workspace->selected);
     shadowspill_schedule_storage_destroy(&workspace->best);
+    shadowspill_schedule_storage_destroy(&workspace->unsplit);
     simulation_workspace_destroy(&workspace->simulation);
     placement_workspace_destroy(&workspace->placement);
     shadowspill_candidate_admission_workspace_destroy(&workspace->admission);
@@ -2164,6 +2172,10 @@ typedef struct CandidateSearch {
 
     /* Moves as the search runs. */
     int need_emit;
+    /* Whether the plan in hand has been offered the write-back split, and
+     * whether it took it -- a split that will not place is put back. */
+    int split_tried;
+    int split_applied;
     /* Capacity is a property of the plan, so it travels with it. */
     uint64_t plan_capacity_bytes;
     /* The best plan the search set aside, held in `workspace->best`. */
@@ -2441,6 +2453,8 @@ static StageOutcome search_emit(CandidateSearch *search) {
         return search_done(search, answer_or_stop(search));
     }
     search->need_emit = 0;
+    search->split_tried = 0;
+    search->split_applied = 0;
     return STAGE_NEXT;
 }
 
@@ -2496,6 +2510,72 @@ static StageOutcome record_admission_move(
 
 /* Admission refused the schedule: move the fetch that overran, or make
  * room for it and reduce again. */
+/*
+ * A plan that has simulated knows what waited on it. An eviction that held
+ * something up is split in two: the copy moves back to the boundary where the
+ * object was last written, and the boundary that evicted is left with a
+ * release, which costs nothing.
+ *
+ * The split is a proposal. Simulating again prices it, including the queue on
+ * the evict lane and the spill capacity the copy now takes earlier, and a
+ * plan that did not get faster is put back as it was.
+ */
+static StageOutcome search_split_write_backs(CandidateSearch *search) {
+    if (search->split_tried || search->options->split_write_backs == 0U ||
+        search->simulation_status != SHADOWSPILL_STATUS_OK) {
+        return STAGE_NEXT;
+    }
+    search->split_tried = 1;
+    CandidateWorkspace *workspace = search->workspace;
+    if (shadowspill_schedule_storage_copy(
+            &workspace->unsplit, &workspace->schedule
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    const int split = shadowspill_split_blocking_evictions(
+        &search->facts, &search->simulation, &workspace->schedule
+    );
+    if (split < 0) {
+        return search_done(search, -1);
+    }
+    if (split == 0) {
+        return STAGE_NEXT;
+    }
+    const uint64_t unsplit_makespan_ns = search->simulation.makespan_ns;
+    StageOutcome outcome = search_simulate(search);
+    if (outcome == STAGE_NEXT &&
+        search->simulation_status == SHADOWSPILL_STATUS_OK &&
+        search->simulation.makespan_ns < unsplit_makespan_ns) {
+        search->split_applied = 1;
+        return outcome;
+    }
+    if (shadowspill_schedule_storage_copy(
+            &workspace->schedule, &workspace->unsplit
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    /* Answered by the simulation memo: this plan has been priced already. */
+    return search_simulate(search);
+}
+
+/*
+ * Put the plan back as it was before the split.
+ *
+ * A faster schedule that will not fit the pool is not an answer, and it must
+ * not cost the candidate the answer it had: without this, an unplaceable
+ * split sends the candidate down the capacity-refinement path and the plan it
+ * would have settled on is never seen again.
+ */
+static StageOutcome search_restore_unsplit(CandidateSearch *search) {
+    search->split_applied = 0;
+    if (shadowspill_schedule_storage_copy(
+            &search->workspace->schedule, &search->workspace->unsplit
+        ) != 0) {
+        return search_done(search, -1);
+    }
+    return STAGE_REPEAT;
+}
+
 static StageOutcome search_repair_admission(CandidateSearch *search) {
     if (search->admission_status != SHADOWSPILL_STATUS_REPLAY_INFEASIBLE) {
         return STAGE_NEXT;
@@ -2777,11 +2857,18 @@ static StageOutcome search_place(CandidateSearch *search) {
         placed == 0 ? SHADOWSPILL_STEP_MEASURED : 0U,
         placed == 0 ? required_bytes : 0U
     );
+    /* A pool that refused the plan is grounds to put a split back; a problem
+     * with no pool to place into never attempted it, and has nothing to say. */
+    const int refusable =
+        search->split_applied && search->problem->placement != NULL;
     if (placed != 0) {
-        return STAGE_NEXT;
+        return refusable ? search_restore_unsplit(search) : STAGE_NEXT;
     }
     if (required_bytes <= pool_bytes) {
         return search_keep_placed(search);
+    }
+    if (refusable) {
+        return search_restore_unsplit(search);
     }
     return search_refine_capacity(search, required_bytes, pool_bytes);
 }
@@ -3020,6 +3107,15 @@ static int evaluate_candidate(
             const Section repair = section_open(&workspace->sections.repair_ns);
             outcome = search_repair_admission(&search);
             section_close(repair);
+        }
+        if (outcome == STAGE_NEXT) {
+            /* Mostly a second simulation, so it is timed as one. */
+            const uint64_t admitted_ns = workspace->admission.time_ns;
+            const Section split = section_open(&workspace->sections.simulate_ns);
+            outcome = search_split_write_backs(&search);
+            section_close(split);
+            workspace->sections.admit_ns +=
+                workspace->admission.time_ns - admitted_ns;
         }
         /* A plan that simulated is a plan that could be the answer: name it,
          * measure whether it fits, and decide whether to keep looking. */

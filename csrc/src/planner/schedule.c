@@ -65,6 +65,48 @@ static void record_earliest(
     }
 }
 
+/* Index the write events per alias, so a pass can find the last write before
+ * a boundary by search rather than by walking the row. */
+static int index_write_events(ShadowSpillScheduleFacts *facts) {
+    facts->write_offsets = calloc(
+        (size_t)facts->alias_count + 1U, sizeof(*facts->write_offsets)
+    );
+    if (facts->write_offsets == NULL) {
+        return -1;
+    }
+    size_t total = 0U;
+    for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
+        facts->write_offsets[alias + 1U] = facts->write_offsets[alias];
+        for (uint32_t boundary = 0U; boundary < facts->boundary_count;
+             ++boundary) {
+            if (facts->write_events[
+                    cell(alias, facts->boundary_count, boundary)
+                ] != 0U) {
+                ++facts->write_offsets[alias + 1U];
+                ++total;
+            }
+        }
+    }
+    facts->write_boundaries = malloc(
+        (total == 0U ? 1U : total) * sizeof(*facts->write_boundaries)
+    );
+    if (facts->write_boundaries == NULL) {
+        return -1;
+    }
+    size_t position = 0U;
+    for (uint32_t alias = 0U; alias < facts->alias_count; ++alias) {
+        for (uint32_t boundary = 0U; boundary < facts->boundary_count;
+             ++boundary) {
+            if (facts->write_events[
+                    cell(alias, facts->boundary_count, boundary)
+                ] != 0U) {
+                facts->write_boundaries[position++] = boundary;
+            }
+        }
+    }
+    return 0;
+}
+
 int shadowspill_schedule_facts_create(
     const ShadowSpillPressureFitProblem *problem,
     ShadowSpillScheduleFacts *facts
@@ -130,7 +172,7 @@ int shadowspill_schedule_facts_create(
                 1U;
         }
     }
-    return 0;
+    return index_write_events(facts);
 }
 
 void shadowspill_schedule_facts_destroy(ShadowSpillScheduleFacts *facts) {
@@ -139,6 +181,8 @@ void shadowspill_schedule_facts_destroy(ShadowSpillScheduleFacts *facts) {
     }
     free(facts->earliest_access_task);
     free(facts->write_events);
+    free(facts->write_offsets);
+    free(facts->write_boundaries);
     memset(facts, 0, sizeof(*facts));
 }
 
@@ -1221,6 +1265,337 @@ int shadowspill_delay_indexed_fetch(
         };
     }
     return sort_storage_actions(storage) == 0 ? 1 : -1;
+}
+
+/*
+ * Clean early, release late.
+ *
+ * An eviction does two things at one boundary: it copies the object to spill
+ * and it drops the device copy. The copy has to happen somewhere, but it does
+ * not have to happen there. When the evict lane is idle between the object's
+ * last write and the boundary that evicts it, the copy can run in that idle
+ * time and the boundary is left with a release, which costs nothing.
+ *
+ * The lane's idle time is read from a simulation of this very schedule, so it
+ * is an estimate of where the copy fits rather than a promise; the caller
+ * simulates again and keeps the split only if the plan got faster.
+ */
+
+typedef struct ActionOrder {
+    uint32_t trigger;
+    uint32_t sequence;
+    uint32_t alias;
+    uint8_t kind;
+} ActionOrder;
+
+static int action_order_compare(const void *left_value, const void *right_value) {
+    const ActionOrder *left = left_value;
+    const ActionOrder *right = right_value;
+    if (left->trigger != right->trigger) {
+        return left->trigger < right->trigger ? -1 : 1;
+    }
+    if (left->sequence != right->sequence) {
+        return left->sequence < right->sequence ? -1 : 1;
+    }
+    /* One boundary's two halves of a split eviction: the copy precedes the
+     * release, which is the order they must run in. */
+    return left->kind == SHADOWSPILL_MEMORY_WRITE_BACK ? -1 : 1;
+}
+
+/* Where the lane is free for `duration` at or after `from`, tested against
+ * windows sorted by start. */
+/*
+ * A stretch of time in which something was waiting for room on a device --
+ * either for capacity outright, or for one allocation to be freed so that it
+ * could be reused.
+ *
+ * An eviction exists to free device memory, and the memory is only free once
+ * the copy has landed. So an eviction is worth splitting exactly when someone
+ * waited while it ran: the write-back does the copy earlier, and the release
+ * left behind frees the memory at once. An eviction nothing waited on is left
+ * alone -- moving it would spend lane time and spill capacity to buy nothing.
+ */
+typedef struct CapacityStall {
+    uint64_t start;
+    uint64_t end;
+    /* The furthest any stall up to this one ran to, so one search answers
+     * whether a stretch of time overlaps any of them. */
+    uint64_t max_end;
+} CapacityStall;
+
+static int capacity_stall_compare(
+    const void *left_value, const void *right_value
+) {
+    const CapacityStall *left = left_value;
+    const CapacityStall *right = right_value;
+    if (left->start != right->start) {
+        return left->start < right->start ? -1 : 1;
+    }
+    return 0;
+}
+
+static void note_capacity_stall(
+    CapacityStall *stalls,
+    uint32_t *count,
+    uint32_t stall_mask,
+    uint64_t ready_ns,
+    uint64_t start_ns
+) {
+    /* Two waits are gated by an eviction: a hard capacity wait, and a wait
+     * for one allocation to be freed so it can be reused. In practice it is
+     * the second that shows up -- across the subset corpus the plans record
+     * no capacity wait at all and 3,407 reuse waits -- so keying on capacity
+     * alone made this pass unable to fire on any real program. */
+    const uint32_t gated = (uint32_t)SHADOWSPILL_STALL_DEVICE_CAPACITY |
+                           (uint32_t)SHADOWSPILL_STALL_MEMORY_REUSE;
+    if ((stall_mask & gated) == 0U || start_ns <= ready_ns) {
+        return;
+    }
+    stalls[(*count)++] = (CapacityStall){.start = ready_ns, .end = start_ns};
+}
+
+/* Whether anything was waiting for device room while `from`..`until` ran. */
+static int stalled_within(
+    const CapacityStall *stalls,
+    uint32_t count,
+    uint64_t from,
+    uint64_t until
+) {
+    uint32_t low = 0U;
+    uint32_t high = count;
+    while (low < high) {
+        const uint32_t middle = low + (high - low) / 2U;
+        if (stalls[middle].start < until) {
+            low = middle + 1U;
+        } else {
+            high = middle;
+        }
+    }
+    /* `low` counts the stalls that began before the copy ended; one of them
+     * overlaps it if any was still waiting when the copy began. */
+    return low > 0U && stalls[low - 1U].max_end > from;
+}
+
+/* Where an eviction ran, so the pass can tell whether it held anything up. */
+typedef struct MeasuredEviction {
+    uint32_t alias;
+    uint32_t trigger;
+    uint64_t start;
+    uint64_t end;
+} MeasuredEviction;
+
+static int measured_eviction_compare(
+    const void *left_value, const void *right_value
+) {
+    const MeasuredEviction *left = left_value;
+    const MeasuredEviction *right = right_value;
+    if (left->alias != right->alias) {
+        return left->alias < right->alias ? -1 : 1;
+    }
+    if (left->trigger != right->trigger) {
+        return left->trigger < right->trigger ? -1 : 1;
+    }
+    return 0;
+}
+
+static const MeasuredEviction *measured_eviction_find(
+    const MeasuredEviction *items,
+    uint32_t count,
+    uint32_t alias,
+    uint32_t trigger
+) {
+    uint32_t low = 0U;
+    uint32_t high = count;
+    while (low < high) {
+        const uint32_t middle = low + (high - low) / 2U;
+        const MeasuredEviction *item = &items[middle];
+        if (item->alias < alias ||
+            (item->alias == alias && item->trigger < trigger)) {
+            low = middle + 1U;
+        } else {
+            high = middle;
+        }
+    }
+    if (low < count && items[low].alias == alias &&
+        items[low].trigger == trigger) {
+        return &items[low];
+    }
+    return NULL;
+}
+
+/* The task that wrote the alias last before `trigger`, or UINT32_MAX for an
+ * alias this program never writes -- whose spill copy is already current, so
+ * the emitter would have released it rather than evicting it. */
+static uint32_t last_write_before(
+    const ShadowSpillScheduleFacts *facts, uint32_t alias, uint32_t trigger
+) {
+    uint32_t low = facts->write_offsets[alias];
+    const uint32_t from = low;
+    uint32_t high = facts->write_offsets[alias + 1U];
+    while (low < high) {
+        const uint32_t middle = low + (high - low) / 2U;
+        if (facts->write_boundaries[middle] > trigger) {
+            high = middle;
+        } else {
+            low = middle + 1U;
+        }
+    }
+    if (low == from) {
+        return UINT32_MAX;
+    }
+    /* A write by task t is recorded at boundary t + 1. */
+    return facts->write_boundaries[low - 1U] - 1U;
+}
+
+int shadowspill_split_blocking_evictions(
+    const ShadowSpillScheduleFacts *facts,
+    const ShadowSpillSimulationResult *simulation,
+    ShadowSpillScheduleStorage *storage
+) {
+    if (facts == NULL || simulation == NULL || storage == NULL) {
+        return -1;
+    }
+    const ShadowSpillSimulationProgram *program = facts->problem->simulation;
+    const uint32_t actions = storage->value.action_count;
+    /* A plan answered from the simulation memo keeps its makespan but not its
+     * timeline, and the timeline is the whole input here: such a plan has
+     * been priced before, so there is nothing to learn from it. */
+    if (actions == 0U || simulation->task_intervals == NULL ||
+        simulation->transfer_intervals == NULL ||
+        simulation->task_interval_count == 0U) {
+        return 0;
+    }
+    const uint32_t tasks = simulation->task_interval_count;
+    const uint32_t intervals = simulation->transfer_interval_count;
+    CapacityStall *stalls = malloc(
+        ((size_t)tasks + intervals + 1U) * sizeof(*stalls)
+    );
+    MeasuredEviction *measured = malloc(
+        ((size_t)intervals + 1U) * sizeof(*measured)
+    );
+    ActionOrder *order = malloc(((size_t)actions * 2U) * sizeof(*order));
+    if (stalls == NULL || measured == NULL || order == NULL) {
+        free(stalls);
+        free(measured);
+        free(order);
+        return -1;
+    }
+    uint32_t stall_count = 0U;
+    for (uint32_t index = 0U; index < tasks; ++index) {
+        const ShadowSpillTaskInterval *item = &simulation->task_intervals[index];
+        note_capacity_stall(
+            stalls, &stall_count, item->stall_mask, item->ready_ns,
+            item->start_ns
+        );
+    }
+    uint32_t measured_count = 0U;
+    for (uint32_t index = 0U; index < intervals; ++index) {
+        const ShadowSpillTransferInterval *item =
+            &simulation->transfer_intervals[index];
+        note_capacity_stall(
+            stalls, &stall_count, item->stall_mask, item->ready_ns,
+            item->start_ns
+        );
+        if (item->kind == SHADOWSPILL_MEMORY_EVICT) {
+            measured[measured_count++] = (MeasuredEviction){
+                .alias = item->alias,
+                .trigger = item->trigger_task,
+                .start = item->start_ns,
+                .end = item->end_ns,
+            };
+        }
+    }
+    if (stall_count == 0U) {
+        /* Nothing waited for device room anywhere, so no eviction is in
+         * anyone's way and there is nothing here to buy. */
+        free(stalls);
+        free(measured);
+        free(order);
+        return 0;
+    }
+    qsort(stalls, stall_count, sizeof(*stalls), capacity_stall_compare);
+    uint64_t furthest = 0U;
+    for (uint32_t index = 0U; index < stall_count; ++index) {
+        if (stalls[index].end > furthest) {
+            furthest = stalls[index].end;
+        }
+        stalls[index].max_end = furthest;
+    }
+    qsort(
+        measured, measured_count, sizeof(*measured), measured_eviction_compare
+    );
+
+    uint32_t split_count = 0U;
+    for (uint32_t index = 0U; index < actions; ++index) {
+        if (storage->value.action_kinds[index] != SHADOWSPILL_MEMORY_EVICT) {
+            continue;
+        }
+        const uint32_t alias = storage->value.action_aliases[index];
+        const uint32_t trigger = storage->value.action_trigger_tasks[index];
+        if (alias >= facts->alias_count || trigger >= program->task_count ||
+            program->alias_retain_spill_copy[alias] == 0U) {
+            /* Without a retained copy a release frees the spill copy too, so
+             * splitting would discard what the write-back wrote. */
+            continue;
+        }
+        const MeasuredEviction *own = measured_eviction_find(
+            measured, measured_count, alias, trigger
+        );
+        if (own == NULL || own->end <= own->start ||
+            !stalled_within(stalls, stall_count, own->start, own->end)) {
+            continue;
+        }
+        /* The copy carries the value the last write left, so that boundary is
+         * where it belongs: the earliest point the copy is correct, and the
+         * furthest from the boundary that was waiting for it. Where the copy
+         * actually runs is the simulator's to decide -- it owns the lane, and
+         * it prices the queue that forms when several copies move at once. */
+        const uint32_t last_write = last_write_before(facts, alias, trigger);
+        if (last_write == UINT32_MAX || last_write >= trigger) {
+            continue;
+        }
+        storage->value.action_kinds[index] = SHADOWSPILL_MEMORY_WRITE_BACK;
+        storage->value.action_trigger_tasks[index] = last_write;
+        order[actions + split_count] = (ActionOrder){
+            .trigger = trigger,
+            .sequence = index,
+            .alias = alias,
+            .kind = SHADOWSPILL_MEMORY_RELEASE,
+        };
+        ++split_count;
+    }
+    if (split_count == 0U) {
+        free(stalls);
+        free(measured);
+        free(order);
+        return 0;
+    }
+    for (uint32_t index = 0U; index < actions; ++index) {
+        order[index] = (ActionOrder){
+            .trigger = storage->value.action_trigger_tasks[index],
+            .sequence = index,
+            .alias = storage->value.action_aliases[index],
+            .kind = storage->value.action_kinds[index],
+        };
+    }
+    const uint32_t total = actions + split_count;
+    if (reserve_schedule_actions(storage, total) != 0) {
+        free(stalls);
+        free(measured);
+        free(order);
+        return -1;
+    }
+    qsort(order, total, sizeof(*order), action_order_compare);
+    for (uint32_t index = 0U; index < total; ++index) {
+        storage->value.action_trigger_tasks[index] = order[index].trigger;
+        storage->value.action_aliases[index] = order[index].alias;
+        storage->value.action_kinds[index] = order[index].kind;
+    }
+    storage->value.action_count = total;
+    free(stalls);
+    free(measured);
+    free(order);
+    return (int)split_count;
 }
 
 int shadowspill_advance_indexed_fetch_to_release(
