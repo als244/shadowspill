@@ -352,8 +352,10 @@ def _planning_breakdown(
     )
     program_lowering = phase_seconds.get("program_lowering", 0.0)
     pressurefit = phase_seconds.get("pressurefit_simulation", 0.0)
-    admission = phase_seconds.get("spill_admission", 0.0) + phase_seconds.get(
-        "slab_admission", 0.0
+    admission = (
+        phase_seconds.get("admission_facts", 0.0)
+        + phase_seconds.get("spill_admission", 0.0)
+        + phase_seconds.get("slab_admission", 0.0)
     )
     classified = (
         lowering_aot
