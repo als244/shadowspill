@@ -739,17 +739,6 @@ def pool_object_pointer(runtime: Runtime, object_id: int, pool_id: int) -> int:
     return int(snapshot.pointer or 0)
 
 
-def unregister_pool_object(runtime: Runtime, object_id: int) -> None:
-    """Give one registered object back to its pool."""
-
-    _require_status(
-        runtime_library().shadowspill_unregister_object(
-            runtime._runtime_handle, object_id
-        ),
-        f"release persistent object {object_id}",
-    )
-
-
 def _snapshot(
     runtime_handle: int, object_id: int, pool_id: int
 ) -> ObjectLocationSnapshot:

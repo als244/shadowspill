@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 from shadowspill.planner.artifact_store import digest_directory
+from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 
 from .records import PROFILE_SCHEMA, ProfileKey, TaskMeasurement
 
@@ -38,9 +39,7 @@ class ProfileStore:
         root: str | Path | None = None,
         *,
         compiled_manifest_root: str | Path | None = None,
-        read_enabled: bool = True,
-        write_enabled: bool = True,
-        overwrite: bool = False,
+        policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
         self.root = (
@@ -53,20 +52,19 @@ class ProfileStore:
             if compiled_manifest_root is not None
             else self.root / "compiled_manifests"
         )
-        self.read_enabled = read_enabled
-        self.write_enabled = write_enabled
-        self.overwrite = overwrite
+        self.policy = policy
         self.artifact_recorder = artifact_recorder
 
     def path(self, key: ProfileKey) -> Path:
         return digest_directory(self.root, key.digest) / "measurement.json"
 
     def read(self, key: ProfileKey) -> TaskMeasurement | None:
-        if not self.read_enabled:
+        if not self.policy.read_enabled:
             return None
         path = self.path(key)
         payload = self._read_payload(path)
         if payload is None:
+            self.policy.refuse_miss("profile", key.digest)
             return None
         self._validate_payload(path, key, payload)
         measurement = TaskMeasurement.from_dict(payload.get("measurement"))
@@ -102,7 +100,7 @@ class ProfileStore:
         *,
         replace_invalid: bool = False,
     ) -> None:
-        if not self.write_enabled:
+        if not self.policy.write_enabled:
             return
         path = self.path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,7 +126,7 @@ class ProfileStore:
         encoded: str,
         replace_invalid: bool,
     ) -> bool:
-        if not path.exists() or self.overwrite or replace_invalid:
+        if not path.exists() or self.policy.overwrite or replace_invalid:
             return False
         try:
             existing = path.read_text()
@@ -137,7 +135,7 @@ class ProfileStore:
         if existing != encoded:
             raise ValueError(
                 "fresh profiling differs from an existing cache entry; "
-                "use overwrite_plan=True or a new implementation_revision: "
+                "use a 'refresh' store mode or a new implementation_revision: "
                 f"{path}"
             )
         return True

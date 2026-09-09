@@ -6,7 +6,6 @@ import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from fractions import Fraction
 from typing import Any, Literal, NoReturn
 
 import torch
@@ -16,22 +15,21 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.errors import (
     AdmissionError,
     CompilationError,
+    PlanInfeasibleError,
     PlanningError,
+    PlanSearchExhaustedError,
 )
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
 from shadowspill.planner import (
     AdmissionFacts,
-    PressureFitInfeasibleError,
-    PressureFitResult,
-    PressureFitSearchExhaustedError,
+    ProgramPlanResult,
     validate_schedule_feasibility,
 )
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
-from shadowspill.planner.program import PressureFitProgram, StepProgram
-from shadowspill.planner.recomputation import ShareValue, resolution_options_or_default
-from shadowspill.planner.request import PressureFitOptions
+from shadowspill.planner.program import ShadowSpillPlanningProblem, StepProgram
+from shadowspill.planner.search import SearchOptions
 from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
@@ -738,7 +736,7 @@ def _report_training_program_inventory(
         key=lambda item: item.workspace_bytes,
     )
     timer.progress(
-        "recurrent Program inventory: "
+        "recurrent ShadowSpillProgram inventory: "
         f"tasks={len(recurrent.program.tasks)}, "
         f"objects={len(recurrent.program.objects)}, "
         f"aliases={len(recurrent.program.alias_groups)}, "
@@ -747,14 +745,13 @@ def _report_training_program_inventory(
     )
 
 
-def pressurefit_training_programs(
+def plan_training_programs(
     programs: TrainingProgramArtifacts,
     *,
-    options: PressureFitOptions,
     stores: PlanningStores,
     timer: PlanningTimer,
-    resolution_options: tuple[Fraction, ...] | None = None,
-    incumbent: PressureFitResult | None = None,
+    search_options: SearchOptions | None = None,
+    incumbent: ProgramPlanResult | None = None,
 ) -> TrainingSelections:
     """Resolve recurrent and, when required, lazy-state first-step selections.
 
@@ -773,7 +770,7 @@ def pressurefit_training_programs(
                 final_residency=programs.recurrent.final_residency,
                 config=programs.simulation_config,
                 admission=programs.recurrent_admission,
-                resolution_options=resolution_options,
+                search_options=search_options,
             )
             if needs_initial:
                 validate_schedule_feasibility(
@@ -782,17 +779,17 @@ def pressurefit_training_programs(
                     final_residency=programs.initial.final_residency,
                     config=programs.simulation_config,
                     admission=programs.initial_admission,
-                    resolution_options=resolution_options,
+                    search_options=search_options,
                 )
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
-        except PressureFitSearchExhaustedError as error:
+        except PlanSearchExhaustedError as error:
             raise public_search_exhausted_error(error) from error
     scratch_reserve = dynamic_scratch_reserve_bytes(
         programs.measurements_by_profile,
         minimum_bytes=programs.dynamic_scratch_reserve_bytes,
     )
-    with timer.measure("pressurefit_simulation"):
+    with timer.measure("search"):
         try:
             recurrent = resolve_fixed_layout_selection(
                 programs.simulation_config,
@@ -804,8 +801,7 @@ def pressurefit_training_programs(
                     initial_residency=programs.recurrent.initial_residency,
                     final_residency=programs.recurrent.final_residency,
                     config=config,
-                    options=options,
-                    resolution_options=resolution_options,
+                    search_options=search_options,
                     incumbent=incumbent,
                     placement=placement_facts(
                         programs.recurrent_admission,
@@ -827,8 +823,7 @@ def pressurefit_training_programs(
                         initial_residency=programs.initial.initial_residency,
                         final_residency=programs.initial.final_residency,
                         config=config,
-                        options=options,
-                        resolution_options=resolution_options,
+                        search_options=search_options,
                         placement=placement_facts(
                             programs.initial_admission,
                             scratch_reserve_bytes=scratch_reserve,
@@ -841,9 +836,9 @@ def pressurefit_training_programs(
                 if needs_initial
                 else None
             )
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error
-        except PressureFitSearchExhaustedError as error:
+        except PlanSearchExhaustedError as error:
             raise public_search_exhausted_error(error) from error
         except FixedLayoutInfeasibleError as error:
             raise AdmissionError(f"fixed slab admission failed: {error}") from error
@@ -912,7 +907,7 @@ def admit_training_plan(
     stores: PlanningStores,
     timer: PlanningTimer,
     started: int,
-    resolution_options: tuple[Fraction, ...] | None = None,
+    search_options: SearchOptions | None = None,
 ) -> PlannedTrainStep:
     """Physically admit selections and publish the training callable/report."""
 
@@ -1022,7 +1017,7 @@ def admit_training_plan(
             memory=memory,
             timer=timer,
             started=started,
-            resolution_options=resolution_options,
+            search_options=search_options,
         )
         return PlannedTrainStep(
             model,
@@ -1129,7 +1124,7 @@ def _training_plan_report(
     memory: PlanMemory,
     timer: PlanningTimer,
     started: int,
-    resolution_options: tuple[Fraction, ...] | None = None,
+    search_options: SearchOptions | None = None,
 ) -> PlanReport:
     with timer.measure("diagnostic_inventory"):
         task_stage_map, unique_stages = training_stage_inventory(
@@ -1164,7 +1159,7 @@ def _training_plan_report(
         aot_unique_stage_contracts=stores.graph_pairs.unique_keys,
         aot_graph_pair_cache_hits=stores.graph_pairs.hits,
         aot_graph_pair_cache_misses=stores.graph_pairs.misses,
-        pressurefit_results=(
+        search_results=(
             (admitted.recurrent_result,)
             if admitted.initial_result is None
             else (admitted.initial_result, admitted.recurrent_result)
@@ -1198,7 +1193,7 @@ def _training_plan_report(
         ),
         optimizer_ordering=optimizer_ordering,
         data_ordering=data_ordering,
-        resolution_options=resolution_options,
+        search_options=search_options,
         memory=memory,
     )
     return publish_plan_report(
@@ -1357,7 +1352,7 @@ def make_training_program(
             memory.runtime,
             error,
             lambda: rollback_training_materialization(model, materialized),
-            operation="build training Program",
+            operation="build training ShadowSpillProgram",
         )
     try:
         rollback_training_materialization(model, materialized)
@@ -1366,7 +1361,7 @@ def make_training_program(
             memory.runtime,
             error,
             lambda: None,
-            operation="release training Program build state",
+            operation="release training ShadowSpillProgram build state",
         )
     return result
 
@@ -1479,11 +1474,11 @@ def _pressurefit_program_artifact(
     maximum_execution_budget_bytes: int,
     maximum_spill_budget_bytes: int,
     dynamic_scratch_reserve_bytes_: int,
-) -> PressureFitProgram:
+) -> ShadowSpillPlanningProblem:
     device = simulation_config.devices[0]
     fixed_bytes = source_execution_budget_bytes - admission.pool_capacity_bytes
     object_reserve = admission.pool_capacity_bytes - device.capacity_bytes
-    return PressureFitProgram(
+    return ShadowSpillPlanningProblem(
         role=role,
         program=lowered.program,
         initial_residency=lowered.initial_residency,
@@ -1522,7 +1517,7 @@ def _program_phase_timings(
     )
     if sum(duration for _name, duration in phases) > elapsed:
         raise RuntimeError(
-            "Program construction phase intervals overlap: measured time exceeds wall"
+            "program construction phase intervals overlap: measured time exceeds wall"
         )
     return (*phases, ("total", elapsed))
 
@@ -1547,7 +1542,7 @@ def build_training(
     allocation_probe_repetitions: int,
     minimum_object_bytes_evict_eligible: int = 0,
     deterministic: bool = False,
-    resolution_options: Sequence[ShareValue] | None = None,
+    search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
@@ -1559,7 +1554,7 @@ def build_training(
     started = time.perf_counter_ns()
     # Validated before any capture; the library's default when none are
     # named, which is what the store keys and the report records.
-    chosen = resolution_options_or_default(resolution_options)
+    chosen = search_options
     timer = PlanningTimer(verbose=verbose)
     artifacts = open_planning_stores(artifact_store)
     captured = capture_training_graphs(
@@ -1602,17 +1597,11 @@ def build_training(
             data_ordering=data_ordering,
             timer=timer,
         )
-        selections = pressurefit_training_programs(
+        selections = plan_training_programs(
             programs,
-            options=PressureFitOptions(
-                minimum_object_bytes_evict_eligible=(
-                    minimum_object_bytes_evict_eligible
-                ),
-                deterministic=deterministic,
-            ),
             stores=artifacts,
             timer=timer,
-            resolution_options=chosen,
+            search_options=chosen,
             incumbent=None if incumbent is None else incumbent.result,
         )
         executable = compile_selected_training_tasks(
@@ -1643,7 +1632,7 @@ def build_training(
         stores=artifacts,
         timer=timer,
         started=started,
-        resolution_options=chosen,
+        search_options=chosen,
     )
 
 
@@ -1748,7 +1737,7 @@ def _build_training_admissions(
 
 def _selected_artifact_digests(
     lowered: LoweredTrainingProgram,
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
 ) -> set[str]:
     selected_task_ids = {
         task.task_id for task in lowered.program.selected_tasks(selected.selections)
@@ -1801,7 +1790,7 @@ def _verify_optimizer_phase_identity(
 
 def _execution_plan(
     lowered: LoweredTrainingProgram,
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     optimizer_type: str,
     admission: PhysicalAdmission,
 ) -> ExecutionPlan:
@@ -1842,7 +1831,7 @@ __all__ = [
     "capture_training_graphs",
     "compile_selected_training_tasks",
     "materialize_training_state",
-    "pressurefit_training_programs",
+    "plan_training_programs",
     "profile_training_tasks",
     "rollback_training_materialization",
 ]

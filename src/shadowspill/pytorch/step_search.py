@@ -17,8 +17,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from fractions import Fraction
+from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
 from types import MappingProxyType
@@ -32,32 +31,26 @@ from shadowspill.errors import (
     PlanSearchExhaustedError,
 )
 from shadowspill.planner import (
-    PressureFitInfeasibleError,
-    PressureFitOptions,
-    PressureFitSearchExhaustedError,
+    SearchOptions,
     StepDataOrdering,
-    pressurefit_program,
+    plan_program,
 )
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planner.artifact_store import StoreMode
 from shadowspill.planner.diagnostics import INCUMBENT_CANDIDATE_ID
 from shadowspill.planner.diagnostics.plan import (
     PlanSummary,
     summarize_selected_plan,
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
-from shadowspill.planner.recomputation import ShareValue, resolution_options_or_default
-from shadowspill.planner.result import PressureFitResult
-from shadowspill.pytorch.api import make_step_program
+from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.pytorch.api import build_step_program
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
 
-_INFEASIBLE = (
-    PressureFitInfeasibleError,
-    PlanInfeasibleError,
-    SimulationInfeasibleError,
-)
-_EXHAUSTED = (PressureFitSearchExhaustedError, PlanSearchExhaustedError)
+_INFEASIBLE = (PlanInfeasibleError, SimulationInfeasibleError)
+_EXHAUSTED = (PlanSearchExhaustedError,)
 # a point the planner refuses, for whatever reason it gives, is recorded and
 # the sweep goes on; ProblemPreparationError is one such RuntimeError
 _REJECTED = (RuntimeError,)
@@ -203,7 +196,7 @@ class GraphPairOutcome:
 
 
 def _graph_pair_outcomes(
-    result: PressureFitResult,
+    result: ProgramPlanResult,
 ) -> tuple[GraphPairOutcome, ...]:
     """One record per graph-pair selection the search evaluated.
 
@@ -328,7 +321,7 @@ class StepSearchReport:
     skipped: tuple[tuple[int, int, str], ...]
     #: The resolution options every point was searched over, as exact
     #: fractions of the flexible groups recomputing.
-    resolution_options: tuple[Fraction, ...] | None = None
+    search_options: SearchOptions | None = None
     #: The calibration every point planned against instead of its program's
     #: own, or `None` when each program's embedded calibration was used; the
     #: per-geometry record says what that was.
@@ -388,10 +381,8 @@ class StepSearchReport:
             "total_sequences_per_step": self.total_sequences_per_step,
             "sequence_length": self.sequence_length,
             "budgets": [list(item) for item in self.budgets],
-            "resolution_options": (
-                None
-                if self.resolution_options is None
-                else [str(share) for share in self.resolution_options]
+            "search_options": (
+                None if self.search_options is None else self.search_options.to_dict()
             ),
             "transfer_bandwidths": (
                 None
@@ -484,17 +475,17 @@ def plan_step_search(
     transfer_bandwidths: TransferBandwidths | None = None,
     min_tokens_per_microbatch: int | None = None,
     max_tokens_per_microbatch: int | None = None,
-    options: PressureFitOptions | None = None,
-    minimum_object_bytes_evict_eligible: int = 1 << 20,
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     orderings: Callable[[int], Sequence[StepDataOrdering]] | None = None,
-    resolution_options: Sequence[ShareValue] | None = None,
+    search_options: SearchOptions | None = None,
     incumbents: bool = True,
-    artifact_store_dir: str | PathLike[str] | None = None,
-    plan_store_dir: str | PathLike[str] | None = None,
+    artifact_store: str | PathLike[str] | None = None,
+    build_store: str | PathLike[str] | None = None,
+    plan_store: str | PathLike[str] | None = None,
+    build_store_mode: StoreMode = "contribute",
+    plan_store_mode: StoreMode = "contribute",
     verbose: bool = False,
     progress: Callable[[str], None] | None = None,
-    force_fresh: bool = False,
     implementation_revision: str | None = None,
 ) -> StepSearchReport:
     """Plan every admitted geometry under every budget; execute nothing.
@@ -505,10 +496,10 @@ def plan_step_search(
     embeds from the runtime; leave it unset to plan against the measured
     routes. Either way the report records the calibration each geometry's
     program embeds, and the override when there was one, so two searches
-    can be compared or one pinned to another's. ``options`` selects the
-    search policy;
-    ``minimum_object_bytes_evict_eligible`` applies on top of it with the same
-    meaning and default as :func:`plan_step`. Failures are outcomes, not
+    can be compared or one pinned to another's. ``options`` is what every search is
+    told, and ``search_options`` what this one is; both reach every point
+    unchanged, so a value set here is the value searched under. Failures
+    are outcomes, not
     errors: a geometry-budget point that
     proves infeasible or exhausts its search budget is reported with that
     status while the search continues. A geometry whose build exhausts the
@@ -526,7 +517,7 @@ def plan_step_search(
     planned under every budget. The default, :func:`default_orderings`, is
     every ``depth x breadth`` factor pair with the flags at their defaults.
 
-    ``resolution_options`` names the resolutions every point is searched
+    ``search_options`` names the resolutions every point is searched
     over, with the meaning it has for :func:`plan_step`; ``None`` is the
     library's default of every quarter. Options that are not valid are
     rejected before any geometry is built.
@@ -539,7 +530,7 @@ def plan_step_search(
     budget it came from as ``incumbent_budget_bytes``. ``False`` searches
     every point alone, which is how the two are compared.
 
-    ``plan_store_dir`` keeps every point's plan records apart from the
+    ``plan_store`` keeps every point's plan records apart from the
     artifact store, so a search can reuse another run's captures, profiles
     and lowering and still plan every point itself; ``None`` keeps them in
     the store, where a matching plan would be read back instead of planned.
@@ -554,11 +545,7 @@ def plan_step_search(
     # The best plan seen under each budget pair, across every geometry and
     # ordering: what a run of the winner starts from.
     best_by_budget: dict[tuple[int, int], tuple[int, AnnotatedProgramPlan]] = {}
-    chosen = resolution_options_or_default(resolution_options)
-    options = replace(
-        options or PressureFitOptions(),
-        minimum_object_bytes_evict_eligible=minimum_object_bytes_evict_eligible,
-    )
+    chosen = search_options
     geometries, skipped = search_geometries(
         total_sequences_per_step,
         sequence_length=sequence_length,
@@ -588,7 +575,7 @@ def plan_step_search(
                 build_started = time.perf_counter()
                 try:
                     examples = example_microbatches(sequences, accumulation)
-                    step = make_step_program(
+                    step = build_step_program(
                         model,
                         objective=objective,
                         optimizer=optimizer,
@@ -604,10 +591,10 @@ def plan_step_search(
                         reverse_breadth=ordering.reverse_breadth,
                         pair_loss=ordering.pair_loss,
                         verbose=verbose,
-                        artifact_store_dir=artifact_store_dir,
-                        save_plan=True,
-                        force_fresh=force_fresh,
-                        implementation_revision=implementation_revision,
+                        artifact_store=artifact_store,
+                        build_store=build_store,
+                        build_store_mode=build_store_mode,
+                                    implementation_revision=implementation_revision,
                     )
                 except Exception as error:
                     if not _device_exhausted(error):
@@ -676,23 +663,20 @@ def plan_step_search(
                 outcomes: tuple[GraphPairOutcome, ...] = ()
                 inherited: int | None = None
                 try:
-                    plan = pressurefit_program(
+                    plan = plan_program(
                         step.recurrent,
                         execution_budget=execution_budget,
                         spill_budget=spill_budget,
                         transfer_bandwidths=transfer_bandwidths,
-                        options=options,
-                        resolution_options=chosen,
+                        search_options=chosen,
                         incumbent=(
                             carried[1] if incumbents and carried is not None else None
                         ),
-                        artifact_store_dir=artifact_store_dir,
-                        plan_store_dir=plan_store_dir,
+                        artifact_store=artifact_store,
+                        plan_store=plan_store,
+                        plan_store_mode=plan_store_mode,
                         verbose=verbose,
-                        save_plan=True,
-                        force_fresh=force_fresh,
-                        overwrite_plan=False,
-                    )
+                                )
                 except _EXHAUSTED as error:
                     status, failure = "search_exhausted", str(error)
                 except _INFEASIBLE as error:
@@ -752,7 +736,7 @@ def plan_step_search(
         geometries=tuple(builds),
         points=tuple(points),
         skipped=skipped,
-        resolution_options=chosen,
+        search_options=chosen,
         transfer_bandwidths=transfer_bandwidths,
         winner_plans=MappingProxyType(
             {budget: held[1] for budget, held in best_by_budget.items()}

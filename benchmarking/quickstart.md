@@ -19,8 +19,8 @@ python -m benchmarking.quickstart mlops_olmoe
 
 **Planning only.** Search budgets but no run budgets: every geometry
 plans under every budget, figures render if asked, and nothing executes.
-This mode needs the device only for profiling fresh geometries; warm
-artifact stores keep it cheap.
+This mode needs the device only for profiling fresh geometries; a warm
+build store keeps it cheap.
 
 ```bash
 python -m benchmarking.quickstart mlops_olmoe \
@@ -81,34 +81,55 @@ Budgets:
 | `--search-budget-gib` | Comma-separated execution budgets to search and plot across, for example `10,12,16` | the run budgets, or the retained value |
 | `--run-budget-gib` | Comma-separated execution budgets to actually run; every one must appear among the search budgets | retained value when no budget flag is given; otherwise none |
 | `--spill-gib` | Pinned-host spill budget, shared by every point | retained value |
+| `--steps` | Optimizer steps per run budget; the last is traced | 5 |
+| `--seed` | Model and data seed | 0 |
 
-Output and caching:
+What the search plans:
+
+| Argument | Meaning | Default |
+|---|---|---|
+| `--orderings` | Which microbatch orderings the search tries per geometry: `factors` lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the plain walk, one microbatch start to finish before the next. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
+| `--resolution-options` | The shares of flexible groups to recompute, as `quarters`, `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point: on the llama3 frontier `eighths` cost 1.75x the search wall and beat the quarter rungs by a median of 0.00 % (mean 0.77 %). The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
+| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run (22 against 26 GB/s on one machine, one hour apart). The run phase keeps the live calibration | calibrated |
+| `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
+| `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its live calibration differs from what the search planned against. `--no-incumbents` searches every point alone, for comparing the two | on |
+
+Output and stores:
 
 | Argument | Meaning | Default |
 |---|---|---|
 | `--plots` | Render the figures below | off |
-| `--output-dir` | Where this run writes: its search report, log, traced steps, figures, and — unless `--artifact-store` or `--plan-store` point elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>/seq<length>/seqsperstep<n>` |
+| `--output-dir` | Where this run writes: its console and progress logs, search report, traced steps, figures, and — unless a store flag points elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>/seq<length>/seqsperstep<n>` |
+| `--force-overwrite` | Replace an existing run at that directory. Its stores are kept, being content-addressed | off |
+| `--artifact-store` | Roots both store trees | `<output-dir>/artifact_store` |
+| `--build-store` | The captures, graph pairs, profiles and compiled artifacts to read and write; overrides `--artifact-store` for the build tree. Point it at another run's store to skip work already paid for there | the artifact store |
+| `--plan-store` | Where this run's plans go: every selection request, result and plan manifest; overrides `--artifact-store` for the planning tree | `<output-dir>/plan_store` |
+| `--build-store-mode`, `--plan-store-mode` | What this run does with each tree: `contribute` reads hits and writes misses, `reuse` reads and persists nothing, `require` refuses a miss | `contribute` |
 
-Each run budget also writes its traced step beside those, as
-`<model>_seq<length>_seqsperstep<n>.step-<budget>gib.json`: the complete `StepDiagnostics`
-for that budget's final step, which is the only step run with
-`runtime_trace=True`. The figures keep nine aggregate numbers per budget, and
-those answer *how far* the prediction was from the measurement; the trace is
-what answers *which* transfers drifted and *which* tasks ran long. It is the
-same `shadowspill.step_diagnostics` schema the performance matrix writes, so
-`python -m tools.qualification.gap_report` reads a quickstart run the same way
-it reads a matrix.
+A run owns both trees by default, so everything it measured is in one place
+and nothing it reused is ambiguous. That means a fresh run pays capture,
+compilation and profiling in full. To skip work already done, point
+`--build-store` at another run's build tree: it is content-addressed, so
+whatever matches by structural digest is reused and the rest is built. The
+plans stay this run's own, so a shared build store never answers a point with
+a plan another run searched; that is what makes a planning-time comparison
+between two runs on one store honest.
 
-Everything a run writes lands in one directory, keyed by model and then by
-each parameter of the run's shape, so another shape is a sibling rather than an
-overwrite:
+## What a run writes
+
+Everything lands in one directory, keyed by model and then by each parameter
+of the run's shape, so another shape is a sibling rather than an overwrite:
 
 ```text
-benchmarking/quickstart/
-  mlops_llama3/
+benchmarking/quickstart_reports/
+  mlops_llama3_<revision>/
     seq1024/
       seqsperstep64/
         search.json             the search report, lossless
+        console.log             everything the run printed, as it was
+                                printed: the geometry table, the chosen
+                                plans and their breakdowns, and the
+                                per-step numbers
         progress.log            planner phases and search progress, wall-clock
                                 stamped and tailable while it runs
         steps/
@@ -126,42 +147,33 @@ benchmarking/quickstart/
 ```
 
 Each directory level is exactly one parameter, so the shapes at one sequence
-length sit together, which is the comparison worth making most often.
+length sit together, which is the comparison worth making most often. A
+directory that already holds a run is refused rather than replaced, since
+changing budgets for the same model, length and step size produces a
+different answer at the same path; `--force-overwrite` or `--output-dir` is
+the way past that.
 
-A run owns both stores by default, so everything it measured is in one place
-and nothing it reused is ambiguous. That means a fresh run pays capture,
-compilation and profiling in full. To skip work already done, point
-`--artifact-store` at another run's store: the store is content-addressed, so
-whatever matches by structural digest is reused and the rest is built. The
-plans stay this run's own, in its `plan_store`, so a shared artifact store
-never answers a point with a plan another run searched; that is what makes a
-planning-time comparison between two runs on one store honest.
-
-`--output-dir` moves the whole tree somewhere else; `--artifact-store` and
-`--plan-store` point the two stores at existing ones. Those are the only path
-flags, because everything else a run writes has a fixed name inside the run
-directory.
-| `--steps` | Optimizer steps per run budget; the last is traced | 5 |
-| `--seed` | Model and data seed | 0 |
-| `--artifact-store` | The captures, graph pairs, profiles and lowered programs to read and write. Point it at another run's store to skip work already paid for there | `<output-dir>/artifact_store` |
-| `--plan-store` | Where this run's plans go: every selection request, selection and plan manifest, kept apart from the artifact store so a shared store never hands a run another run's plans | `<output-dir>/plan_store` |
-| `--orderings` | Which microbatch orderings the search tries per geometry: `factors` (the default) lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the plain walk, one microbatch start to finish before the next. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
-| `--resolution-options` | Which resolutions the search and the runs plan: the shares of flexible groups to recompute, as `quarters` (the library default), `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point: on the llama3 frontier `eighths` cost 1.75x the search wall and beat the quarter rungs by a median of 0.00 % (mean 0.77 %). The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
-| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run (22 against 26 GB/s on one machine, one hour apart). The run phase keeps the live calibration | calibrated |
-| `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
-| `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its live calibration differs from what the search planned against. `--no-incumbents` searches every point alone, for comparing the two | on |
+Each traced step under `steps/` is the complete `StepDiagnostics` for that
+budget's final step, which is the only step run with `runtime_trace=True`.
+The figures keep a handful of aggregate numbers per budget, and those answer
+*how far* the prediction was from the measurement; the trace is what answers
+*which* transfers drifted and *which* tasks ran long. It is the same
+`shadowspill.step_diagnostics` schema the performance matrix writes, so
+`python -m tools.qualification.gap_report` reads a quickstart run the same way
+it reads a matrix.
 
 ## What the output shows, in order
 
 1. **Configuration.** The effective geometry, the search and run budget
-   lists, and the spill budget.
+   lists, the spill budget, the orderings and resolutions the search will
+   try, and the calibrated transfer lanes.
 2. **Geometry search** — `plan_step_search` from the
    [frontend API](../docs/python/api/frontend.md). Every admitted split
    plans through capture, profiling, lowering, and the PressureFit search
    ([planning orchestration](../docs/architecture/planning.md),
    [PressureFit](../docs/architecture/pressurefit.md)); each distinct
    microbatch shape compiles and profiles once, deduplicated by the
-   artifact store. The table lists every split under every budget with
+   build store. The table lists every split under every budget with
    its simulated step and marks each budget's winner; skipped splits show
    their reasons, and build/search wall totals close the section. The
    full report — every point's `PlanSummary`, per-geometry build phase
@@ -173,7 +185,7 @@ directory.
    with nothing executed; `real/` needs a step to have run.
 
    ```text
-   sequence-1024/
+   figures/
      sim/
        geometry_table.png          winning geometry per budget
        throughput/
@@ -202,6 +214,17 @@ directory.
        transfers/
          bytes.png                 fetched and evicted GiB per step
          lane_utilization.png      share of lane-seconds
+         by_geometry_bytes.png     what each geometry moves, not only the
+         by_geometry.png           winner: bytes, and as a share of the step
+         by_graph_pair_selection/
+           <micro>x<accum>.png     one geometry's lane cost by selection:
+           <micro>x<accum>_shares.png  recomputing less means keeping more,
+                                   and keeping more is traffic
+       orderings/
+         <micro>x<accum>.png       the ladder behind one geometry's line:
+                                   its step time under every ordering the
+                                   search tried, so the walk's own worth at
+                                   each budget is visible
        vs_unconstrained/
          by_geometry.png           each geometry's unconstrained compute floor
                                    over its simulated step, with that floor in
@@ -217,7 +240,9 @@ directory.
        steps.csv                   one row per budget and step
      real/
        throughput.png              measured against simulated, per run budget
-       sim_fidelity.png            how far the prediction fell at each budget,
+       sim_fidelity.png            how far the measurement fell from the
+                                   prediction at each budget -- positive means
+                                   the step ran slower than predicted --
                                    against the bounds the performance gate
                                    holds the simulator to, and which part of
                                    the step it missed: compute, waiting, or
@@ -225,15 +250,13 @@ directory.
                                    model at all
    ```
 
-   The sequence length leads, so repeating the search at another length
-   writes its own tree beside the first rather than over it. `raw_data/`
-   holds what the figures were drawn from, so they can be drawn again in
-   another style or another tool. `search.json` is the report itself and is
-   lossless. The CSVs are its tidy view, two rather than one per figure
-   because all but the ladder are projections of the same per-point row, and
-   writing that row twenty times under different names would be twenty
-   copies to disagree with each other. A point that never planned is still a
-   row, because a gap in a line is data too.
+   `raw_data/` holds what the figures were drawn from, so they can be drawn
+   again in another style or another tool. `search.json` is the report itself
+   and is lossless. The CSVs are its tidy view, two rather than one per
+   figure because all but the ladder are projections of the same per-point
+   row, and writing that row twenty times under different names would be
+   twenty copies to disagree with each other. A point that never planned is
+   still a row, because a gap in a line is data too.
 
    The winning geometry at each budget is circled in the line figures and
    outlined in the bars, and a geometry keeps one colour throughout.
@@ -252,7 +275,8 @@ directory.
    every other budget's bar reduction order: a run that disagrees is a
    correctness signal, not a measurement. Optimizer state is allocated and
    filled before the first step rather than created by it, so every step
-   runs the same plan and the measured step is the median of them),
+   runs the same plan, and the reported step is the median of every step
+   after the first),
    then **the traced step versus simulation**, using the fields defined
    in the [StepResult diagnostics guide](../docs/python/step-diagnostics.md).
    The boundary behavior it reports — the opening restore and the
@@ -291,8 +315,10 @@ directory.
 | lane utilization | Simulated transfer bytes over the assumed lane bandwidth over the simulated step: the share of the step each transfer lane spends busy. |
 | infeasible / search_exhausted | A geometry the planner proved cannot fit the budget, or whose bounded candidate search ended without a feasible schedule. A geometry whose build exhausts the device reports every one of its budgets infeasible too, since profiling runs real kernels and the largest microbatch can run out of memory before any plan exists. Reported in the table, never raised. |
 | rejected | A point the planner refused, before or during its search; `error` carries its reason. The sweep goes on with the next point. |
-| artifact store | The on-disk cache of compilation, profiling, and plan artifacts, keyed by content digests — see [reusable planning](../docs/examples/reusable-planning.md). |
+| artifact store | The on-disk store of build and planning artifacts, keyed by content digests — see [reusable planning](../docs/examples/reusable-planning.md). |
 
 The traced-step deltas are real minus simulated: positive start deltas
 mean the real timeline ran behind the prediction, and positive duration
-deltas mean the work took longer than profiled.
+deltas mean the work took longer than profiled. The simulator error the
+figures and the gate report follows the same convention: positive means the
+step ran slower than predicted.

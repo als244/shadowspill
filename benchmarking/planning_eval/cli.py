@@ -127,7 +127,7 @@ def main() -> int:
             options=ControllerOptions(
                 artifact_store=arguments.artifact_store.expanduser().resolve(),
                 resume=arguments.resume,
-                verbose_pressurefit=arguments.verbose_pressurefit,
+                verbose_search=arguments.verbose_search,
                 revision=arguments.revision or provenance.head,
             ),
             repository_root=repository_root,
@@ -146,8 +146,8 @@ def main() -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run PressureFit over a frozen Program corpus. Every point is "
-            "atomically persisted and Program workers are crash-isolated."
+            "Run PressureFit over a frozen ShadowSpillProgram corpus. Every point is "
+            "atomically persisted and ShadowSpillProgram workers are crash-isolated."
         )
     )
     parser.add_argument("--config", type=Path, required=True)
@@ -167,7 +167,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--case", action="append", default=[], metavar="GLOB")
     parser.add_argument("--start-at")
     parser.add_argument("--limit", type=int)
-    parser.add_argument("--verbose-pressurefit", action="store_true")
+    parser.add_argument("--verbose-search", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -186,7 +186,7 @@ def _select_cases(
         or any(fnmatch.fnmatchcase(case.case_id, item) for item in patterns)
     )
     if patterns and not selected:
-        raise ValueError("--case patterns selected no Program cases")
+        raise ValueError("--case patterns selected no ShadowSpillProgram cases")
     if start_at is not None:
         matches = tuple(
             index for index, case in enumerate(selected) if case.case_id == start_at
@@ -199,7 +199,7 @@ def _select_cases(
             raise ValueError("--limit must be positive")
         selected = selected[:limit]
     if not selected:
-        raise ValueError("no Program cases remain after filtering")
+        raise ValueError("no ShadowSpillProgram cases remain after filtering")
     return selected
 
 

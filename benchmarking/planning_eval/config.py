@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from shadowspill.planner.artifact_store import STORE_MODES, StoreMode
 from shadowspill.schema import artifact_schema
 
 _SCHEMA = artifact_schema("pressurefit_frontier_config")
@@ -25,7 +26,7 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 @dataclass(frozen=True, slots=True)
 class BandwidthScale:
-    """One exact rational multiplier applied to a Program's calibration."""
+    """One exact rational multiplier applied to a ShadowSpillProgram's calibration."""
 
     numerator: int
     denominator: int
@@ -79,7 +80,7 @@ class FrontierGrid:
 
 @dataclass(frozen=True, slots=True)
 class TransferBandwidthBaseline:
-    """One global concurrent transfer pair shared by every Program."""
+    """One global concurrent transfer pair shared by every ShadowSpillProgram."""
 
     fetch_bytes_per_second: int
     evict_bytes_per_second: int
@@ -115,7 +116,7 @@ class FrontierConfig:
     point_timeout_seconds: int
     max_point_attempts: int
     max_worker_restarts_per_program: int
-    pressurefit_cache_mode: Literal["cold", "warm"]
+    plan_store_mode: StoreMode
     transfer_bandwidths: TransferBandwidthBaseline
     grids: tuple[FrontierGrid, ...]
     #: How much capacity a plan gives back at a time when its layout does not
@@ -168,7 +169,7 @@ class FrontierConfig:
             "point_timeout_seconds": self.point_timeout_seconds,
             "max_point_attempts": self.max_point_attempts,
             "max_worker_restarts_per_program": (self.max_worker_restarts_per_program),
-            "pressurefit_cache_mode": self.pressurefit_cache_mode,
+            "plan_store_mode": self.plan_store_mode,
             "capacity_refinement_bytes": self.capacity_refinement_bytes,
             "max_repair_attempts": self.max_repair_attempts,
             "split_write_backs": self.split_write_backs,
@@ -197,7 +198,7 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             "point_timeout_seconds",
             "max_point_attempts",
             "max_worker_restarts_per_program",
-            "pressurefit_cache_mode",
+            "plan_store_mode",
             "transfer_bandwidths",
             "grids",
         },
@@ -242,12 +243,12 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             data.get("max_worker_restarts_per_program"),
             "config.max_worker_restarts_per_program",
         ),
-        pressurefit_cache_mode=cast(
-            Literal["cold", "warm"],
+        plan_store_mode=cast(
+            StoreMode,
             _literal(
-                data.get("pressurefit_cache_mode"),
-                {"cold", "warm"},
-                "config.pressurefit_cache_mode",
+                data.get("plan_store_mode"),
+                set(STORE_MODES),
+                "config.plan_store_mode",
             ),
         ),
         transfer_bandwidths=_transfer_bandwidths(

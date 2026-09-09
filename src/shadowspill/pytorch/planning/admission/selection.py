@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
-from shadowspill.planner import PressureFitResult
+from shadowspill.planner import ProgramPlanResult
 from shadowspill.planner.admission.admission_replay import AdmissionReplay
 from shadowspill.planner.admission.layout import (
     FixedLayoutAdmission,
@@ -84,7 +84,7 @@ class SelectedAdmission:
             )
         return tuple(result)
 
-    def apply_prediction(self, selected: PressureFitResult) -> PressureFitResult:
+    def apply_prediction(self, selected: ProgramPlanResult) -> ProgramPlanResult:
         """Return the selection with admission-aware simulator evidence."""
 
         return replace(
@@ -97,7 +97,7 @@ class SelectedAdmission:
 
 
 def build_fixed_selected_admission(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     measurements: Mapping[str, TaskMeasurement],
     *,
     fixed_admission: FixedLayoutAdmission,
@@ -121,7 +121,7 @@ def build_fixed_selected_admission(
 
 
 def _selected_task_envelopes(
-    selected: PressureFitResult,
+    selected: ProgramPlanResult,
     measurements: Mapping[str, TaskMeasurement],
     *,
     output_bindings: Mapping[str, tuple[TaskOutputBinding, ...]] | None = None,

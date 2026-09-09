@@ -6,18 +6,18 @@ from dataclasses import dataclass
 
 from shadowspill.ir import (
     MemoryLocation,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
     TaskSpec,
 )
-from shadowspill.planner.result import PressureFitInfeasibleError
+from shadowspill.planner.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
 
 @dataclass(frozen=True, slots=True)
 class PlanningFacts:
-    program: Program
+    program: ShadowSpillProgram
     selections: tuple[TaskAlternativeChoice, ...]
     tasks: tuple[TaskSpec, ...]
     task_index: dict[str, int]
@@ -64,7 +64,7 @@ def _residency_map(
 
 
 def build_facts(
-    program: Program,
+    program: ShadowSpillProgram,
     selections: tuple[TaskAlternativeChoice, ...],
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
@@ -186,7 +186,7 @@ def build_facts(
         device_id = task.resource.device_id
         capacity = object_capacity[device_id]
         if workspace > capacity:
-            raise PressureFitInfeasibleError(
+            raise PlanInfeasibleError(
                 f"task workspace {workspace} exceeds capacity "
                 f"{capacity} on {device_id!r}",
                 kind="workspace_capacity",

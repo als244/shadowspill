@@ -15,6 +15,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from shadowspill.planner.artifact_store import digest_directory
+from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.profiling.records import ProfileKey
@@ -31,15 +32,11 @@ class CompiledManifestStore:
         self,
         root: Path,
         *,
-        read_enabled: bool = True,
-        write_enabled: bool = True,
-        overwrite: bool = False,
+        policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
         self.root = root
-        self.read_enabled = read_enabled
-        self.write_enabled = write_enabled
-        self.overwrite = overwrite
+        self.policy = policy
         self.artifact_recorder = artifact_recorder
 
     def path(self, key: ProfileKey) -> Path:
@@ -53,7 +50,7 @@ class CompiledManifestStore:
     ) -> ExecutableTaskManifest | None:
         """Return a validated manifest or ``None`` when it needs hydration."""
 
-        if not self.read_enabled:
+        if not self.policy.read_enabled:
             return None
         path = self.path(key)
         try:
@@ -90,7 +87,7 @@ class CompiledManifestStore:
     ) -> None:
         """Atomically publish a manifest; cache failure never changes semantics."""
 
-        if not self.write_enabled:
+        if not self.policy.write_enabled:
             return
         path = self.path(key)
         payload = {
@@ -102,11 +99,11 @@ class CompiledManifestStore:
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            if path.exists() and not self.overwrite:
+            if path.exists() and not self.policy.overwrite:
                 if path.read_text() != encoded:
                     raise ValueError(
                         "fresh compiled manifest differs from an existing cache "
-                        "entry; use overwrite_plan=True or a new "
+                        "entry; use a 'refresh' store mode or a new "
                         f"implementation_revision: {path}"
                     )
                 self._record(key, path, "matched", manifest.compatibility_digest)

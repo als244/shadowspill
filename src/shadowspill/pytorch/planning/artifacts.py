@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils._pytree import TreeSpec
 
 from shadowspill.ir import ExecutionPlan
-from shadowspill.planner import AdmissionFacts, PressureFitResult
+from shadowspill.planner import AdmissionFacts, ProgramPlanResult
 from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
@@ -68,7 +68,7 @@ class ForwardProfileArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class ForwardProgramArtifacts:
-    """Canonical Program plus exact PressureFit call inputs."""
+    """Canonical ShadowSpillProgram plus exact PressureFit call inputs."""
 
     lowered: LoweredForwardProgram
     measurements: dict[str, TaskMeasurement]
@@ -144,7 +144,7 @@ class TrainingSelections:
     initial: FixedLayoutSelection | None
 
     @property
-    def results(self) -> tuple[PressureFitResult, ...]:
+    def results(self) -> tuple[ProgramPlanResult, ...]:
         if self.initial is None:
             return (self.recurrent.result,)
         return (self.initial.result, self.recurrent.result)
@@ -165,8 +165,8 @@ class TrainingAdmissionArtifacts:
     initial: ExecutionPlan | None
     recurrent_admission: SelectedAdmission
     initial_admission: SelectedAdmission | None
-    recurrent_result: PressureFitResult
-    initial_result: PressureFitResult | None
+    recurrent_result: ProgramPlanResult
+    initial_result: ProgramPlanResult | None
 
 
 __all__ = [

@@ -24,6 +24,7 @@ known cell.
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import gc
 import json
@@ -34,16 +35,26 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast
 
 import torch
 
 from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.planner import PressureFitOptions, StepDataOrdering
+from shadowspill.planner import (
+    GenericPlanningOptions,
+    SearchOptions,
+    StepDataOrdering,
+)
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planner.artifact_store import STORE_MODES
 from shadowspill.planner.program_inputs import TransferBandwidths
-from shadowspill.planner.recomputation import (
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
+from shadowspill.planner.search.toolkit.resolution import (
     DEFAULT_RESOLUTION_OPTIONS,
     validate_resolution_options,
 )
@@ -61,15 +72,16 @@ def _budget_list(value: str) -> list[float]:
     return [float(item) for item in value.split(",") if item]
 
 
-#: Named resolution options; ``None`` is the library's default of quarters.
-_NAMED_RESOLUTION_OPTIONS: dict[str, tuple[str, ...] | None] = {
-    "quarters": None,
+#: Named resolution options. ``quarters`` is the library's own default,
+#: spelled out here so every run records the shares it actually planned.
+_NAMED_RESOLUTION_OPTIONS: dict[str, tuple[str, ...]] = {
+    "quarters": tuple(str(share) for share in DEFAULT_RESOLUTION_OPTIONS),
     "eighths": tuple(f"{numerator}/8" for numerator in range(9)),
     "halves": ("0", "1/2", "1"),
 }
 
 
-def _named_resolution_options(value: str) -> tuple[str, ...] | None:
+def _named_resolution_options(value: str) -> tuple[str, ...]:
     """A named set, or a comma-separated list of exact fractions."""
 
     if value in _NAMED_RESOLUTION_OPTIONS:
@@ -490,11 +502,7 @@ def print_epilogue(diagnostics: Any) -> None:
             f" {lane_summary.bytes / 2**30:.1f} GiB), real minus simulated;"
             f" lane busy real {lane_summary.lane_busy_seconds:.3f} s"
             f" simulated {lane_summary.simulated_busy_seconds:.3f} s"
-            + (
-                f"; effective {gb_s(effective)}"
-                if effective is not None
-                else ""
-            )
+            + (f"; effective {gb_s(effective)}" if effective is not None else "")
         )
         if measured:
             print(
@@ -553,7 +561,7 @@ def main() -> int:
     parser.add_argument(
         "--resolution-options",
         type=_named_resolution_options,
-        default="quarters",
+        default=_NAMED_RESOLUTION_OPTIONS["quarters"],
         help="which resolutions the search and the runs plan: the shares of"
         " flexible groups to recompute, as 'quarters' (the library"
         " default), 'eighths', 'halves', or a comma-separated list of exact"
@@ -592,19 +600,36 @@ def main() -> int:
         "--artifact-store",
         type=Path,
         default=None,
-        help="the captures, graph pairs, profiles and lowered programs to read"
-        " and write; point it at another run's store to skip work already"
-        " paid for there. Defaults to <output-dir>/artifact_store",
+        help="roots both stores under one directory. Defaults to"
+        " <output-dir>/artifact_store",
+    )
+    parser.add_argument(
+        "--build-store",
+        type=Path,
+        default=None,
+        help="the captures, graph pairs, profiles and compiled artifacts to"
+        " read and write; point it at another run's store to skip work"
+        " already paid for there. Overrides --artifact-store for the build"
+        " tree",
     )
     parser.add_argument(
         "--plan-store",
         type=Path,
         default=None,
-        help="where this run's plans go: every selection request, selection"
-        " and plan manifest, kept apart from the artifact store so a shared"
-        " store never hands a run another run's plans. Defaults to"
-        " <output-dir>/plan_store",
+        help="where this run's plans go: every request, result and plan"
+        " manifest, kept apart from the build store so a shared store never"
+        " hands a run another run's plans. Overrides --artifact-store for the"
+        " planning tree. Defaults to <output-dir>/plan_store",
     )
+    for tree in ("build", "plan"):
+        parser.add_argument(
+            f"--{tree}-store-mode",
+            choices=STORE_MODES,
+            default="contribute",
+            help=f"what this run may do about a {tree} artifact the store does"
+            " not hold: contribute builds it and writes it back, reuse builds"
+            " it and persists nothing, require refuses and names it",
+        )
     parser.add_argument(
         "--deterministic",
         action=argparse.BooleanOptionalAction,
@@ -630,11 +655,10 @@ def main() -> int:
     arguments = parser.parse_args()
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
-    if arguments.resolution_options is not None:
-        try:
-            validate_resolution_options(arguments.resolution_options)
-        except ValueError as error:
-            parser.error(f"--resolution-options: {error}")
+    try:
+        validate_resolution_options(arguments.resolution_options)
+    except ValueError as error:
+        parser.error(f"--resolution-options: {error}")
 
     implementation, family = arguments.model.split("_", 1)
     manifest = manifest_for(family, cast(ModelImplementation, implementation))
@@ -725,7 +749,40 @@ def main() -> int:
     # this run's own either way, so a shared store never answers a point
     # with a plan another run searched.
     store = arguments.artifact_store or (run_root / "artifact_store")
+    build_store = arguments.build_store
     plan_store = arguments.plan_store or (run_root / "plan_store")
+
+    # Everything printed is also kept beside the run it describes. The
+    # progress log records what the search and the runtime were doing at each
+    # moment; this is the report a person actually read -- the geometry table,
+    # the chosen plans, the per-step numbers -- and a run whose console has
+    # scrolled away is a measurement that has to be taken again to be read.
+    run_root.mkdir(parents=True, exist_ok=True)
+    console = (run_root / "console.log").open("w", encoding="utf-8")
+    stdout = sys.stdout
+
+    class _Tee:
+        """Write to the terminal and to the run's own copy."""
+
+        def write(self, text: str) -> int:
+            console.write(text)
+            # Flushed as it goes, so the copy is readable while the run is
+            # still going and survives a run that is killed rather than ended.
+            console.flush()
+            return stdout.write(text)
+
+        def flush(self) -> None:
+            console.flush()
+            stdout.flush()
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(stdout, name)
+
+    sys.stdout = _Tee()  # type: ignore[assignment]
+    # However the run ends -- finished, interrupted, or failed -- the copy is
+    # closed and the terminal is handed back, so a partial run still leaves a
+    # readable record of how far it got.
+    atexit.register(lambda: (setattr(sys, "stdout", stdout), console.close()))
 
     # Built before the banner so the banner can state the calibrated rates as
     # measurements rather than a promise. Calibration happens once here and is
@@ -784,7 +841,7 @@ def main() -> int:
         )
         + "; loss paired, backward reversed"
     )
-    shares = arguments.resolution_options or DEFAULT_RESOLUTION_OPTIONS
+    shares = arguments.resolution_options
     print(
         "  resolutions         "
         + f"{len(shares):>10}      "
@@ -918,12 +975,14 @@ def main() -> int:
                     spill="spill",
                     min_tokens_per_microbatch=arguments.min_tokens_per_microbatch,
                     max_tokens_per_microbatch=arguments.max_tokens_per_microbatch,
-                    artifact_store_dir=store,
-                    plan_store_dir=plan_store,
+                    artifact_store=store,
+                    build_store=build_store,
+                    plan_store=plan_store,
+                    build_store_mode=arguments.build_store_mode,
+                    plan_store_mode=arguments.plan_store_mode,
                     verbose=True,
                     progress=progress,
-                    force_fresh=False,
-                    options=PressureFitOptions(deterministic=arguments.deterministic),
+
                     incumbents=arguments.incumbents,
                     orderings=(
                         None
@@ -932,7 +991,19 @@ def main() -> int:
                             StepDataOrdering.depth_first(accumulation),
                         )
                     ),
-                    resolution_options=arguments.resolution_options,
+                    search_options=SearchOptions(
+                        generic=GenericPlanningOptions(
+                            deterministic=arguments.deterministic
+                        ),
+                        algorithm=PressureFit(
+                            PressureFitOptions(
+                                resolution_options=tuple(
+                                    Fraction(share)
+                                    for share in arguments.resolution_options
+                                )
+                            )
+                        ),
+                    ),
                     transfer_bandwidths=arguments.transfer_bandwidths,
                 )
             print()
@@ -994,9 +1065,7 @@ def main() -> int:
                 # correctness check as well as a measurement.
                 marker = time.perf_counter()
                 release_case_model(case, runtime=runtime)
-                case = build_case(
-                    manifest, seed=arguments.seed, runtime=runtime
-                )
+                case = build_case(manifest, seed=arguments.seed, runtime=runtime)
                 charge("model construction", marker)
                 plan_log.note("model and optimizer state reset for a comparable run")
             trained = True
@@ -1021,16 +1090,28 @@ def main() -> int:
                     breadth=ordering.breadth,
                     reverse_breadth=ordering.reverse_breadth,
                     pair_loss=ordering.pair_loss,
-                    artifact_store_dir=store,
-                    plan_store_dir=plan_store,
-                    save_plan=True,
-                    force_fresh=False,
-                    overwrite_plan=False,
+                    artifact_store=store,
+                    build_store=build_store,
+                    plan_store=plan_store,
+                    build_store_mode=arguments.build_store_mode,
+                    plan_store_mode=arguments.plan_store_mode,
                     # The search policy the geometry search used, so the run
                     # plans the plan the search promised rather than missing
                     # the store and searching again under other options.
                     deterministic=arguments.deterministic,
-                    resolution_options=arguments.resolution_options,
+                    search_options=SearchOptions(
+                        generic=GenericPlanningOptions(
+                            deterministic=arguments.deterministic
+                        ),
+                        algorithm=PressureFit(
+                            PressureFitOptions(
+                                resolution_options=tuple(
+                                    Fraction(share)
+                                    for share in arguments.resolution_options
+                                )
+                            )
+                        ),
+                    ),
                     # The search's winning plan is the plan to beat, so the
                     # step executes what the search chose, or better, even
                     # when the replan's calibration or facts differ from the
@@ -1057,7 +1138,7 @@ def main() -> int:
                     step = timing.step_number
                     cycles[step] = timing.cycle_seconds
                     note = ""
-                    if step == 1 and plan_report.initial_pressurefit_result is not None:
+                    if step == 1 and plan_report.initial_search_result is not None:
                         note = "   (first-step plan)"
                     plan_log.write(
                         f"  step {step:>3}   {timing.cycle_seconds:7.3f} s"
@@ -1079,6 +1160,7 @@ def main() -> int:
                 hosts[step] = time.perf_counter() - started
                 report_cycles()
                 return result
+
             if arguments.steps > 1:
                 print(rule("Steps"))
                 for step in range(1, arguments.steps):

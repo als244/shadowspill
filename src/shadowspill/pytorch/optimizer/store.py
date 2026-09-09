@@ -26,6 +26,7 @@ import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.planner.artifact_store import digest_directory
+from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
 from shadowspill.pytorch.graph_pairs.serialization import (
@@ -142,15 +143,11 @@ class OptimizerCaptureStore:
         self,
         root: str | Path | None = None,
         *,
-        read_enabled: bool = True,
-        write_enabled: bool = True,
-        overwrite: bool = False,
+        policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
         self._root = None if root is None else Path(root).expanduser()
-        self._read_enabled = read_enabled
-        self._write_enabled = write_enabled
-        self._overwrite = overwrite
+        self._policy = policy
         self._artifact_recorder = artifact_recorder
         self.hits = 0
         self.misses = 0
@@ -164,13 +161,14 @@ class OptimizerCaptureStore:
         """The stored capture under ``key``, or ``None`` when there is none."""
 
         path = self._path(key)
-        if path is None or not self._read_enabled:
+        if path is None or not self._policy.read_enabled:
             self.misses += 1
             return None
         try:
             payload = torch.load(path, map_location="cpu", weights_only=False)
         except FileNotFoundError:
             self.misses += 1
+            self._policy.refuse_miss("optimizer capture", key)
             return None
         except (
             OSError,
@@ -207,11 +205,11 @@ class OptimizerCaptureStore:
         """Store a traced update under ``key``; an existing entry is kept."""
 
         path = self._path(key)
-        if path is None or not self._write_enabled:
+        if path is None or not self._policy.write_enabled:
             return
         stored = StoredOptimizerCapture.capture(artifact)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and not self._overwrite:
+        if path.exists() and not self._policy.overwrite:
             self._record(key, path, "matched", stored)
             return
         descriptor, temporary = tempfile.mkstemp(

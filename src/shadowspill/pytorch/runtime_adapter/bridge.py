@@ -14,7 +14,7 @@ from shadowspill.ir import (
     MemoryAction,
     MemoryActionKind,
     MutationSpec,
-    Program,
+    ShadowSpillProgram,
     TaskSpec,
 )
 from shadowspill.pytorch.runtime_adapter.abi import (
@@ -177,12 +177,12 @@ def _runtime_action(
 
 
 class RuntimeBridge:
-    """Bind one Program's local identities to shared runtime objects."""
+    """Bind one ShadowSpillProgram's local identities to shared runtime objects."""
 
     def __init__(
         self,
         runtime: Runtime,
-        program: Program,
+        program: ShadowSpillProgram,
         plan_handle: int,
         *,
         execution_pool_id: int,
@@ -841,7 +841,7 @@ class RuntimeBridge:
             self.runtime._register_object(
                 runtime_object_id,
                 self._size(alias_id),
-                pool_id=0,
+                pool_id=self.spill_pool_id,
                 retain_spill_copy=False,
                 initially_resident=False,
             ),

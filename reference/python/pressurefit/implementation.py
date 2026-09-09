@@ -9,30 +9,30 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
 from reference.python.simulator import simulate_python
+from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.ir import (
     MemorySchedule,
-    Program,
     ResidencySpec,
+    ShadowSpillProgram,
     TaskAlternativeChoice,
 )
 from shadowspill.ir.validation import ValidationError
 from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.planner.diagnostics import (
     CandidateDiagnostic,
-    PressureFitDiagnostics,
-    PressureFitRepairDiagnostics,
-    PressureFitSectionTiming,
-    PressureFitWorkDiagnostics,
+    PlanningDiagnostics,
+    PlanningRepairDiagnostics,
+    PlanningSectionTiming,
+    PlanningWorkDiagnostics,
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
-from shadowspill.planner.recomputation import resolutions
-from shadowspill.planner.request import PressureFitOptions
-from shadowspill.planner.result import (
-    PressureFitInfeasibleError,
-    PressureFitResult,
-    PressureFitSearchExhaustedError,
-)
+from shadowspill.planner.request import GenericPlanningOptions
+from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.search import SearchOptions
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
+from shadowspill.planner.search.toolkit.resolution import resolutions
 from shadowspill.simulator import (
     SimulationConfig,
     SimulationInfeasibleError,
@@ -152,12 +152,13 @@ def _selection_id(selections: tuple[TaskAlternativeChoice, ...]) -> str:
 
 
 def validate_schedule_feasibility(
-    program: Program,
+    program: ShadowSpillProgram,
     *,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
     admission: AdmissionFacts | None = None,
+    algorithm_options: PressureFitOptions | None = None,
 ) -> None:
     """Reject irreducible capacity failures before schedule search.
 
@@ -167,8 +168,8 @@ def validate_schedule_feasibility(
     retains the same checks internally as defensive invariants.
     """
 
-    if not isinstance(program, Program):
-        raise TypeError("program must be a Program")
+    if not isinstance(program, ShadowSpillProgram):
+        raise TypeError("program must be a ShadowSpillProgram")
     if not isinstance(initial_residency, tuple):
         raise TypeError("initial_residency must be a tuple")
     if not isinstance(final_residency, tuple):
@@ -189,8 +190,9 @@ def validate_schedule_feasibility(
                 "feasibility capacity must equal AdmissionFacts object capacity"
             )
 
-    failures: list[PressureFitInfeasibleError] = []
-    for selections in resolutions(program):
+    failures: list[PlanInfeasibleError] = []
+    chosen = algorithm_options or PressureFitOptions()
+    for selections in resolutions(program, chosen.resolution_options):
         try:
             facts = build_facts(
                 program,
@@ -200,14 +202,14 @@ def validate_schedule_feasibility(
                 config,
             )
             assert_required_floor(facts)
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             failures.append(error)
         else:
             return
 
     if failures:
         raise failures[0]
-    raise PressureFitInfeasibleError(
+    raise PlanInfeasibleError(
         "no resolution could be constructed",
         kind="graph_pair_selection",
     )
@@ -317,8 +319,8 @@ def _failure_diagnostic(
     status: str,
     kind: str,
     detail: str,
-    repairs: PressureFitRepairDiagnostics | None = None,
-    work: PressureFitWorkDiagnostics | None = None,
+    repairs: PlanningRepairDiagnostics | None = None,
+    work: PlanningWorkDiagnostics | None = None,
 ) -> CandidateDiagnostic:
     return CandidateDiagnostic(
         candidate_id=spec.candidate_id,
@@ -326,16 +328,16 @@ def _failure_diagnostic(
         status=status,
         failure_kind=kind,
         failure_detail=detail,
-        repairs=repairs or PressureFitRepairDiagnostics(),
-        work=work or PressureFitWorkDiagnostics(),
+        repairs=repairs or PlanningRepairDiagnostics(),
+        work=work or PlanningWorkDiagnostics(),
     )
 
 
 def _repair_exhausted_diagnostic(
     spec: _CandidateSpec,
     error: SimulationInfeasibleError,
-    repairs: PressureFitRepairDiagnostics,
-    work: PressureFitWorkDiagnostics,
+    repairs: PlanningRepairDiagnostics,
+    work: PlanningWorkDiagnostics,
 ) -> CandidateDiagnostic:
     return _failure_diagnostic(
         spec,
@@ -354,7 +356,8 @@ def _repair_exhausted_diagnostic(
 def _evaluate_candidate(
     spec: _CandidateSpec,
     config: SimulationConfig,
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    algorithm_options: PressureFitOptions,
 ) -> _CandidateOutcome:
     facts = spec.problem.facts
     seed = spec.problem.seed
@@ -371,23 +374,23 @@ def _evaluate_candidate(
     simulation_fetch_delay_attempts = 0
     simulation_pressure_boundary_attempts = 0
 
-    def repairs_value() -> PressureFitRepairDiagnostics:
-        return PressureFitRepairDiagnostics(
+    def repairs_value() -> PlanningRepairDiagnostics:
+        return PlanningRepairDiagnostics(
             simulation_fetch_delay_attempts=(simulation_fetch_delay_attempts),
             simulation_pressure_boundary_attempts=(
                 simulation_pressure_boundary_attempts
             ),
         )
 
-    def work_value() -> PressureFitWorkDiagnostics:
+    def work_value() -> PlanningWorkDiagnostics:
         total_ns = time.perf_counter_ns() - candidate_started
         named_ns = reduce_ns + emit_ns + simulate_ns + digest_ns
-        return PressureFitWorkDiagnostics(
+        return PlanningWorkDiagnostics(
             schedule_emissions=schedule_emissions,
             schedule_cache_hits=schedule_cache_hits,
             simulation_calls=simulation_calls,
             simulation_cache_hits=simulation_cache_hits,
-            sections=PressureFitSectionTiming(
+            sections=PlanningSectionTiming(
                 total_ns=total_ns,
                 reduce_ns=reduce_ns,
                 emit_ns=emit_ns,
@@ -445,7 +448,7 @@ def _evaluate_candidate(
                 spec.problem.schedule_cache[schedule_key] = schedule
             else:
                 schedule_cache_hits += 1
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             return _CandidateOutcome(
                 spec,
                 _failure_diagnostic(
@@ -499,7 +502,8 @@ def _evaluate_candidate(
                     simulation_cache_hits += 1
                 simulation = cached_simulation
             except SimulationInfeasibleError as error:
-                if repairs_value().total_attempts < options.max_repair_attempts:
+                attempts = repairs_value().total_attempts
+                if attempts < algorithm_options.max_repair_attempts:
                     delayed = _delay_fetch(facts, schedule, error)
                     if delayed is not None and delayed != schedule:
                         schedule = delayed
@@ -565,17 +569,18 @@ def _evaluate_candidate(
 
 
 def _build_problems(
-    program: Program,
+    program: ShadowSpillProgram,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...],
     config: SimulationConfig,
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    algorithm_options: PressureFitOptions,
     *,
     resolved: tuple[tuple[TaskAlternativeChoice, ...], ...],
     progress: Callable[[str], None] | None,
 ) -> tuple[_SelectionProblem, ...]:
     problems: list[_SelectionProblem] = []
-    failures: list[PressureFitInfeasibleError] = []
+    failures: list[PlanInfeasibleError] = []
     started = time.perf_counter_ns()
     for selection_index, selections in enumerate(resolved, start=1):
         try:
@@ -587,13 +592,13 @@ def _build_problems(
                 config,
             )
             assert_required_floor(facts)
-        except PressureFitInfeasibleError as error:
+        except PlanInfeasibleError as error:
             failures.append(error)
             continue
         seed = seed_residency(
             facts,
             config,
-            options.initial_placement,
+            algorithm_options.initial_placement,
             # Initial placement is a property of the program and public
             # capacity, not a later strategy's speculative headroom.
             initial_capacity_by_device=facts.object_capacity_by_device,
@@ -617,7 +622,7 @@ def _build_problems(
         return tuple(problems)
     if failures:
         raise failures[0]
-    raise PressureFitInfeasibleError(
+    raise PlanInfeasibleError(
         "no resolution could be constructed",
         kind="graph_pair_selection",
     )
@@ -625,14 +630,15 @@ def _build_problems(
 
 def _candidate_specs(
     problems: tuple[_SelectionProblem, ...],
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    algorithm_options: PressureFitOptions,
 ) -> tuple[_CandidateSpec, ...]:
     specs: list[_CandidateSpec] = []
     ordinal = 0
-    coalescing = (False, True) if options.evaluate_coalesced else (False,)
+    coalescing = (False, True) if algorithm_options.evaluate_coalesced else (False,)
     for problem in problems:
-        for strategy in options.residency_strategies:
-            for rule in options.fetch_rules:
+        for strategy in algorithm_options.residency_strategies:
+            for rule in algorithm_options.fetch_rules:
                 for coalesced in coalescing:
                     specs.append(
                         _CandidateSpec(
@@ -650,10 +656,15 @@ def _candidate_specs(
 def _run_candidates(
     specs: tuple[_CandidateSpec, ...],
     config: SimulationConfig,
-    options: PressureFitOptions,
+    generic: GenericPlanningOptions,
+    algorithm_options: PressureFitOptions,
+    workers: int,
 ) -> tuple[_CandidateOutcome, ...]:
-    if options.workers == 1 or len(specs) <= 1:
-        return tuple(_evaluate_candidate(spec, config, options) for spec in specs)
+    if workers == 1 or len(specs) <= 1:
+        return tuple(
+            _evaluate_candidate(spec, config, generic, algorithm_options)
+            for spec in specs
+        )
     batches: list[list[_CandidateSpec]] = []
     for spec in specs:
         if not batches or batches[-1][0].problem is not spec.problem:
@@ -661,10 +672,13 @@ def _run_candidates(
         batches[-1].append(spec)
 
     def evaluate_batch(batch: list[_CandidateSpec]) -> tuple[_CandidateOutcome, ...]:
-        return tuple(_evaluate_candidate(spec, config, options) for spec in batch)
+        return tuple(
+            _evaluate_candidate(spec, config, generic, algorithm_options)
+            for spec in batch
+        )
 
-    workers = None if options.workers == 0 else options.workers
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    thread_count = None if workers == 0 else workers
+    with ThreadPoolExecutor(max_workers=thread_count) as executor:
         results = tuple(
             outcome
             for batch_results in executor.map(evaluate_batch, batches)
@@ -674,15 +688,17 @@ def _run_candidates(
 
 
 def _pressurefit_once(
-    program: Program,
+    program: ShadowSpillProgram,
     *,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
-    options: PressureFitOptions | None = None,
+    generic: GenericPlanningOptions | None = None,
+    algorithm_options: PressureFitOptions | None = None,
+    workers: int = 0,
     admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
-) -> PressureFitResult:
+) -> ProgramPlanResult:
     """Plan residency, movement, and recomputation for a validated program.
 
     Every returned schedule has been accepted by the public simulator. Planner
@@ -690,8 +706,8 @@ def _pressurefit_once(
     move an action after candidate selection.
     """
 
-    if not isinstance(program, Program):
-        raise TypeError("program must be a Program")
+    if not isinstance(program, ShadowSpillProgram):
+        raise TypeError("program must be a ShadowSpillProgram")
     if not isinstance(initial_residency, tuple):
         raise TypeError("initial_residency must be a tuple")
     if not isinstance(final_residency, tuple):
@@ -702,8 +718,9 @@ def _pressurefit_once(
         if not isinstance(admission, AdmissionFacts):
             raise TypeError("admission must be an AdmissionFacts")
         admission.validate(program)
-    selected_options = options or PressureFitOptions()
-    resolved = resolutions(program)
+    selected_options = generic or GenericPlanningOptions()
+    selected_search = algorithm_options or PressureFitOptions()
+    resolved = resolutions(program, selected_search.resolution_options)
     if progress is not None:
         progress(
             "PressureFit resolved: "
@@ -717,6 +734,7 @@ def _pressurefit_once(
         final_residency,
         config,
         selected_options,
+        selected_search,
         resolved=resolved,
         progress=progress,
     )
@@ -726,18 +744,20 @@ def _pressurefit_once(
             f"valid={len(problems)}/{len(resolved)}, "
             f"elapsed={(time.perf_counter_ns() - problems_started) / 1e9:.3f}s"
         )
-    specs = _candidate_specs(problems, selected_options)
+    specs = _candidate_specs(problems, selected_options, selected_search)
     if progress is not None:
         progress(
             "PressureFit candidates: "
             f"count={len(specs)}, per_problem={len(specs) // len(problems)}"
         )
     candidates_started = time.perf_counter_ns()
-    if selected_options.workers == 1 or len(specs) <= 1:
+    if workers == 1 or len(specs) <= 1:
         outcomes_list: list[_CandidateOutcome] = []
         per_problem = len(specs) // len(problems)
         for index, spec in enumerate(specs, start=1):
-            outcomes_list.append(_evaluate_candidate(spec, config, selected_options))
+            outcomes_list.append(
+                _evaluate_candidate(spec, config, selected_options, selected_search)
+            )
             if progress is not None and (
                 index % per_problem == 0 or index == len(specs)
             ):
@@ -753,7 +773,9 @@ def _pressurefit_once(
                 )
         outcomes = tuple(outcomes_list)
     else:
-        outcomes = _run_candidates(specs, config, selected_options)
+        outcomes = _run_candidates(
+            specs, config, selected_options, selected_search, workers
+        )
         if progress is not None:
             progress(
                 "PressureFit parallel candidates finished: "
@@ -767,13 +789,13 @@ def _pressurefit_once(
     if not valid:
         failure_diagnostics = tuple(outcome.diagnostic for outcome in outcomes)
         if any(item.status == "exhausted" for item in failure_diagnostics):
-            raise PressureFitSearchExhaustedError(
+            raise PlanSearchExhaustedError(
                 "PressureFit exhausted its bounded candidate-repair budget "
                 "before proving a feasible schedule",
                 diagnostics=failure_diagnostics,
             )
         first = failure_diagnostics[0] if failure_diagnostics else None
-        raise PressureFitInfeasibleError(
+        raise PlanInfeasibleError(
             "no simulator-valid PressureFit candidate satisfied the declared "
             "capacity and residency constraints",
             kind=first.failure_kind if first and first.failure_kind else "no_candidate",
@@ -790,7 +812,7 @@ def _pressurefit_once(
     assert best.simulation is not None
     final_simulation = best.simulation
     problem_diagnostics: list[ResolvedProgramDiagnostics] = []
-    aggregate_work = PressureFitWorkDiagnostics()
+    aggregate_work = PlanningWorkDiagnostics()
     for problem in problems:
         problem_outcomes = tuple(
             outcome for outcome in outcomes if outcome.spec.problem is problem
@@ -812,7 +834,7 @@ def _pressurefit_once(
                 ),
             )
         )
-        problem_work = PressureFitWorkDiagnostics()
+        problem_work = PlanningWorkDiagnostics()
         for candidate in problem_candidates:
             problem_work += candidate.work
         aggregate_work += problem_work
@@ -835,16 +857,18 @@ def _pressurefit_once(
                 work=problem_work,
             )
         )
-    diagnostics = PressureFitDiagnostics(
+    diagnostics = PlanningDiagnostics(
         selected_candidate_id=best.spec.candidate_id,
         selected_selection_id=best.spec.problem.selection_id,
         selected_makespan_ns=final_simulation.makespan_ns,
         resolved_programs=tuple(problem_diagnostics),
         work=aggregate_work,
     )
-    return PressureFitResult(
+    return ProgramPlanResult(
         program=program,
-        options=selected_options,
+        search_options=SearchOptions(
+            generic=selected_options, algorithm=PressureFit(selected_search)
+        ),
         initial_residency=initial_residency,
         final_residency=final_residency,
         simulation_config=config,
@@ -857,15 +881,17 @@ def _pressurefit_once(
 
 
 def pressurefit(
-    program: Program,
+    program: ShadowSpillProgram,
     *,
     initial_residency: tuple[ResidencySpec, ...],
     final_residency: tuple[ResidencySpec, ...] = (),
     config: SimulationConfig,
-    options: PressureFitOptions | None = None,
+    generic: GenericPlanningOptions | None = None,
+    algorithm_options: PressureFitOptions | None = None,
+    workers: int = 0,
     admission: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
-) -> PressureFitResult:
+) -> ProgramPlanResult:
     """Select a schedule at the caller's object capacity.
 
     Selection runs once.  The global capacity ladder this used to describe -
@@ -878,19 +904,24 @@ def pressurefit(
     # Preserve the framework-neutral semantic diagnostics before entering the
     # required compiled search. This validates caller input; it is not an
     # alternate planner or simulator execution path.
+    generic = generic or GenericPlanningOptions()
+    algorithm_options = algorithm_options or PressureFitOptions()
     validate_schedule_feasibility(
         program,
         initial_residency=initial_residency,
         final_residency=final_residency,
         config=config,
         admission=admission,
+        algorithm_options=algorithm_options,
     )
     result = _pressurefit_once(
         program,
         initial_residency=initial_residency,
         final_residency=final_residency,
         config=config,
-        options=options,
+        generic=generic,
+        algorithm_options=algorithm_options,
+        workers=workers,
         admission=admission,
         progress=progress,
     )

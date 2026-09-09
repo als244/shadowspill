@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from shadowspill.ir import Program, TaskSpec, shared_residency_footprint
+from shadowspill.ir import ShadowSpillProgram, TaskSpec, shared_residency_footprint
 from shadowspill.planner import (
     AdmissionFacts,
     StorageHandoff,
@@ -24,7 +24,7 @@ from ...lowering.training import TrainingTaskEntrypoint
 
 @dataclass(frozen=True, slots=True)
 class TaskOutputBinding:
-    """Map one returned tensor leaf to its persistent Program alias group."""
+    """Map one returned tensor leaf to its persistent ShadowSpillProgram alias group."""
 
     leaf_index: int
     alias_group_id: str
@@ -93,7 +93,7 @@ def output_bindings_for_entrypoints(
 
 
 def build_admission_facts(
-    program: Program,
+    program: ShadowSpillProgram,
     *,
     execution_pool_bytes: int,
     object_capacity_bytes: int,
@@ -107,7 +107,7 @@ def build_admission_facts(
     if len(program.devices) != 1:
         raise ValueError(
             "one admission facts currently describes one execution pool; "
-            f"Program has {len(program.devices)} devices"
+            f"ShadowSpillProgram has {len(program.devices)} devices"
         )
     alias_by_object = {item.object_id: item.alias_group_id for item in program.objects}
     alias_size = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
@@ -173,7 +173,7 @@ def build_admission_facts(
         )
         if sum(task_workspace_extents) != profiled_workspace:
             raise ValueError(
-                f"task {task.task_id} physical allocation trace and Program "
+                f"task {task.task_id} physical allocation trace and ShadowSpillProgram "
                 "workspace disagree: "
                 f"trace_peak={sum(task_workspace_extents)}, "
                 f"program_workspace={profiled_workspace}, "
@@ -215,7 +215,7 @@ def _task_allocation_steps(
     """Project one physical profile without making it a runtime contract.
 
     The profiled order is used only by offline dynamic-pool admission.  Output
-    leaves that do not become Program objects are released at task completion;
+    leaves that do not become program objects are released at task completion;
     persistent output allocations remain live for ownership publication.
     """
 
@@ -260,13 +260,13 @@ def _task_allocation_steps(
     unexpected = observed_aliases - persistent_aliases
     if missing or unexpected:
         raise ValueError(
-            f"task {task_id} physical output bindings disagree with Program "
+            f"task {task_id} physical output bindings disagree with ShadowSpillProgram "
             f"ownership: missing={sorted(missing)!r}, "
             f"unexpected={sorted(unexpected)!r}"
         )
     # The profiler intentionally omits logical frees for returned tensors.
     # Unselected returned leaves are ordinary task-local allocations and end
-    # at the task boundary; declared Program outputs remain live.
+    # at the task boundary; declared ShadowSpillProgram outputs remain live.
     steps.extend(
         TaskAllocationStep(ordinal, TaskAllocationStepKind.RELEASE)
         for ordinal, alias_id in live.items()
@@ -288,7 +288,7 @@ def _workspace_peak_extents(
     *,
     transient_aliases: set[str],
 ) -> tuple[int, ...]:
-    """Return the live-set peak not charged as fresh Program output storage."""
+    """Return the live-set peak not charged as fresh program output storage."""
 
     live: dict[int, int] = {}
     peak: tuple[int, ...] = ()

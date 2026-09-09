@@ -10,12 +10,12 @@ from typing import Any, Literal, NoReturn
 import torch
 import torch.nn as nn
 
+from shadowspill.planner import SearchOptions
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.planner.artifact_store import ArtifactStore, StoreMode
 from shadowspill.planner.program import (
     StepProgram,
 )
-from shadowspill.planner.recomputation import ShareValue
 from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
@@ -108,18 +108,19 @@ def plan_forward(
     dynamic_scratch_reserve_bytes: int | None = None,
     minimum_object_bytes_evict_eligible: int = 1 << 20,
     deterministic: bool = False,
+    search_options: SearchOptions | None = None,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     verbose: bool = True,
-    artifact_store_dir: str | os.PathLike[str] | None = None,
-    plan_store_dir: str | os.PathLike[str] | None = None,
+    artifact_store: str | os.PathLike[str] | None = None,
+    build_store: str | os.PathLike[str] | None = None,
+    plan_store: str | os.PathLike[str] | None = None,
     profiling_metadata: object = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
     shared_outputs: Sequence[SharedOutput] = (),
-    save_plan: bool = True,
-    force_fresh: bool = False,
-    overwrite_plan: bool = False,
+    build_store_mode: StoreMode = "contribute",
+    plan_store_mode: StoreMode = "contribute",
     implementation_revision: str | None = None,
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
@@ -135,16 +136,15 @@ def plan_forward(
     is a JSON-compatible, key-only description of value-sensitive profiling
     behavior. It is not passed to the model or returned callable.
 
-    ``artifact_store_dir`` selects the shared artifact store, and
-    ``plan_store_dir`` keeps this call's plan records (its selection request,
-    selection and manifest) somewhere of their own, so one store can serve
-    many runs that each keep their plans; ``None`` keeps them in the store.
-    ``force_fresh``
-    disables cache reads; ``save_plan`` controls writes; and
-    ``overwrite_plan`` replaces an existing identity only during a saved fresh
-    run. ``implementation_revision`` invalidates compiler/profile artifacts
-    when a lower-level custom implementation changes without changing its
-    exported graph.
+    A store has two trees, rooted and permitted apart. ``artifact_store`` roots
+    both; ``build_store`` and ``plan_store`` override either, so one build
+    store can serve many runs that each keep their own plans. Each tree's mode
+    says what this run does with it: ``contribute`` reads what is there and
+    writes back what is not, ``reuse`` reads and persists nothing, ``require``
+    refuses a miss, and ``refresh`` ignores what is there and writes over it.
+    ``implementation_revision`` invalidates compiler and profile artifacts when
+    a lower-level custom implementation changes without changing its exported
+    graph.
 
     ``partition`` accepts ``"auto"``, ``"whole"``, or a
     :class:`PartitionPolicy`. Partitioning only creates ordered stage
@@ -201,11 +201,11 @@ def plan_forward(
             owning_plan=memory.plan_handle,
         )
         cache = ArtifactStore.resolve(
-            artifact_store_dir,
-            plan_store_dir=plan_store_dir,
-            save_plan=save_plan,
-            force_fresh=force_fresh,
-            overwrite_plan=overwrite_plan,
+            artifact_store,
+            build_store=build_store,
+            plan_store=plan_store,
+            build_store_mode=build_store_mode,
+            plan_store_mode=plan_store_mode,
             implementation_revision=implementation_revision,
         )
         with cache.activate_pytorch():
@@ -224,6 +224,7 @@ def plan_forward(
                     minimum_object_bytes_evict_eligible
                 ),
                 deterministic=deterministic,
+                search_options=search_options,
             )
     except BaseException as error:
         _surface_failed_plan(
@@ -258,17 +259,17 @@ def plan_step(
     breadth: int | None = None,
     reverse_breadth: bool = True,
     pair_loss: bool = True,
-    resolution_options: Sequence[ShareValue] | None = None,
+    search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
     verbose: bool = True,
-    artifact_store_dir: str | os.PathLike[str] | None = None,
-    plan_store_dir: str | os.PathLike[str] | None = None,
+    artifact_store: str | os.PathLike[str] | None = None,
+    build_store: str | os.PathLike[str] | None = None,
+    plan_store: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
-    save_plan: bool = True,
-    force_fresh: bool = False,
-    overwrite_plan: bool = False,
+    build_store_mode: StoreMode = "contribute",
+    plan_store_mode: StoreMode = "contribute",
     implementation_revision: str | None = None,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
@@ -304,7 +305,7 @@ def plan_step(
     ``profiling_metadata`` has one JSON-compatible entry per example
     microbatch. It only distinguishes value-sensitive task measurements and
     their downstream plans; it is never passed to the objective or runtime.
-    Cache policy arguments, ``plan_store_dir`` included, have the same meaning
+    Cache policy arguments, ``plan_store`` included, have the same meaning
     as :func:`plan_forward`.
     ``partition`` uses the same stage-only policy contract as forward
     planning. A later graph-pair phase independently shares differentiation
@@ -327,7 +328,7 @@ def plan_step(
     this budget and answers with unless it does strictly better, so a step
     run after a sweep executes the plan the sweep chose even when the
     calibration or the budget of the replan differs from the sweep's.
-    ``resolution_options`` names the resolutions the search plans: the shares
+    ``search_options`` names the resolutions the search plans: the shares
     of flexible groups to recompute, one resolved program each, as exact
     fractions such as ``("0", "1/2", "1")``. ``None`` plans the library's
     default of every quarter. The options are part of the plan's identity in
@@ -371,11 +372,11 @@ def plan_step(
             owning_plan=memory.plan_handle,
         )
         cache = ArtifactStore.resolve(
-            artifact_store_dir,
-            plan_store_dir=plan_store_dir,
-            save_plan=save_plan,
-            force_fresh=force_fresh,
-            overwrite_plan=overwrite_plan,
+            artifact_store,
+            build_store=build_store,
+            plan_store=plan_store,
+            build_store_mode=build_store_mode,
+            plan_store_mode=plan_store_mode,
             implementation_revision=implementation_revision,
         )
         with cache.activate_pytorch():
@@ -399,7 +400,7 @@ def plan_step(
                     minimum_object_bytes_evict_eligible
                 ),
                 deterministic=deterministic,
-                resolution_options=resolution_options,
+                search_options=search_options,
                 incumbent=incumbent,
             )
     except BaseException as error:
@@ -411,7 +412,7 @@ def plan_step(
         )
 
 
-def make_step_program(
+def build_step_program(
     model: nn.Module,
     *,
     objective: Any,
@@ -434,22 +435,27 @@ def make_step_program(
     reverse_breadth: bool = True,
     pair_loss: bool = True,
     verbose: bool = True,
-    artifact_store_dir: str | os.PathLike[str] | None = None,
+    artifact_store: str | os.PathLike[str] | None = None,
+    build_store: str | os.PathLike[str] | None = None,
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
-    save_plan: bool = True,
-    force_fresh: bool = False,
-    overwrite_plan: bool = False,
+    build_store_mode: StoreMode = "contribute",
     implementation_revision: str | None = None,
 ) -> StepProgram:
     """Capture, profile, and lower a reusable step without running PressureFit.
+
+    Takes no plan-store arguments, because it writes no plans. What it
+    produces is build work -- exports, graph pairs, profiles, a lowered
+    program -- so ``build_store`` and ``build_store_mode`` are the only store
+    controls that mean anything here. Pass the result to
+    :func:`plan_program`, which plans it and does take them.
 
     ``depth``, ``breadth``, ``reverse_breadth`` and ``pair_loss`` mean what
     they mean for :func:`plan_step`; the ordering is recorded in the program.
 
     The returned :class:`StepProgram` is a fully self-contained JSON boundary.
-    It can be passed to :func:`pressurefit_program` repeatedly with different
+    It can be passed to :func:`plan_program` repeatedly with different
     budgets and transfer bandwidths. Temporary compilation/materialization
     state is released before this function returns; no runtime callable remains
     active.
@@ -477,10 +483,9 @@ def make_step_program(
         )
         planning_started = True
         cache = ArtifactStore.resolve(
-            artifact_store_dir,
-            save_plan=save_plan,
-            force_fresh=force_fresh,
-            overwrite_plan=overwrite_plan,
+            artifact_store,
+            build_store=build_store,
+            build_store_mode=build_store_mode,
             implementation_revision=implementation_revision,
         )
         with cache.activate_pytorch():
@@ -511,13 +516,13 @@ def make_step_program(
         _surface_failed_plan(
             runtime,
             planning_started=planning_started,
-            operation="make training step Program",
+            operation="make training step ShadowSpillProgram",
             error=error,
         )
 
 
 __all__ = [
-    "make_step_program",
+    "build_step_program",
     "plan_forward",
     "plan_step",
 ]

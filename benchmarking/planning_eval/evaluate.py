@@ -1,4 +1,4 @@
-"""Collect a reproducible PressureFit frontier over a saved Program corpus."""
+"""Collect a reproducible PressureFit frontier over a saved program corpus."""
 
 from benchmarking.planning_eval.cli import main
 

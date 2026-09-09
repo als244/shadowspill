@@ -1,4 +1,4 @@
-"""Lightweight discovery of immutable Program-corpus cases."""
+"""Lightweight discovery of immutable ShadowSpillProgram-corpus cases."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from benchmarking.program_collection.corpus import ProgramCaseIdentity
 
 @dataclass(frozen=True, slots=True)
 class CorpusProgramCase:
-    """One saved Program without eagerly parsing its large artifact."""
+    """One saved ShadowSpillProgram without eagerly parsing its large artifact."""
 
     directory: Path
     identity: ProgramCaseIdentity
@@ -64,15 +64,15 @@ def discover_program_cases(
         )
     )
     if not cases:
-        raise ValueError(f"no saved Program cases found under {root}")
+        raise ValueError(f"no saved ShadowSpillProgram cases found under {root}")
     if expected_count is not None and len(cases) != expected_count:
         raise ValueError(
-            "Program corpus count differs from frontier config: "
+            "ShadowSpillProgram corpus count differs from frontier config: "
             f"expected={expected_count}, observed={len(cases)}"
         )
     case_ids = tuple(item.case_id for item in cases)
     if len(case_ids) != len(set(case_ids)):
-        raise ValueError("Program corpus contains duplicate case identities")
+        raise ValueError("ShadowSpillProgram corpus contains duplicate case identities")
     return cases
 
 
@@ -97,19 +97,19 @@ def _case_from_manifest(path: Path) -> CorpusProgramCase:
     try:
         value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"cannot read Program manifest {path}") from error
+        raise ValueError(f"cannot read ShadowSpillProgram manifest {path}") from error
     if not isinstance(value, dict):
-        raise ValueError(f"Program manifest {path} is not an object")
+        raise ValueError(f"ShadowSpillProgram manifest {path} is not an object")
     identity = ProgramCaseIdentity.from_value(value.get("identity"))
     artifact = value.get("step_program")
     if not isinstance(artifact, dict):
-        raise ValueError(f"Program manifest {path} has no step_program object")
+        raise ValueError(f"program manifest {path} has no step_program object")
     program_digest = artifact.get("program_digest")
     artifact_digest = artifact.get("artifact_sha256")
     if not isinstance(program_digest, str) or len(program_digest) != 64:
-        raise ValueError(f"Program manifest {path} has an invalid Program digest")
+        raise ValueError(f"program manifest {path} has an invalid program digest")
     if not isinstance(artifact_digest, str) or len(artifact_digest) != 64:
-        raise ValueError(f"Program manifest {path} has an invalid artifact digest")
+        raise ValueError(f"program manifest {path} has an invalid artifact digest")
     return CorpusProgramCase(
         directory=path.parent.resolve(),
         identity=identity,

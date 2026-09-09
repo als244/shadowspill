@@ -6,7 +6,12 @@ from dataclasses import dataclass
 
 import torch
 
-from shadowspill.ir import Program, ResidencySpec, TaskAlternativeGroup, TaskSpec
+from shadowspill.ir import (
+    ResidencySpec,
+    ShadowSpillProgram,
+    TaskAlternativeGroup,
+    TaskSpec,
+)
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact, OptimizerTensorRole
 
@@ -60,7 +65,7 @@ class TrainingTaskEntrypoint:
 
 @dataclass(frozen=True, slots=True)
 class LoweredTrainingProgram:
-    program: Program
+    program: ShadowSpillProgram
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     registrations: tuple[RegistrationBinding, ...]
@@ -80,7 +85,7 @@ class LoweredTrainingProgram:
 class TrainingStorageLayout:
     """Deterministic model/input identities needed before optimizer capture."""
 
-    program: Program
+    program: ShadowSpillProgram
     registrations: tuple[RegistrationBinding, ...]
     root_input_slots: tuple[tuple[TensorSlot, ...], ...]
 

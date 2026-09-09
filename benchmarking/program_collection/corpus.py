@@ -31,7 +31,7 @@ _CASE_SCHEMA = "shadowspill.planning_corpus.case/v1"
 
 @dataclass(frozen=True, slots=True)
 class ProgramCaseIdentity:
-    """Human-readable model and data geometry for one reusable Program."""
+    """Human-readable model and data geometry for one reusable ShadowSpillProgram."""
 
     family: str
     provider: str
@@ -145,7 +145,7 @@ def save_step_program(
     program: StepProgram,
     metadata: Mapping[str, object] | None = None,
 ) -> SavedProgramCase:
-    """Atomically save one self-contained pre-PressureFit Program case."""
+    """Atomically save one self-contained pre-PressureFit ShadowSpillProgram case."""
 
     initialize_corpus(root)
     payload = program.to_json()
@@ -187,7 +187,7 @@ def save_step_program(
 
 
 def load_step_program(path: Path) -> tuple[SavedProgramCase, StepProgram]:
-    """Load and integrity-check a case directory or its Program JSON file."""
+    """Load and integrity-check a case directory or its ShadowSpillProgram JSON file."""
 
     directory = path if path.is_dir() else path.parent
     manifest = read_mapping(directory / "manifest.json", "case manifest")
@@ -223,14 +223,14 @@ def _safe(value: str) -> str:
     return normalized
 
 
-_README = """# ShadowSpill input Program dataset
+_README = """# ShadowSpill input ShadowSpillProgram dataset
 
 Each case stores one self-contained `step_program.json` produced before
 PressureFit. Directories are organized by provider/model, data geometry, and
 content digest. Planning-evaluation results live outside this immutable input
 dataset under `benchmarking/planning_eval/results/`.
 
-Every Program has a SHA-256 entry in its adjacent manifest and is validated by
+Every program has a SHA-256 entry in its adjacent manifest and is validated by
 `StepProgram.from_json()` when loaded.
 """
 

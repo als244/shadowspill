@@ -1,4 +1,4 @@
-"""Deterministic expansion of collection configuration into Program requests."""
+"""Deterministic expansion of collection configuration into program requests."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from dataclasses import dataclass
 
 from benchmarking.data_geometry import DataGeometry
 
-from .config import CollectionConfig, ModelSpec, PlanningSpec, RuntimeSpec
+from .config import BuildSpec, CollectionConfig, ModelSpec, RuntimeSpec
 
 
 @dataclass(frozen=True, slots=True)
 class ProgramRequest:
-    """One fully resolved model/geometry Program collection request."""
+    """One fully resolved model/geometry ShadowSpillProgram collection request."""
 
     config_digest: str
     collection_name: str
@@ -22,7 +22,7 @@ class ProgramRequest:
     sequence_length: int
     accumulation_rounds: int
     runtime: RuntimeSpec
-    planning: PlanningSpec
+    build: BuildSpec
     seed: int
 
     @property
@@ -59,12 +59,12 @@ class ProgramRequest:
                 "tokens_per_microbatch": self.tokens_per_microbatch,
                 "sequence_length": self.sequence_length,
                 "sequences_per_microbatch": self.sequences_per_microbatch,
-                # Preserve the schema-v1 Program request digest.
+                # Preserve the schema-v1 ShadowSpillProgram request digest.
                 "accumulation_steps": self.accumulation_rounds,
                 "tokens_per_step": self.tokens_per_step,
             },
             "runtime": self.runtime.to_dict(),
-            "planning": self.planning.to_dict(),
+            "build": self.build.to_dict(),
             "seed": self.seed,
         }
 
@@ -78,13 +78,13 @@ def expand_program_requests(config: CollectionConfig) -> tuple[ProgramRequest, .
         requests.extend(group[index] for group in per_model if index < len(group))
     case_ids = tuple(request.case_id for request in requests)
     if len(case_ids) != len(set(case_ids)):
-        raise ValueError("expanded Program case identities are not unique")
+        raise ValueError("expanded ShadowSpillProgram case identities are not unique")
     if (
         config.expected_programs is not None
         and len(requests) != config.expected_programs
     ):
         raise ValueError(
-            "expanded Program count does not match expected_programs: "
+            "expanded ShadowSpillProgram count does not match expected_programs: "
             f"expected {config.expected_programs}, observed {len(requests)}"
         )
     if not requests:
@@ -107,7 +107,7 @@ def _model_requests(
             sequence_length=sequence_length,
             accumulation_rounds=accumulation_rounds,
             runtime=config.runtime,
-            planning=config.planning,
+            build=config.build,
             seed=model_seed,
         )
         for tokens in axes.tokens_per_microbatch
