@@ -92,7 +92,7 @@ typedef struct ShadowSpillCandidateAdmissionWorkspace {
 } ShadowSpillCandidateAdmissionWorkspace;
 
 int shadowspill_candidate_admission_workspace_create(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     ShadowSpillCandidateAdmissionWorkspace *workspace
 );
 
@@ -101,7 +101,7 @@ void shadowspill_candidate_admission_workspace_destroy(
 );
 
 ShadowSpillStatus shadowspill_admit_indexed_schedule(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     ShadowSpillSimulationProgram *program,
@@ -126,23 +126,23 @@ typedef struct OperationTally {
 
 /* topology.c */
 int shadowspill_admission_counts(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     uint64_t *lease_count,
     uint64_t *operation_count
 );
 int shadowspill_admission_facts_valid(
-    const ShadowSpillPressureFitProblem *problem
+    const ShadowSpillScheduleContext *context
 );
 int shadowspill_admission_reserve_buffers(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace
 );
 
 /* operations.c */
 int shadowspill_admission_build_operations(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace,
     OperationTally *tally

@@ -28,11 +28,11 @@
  * to the work that precedes it, and the critical section is a fixed-size
  * copy.
  */
-struct ShadowSpillBestPlaced {
+struct ShadowSpillPressureFitBestPlaced {
     /* Mirrors record.makespan_ns so the hot path needs no lock. */
     _Atomic uint64_t makespan_ns;
     atomic_flag guard;
-    ShadowSpillBestPlacedRecord record;
+    ShadowSpillPressureFitBestPlacedRecord record;
     /* The plan itself, owned. The record names a plan by digest, and the
      * buffer a candidate built it in is reused by the next candidate and
      * thrown away when that candidate ends, so a record that did not keep a
@@ -41,18 +41,18 @@ struct ShadowSpillBestPlaced {
     ShadowSpillScheduleStorage plan;
 };
 
-static void lock(ShadowSpillBestPlaced *best) {
+static void lock(ShadowSpillPressureFitBestPlaced *best) {
     while (atomic_flag_test_and_set_explicit(&best->guard, memory_order_acquire)) {
         /* Held only for a fixed-size copy, so spinning beats descheduling. */
     }
 }
 
-static void unlock(ShadowSpillBestPlaced *best) {
+static void unlock(ShadowSpillPressureFitBestPlaced *best) {
     atomic_flag_clear_explicit(&best->guard, memory_order_release);
 }
 
-ShadowSpillBestPlaced *shadowspill_best_placed_create(void) {
-    ShadowSpillBestPlaced *best = calloc(1U, sizeof(*best));
+ShadowSpillPressureFitBestPlaced *shadowspill_pressurefit_best_placed_create(void) {
+    ShadowSpillPressureFitBestPlaced *best = calloc(1U, sizeof(*best));
     if (best == NULL) {
         return NULL;
     }
@@ -61,7 +61,7 @@ ShadowSpillBestPlaced *shadowspill_best_placed_create(void) {
     return best;
 }
 
-void shadowspill_best_placed_destroy(ShadowSpillBestPlaced *best) {
+void shadowspill_pressurefit_best_placed_destroy(ShadowSpillPressureFitBestPlaced *best) {
     if (best == NULL) {
         return;
     }
@@ -70,8 +70,8 @@ void shadowspill_best_placed_destroy(ShadowSpillBestPlaced *best) {
 }
 
 int shadowspill_best_placed_offer(
-    ShadowSpillBestPlaced *best,
-    const ShadowSpillBestPlacedRecord *record,
+    ShadowSpillPressureFitBestPlaced *best,
+    const ShadowSpillPressureFitBestPlacedRecord *record,
     const ShadowSpillScheduleStorage *plan
 ) {
     if (best == NULL || record == NULL || plan == NULL ||
@@ -105,9 +105,9 @@ int shadowspill_best_placed_offer(
     return replaced;
 }
 
-void shadowspill_best_placed_read(
-    const ShadowSpillBestPlaced *best,
-    ShadowSpillBestPlacedRecord *record
+void shadowspill_pressurefit_best_placed_read(
+    const ShadowSpillPressureFitBestPlaced *best,
+    ShadowSpillPressureFitBestPlacedRecord *record
 ) {
     if (record == NULL) {
         return;
@@ -116,13 +116,13 @@ void shadowspill_best_placed_read(
         memset(record, 0, sizeof(*record));
         return;
     }
-    ShadowSpillBestPlaced *mutable_best = (ShadowSpillBestPlaced *)best;
+    ShadowSpillPressureFitBestPlaced *mutable_best = (ShadowSpillPressureFitBestPlaced *)best;
     lock(mutable_best);
     *record = best->record;
     unlock(mutable_best);
 }
 
-uint64_t shadowspill_best_placed_bound(const ShadowSpillBestPlaced *best) {
+uint64_t shadowspill_best_placed_bound(const ShadowSpillPressureFitBestPlaced *best) {
     if (best == NULL) {
         return 0U;
     }

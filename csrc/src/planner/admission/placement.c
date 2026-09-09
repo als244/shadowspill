@@ -154,11 +154,11 @@ static uint32_t time_axis_rank(const TimeAxis *axis, uint64_t value)
 }
 
 static int time_axis_build(
-    const ShadowSpillPlacementProblem *problem,
+    const ShadowSpillPlacementProblem *context,
     TimeAxis *axis
 )
 {
-    const uint32_t count = problem->lifetime_count;
+    const uint32_t count = context->lifetime_count;
     axis->times = malloc((size_t)count * 2U * sizeof(*axis->times));
     axis->start_rank = malloc((size_t)count * sizeof(*axis->start_rank));
     axis->end_rank = malloc((size_t)count * sizeof(*axis->end_rank));
@@ -167,8 +167,8 @@ static int time_axis_build(
         return -1;
     }
     for (uint32_t index = 0U; index < count; ++index) {
-        axis->times[index * 2U] = problem->lifetimes[index].start_ns;
-        axis->times[index * 2U + 1U] = problem->lifetimes[index].end_ns;
+        axis->times[index * 2U] = context->lifetimes[index].start_ns;
+        axis->times[index * 2U + 1U] = context->lifetimes[index].end_ns;
     }
     qsort(axis->times, (size_t)count * 2U, sizeof(*axis->times), compare_time);
 
@@ -183,9 +183,9 @@ static int time_axis_build(
     /* Rank each endpoint once here rather than on every query below. */
     for (uint32_t index = 0U; index < count; ++index) {
         axis->start_rank[index] =
-            time_axis_rank(axis, problem->lifetimes[index].start_ns);
+            time_axis_rank(axis, context->lifetimes[index].start_ns);
         axis->end_rank[index] =
-            time_axis_rank(axis, problem->lifetimes[index].end_ns);
+            time_axis_rank(axis, context->lifetimes[index].end_ns);
     }
     return 0;
 }
@@ -316,19 +316,19 @@ static int compare_order(const void *left, const void *right)
 }
 
 static OrderKey *placing_order(
-    const ShadowSpillPlacementProblem *problem,
+    const ShadowSpillPlacementProblem *context,
     const TimeAxis *axis
 )
 {
-    const uint32_t count = problem->lifetime_count;
+    const uint32_t count = context->lifetime_count;
     OrderKey *order = malloc((size_t)count * sizeof(*order));
     if (order == NULL) {
         return NULL;
     }
     for (uint32_t index = 0U; index < count; ++index) {
         order[index] = (OrderKey){
-            .bytes = problem->lifetimes[index].bytes,
-            .start_ns = problem->lifetimes[index].start_ns,
+            .bytes = context->lifetimes[index].bytes,
+            .start_ns = context->lifetimes[index].start_ns,
             .span = axis->end_rank[index] - axis->start_rank[index],
             .lifetime = index,
         };
@@ -429,7 +429,7 @@ static ShadowSpillStatus place_region(
     if (count == 0U) {
         return SHADOWSPILL_STATUS_OK;
     }
-    const ShadowSpillPlacementProblem problem = {
+    const ShadowSpillPlacementProblem context = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .lifetime_count = count,
         .lifetimes = lifetimes,
@@ -437,11 +437,11 @@ static ShadowSpillStatus place_region(
     Placer placer;
     memset(&placer, 0, sizeof(placer));
     ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    if (time_axis_build(&problem, &placer.axis) != 0 ||
+    if (time_axis_build(&context, &placer.axis) != 0 ||
         occupancy_index_create(&placer.index, placer.axis.time_count) != 0) {
         goto done;
     }
-    placer.order = placing_order(&problem, &placer.axis);
+    placer.order = placing_order(&context, &placer.axis);
     if (placer.order == NULL) {
         goto done;
     }
@@ -484,15 +484,15 @@ done:
 /* The leases placement is asked for, copied out contiguously so the region
  * placer can run on them, with where each came from. */
 static uint32_t gather(
-    const ShadowSpillPlacementProblem *problem,
+    const ShadowSpillPlacementProblem *context,
     ShadowSpillLeaseLifetime *records,
     uint32_t *sources
 )
 {
     uint32_t count = 0U;
-    for (uint32_t index = 0U; index < problem->lifetime_count; ++index) {
-        if (problem->excluded[index] == 0U) {
-            records[count] = problem->lifetimes[index];
+    for (uint32_t index = 0U; index < context->lifetime_count; ++index) {
+        if (context->excluded[index] == 0U) {
+            records[count] = context->lifetimes[index];
             sources[count++] = index;
         }
     }
@@ -500,25 +500,25 @@ static uint32_t gather(
 }
 
 ShadowSpillStatus shadowspill_place_lifetimes(
-    const ShadowSpillPlacementProblem *problem,
+    const ShadowSpillPlacementProblem *context,
     ShadowSpillPlacementResult *result
 )
 {
-    if (problem == NULL || result == NULL ||
-        problem->abi_version != SHADOWSPILL_ABI_VERSION) {
+    if (context == NULL || result == NULL ||
+        context->abi_version != SHADOWSPILL_ABI_VERSION) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     result->required_bytes = 0U;
-    const uint32_t count = problem->lifetime_count;
+    const uint32_t count = context->lifetime_count;
     if (count == 0U) {
         return SHADOWSPILL_STATUS_OK;
     }
-    if (problem->lifetimes == NULL || result->offsets == NULL) {
+    if (context->lifetimes == NULL || result->offsets == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    if (problem->excluded == NULL) {
+    if (context->excluded == NULL) {
         return place_region(
-            problem->lifetimes, count, result->offsets, &result->required_bytes
+            context->lifetimes, count, result->offsets, &result->required_bytes
         );
     }
 
@@ -531,7 +531,7 @@ ShadowSpillStatus shadowspill_place_lifetimes(
     if (records == NULL || sources == NULL || offsets == NULL) {
         goto done;
     }
-    const uint32_t placed = gather(problem, records, sources);
+    const uint32_t placed = gather(context, records, sources);
     status = place_region(records, placed, offsets, &result->required_bytes);
     if (status == SHADOWSPILL_STATUS_OK) {
         for (uint32_t index = 0U; index < placed; ++index) {
