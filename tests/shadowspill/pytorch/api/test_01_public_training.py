@@ -119,7 +119,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     training = plan_step(
         model,
         objective=_training_objective,
-        opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
+        optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
         runtime=runtime,
         execution="execution",
@@ -282,7 +282,7 @@ def test_public_training_breadth_first_matches_the_eager_reference(
     training = plan_step(
         model,
         objective=_training_objective,
-        opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
+        optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
         runtime=runtime,
         execution="execution",
@@ -312,7 +312,7 @@ def test_public_training_breadth_first_matches_the_eager_reference(
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
+def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
     _require_adapter()
     torch.manual_seed(73)
     model = _TrainingNetwork()
@@ -339,7 +339,7 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
     )
     built: list[torch.optim.Optimizer] = []
 
-    def optimizer_factory(
+    def build_optimizer(
         parameters: Iterable[torch.nn.Parameter],
     ) -> torch.optim.Optimizer:
         optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
@@ -349,8 +349,9 @@ def test_public_training_lazy_adamw_state_replays(tmp_path: object) -> None:
     training = plan_step(
         model,
         objective=_training_objective,
-        opt=optimizer_factory,
+        optimizer=build_optimizer,
         example_inputs=examples,
+        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         runtime=runtime,
         execution="execution",
         spill="spill",
@@ -417,7 +418,7 @@ def test_public_training_owns_the_model_state_it_imported(tmp_path: object) -> N
     training = plan_step(
         model,
         objective=_training_objective,
-        opt=partial(torch.optim.SGD, lr=0.02, foreach=False),
+        optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
         runtime=runtime,
         execution="execution",
@@ -480,7 +481,8 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     training = plan_step(
         model,
         objective=_training_objective,
-        opt=partial(_OpaqueSgd, lr=0.02),
+        optimizer=partial(_OpaqueSgd, lr=0.02),
+        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         example_inputs=examples,
         runtime=runtime,
         execution="execution",
@@ -542,12 +544,13 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
     training = plan_step(
         model,
         objective=objective,
-        opt=partial(
+        optimizer=partial(
             mlops.optim.AdamW,
             lr=3e-3,
             state_dtype=torch.bfloat16,
             master_parameter_dtype=torch.bfloat16,
         ),
+        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         example_inputs=inputs(92),
         runtime=runtime,
         execution="execution",
@@ -582,3 +585,72 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
                 assert value == other
     training.close()
     export_model_state(model, runtime=runtime, release_runtime=True)
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_follows_a_learning_rate_schedule() -> None:
+    """A rate named at planning and set per step reproduces eager training.
+
+    This is the whole claim behind ``hyperparams``: one plan, one capture, and
+    a value the step reads rather than one the capture folded in. Comparing
+    against an eager run of the same schedule is what distinguishes that from
+    a step that quietly uses the rate it was planned with.
+    """
+
+    _require_adapter()
+    schedule = (1e-3, 5e-4, 2.5e-4, 1.25e-4, 8e-4, 1e-5)
+
+    def network() -> nn.Module:
+        torch.manual_seed(91)
+        return nn.Sequential(
+            nn.Linear(8, 12, bias=False),
+            nn.ReLU(),
+            nn.Linear(12, 4, bias=False),
+        )
+
+    def batches(seed: int) -> list[list[torch.Tensor]]:
+        torch.manual_seed(seed)
+        return [[torch.randn(2, 8), torch.randn(2, 4)]]
+
+    def objective(model: nn.Module, value: torch.Tensor, target: torch.Tensor):
+        return torch.nn.functional.mse_loss(model(value), target)
+
+    build = partial(torch.optim.AdamW, foreach=False)
+    runtime = public_test_runtime()
+    model = import_model_state(
+        network(), runtime=runtime, pool="spill", release_source=True
+    )
+    training = plan_step(
+        model,
+        objective=objective,
+        optimizer=build,
+        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
+        hyperparams=("lr",),
+        example_inputs=batches(92),
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+    )
+    for index, rate in enumerate(schedule):
+        training(batches(100 + index), hyperparams={"lr": rate})
+    planned = {
+        name: value.detach().float().cpu()
+        for name, value in training.state_dict()["model"].items()
+    }
+    training.close()
+
+    reference = network().cuda()
+    optimizer = build(reference.parameters())
+    for index, rate in enumerate(schedule):
+        for group in optimizer.param_groups:
+            group["lr"] = rate
+        value, target = (item.cuda() for item in batches(100 + index)[0])
+        optimizer.zero_grad()
+        objective(reference, value, target).backward()
+        optimizer.step()
+
+    for name, expected in reference.state_dict().items():
+        torch.testing.assert_close(
+            planned[name], expected.detach().float().cpu(), rtol=1e-5, atol=1e-6
+        )

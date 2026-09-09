@@ -104,7 +104,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         constructed: list[torch.optim.AdamW] = []
         optimizer_calls: list[int] = []
 
-        def optimizer_factory(
+        def build_optimizer(
             parameters: Iterable[torch.nn.Parameter],
         ) -> torch.optim.AdamW:
             optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
@@ -148,7 +148,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
         planned = plan_step(
             model,
             objective=_objective,
-            opt=optimizer_factory,
+            optimizer=build_optimizer,
+            optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
             example_inputs=example_inputs,
             runtime=runtime,
             execution="execution",
@@ -160,7 +161,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             ),
         )
         if len(constructed) != 1:
-            raise AssertionError("optimizer factory was not invoked exactly once")
+            raise AssertionError("optimizer was not built exactly once")
         plan_diagnostics = planned.plan_report.diagnostics
         if not plan_diagnostics.cache_artifacts:
             raise AssertionError("plan diagnostics omitted cache artifacts")
@@ -509,7 +510,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
         warm = plan_step(
             warm_model,
             objective=_objective,
-            opt=optimizer_factory,
+            optimizer=build_optimizer,
+            optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
             example_inputs=example_inputs,
             runtime=runtime,
             execution="execution",
