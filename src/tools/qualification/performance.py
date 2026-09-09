@@ -23,13 +23,14 @@ from shadowspill.pytorch import (
     plan_step,
 )
 from shadowspill.schema import artifact_schema
-from tools.qualification.model_state import import_case_model, release_case_model
+from tools.qualification.model_state import release_case_model
 from tools.qualification.pressurefit_fixtures import write_pressurefit_fixtures
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
     statistics_dict,
 )
+from workloads.common.training import LEARNING_RATE, optimizer_state_init
 from workloads.full_model import FullModelManifest, build_case, manifest_for
 from workloads.providers import ModelImplementation
 
@@ -239,15 +240,16 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         runtime.calibrate_transfer_capabilities()
         calibration_attempts += 1
     runtime_transfer_capabilities = _report_runtime_transfer_capabilities(runtime)
-    case = build_case(manifest, seed=arguments.seed)
+    case = build_case(manifest, seed=arguments.seed, runtime=runtime)
     with case.implementations():
-        case = import_case_model(case, runtime=runtime)
         model = case.model
         planning_started = time.perf_counter()
         training = plan_step(
             model,
             objective=case.objective,
-            opt=case.optimizer,
+            optimizer=case.optimizer,
+            optimizer_state_init=optimizer_state_init,
+            hyperparams=("lr",),
             example_inputs=case.microbatches,
             runtime=runtime,
             execution="execution",
@@ -316,6 +318,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         warm_started = time.perf_counter()
         warm_result = training(
             case.microbatches,
+            hyperparams={"lr": LEARNING_RATE},
             runtime_trace=True,
             profiler_annotations=arguments.profiler_annotations,
         )
@@ -378,6 +381,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 call_started = time.perf_counter()
                 step_result = training(
                     case.microbatches,
+                    hyperparams={"lr": LEARNING_RATE},
                     profiler_annotations=arguments.profiler_annotations,
                 )
                 dispatch_seconds.append(time.perf_counter() - call_started)
