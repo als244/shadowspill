@@ -50,9 +50,9 @@ from shadowspill.planner.recomputation import (
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
-from shadowspill.pytorch.state.storage import PoolTensorFactory
 from shadowspill.pytorch.step_search import search_geometries
-from tools.qualification.model_state import import_case_model, release_case_model
+from tools.qualification.model_state import release_case_model
+from workloads.common.training import LEARNING_RATE, optimizer_state_init
 from workloads.full_model import build_case, manifest_for
 from workloads.providers import ModelImplementation
 
@@ -829,11 +829,12 @@ def main() -> int:
     note_host_memory(None, "runtime pools registered")
     marker = time.perf_counter()
     # Built inside the pool it will live in, so the parameters are written
-    # where they stay rather than allocated on the host and copied in. The
-    # import below then adopts them instead of moving ~30 GiB.
-    with PoolTensorFactory(runtime, runtime.pools["spill"]):
-        case = build_case(manifest, seed=arguments.seed)
-    charge("model construction", marker)
+    # Declared on meta and materialised straight into the spill pool, so the
+    # model's values are written where they will live and no host memory
+    # proportional to it is ever allocated.
+    case = build_case(manifest, seed=arguments.seed, runtime=runtime)
+    charge("model construction in the spill pool", marker)
+    note_host_memory(None, "model constructed in the spill pool")
     vocabulary = int(manifest.model_config.vocab_size)
 
     def example_microbatches(
@@ -869,11 +870,7 @@ def main() -> int:
         return example_microbatches(sequences, accumulation, generator=generator)
 
     with case.implementations():
-        marker = time.perf_counter()
-        case = import_case_model(case, runtime=runtime)
-        charge("model import into the spill pool", marker)
         trained = False
-        note_host_memory(None, "model imported into the spill pool")
         report = None
         # Opened before the branch: a run that chose its geometry by hand still
         # plans once per budget, and that is the same granular output a search
@@ -906,7 +903,9 @@ def main() -> int:
                 report = plan_step_search(
                     case.model,
                     objective=case.objective,
-                    opt=case.optimizer,
+                    optimizer=case.optimizer,
+                    optimizer_state_init=optimizer_state_init,
+                    hyperparams=("lr",),
                     example_microbatches=example_microbatches,
                     total_sequences_per_step=sequences_per_step,
                     sequence_length=sequence_length,
@@ -995,8 +994,8 @@ def main() -> int:
                 # correctness check as well as a measurement.
                 marker = time.perf_counter()
                 release_case_model(case, runtime=runtime)
-                case = import_case_model(
-                    build_case(manifest, seed=arguments.seed), runtime=runtime
+                case = build_case(
+                    manifest, seed=arguments.seed, runtime=runtime
                 )
                 charge("model construction", marker)
                 plan_log.note("model and optimizer state reset for a comparable run")
@@ -1009,7 +1008,9 @@ def main() -> int:
                 training = plan_step(
                     case.model,
                     objective=case.objective,
-                    opt=case.optimizer,
+                    optimizer=case.optimizer,
+                    optimizer_state_init=optimizer_state_init,
+                    hyperparams=("lr",),
                     example_inputs=microbatches,
                     runtime=runtime,
                     execution="execution",
@@ -1068,7 +1069,9 @@ def main() -> int:
             def run_step(step: int, *, traced: bool) -> Any:
                 started = time.perf_counter()
                 result = training(
-                    step_microbatches(*geometry), runtime_trace=traced
+                    step_microbatches(*geometry),
+                    hyperparams={"lr": LEARNING_RATE},
+                    runtime_trace=traced,
                 )
                 losses[step] = statistics.fmean(
                     float(value) for value in result.objectives
