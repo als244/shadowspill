@@ -29,22 +29,43 @@ def test_state_metrics_are_path_specific_and_deterministic() -> None:
         "model": {"weight": torch.tensor([1.0, -2.0, 3.01])},
         "optimizer": {"step": torch.tensor(2)},
     }
-    metrics, failures = compare_states(reference, actual)
+    metrics, failures, structure = compare_states(reference, actual)
     assert not failures
+    assert not structure
     assert set(metrics) == {"state/model/weight"}
     assert metrics["state/model/weight"].cosine > 0.999
     assert state_digest(reference) == state_digest(reference)
     assert state_digest(reference) != state_digest(actual)
 
 
-def test_state_metrics_reject_nonfloating_and_structural_differences() -> None:
-    _metrics, failures = compare_states(
+def test_state_metrics_separate_value_differences_from_structural_ones() -> None:
+    """A different value and a different shape are different findings.
+
+    Values that disagree are evidence about arithmetic. Shapes that disagree
+    mean the two states are not answers to the same question at all, so any
+    metric taken across them describes nothing -- which is why they are
+    returned apart rather than in one list of failures.
+    """
+
+    _metrics, failures, structure = compare_states(
         {"value": torch.tensor([1, 2]), "kind": "x"},
         {"value": torch.tensor([1, 3]), "kind": "y"},
     )
     assert failures == (
         "state/kind: 'x' != 'y'",
         "state/value: integral tensor differs [1, 2] != [1, 3]",
+    )
+    assert not structure
+
+    _metrics, failures, structure = compare_states(
+        {"weight": torch.zeros(2048, 2048), "state": {"a": torch.zeros(4)}},
+        {"weight": torch.zeros(2048), "state": {"b": torch.zeros(4)}},
+    )
+    assert not failures
+    assert structure == (
+        "state/state: mapping keys differ",
+        "state/weight: geometry torch.Size([2048, 2048])/torch.float32 != "
+        "torch.Size([2048])/torch.float32",
     )
 
 

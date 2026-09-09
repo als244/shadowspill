@@ -43,6 +43,24 @@ uninterrupted run within the same per-tensor tolerance the reference
 comparison uses, real EVICT/FETCH traffic, numerical tolerances, and the
 physical device cap.
 
+A disagreement is reported as one of two kinds, and the structural kind is
+reported first because it decides whether the other means anything.
+`structure_failures` names states that do not have the same shape as the
+reference -- a tensor of a different geometry, a mapping with different keys, a
+sequence of a different length. When those appear, whatever values still line
+up are being compared across tensors that do not correspond, so the cosine and
+relative-L2 figures describe nothing and the run is not a numerical
+disagreement at all. The usual cause is that the reference was recorded against
+a different configuration: changing the optimizer's parameter groups, for
+instance, permutes the index a state entry is stored under, and every entry
+then mismatches on shape while nothing computes wrong. That is a reference to
+regenerate, not a fault to debug.
+
+`exact_failures` is the second kind: same shape, different value, where the
+value is one that must agree exactly -- an integral tensor, a scalar option.
+`metric_failures` is the third: same shape, floating-point value, outside the
+per-tensor tolerance. Only those two are evidence about arithmetic.
+
 The replay is answered two ways, and both are reported.
 `checkpoint_replay_bitwise` says whether it agreed exactly, and
 `checkpoint_replay_within_tolerance` whether it agreed within the per-tensor
