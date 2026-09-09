@@ -147,8 +147,8 @@ selected-task span = sum of selected task-event durations
 | `selected_span_delta_seconds` | Real selected span minus simulated selected span. |
 | `simulator_makespan_seconds` | Complete simulated schedule, including modeled terminal work. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
-| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the end marker `mark_cycle_end()` records; `None` when the trace was resolved before anything closed the cycle. Equals `head_wait_seconds + real_selected_span_seconds + exposed_tail_seconds`. See [timing](api/timing.md). |
-| `head_wait_seconds` | Origin to the first task's compute start: the first task's readiness waits and whatever the opening still held the stream for. |
+| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the end marker `mark_cycle_end()` records; `None` when the trace was resolved before anything closed the cycle. Equals `opening_delay_seconds + real_selected_span_seconds + exposed_tail_seconds`. See [timing](api/timing.md). |
+| `opening_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and whatever the opening still held the stream for. |
 | `exposed_tail_seconds` | Last task's compute end to the cycle's end: terminal work the stream itself still did. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |
 | `prior_invocation_drain_seconds` | Host time this call spent at its start waiting for the previous invocation's plan to go idle. A plan assumes its initial objects are resident when it begins, and the invocation before it ends by writing them back, so the next call cannot overlap that writeback. The first invocation has nothing to wait for and reports zero, which is why a trace taken on a warm first step shows zero here even though every later step pays it. |

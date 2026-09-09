@@ -502,13 +502,13 @@ class StepTimingSummary:
     #: stream to the next invocation's, or to the end marker the caller
     #: recorded, whichever the stream reached first. It is the time a
     #: repeated step costs and what throughput divides by; it contains the
-    #: head, the span and the exposed tail exactly, and excludes the part of
-    #: the previous invocation's tail that overlapped it. `None` when the
-    #: trace was resolved before anything closed the cycle.
+    #: opening delay, the span and the exposed tail exactly, and excludes the
+    #: part of the previous invocation's tail that overlapped it. `None` when
+    #: the trace was resolved before anything closed the cycle.
     cycle_seconds: float | None
     #: Origin to the first task's compute start: the first task's readiness
     #: waits and whatever the opening still held the stream for.
-    head_wait_seconds: float
+    opening_delay_seconds: float
     #: Last task's compute end to the cycle's end: terminal work the stream
     #: itself still did. `None` with `cycle_seconds`.
     exposed_tail_seconds: float | None
@@ -557,7 +557,7 @@ class StepTimingSummary:
             "simulator_makespan_seconds": self.simulator_makespan_seconds,
             "simulator_terminal_tail_seconds": self.simulator_terminal_tail_seconds,
             "cycle_seconds": self.cycle_seconds,
-            "head_wait_seconds": self.head_wait_seconds,
+            "opening_delay_seconds": self.opening_delay_seconds,
             "exposed_tail_seconds": self.exposed_tail_seconds,
             "call_seconds": self.call_seconds,
             "prior_invocation_drain_seconds": self.prior_invocation_drain_seconds,
