@@ -540,7 +540,7 @@ class TaskAlternativeChoice:
 
 
 @dataclass(frozen=True, slots=True)
-class Program:
+class ShadowSpillProgram:
     devices: tuple[DeviceSpec, ...]
     alias_groups: tuple[AliasGroupSpec, ...]
     objects: tuple[ObjectSpec, ...]
@@ -741,7 +741,7 @@ class Program:
             "devices": [device.to_dict() for device in self.devices],
             "objects": [item.to_dict() for item in self.objects],
             "profiles": [profile.to_dict() for profile in self.profiles],
-            "recomputation_groups": [
+            "task_alternative_groups": [
                 group.to_dict() for group in self.task_alternative_groups
             ],
             "schema": PROGRAM_SCHEMA,
@@ -752,7 +752,7 @@ class Program:
         return canonical_json(self.to_dict())
 
     @classmethod
-    def from_dict(cls, value: object) -> Program:
+    def from_dict(cls, value: object) -> ShadowSpillProgram:
         data = expect_mapping(value, "program")
         schema = expect_string(field(data, "schema", "program"), "program.schema")
         require(
@@ -767,7 +767,7 @@ class Program:
         objects = records("objects")
         profiles = records("profiles")
         tasks = records("tasks")
-        groups = records("recomputation_groups")
+        groups = records("task_alternative_groups")
         return cls(
             devices=tuple(
                 DeviceSpec.from_value(item, f"program.devices[{index}]")
@@ -791,14 +791,14 @@ class Program:
             ),
             task_alternative_groups=tuple(
                 TaskAlternativeGroup.from_value(
-                    item, f"program.recomputation_groups[{index}]"
+                    item, f"program.task_alternative_groups[{index}]"
                 )
                 for index, item in enumerate(groups)
             ),
         )
 
     @classmethod
-    def from_json(cls, payload: str) -> Program:
+    def from_json(cls, payload: str) -> ShadowSpillProgram:
         return cls.from_dict(parse_json(payload))
 
     def selected_tasks(
@@ -874,9 +874,9 @@ __all__ = [
     "ObjectRole",
     "ObjectSpec",
     "Persistence",
-    "Program",
     "ResourceKind",
     "ResourceSpec",
+    "ShadowSpillProgram",
     "TaskAlternativeChoice",
     "TaskAlternativeGroup",
     "TaskAlternativeOption",

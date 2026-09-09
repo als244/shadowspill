@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from shadowspill.schema import artifact_schema
 
-from .program import Program, TaskAlternativeChoice
+from .program import ShadowSpillProgram, TaskAlternativeChoice
 from .schedule import MemorySchedule
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
@@ -188,7 +188,7 @@ class PlanPrediction:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionPlan:
-    program: Program
+    program: ShadowSpillProgram
     schedule: MemorySchedule
     selections: tuple[TaskAlternativeChoice, ...]
     entrypoints: tuple[EntrypointSpec, ...]
@@ -196,7 +196,11 @@ class ExecutionPlan:
     prediction: PlanPrediction
 
     def __post_init__(self) -> None:
-        require(isinstance(self.program, Program), "plan.program", "invalid program")
+        require(
+            isinstance(self.program, ShadowSpillProgram),
+            "plan.program",
+            "invalid program",
+        )
         require(
             isinstance(self.schedule, MemorySchedule),
             "plan.schedule",
@@ -268,7 +272,7 @@ class ExecutionPlan:
             field(data, "entrypoints", "plan"), "plan.entrypoints"
         )
         return cls(
-            program=Program.from_dict(field(data, "program", "plan")),
+            program=ShadowSpillProgram.from_dict(field(data, "program", "plan")),
             schedule=MemorySchedule.from_dict(field(data, "schedule", "plan")),
             selections=tuple(
                 TaskAlternativeChoice.from_value(item, f"plan.selections[{index}]")

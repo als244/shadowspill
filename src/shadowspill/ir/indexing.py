@@ -1,4 +1,11 @@
-"""Stable integer projections for the C ABI."""
+"""The IR with its identifiers replaced by stable integer indices.
+
+Every C entry point takes flat arrays rather than objects, so a program,
+a schedule and an execution plan each have an indexed form: the same
+facts, with string ids resolved to positions and rows flattened. The
+indices are assigned once, deterministically, and every later array is
+in that order, so the C side never looks anything up by name.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +15,8 @@ from .execution import ExecutionPlan
 from .program import (
     ObjectRole,
     Persistence,
-    Program,
     ResourceKind,
+    ShadowSpillProgram,
     SharedResidencyPolicy,
 )
 from .schedule import MemoryActionKind, MemoryLocation, MemorySchedule
@@ -41,7 +48,7 @@ MEMORY_ACTION_CODE = {
 
 @dataclass(frozen=True, slots=True)
 class IndexedProgram:
-    """Indexed lossless projection of a :class:`Program`."""
+    """Indexed lossless projection of a :class:`ShadowSpillProgram`."""
 
     device_ids: tuple[str, ...]
     device_process_ids: tuple[str, ...]
@@ -92,12 +99,12 @@ class IndexedProgram:
 class IndexedMemorySchedule:
     """Indexed lossless projection of a :class:`MemorySchedule`."""
 
-    initial_alias_groups: tuple[int, ...]
+    initial_aliases: tuple[int, ...]
     initial_locations: tuple[int, ...]
     action_trigger_tasks: tuple[int, ...]
-    action_alias_groups: tuple[int, ...]
+    action_aliases: tuple[int, ...]
     action_kinds: tuple[int, ...]
-    final_alias_groups: tuple[int, ...]
+    final_aliases: tuple[int, ...]
     final_locations: tuple[int, ...]
 
 
@@ -156,7 +163,7 @@ def flatten_rows(
     return tuple(offsets), tuple(values)
 
 
-def index_program(program: Program) -> IndexedProgram:
+def index_program(program: ShadowSpillProgram) -> IndexedProgram:
     """Project a validated program without changing declared order."""
 
     device_ids = tuple(item.device_id for item in program.devices)
@@ -273,7 +280,7 @@ def index_program(program: Program) -> IndexedProgram:
 
 
 def index_memory_schedule(
-    program: Program,
+    program: ShadowSpillProgram,
     schedule: MemorySchedule,
 ) -> IndexedMemorySchedule:
     """Project schedule identities through a program's stable contiguous indices."""
@@ -283,7 +290,7 @@ def index_memory_schedule(
     }
     task_index = {item.task_id: index for index, item in enumerate(program.tasks)}
     return IndexedMemorySchedule(
-        initial_alias_groups=tuple(
+        initial_aliases=tuple(
             alias_index[item.alias_group_id] for item in schedule.initial_residency
         ),
         initial_locations=tuple(
@@ -292,11 +299,11 @@ def index_memory_schedule(
         action_trigger_tasks=tuple(
             task_index[item.trigger_task_id] for item in schedule.actions
         ),
-        action_alias_groups=tuple(
+        action_aliases=tuple(
             alias_index[item.alias_group_id] for item in schedule.actions
         ),
         action_kinds=tuple(MEMORY_ACTION_CODE[item.kind] for item in schedule.actions),
-        final_alias_groups=tuple(
+        final_aliases=tuple(
             alias_index[item.alias_group_id] for item in schedule.final_residency
         ),
         final_locations=tuple(
