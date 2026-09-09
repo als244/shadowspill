@@ -525,6 +525,14 @@ static int apply_release_action(
 
 /* An eviction has to finish copying before the memory can be reused, so it
  * takes a dependency of its own rather than the task's. */
+/* A write-back copies the object to spill and keeps the device copy, so it
+ * moves bytes on the evict lane and retires nothing. What ends the lease is
+ * the release that follows it. */
+static int apply_write_back_action(OperationBuild *build, uint32_t alias) {
+    build->tally->evict_bytes += build->program->alias_size_bytes[alias];
+    return 0;
+}
+
 static int apply_evict_action(
     OperationBuild *build, uint32_t action, uint32_t alias
 ) {
@@ -604,6 +612,9 @@ static int apply_task_actions(
             break;
         case SHADOWSPILL_MEMORY_FETCH:
             applied = apply_fetch_action(build, action, alias);
+            break;
+        case SHADOWSPILL_MEMORY_WRITE_BACK:
+            applied = apply_write_back_action(build, alias);
             break;
         default:
             return -1;
