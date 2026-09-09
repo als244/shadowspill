@@ -51,6 +51,19 @@ static void append_action_locked(
     object->action_tail = action;
 }
 
+/* A write-back of this object still to copy: queued or on the lane. */
+static int has_pending_copy_locked(const ShadowSpillObject *object) {
+    for (const ShadowSpillQueuedAction *queued = object->action_head;
+         queued != NULL;
+         queued = queued->object_next) {
+        if (queued->kind == SHADOWSPILL_RUNTIME_WRITE_BACK &&
+            !queued->skips_copy) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 ShadowSpillStatus shadowspill_object_schedule_action_locked(
     ShadowSpillObject *object,
     ShadowSpillQueuedAction *action
@@ -68,6 +81,8 @@ ShadowSpillStatus shadowspill_object_schedule_action_locked(
     action->scheduled_version = before.version;
     action->produces_current_execution = 0U;
     action->produces_current_spill = 0U;
+    action->skips_copy = 0U;
+    action->retires_when_processed = 0U;
 
     switch (action->kind) {
         case SHADOWSPILL_RUNTIME_FETCH:
@@ -83,12 +98,22 @@ ShadowSpillStatus shadowspill_object_schedule_action_locked(
                 return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }
             action->produces_current_spill = before.spill_current;
+            action->retires_when_processed =
+                has_pending_copy_locked(object) ? 1U : 0U;
             break;
         case SHADOWSPILL_RUNTIME_EVICT:
             if (!before.execution_current) {
                 return SHADOWSPILL_STATUS_PLAN_VIOLATION;
             }
             action->produces_current_spill = 1U;
+            break;
+        case SHADOWSPILL_RUNTIME_WRITE_BACK:
+            if (!before.execution_current) {
+                return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+            }
+            action->produces_current_execution = 1U;
+            action->produces_current_spill = 1U;
+            action->skips_copy = before.spill_current;
             break;
         default:
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -132,6 +157,8 @@ int shadowspill_object_reset_admitted_action_locked(
     action->active = 0U;
     action->produces_current_execution = 0U;
     action->produces_current_spill = 0U;
+    action->skips_copy = 0U;
+    action->retires_when_processed = 0U;
     action->handoff_lease = NULL;
     action->handoff_generation = 0U;
     action->caller_handoff_lease = NULL;

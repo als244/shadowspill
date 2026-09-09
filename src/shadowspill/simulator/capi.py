@@ -92,6 +92,7 @@ class CTransferInterval(ctypes.Structure):
         ("trigger_task", ctypes.c_uint32),
         ("device", ctypes.c_uint32),
         ("direction", ctypes.c_uint8),
+        ("kind", ctypes.c_uint8),
         ("sequence", ctypes.c_uint32),
         ("ready_ns", ctypes.c_uint64),
         ("start_ns", ctypes.c_uint64),

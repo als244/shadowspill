@@ -39,7 +39,10 @@ generation. An eviction's source is not freed when the action is queued: it
 becomes reusable only through that completion, which is what keeps later task
 allocations from overtaking planned transfer capacity while the lane stays
 FIFO. The worker loop itself is described in
-[memory runtime](memory-runtime.md#worker).
+[memory runtime](memory-runtime.md#worker). A write-back travels the evict
+lane exactly as an eviction does, in the same order and against the same
+window; only what its completion publishes differs: the spill copy becomes
+current and the execution copy stays.
 
 Each lane serves two queues. Transfers the plan scheduled are dispatched in
 the order their boundaries triggered them. Transfers the plan did not

@@ -118,6 +118,8 @@ class TransferLabelIndex:
             return "fetch"
         if kind is MemoryActionKind.EVICT:
             return "evict"
+        if kind is MemoryActionKind.WRITE_BACK:
+            return "write_back"
         return "release"
 
 

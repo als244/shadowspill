@@ -47,6 +47,7 @@ class Status(IntEnum):
     INVALID_FETCH = 30
     FINAL_RESIDENCY = 31
     SIMULATION_INTERNAL_ERROR = 32
+    INVALID_WRITE_BACK = 33
 
     # Execution, 40-79.
     OUT_OF_MEMORY = 40

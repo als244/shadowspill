@@ -11,6 +11,7 @@ from shadowspill.ir import (
     MemoryActionKind,
     MemoryLocation,
     MemorySchedule,
+    MutationSpec,
     ObjectRole,
     ObjectSpec,
     Persistence,
@@ -187,4 +188,77 @@ def representative_plan() -> ExecutionPlan:
             spill_peak_bytes=128,
             makespan_ns=38,
         ),
+    )
+
+
+def write_back_program() -> Program:
+    """One retained state alias: `update` writes it in place, `consume` reads
+    it after a spacer long enough for a copy to land in between."""
+
+    compute = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
+    return Program(
+        devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
+        alias_groups=(
+            AliasGroupSpec("state_storage", "cuda_0", 128, retain_spill_copy=True),
+        ),
+        objects=(
+            ObjectSpec("state", "state_storage", 0, 128, ObjectRole.OPTIMIZER_STATE),
+        ),
+        profiles=(
+            TaskProfile("update_profile", 100, 16, "update_abi"),
+            TaskProfile("spacer_profile", 300, 8, "spacer_abi"),
+            TaskProfile("consume_profile", 100, 16, "consume_abi"),
+        ),
+        tasks=(
+            TaskSpec(
+                "update",
+                compute,
+                "update_profile",
+                inputs=("state",),
+                mutations=(MutationSpec("state"),),
+            ),
+            TaskSpec(
+                "spacer",
+                compute,
+                "spacer_profile",
+                dependencies=("update",),
+            ),
+            TaskSpec(
+                "consume",
+                compute,
+                "consume_profile",
+                dependencies=("spacer",),
+                inputs=("state",),
+            ),
+        ),
+    )
+
+
+def write_back_schedule() -> MemorySchedule:
+    """Write the state back after the update, so releasing it during the
+    spacer costs nothing, and fetch it again for the consumer."""
+
+    return MemorySchedule(
+        initial_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
+        actions=(
+            MemoryAction("update", "state_storage", MemoryActionKind.WRITE_BACK),
+            MemoryAction("spacer", "state_storage", MemoryActionKind.RELEASE),
+            MemoryAction("spacer", "state_storage", MemoryActionKind.FETCH),
+        ),
+        final_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
+    )
+
+
+def release_behind_write_back_schedule() -> MemorySchedule:
+    """Release and fetch at the write-back's own trigger: the release waits
+    for the copy to land, and the fetch behind it waits for the release."""
+
+    return MemorySchedule(
+        initial_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
+        actions=(
+            MemoryAction("update", "state_storage", MemoryActionKind.WRITE_BACK),
+            MemoryAction("update", "state_storage", MemoryActionKind.RELEASE),
+            MemoryAction("update", "state_storage", MemoryActionKind.FETCH),
+        ),
+        final_residency=(ResidencySpec("state_storage", MemoryLocation.DEVICE),),
     )

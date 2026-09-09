@@ -20,6 +20,7 @@ _STATUS_KIND: dict[int, str] = {
     Status.INVALID_FETCH: "invalid-fetch",
     Status.FINAL_RESIDENCY: "final-residency",
     Status.SIMULATION_INTERNAL_ERROR: "internal-error",
+    Status.INVALID_WRITE_BACK: "invalid-write-back",
 }
 
 _STATUS_MESSAGE: dict[int, str] = {
@@ -32,12 +33,18 @@ _STATUS_MESSAGE: dict[int, str] = {
     Status.FETCH_DEVICE_CAPACITY: "fetch cannot reserve device capacity",
     Status.EVICT_SPILL_CAPACITY: "evict cannot reserve host capacity",
     Status.TRANSFER_DEADLOCK: "transfer has no progress source",
-    Status.INVALID_RELEASE: "release has no ready device copy",
+    Status.INVALID_RELEASE: (
+        "release has no ready device copy or drops the only current copy "
+        "of a value still needed"
+    ),
     Status.RELEASE_TRANSFER_CONFLICT: "release conflicts with a transfer",
     Status.INVALID_EVICT: "evict has no ready device source",
     Status.INVALID_FETCH: ("fetch has no host source or duplicates a device copy"),
     Status.FINAL_RESIDENCY: "required final residency was not reached",
     Status.SIMULATION_INTERNAL_ERROR: "internal simulator invariant failed",
+    Status.INVALID_WRITE_BACK: (
+        "write-back has no ready device source or overlaps a transfer"
+    ),
 }
 
 _CAPACITY_STATUSES: frozenset[int] = frozenset(

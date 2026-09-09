@@ -11,7 +11,8 @@ standalone evaluator for an already selected schedule.
 - aliases, sizes, versions, and retained spill copies;
 - task resource, duration, workspace, dependencies, inputs, outputs, and
   mutations;
-- memory actions and initial/final residency;
+- memory actions (release, evict, fetch, write-back) and initial/final
+  residency;
 - task/action physical byte deltas;
 - physical memory-reuse dependencies.
 
@@ -26,7 +27,14 @@ makespan, spill peak, task intervals, transfer intervals, per-device
 object/workspace/total peaks, and capacity shortfalls. Caller-provided
 interval, peak, and violation buffers remain caller-owned.
 
-Task and transfer intervals include readiness, start, end, and stall masks.
+Task and transfer intervals include readiness, start, end, and stall masks;
+a transfer interval also carries its direction and the kind of the action
+that issued it, which tells a write-back from an eviction on the evict
+lane. An action whose preconditions fail ends the simulation with the
+matching status (`SHADOWSPILL_STATUS_INVALID_RELEASE`, `_INVALID_EVICT`,
+`_INVALID_FETCH`, `_INVALID_WRITE_BACK`);
+[Simulation](../architecture/simulation.md#memory-actions) states the
+preconditions.
 Stall masks distinguish input residency, device capacity, source readiness,
 spill capacity, and physical memory reuse.
 

@@ -29,6 +29,14 @@ int shadowspill_allocate_work(
         work->task_word_count == 0U ? 1U : work->task_word_count,
         sizeof(*work->active_tasks)
     );
+    work->alias_last_reader = malloc(
+        (program->alias_count == 0U ? 1U : program->alias_count) *
+        sizeof(*work->alias_last_reader)
+    );
+    work->alias_final_required = calloc(
+        program->alias_count == 0U ? 1U : program->alias_count,
+        sizeof(*work->alias_final_required)
+    );
     work->transfers = calloc(
         program->action_count == 0U ? 1U : program->action_count,
         sizeof(*work->transfers)
@@ -58,6 +66,8 @@ int shadowspill_allocate_work(
         program->device_count, sizeof(*work->device_total_peaks)
     );
     if (work->aliases == NULL || work->tasks == NULL ||
+        work->alias_last_reader == NULL ||
+        work->alias_final_required == NULL ||
         work->lane_successors == NULL || work->lane_heads == NULL ||
         work->active_tasks == NULL ||
         work->transfers == NULL || work->active_fetch == NULL ||
@@ -104,6 +114,8 @@ void shadowspill_free_work(ShadowSpillSimulationWork *work) {
     free(work->lane_successors);
     free(work->lane_heads);
     free(work->active_tasks);
+    free(work->alias_last_reader);
+    free(work->alias_final_required);
     free(work->transfers);
     free(work->active_fetch);
     free(work->active_evict);
@@ -149,6 +161,24 @@ int shadowspill_initialize_memory(
     ShadowSpillSimulationWork *work,
     ShadowSpillSimulationResult *result
 ) {
+    for (uint32_t alias = 0; alias < program->alias_count; ++alias) {
+        work->alias_last_reader[alias] = SHADOWSPILL_SIMULATOR_NO_INDEX;
+    }
+    for (uint32_t task = 0; task < program->task_count; ++task) {
+        for (uint32_t index = program->input_offsets[task];
+             index < program->input_offsets[task + 1U];
+             ++index) {
+            work->alias_last_reader[program->input_aliases[index]] = task;
+        }
+        for (uint32_t index = program->mutation_offsets[task];
+             index < program->mutation_offsets[task + 1U];
+             ++index) {
+            work->alias_last_reader[program->mutation_aliases[index]] = task;
+        }
+    }
+    for (uint32_t index = 0; index < program->final_count; ++index) {
+        work->alias_final_required[program->final_aliases[index]] = 1U;
+    }
     for (uint32_t alias = 0; alias < program->alias_count; ++alias) {
         ShadowSpillAliasState *state = &work->aliases[alias];
         state->device_version = program->alias_initial_version[alias];

@@ -65,6 +65,7 @@ _ACTION_KIND = {
     0: MemoryActionKind.RELEASE,
     1: MemoryActionKind.EVICT,
     2: MemoryActionKind.FETCH,
+    3: MemoryActionKind.WRITE_BACK,
 }
 _LOCATION = {0: MemoryLocation.DEVICE, 1: MemoryLocation.SPILL}
 _INITIAL_PLACEMENT = {"required": 0, "greedy": 1}

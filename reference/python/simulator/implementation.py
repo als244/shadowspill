@@ -46,6 +46,7 @@ class _AliasState:
     spill_version: int = 0
     fetch_pending: bool = False
     evict_pending: bool = False
+    write_back_pending: bool = False
 
 
 @dataclass(slots=True)
@@ -54,8 +55,11 @@ class _PendingTransfer:
     alias_group_id: str
     trigger_task_id: str
     direction: TransferDirection
+    kind: MemoryActionKind
     ready_ns: int
     sequence: int
+    # The device version a device-to-spill copy carries.
+    version: int = 0
     stall_reasons: set[str] = field(default_factory=set)
 
 
@@ -109,6 +113,18 @@ class _Simulator:
         self.alias_by_id = {item.alias_group_id: item for item in program.alias_groups}
         self.object_alias = {
             item.object_id: item.alias_group_id for item in program.objects
+        }
+        # Where a value is still needed after a release: the last task that
+        # reads each alias, and the aliases the final residency names.
+        self.alias_last_reader: dict[str, str] = {}
+        for task in self.tasks:
+            for object_id in (
+                *task.inputs,
+                *(mutation.object_id for mutation in task.mutations),
+            ):
+                self.alias_last_reader[self.object_alias[object_id]] = task.task_id
+        self.final_aliases = {
+            item.alias_group_id for item in schedule.final_residency
         }
         self.device_config = {item.device_id: item for item in config.devices}
         if admission is not None and admission.device_capacity_bytes:
@@ -457,6 +473,7 @@ class _Simulator:
                 state.device_ready = False
                 state.fetch_pending = False
                 state.evict_pending = False
+                state.write_back_pending = False
                 state.spill_ready = False
             self.device_workspace_bytes[device_id] += profile.workspace_bytes
             self._apply_physical_delta(device_id, physical_delta)
@@ -509,8 +526,10 @@ class _Simulator:
             alias_group_id=action.alias_group_id,
             trigger_task_id=action.trigger_task_id,
             direction=direction,
+            kind=action.kind,
             ready_ns=self.deferred_ready_ns.get(action_index, self.now_ns),
             sequence=sequence,
+            version=state.device_version,
         )
         if action_index in self.deferred_ready_ns:
             pending.stall_reasons.add(
@@ -521,11 +540,16 @@ class _Simulator:
         if direction is TransferDirection.FETCH:
             state.fetch_pending = True
             self.pending_fetch[state.device_id].append(pending)
+        elif action.kind is MemoryActionKind.WRITE_BACK:
+            state.write_back_pending = True
+            self.pending_evict[state.device_id].append(pending)
         else:
             state.evict_pending = True
             self.pending_evict[state.device_id].append(pending)
 
-    def _release(self, action: MemoryAction) -> None:
+    def _release(self, action: MemoryAction) -> bool:
+        """Drop the device copy; False when the release must wait."""
+
         state = self.alias_state[action.alias_group_id]
         if not state.device_allocated or not state.device_ready:
             raise SimulationInfeasibleError(
@@ -544,6 +568,27 @@ class _Simulator:
                 task_id=action.trigger_task_id,
                 alias_group_ids=(action.alias_group_id,),
             )
+        if state.write_back_pending:
+            # The release drops the copy the write-back is still reading, so
+            # it waits for the copy to land, as the runtime's does.
+            return False
+        last_reader = self.alias_last_reader.get(action.alias_group_id)
+        if not state.spill_ready and (
+            action.alias_group_id in self.final_aliases
+            or (last_reader is not None and last_reader not in self.completed)
+        ):
+            # Dropping the only current copy of a value still needed is a
+            # loss, reported here rather than at the fetch, task or final
+            # residency that would miss it.
+            raise SimulationInfeasibleError(
+                f"release of {action.alias_group_id!r} drops the only current "
+                "copy",
+                kind="invalid-release",
+                time_ns=self.now_ns,
+                task_id=action.trigger_task_id,
+                alias_group_ids=(action.alias_group_id,),
+                location=f"device:{state.device_id}",
+            )
         state.device_allocated = False
         state.device_ready = False
         self.device_object_bytes[state.device_id] -= state.size_bytes
@@ -552,6 +597,7 @@ class _Simulator:
             state.spill_ready = False
             self.spill_bytes -= state.size_bytes
         self._snapshot()
+        return True
 
     def _submit_ready_actions(self) -> None:
         while self.next_action_index < len(self.schedule.actions):
@@ -590,16 +636,41 @@ class _Simulator:
                     )
                 return
             if action.kind is MemoryActionKind.RELEASE:
-                self._release(action)
-            elif action.kind is MemoryActionKind.EVICT:
-                if not state.device_allocated or not state.device_ready:
+                if not self._release(action):
+                    return
+            elif action.kind in (
+                MemoryActionKind.EVICT,
+                MemoryActionKind.WRITE_BACK,
+            ):
+                # One copy of an object at a time: a second departure while
+                # the first is still on the lane has no single version to
+                # carry.
+                if (
+                    not state.device_allocated
+                    or not state.device_ready
+                    or state.evict_pending
+                    or state.write_back_pending
+                ):
+                    name = (
+                        "evict"
+                        if action.kind is MemoryActionKind.EVICT
+                        else "write-back"
+                    )
                     raise SimulationInfeasibleError(
-                        f"evict of {action.alias_group_id!r} lacks a device source",
-                        kind="invalid-evict",
+                        f"{name} of {action.alias_group_id!r} lacks a device "
+                        "source or overlaps a transfer",
+                        kind=f"invalid-{name}",
                         time_ns=self.now_ns,
                         task_id=action.trigger_task_id,
                         alias_group_ids=(action.alias_group_id,),
                     )
+                if action.kind is MemoryActionKind.WRITE_BACK and state.spill_ready:
+                    # Nothing to copy: the spill copy already holds this
+                    # version, so the action completes at its trigger.
+                    self._apply_physical_delta(device_id, physical_delta)
+                    self._snapshot()
+                    self.next_action_index += 1
+                    continue
                 if not state.spill_allocated:
                     if (
                         self.spill_bytes + state.size_bytes
@@ -768,14 +839,21 @@ class _Simulator:
                 state.spill_ready = False
                 self.spill_bytes -= state.size_bytes
         else:
-            state.spill_ready = True
-            state.spill_version = state.device_version
-            state.evict_pending = False
-            state.device_ready = False
-            if not state.fetch_pending:
-                state.device_allocated = False
-                self.device_object_bytes[device_id] -= state.size_bytes
-                default_physical_delta = -state.size_bytes
+            # The copy carries the version it started from. A write that
+            # landed meanwhile leaves the spill copy stale, never current by
+            # fiat, so a later fetch or the final residency reports the loss.
+            state.spill_version = pending.version
+            state.spill_ready = state.device_version == pending.version
+            if pending.kind is MemoryActionKind.WRITE_BACK:
+                # The device copy stays, allocated and authoritative.
+                state.write_back_pending = False
+            else:
+                state.evict_pending = False
+                state.device_ready = False
+                if not state.fetch_pending:
+                    state.device_allocated = False
+                    self.device_object_bytes[device_id] -= state.size_bytes
+                    default_physical_delta = -state.size_bytes
         self._apply_physical_delta(
             device_id,
             self._action_completion_delta(pending.action_index, default_physical_delta),
@@ -787,6 +865,7 @@ class _Simulator:
                 trigger_task_id=pending.trigger_task_id,
                 device_id=device_id,
                 direction=direction,
+                kind=pending.kind,
                 sequence=pending.sequence,
                 ready_ns=pending.ready_ns,
                 start_ns=active.start_ns,
@@ -839,7 +918,10 @@ class _Simulator:
                         task_id=action.trigger_task_id,
                         aliases=(action.alias_group_id,),
                     )
-                if action.kind is MemoryActionKind.EVICT:
+                if action.kind in (
+                    MemoryActionKind.EVICT,
+                    MemoryActionKind.WRITE_BACK,
+                ):
                     self._raise_capacity(
                         kind="evict-spill-capacity",
                         location="host",
@@ -959,9 +1041,8 @@ class _Simulator:
                     location=residency.location.value,
                 )
 
-    def run(self) -> SimulationResult:
-        self._initialize_memory()
-        while (
+    def _has_pending_work(self) -> bool:
+        return bool(
             self.unlaunched
             or self.active_tasks
             or self.next_action_index < len(self.schedule.actions)
@@ -969,7 +1050,11 @@ class _Simulator:
             or any(self.pending_evict.values())
             or self.active_fetch
             or self.active_evict
-        ):
+        )
+
+    def run(self) -> SimulationResult:
+        self._initialize_memory()
+        while self._has_pending_work():
             changed = True
             while changed:
                 changed = self._try_start_transfers()
@@ -979,6 +1064,10 @@ class _Simulator:
                 before = self.next_action_index
                 self._submit_ready_actions()
                 changed |= self.next_action_index != before
+            if not self._has_pending_work():
+                # The last action went through on a retry, with nothing
+                # left to wait for.
+                break
             next_time = self._next_event_time()
             if next_time is None:
                 self._deadlock()

@@ -91,10 +91,21 @@ typedef enum ShadowSpillObjectResidency {
     SHADOWSPILL_OBJECT_RELEASED = 4,
 } ShadowSpillObjectResidency;
 
+/*
+ * What a plan asks of one object at a task boundary. A release drops the
+ * execution copy; an evict copies it to the spill pool and then drops it; a
+ * fetch copies the spill copy into the execution pool; a write-back copies
+ * the execution copy to the spill pool and keeps it, so the spill copy is
+ * current again and a later release costs nothing. A write-back whose spill
+ * copy is already current completes without a copy. A release behind a
+ * pending write-back of its object frees the execution copy once that copy
+ * has landed.
+ */
 typedef enum ShadowSpillRuntimeActionKind {
     SHADOWSPILL_RUNTIME_RELEASE = 0,
     SHADOWSPILL_RUNTIME_EVICT = 1,
     SHADOWSPILL_RUNTIME_FETCH = 2,
+    SHADOWSPILL_RUNTIME_WRITE_BACK = 3,
 } ShadowSpillRuntimeActionKind;
 
 typedef enum ShadowSpillAllocationEventKind {

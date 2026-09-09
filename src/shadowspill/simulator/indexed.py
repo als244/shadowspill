@@ -57,6 +57,7 @@ _ACTION_CODE = {
     MemoryActionKind.RELEASE: 0,
     MemoryActionKind.EVICT: 1,
     MemoryActionKind.FETCH: 2,
+    MemoryActionKind.WRITE_BACK: 3,
 }
 _STALL_REASONS = (
     (1 << 0, "input-residency"),
@@ -762,12 +763,14 @@ def _simulate_projection(
         0: TransferDirection.FETCH,
         1: TransferDirection.EVICT,
     }
+    kinds = {code: kind for kind, code in _ACTION_CODE.items()}
     transfer_intervals = tuple(
         TransferInterval(
             alias_group_id=projection.alias_ids[item.alias],
             trigger_task_id=projection.task_ids[item.trigger_task],
             device_id=projection.device_ids[item.device],
             direction=directions[item.direction],
+            kind=kinds[item.kind],
             sequence=int(item.sequence),
             ready_ns=int(item.ready_ns),
             start_ns=int(item.start_ns),

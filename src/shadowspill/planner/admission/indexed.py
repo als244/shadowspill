@@ -119,6 +119,7 @@ _ACTION_KIND = {
     MemoryActionKind.RELEASE: 0,
     MemoryActionKind.EVICT: 1,
     MemoryActionKind.FETCH: 2,
+    MemoryActionKind.WRITE_BACK: 3,
 }
 _LOCATION = {MemoryLocation.DEVICE: 0, MemoryLocation.SPILL: 1}
 _ALLOCATION_KIND = {

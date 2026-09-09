@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from shadowspill.ir import MemoryActionKind
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.collection import (
     _lane_summary,
@@ -50,6 +51,7 @@ def _interval(sequence: int, *, start_ns: int, end_ns: int) -> TransferInterval:
         trigger_task_id="task_000003",
         device_id="cuda_0",
         direction=TransferDirection.FETCH,
+        kind=MemoryActionKind.FETCH,
         sequence=sequence,
         ready_ns=start_ns - 1_000,
         start_ns=start_ns,

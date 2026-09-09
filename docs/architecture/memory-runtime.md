@@ -121,6 +121,16 @@ reusable only through its transfer-completion dependency. Reserving at trigger
 time prevents later task allocations from overtaking planned transfer
 capacity; deferring copy submission preserves FIFO lane behavior.
 
+A write-back shares the evict route with evictions: the copy runs on the
+evict lane and the execution copy stays, so tasks keep reading it while
+the copy lands, and completion marks the spill copy current at the version
+the action was scheduled at. A write-back scheduled while the spill copy is
+already current completes at its trigger without entering the lane. A
+release scheduled behind a pending write-back of the same object does not
+retire its source at the trigger, since the copy is still reading it; the
+worker retires and frees the range when it reaches the release, after the
+copy has landed, which is when the simulator frees it too.
+
 ## Worker
 
 One C-owned worker services completions, releases, and both transfer lanes. It

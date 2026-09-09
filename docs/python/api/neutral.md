@@ -243,6 +243,10 @@ Configuration and results:
 - `MemorySnapshot`, `DeviceMemoryPeak`, `CapacityViolation`
 - `ActionPhysicalDelta`, `TaskPhysicalDelta`, `MemoryReuseDependency`
 
+`TransferInterval.kind` names the `MemoryActionKind` behind a copy beside
+its `direction`: a write-back shares the evict lane with evictions and is
+told apart by it.
+
 A fetch or task launch with nowhere to go waits for room rather than
 failing, as [simulation](../../architecture/simulation.md#trigger-time-capacity)
 specifies, so a plan that comes up short is slower rather than rejected. Each

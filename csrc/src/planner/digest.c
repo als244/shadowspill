@@ -156,6 +156,8 @@ static const char *action_name(uint8_t kind) {
             return "evict";
         case SHADOWSPILL_MEMORY_FETCH:
             return "fetch";
+        case SHADOWSPILL_MEMORY_WRITE_BACK:
+            return "write_back";
     }
     return "invalid";
 }

@@ -35,7 +35,9 @@ ShadowSpillTransferLane *shadowspill_transfer_lane_for_action(
 ) {
     (void)runtime;
     if (action == NULL || action->route == NULL ||
-        action->kind == SHADOWSPILL_RUNTIME_RELEASE) {
+        action->kind == SHADOWSPILL_RUNTIME_RELEASE ||
+        (action->kind == SHADOWSPILL_RUNTIME_WRITE_BACK &&
+         action->skips_copy)) {
         return NULL;
     }
     return &action->route->transfers;
