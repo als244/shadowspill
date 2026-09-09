@@ -280,26 +280,114 @@ class PlannedTrainStep:
         self,
         inputs: Sequence[Sequence[Any]],
         *,
+        hyperparams: Mapping[str, float | Sequence[float]] | None = None,
         runtime_trace: bool = False,
         profiler_annotations: bool = False,
     ) -> StepResult:
         self._require_no_pending_invocation()
+        self._apply_hyperparams(hyperparams)
         return self._invoke(
             inputs,
             runtime_trace=runtime_trace,
             profiler_annotations=profiler_annotations,
         )
 
+    def _apply_hyperparams(
+        self, hyperparams: Mapping[str, float | Sequence[float]] | None
+    ) -> None:
+        """Write this step's hyperparameters into the tensors that carry them.
+
+        A value the program reads from a tensor can change between steps
+        without recapturing, because a tensor enters a capture's identity by
+        geometry rather than by value. A value read from a plain number was
+        fixed when it was captured, so asking to change one is refused rather
+        than silently ignored.
+
+        Which values are tensors is settled when the step is planned, by
+        ``plan_step``'s own ``hyperparams`` argument naming them. Only the named
+        ones are held that way, because an optimizer is entitled to require a
+        number, so a name that still holds one is an error naming the fix
+        rather than a value silently going nowhere.
+
+        Names resolve against the optimizer's parameter groups and the model's
+        named buffers, which are the two registries of named values that
+        already exist. Every optimizer group carrying the name is written, so
+        one schedule reaches an optimizer with several groups; groups that must
+        differ are written directly, which is the mechanism underneath this.
+        """
+
+        if not hyperparams:
+            return
+        groups = self._executor.optimizer.param_groups
+        buffers = dict(self._model.named_buffers())
+        for name, value in hyperparams.items():
+            in_groups = [
+                group[name]
+                for group in groups
+                if isinstance(group.get(name), torch.Tensor)
+            ]
+            buffer = buffers.get(name)
+            in_buffers = [buffer] if isinstance(buffer, torch.Tensor) else []
+            if in_groups and in_buffers:
+                raise KeyError(
+                    f"{name!r} names both an optimizer value and a model "
+                    "buffer, so which one to write is ambiguous; rename one "
+                    "or write it directly"
+                )
+            targets = in_groups or in_buffers
+            if targets:
+                if not isinstance(value, int | float):
+                    raise TypeError(
+                        f"{name!r} holds one value, so it takes one number"
+                    )
+                with torch.no_grad():
+                    for tensor in targets:
+                        tensor.fill_(value)
+                continue
+            held = [
+                item
+                for group in groups
+                if isinstance(group.get(name), tuple | list)
+                for item in group[name]
+                if isinstance(item, torch.Tensor)
+            ]
+            if held:
+                # An entry holding several values, as betas does: one number
+                # sets them all, a sequence sets them in order.
+                if isinstance(value, int | float):
+                    values = [float(value)] * len(held)
+                else:
+                    values = [float(item) for item in value]
+                if len(values) != len(held):
+                    raise ValueError(
+                        f"{name!r} holds {len(held)} values, so it needs that "
+                        f"many, not {len(values)}"
+                    )
+                with torch.no_grad():
+                    for tensor, item in zip(held, values, strict=True):
+                        tensor.fill_(item)
+                continue
+            if any(name in group for group in groups) or name in buffers:
+                raise TypeError(
+                    f"{name!r} is a plain number, so the capture fixed it when "
+                    "it was traced. To set it per step, name it when the step "
+                    f'is planned -- plan_step(..., hyperparams=("{name}",)) -- '
+                    "or register it as a model buffer."
+                )
+            raise KeyError(f"no optimizer value or model buffer named {name!r}")
+
     def submit(
         self,
         inputs: Sequence[Sequence[Any]],
         *,
+        hyperparams: Mapping[str, float | Sequence[float]] | None = None,
         runtime_trace: bool = False,
         profiler_annotations: bool = False,
     ) -> InvocationResult[StepResult]:
         """Dispatch without synchronizing and return explicit result ownership."""
 
         self._require_no_pending_invocation()
+        self._apply_hyperparams(hyperparams)
         result = self._invoke(
             inputs,
             runtime_trace=runtime_trace,
@@ -467,7 +555,7 @@ class PlannedTrainStep:
         ordinary CPU tensors is ``export_model_state``, a separate call.
 
         Optimizer state has no equivalent home today. ``plan_step`` builds the
-        optimizer from the factory it is given and imports its state into
+        optimizer with the callable it is given and imports its state into
         storage the plan owns; planning refuses an optimizer whose state the
         caller imported, so there is no caller-owned pool for it to be left
         in. Releasing the plan therefore releases the state with it, which is

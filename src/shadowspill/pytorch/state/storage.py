@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import torch
-from torch.overrides import TorchFunctionMode
 
 from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectLocationSnapshot,
@@ -22,6 +21,7 @@ from shadowspill.pytorch.runtime_adapter.runtime import (
     RuntimeConfigurationError,
 )
 
+from ..contracts import contiguous_stride
 from .records import PersistentState, PersistentStorage, TensorView
 from .registry import registry_for
 
@@ -574,7 +574,7 @@ PLANNING_MEMORY_MINIMUM_BYTES = 1 << 20
 
 
 
-def take_pool_memory(
+def _take_pool_memory(
     runtime: Runtime,
     pool: MemoryPool,
     *,
@@ -625,190 +625,37 @@ def take_pool_memory(
     )
 
 
-class PoolTensorFactory(TorchFunctionMode):
-    """Serve host tensor factories from the spill pool while this is active.
+def pool_backed_tensor(
+    runtime: Runtime,
+    pool: MemoryPool,
+    *,
+    shape: tuple[int, ...],
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, PersistentStorage]:
+    """Take memory from ``pool`` and present it as a host tensor.
 
-    Only ordinary host tensors are served, and only above ``minimum_bytes``:
-    a fake or meta tensor costs nothing to begin with, and a small one is not
-    worth an object. Anything else falls through to PyTorch untouched, so a
-    call this does not understand behaves exactly as it always did.
+    The object is registered without a source, so nothing is copied: the
+    caller writes the values it wants where they will stay. The tensor and the
+    allocation are returned together, because the allocation is what an import
+    adopts and the tensor is what the caller binds into its module.
     """
 
-    #: Factories whose result this can produce directly, with how to fill it.
-    _FILLED_FROM_SHAPE = ("zeros", "ones", "empty", "full")
-    _FILLED_FROM_TENSOR = ("zeros_like", "ones_like", "empty_like", "full_like")
-
-    def __init__(
-        self,
-        runtime: Runtime,
-        pool: MemoryPool,
-        *,
-        minimum_bytes: int = PLANNING_MEMORY_MINIMUM_BYTES,
-    ) -> None:
-        super().__init__()
-        self._runtime = runtime
-        self._pool = pool
-        self._minimum_bytes = minimum_bytes
-        self._allocations: dict[int, PersistentStorage] = {}
-
-    @property
-    def allocations(self) -> dict[int, PersistentStorage]:
-        """Every allocation still held, by the identity of its storage."""
-
-        return dict(self._allocations)
-
-    def release_all_but(self, kept: frozenset[int]) -> None:
-        """Give back every allocation whose storage is not in ``kept``."""
-
-        for identity, allocation in tuple(self._allocations.items()):
-            if identity in kept:
-                continue
-            del self._allocations[identity]
-            registry_for(self._runtime).forget_pool_allocation(identity)
-            allocation.anchor = torch.empty(0, dtype=torch.uint8, device="cpu")
-            unregister_tensor_storages((allocation,), runtime=self._runtime)
-
-    def __torch_function__(
-        self,
-        func: Any,
-        types: Any,
-        args: tuple[Any, ...] = (),
-        kwargs: dict[str, Any] | None = None,
-    ) -> Any:
-        kwargs = kwargs or {}
-        served = self._serve(func, args, kwargs)
-        if served is not None:
-            return served
-        return func(*args, **kwargs)
-
-    def _serve(
-        self,
-        func: Any,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-    ) -> torch.Tensor | None:
-        name = getattr(func, "__name__", "")
-        if name in self._FILLED_FROM_TENSOR:
-            return self._like(name, args, kwargs)
-        if name in self._FILLED_FROM_SHAPE:
-            return self._shaped(name, args, kwargs)
-        return None
-
-    def _like(
-        self,
-        name: str,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-    ) -> torch.Tensor | None:
-        if not args or not isinstance(args[0], torch.Tensor):
-            return None
-        source = args[0]
-        dtype = kwargs.get("dtype") or source.dtype
-        device = torch.device(kwargs.get("device") or source.device)
-        result = self._tensor(tuple(source.shape), dtype, device, kwargs)
-        if result is None:
-            return None
-        if name == "zeros_like":
-            return result.zero_()
-        if name == "ones_like":
-            return result.fill_(1)
-        if name == "full_like":
-            value = kwargs.get("fill_value", args[1] if len(args) > 1 else 0)
-            return result.fill_(value)
-        return result
-
-    def _shaped(
-        self,
-        name: str,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-    ) -> torch.Tensor | None:
-        shape = _requested_shape(name, args)
-        if shape is None:
-            return None
-        dtype = kwargs.get("dtype") or torch.get_default_dtype()
-        device = torch.device(kwargs.get("device") or "cpu")
-        result = self._tensor(shape, dtype, device, kwargs)
-        if result is None:
-            return None
-        if name == "zeros":
-            return result.zero_()
-        if name == "ones":
-            return result.fill_(1)
-        if name == "full":
-            value = kwargs.get("fill_value", args[1] if len(args) > 1 else 0)
-            return result.fill_(value)
-        return result
-
-    def _tensor(
-        self,
-        shape: tuple[int, ...],
-        dtype: torch.dtype,
-        device: torch.device,
-        kwargs: dict[str, Any],
-    ) -> torch.Tensor | None:
-        if device.type != "cpu" or kwargs.get("out") is not None:
-            return None
-        if kwargs.get("layout") not in (None, torch.strided):
-            return None
-        if kwargs.get("pin_memory"):
-            # Pool memory is pinned already, but saying so is the caller's
-            # contract with PyTorch, not ours to reinterpret.
-            return None
-        elements = 1
-        for size in shape:
-            if size < 0:
-                return None
-            elements *= size
-        size_bytes = elements * torch.empty(0, dtype=dtype).element_size()
-        if size_bytes < self._minimum_bytes:
-            return None
-        # PyTorch pops this mode while `__torch_function__` runs, so the
-        # calls below are ordinary allocations, not another visit here.
-        allocation = take_pool_memory(
-            self._runtime, self._pool, size_bytes=size_bytes
-        )
-        view = torch.empty(0, dtype=dtype, device="cpu")
-        view.set_(
-            allocation.anchor.untyped_storage(),
-            0,
-            torch.Size(shape),
-            _contiguous_stride(shape),
-        )
-        identity = int(view.untyped_storage()._cdata)
-        self._allocations[identity] = allocation
-        # Offer it to any import that meets this storage later, so adopting it
-        # needs no argument threaded from here to there.
-        registry_for(self._runtime).note_pool_allocation(allocation)
-        if kwargs.get("requires_grad"):
-            view.requires_grad_(True)
-        return view
-
-
-def _contiguous_stride(shape: tuple[int, ...]) -> tuple[int, ...]:
-    stride: list[int] = []
-    running = 1
-    for size in reversed(shape):
-        stride.append(running)
-        running *= size
-    return tuple(reversed(stride))
-
-
-def _requested_shape(name: str, args: tuple[Any, ...]) -> tuple[int, ...] | None:
-    """The shape a size-taking factory was asked for, or None if it is unclear."""
-
-    if not args:
-        return None
-    first = args[0]
-    if isinstance(first, torch.Size | list | tuple):
-        values = tuple(first)
-    else:
-        values = tuple(
-            item for item in (args[:-1] if name == "full" else args) if item is not None
-        )
-    if not values or any(not isinstance(item, int) for item in values):
-        return None
-    return tuple(int(item) for item in values)
+    elements = 1
+    for size in shape:
+        if size < 0:
+            raise ValueError("a pool-backed tensor needs a concrete shape")
+        elements *= size
+    size_bytes = elements * torch.empty(0, dtype=dtype).element_size()
+    allocation = _take_pool_memory(runtime, pool, size_bytes=max(size_bytes, 1))
+    view = torch.empty(0, dtype=dtype, device="cpu")
+    view.set_(
+        allocation.anchor.untyped_storage(),
+        0,
+        torch.Size(shape),
+        contiguous_stride(shape),
+    )
+    registry_for(runtime).note_pool_allocation(allocation)
+    return view, allocation
 
 
 def _storage_roots(

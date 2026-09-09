@@ -34,7 +34,7 @@ def lower_training_storage_layout(
     *,
     device_ordinal: int = 0,
 ) -> TrainingStorageLayout:
-    """Assign stable model/input IDs before the optimizer factory is invoked."""
+    """Assign stable model/input IDs before the optimizer is built."""
 
     if not captures:
         raise CaptureError("training storage layout requires a microbatch")

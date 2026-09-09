@@ -24,6 +24,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+import torch
 from torch import OutOfMemoryError, nn
 
 from shadowspill.errors import (
@@ -469,7 +470,10 @@ def plan_step_search(
     model: nn.Module,
     *,
     objective: Any,
-    opt: Any,
+    optimizer: Any,
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None = None,
+    hyperparams: Sequence[str] = (),
     example_microbatches: Callable[[int, int], Sequence[Sequence[Any]]],
     total_sequences_per_step: int,
     sequence_length: int,
@@ -587,7 +591,9 @@ def plan_step_search(
                     step = make_step_program(
                         model,
                         objective=objective,
-                        opt=opt,
+                        optimizer=optimizer,
+                        optimizer_state_init=optimizer_state_init,
+                        hyperparams=hyperparams,
                         example_inputs=examples,
                         runtime=runtime,
                         execution=execution,
