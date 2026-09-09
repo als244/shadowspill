@@ -32,6 +32,20 @@ typedef enum ShadowSpillTransferDirection {
     SHADOWSPILL_TRANSFER_EVICT = 1,
 } ShadowSpillTransferDirection;
 
+/*
+ * Why a task or transfer that was ready did not start yet.
+ *
+ * `MEMORY_REUSE` and `DEVICE_CAPACITY` are easy to confuse and are not the
+ * same wait. Memory reuse is an ordering wait the plan itself created: the
+ * work is waiting on the named predecessor -- an eviction or a release --
+ * that frees the allocation it will reuse. Device capacity is a shortfall:
+ * there is no room at all, so a fetch has nowhere to land or a task's outputs
+ * and workspace do not fit. A plan that arranges its own capacity waits on
+ * the first and never reaches the second, which is why real plans record
+ * memory reuse and no capacity waits; the capacity mask is how an
+ * over-subscribed plan says so, and it is paired with a
+ * `ShadowSpillCapacityViolation` giving the size of the shortfall.
+ */
 enum {
     SHADOWSPILL_STALL_INPUT_RESIDENCY = 1U << 0U,
     SHADOWSPILL_STALL_DEVICE_CAPACITY = 1U << 1U,
