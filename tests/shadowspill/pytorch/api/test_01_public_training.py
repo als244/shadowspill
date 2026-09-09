@@ -124,7 +124,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
         profiling_metadata=(
             {"batch_size": 2, "tag": "left"},
             {"batch_size": 4, "tag": "right"},
@@ -136,9 +136,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     assert training.plan_report.aot_graph_pair_cache_hits == 0
     assert training.plan_report.aot_graph_pair_cache_misses == 4
     assert training.plan_report.program is training.plan_report.execution_plan.program
-    assert (
-        training.plan_report.pressurefit_result.program == training.plan_report.program
-    )
+    assert training.plan_report.search_result.program == training.plan_report.program
     assert training.plan_report.diagnostics.cache_artifacts
     assert len(training.plan_report.diagnostics.profiling_metadata) == 2
     layouts = training.plan_report.diagnostics.physical_layouts
@@ -150,8 +148,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     assert all(item.required_bytes <= item.pool_capacity_bytes for item in layouts)
     assert all(item.attempts[-1].accepted for item in layouts)
     assert all(
-        attempt.pressurefit_wall_time_ns > 0
-        and attempt.physical_admission_wall_time_ns > 0
+        attempt.search_wall_time_ns > 0 and attempt.physical_admission_wall_time_ns > 0
         for layout in layouts
         for attempt in layout.attempts
     )
@@ -289,7 +286,7 @@ def test_public_training_breadth_first_matches_the_eager_reference(
         spill="spill",
         depth=1,
         breadth=2,
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
         profiling_metadata=(
             {"batch_size": 2, "tag": "left"},
             {"batch_size": 4, "tag": "right"},
@@ -355,7 +352,7 @@ def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
     optimizer_owner = persistent_state(runtime, built[0])
@@ -423,7 +420,7 @@ def test_public_training_owns_the_model_state_it_imported(tmp_path: object) -> N
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
     )
     owned = persistent_state(runtime, model)
     assert owned is not None
@@ -487,7 +484,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
     )
     actual = training(values)
     torch.testing.assert_close(actual.objectives[0].cpu(), expected.loss.detach())
@@ -555,7 +552,7 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
     )
     assert training.plan_report.initial_execution_plan is None
     optimizer_tasks = tuple(

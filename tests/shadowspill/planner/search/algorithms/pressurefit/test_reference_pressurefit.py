@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from reference.python.pressurefit import pressurefit as pressurefit_reference
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import GenericPlanningOptions, pressurefit
 
-from ._examples import (
+from ...._examples import (
     training_chain_config,
     training_chain_initial,
     training_chain_program,
@@ -19,7 +19,7 @@ def test_compiled_pressurefit_matches_readable_reference() -> None:
         program,
         initial_residency=initial,
         config=config,
-        options=PressureFitOptions(minimum_object_bytes_evict_eligible=0),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
     reference = pressurefit_reference(
         program,

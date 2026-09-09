@@ -59,7 +59,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=tmp_path,
+        artifact_store=tmp_path,
         profiling_metadata={"batch_size": 3, "width": 17},
     )
     assert planned.plan_report.mode == "forward"
@@ -83,7 +83,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     )
     assert planned.plan_report.capture_identity
     assert planned.plan_report.program is planned.plan_report.execution_plan.program
-    assert planned.plan_report.pressurefit_result.program == planned.plan_report.program
+    assert planned.plan_report.search_result.program == planned.plan_report.program
     assert planned.plan_report.diagnostics.cache_artifacts
     assert len(planned.plan_report.diagnostics.profiling_metadata) == 1
     assert len(planned.plan_report.diagnostics.physical_layouts) == 1
@@ -92,11 +92,11 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     assert layout.strategy == "fixed"
     assert layout.required_bytes <= layout.pool_capacity_bytes
     assert layout.attempts[-1].accepted
-    assert all(item.pressurefit_wall_time_ns > 0 for item in layout.attempts)
+    assert all(item.search_wall_time_ns > 0 for item in layout.attempts)
     assert all(item.physical_admission_wall_time_ns > 0 for item in layout.attempts)
     assert layout.task_memory_envelopes
     encoded_layout = planned.plan_report.diagnostics.as_dict()["physical_layouts"][0]
-    assert encoded_layout["attempts"][-1]["pressurefit_wall_time_ns"] > 0
+    assert encoded_layout["attempts"][-1]["search_wall_time_ns"] > 0
     assert encoded_layout["attempts"][-1]["physical_admission_wall_time_ns"] > 0
     actual = planned([inputs, 17])[0]
     torch.testing.assert_close(

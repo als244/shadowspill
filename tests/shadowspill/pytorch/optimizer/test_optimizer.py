@@ -88,9 +88,7 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
     # stays on the host, where writing the next step's value copies nothing.
     for binding in captured.bindings:
         expected = (
-            "cpu"
-            if binding.role is OptimizerTensorRole.HYPERPARAMETER
-            else "cuda"
+            "cpu" if binding.role is OptimizerTensorRole.HYPERPARAMETER else "cuda"
         )
         assert binding.tensor.device.type == expected
 
@@ -468,4 +466,3 @@ def test_a_recurrent_capture_is_served_from_the_store(tmp_path: Path) -> None:
         store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
     )
     assert [item["access"] for item in records] == ["write", "read", "write"]
-

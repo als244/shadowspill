@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from shadowspill.planner import PressureFitOptions
+from shadowspill.planner import GenericPlanningOptions
 from shadowspill.planner.diagnostics import (
     CandidateDiagnostic,
-    PressureFitDiagnostics,
+    PlanningDiagnostics,
     ResolvedProgramDiagnostics,
 )
 from shadowspill.planner.diagnostics.plan import PlanSummary, summarize_selected_plan
-from shadowspill.planner.result import PressureFitResult
+from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.search import SearchOptions
 from shadowspill.simulator import (
     DeviceSimulationConfig,
     SimulationConfig,
@@ -22,7 +23,7 @@ from tests.shadowspill.ir._examples import (
 )
 
 
-def _result() -> PressureFitResult:
+def _result() -> ProgramPlanResult:
     program = representative_program()
     plan = representative_plan()
     config = SimulationConfig(
@@ -41,16 +42,18 @@ def _result() -> PressureFitResult:
     simulation = simulate(
         program, plan.schedule, selections=SAVE_SELECTION, config=config
     )
-    return PressureFitResult(
+    return ProgramPlanResult(
         program=program,
-        options=PressureFitOptions(workers=1, minimum_object_bytes_evict_eligible=0),
+        search_options=SearchOptions(
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
+        ),
         initial_residency=plan.schedule.initial_residency,
         final_residency=plan.schedule.final_residency,
         simulation_config=config,
         schedule=plan.schedule,
         selections=SAVE_SELECTION,
         simulation=simulation,
-        diagnostics=PressureFitDiagnostics(
+        diagnostics=PlanningDiagnostics(
             selected_candidate_id="fixture",
             selected_selection_id="fixture",
             selected_makespan_ns=simulation.makespan_ns,

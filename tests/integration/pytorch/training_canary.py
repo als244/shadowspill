@@ -154,7 +154,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            artifact_store_dir=cache,
+            artifact_store=cache,
             profiling_metadata=(
                 {"batch_size": 3, "label": "short"},
                 {"batch_size": 5, "label": "long"},
@@ -171,7 +171,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("plan phases measure more than the whole call")
         phase_names = {item.name for item in plan_diagnostics.phases}
         if (
-            "pressurefit_simulation" not in phase_names
+            "search" not in phase_names
             or "compiled_entrypoint_construction" not in phase_names
             or "unique_stage_warmup_profiling" not in phase_names
         ):
@@ -305,7 +305,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 ):
                     raise AssertionError("step timing reconciliation is incomplete")
                 expected_transfers = (
-                    planned.plan_report.pressurefit_result.simulation.transfer_intervals
+                    planned.plan_report.search_result.simulation.transfer_intervals
                 )
                 scheduled = [
                     transfer
@@ -516,7 +516,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             runtime=runtime,
             execution="execution",
             spill="spill",
-            artifact_store_dir=cache,
+            artifact_store=cache,
             profiling_metadata=(
                 {"batch_size": 3, "label": "short"},
                 {"batch_size": 5, "label": "long"},

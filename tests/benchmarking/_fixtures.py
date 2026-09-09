@@ -1,4 +1,4 @@
-"""Small reusable Program fixtures for benchmarking tests."""
+"""Small reusable ShadowSpillProgram fixtures for benchmarking tests."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from shadowspill.ir import (
     DeviceSpec,
     MemoryLocation,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
 )
@@ -20,14 +20,14 @@ from shadowspill.planner import (
     TaskAdmissionSpec,
 )
 from shadowspill.planner.program import (
-    PressureFitProgram,
+    ShadowSpillPlanningProblem,
     StepProgram,
 )
 from shadowspill.simulator import SimulationConfig
 
 
 def _fixture() -> StepProgram:
-    program = Program(
+    program = ShadowSpillProgram(
         devices=(DeviceSpec("cuda_0", "process_0", "cuda", 0),),
         alias_groups=(AliasGroupSpec("state", "cuda_0", 64, retain_spill_copy=True),),
         objects=(ObjectSpec("state_object", "state", 0, 64),),
@@ -41,7 +41,7 @@ def _fixture() -> StepProgram:
             ),
         ),
     )
-    pre_pressurefit = PressureFitProgram(
+    pre_pressurefit = ShadowSpillPlanningProblem(
         role="recurrent",
         program=program,
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),

@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 
 from benchmarking.program_collection.config import (
+    BuildSpec,
     CollectionConfig,
     GeometryAxes,
     ModelSpec,
-    PlanningSpec,
     RuntimeSpec,
     load_collection_config,
 )
@@ -55,7 +55,7 @@ def _config() -> CollectionConfig:
         geometry=GeometryAxes((1024,), (1024,), (1, 2)),
         models=(ModelSpec("mlops-llama", "llama3", "mlops"),),
         runtime=RuntimeSpec(4096, 8192, 4096, 8192),
-        planning=PlanningSpec("stage_interleaved", 1, 2, True, False, False, None),
+        build=BuildSpec("stage_interleaved", 1, 2, "contribute", None),
     )
 
 
@@ -230,7 +230,7 @@ def test_controller_records_each_failure_and_continues(
             timeout_seconds=10,
             max_attempts=1,
             quiet_plan=False,
-            force_fresh=False,
+            build_store_mode=None,
         ),
     )
     assert summary["counts"] == {
@@ -279,7 +279,7 @@ def test_controller_records_controller_exception_and_continues(
             timeout_seconds=10,
             max_attempts=1,
             quiet_plan=False,
-            force_fresh=False,
+            build_store_mode=None,
         ),
     )
     assert len(visited) == 2

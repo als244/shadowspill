@@ -7,15 +7,17 @@ from shadowspill.ir import (
     DeviceSpec,
     MemoryLocation,
     ObjectSpec,
-    Program,
     ResidencySpec,
     ResourceKind,
     ResourceSpec,
+    ShadowSpillProgram,
     SharedResidencyPolicy,
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.planner import PressureFitOptions, pressurefit
+from shadowspill.planner import GenericPlanningOptions
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
 from shadowspill.pytorch.planning.admission import build_admission_facts
 from shadowspill.pytorch.planning.admission.bindings import TaskOutputBinding
 from shadowspill.pytorch.profiling import (
@@ -25,8 +27,8 @@ from shadowspill.pytorch.profiling import (
 from shadowspill.simulator import SimulationConfig
 
 
-def _program() -> Program:
-    return Program(
+def _program() -> ShadowSpillProgram:
+    return ShadowSpillProgram(
         devices=(DeviceSpec("device_0", "process_0", "device", 0),),
         alias_groups=(
             AliasGroupSpec(
@@ -65,17 +67,18 @@ def _config() -> SimulationConfig:
 
 
 def test_pressurefit_never_creates_actions_for_shared_aliases() -> None:
-    result = pressurefit(
+    result = PressureFit(
+        PressureFitOptions(
+            residency_strategies=("relaxed-stall",),
+            fetch_rules=("latest-safe",),
+            evaluate_coalesced=False,
+        )
+    )(
         _program(),
         initial_residency=(),
         final_residency=(ResidencySpec("output_storage", MemoryLocation.DEVICE),),
         config=_config(),
-        options=PressureFitOptions(
-            residency_strategies=("relaxed-stall",),
-            fetch_rules=("latest-safe",),
-            evaluate_coalesced=False,
-            minimum_object_bytes_evict_eligible=0,
-        ),
+        generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
     )
 
     assert result.schedule.actions == ()

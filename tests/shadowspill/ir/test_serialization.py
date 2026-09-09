@@ -8,7 +8,7 @@ from pathlib import Path
 from shadowspill.ir import (
     ExecutionPlan,
     MemorySchedule,
-    Program,
+    ShadowSpillProgram,
     index_execution_plan,
     index_memory_schedule,
     index_program,
@@ -24,7 +24,7 @@ from ._examples import (
 def test_program_round_trip_is_byte_identical() -> None:
     program = representative_program()
 
-    restored = Program.from_json(program.to_json())
+    restored = ShadowSpillProgram.from_json(program.to_json())
 
     assert restored == program
     assert restored.to_json() == program.to_json()
@@ -91,12 +91,12 @@ def test_schedule_projection_preserves_ordered_actions() -> None:
         representative_schedule(),
     )
 
-    assert indexed.initial_alias_groups == (0, 1)
+    assert indexed.initial_aliases == (0, 1)
     assert indexed.initial_locations == (0, 0)
     assert indexed.action_trigger_tasks == (0, 1, 3)
-    assert indexed.action_alias_groups == (2, 2, 2)
+    assert indexed.action_aliases == (2, 2, 2)
     assert indexed.action_kinds == (1, 2, 0)
-    assert indexed.final_alias_groups == (3,)
+    assert indexed.final_aliases == (3,)
     assert indexed.final_locations == (0,)
 
 
@@ -133,7 +133,7 @@ def test_canonical_ir_matches_frozen_identity_artifact() -> None:
         indexed.schedule.action_trigger_tasks
     )
     assert artifact["action_alias_group_indices"] == list(
-        indexed.schedule.action_alias_groups
+        indexed.schedule.action_aliases
     )
     assert artifact["action_kind_codes"] == list(indexed.schedule.action_kinds)
 

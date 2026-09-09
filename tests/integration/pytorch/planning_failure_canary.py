@@ -207,9 +207,11 @@ def _plan(
         runtime=runtime,
         execution="execution",
         spill="spill",
-        artifact_store_dir=cache,
-        force_fresh=True,
-        save_plan=False,
+        artifact_store=cache,
+        # This canary provokes a planning failure; it should leave nothing in
+        # either tree, and read nothing it might otherwise have hit.
+        build_store_mode="reuse",
+        plan_store_mode="reuse",
         verbose=False,
         execution_budget=execution_budget,
         spill_budget=spill_budget,
@@ -346,7 +348,7 @@ def main() -> int:
                 raise AssertionError(
                     "irreducible task capacity was not rejected by preflight"
                 )
-            if any("'pressurefit_simulation'" in note for note in notes):
+            if any("'search'" in note for note in notes):
                 raise AssertionError(
                     "irreducible task capacity incorrectly entered PressureFit"
                 )
