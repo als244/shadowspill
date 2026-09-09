@@ -1,6 +1,6 @@
-#include "../common/platform.h"
-#include "internal.h"
-#include "residency_internal.h"
+#include "../../../../common/platform.h"
+#include "../../../internal.h"
+#include "candidates_internal.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -9,7 +9,7 @@
 #include <string.h>
 
 typedef struct PreparedProblem {
-    ShadowSpillResidencyProblem residency;
+    ShadowSpillPressureFitResidencyProblem residency;
     ShadowSpillPressureFitProblem problem;
 
     int8_t *initial_location;
@@ -17,7 +17,7 @@ typedef struct PreparedProblem {
     uint8_t *anchors;
     uint8_t *productions;
     uint32_t *latest_access_task;
-    ShadowSpillResidencySparseLists sparse;
+    ShadowSpillPressureFitResidencySparseLists sparse;
     uint8_t *output_reservations;
     uint8_t *write_prefix;
     uint32_t *first_input_task;
@@ -201,20 +201,20 @@ static void prepared_problem_destroy(PreparedProblem *prepared) {
 }
 
 static int program_problem_valid(
-    const ShadowSpillPressureFitProgramProblem *problem,
-    const ShadowSpillPressureFitProblemOptions *options
+    const ShadowSpillIndexedProblem *problem,
+    const ShadowSpillPressureFitOptions *options
 ) {
-    if (problem == NULL || options == NULL || problem->simulation == NULL ||
-        problem->device_priority == NULL || problem->alias_json_names == NULL ||
-        problem->task_json_names == NULL ||
+    if (problem == NULL || options == NULL || problem->context.simulation == NULL ||
+        problem->device_priority == NULL || problem->context.alias_json_names == NULL ||
+        problem->context.task_json_names == NULL ||
         problem->abi_version != SHADOWSPILL_ABI_VERSION ||
-        problem->simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
-        problem->simulation->device_count == 0U ||
-        problem->simulation->task_count == 0U ||
-        options->initial_placement > SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
+        problem->context.simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
+        problem->context.simulation->device_count == 0U ||
+        problem->context.simulation->task_count == 0U ||
+        options->initial_placement > SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_GREEDY) {
         return 0;
     }
-    const ShadowSpillSimulationProgram *program = problem->simulation;
+    const ShadowSpillSimulationProgram *program = problem->context.simulation;
     if (program->devices == NULL || program->alias_device == NULL ||
         program->alias_size_bytes == NULL ||
         program->alias_retain_spill_copy == NULL ||
@@ -232,12 +232,12 @@ static int program_problem_valid(
         return 0;
     }
     for (uint32_t alias = 0U; alias < program->alias_count; ++alias) {
-        if (problem->alias_json_names[alias] == NULL) {
+        if (problem->context.alias_json_names[alias] == NULL) {
             return 0;
         }
     }
     for (uint32_t task = 0U; task < program->task_count; ++task) {
-        if (problem->task_json_names[task] == NULL) {
+        if (problem->context.task_json_names[task] == NULL) {
             return 0;
         }
     }
@@ -573,7 +573,7 @@ static ShadowSpillStatus finalize_boundary_capacities(
                 prepared->boundary_capacity_bytes[position];
             if (workspace > capacity) {
                 prepared->failure_kind =
-                    SHADOWSPILL_PREFLIGHT_WORKSPACE_CAPACITY;
+                    SHADOWSPILL_PRESSUREFIT_PREFLIGHT_WORKSPACE_CAPACITY;
                 prepared->error_device = device;
                 prepared->error_boundary = (int32_t)boundary;
                 prepared->failure_required_bytes = workspace;
@@ -623,7 +623,7 @@ static ShadowSpillStatus finalize_alias_facts(
             prepared->produced[alias] == 0U &&
             prepared->initial_location[alias] < 0) {
             prepared->failure_kind =
-                SHADOWSPILL_PREFLIGHT_MISSING_INITIAL_RESIDENCY;
+                SHADOWSPILL_PRESSUREFIT_PREFLIGHT_MISSING_INITIAL_RESIDENCY;
             prepared->error_alias = alias;
             prepared->error_boundary = 0;
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -703,7 +703,7 @@ static ShadowSpillStatus validate_required_floor(
                     (uint64_t)device * boundary_count + position
                 ]) {
                 prepared->failure_kind =
-                    SHADOWSPILL_PREFLIGHT_REQUIRED_CAPACITY;
+                    SHADOWSPILL_PRESSUREFIT_PREFLIGHT_REQUIRED_CAPACITY;
                 prepared->error_device = device;
                 prepared->error_boundary = (int32_t)position;
                 prepared->failure_required_bytes = required;
@@ -737,19 +737,19 @@ static ShadowSpillStatus validate_required_floor(
  * ideal timeline allows.
  */
 static ShadowSpillStatus reserve_resident_slice(
-    const ShadowSpillPressureFitProgramProblem *source,
-    const ShadowSpillPressureFitProblemOptions *options,
+    const ShadowSpillIndexedProblem *source,
+    const ShadowSpillPressureFitOptions *options,
     PreparedProblem *prepared
 ) {
-    const ShadowSpillSimulationProgram *program = source->simulation;
+    const ShadowSpillSimulationProgram *program = source->context.simulation;
     const uint32_t boundary_count = program->task_count + 1U;
     const uint64_t threshold = options->minimum_object_bytes_evict_eligible;
     uint64_t alignment = 1U;
-    if (source->placement != NULL && source->placement->minimum_alignment != 0U) {
-        alignment = source->placement->minimum_alignment;
-    } else if (source->admission != NULL &&
-               source->admission->minimum_alignment != 0U) {
-        alignment = source->admission->minimum_alignment;
+    if (source->context.placement != NULL && source->context.placement->minimum_alignment != 0U) {
+        alignment = source->context.placement->minimum_alignment;
+    } else if (source->context.admission != NULL &&
+               source->context.admission->minimum_alignment != 0U) {
+        alignment = source->context.admission->minimum_alignment;
     }
     const size_t aliases = program->alias_count == 0U ? 1U : program->alias_count;
     uint32_t *generations = malloc(aliases * sizeof(*generations));
@@ -812,7 +812,7 @@ static ShadowSpillStatus reserve_resident_slice(
     for (uint32_t device = 0U; device < program->device_count; ++device) {
         const uint64_t slice = prepared->resident_slice_bytes[device];
         if (slice > prepared->device_capacity_bytes[device]) {
-            prepared->failure_kind = SHADOWSPILL_PREFLIGHT_RESIDENT_SLICE_CAPACITY;
+            prepared->failure_kind = SHADOWSPILL_PRESSUREFIT_PREFLIGHT_RESIDENT_SLICE_CAPACITY;
             prepared->error_device = device;
             prepared->failure_required_bytes = slice;
             prepared->failure_capacity_bytes = prepared->device_capacity_bytes[device];
@@ -975,15 +975,15 @@ static ShadowSpillStatus greedily_place_initial_aliases(
 }
 
 static ShadowSpillStatus prepare_problem(
-    const ShadowSpillPressureFitProgramProblem *source,
-    const ShadowSpillPressureFitProblemOptions *options,
+    const ShadowSpillIndexedProblem *source,
+    const ShadowSpillPressureFitOptions *options,
     PreparedProblem *prepared
 ) {
     memset(prepared, 0, sizeof(*prepared));
     prepared->error_device = UINT32_MAX;
     prepared->error_alias = UINT32_MAX;
     prepared->error_boundary = INT32_MIN;
-    const ShadowSpillSimulationProgram *program = source->simulation;
+    const ShadowSpillSimulationProgram *program = source->context.simulation;
     if (allocate_prepared_buffers(program, prepared) != 0) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
@@ -1003,15 +1003,15 @@ static ShadowSpillStatus prepare_problem(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
-    if (source->admission != NULL) {
+    if (source->context.admission != NULL) {
         if (program->device_count != 1U ||
-            source->admission->object_capacity_bytes == 0U ||
-            source->admission->object_capacity_bytes >
-                source->admission->pool_capacity_bytes) {
+            source->context.admission->object_capacity_bytes == 0U ||
+            source->context.admission->object_capacity_bytes >
+                source->context.admission->pool_capacity_bytes) {
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
         prepared->device_capacity_bytes[0] =
-            source->admission->object_capacity_bytes;
+            source->context.admission->object_capacity_bytes;
     }
     status = finalize_alias_facts(program, prepared);
     if (status != SHADOWSPILL_STATUS_OK) {
@@ -1029,7 +1029,7 @@ static ShadowSpillStatus prepare_problem(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
-    prepared->residency = (ShadowSpillResidencyProblem){
+    prepared->residency = (ShadowSpillPressureFitResidencyProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .alias_count = program->alias_count,
         .boundary_count = program->task_count + 1U,
@@ -1061,7 +1061,7 @@ static ShadowSpillStatus prepare_problem(
     };
 
     build_anchor_seed(program, prepared);
-    if (options->initial_placement == SHADOWSPILL_INITIAL_PLACEMENT_GREEDY) {
+    if (options->initial_placement == SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_GREEDY) {
         status = greedily_place_initial_aliases(program, prepared);
         if (status != SHADOWSPILL_STATUS_OK) {
             return status;
@@ -1070,24 +1070,22 @@ static ShadowSpillStatus prepare_problem(
 
     prepared->problem = (ShadowSpillPressureFitProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
+        .context = source->context,
         .residency = &prepared->residency,
-        .simulation = program,
         .seed_resident = prepared->seed_resident,
         .seed_breaks = prepared->seed_breaks,
-        .admission = source->admission,
-        .placement = source->placement,
-        .alias_json_names = source->alias_json_names,
-        .task_json_names = source->task_json_names,
         .incumbent = source->incumbent,
     };
+    /* The same machine and names, over the resolved program this one plans. */
+    prepared->problem.context.simulation = program;
     return SHADOWSPILL_STATUS_OK;
 }
 
-ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
-    const ShadowSpillPressureFitProgramProblem *problems,
+ShadowSpillStatus shadowspill_pressurefit_search(
+    const ShadowSpillIndexedProblem *problems,
     uint32_t problem_count,
-    const ShadowSpillPressureFitProblemOptions *options,
-    ShadowSpillPressureFitProblemResult *results
+    const ShadowSpillPressureFitOptions *options,
+    ShadowSpillPressureFitResult *results
 ) {
     if (problems == NULL || results == NULL || problem_count == 0U) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -1141,7 +1139,7 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
     }
     const uint64_t prepare_ns = shadowspill_monotonic_ns() - prepare_started;
     if (evaluated_count == problem_count) {
-        status = shadowspill_evaluate_pressurefit_problems(
+        status = shadowspill_pressurefit_evaluate_resolved(
             derived, problem_count, options, results
         );
     } else if (evaluated_count > 0U) {
@@ -1149,12 +1147,12 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
          * prepared ones are evaluated in a compact batch and each result is
          * put back where its Program is; a result owns its buffers, and the
          * copy takes them with it. */
-        ShadowSpillPressureFitProblemResult *compact =
+        ShadowSpillPressureFitResult *compact =
             calloc(evaluated_count, sizeof(*compact));
         if (compact == NULL) {
             status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
         } else {
-            status = shadowspill_evaluate_pressurefit_problems(
+            status = shadowspill_pressurefit_evaluate_resolved(
                 derived, evaluated_count, options, compact
             );
             for (uint32_t slot = 0U; slot < evaluated_count; ++slot) {
@@ -1201,8 +1199,8 @@ ShadowSpillStatus shadowspill_evaluate_pressurefit_program_problems(
     return status;
 }
 
-ShadowSpillStatus shadowspill_validate_pressurefit_program_problem(
-    const ShadowSpillPressureFitProgramProblem *problem,
+ShadowSpillStatus shadowspill_pressurefit_preflight(
+    const ShadowSpillIndexedProblem *problem,
     ShadowSpillPressureFitPreflightResult *result
 ) {
     if (result == NULL) {
@@ -1213,8 +1211,8 @@ ShadowSpillStatus shadowspill_validate_pressurefit_program_problem(
     result->error_device = UINT32_MAX;
     result->error_alias = UINT32_MAX;
     result->error_boundary = INT32_MIN;
-    const ShadowSpillPressureFitProblemOptions options = {
-        .initial_placement = SHADOWSPILL_INITIAL_PLACEMENT_REQUIRED,
+    const ShadowSpillPressureFitOptions options = {
+        .initial_placement = SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_REQUIRED,
     };
     if (!program_problem_valid(problem, &options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;

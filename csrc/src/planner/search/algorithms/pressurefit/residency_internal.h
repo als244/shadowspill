@@ -2,9 +2,102 @@
 #define SHADOWSPILL_PLANNER_RESIDENCY_INTERNAL_H
 
 #include <shadowspill/planner.h>
+#include <shadowspill/pressurefit/pressurefit.h>
 
 #include <stddef.h>
 #include <stdint.h>
+
+/* PressureFit's residency reducer works on this form of the problem: the
+ * per-boundary capacities, anchors and access points its bitmaps are
+ * indexed by. It is derived from a ShadowSpillIndexedProblem inside the
+ * search and never crosses the library boundary. */
+/* PressureFit's own input, never seen by a caller: the residency problem
+ * its reducer works on, the seeds it starts from, and the resolved problem
+ * one candidate is placed against. A caller supplies a
+ * ShadowSpillIndexedProblem; these are derived from it inside the search.
+ */
+typedef struct ShadowSpillPressureFitResidencyProblem {
+    uint32_t abi_version;
+    uint32_t alias_count;
+    uint32_t boundary_count;
+    uint32_t device_count;
+
+    const uint64_t *alias_size_bytes;
+    const uint32_t *alias_device;
+    const uint8_t *alias_retain_spill_copy;
+    const int8_t *initial_location;
+    const int8_t *final_location;
+    const uint8_t *anchors;
+    const uint8_t *productions;
+    const uint32_t *latest_access_task;
+    const uint8_t *output_reservations;
+    const uint8_t *write_prefix;
+    const uint32_t *first_input_task;
+    const uint64_t *fetch_runtime_ns;
+    const uint64_t *evict_runtime_ns;
+    const uint64_t *task_ideal_end_ns;
+    const uint64_t *device_capacity_bytes;
+    /* Maximum task-object pressure at each [device][boundary] cell. */
+    const uint64_t *boundary_capacity_bytes;
+    const uint32_t *device_priority;
+    /* The anchors of each alias as a sorted list: anchor_offsets[alias] ..
+       anchor_offsets[alias + 1] index anchor_positions (boundary) and
+       anchor_tasks (that cell's latest_access_task). The sparse companion
+       of `anchors` and `latest_access_task`. */
+    const uint32_t *anchor_offsets;
+    const uint32_t *anchor_positions;
+    const uint32_t *anchor_tasks;
+    /* The boundaries each alias reserves for a produced output, as a sorted
+       list: reserved_offsets[alias] .. reserved_offsets[alias + 1] index
+       reserved_positions. The sparse companion of `output_reservations`. */
+    const uint32_t *reserved_offsets;
+    const uint32_t *reserved_positions;
+    /* Per alias, whether the reducer may cut its residency; NULL means every
+       alias may be cut. An alias that may not be cut stays resident from its
+       first to its last access and is charged in the required floor; the
+       emitter still produces its opening fetch, its release, and its
+       terminal writeback. */
+    const uint8_t *alias_evict_eligible;
+    /* Per alias the reducer may not cut and that starts the step in spill:
+       the task after which it is fetched, chosen once at preparation so the
+       resident slice is sized for it. UINT32_MAX elsewhere. */
+    const uint32_t *fixed_fetch_trigger;
+} ShadowSpillPressureFitResidencyProblem;
+
+typedef struct ShadowSpillPressureFitResidencyOptions {
+    uint8_t minimize_transfer;
+    uint8_t fetch_headroom;
+    const uint8_t *seed_resident;
+    const uint8_t *seed_breaks;
+    const uint64_t *extra_pressure_bytes;
+} ShadowSpillPressureFitResidencyOptions;
+
+typedef struct ShadowSpillPressureFitResidencyResult {
+    uint32_t status;
+    uint32_t error_device;
+    int32_t error_boundary;
+    uint64_t required_bytes;
+    uint64_t capacity_bytes;
+    uint8_t *resident;
+    uint64_t resident_capacity;
+    uint8_t *breaks;
+    uint64_t break_capacity;
+    /* Optional: the aliases this reduction cut, in the order it cut them.
+       NULL asks for no record, which is what planning normally wants. */
+    uint32_t *cut_aliases;
+    uint64_t cut_capacity;
+    uint64_t cut_count;
+} ShadowSpillPressureFitResidencyResult;
+
+static inline uint64_t shadowspill_boundary_capacity(
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    uint32_t device,
+    uint32_t boundary
+) {
+    return problem->boundary_capacity_bytes[
+        (uint64_t)device * problem->boundary_count + boundary
+    ];
+}
 
 /* Residency bitmaps are packed: one bit per (alias, boundary) cell, cell
  * index = alias * boundary_count + boundary, least significant bit first
@@ -16,7 +109,7 @@ static inline size_t shadowspill_packed_cells(uint64_t cells) {
 
 /* Whether the reducer may cut an alias; NULL eligibility means every alias. */
 static inline int shadowspill_alias_may_cut(
-    const ShadowSpillResidencyProblem *problem, uint32_t alias
+    const ShadowSpillPressureFitResidencyProblem *problem, uint32_t alias
 ) {
     return problem->alias_evict_eligible == NULL ||
         problem->alias_evict_eligible[alias] != 0U;
@@ -76,7 +169,7 @@ static inline uint32_t shadowspill_anchor_lower_bound(
  * than `after`, the same question as scanning latest_access_task over the
  * span's cells. */
 static inline int shadowspill_span_accessed_after(
-    const ShadowSpillResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyProblem *problem,
     uint32_t alias,
     uint32_t start,
     uint32_t end,
@@ -148,16 +241,16 @@ static inline void shadowspill_cells_store(
 }
 
 
-typedef struct ShadowSpillResidencyWorkspace ShadowSpillResidencyWorkspace;
+typedef struct ShadowSpillPressureFitResidencyWorkspace ShadowSpillPressureFitResidencyWorkspace;
 
 /* The sparse companions of the dense anchor, access, and reservation arrays. */
-typedef struct ShadowSpillResidencySparseLists {
+typedef struct ShadowSpillPressureFitResidencySparseLists {
     uint32_t *anchor_offsets;
     uint32_t *anchor_positions;
     uint32_t *anchor_tasks;
     uint32_t *reserved_offsets;
     uint32_t *reserved_positions;
-} ShadowSpillResidencySparseLists;
+} ShadowSpillPressureFitResidencySparseLists;
 
 int shadowspill_residency_sparse_lists_build(
     const uint8_t *anchors,
@@ -165,28 +258,28 @@ int shadowspill_residency_sparse_lists_build(
     const uint8_t *output_reservations,
     uint32_t alias_count,
     uint32_t boundary_count,
-    ShadowSpillResidencySparseLists *lists
+    ShadowSpillPressureFitResidencySparseLists *lists
 );
 
-void shadowspill_residency_sparse_lists_destroy(ShadowSpillResidencySparseLists *lists);
+void shadowspill_residency_sparse_lists_destroy(ShadowSpillPressureFitResidencySparseLists *lists);
 
 int shadowspill_residency_workspace_create(
-    const ShadowSpillResidencyProblem *problem,
-    ShadowSpillResidencyWorkspace **workspace
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    ShadowSpillPressureFitResidencyWorkspace **workspace
 );
 
 void shadowspill_residency_workspace_destroy(
-    ShadowSpillResidencyWorkspace *workspace
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 );
 
 int shadowspill_residency_pressure_at(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
     const uint8_t *resident,
     const uint8_t *breaks,
     uint32_t device,
     uint32_t boundary,
-    ShadowSpillResidencyWorkspace *workspace,
+    ShadowSpillPressureFitResidencyWorkspace *workspace,
     uint64_t *pressure_bytes
 );
 
@@ -205,11 +298,11 @@ void shadowspill_canonicalize_breaks(
     uint32_t boundary_count
 );
 
-ShadowSpillStatus shadowspill_reduce_residency_reusing(
-    const ShadowSpillResidencyProblem *problem,
-    const ShadowSpillResidencyOptions *options,
-    ShadowSpillResidencyResult *result,
-    ShadowSpillResidencyWorkspace *workspace
+ShadowSpillStatus shadowspill_pressurefit_reduce_residency_reusing(
+    const ShadowSpillPressureFitResidencyProblem *problem,
+    const ShadowSpillPressureFitResidencyOptions *options,
+    ShadowSpillPressureFitResidencyResult *result,
+    ShadowSpillPressureFitResidencyWorkspace *workspace
 );
 
 #endif

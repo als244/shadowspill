@@ -25,14 +25,14 @@ static int checked_add(uint64_t left, uint64_t right, uint64_t *result) {
 }
 
 int shadowspill_admission_facts_valid(
-    const ShadowSpillPressureFitProblem *problem
+    const ShadowSpillScheduleContext *context
 ) {
-    if (problem == NULL || problem->admission == NULL ||
-        problem->simulation == NULL) {
+    if (context == NULL || context->admission == NULL ||
+        context->simulation == NULL) {
         return 0;
     }
-    const ShadowSpillAdmissionFacts *topology = problem->admission;
-    const ShadowSpillSimulationProgram *program = problem->simulation;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
+    const ShadowSpillSimulationProgram *program = context->simulation;
     if (topology->abi_version != SHADOWSPILL_ABI_VERSION ||
         program->device_count != 1U || topology->task_count != program->task_count ||
         topology->alias_count != program->alias_count ||
@@ -129,20 +129,20 @@ int shadowspill_admission_facts_valid(
 }
 
 static uint64_t invariant_lease_count(
-    const ShadowSpillPressureFitProblem *problem
+    const ShadowSpillScheduleContext *context
 ) {
-    const ShadowSpillAdmissionFacts *topology = problem->admission;
-    const ShadowSpillSimulationProgram *program = problem->simulation;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
+    const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = program->alias_count;
     count += topology->allocation_slot_count;
     return count;
 }
 
 static uint64_t invariant_operation_count(
-    const ShadowSpillPressureFitProblem *problem
+    const ShadowSpillScheduleContext *context
 ) {
-    const ShadowSpillAdmissionFacts *topology = problem->admission;
-    const ShadowSpillSimulationProgram *program = problem->simulation;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
+    const ShadowSpillSimulationProgram *program = context->simulation;
     uint64_t count = (uint64_t)program->alias_count * 2U;
     const uint32_t allocation_count =
         topology->task_allocation_offsets[topology->task_count];
@@ -173,15 +173,15 @@ static void free_action_buffers(
 /* How many leases and operations a schedule can produce. Pure arithmetic:
  * callers that only want the sizes must not pay for the buffers. */
 static int admission_counts(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     uint64_t *lease_count,
     uint64_t *operation_count,
     uint64_t *dependency_count
 ) {
-    *lease_count = invariant_lease_count(problem);
-    *operation_count = invariant_operation_count(problem);
-    *dependency_count = problem->simulation->task_count;
+    *lease_count = invariant_lease_count(context);
+    *operation_count = invariant_operation_count(context);
+    *dependency_count = context->simulation->task_count;
     for (uint32_t action = 0U; action < schedule->action_count; ++action) {
         const uint8_t kind = schedule->action_kinds[action];
         if (kind == SHADOWSPILL_MEMORY_FETCH) {
@@ -211,14 +211,14 @@ static int admission_counts(
 }
 
 int shadowspill_admission_counts(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     uint64_t *lease_count,
     uint64_t *operation_count
 ) {
     uint64_t dependency_count = 0U;
     return admission_counts(
-        problem, schedule, lease_count, operation_count, &dependency_count
+        context, schedule, lease_count, operation_count, &dependency_count
     );
 }
 
@@ -384,7 +384,7 @@ static uint64_t at_least(uint64_t value, uint64_t floor_value) {
 }
 
 int shadowspill_admission_reserve_buffers(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,
     ShadowSpillCandidateAdmissionWorkspace *workspace
 ) {
@@ -392,7 +392,7 @@ int shadowspill_admission_reserve_buffers(
     uint64_t operation_count = 0U;
     uint64_t dependency_count = 0U;
     if (admission_counts(
-            problem, schedule, &lease_count, &operation_count, &dependency_count
+            context, schedule, &lease_count, &operation_count, &dependency_count
         ) != 0) {
         return -1;
     }
@@ -427,22 +427,22 @@ int shadowspill_admission_reserve_buffers(
 }
 
 int shadowspill_candidate_admission_workspace_create(
-    const ShadowSpillPressureFitProblem *problem,
+    const ShadowSpillScheduleContext *context,
     ShadowSpillCandidateAdmissionWorkspace *workspace
 ) {
-    if (workspace == NULL || !shadowspill_admission_facts_valid(problem)) {
+    if (workspace == NULL || !shadowspill_admission_facts_valid(context)) {
         return -1;
     }
     memset(workspace, 0, sizeof(*workspace));
-    const uint32_t aliases = problem->simulation->alias_count;
-    const uint32_t tasks = problem->simulation->task_count;
+    const uint32_t aliases = context->simulation->alias_count;
+    const uint32_t tasks = context->simulation->task_count;
     workspace->active_alias_leases = malloc(
         (aliases == 0U ? 1U : aliases) * sizeof(*workspace->active_alias_leases)
     );
     workspace->new_alias_leases = malloc(
         (aliases == 0U ? 1U : aliases) * sizeof(*workspace->new_alias_leases)
     );
-    const uint32_t allocation_slots = problem->admission->allocation_slot_count;
+    const uint32_t allocation_slots = context->admission->allocation_slot_count;
     workspace->task_allocation_leases = malloc(
         (allocation_slots == 0U ? 1U : allocation_slots) *
             sizeof(*workspace->task_allocation_leases)

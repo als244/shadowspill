@@ -54,19 +54,19 @@ static void lease_index_destroy(LeaseIndex *index)
 
 /* Tasks and transfers report their own index, so both invert by scatter. */
 static int index_intervals(
-    const ShadowSpillLeaseLifetimeProblem *problem, LeaseIndex *index
+    const ShadowSpillLeaseLifetimeProblem *context, LeaseIndex *index
 )
 {
-    const uint32_t tasks = problem->admission->task_count;
-    const uint32_t actions = problem->schedule->action_count;
+    const uint32_t tasks = context->admission->task_count;
+    const uint32_t actions = context->schedule->action_count;
     index->task_interval = calloc(tasks ? tasks : 1U, sizeof(*index->task_interval));
     index->transfer_of_action =
         calloc(actions ? actions : 1U, sizeof(*index->transfer_of_action));
     if (index->task_interval == NULL || index->transfer_of_action == NULL) {
         return -1;
     }
-    for (uint32_t item = 0U; item < problem->task_interval_count; ++item) {
-        const ShadowSpillTaskInterval *interval = &problem->task_intervals[item];
+    for (uint32_t item = 0U; item < context->task_interval_count; ++item) {
+        const ShadowSpillTaskInterval *interval = &context->task_intervals[item];
         if (interval->task < tasks) {
             index->task_interval[interval->task] = interval;
         }
@@ -75,7 +75,7 @@ static int index_intervals(
     /* A transfer names its sequence within its direction, not its action. Both
      * directions number densely from zero, so invert by scatter and then walk
      * the schedule once to recover the pairing. */
-    const uint32_t transfers = problem->transfer_interval_count;
+    const uint32_t transfers = context->transfer_interval_count;
     const ShadowSpillTransferInterval **by_sequence =
         calloc(transfers ? transfers * 2U : 2U, sizeof(*by_sequence));
     if (by_sequence == NULL) {
@@ -83,7 +83,7 @@ static int index_intervals(
     }
     for (uint32_t item = 0U; item < transfers; ++item) {
         const ShadowSpillTransferInterval *interval =
-            &problem->transfer_intervals[item];
+            &context->transfer_intervals[item];
         if (interval->direction < 2U && interval->sequence < transfers) {
             by_sequence[interval->direction * transfers + interval->sequence] =
                 interval;
@@ -93,7 +93,7 @@ static int index_intervals(
     int status = 0;
     uint32_t sequence[2] = {0U, 0U};
     for (uint32_t action = 0U; action < actions; ++action) {
-        const uint8_t kind = problem->schedule->action_kinds[action];
+        const uint8_t kind = context->schedule->action_kinds[action];
         if (kind == SHADOWSPILL_MEMORY_RELEASE) {
             continue;
         }
@@ -121,11 +121,11 @@ static int index_intervals(
 
 /* Which allocation step owns each lease, and which lease each slot holds. */
 static int index_allocation_steps(
-    const ShadowSpillLeaseLifetimeProblem *problem, LeaseIndex *index
+    const ShadowSpillLeaseLifetimeProblem *context, LeaseIndex *index
 )
 {
-    const ShadowSpillAdmissionOperations *operations = problem->operations;
-    const ShadowSpillAdmissionFacts *topology = problem->admission;
+    const ShadowSpillAdmissionOperations *operations = context->operations;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     const uint32_t slots = topology->allocation_slot_count;
     const uint64_t leases = operations->lease_count;
     index->latest_step = malloc((slots ? slots : 1U) * sizeof(*index->latest_step));
@@ -208,14 +208,14 @@ static uint8_t allocation_purpose(
  * triggering task, and initial residency names neither.
  */
 static void lease_identity(
-    const ShadowSpillLeaseLifetimeProblem *problem,
+    const ShadowSpillLeaseLifetimeProblem *context,
     const LeaseIndex *index,
     uint64_t lease,
     ShadowSpillLeaseIdentity *identity
 )
 {
-    const ShadowSpillAdmissionOperations *operations = problem->operations;
-    const ShadowSpillAdmissionFacts *topology = problem->admission;
+    const ShadowSpillAdmissionOperations *operations = context->operations;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     const uint64_t start = operations->lease_starts[lease];
     const uint32_t own_step = index->step_of_lease[lease];
 
@@ -240,7 +240,7 @@ static void lease_identity(
     switch (operations->boundaries[start]) {
     case SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_TRIGGER:
     case SHADOWSPILL_ADMISSION_BOUNDARY_ACTION_COMPLETION:
-        identity->task = problem->schedule->action_trigger_tasks[at];
+        identity->task = context->schedule->action_trigger_tasks[at];
         identity->action = at;
         break;
     case SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL:
@@ -286,13 +286,13 @@ static int predicted_start(
 /* An eviction frees its address once the copy lands; anything else frees it
  * when the task it is retired at ends. */
 static int predicted_end(
-    const ShadowSpillLeaseLifetimeProblem *problem,
+    const ShadowSpillLeaseLifetimeProblem *context,
     const LeaseIndex *index,
     uint64_t retire,
     uint64_t *when
 )
 {
-    const ShadowSpillAdmissionOperations *operations = problem->operations;
+    const ShadowSpillAdmissionOperations *operations = context->operations;
     const uint8_t purpose = operations->purposes[retire];
     const uint8_t boundary = operations->boundaries[retire];
     const uint32_t at = operations->indices[retire];
@@ -309,13 +309,13 @@ static int predicted_end(
     }
     uint32_t task;
     if (at_action) {
-        task = problem->schedule->action_trigger_tasks[at];
+        task = context->schedule->action_trigger_tasks[at];
     } else if (boundary == SHADOWSPILL_ADMISSION_BOUNDARY_INITIAL) {
         return -1;
     } else {
         task = at;
     }
-    if (task >= problem->admission->task_count ||
+    if (task >= context->admission->task_count ||
         index->task_interval[task] == NULL) {
         return -1;
     }
@@ -378,16 +378,16 @@ static int partition_dynamic(
 /* ----------------------------------------------------------------- entry */
 
 static ShadowSpillStatus build_lifetimes(
-    const ShadowSpillLeaseLifetimeProblem *problem,
+    const ShadowSpillLeaseLifetimeProblem *context,
     ShadowSpillLeaseLifetimeResult *result,
     LeaseIndex *index,
     uint8_t *dynamic
 )
 {
-    const ShadowSpillAdmissionOperations *operations = problem->operations;
-    const ShadowSpillAdmissionFacts *topology = problem->admission;
+    const ShadowSpillAdmissionOperations *operations = context->operations;
+    const ShadowSpillAdmissionFacts *topology = context->admission;
     const uint64_t count = operations->lease_count;
-    const uint64_t terminal_time = problem->makespan_ns + 1U;
+    const uint64_t terminal_time = context->makespan_ns + 1U;
     const uint64_t terminal_boundary = operations->operation_count + 1U;
 
     for (uint32_t alias = 0U; alias < topology->alias_count; ++alias) {
@@ -396,7 +396,7 @@ static ShadowSpillStatus build_lifetimes(
 
     for (uint64_t lease = 0U; lease < count; ++lease) {
         ShadowSpillLeaseIdentity *identity = &result->identities[lease];
-        lease_identity(problem, index, lease, identity);
+        lease_identity(context, index, lease, identity);
 
         const uint64_t retire = operations->lease_retires[lease];
         uint64_t ends;
@@ -409,7 +409,7 @@ static ShadowSpillStatus build_lifetimes(
                 result->alias_leases[identity->alias] = lease;
             }
         } else {
-            if (predicted_end(problem, index, retire, &ends) != 0) {
+            if (predicted_end(context, index, retire, &ends) != 0) {
                 return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
             }
             identity->causal_end = retire;
@@ -442,8 +442,8 @@ static ShadowSpillStatus build_lifetimes(
         result->alias_leases[source] = NO_LEASE;
     }
 
-    for (uint32_t item = 0U; item < problem->dynamic_alias_count; ++item) {
-        const uint32_t alias = problem->dynamic_aliases[item];
+    for (uint32_t item = 0U; item < context->dynamic_alias_count; ++item) {
+        const uint32_t alias = context->dynamic_aliases[item];
         if (alias >= topology->alias_count ||
             result->alias_leases[alias] == NO_LEASE) {
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -463,34 +463,34 @@ static ShadowSpillStatus build_lifetimes(
 }
 
 ShadowSpillStatus shadowspill_build_lease_lifetimes(
-    const ShadowSpillLeaseLifetimeProblem *problem,
+    const ShadowSpillLeaseLifetimeProblem *context,
     ShadowSpillLeaseLifetimeResult *result
 )
 {
-    if (problem == NULL || result == NULL ||
-        problem->abi_version != SHADOWSPILL_ABI_VERSION ||
-        problem->operations == NULL || problem->admission == NULL ||
-        problem->schedule == NULL || result->lifetimes == NULL ||
+    if (context == NULL || result == NULL ||
+        context->abi_version != SHADOWSPILL_ABI_VERSION ||
+        context->operations == NULL || context->admission == NULL ||
+        context->schedule == NULL || result->lifetimes == NULL ||
         result->identities == NULL || result->allocation_step_leases == NULL ||
         result->alias_leases == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    if (problem->dynamic_alias_count > 0U && problem->dynamic_aliases == NULL) {
+    if (context->dynamic_alias_count > 0U && context->dynamic_aliases == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     result->lifetime_count = 0U;
     result->fixed_count = 0U;
 
-    const uint64_t count = problem->operations->lease_count;
+    const uint64_t count = context->operations->lease_count;
     LeaseIndex index;
     memset(&index, 0, sizeof(index));
     uint8_t *dynamic = malloc(count ? count : 1U);
     ShadowSpillStatus status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-    if (dynamic == NULL || index_intervals(problem, &index) != 0 ||
-        index_allocation_steps(problem, &index) != 0) {
+    if (dynamic == NULL || index_intervals(context, &index) != 0 ||
+        index_allocation_steps(context, &index) != 0) {
         goto done;
     }
-    status = build_lifetimes(problem, result, &index, dynamic);
+    status = build_lifetimes(context, result, &index, dynamic);
     if (status != SHADOWSPILL_STATUS_OK) {
         goto done;
     }
