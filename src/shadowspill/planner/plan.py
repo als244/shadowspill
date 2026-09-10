@@ -6,9 +6,9 @@ search, holds that search to any plan it was given, and admits the winner
 physically.
 
 Which search runs is the caller's choice and this module's ignorance:
-`search` is any :class:`~shadowspill.planner.SearchAlgorithm`, and
-`search_options` is that search's own record, carried into the plan key and
-never read here. PressureFit is the search that ships.
+`search_options.algorithm` is any
+:class:`~shadowspill.planner.SearchAlgorithm`, carrying its own options into
+the plan key and read by nothing here. PressureFit is the search that ships.
 
 This module is framework-neutral: it needs a program, a budget and a
 machine, and nothing that belongs to a frontend.
@@ -20,9 +20,9 @@ import os
 
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram
 from shadowspill.simulator import SimulationConfig
+from shadowspill.store import ArtifactStore, StoreMode
 
 from .admission import AdmissionFacts
-from .artifact_store import ArtifactStore, StoreMode
 from .program import (
     AnnotatedProgramPlan,
     ShadowSpillPlanningProblem,
@@ -93,10 +93,9 @@ def plan_program(
     ``algorithm``, which is the search itself carrying its own options.
     Both reach the plan key; ``search_options.workers`` does not, because
     it says how much machine to spend rather than what to decide. Leaving
-    ``algorithm`` unset runs the search
-    that ships; a caller with a search of their own subclasses
-    :class:`~shadowspill.planner.SearchAlgorithm` and passes an instance,
-    which needs nothing registered and no name looked up.
+    ``algorithm`` unset runs the search that ships; a caller with a search of
+    their own subclasses :class:`~shadowspill.planner.SearchAlgorithm` and
+    passes an instance.
 
     ``incumbent`` is the plan to beat: a plan for this same program found
     under another budget. It reaches the search as a bound, and the answer

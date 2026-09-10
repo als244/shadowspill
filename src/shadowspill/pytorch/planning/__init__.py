@@ -1,6 +1,6 @@
 """Composable high-level PyTorch planning boundaries."""
 
-from shadowspill.planner.artifact_store import ArtifactStore
+from shadowspill.store import ArtifactStore
 
 from .artifacts import (
     ForwardCaptureArtifacts,

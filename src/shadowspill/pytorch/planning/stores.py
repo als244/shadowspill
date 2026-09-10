@@ -1,17 +1,17 @@
 """The stores one PyTorch planning call reads and writes.
 
 This module is intentionally policy-only.  It does not capture graphs, profile
-tasks, construct Programs, or admit runtime memory.
+tasks, construct programs, or admit runtime memory.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import PlanStore, open_plan_store
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileStore
+from shadowspill.store import ArtifactStore
 
 from ..graph_pairs import GraphPairStore
 from ..optimizer.store import OptimizerCaptureStore
@@ -70,9 +70,8 @@ def open_planning_stores(store: ArtifactStore) -> PlanningStores:
 
     Profiles, graph pairs and optimizer captures live in the build tree and
     follow ``build_store_mode``; plans live in the planning tree and follow
-    ``plan_store_mode``. They were one switch until the two trees could be
-    rooted apart, and one switch meant a run that kept its plans to itself
-    also stopped contributing the builds it had paid for.
+    ``plan_store_mode``, so a run that keeps its plans to itself still
+    contributes the builds it paid for.
     """
 
     return PlanningStores(

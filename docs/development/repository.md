@@ -11,7 +11,7 @@ shadowspill/
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── reference/             executable reference implementations
-├── benchmarking/          the quickstart tour, ShadowSpillProgram corpora, and planning evaluation
+├── benchmarking/          the quickstart tour, StepProgram corpora, and planning evaluation
 ├── qualification/         thin numerical and performance release gates
 ├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
@@ -36,11 +36,21 @@ arguments beyond its corpus path.
 ```text
 src/shadowspill/
 ├── ir/                    framework-neutral values and indexed projections
-├── planner/               PressureFit orchestration and compiled bindings
-│   ├── admission/         neutral physical admission
+├── step/                  a training step's shape and provenance, framework-free
+│   ├── ordering.py        StepDataOrdering: the walk through the microbatches
+│   └── program.py         StepProgram: the problems a captured step lowered to
+├── store/                 content-addressed artifacts, and the modes that gate
+│   │                      reading and writing them
+│   ├── artifacts.py       the store itself
+│   └── policy.py          StoreMode and the four gates it implies
+├── planner/               the planning question and the compiled bindings
+│   ├── admission/         neutral physical admission, after a search answers
+│   │   └── layout/        leases to fixed offsets, and the certificate
 │   ├── diagnostics/       PlanReport values
-│   ├── pressurefit/       the search itself
-│   ├── recomputation/     resolved-program enumeration
+│   ├── search/            the search seam
+│   │   ├── toolkit/       what any search may call
+│   │   └── algorithms/
+│   │       └── pressurefit/   the search that ships
 │   └── serialization/     neutral artifact encode/decode
 ├── simulator/             the simulator and diagnostic timeline
 ├── runtime/               physical admission and replay bindings
@@ -59,7 +69,7 @@ src/shadowspill/
     ├── runtime_adapter/   Python-to-C runtime and allocator boundary
     ├── diagnostics/       PlanReport and StepDiagnostics
     ├── sharing/           runtime-owned TensorRef handles
-    ├── state/             persistent model/optimizer import
+    └── state/             persistent model/optimizer import
 ```
 
 High-level modules expose small orchestration functions. Detailed algorithms

@@ -13,16 +13,14 @@ from benchmarking.program_collection.corpus import (
     save_step_program,
 )
 from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.planner.artifact_store import STORE_MODES
-from shadowspill.planner.program import (
-    StepProgram,
-)
 from shadowspill.pytorch import (
     Runtime,
     build_step_program,
     export_model_state,
     import_model_state,
 )
+from shadowspill.step import StepProgram
+from shadowspill.store import STORE_MODES
 from workloads.common.training import optimizer_state_init
 
 from .config import load_collection_config

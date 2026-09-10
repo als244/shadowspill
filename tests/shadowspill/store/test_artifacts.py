@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.planner import artifact_store as store_module
-from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.pytorch.profiling.metadata import (
     canonicalize_profiling_metadata,
     training_profiling_metadata,
 )
 from shadowspill.schema import ARTIFACT_VERSION
+from shadowspill.store import ArtifactStore
+from shadowspill.store import artifacts as store_module
 
 
 def test_profiling_metadata_is_canonical_and_position_aligned() -> None:

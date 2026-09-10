@@ -10,9 +10,9 @@ from dataclasses import replace
 
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import ProgramPlanResult, SearchOptions
-from shadowspill.planner.artifact_store import ArtifactStore
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.profiling import ProfilingMetadata, ProfilingResult
+from shadowspill.step import StepDataOrdering
+from shadowspill.store import ArtifactStore
 
 from ..diagnostics import (
     PlanCacheArtifact,

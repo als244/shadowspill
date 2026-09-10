@@ -48,7 +48,6 @@ from shadowspill.planner import (
     StepDataOrdering,
 )
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.artifact_store import STORE_MODES
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
@@ -62,6 +61,7 @@ from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
 from shadowspill.pytorch.step_search import search_geometries
+from shadowspill.store import STORE_MODES
 from tools.qualification.model_state import release_case_model
 from workloads.common.training import LEARNING_RATE, optimizer_state_init
 from workloads.full_model import build_case, manifest_for
@@ -1018,7 +1018,7 @@ def main() -> int:
                         ledger[f"build: {name}"] = (
                             ledger.get(f"build: {name}", 0.0) + value
                         )
-            ledger["search: pressurefit"] = report.total_search_seconds
+            ledger["search"] = report.total_search_seconds
             ledger["build: unattributed"] = max(
                 0.0,
                 report.total_build_seconds
@@ -1098,7 +1098,6 @@ def main() -> int:
                     # The search policy the geometry search used, so the run
                     # plans the plan the search promised rather than missing
                     # the store and searching again under other options.
-                    deterministic=arguments.deterministic,
                     search_options=SearchOptions(
                         generic=GenericPlanningOptions(
                             deterministic=arguments.deterministic

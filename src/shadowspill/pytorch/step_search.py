@@ -6,7 +6,7 @@ rounds plans best. :func:`plan_step_search` answers by planning all of
 them: it captures, profiles, and lowers one :class:`StepProgram` per
 distinct geometry — expensive work the artifact store deduplicates by
 structural digest, so each unique microbatch shape compiles and profiles
-once — then runs the PressureFit search for every geometry under every
+once — then runs the search for every geometry under every
 requested budget pair. It executes nothing and returns reports only;
 running a winner afterward is one ordinary :func:`plan_step` call at the
 chosen geometry, warm against the same store.
@@ -36,7 +36,6 @@ from shadowspill.planner import (
     plan_program,
 )
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.artifact_store import StoreMode
 from shadowspill.planner.diagnostics import INCUMBENT_CANDIDATE_ID
 from shadowspill.planner.diagnostics.plan import (
     PlanSummary,
@@ -48,6 +47,7 @@ from shadowspill.pytorch.api import build_step_program
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
+from shadowspill.store import StoreMode
 
 _INFEASIBLE = (PlanInfeasibleError, SimulationInfeasibleError)
 _EXHAUSTED = (PlanSearchExhaustedError,)
@@ -345,7 +345,7 @@ class StepSearchReport:
 
     @property
     def total_search_seconds(self) -> float:
-        """Wall time spent in the PressureFit search across every point."""
+        """Wall time spent searching across every point."""
 
         return sum(item.search_seconds for item in self.points)
 
@@ -496,13 +496,11 @@ def plan_step_search(
     embeds from the runtime; leave it unset to plan against the measured
     routes. Either way the report records the calibration each geometry's
     program embeds, and the override when there was one, so two searches
-    can be compared or one pinned to another's. ``options`` is what every search is
-    told, and ``search_options`` what this one is; both reach every point
-    unchanged, so a value set here is the value searched under. Failures
-    are outcomes, not
-    errors: a geometry-budget point that
-    proves infeasible or exhausts its search budget is reported with that
-    status while the search continues. A geometry whose build exhausts the
+    can be compared or one pinned to another's. ``search_options`` reaches
+    every point unchanged, so a value set here is the value searched under.
+    Failures are outcomes, not errors: a geometry-budget point that proves
+    infeasible or exhausts its search budget is reported with that status
+    while the search continues. A geometry whose build exhausts the
     device -- profiling runs real kernels, so the largest microbatch can --
     reports every one of its budgets ``infeasible`` with the exhaustion as
     the point's error, and the search moves to the next geometry; that
