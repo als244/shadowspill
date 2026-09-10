@@ -46,6 +46,7 @@ import torch
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import (
     GenericPlanningOptions,
+    InitialPlacement,
     SearchOptions,
     StepDataOrdering,
 )
@@ -63,6 +64,7 @@ from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
 from shadowspill.pytorch.planning import planned_transfer_bandwidths
+from shadowspill.pytorch.runtime_adapter.runtime import planned_execution_budget
 from shadowspill.pytorch.step_search import search_geometries
 from shadowspill.store import STORE_MODES
 from tools.qualification.model_state import release_case_model
@@ -314,6 +316,29 @@ class PlanLog:
         self._stdout.flush()
 
 
+def search_policy(arguments: argparse.Namespace) -> SearchOptions:
+    """The one search policy this tour plans with.
+
+    Both planning phases have to be told the same thing: the geometry search ranks
+    candidates under a policy, and the run then plans the plan that search promised.
+    Building the policy twice is how the two drift -- a flag added to one call and not
+    the other changes what is measured without changing what is reported -- so it is
+    built here and threaded, and every phase is handed this value.
+    """
+
+    return SearchOptions(
+        generic=GenericPlanningOptions(deterministic=arguments.deterministic),
+        algorithm=PressureFit(
+            PressureFitOptions(
+                initial_placement=InitialPlacement(arguments.initial_placement),
+                resolution_options=tuple(
+                    Fraction(share) for share in arguments.resolution_options
+                ),
+            )
+        ),
+    )
+
+
 def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
     print(rule("Geometry search"))
     print(
@@ -489,27 +514,68 @@ def _transfer_duration_delta(record: TransferRecord) -> float:
 def print_epilogue(diagnostics: Any) -> None:
     summary = diagnostics.summary
     timelines = diagnostics.timelines
-    real = summary.real_selected_span_seconds
-    simulated = summary.simulated_selected_span_seconds
-    print("  task window: first task's compute start through the last task's end")
+    # The headline compares the step against the step. The simulated step is the
+    # makespan -- the same figure the plan's breakdown advertises -- and it is the
+    # task window plus the terminal writeback priced after the last task. The real
+    # step is the cycle, and it is the opening delay plus the task window plus the
+    # tail the stream actually exposed. Each side decomposes into exactly those
+    # three parts, so the rows below sum to their own total and the one the
+    # simulator gets wrong is visible rather than inferred.
+    #
+    # Comparing the task window against the makespan instead would flatter the
+    # simulator: it would credit a tail while ignoring an opening the simulator
+    # prices at zero.
+    simulated_step = summary.simulator_makespan_seconds
+    real_step = summary.cycle_seconds
+    real_span = summary.real_selected_span_seconds
+    simulated_span = summary.simulated_selected_span_seconds
+    simulated_tail = summary.simulator_terminal_tail_seconds
+    if real_step is None:
+        print(
+            "  step: the trace resolved before the next step opened, so the step"
+            " itself is not comparable here -- only the task window below"
+        )
+    else:
+        # This is the traced step, which is the last one run, and steps drift
+        # slightly slower across a budget -- so this figure reads a few tenths of
+        # a percent worse than the one the figures draw, which is the median of
+        # the untraced steps. Saying which step this is keeps the two from
+        # looking like they disagree.
+        print(
+            "  traced step: origin on the compute stream through the next step's"
+            " origin, against the simulated makespan"
+        )
+        print(
+            f"  traced step      real {real_step:.3f} s"
+            f"   simulated {simulated_step:.3f} s"
+            f"   ({(real_step - simulated_step) / simulated_step:+.2%})"
+        )
+        print(
+            f"    opening        real {summary.opening_delay_seconds:.3f} s"
+            f"   simulated {simulated_step - simulated_span - simulated_tail:.3f} s"
+            "   (the restore; unmodeled, docs/architecture/step-boundaries.md)"
+        )
     print(
-        f"  task window      real {real:.3f} s   simulated {simulated:.3f} s"
-        f"   ({(real - simulated) / simulated:+.2%})"
+        f"    task window    real {real_span:.3f} s"
+        f"   simulated {simulated_span:.3f} s"
+        f"   ({(real_span - simulated_span) / simulated_span:+.2%})"
+        "   (first task's compute start through the last task's end)"
     )
+    if real_step is not None and summary.exposed_tail_seconds is not None:
+        print(
+            f"    terminal tail  real {summary.exposed_tail_seconds:.3f} s"
+            f"   simulated {simulated_tail:.3f} s"
+            "   (writeback; the simulator overlaps none of it with the next step)"
+        )
     print(
         "  stalled          real"
         f" {summary.real_inter_task_readiness_wait_seconds:.3f} s"
         f"   simulated {summary.simulated_inter_task_readiness_wait_seconds:.3f} s"
     )
     print(
-        "  opening restore  first task waited"
+        "  first task       waited"
         f" {summary.real_initial_readiness_wait_seconds * 1e3:.1f} ms"
-        "   (unmodeled; docs/architecture/step-boundaries.md)"
-    )
-    print(
-        "  terminal tail    simulated"
-        f" {summary.simulator_terminal_tail_seconds * 1e3:.1f} ms"
-        " of writeback after the last task"
+        " for its own inputs, inside the opening above"
     )
     compute = [diagnostics.tasks[task_id] for task_id in timelines.compute]
     worst = max(compute, key=lambda item: abs(_task_duration_delta(item)))
@@ -593,6 +659,18 @@ def main() -> int:
         " every depth x breadth factor pair (the default), or only the"
         " depth-first walk. The loss stays paired and the backward walk"
         " reversed either way; the search does not toggle those",
+    )
+    parser.add_argument(
+        "--initial-placement",
+        choices=("greedy", "required"),
+        default="greedy",
+        help="how objects the declaration leaves in spill may be placed before"
+        " the first task. 'greedy', the library default, promotes a cold object"
+        " to the opening boundary when its fetch would otherwise be late, which"
+        " moves those bytes out of the schedule and into the opening restore --"
+        " where the simulated makespan does not count them. 'required' places"
+        " only what the declaration asks for, plus what the first task reads and"
+        " so cannot be fetched in time",
     )
     parser.add_argument(
         "--resolution-options",
@@ -725,6 +803,10 @@ def main() -> int:
                 " does not"
             )
     search_budgets.sort()
+    # The largest budget is the process's device-memory cap, not its slab: a pool's
+    # physical capacity covers the accelerator problem and the provider headroom as
+    # well as the suballocatable slab. Sizing the pool above it would let the process
+    # exceed the budget the caller asked for.
     physical_capacity = max(search_budgets)
     sequence_length = manifest.sequence_length
     sequences_per_step = arguments.sequences_per_step or (
@@ -846,8 +928,36 @@ def main() -> int:
     print("═" * 68)
     print(f"  ShadowSpill quickstart — {arguments.model}")
     print("═" * 68)
-    searched = ", ".join(gib(item) for item in search_budgets)
-    ran = ", ".join(gib(item) for item in run_budgets) or "none (search only)"
+    # A requested budget is the process's device-memory cap; the slab a plan may fill
+    # is what is left after the accelerator problem and the provider headroom. Planning
+    # resolves that, so both phases are given the resolved figure -- the search used to
+    # take its budgets literally and rank against a slab the cap cannot hold, which made
+    # it promise plans the run could not reproduce.
+    execution_pool = runtime.pools["execution"]
+    planned_budget = {
+        item: planned_execution_budget(execution_pool, item)
+        for item in dict.fromkeys([*search_budgets, *run_budgets])
+    }
+    requested_search, requested_run = search_budgets, run_budgets
+    # Two requests can resolve to one slab once they reach the pool's capacity, and
+    # planning the same budget twice would search it twice.
+    search_budgets = list(
+        dict.fromkeys(planned_budget[item] for item in requested_search)
+    )
+    run_budgets = list(dict.fromkeys(planned_budget[item] for item in requested_run))
+
+    def asked(values: list[int]) -> str:
+        """Each request, naming the slab it resolved to wherever that is smaller."""
+
+        return ", ".join(
+            gib(item)
+            if planned_budget[item] == item
+            else f"{gib(item)}->{gib(planned_budget[item])}"
+            for item in values
+        )
+
+    searched = asked(requested_search)
+    ran = asked(requested_run) or "none (search only)"
     print(
         f"  sequence length     {sequence_length:>10,}      search budgets   {searched}"
     )
@@ -858,6 +968,13 @@ def main() -> int:
         f"  tokens per step     {tokens_per_step:>10,}"
         f"      spill budget     {gib(manifest.spill_budget_bytes)}"
     )
+    print(
+        f"  execution pool      {gib(execution_pool.physical_capacity or 0):>10}"
+        f"      suballocatable   {gib(execution_pool.capacity)}"
+        f"   (runtime init carved"
+        f" {gib((execution_pool.physical_capacity or 0) - execution_pool.capacity)})"
+    )
+
     admitted, skipped = search_geometries(
         sequences_per_step,
         sequence_length=sequence_length,
@@ -884,6 +1001,20 @@ def main() -> int:
         + f"{len(shares):>10}      "
         + ", ".join(str(item) for item in shares)
         + " of the flexible groups recomputing"
+    )
+    # Which placement ran is not recoverable from the figures, and the two
+    # price the opening differently -- greedy moves bytes into the unpriced
+    # restore -- so a report that does not say which it used cannot be compared
+    # against one that used the other.
+    print(
+        f"  initial placement   {arguments.initial_placement:>10}      "
+        + (
+            "cold objects may be promoted to the opening boundary,"
+            " so their bytes land in the restore rather than the schedule"
+            if arguments.initial_placement == "greedy"
+            else "only what the declaration asks for, plus what the first"
+            " task reads and cannot be fetched in time"
+        )
     )
 
     # One calibration serves every geometry, so it is a property of the run.
@@ -968,6 +1099,9 @@ def main() -> int:
             for _ in range(accumulation)
         )
 
+    # Built once and handed to both planning phases; see `search_policy`.
+    policy = search_policy(arguments)
+
     def step_microbatches(
         sequences: int, accumulation: int
     ) -> tuple[tuple[object, ...], ...]:
@@ -1047,19 +1181,7 @@ def main() -> int:
                             StepDataOrdering.depth_first(accumulation),
                         )
                     ),
-                    search_options=SearchOptions(
-                        generic=GenericPlanningOptions(
-                            deterministic=arguments.deterministic
-                        ),
-                        algorithm=PressureFit(
-                            PressureFitOptions(
-                                resolution_options=tuple(
-                                    Fraction(share)
-                                    for share in arguments.resolution_options
-                                )
-                            )
-                        ),
-                    ),
+                    search_options=policy,
                     transfer_bandwidths=arguments.transfer_bandwidths,
                 )
             print()
@@ -1154,19 +1276,7 @@ def main() -> int:
                     # The search policy the geometry search used, so the run
                     # plans the plan the search promised rather than missing
                     # the store and searching again under other options.
-                    search_options=SearchOptions(
-                        generic=GenericPlanningOptions(
-                            deterministic=arguments.deterministic
-                        ),
-                        algorithm=PressureFit(
-                            PressureFitOptions(
-                                resolution_options=tuple(
-                                    Fraction(share)
-                                    for share in arguments.resolution_options
-                                )
-                            )
-                        ),
-                    ),
+                    search_options=policy,
                     # The search's winning plan is the plan to beat, so the
                     # step executes what the search chose, or better, even
                     # when the replan's calibration or facts differ from the
@@ -1195,10 +1305,15 @@ def main() -> int:
                     note = ""
                     if step == 1 and plan_report.initial_search_result is not None:
                         note = "   (first-step plan)"
+                    # A cycle closes where the next step opens, so a step is
+                    # reported one step late and the traced step's predecessor
+                    # arrives beside it. Naming the traced one is what keeps that
+                    # from reading as two traced steps.
+                    if step == arguments.steps:
+                        note += "   (traced; not in the median)"
                     plan_log.write(
                         f"  step {step:>3}   {timing.cycle_seconds:7.3f} s"
                         f"   {tokens_per_step / timing.cycle_seconds:>10,.0f} tok/s"
-                        f"   opening {timing.opening_delay_seconds:6.3f} s"
                         f"   loss {losses[step]:.4f}{note}\n"
                     )
 
@@ -1230,15 +1345,40 @@ def main() -> int:
             # Every cycle runs origin to next origin, so consecutive cycles
             # tile the run: their sum is the span from the first step's start
             # to the last one's end, and tokens over that span is the one
-            # throughput a boundary between steps cannot hide in. The per-step
-            # lines above each carry their own boundary as `opening`.
+            # throughput a boundary between steps cannot hide in.
             elapsed = sum(cycles.values())
+            walls = [cycles[step] for step in sorted(cycles)]
+            # Two of these steps are not the step this reports. The first pays
+            # the plan's reconciliation of its initial state. The last is the
+            # traced one, and tracing costs it tens of milliseconds of collection
+            # -- enough that it came out slower than its predecessor at almost
+            # every budget measured -- so including it biases the median upward
+            # every time. The qualification gate makes the same exclusion.
+            untraced = walls[:-1] if len(walls) > 1 else walls
+            measured = untraced[1:] if len(untraced) > 1 else untraced
+            # Both sides are the whole step -- the median on the device clock
+            # against the plan's makespan -- and these are the same two values
+            # the figures use, so the percentage here and the figure's relative
+            # error cannot drift apart. Written with the steps it summarizes,
+            # rather than after the epilogue, where it would read as part of the
+            # trace.
+            median_step = statistics.median(measured)
+            simulated_step = plan_report.summary.simulated_step_seconds
             plan_log.write(
-                f"  end to end {elapsed:8.3f} s"
+                f"\n  end to end {elapsed:8.3f} s"
+                f"   ({elapsed / len(cycles):.3f} s per step)"
                 f"   {len(cycles) * tokens_per_step / elapsed:>10,.0f} tok/s"
                 f"   ({len(cycles)} steps, every boundary included)\n"
             )
+            plan_log.write(
+                f"  median step {median_step:7.3f} s"
+                f"   simulated {simulated_step:7.3f} s"
+                f"   ({(median_step - simulated_step) / simulated_step:+.2%})"
+                f"   ({len(measured)} untraced"
+                f" step{'' if len(measured) == 1 else 's'} after the first)\n"
+            )
             print()
+            print(rule("Traced step versus simulation"))
             assert result.diagnostics is not None
             diagnostics = result.diagnostics.result()
             print()
@@ -1252,10 +1392,6 @@ def main() -> int:
             ledger["steps execution"] = ledger.get("steps execution", 0.0) + sum(
                 hosts.values()
             )
-            walls = [cycles[step] for step in sorted(cycles)]
-            # The first step pays the plan's reconciliation of its initial
-            # state; the measured step is the median of the ones after it.
-            measured = walls[1:] if len(walls) > 1 else walls
             # The final StepResult's public outputs are caller-owned device
             # tensors; the runtime refuses to close while they are alive.
             del result
@@ -1264,15 +1400,23 @@ def main() -> int:
             step_summary = diagnostics.summary
             return RunBudgetOutcome(
                 execution_budget_bytes=budget,
-                simulated_step_seconds=plan_report.summary.simulated_step_seconds,
-                measured_step_seconds=statistics.median(measured),
+                simulated_step_seconds=simulated_step,
+                measured_step_seconds=median_step,
                 step_seconds=tuple(walls),
                 profiled_task_seconds=step_summary.profiled_task_seconds,
                 real_task_seconds=step_summary.real_task_event_seconds,
                 simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
                 real_idle_seconds=step_summary.real_inter_task_idle_seconds,
-                prologue_seconds=(step_summary.real_initial_readiness_wait_seconds),
+                recomputation_seconds=(
+                    plan_report.summary.recomputation_overhead_seconds
+                ),
+                # The whole opening, not the first task's wait for its own
+                # inputs: the restore runs before the first task's compute starts,
+                # and the simulator prices none of it, so it is the measured
+                # step's largest unmodelled part.
+                prologue_seconds=step_summary.opening_delay_seconds,
                 terminal_tail_seconds=(step_summary.simulator_terminal_tail_seconds),
+                real_terminal_tail_seconds=(step_summary.exposed_tail_seconds or 0.0),
             )
 
         run_entries: list[RunBudgetOutcome] = []
