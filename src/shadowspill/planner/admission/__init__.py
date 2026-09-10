@@ -16,6 +16,15 @@ from enum import StrEnum
 from shadowspill.ir import ShadowSpillProgram
 from shadowspill.schema import artifact_schema
 
+from ..strict import (
+    _integer,
+    _list,
+    _mapping,
+    _optional_integer,
+    _optional_string,
+    _string,
+)
+
 _SCHEMA = artifact_schema("admission_facts")
 
 
@@ -32,7 +41,7 @@ class TaskAllocationStep:
 
     ``allocation_ordinal`` relates a release to its earlier allocation.  An
     output alias is present only when that allocation becomes a persistent
-    ShadowSpillProgram object after the task.  The trace is admission evidence, not a
+    program object after the task.  The trace is admission evidence, not a
     runtime callback-order contract.
     """
 
@@ -298,11 +307,11 @@ class TaskAdmissionSpec:
 
 @dataclass(frozen=True, slots=True)
 class AdmissionFacts:
-    """Immutable physical facts reused by every PressureFit candidate.
+    """Immutable physical facts reused by every candidate a search measures.
 
     ``pool_capacity_bytes`` is the complete execution-pool capacity certified
     by the production range allocator. ``object_capacity_bytes`` is the
-    conservative residency capacity used by PressureFit before exact task and
+    conservative residency capacity a search plans against before exact task and
     transfer deltas are evaluated.  The current runtime admits one execution
     pool; the device identity is explicit so extending this record to several
     pools does not require model-specific policy.
@@ -341,8 +350,6 @@ class AdmissionFacts:
             "minimum_alignment": self.minimum_alignment,
             "object_capacity_bytes": self.object_capacity_bytes,
             "pool_capacity_bytes": self.pool_capacity_bytes,
-            # Schema v3 named these facts a "topology"; the stored corpus
-            # carries that string and its digests are taken over it.
             "schema": _SCHEMA,
             "tasks": [item.to_dict() for item in self.tasks],
         }
@@ -416,42 +423,6 @@ class AdmissionFacts:
                     f"task admission {task.task_id!r} references unknown aliases "
                     f"{unknown}"
                 )
-
-
-def _mapping(value: object, path: str) -> dict[str, object]:
-    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
-        raise ValueError(f"{path}: expected an object")
-    return value
-
-
-def _list(value: object, path: str) -> list[object]:
-    if not isinstance(value, list):
-        raise ValueError(f"{path}: expected a list")
-    return value
-
-
-def _integer(value: object, path: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{path}: expected an integer")
-    return value
-
-
-def _string(value: object, path: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{path}: expected a string")
-    return value
-
-
-def _optional_string(value: object, path: str) -> str | None:
-    if value is None:
-        return None
-    return _string(value, path)
-
-
-def _optional_integer(value: object, path: str) -> int | None:
-    if value is None:
-        return None
-    return _integer(value, path)
 
 
 def _integer_tuple(value: object, path: str) -> tuple[int, ...]:
