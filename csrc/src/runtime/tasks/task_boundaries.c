@@ -434,7 +434,8 @@ static ShadowSpillStatus instantiate_actions_locked(
     ShadowSpillEventLease *task_completion_event,
     ShadowSpillActionBatch *batch,
     uint64_t *failure_object_id,
-    uint64_t *failure_allocation_id
+    uint64_t *failure_allocation_id,
+    ShadowSpillFailureReason *failure_reason
 ) {
     for (uint32_t index = 0U; index < record->action_count; ++index) {
         const ShadowSpillTaskAction *action = &record->actions[index];
@@ -452,6 +453,10 @@ static ShadowSpillStatus instantiate_actions_locked(
                 object, queued
             );
         if (status != SHADOWSPILL_STATUS_OK) {
+            /* The action was refused by what the object's state allows, not by
+             * anything about the boundary, and a report saying only "boundary
+             * rejected" sends the reader to the wrong question. */
+            *failure_reason = SHADOWSPILL_FAILURE_REASON_OBJECT_STATE_REJECTED;
             pthread_mutex_unlock(&object->lock);
             return status;
         }
@@ -729,6 +734,8 @@ ShadowSpillStatus shadowspill_after_task_record(
     ShadowSpillActionBatch batch = {0};
     uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    ShadowSpillFailureReason failure_reason =
+        SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED;
 
     if (status == SHADOWSPILL_STATUS_OK) {
         status = shadowspill_validate_task_allocation_complete(runtime);
@@ -758,7 +765,8 @@ ShadowSpillStatus shadowspill_after_task_record(
                 task_completion_event,
                 &batch,
                 &failure_object_id,
-                &failure_allocation_id
+                &failure_allocation_id,
+                &failure_reason
             );
         }
         if (status == SHADOWSPILL_STATUS_OK) {
@@ -775,7 +783,7 @@ ShadowSpillStatus shadowspill_after_task_record(
         shadowspill_latch_failure_locked(
             runtime,
             status,
-            SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED,
+            failure_reason,
             failure_object_id,
             failure_allocation_id,
             0U

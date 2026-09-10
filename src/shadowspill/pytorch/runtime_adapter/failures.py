@@ -34,6 +34,15 @@ _STATUS_NAMES: dict[int, str] = {
 }
 
 
+def _reason_name(reason: int) -> str:
+    """The runtime's own name for why it refused."""
+
+    if reason == 0:
+        return ""
+    rendered = runtime_library().shadowspill_failure_reason_string(reason)
+    return "" if rendered is None else bytes(rendered).decode()
+
+
 def format_bytes(value: int) -> str:
     """Bytes as a person reads them, with the exact count kept.
 
@@ -96,6 +105,13 @@ class RuntimeFailureDiagnostics:
     task_allocation_expected_operation: int = 255
     task_allocation_actual_operation: int = 255
     task: ExecutionTaskIdentity | None = None
+    #: What the runtime latched about why it refused, and the state of the object
+    #: it refused over. The runtime knows both; a report that drops them leaves a
+    #: status number and an object id to be decoded by hand.
+    reason: int = 0
+    reason_name: str = ""
+    refused_action: str | None = None
+    object_state: str | None = None
 
     @property
     def is_allocator_oom(self) -> bool:
@@ -214,6 +230,8 @@ def read_allocator_failure(
         operation=operation,
         status=status,
         status_name=_STATUS_NAMES.get(status, f"unknown_{status}"),
+        reason=int(failure.runtime.reason),
+        reason_name=_reason_name(int(failure.runtime.reason)),
         device_ordinal=int(failure.device_ordinal),
         requested_bytes=requested,
         free_bytes=int(failure.runtime.free_bytes),
@@ -332,6 +350,12 @@ def generic_runtime_error(
         )
     elif diagnostics.task_id is not None:
         lines.append(f"runtime_task: {diagnostics.task_id}")
+    if diagnostics.reason_name:
+        lines.append(f"reason: {diagnostics.reason_name}")
+    if diagnostics.refused_action is not None:
+        lines.append(f"refused_action: {diagnostics.refused_action}")
+    if diagnostics.object_state is not None:
+        lines.append(f"object_state: {diagnostics.object_state}")
     lines.extend(
         (
             f"device: {diagnostics.device_ordinal}",
