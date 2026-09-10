@@ -160,40 +160,48 @@ def test_interval_extension_matches_scalar_admission() -> None:
     assert extend_interval_entries(facts, plan) == scalar
 
 
+# These plan under whatever `PressureFitOptions` defaults to, so the default's
+# initial placement is baked into every value here. They were re-frozen when that
+# default became `REQUIRED`: the makespans rose by 4 to 14 microseconds and the
+# action counts by one to eight, because required places only what the
+# declaration and the first task demand and fetches the rest on the schedule,
+# where the simulator charges for it. Greedy's lower numbers were not a faster
+# plan -- they were the same work with the opening restore left out of the
+# makespan. The selected candidate is unchanged at every fixture.
 @pytest.mark.parametrize(
     ("layers", "capacity", "digest", "makespan_ns", "candidate", "actions"),
     (
         (
             1,
             224,
-            "9f604b7bd5be7b026dcfb7cecf1ac4053f0c4d5951b8eacc8b17352d12a45dea",
-            56_000,
+            "0ffa4e2af838ff5cc44c3a3bdc18d0d2b4e1fe7cdb616c15829a8f466a45e727",
+            64_000,
             "tight-stall/packed-fit",
-            13,
+            14,
         ),
         (
             2,
             224,
-            "45c58b17c637fa33f978d09e7f14cd94bbecf52456b92f3731c8b77b92da6724",
-            110_000,
+            "de9fbf3f76897c59937976c8220c7531a929fbe19e878210b01020fc54e2d2f1",
+            114_000,
             "tight-stall/packed-fit",
-            24,
+            25,
         ),
         (
             5,
             800,
-            "0ea05b8eeba4125a5a86e7d54df85165979e838d8ed8963a46db301e215e774f",
-            152_000,
+            "a4696af393b24fb71d0a9ba2dbc9630e1b52c7fa762b9ad7dd1326826571c332",
+            166_000,
             "headroom-stall/packed-fifo",
-            32,
+            40,
         ),
         (
             10,
             500,
-            "995bd7dba563fcb7c1e402c524afdca25f105fdfce46f9a2e2bae4d32b0aec44",
-            302_000,
+            "96dcbfe6b4065c585e60396c7ece819d9f6e20f9cb70fc77505f0a0d2aea0405",
+            310_000,
             "headroom-stall/packed-fifo",
-            98,
+            103,
         ),
     ),
 )
