@@ -95,7 +95,7 @@ meaning; the defaults are:
 
 | option | default |
 |---|---|
-| `initial_placement` | `InitialPlacement.GREEDY` |
+| `initial_placement` | `InitialPlacement.REQUIRED` |
 | `resolution_options` | every quarter, `0` through `1` |
 | `residency_strategies` | `("headroom-stall", "tight-stall")` |
 | `fetch_rules` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` |
@@ -397,8 +397,8 @@ optional admission arrays. This is the only section that exists at the
 problem level and not the candidate level: a candidate never prepares
 anything, it inherits what preparation produced.
 
-Seeding residency happens here too. `InitialPlacement.REQUIRED` uses only the
-anchor hull. The default `InitialPlacement.GREEDY` also considers
+Seeding residency happens here too. The default `InitialPlacement.REQUIRED`
+uses only the anchor hull. `InitialPlacement.GREEDY` also considers
 spill-origin aliases first consumed after task 0, orders them
 deterministically by first-use time, estimated fetch-deadline miss, transfer
 cost, size, and alias order, and preplaces each one that fits initial
