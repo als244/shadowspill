@@ -16,9 +16,8 @@ from shadowspill.errors import (
     PlanSearchExhaustedError,
 )
 from shadowspill.planner.quantization import (
-    GIGABYTE_PER_SECOND,
-    MICROSECOND_NS,
-    nearest,
+    quantized_bandwidth,
+    quantized_latency,
 )
 from shadowspill.pytorch.lowering.program import execution_device_id
 from shadowspill.pytorch.profiling import (
@@ -192,9 +191,9 @@ def workspace_reserve(measurements: Sequence[TaskMeasurement]) -> int:
 
 
 def capacity_leeway(measurements: Sequence[TaskMeasurement]) -> int:
-    """Return the bytes withheld from PressureFit's object capacity.
+    """Return the bytes withheld from the search's object capacity.
 
-    PressureFit bounds instantaneous object-plus-workspace occupancy by
+    A search bounds instantaneous object-plus-workspace occupancy by
     the capacity it is given, while physical admission must place a
     fixed-offset slice whose extent is larger whenever overlapping
     lifetimes block offset reuse. These withheld bytes are the head start
@@ -203,9 +202,9 @@ def capacity_leeway(measurements: Sequence[TaskMeasurement]) -> int:
 
     The amount is the workspace allowance above the peak task workspace
     it is derived from, so with the default 5/4 policy it is a quarter of
-    the peak. That derivation is historical rather than principled — the
-    excess it absorbs is a property of lifetime overlap, not of workspace
-    (docs/architecture/physical-admission.md, "Capacity refinement").
+    the peak, though the excess it absorbs is a property of lifetime
+    overlap, not of workspace (docs/architecture/physical-admission.md,
+    "Capacity refinement").
     """
 
     peak = max((item.workspace_charged_bytes for item in measurements), default=0)
@@ -219,7 +218,7 @@ def simulation_capacity(
     *,
     fixed_slab_bytes: int = 0,
 ) -> int:
-    """Translate a physical slab admission into PressureFit object capacity.
+    """Translate a physical slab admission into object capacity to plan against.
 
     The capacity is the usable slab minus `capacity_leeway`; the workspace
     allowance is accepted only so it can be validated against the slab.
@@ -262,9 +261,9 @@ def build_simulation_config(
 ) -> SimulationConfig:
     """Build the framework-neutral simulator input for one ShadowSpillProgram.
 
-    Calibrated rates enter at whole GB/s and latencies at whole microseconds,
-    so slightly different calibrations reuse one stored plan; the raw
-    calibration stays in the runtime's transfer capabilities.
+    Calibrated rates and latencies are coarsened to a few representable
+    values, so slightly different calibrations reuse one stored plan; the
+    raw calibration stays in the runtime's transfer capabilities.
     """
 
     fetch = memory.transfers.route(memory.spill.name, memory.execution.name)
@@ -278,21 +277,21 @@ def build_simulation_config(
             fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         ),
         spill_capacity_bytes=memory.spill_budget,
-        fetch_bandwidth_bytes_per_second=nearest(
-            fetch.bandwidth_bytes_per_second, GIGABYTE_PER_SECOND
+        fetch_bandwidth_bytes_per_second=quantized_bandwidth(
+            fetch.bandwidth_bytes_per_second
         ),
-        evict_bandwidth_bytes_per_second=nearest(
-            evict.bandwidth_bytes_per_second, GIGABYTE_PER_SECOND
+        evict_bandwidth_bytes_per_second=quantized_bandwidth(
+            evict.bandwidth_bytes_per_second
         ),
-        fetch_latency_ns=nearest(fetch.latency_nanoseconds, MICROSECOND_NS),
-        evict_latency_ns=nearest(evict.latency_nanoseconds, MICROSECOND_NS),
+        fetch_latency_ns=quantized_latency(fetch.latency_nanoseconds),
+        evict_latency_ns=quantized_latency(evict.latency_nanoseconds),
     )
 
 
 def public_infeasible_plan_error(
     error: PlanInfeasibleError,
 ) -> PlanInfeasibleError:
-    """Preserve PressureFit's structured infeasibility at the public boundary."""
+    """Preserve the search's structured infeasibility at the public boundary."""
 
     fields = [
         "ShadowSpill could not construct a feasible memory schedule",
