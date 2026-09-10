@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 /* Registered with on_exit once, on the first bootstrap of the process. */
@@ -156,16 +157,57 @@ static ShadowSpillStatus create_runtime(
     );
 }
 
-/* The pools exist now; the process must still fit the budget. */
+/* The pools exist now; the process must still fit the budget.
+ *
+ * A refusal here is a policy refusal and not a device failure: the device may have
+ * most of its memory free and the process still have passed the cap the caller
+ * declared. The two numbers that decide it are latched so the caller is told which
+ * it was, because a bare status reads as "the device is full" when it means "your
+ * budget is smaller than what this process now holds".
+ *
+ * Failing to read the memory at all is a backend failure rather than a refusal; the
+ * two were reported identically before, which made an unreadable device look like an
+ * exhausted one. */
 static ShadowSpillStatus confirm_budget(
     const ShadowSpillPytorchAdapterConfig *config,
     const ShadowSpillBackend *backend,
     ShadowSpillBackendPhysicalMemory *bootstrapped
 ) {
-    return backend->physical_memory(backend->state, bootstrapped) != 0 ||
-            bootstrapped->process_bytes > config->device_budget_bytes
-        ? SHADOWSPILL_STATUS_OUT_OF_MEMORY
-        : SHADOWSPILL_STATUS_OK;
+    if (backend->physical_memory(backend->state, bootstrapped) != 0) {
+        return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+    }
+    if (bootstrapped->process_bytes <= config->device_budget_bytes) {
+        return SHADOWSPILL_STATUS_OK;
+    }
+    if (config->provider_headroom_bytes == 0U) {
+        /* Zero headroom is a caller declining the cap, not setting one to nothing:
+           there is no reservation to hold the process to, so the excess is reported
+           and the bootstrap continues. The numbers are the point -- a caller who
+           opted out still wants to know by how much, and on which device. */
+        (void)fprintf(
+            stderr,
+            "ShadowSpill: the process holds %llu bytes on device %d against a "
+            "declared execution budget of %llu, exceeding it by %llu. "
+            "provider_headroom is zero, so the budget is reported and not "
+            "enforced.\n",
+            (unsigned long long)bootstrapped->process_bytes,
+            config->device_ordinal,
+            (unsigned long long)config->device_budget_bytes,
+            (unsigned long long)(
+                bootstrapped->process_bytes - config->device_budget_bytes
+            )
+        );
+        (void)fflush(stderr);
+        return SHADOWSPILL_STATUS_OK;
+    }
+    pthread_mutex_lock(&adapter.mutex);
+    shadowspill_pytorch_failure_latch_physical_locked(
+        SHADOWSPILL_STATUS_OUT_OF_MEMORY,
+        bootstrapped->process_bytes,
+        config->device_budget_bytes
+    );
+    pthread_mutex_unlock(&adapter.mutex);
+    return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
 }
 
 /* Everything the rest of the adapter reads, written under the lock, with the

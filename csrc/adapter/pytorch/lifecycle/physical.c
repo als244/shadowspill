@@ -2,6 +2,7 @@
 #include "../failure/internal.h"
 
 #include <pthread.h>
+#include <stdio.h>
 
 ShadowSpillStatus shadowspill_pytorch_physical_admission(
     ShadowSpillPytorchPhysicalAdmission *admission
@@ -116,7 +117,16 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
         return status;
     }
     pthread_mutex_lock(&adapter.mutex);
-    if (required_provider_headroom_bytes >
+    /* Zero headroom is a caller declining the cap at bootstrap, so there is no
+       reservation for the profiled reserve to exceed. Seal anyway and report what the
+       reservation would have had to be, which is the figure a caller setting one
+       wants. Printed after the lock is dropped. */
+    const uint64_t declined = adapter.admission.provider_headroom_bytes == 0U
+        ? required_provider_headroom_bytes
+        : 0U;
+    if (declined != 0U) {
+        adapter.physical_budget_sealed = 1U;
+    } else if (required_provider_headroom_bytes >
         adapter.admission.provider_headroom_bytes) {
         status = SHADOWSPILL_STATUS_PLAN_VIOLATION;
         shadowspill_pytorch_failure_latch_physical_locked(
@@ -128,5 +138,15 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
         adapter.physical_budget_sealed = 1U;
     }
     pthread_mutex_unlock(&adapter.mutex);
+    if (declined != 0U) {
+        (void)fprintf(
+            stderr,
+            "ShadowSpill: the provider's measured reserve needs a headroom of %llu "
+            "bytes; provider_headroom is zero, so this is reported and not "
+            "enforced.\n",
+            (unsigned long long)declined
+        );
+        (void)fflush(stderr);
+    }
     return status;
 }
