@@ -29,9 +29,9 @@ python -m qualification.performance.run llama3 mlops \
 
 `--artifact-store` roots both trees of the store, and `--build-store` and
 `--plan-store` override either. `--build-store-mode` and `--plan-store-mode`
-say what this cell does with each: `contribute` (the default) reads what is
-there and writes back what is not, `reuse` reads and persists nothing, and
-`require` refuses a miss. Omitting the store entirely puts it in the user
+say what this cell does with each; the four modes are defined in [the artifact
+store guide](../../docs/python/artifact-store.md#store-modes), and `contribute`
+is the default. Omitting the store entirely puts it in the user
 cache root, shared with every other run on the machine.
 
 A host cannot hold both the full pinned spill arena and an anonymous
@@ -40,12 +40,12 @@ copy, and the resulting artifact records that checkpoint qualification was
 skipped. A single-cell `run` invocation still checkpoints and restores by
 default; checkpoint/replay release coverage lives in the numerical matrix.
 
-`--plan-only` plans and writes the cell's PressureFit fixtures without
-running a step, which is how placement-bearing fixtures are produced for
-replay. It is also a matrix option, and covers every selected cell there.
+`--plan-only` plans and writes the cell's plan records without running a step,
+which is how placement-bearing records are produced for replay. It is also a
+matrix option, and covers every selected cell there.
 
 `--spill-budget-gib` changes the configured runtime spill-pool capacity.
-`--planning-spill-budget-gib` may set a smaller budget for PressureFit without
+`--planning-spill-budget-gib` may set a smaller budget for planning without
 shrinking that physical pool. The planning budget is rejected immediately if
 it exceeds the configured capacity.
 

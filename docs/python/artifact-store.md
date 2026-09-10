@@ -66,7 +66,7 @@ by whoever plans, and the same saved program answers any of them.
 | Compiled manifest | graph-pair contract, compiler and provider identity, physical storage contract | |
 | Profile | compiled manifest, hardware, representative-value policy, `profiling_metadata`, allocation-probe policy | |
 | `ShadowSpillPlanningProblem` | the canonical `ShadowSpillProgram` and its measured task costs, the role, initial and final residency, admission facts, the device and its simulated capacities and calibrated transfers, and the capacity contract | `SearchOptions`. A program is a problem, not a search |
-| Planned program | the canonical `ShadowSpillProgram` digest, both residency lists, every device's capacity, both bandwidths and both latencies, the spill capacity, every `SearchOptions` field, the admission and placement digests, and the resolution options searched over | the plan handed in as the one to beat, which is provenance rather than the question |
+| Planned program | the canonical `ShadowSpillProgram` digest, both residency lists, every device's capacity, both bandwidths and both latencies, the spill capacity, the admission and placement digests, which search ran, and everything that search was told | `workers`, which changes how long an answer takes and not which answer is right; and the plan handed in as the one to beat, which is provenance rather than the question |
 
 The plan manifest is the one document not found by a key. It is filed by the
 callable it was planned for, and it names the whole request and every artifact
@@ -141,10 +141,11 @@ else.
 Two directories are deliberately not content-addressed, and both say why in
 their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch and
 subdivided by `implementation_revision`.
-`planning/plans/<qualified callable>/<capture identity>/<plan digest>/` groups
-plan manifests under the callable they were planned for, because a person
-reading a store wants the plans for one model rather than a digest they would
-have to compute.
+`planning/plans/<model class>/<capture identity>/<plan digest>/` groups plan
+manifests under the qualified name of the class they were planned for, because
+a person reading a store wants the plans for one model rather than a digest they
+would have to compute. The last two segments are the leading sixteen characters
+of each identity.
 
 ## Rooting the two trees apart
 
@@ -173,24 +174,26 @@ high-frequency atomic artifact publication.
 
 `build_store_mode` and `plan_store_mode` each say what this run does with one
 tree: whether it reads what is there, and what it does about what is not.
+A mode sets all four gates at once -- read, write, overwrite, refuse a miss --
+so no combination that means nothing can be asked for.
 
 | Mode | Reads a hit | On a miss |
 |---|---|---|
 | `contribute` (default) | yes | builds it and writes it back |
 | `reuse` | yes | builds it and persists nothing |
-| `require` | yes | refuses |
-| `refresh` | no | rebuilds and replaces what was there |
-
-The two trees are held apart because they are shared for different reasons. A
-build artifact is what a run *paid for* and any run may reuse; a plan is what a
-run *decided*, and two runs comparing planners must not read each other's. One
-switch for both meant a run that kept its plans to itself also stopped
-contributing the builds it had paid for.
+| `require` | yes | refuses, naming the mode that would allow it |
+| `refresh` | no | rebuilds and overwrites what was there |
 
 `reuse` is what makes a shared store safe to read from many runs at once, and
 `require` is what makes one a fixed reference: two results compared against a
 `require` store are known to have stood on the same artifacts rather than on
 whatever each rebuilt.
+
+The two trees take separate modes because they are shared for different
+reasons. A build artifact is what a run *paid for* and any run may reuse; a
+plan is what a run *decided*, and two runs comparing planners must not read
+each other's. So a run can keep its plans to itself and still contribute the
+builds it paid for.
 
 `build_store_mode` also decides where PyTorch compiles. Only `contribute`
 points Inductor and Triton at the store's own cache. Every other mode runs
@@ -255,25 +258,26 @@ allocation contract and trace are what physical admission replays, and
 
 ```text
 schema, program_digest, initial_residency, final_residency,
-simulation, options, admission, resolution_options, incumbent
+simulation, search, search_options, admission, incumbent
 ```
 
 **Planned program** is the answer, keyed by that request:
 
 ```text
 schema, key_digest, program_digest, initial_residency, final_residency,
-simulation, options, admission_digest, resolution_options, incumbent,
+simulation, search, search_options, admission_digest, incumbent,
 schedule, selections, resident_slice, diagnostics
 ```
 
+`search` names the algorithm and `search_options` is everything it was told,
+both halves in full, so a plan searched over one candidate space is never read
+back for another. The search that ships carries its `resolution_options` there,
+the shares of the flexible groups to recompute as exact fractions (`"1/4"`).
 `selections` is the task-alternative choice per group and `schedule` the memory
 schedule it implies. Reading one re-derives the request fields and rejects a
-mismatch, which is what makes a stale entry an error rather than a silent
-wrong answer. `resolution_options` are the resolutions the plan was searched
-over, as exact fractions of the flexible groups recomputing (`"1/4"`), and
-appear in the request, in the record and in the key, so a plan found under one
-set is never read back for another. `incumbent` is provenance in both
-documents and in neither key: it names the plan the search was handed to beat.
+mismatch, which is what makes a stale entry an error rather than a silent wrong
+answer. `incumbent` is provenance in both documents and in neither key: it
+names the plan the search was handed to beat.
 
 **Plan manifest** is the readable record of one planning call, beside the
 `execution_plan.json` it produced:
