@@ -176,6 +176,16 @@ def _runtime_action(
     )
 
 
+#: The runtime's object residency, named. Mirrors ShadowSpillObjectResidency.
+_OBJECT_RESIDENCY_NAMES: dict[int, str] = {
+    0: "spill_only",
+    1: "execution_ready",
+    2: "fetching",
+    3: "evicting",
+    4: "released",
+}
+
+
 class RuntimeBridge:
     """Bind one ShadowSpillProgram's local identities to shared runtime objects."""
 
@@ -1269,6 +1279,38 @@ class RuntimeBridge:
                 self.runtime._runtime_handle
             ),
             "wait idle",
+        )
+
+    def alias_for_runtime_object(self, object_id: int) -> str | None:
+        """The plan-local alias bound to one runtime object, for failure reports."""
+
+        for alias_id, bound in self._runtime_object_ids.items():
+            if bound == object_id:
+                return alias_id
+        return None
+
+    def describe_object_state(self, object_id: int) -> str | None:
+        """Where a value is and whether each copy is current, as the runtime sees it.
+
+        A refusal names an object; what decides the refusal is the object's state, so
+        a report that gives one without the other cannot be read.
+        """
+
+        snapshot = ObjectSnapshot()
+        status = int(
+            self.runtime_library.shadowspill_object_snapshot(
+                self.runtime._runtime_handle, object_id, ctypes.byref(snapshot)
+            )
+        )
+        if status != 0:
+            return None
+        residency = _OBJECT_RESIDENCY_NAMES.get(
+            int(snapshot.residency), f"unknown_{int(snapshot.residency)}"
+        )
+        return (
+            f"{residency}, spill_current={int(snapshot.spill_current)}, "
+            f"generation={int(snapshot.generation)}, "
+            f"execution_pointer={int(snapshot.execution_pointer or 0)}"
         )
 
     def input_failure_states(self, alias_ids: Iterable[str]) -> tuple[str, ...]:
