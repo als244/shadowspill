@@ -1,7 +1,7 @@
 # Framework-neutral Python API
 
-These modules expose the IR, planner, simulator, and physical-admission values
-used by the PyTorch frontend and by standalone tooling. Nothing here imports a
+These packages expose the errors, the IR, the step's shape, the artifact store,
+the planner, the simulator, and physical admission. Nothing here imports a
 framework, so a saved program can be planned, simulated, and admitted with no
 model and no device present.
 
@@ -59,6 +59,105 @@ the capacity a plan is searched against has already been reduced by. The three
 caller that simulates or plans the same program repeatedly pays the projection
 once. Invalid construction or cross-reference raises `ValidationError`.
 
+## `shadowspill.step`
+
+A training step's shape and provenance, with no framework present. Two values,
+both readable and serializable with no PyTorch installed, which is what lets a
+corpus collected on one machine be planned on another.
+
+### `StepDataOrdering`
+
+How a training step walks its microbatches.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `depth` | `int` | required | Passes over the microbatches. |
+| `breadth` | `int` | required | Microbatches per pass, each pass stage-major forward and stage-major back. |
+| `reverse_breadth` | `bool` | `True` | Walk a pass's microbatches in reverse during backward. |
+| `pair_loss` | `bool` | `True` | Run each microbatch's last stage forward and backward together. |
+
+```text
+StepDataOrdering.resolve(
+    *,
+    microbatches,
+    depth=None,
+    breadth=None,
+    reverse_breadth=True,
+    pair_loss=True,
+) -> StepDataOrdering
+
+StepDataOrdering.creates(position, stage_index, *, stage_count) -> bool
+```
+
+`resolve()` fills in whichever of `depth` and `breadth` a caller left out, and
+refuses a product that is not `microbatches`. `creates()` answers whether the
+microbatch at `position` is the one whose backward *creates* a stage's gradient
+-- the first the walk reaches -- rather than adding into it. The `microbatches`
+property is the product; `depth_first(microbatches, *, reverse_breadth=True,
+pair_loss=True)` builds the one-at-a-time walk; `positions(pass_index)` and
+`backward_positions(pass_index)` give one pass's forward and backward order.
+`label` names the ordering in figures (`2x4rp`: the two counts, then `r` and `p`
+for the flags that are set) and `from_label()` reads one back. `to_dict()` and
+`from_dict()` carry it beside a `StepProgram` and a plan report.
+
+### `StepProgram`
+
+The recurrent and optional initial `ShadowSpillPlanningProblem` a captured step
+lowered to, with the provenance that says what produced them: the ordering, the
+measured profiles, and the digests that identify the content rather than the
+run. `build_step_program()` returns one; `to_json()` and `from_json()` round it
+through a file, and `digest` identifies what it would plan as. Its fields are
+documented in [reusable artifacts](artifacts.md#stepprogram).
+
+## `shadowspill.store`
+
+Content-addressed storage for what each stage produced, and the modes that gate
+it. A store is not part of planning: it holds captured graphs, compiled
+profiles, programs and plans keyed by the digest of their inputs, so a later run
+asking the same question reads the answer instead of recomputing it. The
+frontend's build store, the planner's plan store, and the qualification
+harnesses all sit on this one.
+
+`ArtifactStore` is the store: two trees under one root.
+
+```text
+ArtifactStore.resolve(
+    value,
+    *,
+    build_store=None,
+    plan_store=None,
+    build_store_mode='contribute',
+    plan_store_mode='contribute',
+    implementation_revision=None,
+) -> ArtifactStore
+```
+
+`value` is the root both trees live under, or `None` for the default cache;
+`build_store` and `plan_store` root one tree elsewhere; the two modes say what
+this run may do with each tree; `implementation_revision` names the operation
+implementations the artifacts were produced against. Every entry point's store
+arguments reach this one call, and [the frontend
+page](frontend.md#store-arguments) defines them. `initialize()` creates the
+tree, `artifacts()` returns the `PlanningArtifact` records this call touched,
+and `record(...)` adds one.
+
+`PlanningArtifact` is one such record: its `category` and `kind`, the `digest`
+it is keyed by (SHA-256, or `None` for an unkeyed entry), the `path` it landed
+at, how the run `access`ed it, its `schema`, and the `dependencies` digests it
+was derived from.
+
+`StoreMode` is the literal `"contribute" | "reuse" | "require" | "refresh"`, and
+`STORE_MODES` is those four in order, so a CLI or a config validates against one
+tuple. `StorePolicy` turns one mode into the four gates the code checks --
+`read_enabled`, `write_enabled`, `overwrite` and `require_hit` -- which is what
+stops a caller spelling out a combination that means nothing;
+`StorePolicy.for_mode(mode)` builds one, `refuse_miss(what, key)` raises the
+refusal that names the fix, and `CONTRIBUTE` is the default policy.
+`digest_directory(root, digest)` is where one digest's entry lives under a tree.
+
+[The artifact store](../artifact-store.md) has the layout and what each digest
+covers.
+
 ## `shadowspill.planner`
 
 ### Two layers
@@ -75,128 +174,17 @@ want the answer written down.
 fixes the machine from a budget, keys the answer, runs a search, holds that
 search to any plan it was handed, and physically admits the winner.
 
-The search that ships is `PressureFit`. It receives a program with its
-alternatives still open, expands it into resolved programs -- one concrete
-task set per way of fixing the alternatives -- plans each, and answers with
-the best. It knows only tasks, runtimes, object accesses, budgets and
-bandwidths.
-
 Building a program is the frontend's job:
 [`build_step_program()`](frontend.md#build_step_program) captures, compiles,
 profiles and lowers one, and takes only build-store arguments. `plan_program()`
 plans one and takes only plan-store arguments. Nothing on this page needs a
 device or a model.
 
-### `SearchAlgorithm`
-
-The base class a search is. Subclass it, give it a `name`, implement
-`__call__`, and pass an instance -- there is no registry and no name to
-reserve, so a search written outside ShadowSpill is a first-class one.
-
-| member | kind | meaning |
-|---|---|---|
-| `name` | `ClassVar[str]` | The stable string the plan key records. Not the class's name, so renaming or moving the class leaves a stored corpus reachable. |
-| `options` | `OptionRecord` | This search's own options, carried into the plan key whole and read by nothing outside the search. |
-| `preflight(...)` | method | Refuse a machine no schedule can fit, before a search is paid for. Defaults to saying nothing, which is always correct. |
-| `__call__(...)` | abstract | Answer with a `ProgramPlanResult`. The only method a subclass must write. |
-
-[Writing a search algorithm](../../architecture/search-algorithm.md) is the
-reference: every argument with its type and meaning, the defaults, and a
-worked example. [Plan search](../../architecture/search.md) states what the
-planner promises in return.
-
-### `SearchOptions`
-
-The whole of what one planning call is told about searching, in one
-argument so neither half can be set without the other being visible.
-
-| field | type | default | meaning |
-|---|---|---|---|
-| `generic` | `GenericPlanningOptions` | all defaults | What any search understands |
-| `algorithm` | `SearchAlgorithm` \| `None` | `None` | The search itself, holding its own options. `None` runs the one that ships. |
-| `workers` | `int` | `0` | Threads the search may use; `0` is every logical CPU, `1` forces serial |
-
-`generic` and `algorithm` are both part of the plan key. **`workers` is
-not** -- it says how much machine to spend, not what to decide, so two runs
-at different worker counts ask the same question and read back the same
-answer. The plan report records what was used.
-
-`GenericPlanningOptions` holds `deterministic` (default `False`) and
-`minimum_object_bytes_evict_eligible` (default `1 << 20`).
-
-```python
-plan = plan_program(
-    problem,
-    search_options=SearchOptions(
-        generic=GenericPlanningOptions(deterministic=True),
-        algorithm=PressureFit(PressureFitOptions(max_repair_attempts=256)),
-        workers=8,
-    ),
-)
-```
-
-### `OptionRecord`
-
-The base every option record derives from. `to_dict()` and `from_dict()`
-come from the dataclass's own fields, so an option added later is keyed,
-archived and replayed without a second edit, and a stored record missing an
-option is refused rather than read as though the absent option held today's
-default.
-
-Each subclass names a `KIND` and registers itself under it, so a record
-nested inside another says on the wire what it is and reads back as the type
-it was written as. That is what lets a search store its own options without
-the planner knowing the type.
-
-### `toolkit`
-
-Re-exported as `shadowspill.planner.toolkit`, and its names are also
-available flat from `shadowspill.planner`.
-
-What a search may call into, and need not write itself. Everything here is
-search-agnostic: it takes a program, a machine, or a plan, and says
-something true about it whichever search asked. A search uses what it wants
-and ignores the rest.
-
-| name | signature | what it does |
-|---|---|---|
-| `validate_search_inputs` | `(program, initial_residency, final_residency, config, admission) -> None` | Refuses malformed inputs, and a capacity that does not reconcile with the pool's declared object capacity. Raises `TypeError` or `ValueError`. |
-| `resolutions` | `(program, resolution_options) -> tuple[Resolution, ...]` | Expands a program into resolved programs, one per share of the flexible groups recomputing. `resolution_options` is required. |
-| `validate_resolution_options` | `(values) -> tuple[Fraction, ...]` | Exact fractions in `[0, 1]`, sorted and deduplicated. Floats are refused: `0.1` is not one tenth. |
-| `CostedAlternatives` | `.from_program(program)` | What each alternative group offers and what each option costs, in bytes retained and runtime. Says whether a group is a real decision at all. |
-| `Resolution` | `tuple[TaskAlternativeChoice, ...]` | One option chosen per group -- what makes a program concrete. |
-| `ShareValue` | `Fraction \| int \| str` | How a caller may spell one share: `Fraction(3, 8)`, `0`, `1`, or `"3/8"`. |
-| `DEFAULT_RESOLUTION_OPTIONS` | `tuple[Fraction, ...]` | Every quarter from none recomputing to all. |
-
-Two more toolkits sit outside this package because they are phases rather
-than helpers: `shadowspill.simulator` prices a schedule, and
-`shadowspill.planner.admission` proves one fits real memory. A search calls
-those the same way.
-
-`answer_no_worse_than(result, *, incumbent, config, placement)` is the
-planner's own, not a search's: it replays an incumbent on this machine after
-a search returns and answers with it when it is strictly faster and still
-places. It is exported because it states a guarantee worth reading.
-
-### Resolution options
-
-Which resolved programs exist is the caller's to say, through
-`PressureFitOptions.resolution_options`: the shares of flexible alternative
-groups to recompute, as exact fractions -- `Fraction` values, integers or
-strings such as `"3/8"` -- sorted and deduplicated on the way in, one
-resolved program per share. The default is every quarter, from none
-recomputing to all. It lives on PressureFit's options rather than the
-planner's because expanding a program into resolved programs is a search's
-own work. The planning store keys every plan by the search options it was
-searched over, so a plan found under one set is never read back for another.
-Inventories small enough to enumerate are planned exhaustively whatever
-options are named.
-
 ### `plan_program()`
 
-Selects and physically admits a saved `ShadowSpillPlanningProblem` under requested
-budgets and `TransferBandwidths`, without capture, compilation or profiling.
-It is model- and runtime-independent, so it may be repeated across a
+Selects and physically admits a saved `ShadowSpillPlanningProblem` under
+requested budgets and `TransferBandwidths`, without capture, compilation or
+profiling. It is model- and runtime-independent, so it may be repeated across a
 budget/bandwidth frontier from one built program.
 
 <!-- source-signature: src/shadowspill/planner/plan.py:plan_program -->
@@ -223,33 +211,241 @@ plan_program(
 | `execution_budget` | `int` \| `None` | `None` | Device bytes to plan for; the problem's own budget when `None`, and never more than the capacity it was compiled and profiled under. |
 | `spill_budget` | `int` \| `None` | `None` | Spill bytes to plan for, with the same bound. |
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Fetch and evict rates to price copies at; the problem's embedded calibration when `None`. |
-| `search_options` | `SearchOptions` \| `None` | `None` | How to answer the question: `generic` for what any search understands, `algorithm` for the search itself carrying its own options, and `workers` for how much of the machine it may use (zero for every logical CPU, one to force serial evaluation). `None` runs the search that ships with its defaults. A problem carries none of this, because a problem is a question and how to answer it belongs to whoever plans it. `generic` and `algorithm` are part of the plan key; `workers` is not, since it changes how long an answer takes rather than which answer is right, and is recorded on the report instead. |
+| `search_options` | `SearchOptions` \| `None` | `None` | How to answer the question. `None` runs the search that ships with its defaults. A problem carries none of this, because a problem is a question and how to answer it belongs to whoever plans it. |
 | `incumbent` | `AnnotatedProgramPlan` \| `None` | `None` | The plan to beat, for the same program, found under another budget. |
 | `artifact_store` | path \| `None` | `None` | Roots the store. |
 | `plan_store` | path \| `None` | `None` | Roots the planning tree of its own, so one store serves many runs that each own their plans. |
-| `plan_store_mode` | `"contribute"` \| `"reuse"` \| `"require"` \| `"refresh"` | `"contribute"` | What this call does with the planning tree. |
 | `verbose` | `bool` | `True` | Reports search progress as it runs. |
+| `plan_store_mode` | `"contribute"` \| `"reuse"` \| `"require"` \| `"refresh"` | `"contribute"` | What this call does with the planning tree. |
 | `implementation_revision` | `str` \| `None` | `None` | Marks the operation implementations the plan was measured against. |
 
-The store arguments mean exactly what [the frontend
+Raises `TypeError` when `search_options` is neither a `SearchOptions` nor
+`None`. The store arguments mean exactly what [the frontend
 page](frontend.md#store-arguments) says; there are no build-store arguments
 here, because planning writes nothing under `build/`.
 
 `incumbent` is the plan to beat. It reaches the search as a bound, and the
 answer is held to it here: the incumbent's schedule is replayed on the
 requested machine after the search returns, and answered with when it is
-strictly faster and its layout still fits. A plan that fits in less memory
-fits in more, which is what lets a budget sweep hand each budget the best
-plan found below it and never plan worse with more memory;
-`plan_step_search()` does exactly that. The guarantee is the planner's, so it
-holds whichever search runs. The plan report's diagnostics say what became of
-it under each resolved program, and a plan that won is reported as candidate
-`incumbent`. The planning store treats it as provenance rather than identity:
-a request reads back the plan its search chose, whatever that search was
-handed, so a run that replans the budget it is about to execute gets the
-sweep's answer.
+strictly faster and its layout still fits. A plan that fits in less memory fits
+in more, which is what lets a budget sweep hand each budget the best plan found
+below it and never plan worse with more memory; `plan_step_search()` does
+exactly that, and the guarantee is the planner's, so it holds whichever search
+runs. The plan report's diagnostics say what became of it under each resolved
+program, and a plan that won is reported as candidate `incumbent`. The planning
+store treats it as provenance rather than identity: a request reads back the
+plan its search chose, whatever that search was handed, so a run that replans
+the budget it is about to execute gets the sweep's answer.
 
-### `pressurefit`
+### `validate_schedule_feasibility()`
+
+Asks the search that will run whether any schedule could fit this machine,
+before a search is paid for. It returns `None` and raises
+`PlanInfeasibleError` when nothing can, so an irreducible capacity failure is
+rejected early. What passes here is what that search can reach; it is not a
+promise that a plan exists.
+
+```text
+validate_schedule_feasibility(
+    program,
+    *,
+    initial_residency,
+    final_residency=(),
+    config,
+    admission=None,
+    search_options=None,
+) -> None
+```
+
+| argument | type | default | meaning |
+|---|---|---|---|
+| `program` | `ShadowSpillProgram` | required | The canonical program, alternatives still open. |
+| `initial_residency` | `tuple[ResidencySpec, ...]` | required | Where each object lives before the first task. |
+| `final_residency` | `tuple[ResidencySpec, ...]` | `()` | Where each object must live after the last task. |
+| `config` | `SimulationConfig` | required | The machine to check against. |
+| `admission` | `AdmissionFacts` \| `None` | `None` | Pool topology to check alongside, when the caller has one. |
+| `search_options` | `SearchOptions` \| `None` | `None` | Which search to ask, and what it is told. `None` asks the one that ships with its defaults. |
+
+It is the `preflight()` of `search_options.algorithm`, nothing more. Use
+`simulate()` instead to validate an explicit schedule that already exists.
+
+### Results and diagnostics
+
+Configuration and results:
+
+- `SearchOptions`, `GenericPlanningOptions`, `InitialPlacement`, `OptionRecord`
+- `ProgramPlanResult`, `PlanningDiagnostics`, `ResidentSlice`
+- `AdmissionFacts`, `StorageHandoff`, `TaskAdmissionSpec`
+- `TaskAllocationStep`, `TaskAllocationStepKind`
+
+Search diagnostics:
+
+- `TaskAlternativeChoiceDiagnostic`, `ResolvedProgramDiagnostics`
+- `CandidateDiagnostic`
+- `PlanningRepairDiagnostics`, `PlanningWorkDiagnostics`
+- `PlanningSectionTiming`, `ReductionStep`
+
+`ProgramPlanResult` is what a search answers with: the `program` it planned,
+the `search_options` it was told, the `initial_residency` and `final_residency`
+it honoured, the `simulation_config` it was priced against, the chosen
+`schedule` and `selections`, the `simulation` that priced them, its
+`diagnostics`, the `resident_slice` of objects held resident throughout, and
+the `admission_facts` and `placement_facts` it was planned under.
+
+`PlanningWorkDiagnostics` counts what the search did and carries a
+`PlanningSectionTiming` saying where the time went. Sections are disjoint spans
+named by the function that opened them, so `total_ns` equals `named_ns` plus
+`residual_ns` at every level of the hierarchy -- candidate, resolved program,
+and whole call. `admit_ns` is the one exception: admission runs as part of
+simulating, so it is nested inside `simulate_ns` rather than beside it. Summing
+two of these adds every section, which is how the aggregate is built.
+
+Sections measure work rather than elapsed time, so with several workers a
+resolved program's total exceeds the time the call took. `started_ns` and
+`finished_ns`, on both `CandidateDiagnostic` and `ResolvedProgramDiagnostics`,
+are the elapsed-time counterpart: nanoseconds from the start of the call,
+shared by every span in it, so two candidates ran at the same time exactly when
+their spans overlap.
+
+`ReductionStep` is one plan a candidate held: its makespan, the bytes its
+layout needed, the capacity it was built against, the objects the reducer cut
+to reach it, and what became of it -- simulated, measured, placed, refined,
+best so far, or the answer. `CandidateDiagnostic.steps` is the whole trajectory
+in order, and is empty unless `record_reduction_steps` asked for it.
+
+`PlanningRepairDiagnostics` records what one candidate's monotonic repairs did
+and why they stopped.
+
+### `shadowspill.planner.search`
+
+The search is a replaceable part: the planner states the protocol, the shipped
+search implements it, and a caller's own search is no less a first-class one.
+`SearchAlgorithm`, `SearchOptions` and `answer_no_worse_than()` are also
+available flat from `shadowspill.planner`.
+
+#### `SearchAlgorithm`
+
+The base class a search is. Subclass it, give it a `name`, implement
+`__call__`, and pass an instance -- nothing is looked up by name on the calling
+path, so there is no registry to reserve anything in.
+
+| member | kind | meaning |
+|---|---|---|
+| `name` | `ClassVar[str]` | The stable string the plan key records. Not the class's name, so renaming or moving the class leaves a stored corpus reachable. Defining a concrete subclass without one is refused. |
+| `options` | `OptionRecord` | This search's own options, carried into the plan key whole and read by nothing outside the search. |
+| `__init__(options=None)` | method | Build the search with its own record; `None` means its defaults. Every search is constructed this way, which is what lets an archived plan be handed the search that made it. |
+| `named(name)` | `staticmethod` | The subclass registered under `name`, which defining it registered. Raises `KeyError`, naming the searches it knows, when the defining module has not been imported. |
+| `preflight(...)` | method | Refuse a machine no schedule can fit, before a search is paid for. Takes `program`, `initial_residency`, `final_residency=()`, `config`, `admission=None` and `generic`, and returns `None`. Defaults to saying nothing, which is always correct. |
+| `__call__(...)` | abstract | Answer with a `ProgramPlanResult`. The only method a subclass must write. |
+
+An instance holds no per-call state, so one serves every budget of a sweep and
+every worker of a search. [Writing a search
+algorithm](../../architecture/search-algorithm.md) is the reference: every
+argument with its type and meaning, the defaults, and a worked example. [Plan
+search](../../architecture/search.md) states what the planner promises in
+return.
+
+#### `SearchOptions`
+
+The whole of what one planning call is told about searching, in one argument so
+neither half can be set without the other being visible.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `generic` | `GenericPlanningOptions` | all defaults | What any search understands. |
+| `algorithm` | `SearchAlgorithm` \| `None` | `None` | The search itself, holding its own options. `None` runs the one that ships. |
+| `workers` | `int` | `0` | Threads the search may use; `0` is every logical CPU, `1` forces serial. |
+
+`generic` and `algorithm` are both part of the plan key. **`workers` is
+not** -- it says how much machine to spend, not what to decide, so two runs
+at different worker counts ask the same question and read back the same
+answer. The plan report records what was used. `resolved_algorithm` is the
+search that will actually run: `algorithm`, or the one that ships. `to_dict()`
+writes the keyed half and `from_dict()` reads it back, rebuilding the search
+from its name and handing it its own options; `workers` appears in neither and
+comes back zero.
+
+A worker count is one thread per `(resolved program, candidate)` pair, so it is
+independent of how many resolved programs a call has. It does change how many
+candidates get skipped against the shared placement record, so per-candidate
+counters move with it. Python owns none of these threads: one call gets its own
+workers, and two callers planning at once do not contend.
+
+`GenericPlanningOptions` is what every search is told, whichever one runs.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `deterministic` | `bool` | `False` | Make every candidate's outcome a pure function of its inputs, so any worker count answers the same. Candidates otherwise measure a layout only when the shared best-placed record says it could win, so which worker places first decides which candidates are ever measured; setting this has the placement gate consult only the candidate's own placed plans, and costs wall time. |
+| `minimum_object_bytes_evict_eligible` | `int` | `1 << 20` | Objects smaller than this stay resident from first to last access instead of being evicted and fetched mid-step, while their boundary contract -- an opening fetch, a release after the last access, a terminal writeback when modified -- is emitted as for any object. The default is the size below which a copy is latency-bound. Zero makes every object eligible. |
+
+Each lease the floor holds gets a static home in the `ResidentSlice` the result
+carries, and the capacity the search plans against is reduced by that slice, so
+those bytes are never charged again. A slice a budget cannot hold is reported as
+infeasible rather than quietly relaxed.
+
+```python
+from shadowspill.planner import (
+    GenericPlanningOptions,
+    SearchOptions,
+    plan_program,
+)
+from shadowspill.planner.search.algorithms.pressurefit import (
+    PressureFit,
+    PressureFitOptions,
+)
+
+plan = plan_program(
+    problem,
+    search_options=SearchOptions(
+        generic=GenericPlanningOptions(deterministic=True),
+        algorithm=PressureFit(PressureFitOptions(max_repair_attempts=256)),
+        workers=8,
+    ),
+)
+```
+
+#### `OptionRecord`
+
+The base every option record derives from. `to_dict()` and `from_dict()`
+come from the dataclass's own fields, so an option added later is keyed,
+archived and replayed without a second edit, and a stored record missing an
+option is refused rather than read as though the absent option held today's
+default. `record_from_value(value)` reads any record back as the type it was
+written as.
+
+Each subclass names a `KIND` and registers itself under it, so a record
+nested inside another says on the wire what it is. That is what lets a search
+store its own options without the planner knowing the type.
+
+#### `toolkit`
+
+What a search may call into, and need not write itself. Everything here is
+search-agnostic: it takes a program, a machine, or a plan, and says something
+true about it whichever search asked. A search uses what it wants and ignores
+the rest. Reached as `shadowspill.planner.toolkit`, and every name below except
+`ShareValue` is also available flat from `shadowspill.planner`.
+
+| name | signature | what it does |
+|---|---|---|
+| `validate_search_inputs` | `(program, initial_residency, final_residency, config, admission) -> None` | Refuses malformed inputs, and a capacity that does not reconcile with the pool's declared object capacity. Raises `TypeError` or `ValueError`. |
+| `resolutions` | `(program, resolution_options) -> tuple[Resolution, ...]` | Expands a program into resolved programs, one per share of the flexible groups recomputing. `resolution_options` is required. |
+| `validate_resolution_options` | `(values) -> tuple[Fraction, ...]` | Exact fractions in `[0, 1]`, sorted and deduplicated. Floats are refused: `0.1` is not one tenth. |
+| `CostedAlternatives` | `.from_program(program)` | What each alternative group offers and what each option costs, in bytes retained and runtime. `groups`, `forced`, `flexible_count`, `binary_endpoints` and `combination_count` say whether a group is a real decision at all. |
+| `Resolution` | `tuple[TaskAlternativeChoice, ...]` | One option chosen per group -- what makes a program concrete. |
+| `ShareValue` | `Fraction \| int \| str` | How a caller may spell one share: `Fraction(3, 8)`, `0`, `1`, or `"3/8"`. |
+| `DEFAULT_RESOLUTION_OPTIONS` | `tuple[Fraction, ...]` | Every quarter from none recomputing to all. |
+
+Two more toolkits sit outside this package because they are phases rather
+than helpers: `shadowspill.simulator` prices a schedule, and
+`shadowspill.planner.admission` proves one fits real memory. A search calls
+those the same way.
+
+`answer_no_worse_than(result, *, incumbent, config, placement)` is the
+planner's own, not a search's: it replays an incumbent on this machine after
+a search returns and answers with it when it is strictly faster and still
+places. It is exported because it states a guarantee worth reading.
+
+#### `pressurefit`
 
 The search that ships, answering one `ShadowSpillProgram` directly. Capacity
 is settled inside it: a candidate measures its own plan against the pool
@@ -294,139 +490,28 @@ was planned under. Raises `PlanInfeasibleError` when every resolution is
 analytically infeasible at this capacity, and `ValueError` when the incumbent
 is a plan for a different program.
 
-### `validate_schedule_feasibility()`
-
-Checks whether at least one legal selection of the program, over the same
-resolved programs PressureFit would plan, satisfies the required task-by-task
-residency floor. It returns `None` and raises `PlanInfeasibleError` when
-nothing does, so it rejects an irreducible capacity failure before a search is
-paid for. What passes here is what the search can reach.
-
-```text
-validate_schedule_feasibility(
-    program,
-    *,
-    initial_residency,
-    final_residency=(),
-    config,
-    admission=None,
-    resolution_options=None,
-) -> None
-```
-
-Use `simulate()` instead to validate an explicit schedule that already exists.
-
-### Search policy
-
-`SearchOptions` is the search policy. Every field is part of a planned
-program's identity, worker count included.
+`PressureFitOptions` is this search's own record, and lives with it under
+`shadowspill.planner.search.algorithms.pressurefit` rather than on
+`shadowspill.planner`, because the planner never reads it.
 
 | field | type | default | meaning |
 |---|---|---|---|
 | `initial_placement` | `InitialPlacement` | `GREEDY` | How host-origin objects may be placed before the first task: `REQUIRED` places only what a task demands, `GREEDY` places what fits. |
+| `resolution_options` | `tuple[Fraction, ...]` | `DEFAULT_RESOLUTION_OPTIONS` | Which resolved programs exist: the shares of flexible alternative groups to recompute, as exact fractions, one resolved program per share. |
 | `residency_strategies` | `tuple[str, ...]` | `("headroom-stall", "tight-stall")` | Which residency policies the candidate set is built from. |
 | `fetch_rules` | `tuple[str, ...]` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` | Which fetch orderings the candidate set is built from. |
 | `evaluate_coalesced` | `bool` | `True` | Also evaluate the coalesced form of each candidate. |
 | `max_repair_attempts` | `int` | `256` | How many monotonic repairs one candidate may make before answering with the best plan it reached. |
-| `capacity_refinement_bytes` | `int` | `256 MiB` | How much capacity a plan gives back at a time when its layout does not fit. |
+| `capacity_refinement_bytes` | `int` | `256 MiB` | How much capacity a plan gives back at a time when its layout does not fit. Zero hands back the whole shortfall, which converges in the fewest rounds; a smaller step overshoots less, because the layout's extent does not shrink byte for byte with the capacity. |
 | `record_reduction_steps` | `bool` | `False` | Record each candidate's reduction trajectory, one `ReductionStep` per plan it held. |
-| `workers` | `int` | `0` | Library threads the search runs on. Zero takes one per logical CPU; one evaluates every pair on the calling thread. |
-| `deterministic` | `bool` | `False` | Make every candidate's outcome a pure function of its inputs, so any worker count answers the same. |
-| `minimum_object_bytes_evict_eligible` | `int` | `1 << 20` | Objects smaller than this stay resident from first to last access. |
 | `split_write_backs` | `bool` | `False` | Let a plan split an eviction whose copy fits in idle evict-lane time, keeping the split only if the replan is faster. |
 
-Four of these repay a longer word.
-
-**`workers`.** Python owns no threads: one call gets its own workers, so two
-callers planning at the same time do not contend. The unit of work is one
-(resolved program, candidate) pair, which is why worker count and
-resolved-program count are independent -- eight workers means eight threads
-whether the call was given one resolved program or five. It is a scheduling
-choice, not a search input: it does not change which plans are legal or how
-they simulate, though it does change how many candidates get skipped against
-the shared placement record, so per-candidate counters move with it.
-
-**`deterministic`.** Candidates measure a layout only when the shared
-best-placed record says it could win, so which worker places first decides
-which candidates are ever measured, and two searches over one problem at
-different worker counts can answer with different plans. Setting this makes the
-placement gate consult only the candidate's own placed plans instead of the
-shared record. It costs wall time, because that shared bound is what lets a
-candidate skip measuring a plan which cannot win.
-
-**`capacity_refinement_bytes`.** The extent does not shrink byte for byte with
-the capacity, so handing back the whole shortfall overshoots the capacity that
-would have fit. Zero does hand back the whole shortfall, which converges in the
-fewest rounds and is the setting to reach for when planning time matters more
-than the last percent of makespan.
-
-**`minimum_object_bytes_evict_eligible`.** The reducer never cuts an object
-under this size, so it is never evicted and fetched mid-step, while its
-boundary contract -- an opening fetch, a release after the last access, a
-terminal writeback when modified -- is emitted as for any object. The default
-is the size below which a copy is latency-bound and its bytes hardly relieve a
-boundary, while every such object is still a cut candidate, a dispatch, and an
-event. Zero makes every object eligible, which is what a caller planning
-byte-sized objects wants. Every lease of an object it holds gets a static home
-in the `ResidentSlice` the result carries -- their sum, one home per lease,
-sized at problem preparation -- and the capacity the reducer plans against is
-reduced by that slice, so they are never charged again. A slice a budget cannot
-hold is reported as infeasible rather than quietly relaxed, and each graph-pair
-problem reports how many objects it held, their bytes, and their peak resident
-bytes.
-
-### Step data ordering
-
-`StepDataOrdering` records how a training step walks its microbatches: `depth`
-passes of `breadth` microbatches, each pass stage-major forward and stage-major
-back, with `pair_loss` running each microbatch's last stage forward and
-backward together and `reverse_breadth` walking a pass's microbatches in
-reverse during backward. `StepDataOrdering.resolve()` fills in whichever count a
-caller left out and refuses a product that is not the microbatch count;
-`creates()` says which microbatch's backward creates a stage's gradient (the
-first the walk reaches) and which add into it. The record travels with a
-`StepProgram` and a plan report, and its `label` (`2x4rp`) names the ordering in
-figures.
-
-### Results and diagnostics
-
-Configuration and results:
-
-- `SearchOptions`, `InitialPlacement`
-- `ProgramPlanResult`, `PlanningDiagnostics`, `ResidentSlice`
-- `AdmissionFacts`, `StorageHandoff`, `TaskAdmissionSpec`
-- `TaskAllocationStep`, `TaskAllocationStepKind`
-
-Search diagnostics:
-
-- `TaskAlternativeChoiceDiagnostic`, `ResolvedProgramDiagnostics`
-- `CandidateDiagnostic`
-- `PlanningRepairDiagnostics`, `PlanningWorkDiagnostics`
-- `PlanningSectionTiming`, `ReductionStep`
-
-`PlanningWorkDiagnostics` counts what the search did and carries a
-`PlanningSectionTiming` saying where the time went. Sections are disjoint spans
-named by the function that opened them, so `total_ns` equals `named_ns` plus
-`residual_ns` at every level of the hierarchy -- candidate, resolved program,
-and whole call. `admit_ns` is the one exception: admission runs as part of
-simulating, so it is nested inside `simulate_ns` rather than beside it. Summing
-two of these adds every section, which is how the aggregate is built.
-
-Sections measure work rather than elapsed time, so with several workers a
-resolved program's total exceeds the time the call took. `started_ns` and
-`finished_ns`, on both `CandidateDiagnostic` and `ResolvedProgramDiagnostics`,
-are the elapsed-time counterpart: nanoseconds from the start of the call,
-shared by every span in it, so two candidates ran at the same time exactly when
-their spans overlap.
-
-`ReductionStep` is one plan a candidate held: its makespan, the bytes its
-layout needed, the capacity it was built against, the objects the reducer cut
-to reach it, and what became of it -- simulated, measured, placed, refined,
-best so far, or the answer. `CandidateDiagnostic.steps` is the whole trajectory
-in order, and is empty unless `record_reduction_steps` asked for it.
-
-`PlanningRepairDiagnostics` records what one candidate's monotonic repairs did
-and why they stopped.
+`resolution_options` takes `Fraction` values, integers or strings such as
+`"3/8"`, sorted and deduplicated on the way in. It lives here rather than on the
+planner because expanding a program into resolved programs is a search's own
+work. Every plan is keyed by the options it was searched under, so a plan found
+under one set is never read back for another; inventories small enough to
+enumerate are planned exhaustively whatever options are named.
 
 ### Where the work happens
 
@@ -516,4 +601,5 @@ logical object. Object identity is independent of its current pool lease or
 residency generation. Framework integrations layer their own view metadata on
 this handle and call `ObjectRef.close()` to release public ownership.
 `ObjectConsistency` selects causal generation/readiness ordering or an
-explicitly unordered cross-plan view for a plan binding.
+explicitly unordered cross-plan view for a plan binding; [the frontend
+page](frontend.md#plan_forward) shows it in use.

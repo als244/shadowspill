@@ -37,10 +37,10 @@ from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
     ShadowSpillPlanningProblem,
-    StepProgram,
     TransferBandwidths,
 )
 from shadowspill.simulator import SimulationConfig
+from shadowspill.step import StepProgram
 
 
 def _pressurefit_program() -> ShadowSpillPlanningProblem:

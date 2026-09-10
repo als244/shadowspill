@@ -1,5 +1,7 @@
 """Framework-neutral memory and recomputation planning."""
 
+from shadowspill.step import StepDataOrdering
+
 from .admission import (
     AdmissionFacts,
     StorageHandoff,
@@ -33,7 +35,6 @@ from .search.toolkit import (
     validate_resolution_options,
     validate_search_inputs,
 )
-from .step_ordering import StepDataOrdering
 
 __all__ = [
     "DEFAULT_RESOLUTION_OPTIONS",
