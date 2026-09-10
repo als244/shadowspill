@@ -35,12 +35,18 @@ target_link_libraries(
 )
 add_test(NAME shadowspill_simulator_canary COMMAND shadowspill_simulator_canary)
 
-add_executable(shadowspill_planner_canary planner/planner_canary.c)
+add_executable(
+  shadowspill_pressurefit_canary
+  planner/search/algorithms/pressurefit/pressurefit_canary.c
+)
 target_link_libraries(
-  shadowspill_planner_canary
+  shadowspill_pressurefit_canary
   PRIVATE shadowspill shadowspill_build_options
 )
-add_test(NAME shadowspill_planner_canary COMMAND shadowspill_planner_canary)
+add_test(
+  NAME shadowspill_pressurefit_canary
+  COMMAND shadowspill_pressurefit_canary
+)
 
 add_executable(shadowspill_runtime_canary runtime/runtime_canary.c)
 target_link_libraries(
