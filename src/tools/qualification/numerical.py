@@ -1462,7 +1462,7 @@ def main() -> int:
     for tree in ("build", "plan"):
         parser.add_argument(
             f"--{tree}-store-mode",
-            choices=("contribute", "reuse", "require"),
+            choices=("contribute", "reuse", "require", "refresh"),
             default="contribute",
             help=f"what this run may do about a {tree} artifact the store does"
             " not hold: contribute writes it back, reuse persists nothing,"
