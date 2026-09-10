@@ -4,10 +4,12 @@ One implementation of :class:`~shadowspill.planner.SearchAlgorithm`. Given a
 program, where it must start and end, and a machine, it answers with the
 best schedule it can find under that machine's capacity.
 
-The work divides three ways:
+The work divides up:
 
 ``options``        what it may try, and how hard
+``capi``           its own ctypes surface, mirroring its public C header
 ``candidates``     the library call and the C option structs
+``best``           the best plan placed so far, shared across a search
 ``search``         building problems, running them, decoding a winner
 this module        the search object, expansion, and validating its inputs
 
@@ -36,7 +38,6 @@ from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.capi import simulator_api
 
 from ....admission import AdmissionFacts
-from ....capi import planner_api
 from ....request import GenericPlanningOptions
 from ....result import ProgramPlanResult
 from ... import SearchAlgorithm, SearchOptions, set_default_algorithm
@@ -44,6 +45,7 @@ from ...toolkit.resolution import Resolution, resolutions
 from ...toolkit.validation import validate_search_inputs
 from .best import BestPlaced
 from .candidates import CProblemResult
+from .capi import pressurefit_api
 from .options import PressureFitOptions
 from .search import (
     SelectionProblem,
@@ -100,7 +102,7 @@ def _evaluate_resolutions(
     """
 
     simulator_api()
-    planner_api()
+    pressurefit_api()
     problems = preflight_problems(
         build_problems(
             program,
@@ -137,8 +139,7 @@ def ordered_resolutions(
     The rule is one sort: descending share of groups recomputed. Recomputing
     frees the memory that is binding under pressure, so a more-recomputed
     resolution is both likelier to place a plan at all and likelier to be the
-    one that wins: win rate follows that share without exception, which is
-    what the ordering is derived from rather than asserted against.
+    one that wins.
     """
 
     resolved = resolutions(program, resolution_options)
@@ -194,7 +195,7 @@ class PressureFit(SearchAlgorithm):
             program, initial_residency, final_residency, config, admission
         )
         simulator_api()
-        planner_api()
+        pressurefit_api()
         preflight_problems(
             build_problems(
                 program,
@@ -226,11 +227,11 @@ class PressureFit(SearchAlgorithm):
     ) -> ProgramPlanResult:
         """Select a schedule for `program`, planning each resolution in turn.
 
-        `search_options` is a :class:`PressureFitOptions`, and names among
-        other things which resolved programs to plan. `best` carries a plan
-        already in hand across resolved programs, so each one is searched
-        against the answer the previous ones found; omitting it means this
-        call starts from nothing and keeps its own.
+        This search's own `options` name, among other things, which resolved
+        programs to plan. `best` carries a plan already in hand across
+        resolved programs, so each one is searched against the answer the
+        previous ones found; omitting it means this call starts from nothing
+        and keeps its own.
 
         Capacity is settled inside the search: a candidate measures its own
         plan against the pool `placement` describes and gives capacity back
@@ -320,10 +321,9 @@ class PressureFit(SearchAlgorithm):
         A resolved program that cannot satisfy the semantic-capacity
         preflight is not an answer about the program: it says this one way
         of fixing the save/recompute alternatives does not fit, which is
-        exactly the question this layer exists to ask several times. Under
-        pressure the least-recomputed resolution routinely fails it while
-        the recompute-heavy ones admit, so a rejection is filtered here,
-        and only a program with no viable resolution at all is infeasible.
+        exactly the question this layer exists to ask several times. A
+        rejection is therefore filtered here, and only a program with no
+        viable resolution at all is infeasible.
 
         Threads belong to the library and to this call. Handing it every
         resolved program at once is what lets a worker move between them
