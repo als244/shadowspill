@@ -1,7 +1,7 @@
 """Real-versus-simulated gap report over a performance matrix's traced warm steps.
 
 Reads each cell's saved step diagnostics (``shadowspill.step_diagnostics``)
-and its PressureFit fixture, and prints, per model, where the step's time went
+and its plan record, and prints, per model, where the step's time went
 against the simulation: the span, task, and idle deltas; task-duration error
 by phase; task start drift along the compute lane; each transfer lane's
 assumed versus effective bandwidth; and every measured transfer's achieved

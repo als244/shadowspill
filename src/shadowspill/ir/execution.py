@@ -65,14 +65,15 @@ class EntrypointSpec:
 
 @dataclass(frozen=True, slots=True)
 class PhysicalAdmission:
-    """Physical execution and host admission for one selected plan.
+    """Physical execution and spill admission for one selected plan.
 
     ``workspace_reserve_bytes`` is the contiguous task-workspace
     allowance the execution pool must be able to serve; it is validated
     against ``slab_bytes`` and is NOT subtracted from the pool. Task
     workspace is charged per boundary during planning and placed inside
-    the admitted fixed slice, so this value does not define PressureFit's
-    object capacity — see ``pytorch.planning.common.simulation_capacity``
+    the admitted fixed slice, so this value does not define the search's
+    object capacity — see
+    ``shadowspill.pytorch.planning.common.simulation_capacity``
     for the capacity actually presented to the planner.
     """
 
