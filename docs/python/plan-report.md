@@ -26,10 +26,10 @@ JSON](planning-json.md).
 
 ## Structure
 
-A `PlanReport` has five groups of fields, listed in the table below: the
-plan's identity, the selected plans and their prediction, the capacities
-and transfer assumptions planning worked under, the profiling and selection
-evidence, and the detailed `diagnostics`.
+The table below groups the top-level fields: the plan's identity, the
+selected plans and their prediction, the capacities and transfer assumptions
+planning worked under, the profiling and selection evidence, and the detailed
+`diagnostics`.
 
 Its `summary` is a derived `PlanSummary`, the plan's promise in a dozen
 numbers, and the fastest way to read a plan. Its four time components
@@ -50,9 +50,14 @@ coalescing, and the repairs it had spent when it placed the plan it answers
 with. The [field reference](plan-report-fields.md#plansummary) defines each.
 
 The bandwidths are worth one note: they are the calibrated transfer
-capabilities rounded to the nearest GB/s, with latencies to the nearest
-microsecond, so two slightly different calibrations of the same machine reuse
-one stored plan. The raw calibration stays on `report.transfer_capabilities`.
+capabilities coarsened by their own magnitude, so two slightly different
+calibrations of the same machine reuse one stored plan. A bandwidth at or above
+half a gigabyte a second rounds to the nearest half, a slower one to the
+nearest tenth. A latency rounds to the nearest five microseconds, to the
+microsecond below five, and to coarser steps as it grows: fifty microseconds
+above a hundred, a hundred above five hundred, two hundred and fifty above a
+millisecond, a millisecond above ten. The raw calibration stays on
+`report.transfer_capabilities`.
 
 ## Read the report from the outside in
 
@@ -63,7 +68,7 @@ The most useful inspection order is:
 3. Inspect planning phase time and cache behavior.
 4. Inspect the selected task sequence by chronological execution ID.
 5. Compare each selected task with its unique stage and graph-pair options.
-6. Inspect PressureFit search evidence and physical-layout admission.
+6. Inspect the search evidence and physical-layout admission.
 7. Drill into a structural graph profile only when timing or byte accounting
    needs explanation.
 
@@ -78,11 +83,11 @@ The top-level fields are grouped below.
 | Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
 | Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
 | Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |
-| Selection | `pressurefit_result`, `initial_pressurefit_result` | PressureFit winner, schedule, selections, and search evidence, plus the simulated timeline: `pressurefit_result.simulation.task_intervals` (ready, start, and end per task) and `transfer_intervals` (ready, start, end, and bytes per transfer). |
+| Selection | `search_result`, `initial_search_result` | The winning plan, its schedule, selections and search evidence, plus the simulated timeline: `search_result.simulation.task_intervals` (ready, start, and end per task) and `transfer_intervals` (ready, start, end, and bytes per transfer). |
 | Detailed evidence | `diagnostics` | Phase, cache, stage, graph-pair, profile, search, and layout records. |
 
-For training, `report.program` and `report.pressurefit_result` refer to the
-recurrent plan. `initial_program` and `initial_pressurefit_result` refer to the
+For training, `report.program` and `report.search_result` refer to the
+recurrent plan. `initial_program` and `initial_search_result` refer to the
 optional first invocation. Forward planning has one plan.
 
 ## Transfer assumptions and budgets
@@ -118,7 +123,7 @@ Shared aliases are runtime-global objects that may be bound by several
 callables. Their physical bytes are charged once against the public pool
 budgets and excluded from each callable's movable schedule. The
 `callable_*_budget_bytes` properties expose the residual capacities used for
-that callable's PressureFit and physical-layout admission.
+that callable's search and physical-layout admission.
 
 ## Planning wall time and cache use
 
@@ -148,7 +153,7 @@ The other planning-cost views are:
 | `profile_unique_keys` | Number of structural profiles needed by the call. |
 | `profile_cache_hits`, `profile_cache_misses` | Measurement reuse versus fresh profiling. |
 | `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Reuse versus construction of differentiated graph pairs. |
-| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each planned program -- the complete PressureFit result for a request, its resolved program and memory schedule -- was read from the artifact store instead of searched: one count per plan, recurrent and optional initial. |
+| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each planned program -- the complete answer to a request, its resolved program and memory schedule -- was read from the artifact store instead of searched: one count per plan, recurrent and optional initial. |
 | `store_directories` | The roots this call used, as name/path pairs: `root`, `build`, `build.inductor`, `planning`, and `plan_store`. |
 | `cache_artifacts` | Every artifact this call touched, with its access disposition and dependency digests. |
 
@@ -239,13 +244,13 @@ physical inventory.
 configured limit. A material unstable task should be investigated before its
 simulator prediction is used as a performance authority.
 
-## PressureFit diagnostics
+## Search diagnostics
 
-`report.diagnostics.pressurefit_runs` contains one entry for each selected
-planning role/refinement run. Each run has this hierarchy:
+`report.diagnostics.search_runs` contains one entry for each selected
+planning role and refinement run. Each run has this hierarchy:
 
 ```text
-PressureFit invocation
+search invocation
 └── resolved program (one complete task-alternative selection)
     ├── incumbent (the plan to beat, when one was handed in)
     └── candidate-policy evaluation
@@ -314,7 +319,7 @@ Each `PlanPhysicalLayout` describes one admitted role.
 |---|---|
 | `strategy` and `layout_digest` | Placement strategy and certificate identity. |
 | `pool_capacity_bytes` | Callable-attributable physical execution-pool capacity. |
-| `original_object_capacity_bytes` | Initial logical object capacity sent to PressureFit. |
+| `original_object_capacity_bytes` | Logical object capacity the search started against. |
 | `effective_object_capacity_bytes` | Object capacity the accepted plan was certified at. Subtracting it from `original_object_capacity_bytes` gives the capacity ceded to make physical placement feasible. |
 | `fixed_slice_bytes` | Reusable fixed range required by admitted lifetimes, the resident slice included. |
 | `resident_slice_bytes` | The slice at the end of the fixed range where every lease of an object `minimum_object_bytes_evict_eligible` kept resident has a static home; zero when it kept none. |
@@ -325,13 +330,12 @@ Each `PlanPhysicalLayout` describes one admitted role.
 | `attempts` | Certification history. One entry, unless the certificate disagreed with the search's own layout measurement. |
 | `task_memory_envelopes` | Per-task strict-core and dynamic-scratch limits. |
 
-For every accepted layout, `required_bytes <= pool_capacity_bytes`. Capacity
-is now given back inside the search, per candidate, so the reduction that made
-a plan placeable is reported on that candidate as `capacity_refinements` rather
-than here; a rejected attempt at this level means the certificate disagreed
-with the search's own measurement, which is a bug rather than a tight fit.
-Use [Physical admission and offset handling](../architecture/physical-admission.md)
-to interpret the certificate.
+For every accepted layout, `required_bytes <= pool_capacity_bytes`. Capacity is
+given back inside the search, per candidate, so the reduction that made a plan
+placeable is reported there as `capacity_refinements`; a rejected attempt at
+this level means the certificate disagreed with the search's own measurement,
+which is a bug rather than a tight fit. Use [Physical admission and offset
+handling](../architecture/physical-admission.md) to interpret the certificate.
 
 ## Exporting diagnostic evidence
 
@@ -355,10 +359,10 @@ planning workflow.
 
 | Symptom | Look here first |
 |---|---|
-| Planning is slow | `diagnostics.phases`, compiler profiles, cache hits/misses, then PressureFit work counts. |
+| Planning is slow | `diagnostics.phases`, compiler profiles, cache hits/misses, then the search's work counts. |
 | Predicted step is slow | Selected resolved program, candidate policy, transfer bytes, task profiles, and simulator makespan. |
 | One task is unexpectedly large | Execution task → unique stage → chosen graph pair → forward/backward graph profile byte fields. |
 | Save and recompute look identical | Graph-pair saved-value counts/bytes, active tasks, and semantic root/output contracts. |
-| Plan repeatedly refines capacity | Physical-layout attempts, required/slack bytes, dynamic/scratch reserves, and PressureFit repairs. |
+| Plan repeatedly refines capacity | Physical-layout attempts, required/slack bytes, dynamic/scratch reserves, and search repairs. |
 | Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, implementation revision, and allocation-probe policy. |
 | Real execution disagrees with the plan | Resolve a traced step and use the [Step diagnostics guide](step-diagnostics.md). |

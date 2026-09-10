@@ -1,4 +1,4 @@
-"""Everything one PressureFit call did, as one record."""
+"""Everything one search call did, as one record."""
 
 from __future__ import annotations
 
@@ -38,9 +38,9 @@ class PlanningDiagnostics:
     is whatever that search has to report about how it got there, written
     under its own name and read by nothing here.
 
-    Everything below `search` today is PressureFit's -- resolved programs,
-    repairs, capacity refinement, section timings -- because PressureFit is
-    the only search. The contract is deliberately loose: a search reports
+    Everything belonging to whichever search ran -- resolved programs,
+    repairs, capacity refinement, section timings -- is serialized under the
+    key `search` names. The contract is deliberately loose: a search reports
     what it has, and a reader that does not recognise the name reads the
     generic half and stops.
     """
@@ -53,8 +53,9 @@ class PlanningDiagnostics:
     resolved_programs: tuple[ResolvedProgramDiagnostics, ...]
     work: PlanningWorkDiagnostics = field(default_factory=PlanningWorkDiagnostics)
     effective_object_capacity_bytes: int | None = None
-    #: Which search produced this. The key its own half is written under.
-    search: str = "pressurefit"
+    #: Which search produced this, as that search names itself. The key its
+    #: own half is written under. Empty only on a record built by hand.
+    search: str = ""
     #: How many threads the search was given. Recorded for visibility and
     #: excluded from anything compared across runs, because it changes how
     #: long an answer took and not which answer was right.
