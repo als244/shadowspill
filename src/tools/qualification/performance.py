@@ -39,13 +39,11 @@ _MINIMUM_REGRESSION_RATIO = 0.95
 #: The simulator prices the selected span and the terminal tail; the opening
 #: restore is unmodeled but, since first-use ordering of the initial
 #: placement batch (shadowspill.ir.schedule.first_use_initial_order), bounded
-#: by the first task's own inputs rather than the whole initial set. On a
-#: nominal calibration the error sits within a few percent and errs
-#: pessimistic. The bound is 0.10 because the calibrated transfer bandwidths
-#: the plan is priced against move run to run: a calibration that lands at
-#: 23.7 GB/s instead of the usual 25.5 prices olmoe 6.3% slower than the
-#: hardware then delivers (2026-09-02), which is the simulator being
-#: pessimistic, not wrong. The remaining unmodeled terms are the
+#: by the first task's own inputs rather than the whole initial set. The
+#: bound has room in it because the calibrated transfer bandwidths the plan
+#: is priced against move run to run: a calibration below the rate the
+#: hardware then delivers prices the step pessimistically without the
+#: simulator being wrong. The remaining unmodeled terms are the
 #: terminal-drain serialization, input staging, and profile fidelity.
 _MAXIMUM_SIMULATOR_ERROR = 0.10
 
@@ -222,14 +220,13 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "evict": transfer_route(source="execution", destination="spill"),
         },
     )
-    # Bidirectional-concurrent calibration is bimodal on this host
-    # despite the runtime-first lifecycle (about 21 versus about 25
-    # GB/s across runs; solo variance is expected and not the anomaly),
-    # and a degraded calibration steers planning toward a different,
-    # higher-traffic plan.  The concurrent/solo ratio separates the two
-    # observed modes; a legitimately high solo at most triggers one
-    # benign extra probe.  Persistently low results are recorded and
-    # planning proceeds against the final measurement.
+    # Bidirectional-concurrent calibration is bimodal despite the
+    # runtime-first lifecycle (solo variance is expected and not the
+    # anomaly), and a degraded calibration steers planning toward a
+    # different, higher-traffic plan.  The concurrent/solo ratio separates
+    # the two modes; a legitimately high solo at most triggers one benign
+    # extra probe.  Persistently low results are recorded and planning
+    # proceeds against the final measurement.
     calibration_attempts = 1
     while calibration_attempts < 4 and _calibration_suspect(runtime):
         print(
@@ -272,14 +269,14 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         torch.save(report, plan_path)
         fixtures = write_plan_records(
             results=report.search_results,
-            directory=output.parent / f"{output.stem}_pressurefit",
+            directory=output.parent / f"{output.stem}_plan_records",
         )
         print(
             f"planned {manifest.identity}: total={planning_seconds:.3f}s "
             f"lowering={phases.get('capture_lowering', 0.0):.3f}s "
             f"compilation={phases.get('compiled_entrypoint_construction', 0.0):.3f}s "
             f"profiling={phases.get('unique_stage_warmup_profiling', 0.0):.3f}s "
-            f"pressurefit={phases.get('search', 0.0):.3f}s",
+            f"search={phases.get('search', 0.0):.3f}s",
             flush=True,
         )
 
