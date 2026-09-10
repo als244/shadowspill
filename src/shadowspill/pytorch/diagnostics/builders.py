@@ -30,7 +30,6 @@ from shadowspill.planner.diagnostics.plan import (
     PlanTaskStage,
     PlanUniqueStage,
 )
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
 from shadowspill.pytorch.capture.storage import (
     MutationBinding,
@@ -58,6 +57,7 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.step import StepDataOrdering
 
 
 @dataclass(frozen=True, slots=True)

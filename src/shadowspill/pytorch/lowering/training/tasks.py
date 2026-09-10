@@ -14,12 +14,12 @@ from shadowspill.ir import (
     TaskAlternativeOption,
     TaskSpec,
 )
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     OptimizerCapture,
     OptimizerTask,
 )
+from shadowspill.step import StepDataOrdering
 
 from ..catalog import TensorSlot
 from ..profiles import TaskProfileCatalog

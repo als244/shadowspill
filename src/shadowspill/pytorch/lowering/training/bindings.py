@@ -7,7 +7,6 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
@@ -15,6 +14,7 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
+from shadowspill.step import StepDataOrdering
 
 from ...graph_pairs import (
     DifferentiatedStage,

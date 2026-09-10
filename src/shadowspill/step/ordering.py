@@ -20,8 +20,7 @@ class StepDataOrdering:
     the loss's saved state is consumed the moment it exists instead of being
     held for the whole pass. ``reverse_breadth`` walks the pass's microbatches
     in reverse during backward, so the freshest activations go first. Both
-    are vacuous at ``breadth == 1``, which is the microbatch-major order every
-    step used before there was a choice.
+    are vacuous at ``breadth == 1``, the microbatch-major order.
 
     The gradient of a stage is created by the first backward the walk emits
     for it and accumulated into by every later one, so which microbatch

@@ -8,11 +8,11 @@ from typing import Literal
 import torch.nn as nn
 
 from shadowspill.errors import CaptureError
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.optimizer import OptimizerCapture
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.step import StepDataOrdering
 
 from ...graph_pairs import PartitionedTrainingCapture
 from ..profiles import CompiledLayoutIndex, ProfileMeasurementKey, TaskProfileCatalog
