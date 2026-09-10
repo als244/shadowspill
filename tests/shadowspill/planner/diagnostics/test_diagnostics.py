@@ -139,7 +139,7 @@ def test_search_diagnostics_rejects_old_flat_schema() -> None:
 
 
 def test_candidate_diagnostic_rejects_old_flat_schema() -> None:
-    with pytest.raises(ValueError, match="candidate_policy must be an object"):
+    with pytest.raises(ValueError, match="candidate_policy: expected an object"):
         CandidateDiagnostic.from_value(
             {
                 "candidate_id": "tight-transfer/latest-safe",
