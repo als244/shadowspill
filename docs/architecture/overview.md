@@ -310,50 +310,52 @@ index](../README.md) annotates the same order; this is the map.
    compiled storage behavior, mapped into that IR.
 3. [Graph-pair construction](graph-pair-construction.md) -- local
    forward/backward alternatives for one structural contract.
-4. [Importing state](state-import.md) -- how a model's state reaches a pool
+4. [The step artifacts](step.md) -- what a captured step is, and why its two
+   values need no framework to read.
+5. [Importing state](state-import.md) -- how a model's state reaches a pool
    with no host copy of itself, and how dtype is decided.
-5. [The optimizer](optimizer.md) -- state declared on meta and filled by the
+6. [The optimizer](optimizer.md) -- state declared on meta and filled by the
    caller, and values a step may set.
 
 **Planning**
 
-6. [The ShadowSpillProgram](program.md) -- what the system plans for.
-7. [The planning problem](planning-problem.md) -- the question asked about it.
-8. [Plan search](search.md) -- what the planner asks of a search, and
+7. [The ShadowSpillProgram](program.md) -- what the system plans for.
+8. [The planning problem](planning-problem.md) -- the question asked about it.
+9. [Plan search](search.md) -- what the planner asks of a search, and
    promises it.
-9. [Writing a search algorithm](search-algorithm.md) -- the methods to
+10. [Writing a search algorithm](search-algorithm.md) -- the methods to
    implement, every argument, and a worked example.
-10. [Graph-pair selection](graph-pair-selection.md) -- bounded complete
+11. [Graph-pair selection](graph-pair-selection.md) -- bounded complete
     assignments across those alternatives.
-11. [PressureFit](pressurefit.md) -- the search that ships: logical residency
+12. [PressureFit](pressurefit.md) -- the search that ships: logical residency
     and memory-action selection.
-12. [Physical admission and offset handling](physical-admission.md) -- the
+13. [Physical admission and offset handling](physical-admission.md) -- the
     selected plan proved against real pool geometry.
-13. [From a resolved program to leases](admission-leases.md) -- what a schedule
+14. [From a resolved program to leases](admission-leases.md) -- what a schedule
     allocates, and when each lease is live.
-14. [Fixed-offset placement](fixed-placement.md) -- how leases are given
+15. [Fixed-offset placement](fixed-placement.md) -- how leases are given
     addresses, and what that costs.
-15. [Simulation](simulation.md) -- the deterministic timeline a search prices
+16. [Simulation](simulation.md) -- the deterministic timeline a search prices
     its candidates against.
-16. [Planning orchestration](planning.md) -- artifacts composed, callable and
+17. [Planning orchestration](planning.md) -- artifacts composed, callable and
     report published.
 
 **Execution**
 
-17. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
+18. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
     failure, and tracing.
-18. [Task boundaries](task-boundaries.md) -- what `before_task` and
+19. [Task boundaries](task-boundaries.md) -- what `before_task` and
     `after_task` do, and what is still in flight when the dispatcher returns.
-19. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
+20. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
     does with a failure, and why an exiting process is abandoned.
-20. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
+21. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
     and what step time means.
-21. [Backends](backends.md) -- the driver-level table a provider implements.
-22. [Memory pools](memory-pools.md), [transfers](transfers.md), and
+22. [Backends](backends.md) -- the driver-level table a provider implements.
+23. [Memory pools](memory-pools.md), [transfers](transfers.md), and
     [events](events.md) -- the runtime objects built on that table: arenas,
     routes and lanes with calibration, and event pools.
-23. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the runtime.
-24. [Timelines](timelines.md) -- how a traced step is measured on the device
+24. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the runtime.
+25. [Timelines](timelines.md) -- how a traced step is measured on the device
     clock.
 
 The [Python guide](../python/README.md) and [C guide](../c/README.md) document

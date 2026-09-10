@@ -21,9 +21,9 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.program import (
     ShadowSpillPlanningProblem,
-    StepProgram,
 )
 from shadowspill.simulator import SimulationConfig
+from shadowspill.step import StepProgram
 
 
 def _fixture() -> StepProgram:

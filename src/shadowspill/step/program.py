@@ -23,13 +23,13 @@ from shadowspill.planner.serialization import (
 )
 from shadowspill.schema import artifact_schema
 
-from .step_ordering import StepDataOrdering
+from .ordering import StepDataOrdering
 
 _STEP_PROGRAM_SCHEMA = artifact_schema("step_program")
 
 
 def _data_ordering(value: object, program: ShadowSpillProgram) -> StepDataOrdering:
-    """The record's ordering; a record from before there was one ran depth-first."""
+    """The record's ordering; a record naming none is depth-first."""
     if value is not None:
         return StepDataOrdering.from_dict(value, "step_program.planning.data_ordering")
     positions = {

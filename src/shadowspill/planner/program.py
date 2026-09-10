@@ -1,4 +1,8 @@
-"""Public reusable planning artifacts and JSON contracts."""
+"""The planner's public reusable artifacts and their JSON contracts.
+
+A `StepProgram` is not one of these: it describes a training step rather
+than a planning answer, and lives in :mod:`shadowspill.step`.
+"""
 
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import (
@@ -6,12 +10,10 @@ from shadowspill.planner.program_inputs import (
     ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
-from shadowspill.planner.step_program import StepProgram
 
 __all__ = [
     "AnnotatedProgramPlan",
     "MemoryBudgets",
     "ShadowSpillPlanningProblem",
-    "StepProgram",
     "TransferBandwidths",
 ]

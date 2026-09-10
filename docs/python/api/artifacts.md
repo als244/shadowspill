@@ -1,10 +1,13 @@
 # Reusable planning artifacts
 
 The values that cross the boundary between building a program, planning it,
-and running it. They live in `shadowspill.planner.program`, are immutable,
-content-addressed and JSON-serializable, and their stable digests exclude
-store paths and measured orchestration wall time, so where and how long
-something took never changes what it is.
+and running it. They are immutable, content-addressed and JSON-serializable,
+and their stable digests exclude store paths and measured orchestration wall
+time, so where and how long something took never changes what it is.
+`StepProgram` comes from `shadowspill.step`, because it describes a training
+step rather than a planning answer; `ShadowSpillPlanningProblem`,
+`AnnotatedProgramPlan`, `MemoryBudgets` and `TransferBandwidths` come from
+`shadowspill.planner.program`.
 
 Three of them form one chain:
 
@@ -39,7 +42,7 @@ it was produced. `to_json()` and `from_json()` carry it as a portable corpus.
 ```python
 from pathlib import Path
 
-from shadowspill.planner.program import StepProgram
+from shadowspill.step import StepProgram
 from shadowspill.pytorch import build_step_program
 
 step_program = build_step_program(
@@ -60,11 +63,14 @@ loaded = StepProgram.from_json(Path("program.json").read_text())
 ## `ShadowSpillPlanningProblem`
 
 A self-contained problem: the only input `plan_program()` needs. It holds its
-`role` (`"recurrent"`, `"initial"` or `"forward"`), the canonical `ShadowSpillProgram`,
-initial and final residency, the `SimulationConfig` describing the machine, the
-`AdmissionFacts`, the budgets it was profiled under and the maxima it may be
-replanned within, and the fixed, object-reserve and dynamic-scratch byte
-deductions that reconcile a budget with a pool capacity.
+`role` (`"recurrent"`, `"initial"` or `"forward"`), the canonical
+`ShadowSpillProgram`, its `initial_residency` and `final_residency`, the
+`SimulationConfig` describing the machine, the `AdmissionFacts`, the
+`source_execution_budget_bytes` it was profiled under with the
+`maximum_execution_budget_bytes` and `maximum_spill_budget_bytes` it may be
+replanned within, and the `fixed_execution_bytes`, `object_reserve_bytes` and
+`dynamic_scratch_reserve_bytes` deductions that reconcile a budget with a pool
+capacity.
 
 It carries no `SearchOptions`. A program states what problem it is, and how
 to search that problem belongs to whoever plans it, so options are passed to
@@ -73,7 +79,7 @@ keeps a saved program readable when the planner gains an option: nothing about
 the measured problem changed, so its identity does not move.
 
 ```text
-ShadowSpillPlanningProblem.pressurefit_inputs(
+ShadowSpillPlanningProblem.machine_inputs(
     *,
     execution_budget_bytes=None,
     spill_budget_bytes=None,
@@ -81,12 +87,18 @@ ShadowSpillPlanningProblem.pressurefit_inputs(
 ) -> tuple[SimulationConfig, AdmissionFacts]
 ```
 
-Rebases the budget-dependent inputs without changing the program: each argument
-defaults to what the program itself records, and the pair that comes back is
-what a search at those budgets and rates plans against. A requested budget
-cannot exceed the runtime capacity the program was compiled and profiled under,
-and one that leaves no positive pool or object capacity is refused. Use
-`to_json()`, `from_json()`, or `from_value()` for serialization.
+| argument | type | default | meaning |
+|---|---|---|---|
+| `execution_budget_bytes` | `int` \| `None` | `None` | Device bytes to rebase on; the problem's own `source_execution_budget_bytes` when `None`, and never above `maximum_execution_budget_bytes`. |
+| `spill_budget_bytes` | `int` \| `None` | `None` | Spill bytes to rebase on; the `SimulationConfig`'s own spill capacity when `None`, and never above `maximum_spill_budget_bytes`. |
+| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Rates to price copies at; the problem's own `transfer_bandwidths` when `None`. |
+
+Rebases the budget-dependent inputs without changing the program, and returns
+the `SimulationConfig` and `AdmissionFacts` a search at those budgets and rates
+plans against. A requested budget above the runtime capacity the program was
+compiled and profiled under, or one that leaves no positive pool or object
+capacity, is refused. Use `to_json()`, `from_json()`, or `from_value()` for
+serialization.
 
 ```python
 from shadowspill.planner import plan_program

@@ -21,9 +21,7 @@ from benchmarking._serialization import (
     text_digest,
 )
 from benchmarking.data_geometry import DataGeometry
-from shadowspill.planner.program import (
-    StepProgram,
-)
+from shadowspill.step import StepProgram
 
 _CORPUS_SCHEMA = "shadowspill.planning_corpus/v1"
 _CASE_SCHEMA = "shadowspill.planning_corpus.case/v1"
