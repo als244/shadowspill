@@ -39,9 +39,9 @@ class FixedLayoutAttempt:
 
 @dataclass(frozen=True, slots=True)
 class FixedLayoutSelection:
-    """One PressureFit selection and the exact physical certificate it passed."""
+    """One plan a search selected, and the physical certificate it passed."""
 
-    pressurefit: PlanLookup
+    plan: PlanLookup
     facts: AdmissionFacts
     admission: FixedLayoutAdmission
     attempts: tuple[FixedLayoutAttempt, ...]
@@ -49,11 +49,11 @@ class FixedLayoutSelection:
 
     @property
     def result(self) -> ProgramPlanResult:
-        return self.pressurefit.result
+        return self.plan.result
 
     @property
     def from_store(self) -> bool:
-        return self.pressurefit.from_store
+        return self.plan.from_store
 
     @property
     def capacity_reduction_bytes(self) -> int:
@@ -61,7 +61,7 @@ class FixedLayoutSelection:
 
     @property
     def search_wall_time_ns(self) -> int:
-        """Cumulative PressureFit/cache-resolution time across refinements."""
+        """Cumulative search and cache-resolution time across refinements."""
 
         return sum(item.search_wall_time_ns for item in self.attempts)
 
@@ -99,7 +99,7 @@ def resolve_fixed_layout_selection(
     scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
 ) -> FixedLayoutSelection:
-    """Certify the layout of the plan PressureFit selected.
+    """Certify the layout of the plan the search selected.
 
     The search measures each candidate's layout against this pool and
     answers with a plan that fits, so there is one capacity to certify and
@@ -152,7 +152,7 @@ def resolve_fixed_layout_selection(
         )
         if progress is not None:
             progress(
-                "fixed layout rejected PressureFit capacity "
+                "fixed layout rejected the search's capacity "
                 f"{effective_facts.object_capacity_bytes}: "
                 f"required={error.required_bytes}, "
                 f"physical_pool={error.capacity_bytes}"
@@ -172,7 +172,7 @@ def resolve_fixed_layout_selection(
     )
     if progress is not None:
         progress(
-            "fixed layout accepted PressureFit capacity "
+            "fixed layout accepted the search's capacity "
             f"{effective_facts.object_capacity_bytes}: "
             f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
             f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "
@@ -198,7 +198,7 @@ def _effective_object_capacity(
         return requested_capacity
     if not 0 < effective <= requested_capacity:
         raise ValueError(
-            "PressureFit reported an invalid effective object capacity: "
+            "the search reported an invalid effective object capacity: "
             f"effective={effective}, requested={requested_capacity}"
         )
     return effective
