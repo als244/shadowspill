@@ -19,14 +19,18 @@ import torch
 
 from shadowspill.ir import TaskAlternativeChoice, TaskAlternativeGroup
 from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.planner import StepDataOrdering
-from shadowspill.planner.store_policy import StorePolicy
+from shadowspill.planner import (
+    GenericPlanningOptions,
+    SearchOptions,
+    StepDataOrdering,
+)
 from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
 from shadowspill.schema import artifact_schema
+from shadowspill.store import StorePolicy
 from tools.qualification.model_state import import_case_model, release_case_model
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
@@ -49,25 +53,21 @@ from .references import (
     reference_inputs_path,
 )
 
-# The cells are approximately 1.2 B parameters in bfloat16, so parameters,
-# gradients and both AdamW moments are about 8.8 GiB spill-resident at every
-# step boundary, with the spilled activations on top of that. 64 GiB was far
-# above anything the cells reach and made the gate a 70 GiB-resident process,
-# which is more than the measurement needs and more than a shared host should
-# be asked for. The gate proves the real bound itself: it fails unless the
-# measured spill peak fits the pool.
+# Room for the whole training state of every cell -- parameters, gradients
+# and both optimizer moments -- plus the activations that spill, without
+# asking a shared machine to reserve more than the measurement needs. The
+# gate proves the real bound itself: it fails unless the measured spill peak
+# fits the pool.
 _SPILL_BUDGET = 32 << 30
 _LOSS_RELATIVE_TOLERANCE = 0.01
 _LOSS_ABSOLUTE_TOLERANCE = 2e-5
 _MINIMUM_COSINE = 0.999
 _MAXIMUM_RELATIVE_L2 = 0.025
 # An optimizer moment is an accumulator of small values, and the same step
-# run under two plans is the same arithmetic in two reduction orders. On the
-# MoE cell that alone moves a second-moment estimate by two to three percent
-# of relative L2 while every weight agrees: pytorch qwen35 measured 0.0206 to
-# 0.0270 across forty runs of unchanged code, twice over 0.025. The moments
-# get twice the room; the weights keep the bound, being what training
-# produces.
+# run under two plans is the same arithmetic in two reduction orders. That
+# alone moves a second-moment estimate past the bound above while every
+# weight agrees, so the moments get twice the room; the weights keep the
+# bound, being what training produces.
 _MAXIMUM_RELATIVE_L2_OPTIMIZER = 0.05
 _MINIMUM_SIGN_AGREEMENT = 0.99
 _REFERENCE_EXECUTION = "torch.compile.inductor.fullgraph"
@@ -353,7 +353,7 @@ def _planning_breakdown(
         "profile_cache_and_entrypoint_orchestration", 0.0
     )
     program_lowering = phase_seconds.get("program_lowering", 0.0)
-    pressurefit = phase_seconds.get("search", 0.0)
+    search = phase_seconds.get("search", 0.0)
     admission = (
         phase_seconds.get("admission_facts", 0.0)
         + phase_seconds.get("spill_admission", 0.0)
@@ -366,7 +366,7 @@ def _planning_breakdown(
         + cached_warmup
         + profile_orchestration
         + program_lowering
-        + pressurefit
+        + search
         + admission
     )
     return {
@@ -376,7 +376,7 @@ def _planning_breakdown(
         "cached_entrypoint_warmup": cached_warmup,
         "profile_cache_and_entrypoint_orchestration": profile_orchestration,
         "canonical_program_lowering": program_lowering,
-        "pressurefit": pressurefit,
+        "search": search,
         "physical_admission": admission,
         "other": max(0.0, planning_seconds - classified),
         "total": planning_seconds,
@@ -615,7 +615,9 @@ def _planned_worker(
             # One plan per tree: the search's shared placement gate would
             # otherwise settle on a different plan run to run, and a plan is
             # a reduction order the comparison below can see.
-            deterministic=True,
+            search_options=SearchOptions(
+                generic=GenericPlanningOptions(deterministic=True)
+            ),
         )
         planning_seconds = time.perf_counter() - planning_started
         planning_phases = {
@@ -630,7 +632,7 @@ def _planned_worker(
             f"{planning_phases.get('compiled_entrypoint_construction', 0.0):.3f}s, "
             "profiling="
             f"{planning_phases.get('unique_stage_warmup_profiling', 0.0):.3f}s, "
-            "pressurefit="
+            "search="
             f"{planning_phases.get('search', 0.0):.3f}s",
             flush=True,
         )
@@ -646,7 +648,7 @@ def _planned_worker(
             torch.save(training.plan_report, plan_report_path)
             plan_records = write_plan_records(
                 results=training.plan_report.search_results,
-                directory=result_path.parent / f"{result_path.stem}_pressurefit",
+                directory=result_path.parent / f"{result_path.stem}_plan_records",
             )
             plan_report_artifact = {
                 "path": str(plan_report_path),
@@ -1485,7 +1487,7 @@ def main() -> int:
         "--detailed-artifacts",
         action="store_true",
         help=(
-            "persist the complete PlanReport, PressureFit fixtures, and per-task "
+            "persist the complete PlanReport, plan records, and per-task "
             "step traces; compact correctness evidence is the default"
         ),
     )
