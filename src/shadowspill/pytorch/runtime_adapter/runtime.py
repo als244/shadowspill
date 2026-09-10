@@ -24,7 +24,6 @@ from shadowspill.memory import (
 from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
 )
-from shadowspill.planner.quantization import GIBIBYTE, floored
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.runtime_adapter.abi import (
     ObjectDescription,
@@ -549,12 +548,10 @@ class Runtime:
             resolved_device = _resolve_execution_device(
                 execution_device, execution_pool
             )
-            resolved_execution = floored(
-                _resolve_execution_budget(execution_budget, execution_pool), GIBIBYTE
+            resolved_execution = _resolve_execution_budget(
+                execution_budget, execution_pool
             )
-            resolved_spill = floored(
-                _resolve_budget(spill_budget, spill_pool, "spill_budget"), GIBIBYTE
-            )
+            resolved_spill = _resolve_budget(spill_budget, spill_pool, "spill_budget")
             resolved_scratch = _resolve_dynamic_scratch_reserve(
                 dynamic_scratch_reserve_bytes,
                 execution_budget=resolved_execution,
@@ -940,6 +937,25 @@ def _resolve_budget(value: int | None, pool: MemoryPool, name: str) -> int:
     return value
 
 
+def planned_execution_budget(pool: MemoryPool, execution_budget: int | None) -> int:
+    """The execution budget a plan against `pool` will actually be given.
+
+    Planning resolves a requested budget against the pool it will run in, so the
+    figure a plan is priced against is not always the figure that was asked for. A
+    caller reporting what it planned against asks here rather than repeating that
+    arithmetic.
+
+    Asking is also the only way to see a reduction *before* planning. A budget equal
+    to the pool's physical cap is the spelling for "the whole pool" -- the same thing
+    `None` means -- so it resolves to the derived capacity, which is smaller than the
+    cap by whatever runtime initialization carved out of it. A caller that meant "this
+    exact budget" gets the derived capacity instead, and nothing else in the plan says
+    so.
+    """
+
+    return _resolve_execution_budget(execution_budget, pool)
+
+
 def _resolve_execution_budget(value: int | None, pool: MemoryPool) -> int:
     """Resolve the common physical-cap spelling to suballocatable bytes.
 
@@ -1077,4 +1093,5 @@ __all__ = [
     "RuntimeRoute",
     "TransferCapabilities",
     "TransferProfile",
+    "planned_execution_budget",
 ]
