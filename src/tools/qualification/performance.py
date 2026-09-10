@@ -543,6 +543,15 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             "transfer_bytes_fetched": report.transfer_bytes_fetched,
             "physical_budget_statuses": physical_statuses,
             "physical_budget_passed": physical_passed,
+            "peak_process_physical_bytes": int(
+                execution_statistics.peak_process_physical_bytes
+            ),
+            # What the provider actually took outside the slab, which is what the
+            # configured provider headroom is a prediction of. Recorded so the
+            # prediction can be set from measurement rather than from a round number.
+            "observed_external_high_water_bytes": int(
+                execution_statistics.observed_external_high_water_bytes
+            ),
             "planning_spill_budget_bytes": planning_spill_budget,
             "calibration_attempts": calibration_attempts,
             "strict_runtime_passed": strict_runtime,
