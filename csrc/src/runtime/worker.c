@@ -142,9 +142,8 @@ static void complete_action(
     action->completed_generation = action->activation_generation;
     /*
      * Detach every per-invocation event while the action's object lock still
-     * protects its published fields.  The old implementation released the
-     * trigger fence first and cleared the pointer later, leaving a window in
-     * which another reader could retain or query freed storage.
+     * protects its published fields, so no concurrent reader can retain or
+     * query an event through a field that outlives its release.
      */
     ShadowSpillEventLease *trigger_event = action->trigger_event;
     ShadowSpillEventLease *completion_event = action->completion_event;
@@ -1370,7 +1369,7 @@ static int handle_newly_published_submission(ShadowSpillRuntime *runtime) {
 void *shadowspill_worker_main(void *pointer) {
     ShadowSpillRuntime *runtime = pointer;
     shadowspill_profiler_name_current_thread(
-        &runtime->backend, "shadowspill_worker"
+        &runtime->backend, "shadowspill.wkr"
     );
     while (atomic_load_explicit(
         &runtime->worker_stop, memory_order_acquire

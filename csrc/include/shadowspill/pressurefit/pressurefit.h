@@ -2,9 +2,9 @@
  * PressureFit: the search that ships with ShadowSpill.
  *
  * One implementation of the planning question <shadowspill/planner.h> poses.
- * It takes a ShadowSpillIndexedProblem, expands it into resolved programs,
- * places a schedule for each under a shared best-placed record, and answers
- * with the fastest schedule that the simulator accepts and physical admission
+ * It takes one ShadowSpillIndexedProblem per resolved program, places a
+ * schedule for each under a shared best-placed record, and answers with the
+ * fastest schedule that the simulator accepts and physical admission
  * certifies.
  *
  * Everything here is PressureFit's own: its options, its diagnostics, and the
@@ -121,7 +121,7 @@ typedef enum ShadowSpillPressureFitCandidateStatus {
     /* Every plan this candidate reached needed more contiguous pool than the
      * pool has. Its makespan was never the question: a plan with no layout
      * cannot run, so the candidate has no answer to offer. */
-    SHADOWSPILL_PRESSUREFIT_CANDIDATE_UNPLACEABLE = 7,
+    SHADOWSPILL_PRESSUREFIT_CANDIDATE_UNPLACEABLE = 6,
 } ShadowSpillPressureFitCandidateStatus;
 /* Categorized monotonic repair operations for one candidate evaluation. */
 typedef struct ShadowSpillPressureFitRepairDiagnostics {
