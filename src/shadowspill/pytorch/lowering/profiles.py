@@ -12,7 +12,6 @@ from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.compilation.layout import (
     CompiledTaskLayout,
     reconcile_compiled_task_layout,
-    replacement_transition_bytes,
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
@@ -172,16 +171,6 @@ class TaskProfileCatalog:
             self.contract(artifact),
             self.measurement(artifact, metadata_digest),
             self._root_allocations_for(artifact),
-        )
-
-    def mutation_transition_bytes(
-        self,
-        artifact: GraphArtifact,
-        metadata_digest: str | None = None,
-    ) -> int:
-        return replacement_transition_bytes(
-            self.contract(artifact),
-            self.layout(artifact, metadata_digest),
         )
 
     def additional_workspace_for_outputs(
