@@ -262,6 +262,15 @@ def main() -> int:
             f"--{tree}-store-mode",
             choices=("contribute", "reuse", "require", "refresh"),
         )
+        parser.add_argument(
+            f"--{tree}-store",
+            type=Path,
+            help=(
+                f"put the {tree} tree under this directory instead of the "
+                "per-cell artifact store, so a planner change can be measured "
+                "against a cold store without disturbing the shared one"
+            ),
+        )
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
@@ -365,6 +374,9 @@ def main() -> int:
                 mode = getattr(arguments, f"{tree}_store_mode")
                 if mode is not None:
                     command.extend((f"--{tree}-store-mode", mode))
+                root = getattr(arguments, f"{tree}_store")
+                if root is not None:
+                    command.extend((f"--{tree}-store", str(root)))
             if arguments.plan_only:
                 command.append("--plan-only")
             elif not arguments.checkpoint:
