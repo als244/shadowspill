@@ -15,8 +15,10 @@ plot_step_run(outcomes, "figures", tokens_per_step=65536)
 `plot_step_search()` takes a `StepSearchReport` and writes everything under
 `sim/`, which needs only a plan. `plot_step_run()` takes one
 `RunBudgetOutcome` per executed budget -- the prediction and the measurement
-side by side, each split into task compute, stall, the opening restore and the
-terminal tail -- and writes `real/`. Both write into the directory they are
+side by side, each split into task compute, stall, and what falls outside the
+task window, so that each side's parts sum to that side's step: the simulated
+step is the plan's makespan, and the measured step is the cycle, which carries
+an opening restore the simulator prices at zero -- and writes `real/`. Both write into the directory they are
 given and key nothing themselves, so what distinguishes one run from another
 is the caller's to choose: point a second run at a second directory.
 
@@ -158,11 +160,39 @@ median; `steps.csv` keeps the steps behind it, one row each, because a median
 cannot say whether a budget was steady or erratic.
 
 `search.json` is the report itself and is lossless: it is the same value
-`plot_step_search()` was handed, so the whole `sim/` tree can be rebuilt from it
-alone. The CSVs are its tidy view. There are three rather than one per figure
-because all but the ladder are projections of the same per-point row, and
-writing that row twenty times under different names would be twenty copies to
-disagree with each other.
+`plot_step_search()` was handed, and `StepSearchReport.load()` reads it back to
+an equal report, so the whole `sim/` tree can be rebuilt from it alone. The CSVs
+are its tidy view. There are three rather than one per figure because all but
+the ladder are projections of the same per-point row, and writing that row
+twenty times under different names would be twenty copies to disagree with each
+other.
+
+### `benchmarking/replot.py`
+
+Redraws a run's figures from its `raw_data/`, optionally over a subset of it,
+into a directory of your choosing. The source tree is only read.
+
+```bash
+python -m benchmarking.replot RAW_DATA OUTPUT
+python -m benchmarking.replot RAW_DATA OUTPUT --budget-gib 8,16,29
+python -m benchmarking.replot RAW_DATA OUTPUT --geometry 8x8,4x16 --resolution 3/4,1
+```
+
+`RAW_DATA` is a run's `raw_data/`, its `figures/` directory, or the run root --
+whichever is at hand. `OUTPUT` is created and filled exactly as a run fills one,
+`raw_data/` included, so a redraw can itself be redrawn and narrowed again.
+
+| filter | keeps | narrows |
+|---|---|---|
+| `--budget-gib 8,16,29` | those execution budgets, named as the axis names them, so `29` selects a 29.0137 GiB point | both trees |
+| `--geometry 8x8,4x16` | those geometries, as `microbatch x accumulation` | `sim/` |
+| `--resolution 0,1/4,1/2,3/4,1` | those recompute shares, as the search names them | the `sim/` figures drawn per graph-pair selection |
+
+Narrowing is subtraction only: nothing is recomputed, so every figure still
+draws numbers the search actually produced. Dropping a budget's winning
+geometry drops that budget rather than promoting a runner-up. A column an older
+run did not write reads as zero, so its figures still draw with the parts it did
+not record simply absent.
 
 ## Related
 
