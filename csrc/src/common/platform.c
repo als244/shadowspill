@@ -44,6 +44,7 @@ uint32_t shadowspill_logical_cpu_count(void) {
 #else
 
 #include <pthread.h>
+#include <string.h>
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
@@ -65,8 +66,18 @@ void shadowspill_name_current_thread(const char *name) {
         return;
     }
 #if defined(__linux__)
-    /* Linux caps the name at 16 bytes including the terminator. */
-    (void)pthread_setname_np(pthread_self(), "shadowspill.wkr");
+    /* Linux caps the name at 16 bytes including the terminator and refuses a
+     * longer one outright, which would leave the thread unnamed. Truncate
+     * instead, so a caller still gets the prefix of the name it asked for and
+     * two kinds of thread stay distinguishable in a profiler. */
+    char truncated[16];
+    size_t length = strlen(name);
+    if (length >= sizeof(truncated)) {
+        length = sizeof(truncated) - 1U;
+    }
+    memcpy(truncated, name, length);
+    truncated[length] = '\0';
+    (void)pthread_setname_np(pthread_self(), truncated);
 #endif
 }
 

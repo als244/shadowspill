@@ -5,6 +5,5 @@ from .training import TrainingExecutor
 
 __all__ = [
     "ForwardExecutor",
-    "StepDiagnostics",
     "TrainingExecutor",
 ]

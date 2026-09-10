@@ -127,7 +127,8 @@ class _AllocationLifetime:
 
 @dataclass(frozen=True, slots=True)
 class AdmissionPolicy:
-    """Conservative v1 leeway, kept explicit for reports and tests."""
+    """The margins and granularities admission reserves, named so a report
+    and a test can state them rather than rediscover them."""
 
     minimum_provider_headroom_bytes: int = 1280 * MIB
     provider_growth_margin_bytes: int = 64 * MIB
@@ -159,7 +160,7 @@ class AdmissionPolicy:
         if any(value <= 0 for value in positive):
             raise ValueError("admission ratios and granularities must be positive")
         if self.spill_leeway_percent < 0:
-            raise ValueError("host leeway percent must be non-negative")
+            raise ValueError("spill leeway percent must be non-negative")
 
 
 class AdmissionError(ValueError):
