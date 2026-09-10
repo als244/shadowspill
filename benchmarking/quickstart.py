@@ -376,7 +376,6 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
 def print_breakdown(report: Any, tokens: int) -> None:
     summary = report.summary
     simulated = summary.simulated_step_seconds
-    extra = simulated - summary.unconstrained_step_seconds
     print(rule("The chosen plan's breakdown"))
     print(f"  simulated step   {simulated:8.3f} s   {tokens / simulated:>10,.0f} tok/s")
     print(
@@ -385,8 +384,14 @@ def print_breakdown(report: Any, tokens: int) -> None:
         "   (cheapest graphs, no waiting)"
     )
     print()
-    print(f"  where the extra {extra:.3f} s goes, as shares of the step")
+    print(f"  where the simulated {simulated:.3f} s goes")
+    # `PlanSummary` identifies the step in four parts exactly; the terminal
+    # writeback folds in with the idle because the simulator prices it inside
+    # the same makespan. That is the same three the figures draw, so the
+    # console and the plots partition the step the same way, and the shares
+    # sum to the whole rather than to whatever is left over.
     for label, value in (
+        ("effective compute", summary.unconstrained_step_seconds),
         ("recomputation", summary.recomputation_overhead_seconds),
         (
             "stalled",
@@ -394,7 +399,7 @@ def print_breakdown(report: Any, tokens: int) -> None:
         ),
     ):
         share = value / simulated if simulated > 0 else 0.0
-        print(f"    {label:<22}{value:+8.3f} s  {bar(share)}  {share:6.1%}")
+        print(f"    {label:<22}{value:8.3f} s  {bar(share)}  {share:6.1%}")
     forced = summary.task_alternative_group_count - summary.flexible_group_count
     print(
         f"  recomputation chosen for {summary.recomputing_group_count}"
@@ -429,15 +434,31 @@ def print_breakdown(report: Any, tokens: int) -> None:
         f"  planning capacity  execution {gib(report.execution_budget_bytes)}"
         f"   spill {gib(report.spill_budget_bytes)}"
     )
+    # "assumed" is the rate the plan was priced against, which the summary
+    # carries: a measured rate is coarsened before it reaches the simulator, so
+    # it is not the profile's own figure. The profile holds what was measured.
     fetch, evict = report.fetch_profile, report.evict_profile
-    print(
-        f"  fetch bandwidth    {gb_s(fetch.bandwidth_bytes_per_second)} assumed"
-        f"   ({gb_s(fetch.solo_bandwidth_bytes_per_second)} solo)"
-    )
-    print(
-        f"  evict bandwidth    {gb_s(evict.bandwidth_bytes_per_second)} assumed"
-        f"   ({gb_s(evict.solo_bandwidth_bytes_per_second)} solo)"
-    )
+    for name, planned_rate, planned_latency_ns, profile in (
+        (
+            "fetch",
+            summary.fetch_bandwidth_bytes_per_second,
+            summary.fetch_latency_ns,
+            fetch,
+        ),
+        (
+            "evict",
+            summary.evict_bandwidth_bytes_per_second,
+            summary.evict_latency_ns,
+            evict,
+        ),
+    ):
+        print(
+            f"  {name} lane         {gb_s(planned_rate)} assumed,"
+            f" latency {planned_latency_ns / 1e3:.0f} us"
+            f"   (measured {gb_s(profile.bandwidth_bytes_per_second)} effective,"
+            f" {gb_s(profile.solo_bandwidth_bytes_per_second)} solo,"
+            f" latency {profile.latency_nanoseconds / 1e3:.1f} us)"
+        )
     print()
 
 
@@ -1206,6 +1227,17 @@ def main() -> int:
             # with that cycle in it.
             training.mark_cycle_end()
             report_cycles()
+            # Every cycle runs origin to next origin, so consecutive cycles
+            # tile the run: their sum is the span from the first step's start
+            # to the last one's end, and tokens over that span is the one
+            # throughput a boundary between steps cannot hide in. The per-step
+            # lines above each carry their own boundary as `opening`.
+            elapsed = sum(cycles.values())
+            plan_log.write(
+                f"  end to end {elapsed:8.3f} s"
+                f"   {len(cycles) * tokens_per_step / elapsed:>10,.0f} tok/s"
+                f"   ({len(cycles)} steps, every boundary included)\n"
+            )
             print()
             assert result.diagnostics is not None
             diagnostics = result.diagnostics.result()
