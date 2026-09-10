@@ -10,14 +10,16 @@ one is given an address.
 
 ## What is fixed, and at which level
 
-Four levels, each fixing something the level below varies:
+Two levels are universal, and each fixes something the level below varies:
 
 | level | per plan | fixed here | varies below |
 |---|---|---|---|
-| plan | 1 | program, admission topology, simulation config, pool capacity, alignment | which resolved program |
-| **resolved program** | one per resolution option | the executing task set, its runtimes and object accesses | which candidate policy |
-| candidate | one per policy tuple | residency strategy, fetch rule, coalescing | the target capacity |
-| probe | one per repair round | — | the repaired schedule |
+| plan | 1 | program, admission facts, simulation config, pool capacity, alignment | which resolved program |
+| **resolved program** | one per resolution option | the executing task set, its runtimes and object accesses | the schedule |
+
+Below the resolved program every level belongs to the search: whatever it
+divides its own work into — a policy, a capacity target, a repair round — fixes
+nothing this page describes and varies only the schedule.
 
 A **resolved program** is the program with every alternative fixed, leaving one
 concrete task set. Graph-pair selection is the frontend choice that produces
@@ -26,33 +28,33 @@ execute. A hand-authored program with no alternatives resolves to exactly one,
 and nothing below can tell the difference.
 
 Each resolved program is its own problem: nothing derived here — task set,
-template, topology, floor — is shared with another. What *is* shared is the
-answer. A plan placed under any resolved program bounds the search under every
-other, so they are dispatched together and prune against one another; see
-[workers and the unit of work](pressurefit.md#workers-and-the-unit-of-work).
+template, facts, floor — is shared with another. What *is* shared is the answer,
+because a plan placed under any resolved program bounds the search under every
+other. How the shipped search exploits that is [workers and the unit of
+work](pressurefit.md#workers-and-the-unit-of-work).
 
 ### The shared setup
 
 Everything a measurement needs that a schedule does not change is fixed per
-resolved program, so it is prepared once and reused across every candidate and
-every probe beneath it:
+resolved program, so it is prepared once and reused by every schedule beneath
+it:
 
 - the **selected task set**, with each task's runtime, workspace and object
   accesses;
 - the **compiled simulation template**, derived from that task set;
-- the **admission topology**, derived from the template — per-task
+- the **admission facts**, derived from the template — per-task
   allocation steps, fresh outputs, replacements, storage handoffs, alignment;
 - the **compute floor**, the critical path through the selected tasks, which
   no schedule for this resolved program can beat.
 
 Only the schedule varies below that, so a measurement is a function of the
-setup and one schedule. Rebuilding the setup per probe would cost far more
-than the measurement it serves, but the reason to hold it once is that it says
-plainly what a repair can and cannot change.
+setup and one schedule. Holding the setup once is what says plainly which
+quantities a new schedule can move and which it cannot.
 
 ### How the setup is built
 
-Two compilations, in order.
+Three compilations, in order. `build_admission_setup` does all three and
+returns the `AdmissionSetup` everything below indexes into.
 
 **1. Resolve the task set.** `selected_tasks(selections)` picks one variant per
 alternative, yielding the concrete tasks. Alternatives are *not* fewer or more
@@ -73,7 +75,7 @@ simulation config. It fixes the index space everything below uses:
 Every index in an operation — a task, an alias, an action — is an index into
 this space. Identifiers exist only here.
 
-**3. Compile the admission topology** against that template, flattening the
+**3. Compile the admission facts** against that template, flattening the
 per-task physical facts into arrays the walk indexes directly:
 
 | field | is |
@@ -89,10 +91,10 @@ per-task physical facts into arrays the walk indexes directly:
 
 Every `*_offsets` array holds `task_count + 1` entries: task *t*'s rows are
 `[offsets[t], offsets[t + 1])` of the flattened arrays. `allocation_slot_count`
-is smaller than the number of allocation steps, and the gap between the two is
-slot reuse — a task that frees a slot and reallocates it needs one lease, not
-two. That gap is why a lease is tied to its allocation step through the slot
-rather than through the operation sequence.
+is no larger than the number of allocation steps, and the gap between the two
+is slot reuse — a task that frees a slot and reallocates it needs one lease,
+not two. That gap is why a lease is tied to its allocation step through the
+slot rather than through the operation sequence.
 
 **Slots are assigned once, here, not during the walk.** Compiling the
 allocation rows walks each task's steps in order: a step that allocates
@@ -228,17 +230,16 @@ different routes and drawing on different budgets.
 
 **Caller-owned outputs.** The frontend declares them in `final_residency`;
 admission resolves each to its final lease, excludes it from the fixed slice,
-and counts it in `dynamic_reserve_bytes`. For a training step that is
-typically the loss the training loop reads, one scalar per accumulation
-round.
+and counts it in `dynamic_reserve_bytes`. For a training step those are the
+values the loop itself reads back.
 
 **Provider-owned persistent allocations.** Profiling classifies an allocation
 as provider state when it outlives its task and is not a returned tensor
-(`persistent_after_task and not output_leaf_indices`). Those are cuBLAS
-handles, kernel caches, RNG state: memory the provider keeps across calls,
-which the plan cannot place because it does not control when it is freed.
-They never enter the layout at all; their budget is `provider_headroom_bytes`,
-subtracted before the pool exists.
+(`persistent_after_task and not output_leaf_indices`). Library handles, kernel
+caches and generator state are all this: memory the provider keeps across
+calls, which the plan cannot place because it does not control when it is
+freed. They never enter the layout at all; their budget is
+`provider_headroom_bytes`, subtracted before the pool exists.
 
 Both reach the runtime as offset-free placements, and the projection rejects
 an allocation that claims both policies at once. The complete partition:

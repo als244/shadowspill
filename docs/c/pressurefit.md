@@ -82,14 +82,24 @@ needed more contiguous pool than the pool has.
 
 ## Functions
 
-- `shadowspill_pressurefit_search()` derives resolved problems from one or more
-  `ShadowSpillIndexedProblem`s and evaluates every policy for each. A problem
-  whose derivation fails — a resolved program that is analytically infeasible at
-  this capacity, say — carries that status on its own result, and the others are
-  evaluated together as if it were absent; the call's status is the evaluation's,
-  or the first refusal's when nothing could be derived. It takes a count, so
-  evaluating a single problem is passing one; there is no separate
-  single-problem entry point. A candidate of a problem is the unit of work and
+| Call | Arguments | Returns |
+|---|---|---|
+| `shadowspill_pressurefit_search` | `const ShadowSpillIndexedProblem *problems`, `uint32_t problem_count`, `const ShadowSpillPressureFitOptions *options`, `ShadowSpillPressureFitResult *results` (`problem_count` entries) | `ShadowSpillStatus` |
+| `shadowspill_pressurefit_preflight` | `const ShadowSpillIndexedProblem *problem`, `ShadowSpillPressureFitPreflightResult *result` | `ShadowSpillStatus` |
+| `shadowspill_pressurefit_result_destroy` | `ShadowSpillPressureFitResult *result` | `void` |
+| `shadowspill_pressurefit_best_placed_create` | none | `ShadowSpillPressureFitBestPlaced *` |
+| `shadowspill_pressurefit_best_placed_destroy` | `ShadowSpillPressureFitBestPlaced *best` | `void` |
+| `shadowspill_pressurefit_best_placed_read` | `const ShadowSpillPressureFitBestPlaced *best`, `ShadowSpillPressureFitBestPlacedRecord *record` | `void` |
+
+- `shadowspill_pressurefit_search()` takes one `ShadowSpillIndexedProblem` per
+  resolved program, derives each one's residency problem from its own program,
+  and evaluates every policy for each. A problem whose derivation fails — a
+  resolved program that is analytically infeasible at this capacity, say —
+  carries that status on its own result, and the others are evaluated together
+  as if it were absent; the call's status is the evaluation's, or the first
+  refusal's when nothing could be derived. It takes a count, so evaluating a
+  single problem is passing one; there is no separate single-problem entry
+  point. A candidate of a problem is the unit of work and
   every candidate of every problem competes for the same workers, so **worker
   count and problem count are independent** — asking for eight workers gets
   eight threads whether there is one resolved program or five. The threads
@@ -218,6 +228,18 @@ the objects the reducer cut to reach that step.
 Recording is off by default: it costs an allocation per candidate that grows
 with the search, which is worth paying when attributing planner time or
 explaining a plan and not otherwise.
+
+## Struct sizes
+
+`enum ShadowSpillPressureFitStruct` names this search's own structures for
+[`shadowspill_planner_struct_size()`](planner.md#functions):
+`SHADOWSPILL_PRESSUREFIT_STRUCT_` then `OPTIONS`, `WORK_DIAGNOSTICS`,
+`CANDIDATE_DIAGNOSTIC`, `SECTION_TIMING`, `REDUCTION_STEP`,
+`BEST_PLACED_RECORD` or `RESULT`. The values continue
+`enum ShadowSpillPlannerStruct` rather than restarting, so one call answers for
+the generic planner and for this search, and a caller mirroring these layouts —
+the Python bindings do — compares its sizes at load rather than discovering a
+mismatch as corrupted counters.
 
 ## Ownership
 

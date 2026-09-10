@@ -38,13 +38,16 @@ than including the drain.
 
 ## `InvocationTiming`
 
-| Field | Meaning |
-|---|---|
-| `step_number` | The completed step's number, as `StepResult.step_number`. |
-| `cycle_seconds` | Origin to the next origin or the end marker: the step's time. |
-| `opening_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and whatever the opening still held the stream for. |
-| `selected_span_seconds` | First task's compute start to the last task's compute end. |
-| `exposed_tail_seconds` | Last task's compute end to the cycle's end: terminal work the stream itself still did. |
+What one completed cycle measured. Every field is seconds except the step
+number.
+
+| field | type | meaning |
+|---|---|---|
+| `step_number` | `int` | The completed step's number, as `StepResult.step_number`. |
+| `cycle_seconds` | `float` | Origin to the next origin or the end marker: the step's time. |
+| `opening_delay_seconds` | `float` | Origin to the first task's compute start: the first task's readiness waits and whatever the opening still held the stream for. |
+| `selected_span_seconds` | `float` | First task's compute start to the last task's compute end. |
+| `exposed_tail_seconds` | `float` | Last task's compute end to the cycle's end: terminal work the stream itself still did. |
 
 `cycle_seconds == opening_delay_seconds + selected_span_seconds + exposed_tail_seconds`
 exactly, since each is a difference of two of the same events. Transfers

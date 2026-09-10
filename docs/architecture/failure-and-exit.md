@@ -37,11 +37,11 @@ program is still running and the worker is still able to make progress.
 ## A failure in the runtime
 
 `shadowspill_runtime_close` rejects new work, waits until two counters reach
-zero, synchronizes every transfer lane, joins the worker, and releases
-everything it owns. It is synchronizing and idempotent, and it returns the
-first latched failure. Draining is correct here because the process continues:
-outstanding transfers can still complete, and a caller may go on to use the
-memory they were writing into.
+zero or a failure is latched, synchronizes every transfer lane, joins the
+worker, and releases everything it owns. It is synchronizing and idempotent,
+and it returns the first latched failure. Draining is correct here because the
+process continues: outstanding transfers can still complete, and a caller may
+go on to use the memory they were writing into.
 
 The two counters are not the same kind of thing, which is what the next
 section turns on:

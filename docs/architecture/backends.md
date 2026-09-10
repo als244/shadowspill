@@ -60,12 +60,13 @@ would be making those decisions twice.
 
 ## Choosing a backend
 
-`Runtime(backend=None)`, the default, selects the one accelerator backend
-installed beside the ShadowSpill libraries and refuses to guess when there are
-several. A name resolves to `libshadowspill_backend_<name>.so` there, using the
-same lookup as the runtime library itself, and a path is used as given. The
-build selects which providers to compile the same way: every provider whose
-toolchain is installed, or the ones named in `SHADOWSPILL_BACKENDS`.
+`Runtime(backend=None)`, the default, requires exactly one accelerator backend
+installed beside the ShadowSpill libraries and refuses to guess otherwise; the
+mock is never a candidate, so it has to be named. A name resolves to
+`libshadowspill_backend_<name>.so` there, using the same lookup as the runtime
+library itself, and a path is used as given. The build selects which providers
+to compile the same way: every provider whose toolchain is installed, or the
+ones named in `SHADOWSPILL_BACKENDS`.
 
 ## Adding a provider
 

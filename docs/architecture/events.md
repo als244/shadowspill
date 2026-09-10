@@ -17,13 +17,17 @@ releasing a lease is a list operation and never a driver call.
 
 Cold plan adoption calls `shadowspill_runtime_reserve_event_leases()`, which
 grows the pool to the plan's requirement and creates the backend events up
-front, then seals it. After sealing, a request that finds no free lease is
-refused and counted rather than served by creating an event, and a lease
-record made outside the pool is never used on the task or worker path. The
-runtime statistics expose the pool's capacity, current and peak use,
-rejections, `event_lease_driver_creates`, and `event_lease_sealed`. A driver
-create after sealing is the signal worth watching: it means a steady-state
-step paid a cost the plan did not reserve.
+front, then seals it. Before sealing, a request the free list cannot serve is
+given a record outside the pool that creates its own event. After sealing that
+path is gone: a request that finds no free lease is refused and counted, so no
+steady-state step ever pays a driver call the plan did not reserve.
+
+The runtime statistics expose the pool's capacity, current and peak use,
+`event_lease_sealed`, `event_lease_growth_rejections`, and
+`event_lease_driver_creates` -- every backend event the pool has created, which
+after sealing only a further reservation can raise. A nonzero rejection count
+is the signal worth watching: it means a plan asked for more completions than
+it reserved.
 
 ## Completion tracking
 

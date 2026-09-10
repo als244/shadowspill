@@ -230,10 +230,11 @@ while the dispatcher is already running the next task.
 
 **The dispatcher never does the worker's work.** It does not wait for a copy,
 poll an event, or return a range, even when that would be convenient. An
-allocation that cannot be served waits on the pool for the worker to release
-something; it does not go and retire leases itself. This is why a stalled
-worker shows up as a blocked allocator rather than as a dispatcher that
-silently took over.
+allocation that cannot be served waits for the worker to return capacity to the
+pool, and leaves the wait when the pool's capacity epoch moves or when nothing
+is left to wait for ([memory runtime](memory-runtime.md)); it does not go and
+retire leases itself. This is why a stalled worker shows up as a blocked
+allocator rather than as a dispatcher that silently took over.
 
 The handshake is an active atomic poll on both sides. Neither thread enters a
 condition wait, a sleep, or a scheduler yield, because both are on the critical
@@ -282,12 +283,13 @@ which task triggers each. Those actions are not executed at `before_task`; they 
 the `after_task` of their trigger task, against object state as it is then.
 
 An action's destination lease is reserved before the batch is published, so a
-fetch that cannot fit is reported at the boundary that triggered it rather
-than somewhere inside the worker. That reservation is why `after_task` can
-return `NO_PROGRESS`: the trigger's fetch had nowhere to land and nothing was
-left to release for it. Coming up short is not fatal here — the fetch waits
-for room and is retried — and the simulator models the same wait, so a plan
-that comes up short is slower rather than rejected.
+fetch that cannot fit is reported at the boundary that triggered it rather than
+somewhere inside the worker. Coming up short is not itself fatal: the
+reservation keeps its priority, waits for the worker to return room, and
+retries, and the simulator models the same wait, so a plan that comes up short
+is slower rather than rejected. `after_task` returns `NO_PROGRESS` only when the
+pool could not hold the destination even after every pending release — the
+trigger's fetch had nowhere to land and nothing was left to free for it.
 
 ## Failure
 

@@ -1,32 +1,26 @@
 # ShadowSpill
 
 ShadowSpill turns a fixed-shape PyTorch forward or training step into a
-memory-budgeted callable. It coordinates tensor spilling, fetching, and
-recomputation while PyTorch continues to execute the numerical kernels.
+memory-budgeted callable: it decides what to keep on the device, what to spill
+and fetch back, and what to recompute, then proves the answer fits the declared
+pools before the step runs. PyTorch still executes every kernel.
 
 ## Installation
 
-From a fresh checkout:
-
 ```bash
-./scripts/setup.sh
+./scripts/setup.sh                                    # fresh checkout
+./scripts/setup.sh --python "$CONDA_PREFIX/bin/python" # existing environment
 ```
 
 The script creates `.venv`, installs the supported PyTorch and device-backend
-stack, builds the C planner, simulator, runtime, the backends and the PyTorch
-adapter, installs the mlops operation library, and verifies it. To use an
-existing environment:
-
-```bash
-./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
-```
+stack, builds the C library with its backends and the PyTorch adapter, installs
+the mlops operation library, and verifies it.
 
 ## Minimal example
 
 Initialize the runtime before model state exists, so its pools and routes are
-ready first. Planning declares what exists and each step supplies the values:
-`optimizer_state_init` says what optimizer state starts at, `hyperparams` names
-the values a step may change, and each call sets them.
+ready first. Planning declares what exists: `optimizer_state_init` says what
+optimizer state starts at, `hyperparams` names what a step may change.
 
 ```python
 import torch
@@ -72,10 +66,10 @@ train_step.close()
 ```
 
 One call performs one optimizer update. The
-[Python quickstart](docs/python/quickstart.md) covers accumulation,
-checkpoints, tracing, forward-only planning, and state lifecycle; the
-[quickstart script](benchmarking/quickstart.md) runs one model end to end,
-and the [examples](docs/examples/README.md) are complete workflows.
+[Python quickstart](docs/python/quickstart.md) covers accumulation, checkpoints,
+tracing, forward-only planning, and state lifecycle; the [quickstart
+script](benchmarking/quickstart.md) runs one model end to end, and the
+[examples](docs/examples/README.md) are complete workflows.
 
 ## Project structure
 
@@ -88,20 +82,21 @@ and the [examples](docs/examples/README.md) are complete workflows.
 | `benchmarking/` | The quickstart tour, program collection, and planning evaluation |
 | `qualification/` | Numerical and performance release gates |
 | `src/tools/` | Source-tree diagnostics and acceptance tooling |
-| `reference/` | Executable reference implementations of the planner |
+| `reference/` | Readable reference implementations of the planner |
 | `scripts/` | One-command environment setup |
 | `docs/` | Architecture, Python, C, examples, and development guides |
 
 ## Documentation
+
+[**docs/README.md**](docs/README.md) explains what the system does and links
+every page once. The shortest routes from here:
 
 | Topic | Start here |
 |---|---|
 | System architecture | [Architecture overview](docs/architecture/overview.md) |
 | Python usage and API | [Python documentation](docs/python/README.md) |
 | C components and APIs | [C documentation](docs/c/README.md) |
-| PressureFit planner | [PressureFit](docs/architecture/pressurefit.md) |
-| Graph-pair construction | [Graph-pair construction](docs/architecture/graph-pair-construction.md) |
-| Graph-pair selection | [Graph-pair selection](docs/architecture/graph-pair-selection.md) |
+| Plan search | [Plan search](docs/architecture/search.md), [PressureFit](docs/architecture/pressurefit.md) |
 | Physical admission | [Physical admission and offset handling](docs/architecture/physical-admission.md) |
 | Plan and step diagnostics | [Diagnostics guides](docs/python/plan-report.md) |
 | Serialized planning artifacts | [program and annotated-plan JSON](docs/python/planning-json.md) |

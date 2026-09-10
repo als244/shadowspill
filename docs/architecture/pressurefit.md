@@ -1,9 +1,9 @@
 # PressureFit
 
 PressureFit is the [search](search.md) ShadowSpill ships: one implementation
-of `SearchAlgorithm`, and the only one today. Everything the planner asks of
-any search is on that page, and the contract an implementer writes against is
-in [search algorithm](search-algorithm.md); this one is about how PressureFit
+of `SearchAlgorithm`, and the only one today. What the planner asks of any
+search is on that page, and what an implementer writes against is in [writing
+a search algorithm](search-algorithm.md); this page is how PressureFit
 answers.
 
 Given a [program](program.md), required initial and final residency, memory
@@ -17,9 +17,13 @@ chooses:
 - the minimum-makespan valid candidate among the bounded policies it
   evaluates.
 
-PressureFit does not capture graphs, inspect PyTorch tensors, partition a
-model, construct graph pairs, execute numerical kernels, or advance the
-runtime worker. It consumes only program facts and machine parameters.
+It does not capture graphs, inspect framework tensors, partition a model,
+construct graph pairs, execute kernels, or advance the runtime worker. It
+consumes program facts and machine parameters, and nothing else. The entry to
+it is `shadowspill.planner.search.algorithms.pressurefit`; what surrounds it
+-- turning a budget into a machine, keying the answer, holding it to a plan
+already in hand, admitting the winner -- belongs to `plan_program()` and is
+the same whichever search runs.
 
 ## Resolved programs, and who expands them
 
@@ -33,38 +37,12 @@ planning -- and in what order -- is a judgement about the search. PressureFit
 plans several and answers with the best across them, and the order is part of
 the algorithm: a plan admitted under any resolved program bounds the search
 under every later one. Which shares to expand is
-`PressureFitOptions.resolution_options`. See [ordering the
-resolutions](#trajectories).
+`PressureFitOptions.resolution_options`.
 
 Program and problem are not the same word here: the program is what the
 caller has, and the [problem](planning-problem.md) is the planning question
 derived from it -- residency, boundaries, capacities. One compiled problem is
 one resolved program.
-
-"PressureFit" names this search and nothing else. What surrounds it --
-turning a budget into a machine, keying the answer, holding it to a plan
-already in hand, admitting the winner -- belongs to `plan_program()` and is
-the same whichever search runs; see [plan search](search.md) and [planning
-orchestration](planning.md). The entry to the search itself is
-`shadowspill.planner.search.algorithms.pressurefit`.
-
-## Contract at a glance
-
-| Item | Contract |
-|---|---|
-| Primary input | One immutable `ShadowSpillProgram`, whose tasks are ordered and whose objects, aliases, profiles, and dependencies are valid. Its alternatives are expanded here into resolved programs, in the order they are searched. |
-| Boundary conditions | `initial_residency` and `final_residency` tuples of `ResidencySpec` values. |
-| Machine input | `SimulationConfig`: execution capacities, spill capacity, directional transfer bandwidths, and latencies. |
-| Planner input | `SearchOptions`: worker count, determinism, and the evict-eligibility floor. What every search is told. |
-| Search input | `PressureFitOptions`: resolution options, initial placement, residency strategies, fetch rules, coalescing, repair limit, capacity-refinement granularity, and write-back splitting. PressureFit's own, opaque to the planner. |
-| Optional physical input | `AdmissionFacts`: task allocation steps, output/replacement ownership, storage handoffs, pool capacity, and alignment. |
-| Output | `ProgramPlanResult`: selected task alternative, `MemorySchedule`, full `SimulationResult`, and structured diagnostics. |
-| Feasibility authority | The planner preflight, the simulator, and physical admission when an `AdmissionFacts` is supplied. |
-| Optimization scope | Minimum simulated makespan among the finite candidates actually generated and repaired, not a global optimum over all possible schedules. |
-
-`validate_schedule_feasibility()` performs a necessary-condition preflight on
-the program and its legal task selections. It does not validate an already
-annotated `MemorySchedule`; `simulate()` is the independent schedule validator.
 
 ## Inputs
 
@@ -99,72 +77,72 @@ Workspace is task-local. PressureFit subtracts task $i$'s workspace only at
 the boundary where that task's inputs, fresh outputs, and workspace must
 coexist. It does not subtract a global maximum workspace from every boundary.
 
-When physical admission is enabled, `AdmissionFacts.pool_capacity_bytes`
-is the complete execution-pool capacity, while
-`AdmissionFacts.object_capacity_bytes` is the current logical capacity
-offered to PressureFit. Physical refinement may reduce the latter without
+An optional `AdmissionFacts` carries the pool a layout must fit: task
+allocation steps, output and replacement ownership, storage handoffs, pool
+capacity and alignment, all defined by [physical
+admission](physical-admission.md). Its `pool_capacity_bytes` is the complete
+execution-pool capacity and its `object_capacity_bytes` the logical capacity
+offered to PressureFit; physical refinement may reduce the latter without
 changing the former.
 
-### Search controls
+### What it is told
 
-The default `SearchOptions` evaluate two residency-strategy labels
-(`headroom-stall` and `tight-stall`), four fetch-trigger rules, and
-ordinary/coalesced emission: 16 candidate policies per resolved program. The
-two transfer strategies stay available and off by default: a
-transfer strategy differs from its stall twin only in how it accounts for
-transfers already in flight, and the plans the two reach are the same far
-more often than not, so the default buys half the search for the rare small
-win. Coalescing stays in: joining adjacent transfers changes what the
-simulator sees, and the coalesced twin does win on its own.
+Two records reach the search, the halves of a `SearchOptions`.
+`GenericPlanningOptions` is what any search is told; `PressureFitOptions` is
+PressureFit's own, carried into the plan key and read by nothing else. The
+[planner API reference](../python/api/neutral.md) gives each field's type and
+meaning; the defaults are:
 
-`split_write_backs` lets a plan that has simulated split an eviction that
-held something up, described under
-[split](#split-clean-early-release-late). It widens what the search may
-consider rather than deciding anything: the split plan is simulated and kept
-only if it is faster and still places.
+| option | default |
+|---|---|
+| `initial_placement` | `InitialPlacement.GREEDY` |
+| `resolution_options` | every quarter, `0` through `1` |
+| `residency_strategies` | `("headroom-stall", "tight-stall")` |
+| `fetch_rules` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` |
+| `evaluate_coalesced` | `True` |
+| `max_repair_attempts` | `256` |
+| `capacity_refinement_bytes` | `256 MiB` |
+| `record_reduction_steps` | `False` |
+| `split_write_backs` | `False` |
 
-`capacity_refinement_bytes` decides how much capacity a plan gives back when
-its layout does not fit the pool, 256 MiB by default. Stepping costs rounds
-and buys plan quality; zero hands back the whole shortfall and converges in
-the fewest rounds. Capacity is a property of a
-plan, not of the search — two candidates can answer at different capacities in
-the same call — and it is described in
-[physical admission](physical-admission.md).
+The first three axes are the candidate set: two strategies, four fetch rules
+and ordinary/coalesced emission are 16 candidate policies per resolved
+program. The strategies and rules outside that default remain valid explicit
+options, and naming more of them widens the set, every member of which is
+searched; [built-in candidate policies](#built-in-candidate-policies) is what
+each one does.
 
-`record_reduction_steps` turns on the per-candidate trajectory described
-under [Trajectories](#trajectories). It changes nothing about the search.
+Each remaining option is defined by the section of the cycle that reads it:
+`initial_placement` under [prepare](#prepare-deriving-the-residency-problem),
+`max_repair_attempts` under
+[repair](#repair-moving-a-transfer-or-making-room-for-one),
+`capacity_refinement_bytes` under
+[place](#place-measuring-whether-the-layout-fits), `split_write_backs` under
+[split](#split-clean-early-release-late), and `record_reduction_steps` under
+[trajectories](#trajectories).
 
-`minimum_object_bytes_evict_eligible` takes objects out of the search: one
-smaller than it is never cut, so it is never evicted and fetched mid-step.
-Every lease of such an object gets a static home in the
-[resident slice](fixed-placement.md#the-resident-slice), whose size is known
-at preparation and taken out of the capacity given to the reducer. The
-default is 1 MiB, the size below which a copy is latency-bound and its bytes
-hardly relieve a boundary; zero exempts nothing, which is what a caller
-planning byte-sized objects wants.
-
-Candidates place layouts and publish what they place to a shared record, so
-which plans are worth measuring depends on what has already been placed. That
-makes the search order-dependent by default. Scoping a record per search does
-not remove that: one record is shared by every resolved program dispatched
-concurrently within a call.
+`minimum_object_bytes_evict_eligible`, from the generic half, takes objects out
+of the search entirely: one smaller than it is never cut, so it is never
+evicted and fetched mid-step, and every lease of it gets a static home in the
+[resident slice](fixed-placement.md#the-resident-slice) instead.
 
 `deterministic` is how a caller gets a reproducible answer without giving up
-its workers. The placement gate then consults only the candidate's own placed
-plans instead of the shared record, so every outcome is a pure function of
-that candidate's inputs and any worker count answers the same. It costs wall
-time, because the shared bound is what lets a candidate skip measuring a plan
-that cannot win. `workers=1` is reproducible too, and slower still.
+its workers. Candidates publish what they place to a shared record, so which
+plans are worth measuring depends on what has already been placed, and the
+search is order-dependent by default -- one record is shared by every resolved
+program dispatched within a call. Under `deterministic` the placement gate
+consults only the candidate's own placed plans instead, so every outcome is a
+pure function of that candidate's inputs and any worker count answers the
+same. It costs wall time, because the shared bound is what lets a candidate
+skip measuring a plan that cannot win. `workers=1` is reproducible too, and
+slower still.
 
-A problem may carry the plan to beat: a plan for that resolved program
-already in hand, found at a smaller capacity, say. The search measures it at
-this capacity before any candidate runs — simulated, admitted, placed against
-the pool — and answers with it unless a candidate does strictly better, so a
-search handed one never answers worse than it. A plan that fits in less
-memory fits in more, which is what lets a budget sweep hand each budget the
-best plan found below it and plan monotonically in memory. In the default
-mode the plan also seeds the shared record, so every candidate measures
-against it from the start; in deterministic mode it changes only the answer.
+A problem may also carry the plan to beat. PressureFit measures it at this
+capacity before any candidate runs -- simulated, admitted, placed against the
+pool -- and, in the default mode, seeds the shared record with it so every
+candidate measures against it from the start; under `deterministic` it changes
+only the answer. [Plan search](search.md#what-the-planner-promises) states the
+guarantee this serves.
 
 ### Workers and the unit of work
 
@@ -172,29 +150,22 @@ The unit of work is one **(resolved program, candidate) pair**. A worker takes
 the next pair, evaluates it to completion, and takes another, so a worker that
 draws a cheap candidate never waits on the problem it came from.
 
-That granularity is what makes worker count and problem count independent.
+That granularity is what makes worker count and problem count independent:
 `workers` sizes the threads whether the call was given one resolved program or
-five: eight workers means eight threads either way. The threads belong to the
-call, so two callers planning at once get their own and do not contend.
-`workers=0` takes one per logical CPU; `workers=1` evaluates every pair on the
-calling thread.
+five, and the threads belong to the call, so two callers planning at once do
+not contend. Problems are searched in the order they are passed, and putting
+them in one call is what shares the placement record between them -- the
+pruning that makes searching several together cheaper than searching each
+alone.
 
-Ordering is the caller's: problems are searched in the order they are passed,
-and the array order *is* the policy. Putting them in one call is also what
-shares the placement record between them, so a plan placed under any resolved
-program bounds the search under every other — which is the pruning that makes
-searching several together cheaper than searching each alone.
-
-Worker count is scheduling, not an input to the search: it changes neither
-which plans are legal nor how they simulate. It does change how much of the
-search is skipped, because a candidate is skipped when the record already
-holds something it cannot beat. Per-candidate counters such as
-`placements_attempted` therefore move with worker count, and so can the choice
-between plans that tie.
-
-Because workers interleave, a problem's `work.sections` is the sum of what its
-candidates did rather than the time the call took; `started_ns`/`finished_ns`
-are the elapsed-time counterpart, and [Output](#output) describes both.
+Worker count changes neither which plans are legal nor how they simulate, but
+it does change how much of the search is skipped, because a candidate is
+skipped when the record already holds something it cannot beat. Per-candidate
+counters such as `placements_attempted` therefore move with worker count, and
+so can the choice between plans that tie. Because workers interleave, a
+problem's `work.sections` is the sum of what its candidates did rather than the
+time the call took; `started_ns`/`finished_ns` are the elapsed-time
+counterpart.
 
 ## Output
 
@@ -202,26 +173,29 @@ are the elapsed-time counterpart, and [Output](#output) describes both.
 decision:
 
 - `program`, `initial_residency`, `final_residency`, and `simulation_config`;
+- `search_options`: the generic options, the search that ran, and its own
+  options;
 - selected `selections` for any program alternatives;
-- selected `schedule` with initial placement and ordered release, offload, and
-  prefetch actions;
+- selected `schedule`: initial placement and ordered fetch, release,
+  write-back and evict actions;
 - full `simulation`, including makespan, task/transfer intervals, and peaks;
 - `diagnostics`, including every problem and candidate outcome, repair counts,
   the work each did and the sections its time went to, when each ran
   (`started_ns`/`finished_ns`, nanoseconds from the start of the call, so
   candidates that overlap ran at the same time), schedule digests, capacity
-  refinements, and — when asked for — each candidate's reduction trajectory;
+  refinements, and -- when asked for -- each candidate's reduction trajectory;
 - the original `admission_facts`, when supplied.
 
-The Python API uses `fetch`/`evict` as serialized action names. In
-explanatory text, these are fetch and evict, respectively.
+`validate_schedule_feasibility()` is the separate necessary-condition
+preflight on a program and its legal task selections. It does not validate an
+already annotated `MemorySchedule`, which is `simulate()`'s job.
 
 ## Mathematical formulation
 
 ### Selected task sequence and boundaries
 
 Let $r\in\mathcal R(P)$ be one legal task selection exposed by program $P$.
-Most Programs have a singleton set. For one $r$, let
+Most programs have a singleton set. For one $r$, let
 
 \[
 \mathcal T_r=(\tau_0,\ldots,\tau_{n-1})
@@ -387,13 +361,12 @@ and then either keeps what it got or repairs it and goes again. Everything
 else — preparing the problem, setting up the workspace, adopting a winner —
 happens once, around that cycle.
 
-The sections below are that structure, and the names are load-bearing: they
-are the same names the diagnostics report, the plan JSON carries, and
-`PlanningSectionTiming` measures — `ShadowSpillPressureFitSectionTiming` across
-the C ABI. A section is a disjoint span of work opened and closed by the
-function that orchestrates it, so the time they account for sums exactly to
-the time the step took. Reading a plan's timing and reading this page are the
-same activity.
+The section names below are load-bearing: they are the names the diagnostics
+report, the plan JSON carries, and `PlanningSectionTiming` measures —
+`ShadowSpillPressureFitSectionTiming` across the C ABI. A section is a disjoint
+span opened and closed by the function that orchestrates it, so the named
+sections plus `residual_ns` sum exactly to the time the step took. Reading a
+plan's timing and reading this page are the same activity.
 
 ```text
 per resolved program:  prepare -> setup -> [ per strategy ] -> select -> teardown
@@ -404,23 +377,18 @@ per candidate:         ( emit -> simulate -> repair
 
 ### Before the cycle: preflight and problem construction
 
-For every resolved program, the planner derives anchors, fresh-output
-reservations, and per-boundary capacity. At least one problem must fit its
-required anchor/output floor. This catches an individual task
-whose required inputs, outputs, and workspace cannot coexist, before any
-candidate search happens. A resolved program that fails this derivation is
-reported as infeasible on its own result; the others are evaluated together
-as if it were absent, so a resolution that cannot fit at a capacity never
-silences the ones that can, and a program whose every resolution fails it
-is infeasible at that capacity.
+The resolved programs are expanded first, one problem each, ordered
+most-recomputed first; [graph-pair selection](graph-pair-selection.md)
+documents the training-specific policy that built the alternatives they fix.
 
-The resolved programs are expanded here, from the alternative groups the
-program carries: the finite set of legal selections, ordered
-most-recomputed first. The training-specific policy that constructs the
-alternatives is documented separately in [Graph-pair
-selection](graph-pair-selection.md). Each selection becomes one
-resolved program and one problem here. Deciding which resolved programs exist,
-and in what order to try them, belongs above this search and never inside it.
+For every resolved program, the planner then derives anchors, fresh-output
+reservations and per-boundary capacity, and at least one problem must fit its
+required anchor/output floor -- which catches a task whose inputs, outputs and
+workspace cannot coexist before any candidate search happens. A resolved
+program that fails the derivation is reported infeasible on its own result and
+the others are evaluated as if it were absent, so a resolution that cannot fit
+never silences the ones that can; a program whose every resolution fails it is
+infeasible at that capacity.
 
 ### Prepare — deriving the residency problem
 
@@ -446,10 +414,9 @@ from the search: the floor and the pressure do not count them, the cut index
 has no entries for them, greedy placement skips them, and the emitter issues
 each fetch at the trigger the slice was sized for, so no fetch rule can move a
 lifetime the slice was sized without. Every extent placement measures includes
-the slice. Where the slice sits in the final layout, and why these objects get
-static homes rather than a place in the main assignment, is
-[fixed-offset placement](fixed-placement.md#the-resident-slice). A slice the
-device cannot hold is a preflight failure of its own.
+the slice, and a slice the device cannot hold is a preflight failure of its
+own. [Fixed-offset placement](fixed-placement.md#the-resident-slice) says where
+the slice sits in the final layout.
 
 ### Setup — schedule facts and the candidate workspace
 
@@ -485,15 +452,14 @@ Reductions are not cached. A repair trajectory cuts aliases monotonically,
 so a candidate never returns to a residency it has already reduced; every
 candidate pays its own reductions, the cost lands in `reduce_ns`, and
 reductions a repair forces later are charged to the repair that forced
-them, because that is what they cost. A reduction's fingerprint — a
-128-bit hash of the packed residency — is what the later stages key on.
+them. A reduction's fingerprint — a 128-bit hash of the packed residency —
+is what the later stages key on.
 
-What a worker keeps is small and bounded. The last sixteen emitted
-schedules are held in a ring keyed by residency fingerprint, fetch rule,
-coalescing mode, and headroom; re-emission is recency-local, and an evicted
-schedule is emitted again. Simulated outcomes are kept by the schedule's
-digest with only their scalar results, so a schedule that recurs across
-candidates is not simulated twice.
+What a worker keeps is small and bounded: the last sixteen emitted schedules,
+in a ring keyed by residency fingerprint, fetch rule, coalescing mode and
+headroom, so re-emission is recency-local and an evicted schedule is emitted
+again. Simulated outcomes are kept by schedule digest with only their scalar
+results, so a schedule that recurs across candidates is not simulated twice.
 
 ### Emit — turning residency gaps into an ordered schedule
 
@@ -527,7 +493,7 @@ ending the simulation, as [simulation](simulation.md#trigger-time-capacity)
 specifies. A plan that comes up short is therefore slower, not
 rejected, and it reaches the rest of the cycle with a real makespan and a
 `device-capacity` stall recording what it waited for. What still fails is a
-plan over budget before it starts, an offload with no room in the spill pool,
+plan over budget before it starts, a copy with no room in the spill pool,
 and a plan that can never make room, which deadlocks.
 
 ### Repair — moving a transfer, or making room for one
@@ -542,30 +508,23 @@ For a repairable admission failure, the candidate tries, in order:
 For a repairable simulator capacity failure it first delays an implicated
 fetch, then adds simulator-observed boundary pressure and reduces again. A
 plan that simulated but waited for memory is repaired the same way: the
-shortfall it recorded stands in for an error, so a plan that merely stalls
-takes the same path a plan that failed does. This is the difference that
-matters most in practice — a plan that runs while waiting is valid but not
-finished, and the waiting is time it pays.
+shortfall it recorded stands in for an error, because a plan that runs while
+waiting is valid but not finished, and the waiting is time it pays.
 
 A pressure repair asks the reducer for the shortfall the simulator measured.
 When the next simulation comes up short at the same task and the same moment,
 the room the reducer made did not become room where the simulator looks —
 copies still in flight hold it, or the emitter packed the freed bytes again —
 so a repeat asks for twice what the last round asked, up to the task's whole
-request. Asking for the same bytes again would emit the same plan again, which
-is how a candidate spends its whole repair budget at one task without moving.
-An ask that no cut can meet is taken back for a plain ask, so a candidate is
-only ever slower for having asked for more, never lost to it. A new capacity
-round starts its count of repeats afresh.
+request; asking for the same bytes would emit the same plan and spend the
+whole repair budget without moving. An ask that no cut can meet is taken back
+for a plain ask, so a candidate is only ever slower for having asked for more.
+A new capacity round starts its count of repeats afresh.
 
-Every change is monotonic and counts against `max_repair_attempts`, 256 by
-default. A non-capacity contradiction is rejected directly. A move the
-schedule already carries is not repeated, because repeating it would loop.
-
-The default is generous on purpose: a candidate that runs out of repairs
-answers with what it has, and the plans that need the most repairs are the
-ones where memory is tightest, which are the plans most worth finishing.
-It buys that with planning time, which is what the workers pay for.
+Every change is monotonic and counts against `max_repair_attempts`. A
+non-capacity contradiction is rejected directly. A move the schedule already
+carries is not repeated, because repeating it would loop. A candidate that
+runs out of repairs answers with what it has.
 
 Reductions this section triggers are measured inside it, so `repair_ns`
 answers what the repair machinery actually costs rather than what its
@@ -579,39 +538,32 @@ necessarily there.
 
 An eviction only costs time when something is waiting for the room it frees,
 and the room is not free until the copy has landed. A simulated plan says
-exactly where that happened: every task and transfer interval carries the time
-it was ready, the time it started, and a mask naming what it waited for. An
-eviction whose copy overlaps a wait for device capacity is split in two: a
-`WRITE_BACK` at the boundary where the object was last written, and a
-`RELEASE` where the eviction was, which costs nothing because the spill copy
-is already current by then.
+where that happened: every task and transfer interval carries the time it was
+ready, the time it started, and a mask naming what it waited for. An eviction
+whose copy overlaps a wait for device capacity is split in two: a `WRITE_BACK`
+at the boundary where the object was last written, and a `RELEASE` where the
+eviction was, which costs nothing because the spill copy is already current by
+then.
 
 The last write is where the copy goes because it is the earliest boundary at
 which the copy is correct, and so the furthest from the boundary that was
-waiting for it. Nothing here chooses a time on the lane. The simulator owns
-the lane, and when several copies move at once it is the simulator that prices
-the queue they form -- a pass that fitted copies into idle time it had
-measured before the split would be reading a lane that no longer exists.
+waiting for it. Nothing here chooses a time on the lane: the simulator owns
+it, and prices the queue several copies form when they move at once.
 
 Residency is untouched, so the device copy lives exactly as long as it did and
-device capacity does not move. What does move is when the spill copy is
-written, which is why the split is a proposal rather than a decision: the plan
-is simulated again, and it is kept only if the makespan improved. A plan that
-did not improve is put back as it was, which the simulation memo prices
-without work. So is a plan a configured pool then refuses to place, because a
-faster schedule that does not fit is not an answer, and it must not cost the
-candidate the answer it had.
+device capacity does not move. What moves is when the spill copy is written,
+which is why the split is a proposal rather than a decision: the plan is
+simulated again and kept only if the makespan improved. A plan that did not
+improve is put back as it was — which the simulation memo prices without work
+— and so is one a configured pool then refuses to place.
 
-Evictions nothing waited on are left alone. Moving such a copy spends lane
-time and holds spill capacity longer to buy nothing, and the plan carries an
-extra action for it. Two more are never split whatever waited: one whose
-object keeps no spill copy, because releasing such an object frees the spill
-copy as well, so the split would throw away exactly what the write-back wrote;
-and one whose object no task wrote before it, because then the spill copy was
-already current and the emitter would have released rather than evicted.
-
-`split_write_backs` selects this, off by default until the corpora say what it
-is worth.
+Evictions nothing waited on are left alone: moving such a copy spends lane
+time, holds spill capacity longer and adds an action, to buy nothing. Two more
+are never split whatever waited: one whose object keeps no spill copy, because
+releasing it frees the spill copy too and the split would throw away exactly
+what the write-back wrote; and one whose object no task wrote before it,
+because then the spill copy was already current and the emitter would have
+released rather than evicted.
 
 ### Digest — naming the schedule
 
@@ -628,12 +580,11 @@ extent is the constraint the machine actually imposes, and it is the more
 expensive of the two to answer, so the search answers it as rarely as it can.
 
 The shared best-placed record is what makes that affordable. A plan no better
-than one already placed cannot become the answer, so it is never measured;
-`admits()` is a single atomic read, and the measurement behind it happens
-only for plans that could still win. Every plan that could still win *is*
-measured, though — skipping on any other ground can leave a candidate that
-never placed anything at all, and a candidate with no placed plan has no
-answer to give.
+than one already placed cannot become the answer, so it is never measured:
+`admits()` is a single atomic read, and the measurement behind it happens only
+for plans that could still win. Every plan that could still win *is* measured,
+though — skipping on any other ground can leave a candidate with no placed
+plan, and such a candidate has no answer to give.
 
 A plan whose layout fits is offered to the shared record and kept as this
 candidate's answer if it beats what the candidate already placed. A plan whose
@@ -653,12 +604,10 @@ that is choosing an answer, so it is reported as `select_ns` — the same
 section the problem level uses for adopting its winner.
 
 With a pool to place into, the answer is the best plan whose layout fit — not
-the fastest plan simulated. A plan that cannot be placed cannot run, so
-offering it as an answer only pushes the rejection to a layer that would have
-to walk capacity down to escape it. A candidate that placed nothing reports
-`unplaceable`. Without a pool there is nothing to place into, and the
-candidate answers with its fastest plan, which is what a caller that supplied
-no topology can be told.
+the fastest plan simulated, because a plan that cannot be placed cannot run
+and offering it only pushes the rejection to a layer that would have to walk
+capacity down to escape it. A candidate that placed nothing reports
+`unplaceable`. Without a pool the candidate answers with its fastest plan.
 
 ### Select — adopting the winner and materialising it
 
@@ -673,12 +622,6 @@ caller's full capacity, which is the machine the plan will actually run on. A
 plan built against a reduced capacity was *chosen* on how it behaves there,
 but the reported timeline and the certificate measure the real machine.
 
-The planning store keeps the same promise across runs. The plan in hand is
-provenance rather than part of a request's identity, so a request reads back
-the plan its search chose whatever it was handed; a stored plan that the plan
-in hand claims to beat is searched again with it and replaced only when the
-new answer is faster under this request.
-
 ### Teardown
 
 Releasing everything the evaluation held. Small, and named so that the time
@@ -691,13 +634,8 @@ than only its outcome: one `ReductionStep` per plan it held, carrying that
 plan's makespan, the bytes its layout needed, the capacity it was built
 against, the objects the reducer cut to reach it, the repair count, and what
 became of it — simulated, measured, placed, refined, best so far, or the
-answer. The steps in order are the search itself, which is what a question
-like "why is this plan slower than the one at a larger budget" is actually
-asking about.
-
-Recording is off by default: it costs an allocation per candidate that grows
-with the search, worth paying when attributing planner time or explaining a
-plan and not otherwise.
+answer. The steps in order are the search itself, which is what "why is this
+plan slower than the one at a larger budget" is really asking about.
 
 ## Pseudocode
 
@@ -706,71 +644,45 @@ over what it produced.
 
 ```text
 PressureFit(program, initial, final, machine, options, admission):
-    require the planner and simulator ABIs
-    resolved = ordered_legal_task_selections(program, options.resolution_options)
+    resolved = ordered_resolutions(program, options.resolution_options)
     require some selection's anchor/output floor to fit
-
     best_placed = shared record, empty
 
-    for each resolved program:                      # all in one call, in order
-        prepare:  problem = compile_indexed_problem(resolved, machine, admission)
-                  seed    = required_anchor_hulls(problem)
-                  if options.initial_placement == GREEDY:
-                      seed = preplace_fitting_spill_objects(seed)
-        setup:    facts, workspace = schedule_facts(problem), allocate()
-        incumbent: if the caller handed in a plan for this resolved program:
-                      result = simulate(plan, admit(plan))
-                      if place_lifetimes(result) fits the pool:
-                          best_placed.offer(name, plan); winner = plan
+    for each resolved program:                 # all in one call, in order
+      prepare: problem = compile_indexed_problem(resolved, machine, admission)
+               seed    = required_anchor_hulls(problem), greedily extended
+      setup:   facts, workspace = schedule_facts(problem), allocate()
+      if the caller handed in a plan for this resolved program:
+               measure it here, and offer it to best_placed if it places
 
-        for strategy in options.residency_strategies:
-            reduce:  base = reduce_until_analytic_pressure_fits(seed, strategy)
+      for strategy in options.residency_strategies:
+        reduce: base = reduce_until_analytic_pressure_fits(seed, strategy)
 
-            for fetch_rule in options.fetch_rules:
-                for coalesced in enabled_coalescing_modes:
-                    residency = base
-                    capacity  = machine.object_capacity
-                    placed    = none
+        for fetch_rule, coalesced in options.fetch_rules x coalescing_modes:
+          residency, capacity, placed = base, machine.object_capacity, none
+          loop:                                # the candidate cycle
+            emit:     schedule = emit_actions(residency, fetch_rule,
+                                              coalesced, recorded_constraints)
+                      stop if a recorded constraint cannot hold
+            simulate: result = simulate(schedule, admit(schedule))
+            repair:   if admission refused, or it did not simulate:
+                          move the fetch, else add the measured deficit at the
+                          failing boundary and reduce; continue, or stop
+            digest:   name = schedule_digest(schedule)
+            place:    if best_placed.admits(result.makespan) and name is new:
+                          extent = place_lifetimes(result)
+                          if extent fits the pool:
+                              best_placed.offer(name, schedule)
+                              placed = better_of(placed, result)
+                          else:
+                              capacity -= min(overrun, refinement)
+                              residency = reduce(seed, strategy, given_back)
+                              continue
+            settle:   if result never waited for memory, or no repairs remain:
+                          answer with placed, or unplaceable
+                      otherwise keep the plan and repair again
 
-                    loop:                            # the candidate cycle
-                        emit:      schedule = emit_actions(
-                                       residency, fetch_rule, coalesced,
-                                       recorded_constraints)
-                                   if a constraint cannot hold: stop
-
-                        simulate:  result = simulate(schedule, admit(schedule))
-
-                        repair:    if admission refused the schedule:
-                                       advance or delay the fetch, else add the
-                                       deficit at the failing boundary and reduce
-                                       continue, or stop when nothing is left
-
-                        if result did not simulate:
-                            repair:  delay the fetch, else add boundary pressure
-                                     and reduce; continue, or stop
-                            continue
-
-                        digest:    name = schedule_digest(schedule)
-
-                        place:     if best_placed.admits(result.makespan)
-                                          and name not already measured:
-                                       extent = place_lifetimes(result)
-                                       if extent fits the pool:
-                                           best_placed.offer(name, schedule)
-                                           placed = better_of(placed, result)
-                                       else:
-                                           capacity -= min(overrun, refinement)
-                                           residency = reduce(seed, strategy,
-                                                              pressure=given_back)
-                                           continue
-
-                        settle:    if result never waited for memory
-                                          or no repairs remain:
-                                       answer with placed, or unplaceable
-                                   otherwise keep the plan and repair again
-
-    select:   winner = best_placed.read()
-              return materialize(winner, at machine.object_capacity)
+    select: return materialize(best_placed.read(), at machine.object_capacity)
 ```
 
 ## Built-in candidate policies
@@ -783,20 +695,19 @@ The three candidate axes have separate responsibilities:
    enqueued; it does not decide whether the gap exists.
 3. Coalescing optionally removes a clean release/fetch pair at one boundary.
 
-No row in the tables below is assumed to dominate another. PressureFit emits
-the resulting schedule, applies physical admission when configured, and lets
-the simulator measure the combined compute, lane, readiness, and capacity
-effect.
+No row in the tables below dominates another. PressureFit emits the resulting
+schedule, applies physical admission when configured, and lets the simulator
+measure the combined compute, lane, readiness and capacity effect.
 
 ### Residency strategies
 
 | Strategy | Cut score | Early-fetch headroom | Effect on PressureFit behavior |
 |---|---|---:|---|
-| `headroom-stall` | Minimize estimated exposed stall first | Yes | Charges each fetched span one boundary early while reducing pressure. This may create more or different gaps so early destination reservations fit, trading object residency or transfer traffic for fewer admission conflicts and less exposed readiness stall. |
-| `headroom-transfer` | Prefer cuts that avoid write-back before other tie-breaks | Yes | Uses the same conservative early-fetch charge, but removes the stall estimate from the first score position. It tends to favor clean releases and lower eviction work even when another cut has a better local overlap estimate. |
-| `tight-stall` | Minimize estimated exposed stall first | No | Fits only the current logical residency/output pressure. It may retain more useful residency than a headroom candidate, but later trigger-time fetch reservations can expose pressure that admission or simulation must repair. |
-| `tight-transfer` | Prefer cuts that avoid write-back before other tie-breaks | No | Combines tight logical accounting with the transfer-oriented cut order. It can reduce eviction traffic, while accepting greater risk that selected gaps or fetch timing expose stall or trigger-time capacity pressure. |
-| `relaxed-stall` (not in the default portfolio) | Minimize estimated exposed stall first | No | Currently maps to the same reduction controls as `tight-stall`, so it produces no distinct pressure behavior unless another implementation control is added. It remains a separate candidate identity in diagnostics. |
+| `headroom-stall` | Minimize estimated exposed stall first | Yes | Charges each fetched span one boundary early, so it cuts more or differently to leave room for early destination reservations: residency and transfer traffic traded for fewer admission conflicts and less readiness stall. |
+| `headroom-transfer` | Prefer cuts that avoid write-back before other tie-breaks | Yes | The same early-fetch charge with the stall estimate out of first position, so it favors clean releases and lower eviction work over local overlap. |
+| `tight-stall` | Minimize estimated exposed stall first | No | Fits only the current logical residency/output pressure. It may retain more useful residency, but trigger-time fetch reservations can then expose pressure that admission or simulation must repair. |
+| `tight-transfer` | Prefer cuts that avoid write-back before other tie-breaks | No | Tight accounting with the transfer-oriented cut order: less eviction traffic, more risk that the gaps or fetch timing expose stall or trigger-time pressure. |
+| `relaxed-stall` (not in the default portfolio) | Minimize estimated exposed stall first | No | The same reduction controls as `tight-stall`, so it produces no distinct pressure behavior until another control is added. It stays a separate candidate identity in diagnostics. |
 
 Headroom accounting charges a fetched residency span one boundary earlier
 than its logical entry. It is conservative boundary accounting, not a transfer
@@ -807,11 +718,11 @@ simulator and admission model's responsibility.
 
 | Rule | Mechanical behavior | Expected pressure/latency tradeoff |
 |---|---|---|
-| `packed-fifo` | Work backward from consumer deadlines while packing each device's single fetch lane; earlier fetches account for residual occupancy left by later packed work. | Seeks lane utilization and overlap across the complete reload set. It may enqueue a destination earlier than capacity permits, so admission can delay it or force another residency cut. |
-| `packed-fit` | Start with packed FIFO triggers, then move implicated triggers later until their early destination occupancy fits analytic capacity where possible. | Reduces trigger-time capacity pressure relative to unconstrained packing, at the cost of less transfer lead time and potentially more consumer stall. |
-| `interval-entry` (not in the default portfolio) | Extend each later residency span toward earlier boundaries while exact analytic capacity fits, then place fetches with packed FIFO. | Uses otherwise idle object capacity to create more transfer lead time. It can hide latency, but increases how long fetched destinations occupy execution memory. |
-| `latest-safe` | Independently subtract each fetch's duration from its ideal consumer deadline and choose the latest task boundary no later than that time. | Limits early residency for each object, but does not jointly pack the FIFO. Several individually safe choices may queue behind one another and expose lane-induced consumer stall. |
-| `demand` | Trigger at the final legal enqueue boundary, normally immediately before the first consumer. | Minimizes pre-consumer destination occupancy and is often capacity-friendly, but deliberately exposes most or all fetch latency when the object is not already ready. |
+| `packed-fifo` | Work backward from consumer deadlines while packing each device's single fetch lane; earlier fetches account for the residual occupancy later packed work leaves. | Lane utilization and overlap across the whole reload set. It may enqueue a destination earlier than capacity permits, so admission can delay it or force another cut. |
+| `packed-fit` | Packed FIFO triggers, then implicated ones moved later until their early destination occupancy fits analytic capacity. | Less trigger-time capacity pressure than unconstrained packing, at the cost of lead time and possibly consumer stall. |
+| `interval-entry` (not in the default portfolio) | Extend each later residency span toward earlier boundaries while exact analytic capacity fits, then place fetches with packed FIFO. | Spends idle object capacity on transfer lead time: latency hidden, destinations resident longer. |
+| `latest-safe` | Subtract each fetch's duration from its ideal consumer deadline independently and take the latest boundary no later than that. | Least early residency per object, but no joint packing: individually safe choices can queue behind one another and stall a consumer. |
+| `demand` | Trigger at the final legal enqueue boundary, normally immediately before the first consumer. | Least pre-consumer occupancy and usually capacity-friendly, but exposes most or all fetch latency when the object is not already ready. |
 
 These rules choose enqueue boundaries, not wire start timestamps. The fetch
 lane remains FIFO, and destination capacity is reserved at the trigger even if
@@ -854,18 +765,20 @@ infeasibility across those resolved programs was not established.
 | Layer | Responsibility |
 |---|---|
 | `shadowspill.planner.search.algorithms.pressurefit` | The search object: input validation, expanding the program into resolved programs and ordering them, and the admission facts stamped onto the answer. It hands every resolution to one call and owns no threads. |
-| `shadowspill.planner.search.algorithms.pressurefit.search` | Projecting each resolution into the planner ABI, the preflight that drops the ones that cannot fit, and merging the results into one answer. |
-| `csrc/src/planner/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
-| `csrc/src/planner/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `csrc/src/planner/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
+| `…pressurefit.search` | Projecting each resolution into the planner ABI, the preflight that drops the ones that cannot fit, and merging the results into one answer. |
+| `csrc/src/planner/search/algorithms/pressurefit/problem.c` | Compiling one indexed problem from the projected arrays. |
+| `…/pressurefit/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
+| `…/pressurefit/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
+| `…/pressurefit/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
+| `…/pressurefit/best_placed.c` | The shared record of the best plan the search has placed. |
 | `csrc/src/planner/admission/` | Physical allocation and causal-reuse admission. |
-| `csrc/src/planner/best_placed.c` | The shared record of the best plan any search has placed. |
 | `shadowspill.simulator` / `csrc/src/simulator` | Independent schedule replay and makespan authority. |
 
-The production path requires the planner and simulator. Readable
-Python implementations live only under `reference/python/pressurefit` and
-`reference/python/simulator`; they are differential-test oracles and do not
-silently replace a missing or ABI-incompatible library.
+The production path requires the compiled planner and simulator and fails
+closed on a missing or ABI-incompatible library. Readable Python
+implementations live only under `reference/python/pressurefit` and
+`reference/python/simulator`; they are differential-test oracles and never
+silently replace the library.
 
 Previous: [Writing a search algorithm](search-algorithm.md). Next:
 [Physical admission and offset handling](physical-admission.md).

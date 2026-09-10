@@ -72,13 +72,14 @@ is transfer time.
 The simulator has its own clock, which starts when the first task starts.
 The step diagnostics shift it so that the first selected task starts at
 zero, and report when that task's kernels actually started on the device as
-`first_task_started_at_seconds`: the step's prologue. Every invocation pays it,
-because a step ends by writing its final objects back and begins by
-restoring its initial ones, and the simulator does not price it. Every delta
-between a simulated and a measured time is taken after that shift, so it
-reads as drift within the step, and the prologue is read once rather than
-repeated in every delta; see [step boundaries](step-boundaries.md) for what
-the boundary regions contain.
+`first_task_started_at_seconds`: the step's prologue. Every invocation pays it
+— the previous invocation's drain, input staging, and the opening restore of
+the first task's inputs — and the simulator prices none of it, because its
+clock begins where that work ends. Every delta between a simulated and a
+measured time is taken after the shift, so it reads as drift within the step
+and the prologue is read once rather than repeated in every delta; see [step
+boundaries](step-boundaries.md) for what the boundary regions contain and
+which of them the makespan does charge for.
 
 ## The step: origin to origin
 
@@ -96,15 +97,16 @@ The cycle partitions exactly into three parts, each a difference of two of
 the events:
 
 ```text
-cycle = head wait + selected span + exposed tail
+cycle = opening delay + selected span + exposed tail
 ```
 
-The head wait is origin to span start: the first task's readiness waits and
+The opening delay is origin to span start: the first task's readiness waits and
 whatever the opening still held the stream for. The selected span is the
 tasks. The exposed tail is span end to the next origin: terminal work the
 stream itself still did. Transfers that drained on the lanes meanwhile are
 not in the cycle, because they cost the step nothing; a later invocation
-that has to wait for them pays in its own head, where the cost belongs.
+that has to wait for them pays in its own opening delay, where the cost
+belongs.
 
 The events are created once per callable and reused round-robin, so an
 invocation creates nothing; reading a cycle waits for the closing event and

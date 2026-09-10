@@ -110,12 +110,6 @@ structured no-progress status.
   the retained object record.
 - `shadowspill_write_object()` and `shadowspill_read_object()` copy
   bytes through a declared pool route.
-- `shadowspill_plan_publish_initial_allocation()` publishes cold residency
-  through one plan-local object binding.
-- `shadowspill_task_publish_allocation()` atomically publishes a task output
-  or replacement generation through a predecoded publication ordinal.
-- `shadowspill_transfer_acquired_object_to_caller()` hands an acquired terminal
-  generation to caller ownership while preserving stream readiness.
 - `shadowspill_object_snapshot()` returns a lock-consistent diagnostic view as
   a `ShadowSpillObjectSnapshot`, whose `residency` is a
   `ShadowSpillObjectResidency`: spill-only, execution-ready, fetching,
@@ -204,8 +198,18 @@ runtime's pool, route, event, and object owners:
   readiness waits, without opening a task or allocation scope.
 - `shadowspill_transfer_acquired_object_to_caller()` transfers one acquired
   ordinal after atomically validating its expected address and generation.
-- `shadowspill_plan_admit_fixed_layout()` and
-  `shadowspill_plan_seal_fixed_layout()` install the plan's physical layout.
+- `shadowspill_plan_admit_fixed_layout()` copies and validates one
+  `ShadowSpillFixedLayoutDescription` -- the slice, its
+  `ShadowSpillFixedPlacementDescription` entries, each carrying a
+  `ShadowSpillFixedPlacementKind`, and the
+  `ShadowSpillFixedDependencyDescription` proofs behind every reused address --
+  and reserves the single parent slice.
+  `shadowspill_plan_seal_fixed_layout()` resolves the task and action
+  identities after task admission and makes the layout immutable. Allocation
+  callbacks then validate task, ordinal, size and ownership before returning
+  the admitted offset. See [physical admission and offset
+  handling](../architecture/physical-admission.md) for the layout certificate
+  and the offset coordinate systems.
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
 - `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
   task scopes, submitted actions, and task-owned retirements. Other plans on
@@ -229,19 +233,6 @@ waiting uses monotonic atomics and `cpu_relax`, not the runtime-global lifecycle
 condition variable.
 Initial placement and caller-output acquisition use their dedicated handles;
 they never impersonate execution tasks or allocate per-invocation identities.
-
-Physical placement is installed with `shadowspill_plan_admit_fixed_layout()`,
-which copies and validates one `ShadowSpillFixedLayoutDescription` -- the
-slice, its `ShadowSpillFixedPlacementDescription` entries, each carrying a
-`ShadowSpillFixedPlacementKind`, and the
-`ShadowSpillFixedDependencyDescription` proofs behind every reused address --
-and reserves the single parent slice. `shadowspill_plan_seal_fixed_layout()`
-resolves the task and action identities after task admission and makes the
-layout immutable. Allocation
-callbacks then validate task/ordinal/size/ownership before returning the
-admitted offset.
-See [Physical admission and offset handling](../architecture/physical-admission.md)
-for the layout certificate and offset coordinate systems.
 
 ## Telemetry and failure
 

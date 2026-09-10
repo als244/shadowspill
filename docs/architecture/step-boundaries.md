@@ -76,14 +76,14 @@ synchronization points:
    restore for every entry in the schedule's initial device residency.
    The submitting thread records a compute-stream event that triggers the
    batch, hands it to the worker, and returns once the worker has issued
-   every copy in it onto the strict-FIFO fetch lane. The batch is not
-   part of the schedule's actions: it re-establishes the schedule's
-   assumed starting state rather than executing the schedule. A restore
-   requires a current spill copy and no device copy — and for a parameter
-   the step mutated, the spill copy only becomes current when its
-   writeback completes. The restore therefore cannot start ahead of the
-   drain even in principle; the ordering is a data dependency, not a
-   scheduling choice.
+   every copy in the batch onto the fetch lane. The batch is not part of
+   the schedule's actions: it re-establishes the schedule's assumed
+   starting state rather than executing the schedule. A restore requires a
+   current spill copy and no device copy — and for a parameter the step
+   mutated, the spill copy only becomes current when its writeback
+   completes. The restore therefore cannot start ahead of the drain even
+   in principle; the ordering is a data dependency, not a scheduling
+   choice.
 4. **First task boundaries.** Each task's `before_task` inserts
    stream-ordered waits for inputs still in flight and for the ranges its
    allocations reuse (see [Task boundaries](task-boundaries.md)). The
@@ -122,11 +122,12 @@ convention.
 
 ## Restore order
 
-The opening restore is a background batch on the fetch lane: it is not part
-of the schedule, so the lane dispatches it only within the configured window
-of bytes in flight, and any transfer the plan schedules is served ahead of
-whatever of it is still undispatched (see
-[transfers](transfers.md#dispatch)).
+The opening restore is a background batch on the fetch lane: it is not part of
+the schedule, so the lane dispatches it only within the configured window of
+bytes in flight, and any transfer the plan schedules is served ahead of whatever
+of it is still undispatched (see [transfers](transfers.md#dispatch)). The window
+therefore also bounds how fast the batch is issued, which is the submitting
+thread's wait above.
 
 The batch — and the fixed-layout destinations paired with it position by
 position — is ordered by the program's first consuming task: aliases the
@@ -146,8 +147,8 @@ number:
   event one invocation records before its first task to the origin the
   next invocation records, on the device clock
   ([timelines](timelines.md#the-step-origin-to-origin)). It contains the
-  head (the first task's readiness waits and whatever the opening still
-  held the stream for), every task, and the terminal work the stream
+  opening delay (the first task's readiness waits and whatever the opening
+  still held the stream for), every task, and the terminal work the stream
   itself did; it does not contain transfers that drained on the lanes
   while nothing waited for them. Repeated invocations divide into whole
   cycles by construction, and a loop's last step is closed by an end
@@ -166,18 +167,20 @@ number:
   and tail and blind to the opening region. With the restore in first-use
   order the unmodeled cost is bounded by the first task's own inputs plus
   the plan-idle and staging waits above, rather than by the size of the
-  initial device set. Charging the tail assumes back-to-back invocation —
-  the regime qualification measures, and the one where the planner must
-  see terminal cost so it keeps hiding writebacks behind late compute. A
-  caller with between-step work of its own hides part of the tail and may
-  subtract the separately reported tail from the prediction; the makespan
-  itself does not guess at caller behavior.
+  initial device set. Charging the tail assumes back-to-back invocation,
+  which is the regime in which the planner must see terminal cost so it
+  keeps hiding writebacks behind late compute. A caller with between-step
+  work of its own hides part of the tail and may subtract the separately
+  reported tail from the prediction; the makespan itself does not guess at
+  caller behavior.
 
 The [StepResult diagnostics guide](../python/step-diagnostics.md) exposes
 each piece: the first task's readiness wait is reported on its own,
 outside every span-relative number; the simulated terminal tail is
 reported beside the makespan; and dispatch timing separates the plan-idle
-wait and the restore submission from task dispatch.
+wait and the restore submission from task dispatch. The cycle's own
+partition is `opening_delay_seconds`, `selected_span_seconds` and
+`exposed_tail_seconds` ([timing](../python/api/timing.md)).
 
 Previous: [Task boundaries](task-boundaries.md). The
 [simulation](simulation.md) page defines the prediction this cycle is

@@ -1,15 +1,19 @@
 # Physical admission and offset handling
 
-Physical admission proves that one selected logical schedule can be assigned
-real ranges inside its configured memory pools without unsafe overlap. It runs
-after [PressureFit](pressurefit.md) has selected tasks, residency, and memory
-actions, and before an executable callable is published.
+Physical admission proves that one logical schedule can be assigned real ranges
+inside its configured memory pools without unsafe overlap. It runs after a
+search has chosen tasks, residency and memory actions, and before an executable
+callable is published.
 
-PressureFit answers:
+Admission is search-agnostic. It takes a schedule and the facts about the
+machine it must fit, and certifies that pair; which search produced the
+schedule, and how, is not part of the question. [PressureFit](pressurefit.md)
+is the search that ships, and nothing on this page is specific to it.
+
+A search answers:
 
 > Which objects should be resident, and when should release, write-back,
-> evict, and fetch
-> actions trigger?
+> evict, and fetch actions trigger?
 
 Physical admission answers:
 
@@ -17,14 +21,14 @@ Physical admission answers:
 > task allocation, and fetch destination, and what completion proof protects
 > each reused range?
 
-The current PyTorch path uses a fixed layout for schedule-managed execution
-memory plus bounded dynamic regions for caller-owned terminal outputs and
-optional scratch. The spill pool remains dynamically allocated and is checked
-against its simulated physical peak.
+The answer is a fixed layout for schedule-managed execution memory plus bounded
+dynamic regions for caller-owned terminal outputs and optional scratch. The
+spill pool is dynamically allocated and is checked against its simulated
+physical peak.
 
 Runtime-global shared leases lie outside a callable's physical layout. Their
-bytes are subtracted before constructing the callable-owned pool slice, while
-diagnostics preserve both the shared footprint and residual movable capacity.
+bytes are subtracted before the callable-owned pool slice is constructed, while
+diagnostics keep both the shared footprint and residual movable capacity.
 Admission never assigns a second offset or transfer destination to a shared
 alias.
 
@@ -45,12 +49,13 @@ It returns `FixedLayoutAdmission`, which contains:
 - a `FixedPhysicalLayout` with placements and causal reuse dependencies;
 - a `SimulationAdmission` projection of the physical certificate;
 - a new `SimulationResult` that includes the added dependencies;
-- stable digests tying the layout to its program, schedule, and topology.
+- stable digests tying the layout to its program, schedule, and facts
+  (`program_digest`, `schedule_digest`, `facts_digest`).
 
 ### Measuring and certifying are separate steps
 
-Admission answers two questions of very different cost, and the entry points
-above compose two that can also be called on their own.
+`build_fixed_layout_admission` is the entry point that returns the above, and it
+composes two halves of very different cost that can also be called on their own.
 
 `measure_fixed_layout` replays the schedule into leases, gives each a
 lifetime, and places them. It returns a `FixedLayoutMeasurement` carrying
@@ -70,31 +75,31 @@ A caller searching over schedules measures many and certifies only what it
 keeps.
 
 The admitted layout is pointer-free. Runtime materialization translates its
-semantic IDs to contiguous task, action, and object indices only after the execution
-plan has been resolved.
+semantic IDs to contiguous task, action, and object indices only after the
+execution plan has been resolved.
 
 ## Capacity accounting
 
 Let:
 
 - $B_e$ be the public execution-memory budget;
-- $F$ be process-persistent execution bytes excluded before callable
-  admission, including initialized provider state and profiled retained
-  provider/custom-operation growth;
+- $F$ be the process-persistent execution bytes excluded before callable
+  admission — the driver's baseline and provider-owned state, itemized by
+  field under [two things called
+  dynamic](admission-leases.md#two-things-called-dynamic);
 - $H$ be runtime-global shared execution-resident bytes;
 - $P=B_e-F-H$ be the callable's physical execution-pool capacity;
-- $C$ be the logical object capacity presented to PressureFit;
+- $C$ be the logical object capacity presented to the search;
 - $B_s$ be the public spill-memory budget.
 
-The `AdmissionFacts` records both $P$ and $C$. The difference $P-C$ is
-capacity leeway (`pytorch.planning.common.capacity_leeway`). PressureFit
-subtracts each selected task's actual workspace only at that task boundary; it
-does not reserve a monolithic workspace partition at every boundary, and the
-leeway is not such a partition either.
+`AdmissionFacts` records both $P$ and $C$. The difference $P-C$ is capacity
+leeway (`pytorch.planning.common.capacity_leeway`). A search subtracts each
+selected task's actual workspace at that task's boundary; neither it nor the
+leeway is a monolithic workspace partition reserved at every boundary.
 
-The leeway exists because the two stages bound different quantities.
-PressureFit bounds *instantaneous* occupancy: composing the capacity with the
-per-boundary workspace subtraction gives
+The leeway exists because the two stages bound different quantities. A search
+bounds *instantaneous* occupancy: composing the capacity with the per-boundary
+workspace subtraction gives
 
 \[
 \text{objects}(b) + \text{workspace}(b) \le C \quad\text{at every boundary } b,
@@ -102,21 +107,19 @@ per-boundary workspace subtraction gives
 
 while admission must place a *fixed-offset extent* $L$ that is larger whenever
 overlapping lifetimes prevent two leases from sharing an offset. A layout whose
-excess $L - C$ fits inside the leeway is admitted with no refinement
-attempt; anything larger is what the per-candidate capacity refinement
-below resolves during the search.
+excess $L - C$ fits inside the leeway is admitted with no refinement attempt;
+anything larger is what [capacity refinement](#capacity-refinement) resolves
+during the search.
 
 `PhysicalAdmission.workspace_reserve_bytes` is a separate quantity: the
 contiguous workspace allowance the pool must be able to serve. It is validated
 against the slab and reported, but it is not subtracted from $P$ and does not
-define $C$.
-
-The leeway is nonetheless derived from that allowance: it is whatever the
-allowance holds above the peak task workspace — a quarter of that peak under
-the default 5/4 policy, with a 512 MiB floor and 2 MiB rounding that bind
-instead of the ratio for small peaks. That derivation is historical rather
-than principled, since the excess the leeway absorbs is a property of lifetime
-overlap and not of workspace.
+define $C$. The leeway is derived from that allowance — it is whatever the
+allowance holds above the peak task workspace, a quarter of that peak under the
+default 5/4 policy, with a 512 MiB floor and 2 MiB rounding that bind instead
+of the ratio for small peaks. The excess the leeway absorbs is a property of
+lifetime overlap rather than of workspace, so the derivation bounds it only
+approximately.
 
 For one fixed layout, let:
 
@@ -144,17 +147,18 @@ Spill admission is separate:
 \operatorname{simulated\_spill\_peak} \le B_s.
 \]
 
-The current spill allocator does not receive fixed per-object offsets. Its
-dynamic pool enforces the cap while the simulator and runtime action ledger
-check the selected spill traffic and residency.
+The spill allocator receives no fixed per-object offsets. Its dynamic pool
+enforces the cap while the simulator and runtime action ledger check the
+selected spill traffic and residency.
 
-## Admission topology
+## Admission facts
 
 `AdmissionFacts` is the framework-neutral, immutable physical description
 shared by candidate evaluation and layout construction. Each
 `TaskAdmissionSpec` describes:
 
-- the exact anonymous live-set peak derived from its allocation trace;
+- the simultaneously-live anonymous allocation extents derived from its
+  allocation trace;
 - fresh persistent output aliases;
 - mutation-replacement aliases;
 - zero-copy storage handoffs;
@@ -165,19 +169,39 @@ Allocation steps contain charged bytes, an allocation ordinal, optional output
 ownership, and any same-task ordinal reuse. They contain no observed pointer
 and no planned offset.
 
-There is no synthetic physical sequence. Creating an executable topology
+There is no synthetic physical sequence. Creating an executable set of facts
 requires an explicit trace for every structural profile, including an
 explicitly empty trace for a task that performs no allocation. Workspace
 extents are computed from the trace after persistent outputs and replacements
 are identified; returned but unretained tensors therefore remain anonymous
 workspace for their real lifetime. A nonempty workspace, fresh output, or
-replacement without corresponding allocation steps fails before PressureFit.
+replacement without corresponding allocation steps fails before the search
+runs.
 
-A hand-authored logical `ShadowSpillProgram` can still use PressureFit and the simulator
+A hand-authored logical `ShadowSpillProgram` can still be planned and simulated
 without an `AdmissionFacts`. It becomes executable only after a frontend
-provides complete physical evidence. The serialized topology uses only the
-current `shadowspill.admission_facts/v1` schema; older synthetic forms are
-rejected rather than migrated.
+provides complete physical evidence. The serialized facts use the
+`shadowspill.admission_facts/v1` schema; anything else is rejected.
+
+### What every problem embeds
+
+Certifying a schedule, digesting it, and replaying it through the pool are the
+same questions whichever search produced the schedule, so those entry points
+take a `ShadowSpillScheduleContext` rather than any search's own problem
+struct. It carries the machine (`simulation`), the facts a schedule must fit
+(`admission`), the same facts supplied for placement alone (`placement`), and
+the alias and task names identifiers are written under.
+`ShadowSpillIndexedProblem` is the generic problem a search is handed, and it
+embeds one context, so a search passes the context down and generic code never
+sees the search's own structures.
+
+`admission` and `placement` hold the same facts and are deliberately separate
+fields: supplying `admission` switches on the dynamic-pool replay, which is a
+stricter question that rejects schedules a dependency-certified fixed placement
+accepts. A search prefiltering through it would discard plans that would have
+run. `placement` is the same description without that prefilter; NULL leaves
+plans unplaced, which is how a caller opts out of measuring layouts during a
+search.
 
 ## From a schedule to physical lifetimes
 
@@ -188,15 +212,15 @@ matters when reading anything below.
 
 A **memory action** is a decision the *plan* makes about moving an object:
 `fetch`, `write_back`, `evict`, or `release`, each triggered at a task
-boundary. Actions belong to the `MemorySchedule` and are what PressureFit
-chooses ([IR](ir.md#memory-schedule)). Admission accounts for the three that
-move or free execution memory; a write-back takes a spill destination and
-frees nothing, so it changes no execution lease.
+boundary. Actions belong to the `MemorySchedule` and are what a search chooses
+([IR](ir.md#memory-schedule)). Admission accounts for the three that move or
+free execution memory; a write-back takes a spill destination and frees
+nothing, so it changes no execution lease.
 
 A **pool operation** is an allocator call that *executing* the plan implies:
 `RESERVE`, `ACQUIRE`, `ACQUIRE_RESERVED`, `BEGIN_RETIREMENT`,
 `COMPLETE_RETIREMENT`, `RELEASE`, `PUBLISH_DEPENDENCY`. Operations belong to the
-admission script and are what the production `MemoryPool` policy replays.
+admission script and are what the `MemoryPool` policy replays.
 
 The relationship is one-to-many and the two vocabularies share no kind names.
 There are several operations to every action, because a single fetch
@@ -287,12 +311,11 @@ If two predicted lifetimes overlap, their byte ranges must be disjoint:
 [o_i,o_i+s_i)\cap[o_j,o_j+s_j)=\varnothing.
 \]
 
-The deterministic placer orders leases by decreasing size, decreasing count
-of distinct simulated timeline boundaries spanned, earlier start, and lowest
-input index; it never sees lease identity. It assigns the lowest aligned gap
-not occupied by an overlapping lifetime. The maximum range end is $L$. This
-is a deterministic packing heuristic; admission proves its result fits but
-does not claim that $L$ is the minimum possible extent over every placement.
+The placer is deterministic and never sees lease identity. It assigns the
+lowest aligned gap not occupied by an overlapping lifetime, and the maximum
+range end is $L$. This is a packing heuristic: admission proves its result
+fits but does not claim that $L$ is the minimum possible extent over every
+placement.
 
 Predicted time alone is never the safety proof. After placement, admission
 examines each physical range in causal birth order. Whenever a successor
@@ -308,7 +331,7 @@ faster than simulation without making shared-address reuse unsafe.
 ## Causal reuse dependencies
 
 Most task-allocation reuse is already ordered by the single compute stream.
-Cross-lane reuse needs an explicit edge. The current physical projection emits
+Cross-lane reuse needs an explicit edge. The physical projection emits
 `MemoryReuseDependency` values when an eviction-completion event protects a
 range later used by:
 
@@ -423,16 +446,14 @@ pointer reaches a backend kernel.
 
 ## Capacity refinement
 
-A PressureFit schedule may satisfy logical boundary capacity yet require a
-fixed extent larger than $P$: boundary capacity bounds what is live at an
-instant, while the extent is what the address assignment spans. The second is
-the constraint that decides whether a plan can run, so the search measures it
-itself rather than leaving it to a later layer.
+A schedule may satisfy logical boundary capacity yet require a fixed extent
+larger than $P$: boundary capacity bounds what is live at an instant, while the
+extent is what the address assignment spans. The second is the constraint that
+decides whether a plan can run, so a search measures it itself rather than
+leaving it to a later layer.
 
-Each candidate receives the pool topology as `placement` facts, distinct from
-`admission`: supplying `admission` switches on the dynamic-pool replay, which
-rejects schedules that a dependency-certified fixed placement accepts. With
-`placement` in hand a candidate, on reaching a plan that could still win:
+With `placement` facts in hand a search, on reaching a plan that could still
+win:
 
 1. derives the operations the schedule implies and their lease lifetimes;
 2. places those lifetimes and reads back the extent, adding the leases that
@@ -440,31 +461,26 @@ rejects schedules that a dependency-certified fixed placement accepts. With
 3. if that fits the pool, offers the plan to the shared best-placed record;
 4. otherwise gives capacity back and plans again.
 
-Capacity is therefore a property of a plan, not of the search: two candidates
-can answer at different capacities in the same call, and neither one's
-shortfall costs the other anything. A candidate answers with the best plan it
-placed; one that never placed a plan is `unplaceable` and has no answer, since
-a plan with no layout cannot run whatever its makespan.
+Capacity is therefore a property of a plan, not of the search: two plans can
+be answered at different capacities in the same call, and neither one's
+shortfall costs the other anything. A plan with no layout cannot run whatever
+its makespan, so a search that never placed one has no answer to give.
 
-Giving capacity back reaches the two stages that *shape* a plan and neither
-of the two that *measure* it. The reducer charges it as uniform boundary
-pressure, and the schedule emitter measures its fetch windows and evictions
-against it — a plan emitted against the original capacity packs fetches the
-smaller one cannot hold, and comes back from the simulator having run out of
-memory rather than merely tight. The simulator itself always runs at the
-capacity the caller described, because that is the machine the plan will run
-on: timed at anything else, its makespan and the lease lifetimes derived from
-its timeline belong to a plan that will never execute, and the certificate
-below would disagree with the search that chose it.
+The simulator always runs at the capacity the caller described, because that is
+the machine the plan will run on: timed at anything else, its makespan and the
+lease lifetimes derived from its timeline belong to a plan that will never
+execute, and the certificate would disagree with the search that chose it.
+Reduced capacity therefore reaches only the stages that *shape* a plan, never
+the ones that *measure* it.
 
-How much a plan gives back at a time is `capacity_refinement_bytes`, 256 MiB
-by default. The extent does not fall byte for byte with the capacity — a cut
-in capacity can move it by more — so handing back everything a layout overran
-overshoots the capacity that would have fit, and the plan built below that
-capacity is materially worse than the one just under the line. Stepping costs
-rounds and buys quality. Zero hands back the whole shortfall and converges in
-the fewest rounds, which is the setting to reach for when planning time
-matters more than the last percent of makespan.
+How much a plan gives back at a time is a trade. The extent does not fall byte
+for byte with the capacity — a cut in capacity can move it by more — so handing
+back everything a layout overran overshoots the capacity that would have fit,
+and the plan built below that capacity is materially worse than the one just
+under the line. Stepping costs rounds and buys quality; handing back the whole
+shortfall converges in the fewest rounds, which is what a caller wants when
+planning time matters more than the last of a plan's quality. How much to give
+back is the search's own setting.
 
 The shared best-placed record is what keeps this affordable. Placing a plan
 costs far more than simulating one, so a plan whose makespan is already no
@@ -472,81 +488,23 @@ better than a plan someone else has placed is never measured. The record is
 passed in, so its scope is the caller's choice: one call, or every resolved
 program in a search.
 
-The orchestrator above certifies a single capacity. It has no ladder to walk,
-because the plan it receives has already been measured against this pool, at
-the same capacity and from the same timeline; a rejection there is a
-disagreement between the search's measurement and the certificate rather than
+`resolve_fixed_layout_selection` then certifies a single capacity. It has no
+ladder to walk, because the plan it receives has already been measured against
+this pool, at the same capacity and from the same timeline; a rejection there is
+a disagreement between the search's measurement and the certificate rather than
 a capacity to retry.
-
-The framework-neutral `pressurefit` search can alternatively receive an
-`AdmissionFacts` and evaluate the production dynamic-pool policy inside
-each candidate. The current PyTorch callable path deliberately uses the fixed
-layout builder as its final physical authority: a dynamic best-fit rejection
-must not discard a schedule that has a valid dependency-certified fixed
-placement.
-
-## Pseudocode
-
-```text
-AdmitSelectedSchedule(selected, topology, scratch):
-    operations, ownership = build_causal_admission_script(
-        selected.tasks,
-        selected.schedule,
-        topology.task_allocation_geometry,
-    )
-
-    lifetimes = build_lifetimes(
-        operations,
-        selected.simulated_task_intervals,
-        selected.simulated_transfer_intervals,
-    )
-
-    terminal_dynamic = final_caller_owned_generations(lifetimes)
-    fixed = lifetimes - terminal_dynamic
-
-    placements, fixed_extent = deterministic_interval_place(fixed)
-    dependencies = prove_every_shared_range_reuse(
-        operations,
-        placements,
-    )
-
-    required = (
-        fixed_extent
-        + sum(bytes(l) for l in terminal_dynamic)
-        + scratch
-    )
-    if required > topology.pool_capacity:
-        reject(required - topology.pool_capacity)
-
-    admitted_simulation = simulate(
-        selected.schedule,
-        reuse_dependencies=project_cross_lane_edges(dependencies),
-    )
-
-    return FixedLayoutAdmission(
-        placements,
-        dependencies,
-        terminal_dynamic,
-        scratch,
-        admitted_simulation,
-    )
-```
 
 ## Diagnostics
 
-`PlanReport.diagnostics` retains, per recurrent or initialization plan:
-
-- the `FixedLayoutAttempt` recording the capacity certified, what the layout
-  required, and whether it was accepted — one per plan, since the search
-  settles capacity and leaves nothing here to walk;
-- pool, fixed-slice, terminal-dynamic, scratch, required, and slack bytes;
-- placement counts and bytes by semantic purpose;
-- complete placements and their relative offsets;
-- causal reuse dependencies;
-- task memory envelopes and allocation-contract digests;
-- layout, program, schedule, and topology digests;
-- logical versus physically admitted simulation results;
-- PressureFit and physical-admission wall times separately.
+`PlanReport.diagnostics` carries one `PlanPhysicalLayout` per recurrent or
+initialization plan: the capacities, the bytes each term of $L + D + S \le P$
+required, the placements and their offsets, the reuse dependencies, the task
+memory envelopes, the digests, and the logical and physically admitted
+simulations side by side. Its `attempts` hold one `PlanFixedLayoutAttempt`,
+since the search settles capacity and leaves nothing here to walk, with the
+search and physical-admission wall times reported separately. Every field is
+defined in [physical-layout
+diagnostics](../python/plan-report.md#physical-layout-diagnostics).
 
 When runtime tracing is enabled, `StepDiagnostics` adds actual allocation
 offsets, peaks, waits, scratch usage, failures, and execution-task identity.
@@ -573,13 +531,16 @@ supported contract.
 
 | Module | Responsibility |
 |---|---|
-| `shadowspill.planner.admission` | Immutable framework-neutral task and pool topology. |
+| `shadowspill.planner.admission` | Immutable framework-neutral task and pool facts. |
+| `shadowspill.planner.admission.setup` | Compile the schedule-invariant half of one resolved program. |
 | `shadowspill.planner.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
 | `shadowspill.planner.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
 | `shadowspill.planner.admission.placement` | Deterministic aligned interval placement. |
 | `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
+| `shadowspill.planner.admission.layout.build` | Measure a layout, certify it, or both. |
 | `shadowspill.planner.admission.refinement` | Certify the fixed layout of the plan the search placed. |
 | `shadowspill.pytorch.planning.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |
+| `csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/src/runtime/memory/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 

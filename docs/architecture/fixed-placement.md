@@ -56,11 +56,11 @@ than that.
 Leases are placed one at a time, in a fixed order, each taking the lowest
 address that clears everything it overlaps in time.
 
-**Order:** largest first; among equal sizes, longest-lived first; then
-earliest; then lowest input index. The first two are the heuristic — big,
-long-lived leases are the hardest to fit, so they are placed while the space
-is empty. The last two only break ties, and exist so that records equal in
-every key still get a defined order.
+**Order:** largest first; among equal sizes, the one spanning the most distinct
+lifetime boundaries first; then earliest start; then lowest input index. The
+first two are the heuristic — big, long-lived leases are the hardest to fit, so
+they are placed while the space is empty. The last two only break ties, and
+exist so that records equal in every key still get a defined order.
 
 **Offset:** walk the addresses already taken, in address order, and take the
 first aligned gap wide enough; if none, take the address just past them all.
@@ -81,15 +81,14 @@ slice is ever reused, so nothing in it needs a completion dependency, and the
 certificate's `fixed_slice_bytes` is the main assignment's extent plus
 `resident_slice_bytes`.
 
-The slice's size is known before the search. At problem preparation the
-planner sums the homes such an object will need — one, plus one for every task
-that mutates it in place, since that task holds both generations — each
-rounded up to the alignment, and hands the reducer the device's capacity
-minus that sum, so these objects are never charged per boundary again. Every
-plan the search measures lays its slice out from the leases the plan actually
-has, exactly as the final layout does. The emitter fetches each such object
-at a trigger chosen once, as late as the ideal timeline allows, so no fetch
-rule moves a lifetime the slice was sized without.
+The slice's size is known before the search, because it depends on the program
+rather than on any schedule: one home per such object, plus one for every task
+that mutates it in place, since that task holds both generations, each rounded
+up to the alignment. A search takes that sum out of the capacity it plans
+against, so these objects are never charged per boundary again, and every plan
+it measures lays the slice out from the leases the plan actually has, exactly
+as the final layout does. How the shipped search settles them is
+[prepare](pressurefit.md#prepare-deriving-the-residency-problem).
 
 ## The occupancy index
 
@@ -103,22 +102,9 @@ on the *union* of the addresses in use, never on which lease owns what, and a
 packed layout's union collapses hard. Inserting a range into a union can only
 merge neighbours, never split them, so a node's list stays as short as the
 layout is contiguous — and that is what keeps a query cheap, because a query
-pays for the ranges each covering node holds.
-
-Three choices here were settled by measurement rather than by argument, and
-each ruled out an alternative that looked better on paper:
-
-- **Sorting the gathered ranges beats sweeping them.** A sweep that jumps past
-  the furthest conflicting range rescans everything once per layer, and packed
-  leases stack into many layers.
-- **Merging beats de-duplicating.** An earlier design stored leases on the
-  nodes and skipped the repeats a query reached through several covering nodes
-  at once. Merging is strictly better: it collapses neighbours that
-  de-duplication cannot, and it leaves the same per-node duplication behind,
-  now cheap enough not to be worth removing. That duplication is why a query
-  can return more ranges than the lease has conflicts.
-- **The comparison is a single load, so an indirect comparator costs more than
-  the comparison.** The sort is specialised rather than generic.
+pays for the ranges each covering node holds. A range is stored on every node
+covering its interval, so one query can reach the same range through several
+covering nodes and return more ranges than the lease has conflicts.
 
 ## Cost
 
@@ -138,13 +124,16 @@ else lives in `r_i`, so `r_i` is the number that matters.
 order* — it walks them from zero and stops at the first gap wide enough. The
 index is keyed by time, not address, so what it returns is a bag of ranges
 gathered from the tree nodes covering the lease's lifetime, in node order.
-Sorting it is what turns a set of conflicts into a walkable address line.
+Sorting it is what turns a set of conflicts into a walkable address line. The
+comparison is a single load and most of these sorts are tiny, so the sort is
+specialised rather than generic: an indirect comparator would cost more than
+the comparison.
 
 **What `r_i` is bounded by.** Two things, and neither is `n`:
 
-- Ranges are stored on every node covering their interval, and a query touches
-  `O(log n)` nodes per level of the tree, so `r_i` grows with how many nodes
-  the lease's lifetime spans. Long-lived leases pay the most.
+- A query touches `O(log n)` nodes per level of the tree, so `r_i` grows with
+  how many nodes the lease's lifetime spans. Long-lived leases pay the most,
+  and a handful resident for the whole step dominate the total.
 - Each node holds a *merged* union, so its list is short when the layout is
   contiguous. This is where the packing pays for itself twice: a tight layout
   is both smaller and cheaper to extend.
@@ -152,26 +141,9 @@ Sorting it is what turns a set of conflicts into a walkable address line.
 The loose upper bound is `k_i`, the number of already-placed leases that
 overlap lease `i` in time — but `r_i` is not bounded by `k_i` in either
 direction, because merging pushes it down while per-node duplication pushes it
-up.
-
-Three things follow, with `k` the conflict count and `r` what actually gets
-sorted:
-
-- **The quadratic worst case is nowhere near, and recedes as plans grow.**
-  `Σk` stays far below `n²/2` because the peak number of live leases is set by
-  the working set rather than by the step's length: a longer step adds leases
-  without adding overlap.
-- **Merging is what makes it cheap, and it pays more as plans grow.** There is
-  little to collapse in a small layout and a great deal in a large one, so
-  `Σr` tracks `Σk` on the small one and falls well below it on the large.
-- **The distribution is skewed, not flat.** Most leases gather a few ranges;
-  the handful that stay resident for the whole step gather nearly all of them
-  and dominate the total.
-
-The sort of the gathered ranges is where a placement call spends most of its
-time, then the gather, then the moves the sort makes; insertion is negligible.
-Because most of those sorts are tiny, the comparator is specialised rather
-than generic.
+up. Neither sum approaches the quadratic worst case, because the peak number of
+live leases is set by the working set rather than by the step's length: a
+longer step adds leases without adding overlap.
 
 ## Timings choose the offsets; causality makes them safe
 
@@ -208,16 +180,16 @@ So the two roles are cleanly separated:
 | allowing a shared address | causal order | cannot be wrong; it is a property of the schedule |
 | honouring a shared address | published completions | cannot be wrong; the successor waits |
 
-**Bad predictions cost bytes and time, never correctness.** A slow task
-delays the successor that reuses its address, which is why the reuse slack
-below is worth reporting — but the successor waits rather than writing into a
-range someone still holds.
+**Bad predictions cost bytes and time, never correctness.** A slow task delays
+the successor that reuses its address — the wait step diagnostics report as
+`allocation_reuse_wait_seconds` — but the successor waits rather than writing
+into a range someone still holds.
 
 ## Judging the result
 
 Four numbers describe a layout, each computed where the information exists:
 
-- `slack_bytes` on the fixed layout (`FixedLayout.slack_bytes`,
+- `slack_bytes` on the fixed layout (`FixedPhysicalLayout.slack_bytes`,
   `src/shadowspill/planner/admission/layout/model.py`) is the pool capacity
   minus the bytes the assignment requires: how much of the pool the layout
   leaves untouched.
@@ -232,8 +204,5 @@ Four numbers describe a layout, each computed where the information exists:
   use because they are not contiguous.
 
 The first two are predictions the layout is built against; the last two are
-what the allocator, replayed or real, made of it. When the replayed peak is
-larger than the prediction, the lifetimes were wrong, not the assignment:
-sharing an address is only ever granted between lifetimes already disjoint
-in the predicted timeline, so a bad prediction costs bytes and a successor's
-wait, never correctness.
+what the allocator, replayed or real, made of it. A replayed peak larger than
+the prediction means the lifetimes were wrong, not the assignment.

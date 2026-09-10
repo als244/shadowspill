@@ -1,9 +1,13 @@
 # Development guide
 
-- [Repository structure and validation](repository.md)
-- [Naming conventions](naming.md)
-- [Python documentation](../python/README.md)
-- [C documentation](../c/README.md)
+- [Repository structure and validation](repository.md) — the Python and C
+  trees, where a test for a given module goes, setup, and the lint, type and
+  build commands a change has to pass.
+- [Naming conventions](naming.md) — the vocabulary every surface shares, the
+  words to avoid and why, and what stays generic outside a backend.
+
+The [Python](../python/README.md) and [C](../c/README.md) references document
+the surfaces a change must keep working.
 
 Product code belongs in `src/shadowspill/` or `csrc/`. Reusable source-tree
 tooling belongs in `src/tools/`. Workload definitions, planning benchmarks,

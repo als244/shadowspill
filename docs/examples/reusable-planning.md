@@ -13,8 +13,9 @@ from pathlib import Path
 import torch
 
 from shadowspill.planner import plan_program
-from shadowspill.planner.program import StepProgram, TransferBandwidths
+from shadowspill.planner.program import TransferBandwidths
 from shadowspill.pytorch import build_step_program
+from shadowspill.step import StepProgram
 
 
 def zero_state(
@@ -67,10 +68,12 @@ for execution_budget, spill_budget, bandwidth in points:
     print(execution_budget, annotated.simulation.makespan_ns, output)
 ```
 
-`ShadowSpillPlanningProblem.pressurefit_inputs()` and `plan_program()` reject a
-budget larger than the runtime capacities used to compile/profile the source
-artifact. Lower budgets and alternate transfer bandwidths do not change the
-logical program.
+`ShadowSpillPlanningProblem.machine_inputs()` and `plan_program()` reject a
+budget larger than the runtime capacities the source artifact was compiled and
+profiled under. Lower budgets and alternate transfer bandwidths do not change
+the logical program. To hand a search a different algorithm or different
+generic options, pass `search_options=SearchOptions(...)`; omitting it uses the
+search that ships.
 
 The split runs through the store arguments too. `build_step_program()` takes
 `artifact_store`, `build_store`, and `build_store_mode`, and no plan-store

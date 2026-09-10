@@ -58,7 +58,7 @@ runtime resolution
   -> capture and partition
   -> structural compilation
   -> isolated profiling
-  -> ShadowSpillProgram construction and PressureFit
+  -> ShadowSpillProgram construction and plan search
   -> physical admission
   -> callable publication
 ```

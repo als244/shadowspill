@@ -2,21 +2,21 @@
 
 Graph-pair construction turns one differentiable, partitioned PyTorch stage
 into every executable forward/backward alternative that ShadowSpill is willing
-to expose to planning. It is a PyTorch frontend operation. It is not
-[graph-pair selection](graph-pair-selection.md), and it is not part of
-[PressureFit](pressurefit.md).
+to expose to planning. It is a PyTorch frontend operation, and it is neither
+[graph-pair selection](graph-pair-selection.md) nor part of the
+[search](search.md).
 
 The three layers have deliberately different outputs:
 
 | Layer | Unit of work | Output |
 |---|---|---|
 | Graph-pair construction | One structural stage contract | A `TaskGraphPairs` containing named forward/backward variants |
-| Graph-pair selection | All occurrence-level `TaskAlternativeGroup` values in one program | A bounded tuple of complete `TaskAlternativeChoice` assignments |
-| PressureFit | One complete assignment plus the program and machine model | A residency/action schedule with simulated cost |
+| [Graph-pair selection](graph-pair-selection.md) | All occurrence-level `TaskAlternativeGroup` values in one program | A bounded tuple of complete `TaskAlternativeChoice` assignments |
+| [Plan search](search.md) | One complete assignment plus the program and machine model | A residency/action schedule with simulated cost |
 
 This separation lets the frontend add another legal graph-pair variant without
-changing the framework-neutral selection, PressureFit, simulator, or
-runtime contracts.
+changing the framework-neutral selection, search, simulator, or runtime
+contracts.
 
 ## Vocabulary
 
@@ -47,7 +47,7 @@ Construction consumes:
 - the flattened stage output produced by the representative example;
 - the differentiable output positions that seed the vector-Jacobian product;
 - whether terminal unit cotangents may be specialized away;
-- the configured graph-pair variant builders.
+- the builder that defines the variant set.
 
 It returns an immutable `TaskGraphPairs`:
 
@@ -61,20 +61,20 @@ TaskGraphPairs
     └── GraphPairVariant("recompute", memory_budget=0.0, pair=...)
 ```
 
-The record supports any positive number of uniquely named variants.
-The current default builder emits exactly two. “Every legal variant” therefore
-means every option configured by the builder, not every mathematically
-possible cut of the AOT joint graph.
+The record supports any number of uniquely named variants, and the default
+builder defines two. “Every legal variant” therefore means every variant that
+builder defines, not every mathematically possible cut of the AOT joint graph.
 
 ## Accumulating onto gradients that already exist
 
 For each stage, the first backward the step's walk reaches creates the
-gradient and every later one contributes to it. `options(accumulates=True)`
-returns each variant in the form that
-takes those gradients as further arguments and adds into them, so the addition
-happens inside the backward task instead of after it, where no plan accounts
-for it. Only parameter gradients outlive a microbatch; a cotangent belongs to
-the microbatch that produced it, so those are left alone.
+gradient and every later one contributes to it. So every variant has a second
+form, `accumulating()`, which takes those gradients as further arguments and
+adds into them -- the addition happens inside the backward task instead of
+after it, where no plan accounts for it. `options(accumulates=...)` returns
+the forms one microbatch may choose between. Only parameter gradients outlive
+a microbatch; a cotangent belongs to the microbatch that produced it, so those
+are left alone.
 
 The addition is in place, which is why the task declares a mutation of the
 argument rather than a fresh output: the running gradient keeps its storage,
@@ -107,11 +107,12 @@ cotangents remain real task inputs because they carry activation gradients.
 
 Before AOT capture, ShadowSpill computes the stage structural contract from:
 
-- normalized FX graph semantics;
-- tensor geometry and static arguments;
+- the normalized FX graph, with static arguments specialized into it;
+- each tensor argument's geometry and position;
+- which tensor arguments share storage;
 - explicit mutation declarations;
-- input roles and provenance;
-- alias and storage contracts.
+- normalized input provenance, which fixes each argument's role;
+- the framework and provider versions the graph would be built under.
 
 `GraphPairStore` keys one task's graph pairs by:
 
@@ -139,16 +140,15 @@ used to establish the canonical public stage-boundary contract.
 
 ### Recompute
 
-The `recompute` variant uses PyTorch's min-cut rematerialization partitioner.
-The current endpoint sets `activation_memory_budget=0.0`, the full-recompute
-endpoint. The budget is bound inside the lazy partition callback so ambient
-Functorch configuration cannot change the generated pair.
+The `recompute` variant uses PyTorch's min-cut rematerialization partitioner at
+`activation_memory_budget=0.0`, the full-recompute endpoint. The budget is bound
+inside the lazy partition callback so ambient Functorch configuration cannot
+change the generated pair.
 
-The representation also supports intermediate budgets strictly
-between zero and one. Adding such variants changes the configured construction
-inventory, not the downstream type system. Budget `1.0` reproduces the
-save-everything endpoint and is not exposed as a graph-pair alternative by
-the current builder. The current default emits no intermediate choices.
+A budget strictly between zero and one is a legal variant the representation
+already carries, so adding one changes what the builder emits and nothing
+downstream of it. Budget `1.0` reproduces the save-everything endpoint, so it is
+not exposed as recomputation.
 
 ### Captured pair contract
 
@@ -224,29 +224,14 @@ option names exactly the forward/backward task IDs it activates and the
 internal alias groups it retains. Tasks for unselected variants remain in the
 immutable program but are excluded by `ShadowSpillProgram.selected_tasks()`.
 
-Structural deduplication and occurrence-level choice are both preserved:
-
-- `PlanReport.diagnostics.unique_stages` describes one structural contract and all
-  profiled graph pairs;
-- the execution-task map identifies each occurrence and its selected variant;
-- the program's task-alternative groups carry the exact occurrence-level task
-  and retained-alias identities that graph-pair selection then fixes.
-
-## PlanReport diagnostics
-
-The report preserves graph-pair evidence at both structural and chronological
-levels:
-
-| Record | Directly available information |
-|---|---|
-| `PlanUniqueStage` | Structural key, semantic module targets, occurrence count, and every legal `PlanGraphPair`. |
-| `PlanGraphPair` | Variant name, min-cut memory budget, recomputation flag, saved-value counts/classes/bytes, and paired forward/backward profiles. |
-| `PlanGraphProfile` | Profiled runtime; input, mutation, output, replacement-transition, workspace, and persistent extents; storage/layout identities; allocation contract and timeline. |
-| Task-to-stage map | Chronological execution ID, semantic task, structural stage, occurrence, and selected graph-pair variant. |
-
-This makes the selected variant a direct task lookup while retaining every
-unselected alternative for comparison. Structural profiles are stored once;
-occurrence mappings reference them rather than duplicating their measurements.
+Structural deduplication and occurrence-level choice both survive into the
+program and the report: the task-alternative groups carry the exact
+occurrence-level task and retained-alias identities that graph-pair selection
+fixes, and the plan report keeps every legal variant beside the one each
+occurrence ran, with structural profiles stored once and referenced rather than
+copied per occurrence. See [unique stages and graph
+pairs](../python/plan-report.md#unique-stages-and-graph-pairs) for how to read
+that evidence.
 
 ## Pseudocode
 
@@ -263,7 +248,7 @@ ConstructGraphPairs(partitioned_export):
         graph_pairs = repository.lookup(key)
         if graph_pairs is absent:
             variants = []
-            for policy in configured_variant_policies:
+            for policy in variant_policies:
                 pair = AOTAutograd(
                     occurrence.graph,
                     roots,
@@ -319,12 +304,12 @@ from allocator pointers or FakeTensor storage identity.
 |---|---|
 | `shadowspill.pytorch.partition` | Produce ordered stages and authentic examples. |
 | `shadowspill.pytorch.graph_pairs.capture` | Choose differentiation roots and bind occurrences to their graph pairs. |
-| `shadowspill.pytorch.graph_pairs.build` | Define the configured variant set and invoke AOT capture. |
+| `shadowspill.pytorch.graph_pairs.build` | Define the default variant set and invoke AOT capture. |
 | `shadowspill.pytorch.graph_pairs.artifacts` | Immutable pair, variant, task-graph-pairs, and differentiated-stage records. |
 | `shadowspill.pytorch.graph_pairs.footprint` | Classify saved input, boundary, and internal storage roots. |
 | `shadowspill.pytorch.graph_pairs.store` | Structural cache identity, persistence, and occurrence rebinding. |
 | `shadowspill.pytorch.profiling` | Compile and measure each unique forward/backward artifact. |
 | `shadowspill.pytorch.lowering.training` | Bind variants to canonical objects and emit program groups. |
 
-Previous: [PyTorch capture and lowering](lowering.md). Next:
-[Graph-pair selection](graph-pair-selection.md).
+Previous: [PyTorch capture and lowering](lowering.md). Next: [The step
+artifacts](step.md).
