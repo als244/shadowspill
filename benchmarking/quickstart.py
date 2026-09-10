@@ -13,7 +13,9 @@ Run from the repository root, for example:
     python -m benchmarking.quickstart mlops_llama3 \\
         --sequence-length 1024 --sequences-per-step 64 \\
         --search-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \\
-        --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 --spill-gib 112 --steps 5 \\
+        --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \\
+        --spill-gib 112 --steps 5 \\
+        --min-tokens-per-microbatch 4096 \\
         --plots
 
 Every flag defaults to the model's retained qualification value, so
@@ -175,6 +177,18 @@ def _revision() -> str:
     except (OSError, subprocess.CalledProcessError):
         return "nogit"
     return f"{revision}_dirty" if modified else revision
+
+
+def _started_at() -> str:
+    """When a run began, as `MMDD_HHMM`, so reruns of one revision stay apart.
+
+    A revision does not identify a run on its own: the same commit gets
+    measured more than once -- on a quiet machine, after a rebuild, against
+    another run's store -- and each of those is a measurement worth keeping
+    beside the others rather than on top of them.
+    """
+
+    return time.strftime("%m%d_%H%M")
 
 
 def gib(value: float) -> str:
@@ -592,7 +606,7 @@ def main() -> int:
         default=None,
         help="where this run's search report, log, traced steps and figures"
         " are written; defaults to benchmarking/quickstart_reports/"
-        "<model>_<revision>/seq<length>/seqsperstep<n>",
+        "<model>_<revision>_<MMDD_HHMM>/seq<length>/seqsperstep<n>",
     )
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
@@ -708,19 +722,20 @@ def main() -> int:
         )
     # Everything a run leaves behind lands together: the search report, its
     # log, and one step trace per run budget.
-    # One directory per run: the model and the revision it measured, then
-    # sequence length, then sequences per step, so each level is exactly one
-    # parameter and another run is a sibling rather than an overwrite.
+    # One directory per run: the model, the revision it measured and when it
+    # started, then sequence length, then sequences per step, so each level is
+    # exactly one parameter and another run is a sibling rather than an
+    # overwrite. The start time is what keeps two runs of one revision apart.
     run_root = arguments.output_dir or (
         Path("benchmarking/quickstart_reports")
-        / f"{arguments.model}_{_revision()}"
+        / f"{arguments.model}_{_revision()}_{_started_at()}"
         / f"seq{sequence_length}"
         / f"seqsperstep{sequences_per_step}"
     )
-    # A run directory is written once. Changing budgets for the same model,
-    # length and step size produces a different answer at the same path, and
-    # silently replacing the old one loses a measurement that cost real time.
-    # Refuse instead, and say both ways out.
+    # A run directory is written once, and silently replacing one loses a
+    # measurement that cost real time. The default path carries the start
+    # minute, so this guards an explicit --output-dir and the two runs that
+    # begin within the same minute. Refuse, and say both ways out.
     written = tuple(
         name
         for name in ("search.json", "progress.log", "steps", "figures")
@@ -982,7 +997,6 @@ def main() -> int:
                     plan_store_mode=arguments.plan_store_mode,
                     verbose=True,
                     progress=progress,
-
                     incumbents=arguments.incumbents,
                     orderings=(
                         None

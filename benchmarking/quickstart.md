@@ -97,7 +97,7 @@ Output and stores:
 | Argument | Meaning | Default |
 |---|---|---|
 | `--plots` | Render the figures below | off |
-| `--output-dir` | Where this run writes: its console and progress logs, search report, traced steps, figures, and — unless a store flag points elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>/seq<length>/seqsperstep<n>` |
+| `--output-dir` | Where this run writes: its console and progress logs, search report, traced steps, figures, and — unless a store flag points elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>_<MMDD_HHMM>/seq<length>/seqsperstep<n>` |
 | `--force-overwrite` | Replace an existing run at that directory. Its stores are kept, being content-addressed | off |
 | `--artifact-store` | Roots both store trees | `<output-dir>/artifact_store` |
 | `--build-store` | The captures, graph pairs, profiles and compiled artifacts to read and write; overrides `--artifact-store` for the build tree. Point it at another run's store to skip work already paid for there | the artifact store |
@@ -105,22 +105,28 @@ Output and stores:
 | `--build-store-mode`, `--plan-store-mode` | What this run does with each tree; the four modes are defined in [the artifact store guide](../docs/python/artifact-store.md#store-modes) | `contribute` |
 
 A run owns both trees by default, so everything it measured is in one place
-and nothing it reused is ambiguous. That means a fresh run pays capture,
-compilation and profiling in full. To skip work already done, point
-`--build-store` at another run's build tree: it is content-addressed, so
-whatever matches by structural digest is reused and the rest is built. The
+and nothing it reused is ambiguous. Since every run gets its own directory,
+that also means every run pays capture, compilation and profiling in full
+unless told otherwise. To skip work already done, point `--build-store` at
+another run's build tree: it is content-addressed, so whatever matches by
+structural digest is reused and the rest is built. Pair it with
+`--build-store-mode reuse` to read that tree without writing into it, which
+is how a later run borrows an earlier one's builds while leaving the earlier
+run's directory exactly as it was measured. The
 plans stay this run's own, so a shared build store never answers a point with
 a plan another run searched; that is what makes a planning-time comparison
 between two runs on one store honest.
 
 ## What a run writes
 
-Everything lands in one directory, keyed by model and then by each parameter
-of the run's shape, so another shape is a sibling rather than an overwrite:
+Everything lands in one directory, keyed by what the run measured — the model,
+the revision, and the minute it started — and then by each parameter of the
+run's shape, so another run and another shape are both siblings rather than
+overwrites:
 
 ```text
 benchmarking/quickstart_reports/
-  mlops_llama3_<revision>/
+  mlops_llama3_<revision>_<MMDD_HHMM>/
     seq1024/
       seqsperstep64/
         search.json             the search report, lossless
@@ -144,12 +150,21 @@ benchmarking/quickstart_reports/
       ...
 ```
 
-Each directory level is exactly one parameter, so the shapes at one sequence
-length sit together, which is the comparison worth making most often. A
-directory that already holds a run is refused rather than replaced, since
-changing budgets for the same model, length and step size produces a
-different answer at the same path; `--force-overwrite` or `--output-dir` is
-the way past that.
+The top level names what was measured. `<revision>` is the short commit the
+run built from, with `_dirty` appended when the tree carried uncommitted
+changes, because such a run cannot be reproduced from the hash alone;
+`nogit` stands in outside a checkout. `<MMDD_HHMM>` is the minute the run
+started, which is what keeps two runs of one revision apart — the same commit
+is worth measuring more than once, on a quiet machine or against another
+run's store. Below that, each directory level is exactly one parameter, so the
+shapes at one sequence length sit together, which is the comparison worth
+making most often.
+
+A directory that already holds a run is refused rather than replaced, because
+a measurement costs real time and overwriting one loses it. The default path
+carries the start minute, so this catches an explicit `--output-dir` and two
+runs that begin in the same minute; `--force-overwrite` or `--output-dir` is
+the way past it.
 
 Each traced step under `steps/` is the complete `StepDiagnostics` for that
 budget's final step, which is the only step run with `runtime_trace=True`.
