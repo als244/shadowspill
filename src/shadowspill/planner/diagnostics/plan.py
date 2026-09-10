@@ -17,6 +17,7 @@ from shadowspill.ir import (
 from shadowspill.planner.diagnostics import PlanningDiagnostics
 from shadowspill.planner.result import ProgramPlanResult
 from shadowspill.planner.search.toolkit.resolution import CostedAlternatives
+from shadowspill.planner.serialization import _integer, _mapping
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
 from shadowspill.schema import artifact_schema
 from shadowspill.step import StepDataOrdering
@@ -856,6 +857,55 @@ class PlanSummary:
             "planning_phase_seconds": dict(self.planning_phase_seconds),
             "selected_candidate": dict(self.selected_candidate),
         }
+
+    @classmethod
+    def from_dict(cls, value: object, path: str = "plan_summary") -> PlanSummary:
+        """Read back what :meth:`as_dict` wrote.
+
+        The inverse exists so a saved search is a record rather than a
+        write-only log: a figure can be redrawn, or a run compared against an
+        older one, without planning anything again. ``recomputing_group_fraction``
+        is written for a reader's convenience and derived here, so it is ignored
+        rather than trusted.
+        """
+
+        record = _mapping(value, path)
+
+        def number(name: str, default: float = 0.0) -> float:
+            item = record.get(name, default)
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise ValueError(f"{path}.{name}: expected a number")
+            return float(item)
+
+        def count(name: str, default: int = 0) -> int:
+            return _integer(record.get(name, default), f"{path}.{name}")
+
+        phases = _mapping(
+            record.get("planning_phase_seconds", {}), f"{path}.planning_phase_seconds"
+        )
+        candidate = _mapping(
+            record.get("selected_candidate", {}), f"{path}.selected_candidate"
+        )
+        return cls(
+            simulated_step_seconds=number("simulated_step_seconds"),
+            unconstrained_step_seconds=number("unconstrained_step_seconds"),
+            recomputation_overhead_seconds=number("recomputation_overhead_seconds"),
+            idle_seconds=number("idle_seconds"),
+            terminal_writeback_seconds=number("terminal_writeback_seconds"),
+            recomputing_group_count=count("recomputing_group_count"),
+            task_alternative_group_count=count("task_alternative_group_count"),
+            flexible_group_count=count("flexible_group_count"),
+            transfer_bytes_fetched=count("transfer_bytes_fetched"),
+            transfer_bytes_evicted=count("transfer_bytes_evicted"),
+            fetch_bandwidth_bytes_per_second=count("fetch_bandwidth_bytes_per_second"),
+            evict_bandwidth_bytes_per_second=count("evict_bandwidth_bytes_per_second"),
+            fetch_latency_ns=count("fetch_latency_ns"),
+            evict_latency_ns=count("evict_latency_ns"),
+            planning_phase_seconds=MappingProxyType(
+                {key: float(item) for key, item in phases.items()}
+            ),
+            selected_candidate=MappingProxyType(dict(candidate)),
+        )
 
 
 def summarize_selected_plan(

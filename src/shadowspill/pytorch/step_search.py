@@ -43,6 +43,14 @@ from shadowspill.planner.diagnostics.plan import (
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.serialization import (
+    _integer,
+    _list,
+    _mapping,
+    _optional_integer,
+    _optional_string,
+    _string,
+)
 from shadowspill.pytorch.api import build_step_program
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.schema import artifact_schema
@@ -124,6 +132,18 @@ def search_geometries(
     return tuple(admitted), tuple(skipped)
 
 
+def _number(value: object, path: str) -> float:
+    """A JSON number, accepting the integer a float may have been written as."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{path}: expected a number")
+    return float(value)
+
+
+def _optional_number(value: object, path: str) -> float | None:
+    return None if value is None else _number(value, path)
+
+
 @dataclass(frozen=True, slots=True)
 class GraphPairOutcome:
     """The best plan the search found under one graph-pair selection.
@@ -193,6 +213,42 @@ class GraphPairOutcome:
             "fetched_bytes": self.fetched_bytes,
             "evicted_bytes": self.evicted_bytes,
         }
+
+    @classmethod
+    def from_dict(cls, value: object, path: str) -> GraphPairOutcome:
+        """Read back what :meth:`as_dict` wrote."""
+
+        record = _mapping(value, path)
+        return cls(
+            selection_id=_string(record["selection_id"], f"{path}.selection_id"),
+            recompute_groups=_integer(
+                record["recompute_groups"], f"{path}.recompute_groups"
+            ),
+            group_count=_integer(record["group_count"], f"{path}.group_count"),
+            makespan_seconds=_optional_number(
+                record.get("makespan_seconds"), f"{path}.makespan_seconds"
+            ),
+            selected_compute_seconds=_number(
+                record["selected_compute_seconds"],
+                f"{path}.selected_compute_seconds",
+            ),
+            unconstrained_seconds=_number(
+                record["unconstrained_seconds"], f"{path}.unconstrained_seconds"
+            ),
+            valid_candidate_count=_integer(
+                record.get("valid_candidate_count", 0),
+                f"{path}.valid_candidate_count",
+            ),
+            candidate_count=_integer(
+                record.get("candidate_count", 0), f"{path}.candidate_count"
+            ),
+            fetched_bytes=_integer(
+                record.get("fetched_bytes", 0), f"{path}.fetched_bytes"
+            ),
+            evicted_bytes=_integer(
+                record.get("evicted_bytes", 0), f"{path}.evicted_bytes"
+            ),
+        )
 
 
 def _graph_pair_outcomes(
@@ -284,6 +340,57 @@ class StepSearchPoint:
     #: own search won, or when no plan was handed in.
     incumbent_budget_bytes: int | None = None
 
+    @classmethod
+    def from_dict(cls, value: object, path: str) -> StepSearchPoint:
+        """Read back one point as :meth:`StepSearchReport.to_dict` wrote it."""
+
+        record = _mapping(value, path)
+        summary = record.get("summary")
+        selections = _list(
+            record.get("graph_pair_selections", []),
+            f"{path}.graph_pair_selections",
+        )
+        return cls(
+            sequences_per_microbatch=_integer(
+                record["sequences_per_microbatch"],
+                f"{path}.sequences_per_microbatch",
+            ),
+            accumulation_count=_integer(
+                record["accumulation_count"], f"{path}.accumulation_count"
+            ),
+            ordering=StepDataOrdering.from_dict(record["ordering"], f"{path}.ordering"),
+            execution_budget_bytes=_integer(
+                record["execution_budget_bytes"],
+                f"{path}.execution_budget_bytes",
+            ),
+            spill_budget_bytes=_integer(
+                record["spill_budget_bytes"], f"{path}.spill_budget_bytes"
+            ),
+            status=_string(record["status"], f"{path}.status"),
+            makespan_seconds=_optional_number(
+                record.get("makespan_seconds"), f"{path}.makespan_seconds"
+            ),
+            summary=(
+                None
+                if summary is None
+                else PlanSummary.from_dict(summary, f"{path}.summary")
+            ),
+            error=_optional_string(record.get("error"), f"{path}.error"),
+            search_seconds=_number(
+                record.get("search_seconds", 0.0), f"{path}.search_seconds"
+            ),
+            graph_pair_selections=tuple(
+                GraphPairOutcome.from_dict(
+                    item, f"{path}.graph_pair_selections[{index}]"
+                )
+                for index, item in enumerate(selections)
+            ),
+            incumbent_budget_bytes=_optional_integer(
+                record.get("incumbent_budget_bytes"),
+                f"{path}.incumbent_budget_bytes",
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class StepSearchGeometryBuild:
@@ -307,6 +414,39 @@ class StepSearchGeometryBuild:
     #: The transfer calibration this build's program embeds, which every
     #: point of the geometry planned against unless the search overrode it.
     transfer_bandwidths: TransferBandwidths | None = None
+
+    @classmethod
+    def from_dict(cls, value: object, path: str) -> StepSearchGeometryBuild:
+        """Read back one geometry as :meth:`StepSearchReport.to_dict` wrote it."""
+
+        record = _mapping(value, path)
+        rates = record.get("transfer_bandwidths")
+        phases = _mapping(record.get("phase_seconds", {}), f"{path}.phase_seconds")
+        return cls(
+            sequences_per_microbatch=_integer(
+                record["sequences_per_microbatch"],
+                f"{path}.sequences_per_microbatch",
+            ),
+            accumulation_count=_integer(
+                record["accumulation_count"], f"{path}.accumulation_count"
+            ),
+            ordering=StepDataOrdering.from_dict(record["ordering"], f"{path}.ordering"),
+            step_program_digest=_string(
+                record["step_program_digest"], f"{path}.step_program_digest"
+            ),
+            build_seconds=_number(record["build_seconds"], f"{path}.build_seconds"),
+            phase_seconds=MappingProxyType(
+                {
+                    key: _number(item, f"{path}.phase_seconds.{key}")
+                    for key, item in phases.items()
+                }
+            ),
+            transfer_bandwidths=(
+                None
+                if rates is None
+                else TransferBandwidths.from_value(rates, f"{path}.transfer_bandwidths")
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,6 +570,78 @@ class StepSearchReport:
             ],
             "skipped": [list(item) for item in self.skipped],
         }
+
+    @classmethod
+    def from_dict(
+        cls, value: object, path: str = "step_search_report"
+    ) -> StepSearchReport:
+        """Read back what :meth:`to_dict` wrote.
+
+        The inverse makes a saved search a record rather than a write-only log:
+        its figures can be redrawn, narrowed to a few budgets or geometries, or
+        set beside another run's, without planning anything again.
+
+        ``winner_plans`` is not carried. It is held in memory only -- the report
+        on disk names each winner and the plan store holds the plan itself -- so
+        a report read back answers every question about what was searched, and
+        none about the plan objects a caller would run.
+        """
+
+        record = _mapping(value, path)
+        options = record.get("search_options")
+        rates = record.get("transfer_bandwidths")
+        budgets = _list(record.get("budgets", []), f"{path}.budgets")
+        geometries = _list(record.get("geometries", []), f"{path}.geometries")
+        points = _list(record.get("points", []), f"{path}.points")
+        skipped = _list(record.get("skipped", []), f"{path}.skipped")
+        return cls(
+            total_sequences_per_step=_integer(
+                record["total_sequences_per_step"],
+                f"{path}.total_sequences_per_step",
+            ),
+            sequence_length=_integer(
+                record["sequence_length"], f"{path}.sequence_length"
+            ),
+            budgets=tuple(
+                (
+                    _integer(item[0], f"{path}.budgets[{index}][0]"),
+                    _integer(item[1], f"{path}.budgets[{index}][1]"),
+                )
+                for index, item in enumerate(budgets)
+            ),
+            geometries=tuple(
+                StepSearchGeometryBuild.from_dict(item, f"{path}.geometries[{index}]")
+                for index, item in enumerate(geometries)
+            ),
+            points=tuple(
+                StepSearchPoint.from_dict(item, f"{path}.points[{index}]")
+                for index, item in enumerate(points)
+            ),
+            skipped=tuple(
+                (
+                    _integer(item[0], f"{path}.skipped[{index}][0]"),
+                    _integer(item[1], f"{path}.skipped[{index}][1]"),
+                    _string(item[2], f"{path}.skipped[{index}][2]"),
+                )
+                for index, item in enumerate(skipped)
+            ),
+            search_options=(
+                None
+                if options is None
+                else SearchOptions.from_dict(options, f"{path}.search_options")
+            ),
+            transfer_bandwidths=(
+                None
+                if rates is None
+                else TransferBandwidths.from_value(rates, f"{path}.transfer_bandwidths")
+            ),
+        )
+
+    @classmethod
+    def load(cls, path: str | PathLike[str]) -> StepSearchReport:
+        """Read a report back from the JSON :meth:`save` wrote."""
+
+        return cls.from_dict(json.loads(Path(path).read_text()), str(path))
 
     def save(self, path: str | PathLike[str]) -> Path:
         """Write the report as JSON and return the path."""
@@ -592,7 +804,7 @@ def plan_step_search(
                         artifact_store=artifact_store,
                         build_store=build_store,
                         build_store_mode=build_store_mode,
-                                    implementation_revision=implementation_revision,
+                        implementation_revision=implementation_revision,
                     )
                 except Exception as error:
                     if not _device_exhausted(error):
@@ -629,8 +841,7 @@ def plan_step_search(
                     )
                 continue
             announce(
-                f"{where}: built {name} in"
-                f" {time.perf_counter() - build_started:.1f} s"
+                f"{where}: built {name} in {time.perf_counter() - build_started:.1f} s"
             )
             builds.append(
                 StepSearchGeometryBuild(
@@ -674,7 +885,7 @@ def plan_step_search(
                         plan_store=plan_store,
                         plan_store_mode=plan_store_mode,
                         verbose=verbose,
-                                )
+                    )
                 except _EXHAUSTED as error:
                     status, failure = "search_exhausted", str(error)
                 except _INFEASIBLE as error:
