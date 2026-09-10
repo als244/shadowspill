@@ -33,6 +33,7 @@ from matplotlib.patheffects import withStroke
 from matplotlib.ticker import LogLocator, MaxNLocator, NullFormatter, NullLocator
 
 from shadowspill.planner.diagnostics.plan import PlanSummary
+from shadowspill.plots._axis import budget_label
 from shadowspill.pytorch.step_search import (
     GraphPairOutcome,
     StepSearchPoint,
@@ -66,7 +67,7 @@ def _budget_ticks(axes: Axes, budgets: Sequence[float]) -> None:
     values = sorted(set(budgets))
     axes.set_xticks(values)
     axes.set_xticklabels(
-        [f"{value:g}" for value in values],
+        [budget_label(value) for value in values],
         rotation=45 if len(values) > 8 else 0,
         ha="right" if len(values) > 8 else "center",
     )
@@ -587,25 +588,20 @@ def _geometry_waste_bars(
                     centre,
                     effective + recompute + idle,
                     effective + recompute,
-                    item.summary.idle_seconds
-                    + item.summary.terminal_writeback_seconds,
+                    item.summary.idle_seconds + item.summary.terminal_writeback_seconds,
                 )
             )
             totals.append((centre, effective + recompute + idle))
-            makespans.append(
-                (centre, effective + recompute + idle, item.step_seconds)
-            )
+            makespans.append((centre, effective + recompute + idle, item.step_seconds))
 
     axes.set_title(
-        "Where the Step Goes, Share of the Step"
-        if share
-        else "Where the Step Goes"
+        "Where the Step Goes, Share of the Step" if share else "Where the Step Goes"
     )
     axes.set_xlabel("Execution Budget (GiB)")
     axes.set_ylabel("Share of Simulated Step" if share else "Seconds")
     drawn_budgets = sorted(ticks)
     axes.set_xticks([ticks[budget] for budget in drawn_budgets])
-    axes.set_xticklabels([f"{budget:g}" for budget in drawn_budgets])
+    axes.set_xticklabels([budget_label(budget) for budget in drawn_budgets])
     if share:
         axes.set_ylim(0.0, max(drawn) * 1.30)
         axes.yaxis.set_major_locator(MaxNLocator(nbins=12, steps=[1, 2, 2.5, 5, 10]))
@@ -810,7 +806,7 @@ def _selection_waste(
     axes.set_ylabel("Share of Makespan" if share else "Seconds")
     drawn_budgets = sorted(ticks)
     axes.set_xticks([ticks[budget] for budget in drawn_budgets])
-    axes.set_xticklabels([f"{budget:g}" for budget in drawn_budgets])
+    axes.set_xticklabels([budget_label(budget) for budget in drawn_budgets])
     if share:
         axes.set_ylim(0.0, max(drawn) * 1.30)
         axes.yaxis.set_major_locator(MaxNLocator(nbins=12, steps=[1, 2, 2.5, 5, 10]))
@@ -985,7 +981,7 @@ def _transfer_bars(
     axes.set_ylabel("Share of Lane-Seconds" if share else "GiB per Step", labelpad=26)
     drawn_budgets = sorted(ticks)
     axes.set_xticks([ticks[budget] for budget in drawn_budgets])
-    axes.set_xticklabels([f"{budget:g}" for budget in drawn_budgets])
+    axes.set_xticklabels([budget_label(budget) for budget in drawn_budgets])
     # Half a gap at each end, so the outer budgets are spaced like the
     # inner ones rather than pinned to the frame.
     axes.set_xlim(-_GROUP_GAP / 2, extent + _GROUP_GAP / 2)
@@ -1227,7 +1223,7 @@ def _selection_transfers(
     axes.set_ylabel("Share of Lane-Seconds" if share else "GiB per Step", labelpad=26)
     drawn_budgets = sorted(ticks)
     axes.set_xticks([ticks[budget] for budget in drawn_budgets])
-    axes.set_xticklabels([f"{budget:g}" for budget in drawn_budgets])
+    axes.set_xticklabels([budget_label(budget) for budget in drawn_budgets])
     axes.set_xlim(-_GROUP_GAP / 2, extent + _GROUP_GAP / 2)
     if share:
         # Ticks first: a fixed locator carrying values past the limits pulls
