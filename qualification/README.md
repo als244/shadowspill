@@ -45,9 +45,9 @@ the directory name is what makes a result readable later as a reference, and a
 revision alone does not identify a tree that was modified.
 
 Both matrices write their usual artifacts into those directories -- per-cell
-JSON and log, plan report, PressureFit fixture, `summary.json`, and the run's
-artifact store -- so a gate run leaves exactly what a matrix run by hand
-leaves, under a name that says what produced it.
+JSON and log, plan report, plan record, `summary.json`, and the run's artifact
+store -- so a gate run leaves exactly what a matrix run by hand leaves, under a
+name that says what produced it.
 A failing gate stops the ones that would follow unless `--continue-after-failure`
 is given, and `--keep-going` lets a matrix finish its remaining cells after
 one cell fails.
@@ -124,7 +124,8 @@ public `src/shadowspill/` APIs and workload definitions under `workloads/`.
 Generated reference states, compact result summaries, and optional detailed
 reports are written beneath `qualification/results/`, which is ignored by Git.
 The numerical matrix reuses one identity-checked compiled reference under
-`qualification/results/references/approximately_1b/<model>/<provider>/reference.pt`.
+`<reference-dir>/<model>/<implementation>/reference.pt`, where `<reference-dir>`
+defaults to `qualification/results/references/approximately_1b`.
 Its neighboring `inputs.pt` contains the exact input microbatches, while the
 reference contains only the final model and optimizer state; repeated matrix
 runs do not create duplicate checkpoints.
@@ -154,10 +155,10 @@ python -m qualification.performance.matrix \
 
 Both matrices give each cell its own artifact store under the output
 directory, and both take `--build-store-mode` and `--plan-store-mode` to say
-what a cell does with each tree of it: `contribute` reads what is there and
-writes back what is not, `reuse` reads and persists nothing, and `require`
-refuses a miss. `contribute` is the default, which is what a gate run wants:
-it reuses whatever matches by digest and keeps what it had to build. The
+what a cell does with each tree of it; the four modes are defined in
+[the artifact store guide](../docs/python/artifact-store.md#store-modes).
+`contribute` is the default, which is what a gate run wants: it reuses whatever
+matches by digest and keeps what it had to build. The
 numerical matrix asks for `reuse` on its planning tree unless
 `--detailed-artifacts` is given, because there is nothing to keep from a cell
 that only has to agree.
@@ -216,9 +217,9 @@ python -m tools.qualification.gap_report qualification/results/full_model
 The numerical gate runs every case with mlops's `deterministic_kernels`
 in effect, which asks each operation that offers the choice for the kernel
 whose accumulation order is fixed. Without it a kernel that sums with atomics
-returns a slightly different answer each run -- one llama3 step run twice
-differed in 78 of its 111 gradient tensors -- and no comparison against a
-reference or against a replay can mean anything. The ordered kernels cost
+returns a slightly different answer each run, across most of a step's gradient
+tensors, and no comparison against a reference or against a replay can mean
+anything. The ordered kernels cost
 throughput, so they are not the default outside this gate. The request covers
 reference generation as well as the planned run, so a regenerated reference is
 itself reproducible.
@@ -231,11 +232,11 @@ key it on the setting.
 
 Against the reference, every weight must agree within a relative L2 of
 2.5 % (cosine at least 0.999, sign agreement at least 99 %); an optimizer
-moment gets 5 %, because it is an accumulator whose reduction order follows
-the plan, and on the MoE cell that alone moves a second-moment estimate by
-two to three percent while every weight agrees. The gate also requires a
-checkpoint replay to agree with the uninterrupted run
-within tolerance, and records whether it agreed bit for bit besides. When it
+moment gets 5 %, because it is an accumulator whose reduction order follows the
+plan, so the same arithmetic in two orders moves it further than it moves a
+weight. The gate also requires a checkpoint replay to agree with the
+uninterrupted run within tolerance, and records whether it agreed bit for bit
+besides. When it
 did not, the useful question is which stage of the step is not reproducible,
 and the nondeterminism probe answers that rather than leaving it at
 "somewhere in the backward":

@@ -26,7 +26,7 @@ implementation changes only the forward/backward operation provider. The
 default reference root is
 `qualification/results/references/approximately_1b/`, with one
 identity-checked final state plus an exact-input `inputs.pt` sidecar under each
-model/provider directory.
+`<model>/<implementation>` directory.
 Pass `--reference-dir` to read that canonical set from elsewhere, or
 `--regenerate-reference` to record it instead of reusing it. A reference is
 specific to what produced it -- the machine, and the kernels that machine
@@ -41,10 +41,10 @@ after that stage's final-microbatch backward task by default. Pass
 
 The store flags are the ones every surface uses: `--artifact-store` roots
 both trees, `--build-store` and `--plan-store` override either, and
-`--build-store-mode`/`--plan-store-mode` say what the run does with each --
-`contribute` (the default) reads what is there and writes back what is not,
-`reuse` reads and persists nothing, `require` refuses a miss. Run mode
-defaults the store below the result directory.
+`--build-store-mode`/`--plan-store-mode` say what the run does with each; the
+four modes are defined in [the artifact store
+guide](../../docs/python/artifact-store.md#store-modes), and `contribute` is the
+default. Run mode defaults the store below the result directory.
 
 The command verifies five optimizer updates, two heterogeneous accumulated
 microbatches per update, a step-three checkpoint whose replay agrees with the
@@ -95,8 +95,11 @@ pointer-lookup failure.
 By default, the JSON contains compact correctness, physical-budget, planning,
 and step-summary evidence and planning artifacts are not retained. Add
 `--detailed-artifacts` to write the complete PlanReport, per-task traces, and
-canonical initial/recurrent PressureFit fixtures. Those fixtures contain the
-framework-free arguments passed to `pressurefit()` and its complete result.
+the initial and recurrent plan records. A plan record is the framework-free
+request the search was given -- program, initial and final residency,
+simulation config, search options, admission and placement facts -- beside the
+answer it returned, with a digest over each, so one run's plan can be compared
+against another's without either being repeated.
 
 The supported matrix uses a 10 GiB execution cap for Llama and Qwen and an
 8 GiB cap for OLMoE, which is required to exercise real transfer pressure for
