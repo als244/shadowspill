@@ -125,9 +125,15 @@ plot_step_run(entries, directory, *, tokens_per_step) -> tuple[Path, ...]
 `plot_step_search()` writes the plan-side tree; `plot_step_run()` writes the
 measured one. `RunBudgetOutcome` is one executed budget: its
 `execution_budget_bytes`, the simulated and measured step seconds, the same
-split of the step on both clocks -- task compute, idle, the opening prologue and
-the terminal tail -- and `step_seconds`, every measured step in order, so a
-difference can be attributed rather than only reported.
+split of the step on both clocks -- task compute, idle, and what falls outside
+the task window -- and `step_seconds`, every measured step in order, so a
+difference can be attributed rather than only reported. Outside the task window
+the two clocks differ in kind, so they are kept as separate fields rather than
+one: the simulated side prices a terminal writeback that overlaps nothing
+(`terminal_tail_seconds`), while the measured side pays an opening restore the
+simulator does not model at all (`prologue_seconds`) plus whatever of its own
+writeback the next step did not absorb (`real_terminal_tail_seconds`). Each
+side's parts sum to that side's step.
 
 The [figures guide](../plots.md) describes the tree, what each figure
 represents, and the conventions they share.
