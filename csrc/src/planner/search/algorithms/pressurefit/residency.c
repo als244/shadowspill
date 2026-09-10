@@ -38,8 +38,8 @@ typedef struct CutIndex {
  * One lazily validated max-excess candidate. Entries are ordered by the
  * exact selection total order of the reducer: larger excess first, then
  * smaller boundary, then smaller device priority, then smaller device
- * index. Stale entries (whose recorded excess no longer matches the
- * current pressure) are corrected or discarded at pop time, so the heap
+ * index. Stale entries -- those whose recorded excess does not match the
+ * current pressure -- are corrected or discarded at pop time, so the heap
  * yields the same selection sequence as a full scan.
  */
 typedef struct {

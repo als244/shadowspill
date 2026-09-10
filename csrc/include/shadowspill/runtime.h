@@ -27,7 +27,14 @@ typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
  * addresses and must never be dereferenced by host code.
  */
 
-/* Execution names for the shared statuses; see <shadowspill/status.h>. */
+/* Execution statuses are in the shared vocabulary; see <shadowspill/status.h>. */
+
+/* ------------------------------------------------------------------------
+ * Vocabulary
+ *
+ * Statuses, reasons, and the enumerations every description below
+ * uses. Nothing here allocates or holds state.
+ */
 
 /*
  * Why an operation failed, where the status alone does not say.
@@ -36,16 +43,8 @@ typedef struct ShadowSpillObjectHandle ShadowSpillObjectHandle;
  * specific condition, so a report can explain itself. Several of these sit
  * under one status on purpose - a lease that cannot be released and a process
  * allocator that refuses a record are both internal failures, and a caller
- * treats them
- * alike, but a reader must be able to tell them apart.
+ * treats them alike, but a reader must be able to tell them apart.
  */
-/* ------------------------------------------------------------------------
- * Vocabulary
- *
- * Statuses, reasons, and the enumerations every description below
- * uses. Nothing here allocates or holds state.
- */
-
 typedef enum ShadowSpillFailureReason {
     SHADOWSPILL_FAILURE_REASON_UNSPECIFIED = 0,
     /* The process allocator refused memory for an internal record. This is
@@ -618,13 +617,6 @@ typedef struct ShadowSpillObjectLocationSnapshot {
     void *pointer;
 } ShadowSpillObjectLocationSnapshot;
 
-/*
- * Creates one runtime from explicit pool and directed-route registries, a
- * synchronization backend, profiler, and worker. Registry entries are copied;
- * backend problems are borrowed and must outlive the runtime. Pool and route
- * IDs must equal their contiguous registry indices. On failure, output is set to
- * NULL and successfully created resources are reclaimed in reverse order.
- */
 /* ------------------------------------------------------------------------
  * Runtime and plan lifecycle
  *
@@ -636,16 +628,23 @@ typedef struct ShadowSpillObjectLocationSnapshot {
    entry (the profiler entries may be NULL). */
 SHADOWSPILL_API int shadowspill_backend_is_valid(const ShadowSpillBackend *backend);
 
+/*
+ * Creates one runtime from explicit pool and directed-route registries over
+ * one backend. Registry entries and the backend table are copied; the provider
+ * state the table names is borrowed and must outlive the runtime. Pool and
+ * route IDs must equal their contiguous registry indices. On failure, output
+ * is set to NULL and whatever was created is reclaimed.
+ */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_create(
     const ShadowSpillRuntimeConfig *config,
     ShadowSpillRuntime **runtime
 );
 
 /*
- * Cold-path capacity reservation for neutral event records. Repeated calls may
- * grow the owner for additional admitted callables at an idle boundary. After
- * the first call, steady execution never falls back to process allocation when
- * the pool is full.
+ * Cold-path capacity reservation for neutral event records. Repeated calls
+ * grow the pool for additional admitted callables, each waiting for an idle
+ * boundary first. After the first call, steady execution never falls back to
+ * process allocation when the pool is full.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_reserve_event_leases(
@@ -689,8 +688,8 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_close(
 SHADOWSPILL_API void shadowspill_plan_destroy(ShadowSpillPlan *plan);
 
 /*
- * Rejects new work, drains queued work, synchronizes both transfer streams,
- * joins the worker, and releases owned resources. This call is explicitly
+ * Rejects new work, drains queued work, synchronizes every route's lane, joins
+ * the worker, and releases owned resources. This call is explicitly
  * synchronizing and idempotent. It returns the first latched failure.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_close(
@@ -808,10 +807,6 @@ shadowspill_memory_pool_record_stream(
     ShadowSpillBackendStream stream
 );
 
-/*
- * Registers one logical alias group. The description is borrowed for this
- * call. Requested initial spill storage is leased from the configured spill pool.
- */
 /* ------------------------------------------------------------------------
  * Objects
  *
@@ -849,7 +844,7 @@ shadowspill_object_release_generation(
 );
 
 /*
- * Bind one Program-local identity to a retained runtime object handle. Equal
+ * Bind one plan-local identity to a retained runtime object handle. Equal
  * plan-local IDs in different plans have no relationship unless both bindings
  * use handles for the same runtime object.
  */
@@ -860,6 +855,12 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_bind_object(
     uint8_t consistency
 );
 
+/*
+ * Registers one logical object. The description is borrowed for this call. An
+ * initially resident object is leased storage in the pool `initial_pool_id`
+ * names; one that is not resident holds no lease until a task publishes into
+ * it.
+ */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_register_object(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectDescription *description
@@ -976,8 +977,8 @@ SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_clear_tasks(ShadowSpillPlan *plan);
 
 /*
- * Actively wait until only this plan has no claimed task scope, queued action,
- * or task-owned retirement. Work admitted by other plans does not participate.
+ * Actively wait until this plan has no claimed task scope, queued action or
+ * task-owned retirement. Work admitted by other plans does not participate.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_wait_idle(ShadowSpillPlan *plan);
@@ -1153,7 +1154,7 @@ shadowspill_allocation_telemetry_start(
     uint64_t capacity
 );
 
-/* Stops capture. Previously recorded events remain readable until restart. */
+/* Stops capture. Events already recorded stay readable until the next start. */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_telemetry_stop(ShadowSpillRuntime *runtime);
 
@@ -1215,7 +1216,6 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_read(
     uint64_t allocation_event_capacity
 );
 
-/* Explicitly synchronizing test/checkpoint helper; returns first failure. */
 /* ------------------------------------------------------------------------
  * Waiting, recovery and inspection
  *
@@ -1223,6 +1223,8 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_read(
  * growing a pool, and asking what happened.
  */
 
+/* Blocks until no action is queued and no retirement is pending, then returns
+   the first latched failure. */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_wait_idle(
     ShadowSpillRuntime *runtime
 );
@@ -1279,7 +1281,7 @@ shadowspill_object_location_snapshot(
     ShadowSpillObjectLocationSnapshot *snapshot
 );
 
-/* One sentence naming the condition behind a status. */
+/* One sentence for any reason; see shadowspill_status_string() for the status. */
 SHADOWSPILL_API const char *shadowspill_failure_reason_string(
     ShadowSpillFailureReason reason
 );

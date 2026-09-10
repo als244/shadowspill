@@ -34,10 +34,7 @@ void shadowspill_append_allocation_event_locked(
          * depends on. Running out of room to describe what happened says
          * nothing about whether it succeeded, so stop recording and let the
          * step continue: `allocation_event_overflow` reports the gap, and a
-         * caller reading telemetry can see its record is incomplete. Latching
-         * a failure here instead made every later allocation in the process
-         * fail, and reported it as a memory failure with the operands of
-         * whichever allocation happened to fill the last slot. */
+         * caller reading telemetry can see its record is incomplete. */
         atomic_store_explicit(
             &runtime->allocation_event_overflow, 1U, memory_order_release
         );

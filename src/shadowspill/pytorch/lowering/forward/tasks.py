@@ -218,7 +218,8 @@ def _bind_forward_outputs(
         if not stage.stage.public_output_bindings and (
             position in stage.stage.user_output_indices
         ):
-            # Hand-authored Stage fixtures predate explicit root-output ordinals.
+            # A Stage built without public_output_bindings still names its
+            # outputs via user_output_indices; assign the next public ordinal.
             public_indices = (len(public_outputs),)
         if public_indices:
             catalog.mark_output(object_id)

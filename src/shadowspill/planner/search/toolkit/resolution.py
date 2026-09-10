@@ -145,7 +145,7 @@ def _group_fractions(
     flexible = tuple(index for index in range(len(endpoints)) if index not in forced)
     result: list[tuple[int, ...]] = []
     for share in resolution_options:
-        # Rounded half up, which is where the quarter rungs always landed.
+        # Rounded half up, so a share lands on the nearer whole group.
         recompute_count = int(len(flexible) * share + Fraction(1, 2))
         recomputing = {
             flexible[position]
@@ -393,15 +393,11 @@ def _forward_sink_saves(program: ShadowSpillProgram) -> dict[int, int]:
     will read, and recomputing it would mean recomputing it from nothing, so
     the choice is not free and the group is forced.
 
-    The rule deliberately names one phase rather than generalising to "sinks
-    of whatever phase the group enters first". That generalisation is not
-    behaviour-preserving: a ShadowSpillProgram whose tasks carry no ``forward`` phase
-    forces nothing here and keeps every alternative open, and phrasing the
-    rule in the abstract would instead force all of its terminal groups and
-    delete
-    its recomputation search entirely. Scoping to ``forward`` is what confines
-    this piece of training knowledge to programs that declare they are
-    training. See the phases-and-sinks section of the IR architecture page.
+    The rule names the ``forward`` phase literally, which confines this piece
+    of training knowledge to programs that declare they are training: a
+    program whose tasks carry no ``forward`` phase forces nothing here and
+    keeps every alternative open. See the phases-and-sinks section of the IR
+    architecture page.
     """
 
     forward_task_ids = {

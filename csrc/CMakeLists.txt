@@ -1,14 +1,9 @@
 # One library for everything that plans and executes a step.
 #
-# The simulator, the planner and the runtime were three shared objects with a
-# strict dependency order between them, and nothing else ever linked them
-# apart. Separating them bought no independent deployment and cost a second
-# and third ABI to keep in sync, a status vocabulary per component, and a
-# library-load path per component on the Python side.
-#
 # Two things stay separate because they are genuinely pluggable: a backend is
-# dlopened and compiled against CUDA or nothing, and the PyTorch adapter links
-# libtorch, which planning-only callers must not be made to carry.
+# dlopened and compiled against a provider toolchain alone, and the PyTorch
+# adapter links libtorch, which planning-only callers must not be made to
+# carry. README.md has the rest of the rationale.
 add_library(
   shadowspill
   SHARED

@@ -36,24 +36,20 @@ class SearchAlgorithm(ABC):
     """One way of choosing a schedule, and the options it was built with.
 
     A search *is* an instance of this: subclass it, give it a `name`, and
-    implement the two methods. There is no registry and no name lookup, so
-    a caller extending ShadowSpill with a search of their own passes an
-    instance rather than registering a string.
+    implement `__call__`. A planning call is handed the instance, so a caller
+    extending ShadowSpill with a search of their own looks no name up on the
+    calling path.
 
     `name` identifies the search in a plan key and in a plan manifest. It
     is a stable string chosen by the implementation -- `"pressurefit"` --
     and never the Python class's name, so renaming or moving the class
-    leaves a stored corpus reachable.
+    leaves a stored corpus reachable. It is also what `named` resolves, which
+    is how a plan read back from an archive reaches the search that made it.
 
     `options` is the search's own record, carried into the plan key whole
     and read by nothing outside the search. An instance holds no per-call
     state, so the same one serves every budget of a sweep and every worker
     of a search.
-
-    What the planner does around a search is described in
-    ``docs/architecture/search.md``: it fixes the machine from a budget,
-    keys the answer in the plan store, admits the winner physically, and
-    holds the search to the plan it was handed.
     """
 
     #: The stable name this search is keyed by.
@@ -330,7 +326,7 @@ def answer_no_worse_than(
         search_options=result.search_options,
     )
     if placement is not None and not _places(carried, placement):
-        # Faster, but its layout no longer fits the pool. A plan that cannot
+        # Faster, but its layout does not fit the pool. A plan that cannot
         # be admitted is not an answer.
         return result
     return carried

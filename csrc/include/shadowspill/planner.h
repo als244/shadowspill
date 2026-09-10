@@ -17,7 +17,7 @@ extern "C" {
 #define SHADOWSPILL_ADMISSION_NO_OPERATION UINT64_MAX
 #define SHADOWSPILL_ADMISSION_NO_LEASE UINT64_MAX
 
-/* Planner names for the shared statuses; see <shadowspill/status.h>. */
+/* Planning statuses are in the shared vocabulary; see <shadowspill/status.h>. */
 
 /*
  * A schedule in indexed form: every identifier is the contiguous task or
@@ -100,15 +100,13 @@ typedef struct ShadowSpillScheduleContext {
 /*
  * Schedule-invariant input to a search: the problem before any schedule
  * exists for it. A search resolves this into whatever it evaluates.
- * The simulation topology carries the selected tasks plus the declared
- * initial/final residency.  The planner derives the indexed analytic residency
- * problem and initial seed internally before evaluating the unchanged
- * candidate set.
  */
 typedef struct ShadowSpillIndexedProblem {
     uint32_t abi_version;
     /* What any code judging this problem's schedules needs. */
     ShadowSpillScheduleContext context;
+    /* A rank per device, which breaks ties between devices so an answer does
+       not depend on the order the devices arrived in. */
     const uint32_t *device_priority;
 
     /* The plan to beat: a plan for this problem already in hand -- found at
@@ -117,8 +115,6 @@ typedef struct ShadowSpillIndexedProblem {
        and tasks index this problem. */
     const ShadowSpillIndexedSchedule *incumbent;
 } ShadowSpillIndexedProblem;
-
-/* Exact operations and summed component work for a candidate or problem. */
 
 /* Caller-owned output buffers for one selected schedule's exact admission. */
 typedef struct ShadowSpillScheduleAdmissionResult {
@@ -303,20 +299,6 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_build_lease_lifetimes(
     ShadowSpillLeaseLifetimeResult *result
 );
 
-/*
- * The best makespan any caller has actually placed, shared between searches.
- *
- * A plan no better than one already placed cannot win even if it places, so a
- * search consults this before paying for a placement. The object knows nothing
- * about candidates, resolved programs or calls: passing one object to several
- * concurrent searches shares the gate between them, and passing separate
- * objects keeps them independent. Safe to use from several threads at once.
- *
- * This header carries only what a caller outside the library needs: make one,
- * read what it holds, destroy it. Publishing to it and consulting it before a
- * placement are the library's own, on the path where candidates run.
- */
-
 /* Fixed-offset placement of lease lifetimes within one execution-pool slice. */
 typedef struct ShadowSpillPlacementProblem {
     uint32_t abi_version;
@@ -342,8 +324,8 @@ typedef struct ShadowSpillPlacementResult {
 SHADOWSPILL_API uint64_t shadowspill_planner_struct_size(uint32_t which);
 
 /* Which structure shadowspill_planner_struct_size() is asked about. A search
- * that ships its own structures continues this numbering in its own header;
- * see SHADOWSPILL_PRESSUREFIT_STRUCT_* in <shadowspill/pressurefit/pressurefit.h>. */
+ * that ships its own structures continues this numbering in its own header, so
+ * one call answers for the generic planner and for the search. */
 enum ShadowSpillPlannerStruct {
     SHADOWSPILL_STRUCT_ADMISSION_FACTS = 0,
 };

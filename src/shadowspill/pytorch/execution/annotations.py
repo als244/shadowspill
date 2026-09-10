@@ -65,7 +65,7 @@ class AnnotatedExecutor:
     """What every task executor does about annotations and completion.
 
     Both executors own a `TaskBoundaryAnnotations`, a `RuntimeBridge` and a
-    completion recorder, and did the same three things with them. The
+    completion recorder, and do the same three things with them. The
     behaviour belongs to the policy, not to forward or training.
     """
 

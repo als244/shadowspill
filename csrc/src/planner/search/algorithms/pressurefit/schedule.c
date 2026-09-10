@@ -1342,10 +1342,9 @@ static void note_capacity_stall(
     uint64_t start_ns
 ) {
     /* Two waits are gated by an eviction: a hard capacity wait, and a wait
-     * for one allocation to be freed so it can be reused. In practice it is
-     * the second that shows up -- across the subset corpus the plans record
-     * no capacity wait at all and 3,407 reuse waits -- so keying on capacity
-     * alone made this pass unable to fire on any real program. */
+     * for one allocation to be freed so it can be reused. A plan that
+     * arranges its own capacity records the second and never the first, so
+     * keying on capacity alone would never fire; both count as gated. */
     const uint32_t gated = (uint32_t)SHADOWSPILL_STALL_DEVICE_CAPACITY |
                            (uint32_t)SHADOWSPILL_STALL_MEMORY_REUSE;
     if ((stall_mask & gated) == 0U || start_ns <= ready_ns) {
@@ -1934,8 +1933,8 @@ static int plan_span_reload(
 
 /*
  * The end of a span needs a move only when something later wants the object:
- * another span, or the final residency. A value the spill copy no longer
- * matches has to be written back; anything else is released.
+ * another span, or the final residency. A value the spill copy does not match
+ * has to be written back; anything else is released.
  */
 static int plan_span_departure(
     const ShadowSpillScheduleFacts *facts,

@@ -12,17 +12,9 @@ extern "C" {
 /*
  * One status vocabulary for the whole library.
  *
- * There used to be four: the simulator, the planner, the runtime and the
- * admission replay each declared their own, and each agreed that 0 was OK, 1
- * was a bad argument and 2 was an internal failure before diverging. Four
- * enums meant four functions spelling out the same three strings, and it made
- * a status meaningless without knowing which component produced it - 3 was
- * "initial device capacity" to the simulator and "out of memory" to the
- * runtime.
- *
- * The three shared codes keep the values every component already used, and
- * each component's own codes occupy a band of their own, so a status decodes
- * to exactly one meaning wherever it came from.
+ * Three codes every component shares take 0, 1 and 2; each component's own
+ * codes occupy a band of their own. So a status decodes to exactly one
+ * meaning without knowing which component produced it.
  */
 typedef enum ShadowSpillStatus {
     SHADOWSPILL_STATUS_OK = 0,

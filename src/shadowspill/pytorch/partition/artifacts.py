@@ -65,9 +65,8 @@ class StageExample:
 class StageRecord:
     """One observed call through the split root graph.
 
-    This internal record names fields that were previously encoded as an
-    order-sensitive five-tuple.  It is deliberately independent of AOT graph
-    pairs: partitioning ends once these stage-local values and sources exist.
+    Deliberately independent of AOT graph pairs: partitioning ends once
+    these stage-local values and sources exist.
     """
 
     module_target: str

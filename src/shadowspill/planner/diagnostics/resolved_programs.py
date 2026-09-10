@@ -130,13 +130,11 @@ class ResolvedProgramDiagnostics:
     #: What this problem's own best plan moves. The winner's traffic is on
     #: the plan summary; these are the alternatives', which is what says
     #: whether a cheaper-compute selection pays for it on the lanes. Zero on
-    #: a problem that placed nothing, and on one read back from a store
-    #: written before these were recorded.
+    #: a problem that placed nothing.
     fetched_bytes: int = 0
     evicted_bytes: int = 0
     #: What became of the plan to beat, when this problem was handed one;
-    #: absent on a problem that carried none, and on records written before
-    #: there was one.
+    #: absent on a problem that carried none.
     incumbent: IncumbentDiagnostic | None = None
 
     def __post_init__(self) -> None:
