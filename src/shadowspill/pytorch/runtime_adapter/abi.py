@@ -514,6 +514,7 @@ def configure_adapter_library(library: Any) -> None:
 #: than `c_void_p` because it is pointer-sized either way and reads back as
 #: a plain integer.
 _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
+    ("shadowspill_failure_reason_string", [ctypes.c_uint32], ctypes.c_char_p),
     ("shadowspill_plan_close", [ctypes.c_size_t], ctypes.c_uint32),
     ("shadowspill_plan_destroy", [ctypes.c_size_t], None),
     ("shadowspill_plan_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),

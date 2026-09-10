@@ -192,6 +192,7 @@ def test_adapter_signatures_are_configured_together() -> None:
 class _RuntimeLibrary:
     """Stands in for the neutral runtime the bridge calls plan admission on."""
 
+    shadowspill_failure_reason_string = _Function()
     shadowspill_plan_bind_object = _Function()
     shadowspill_plan_admit_task = _Function()
     shadowspill_plan_publish_initial_allocation = _Function()
