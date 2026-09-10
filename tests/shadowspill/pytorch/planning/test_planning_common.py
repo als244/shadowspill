@@ -25,6 +25,7 @@ from shadowspill.pytorch.planning.admission.physical import physical_admission
 from shadowspill.pytorch.planning.common import (
     PlanningTimer,
     estimate_spill_reservation,
+    planned_transfer_bandwidths,
     public_infeasible_plan_error,
     public_search_exhausted_error,
     simulation_capacity,
@@ -34,6 +35,7 @@ from shadowspill.pytorch.planning.common import (
 )
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
+from shadowspill.runtime.topology import TransferProfile
 
 
 def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> None:
@@ -208,3 +210,62 @@ def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:
         _adapter_path(missing)
     if configured is not None:
         assert _adapter_path(configured) == configured
+
+
+def _profile(source: str, destination: str, **measured: int) -> TransferProfile:
+    """A calibrated route carrying only the fields planning reads."""
+
+    return TransferProfile(
+        source=source,
+        destination=destination,
+        source_pool_id=0,
+        destination_pool_id=1,
+        generation=1,
+        solo_measurement_nanoseconds=0,
+        concurrent_measurement_nanoseconds=0,
+        calibrated_timestamp_nanoseconds=0,
+        small_copy_bytes=1 << 12,
+        large_copy_bytes=1 << 20,
+        measured_copies=4,
+        available=True,
+        calibrated=True,
+        provenance="test",
+        calibration_mode="concurrent",
+        concurrent_route_count=1,
+        **measured,
+    )
+
+
+def test_a_caller_reporting_the_lanes_gets_the_coarsened_planning_input() -> None:
+    """A measurement is not a planning input, and reporting must not imply it is.
+
+    The figure a plan is priced against is the coarsened one, so anything that
+    tells a reader what a run plans against has to ask for it rather than round
+    the measurement itself -- a second rounding drifts as soon as the bands do.
+    """
+
+    planned = planned_transfer_bandwidths(
+        _profile(
+            "spill",
+            "execution",
+            latency_nanoseconds=9_400,
+            bandwidth_bytes_per_second=25_600_000_000,
+            solo_bandwidth_bytes_per_second=36_500_000_000,
+            concurrent_bandwidth_bytes_per_second=25_500_000_000,
+        ),
+        _profile(
+            "execution",
+            "spill",
+            latency_nanoseconds=4_200,
+            bandwidth_bytes_per_second=25_900_000_000,
+            solo_bandwidth_bytes_per_second=56_600_000_000,
+            concurrent_bandwidth_bytes_per_second=25_900_000_000,
+        ),
+    )
+
+    # Half-gigabyte granularity, so 25.6 is not reported as 26.
+    assert planned.fetch_bytes_per_second == 25_500_000_000
+    assert planned.evict_bytes_per_second == 26_000_000_000
+    # Five-microsecond granularity above it, one microsecond below.
+    assert planned.fetch_latency_ns == 10_000
+    assert planned.evict_latency_ns == 4_000

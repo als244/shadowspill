@@ -14,7 +14,7 @@ from .artifacts import (
     TrainingProgramArtifacts,
     TrainingSelections,
 )
-from .common import PlanningTimer
+from .common import PlanningTimer, planned_transfer_bandwidths
 from .forward import (
     admit_forward_plan,
     build_forward_program,
@@ -59,6 +59,7 @@ __all__ = [
     "open_planning_stores",
     "plan_forward_program",
     "plan_training_programs",
+    "planned_transfer_bandwidths",
     "profile_forward_tasks",
     "profile_training_tasks",
     "rollback_training_materialization",

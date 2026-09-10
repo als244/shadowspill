@@ -179,7 +179,11 @@ it reads a matrix.
 
 1. **Configuration.** The effective geometry, the search and run budget
    lists, the spill budget, the orderings and resolutions the search will
-   try, and the calibrated transfer lanes.
+   try, and the transfer lanes both ways round: the rate and latency the
+   simulator will be built with, beside the effective, concurrent and solo
+   rates the runtime measured. The planned figure is the effective one
+   [coarsened by magnitude](../docs/python/plan-report.md), so it is
+   deliberately not the measurement, and a plan is priced against it.
 2. **Geometry search** — `plan_step_search` from the
    [frontend API](../docs/python/api/frontend.md). Every admitted split
    plans through capture, profiling, lowering, and the search
