@@ -27,19 +27,23 @@ not a flag inside PressureFit.
 | `initial_residency` | Where each alias group starts |
 | `final_residency` | Where each alias group must end |
 | `config` | The machine: device capacities, spill capacity, transfer bandwidths |
-| `options` | `SearchOptions` — what every search is told |
-| `search_options` | This search's own record, opaque to the planner |
+| `generic` | `GenericPlanningOptions` — what every search is told |
+| `workers` | How many threads it may use: zero for every logical CPU, one for serial |
 | `admission` | Pool facts, when a caller wants the dynamic-pool replay |
 | `placement` | The pool topology a layout must fit into |
 | `progress` | One line per phase, or `None` |
 | `incumbent` | A plan already in hand for this program, offered as a bound |
 
-`options` holds what is true of any search: how many workers it may use,
-whether it must reproduce exactly, and the size below which an object is
-not worth moving at all. `search_options` holds everything else. The
-planner carries it into the plan key and never reads a field of it, which
-is what lets a search grow its candidate space without the planner learning
-a new word.
+`generic` holds what is true of any search: whether it must reproduce
+exactly, and the size below which an object is not worth moving at all. A
+search's own options are not passed in at all — it was built with them and
+holds them as its `options`. The planner carries that record into the plan
+key and never reads a field of it, which is what lets a search grow its
+candidate space without the planner learning a new word.
+
+`workers` is an argument rather than an option because it changes how long
+an answer takes, not which answer is right, so it is no part of the question
+the plan is keyed by.
 
 The program arrives with its task alternatives **open**. Expanding them
 into resolved programs, deciding which are worth planning and comparing
@@ -92,23 +96,19 @@ whole search. A search that used the hint well returns the incumbent
 itself, and the check agrees with it.
 
 **An answer is keyed by the whole question.** The plan key covers the
-program, the boundaries, the machine, `options`, which search ran, and what
-that search was told. Change any of them and it is a different question
-with a different answer. The plan in hand is deliberately **not** in the
-key: it is provenance, so a run that replans a budget without the sweep's
-plan still reads back the sweep's answer.
+program, the boundaries, the machine, the pool a layout must fit, the
+generic options, the name of the search that ran, and what that search was
+told. Change any of them and it is a different question with a different
+answer. Two things are deliberately outside the key: `workers`, and the
+plan in hand, which is provenance — so a run that replans a budget without
+the sweep's plan still reads back the sweep's answer.
+
+The key records a search's `name`, a stable string the search chooses, and
+never the Python class's name, so renaming or moving the class leaves a
+stored corpus reachable.
 
 **The winner is physically admitted.** What comes back from the planner has
 passed [physical admission](physical-admission.md), not only the simulator.
-
-## Naming a search
-
-A search carries a `name` — a stable string it chooses, `"pressurefit"` —
-and that name is what the plan key and the plan manifest record. It is
-never the Python callable's name, so renaming or wrapping the callable
-leaves a stored corpus reachable. Its options travel beside it as a
-serialized record, derived from the option type's own fields, so an option
-added later is keyed and archived without a second edit.
 
 ## Where it plugs in
 
@@ -118,9 +118,11 @@ a name to look up: an instance holding its own options. `None` runs the one
 that ships, so a call that does not care reads as if there were no seam at
 all.
 
-Nothing registers a search. A `SearchAlgorithm` subclass defined outside this
-package is passed in and used, which is the whole test of whether the seam is
-real.
+Nothing has to be registered by hand, and no call path resolves a name. A
+`SearchAlgorithm` subclass defined outside this package is passed in and
+used, which is the whole test of whether the seam is real. Defining it does
+record its `name`, which is how a plan read back from an archive can be
+given the search that made it.
 
 The PyTorch frontend's `plan_step` builds and plans in one call and takes the
 same argument, using the shipped search throughout when it is not given
@@ -132,8 +134,8 @@ problem the frontend already built.
 
 This page is the contract. [Writing a search
 algorithm](search-algorithm.md) is the reference for satisfying it: the
-two methods to implement, every argument with its type and meaning, what
-the defaults are, and a complete example of a search defined outside this
+method to implement, every argument with its type and meaning, what the
+defaults are, and a complete example of a search defined outside this
 repository.
 
 Previous: [The planning problem](planning-problem.md). Next: [Writing a

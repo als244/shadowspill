@@ -16,9 +16,11 @@ selects its execution pool, spill pool, fetch route, and evict route, so the
 roles are the plan's rather than the runtime's. The PyTorch adapter registers
 one device pool and any number of pinned-host pools.
 
-The execution pool's `physical_capacity` is the complete process-attributable
-device cap. Provider headroom and the driver's own baseline lie inside that
-cap. Planning budgets may reduce configured capacities but cannot exceed them.
+A `DevicePool`'s `physical_capacity` is the complete process-attributable
+accelerator cap. Provider headroom and the driver's own baseline lie inside
+that cap, and the runtime reports the suballocatable pool capacity it derives
+after initialization. Planning budgets may reduce configured capacities but
+cannot exceed them.
 
 A `MemoryLease` owns one range for one residency generation. Objects keep a
 lease per pool location; aliases and views share the same object and lease.
@@ -26,12 +28,8 @@ Generations prevent stale events, frees, bindings, or worker completions from
 modifying a successor.
 
 Runtime-global shared leases are physically charged once and retained outside
-any one callable's movable-object schedule. `SHARED_READ_ONLY` accepts only
-existing inputs and rejects all writes. `SHARED_WRITABLE_CAUSAL` orders each
-generation and allows producers to publish a replacement lease.
-`SHARED_WRITABLE_UNORDERED` permits stable-address in-place mutation without
-introducing cross-callable ordering; readers may therefore observe an older,
-newer, or concurrently changing value.
+any one callable's movable-object schedule; which mutations and orderings each
+shared-residency policy permits is in [the program](program.md).
 
 Every callable uses its own plan-local alias IDs and fixed-layout slice. A
 shared-input binding maps one of those local aliases to an existing
@@ -57,7 +55,7 @@ Lease states have one meaning across execution and spill pools:
 
 ## Fixed layout with bounded dynamic allocation
 
-Production plans use one complete step-level physical layout for
+An admitted plan uses one complete step-level physical layout for
 schedule-managed allocations:
 
 - initial object generations;
@@ -101,17 +99,13 @@ free" state.
 
 ## Transfers
 
-Fetch and evict are separate routes, each owning one lane the runtime creates
-and the worker dispatches onto in FIFO order. What happens between an action's
-trigger and its completion -- destination reservation, the two queues a lane
-serves, and how a write-back differs from an eviction -- is in
-[transfers](transfers.md#dispatch).
+What happens between an action's trigger and its completion -- routes and their
+lanes, destination reservation, the two queues a lane serves, and how a
+write-back differs from an eviction -- is in [transfers](transfers.md#dispatch).
 
-Two consequences belong here, because they are about ranges rather than
-copies. An eviction's source is not freed when the action is queued: it
-becomes reusable only through its transfer-completion dependency. And a
+One consequence belongs here, because it is about ranges rather than copies: a
 release scheduled behind a pending write-back of the same object does not
-retire its source at the trigger, since the copy is still reading it; the
+retire its source at the trigger, since the copy is still reading it. The
 worker retires and frees the range when it reaches the release, after the copy
 has landed, which is when the simulator frees it too.
 
@@ -126,21 +120,22 @@ head of its lane queue and its preconditions hold. The default incomplete-head
 query cadence is `worker_poll_nanoseconds`, one microsecond; an
 already-complete head is followed immediately without an artificial delay.
 
-Cold plan adoption reserves event leases with their backend events
-([events](events.md)), retirement queue entries, `MemoryLease` records, and
-lease-use records. It also sizes one pool-owned release-frontier workspace
-from the sealed lease inventory. That workspace dry-runs pending-range
-coalescing inside a bounded borrowed range-node arena, so destination
-reservation never builds a heap array or clones heap-owned range nodes while
-holding the pool. A lease-use record names one distinct stream while its lease
-is live; an asynchronous free records the completion event directly into that
-same record and gives the immutable list to the retirement queue, so there is
-no stream snapshot and no copied event-wrapper list. A later callable sharing
-the runtime may grow these inventories only at the same cold boundary.
-Generation-tagged leases return records and handles to their respective
-owners, and the worker queries only FIFO heads and calls the backend outside
-data-structure locks. Steady-state execution therefore performs no host
-allocation and creates or destroys no backend event.
+Steady-state execution performs no host allocation and creates or destroys no
+backend event, because cold plan adoption reserves every inventory the hot path
+draws on: event leases with their backend events ([events](events.md)),
+retirement queue entries, `MemoryLease` records, and lease-use records. A later
+callable sharing the runtime may grow these only at the same cold boundary.
+
+Two of those inventories exist for reasons worth naming. Adoption sizes one
+pool-owned release-frontier workspace from the sealed lease inventory, which
+dry-runs pending-range coalescing inside a bounded borrowed range-node arena,
+so destination reservation never builds a heap array or clones heap-owned range
+nodes while holding the pool. And a lease-use record names one distinct stream
+while its lease is live, so an asynchronous free records the completion event
+into that same record and hands the immutable list to the retirement queue:
+there is no stream snapshot and no copied event-wrapper list. Generation-tagged
+leases return records and handles to their respective owners, and the worker
+queries only FIFO heads and calls the backend outside data-structure locks.
 
 ## Dispatcher, streams, and worker timeline
 
@@ -169,8 +164,15 @@ the Python thread on ordinary readiness. `after_task()` reserves transfer
 capacity, publishes its predecoded action batch, and spins only until the
 worker acknowledges that every fetch in the batch has been issued and carries
 a readiness event. It never waits for copy completion, and never for the
-batch's evictions or releases. A dispatcher allocation may wait only when a
-known pending transition can satisfy it; otherwise it fails with no progress.
+batch's evictions or releases.
+
+A dispatcher allocation or destination reservation that cannot be served waits
+only while the pool still has a release source -- a pending retirement or a
+queued capacity action. It leaves the wait as soon as the pool's monotonic
+capacity epoch moves, which is what says capacity was actually returned, and
+gives up the moment nothing is left to wait for, which is what turns a pool
+that can never satisfy the request into a no-progress failure rather than a
+spin. Neither the waiter nor the worker sleeps.
 
 ## Task boundaries
 

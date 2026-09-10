@@ -5,10 +5,10 @@ This prevents incidental FakeTensor storage or allocator callback identity
 from merging or splitting logical objects. The output is the canonical
 [framework-neutral program](program.md), not a PyTorch execution trace.
 
-For training, stage partitioning is followed by the dedicated
-[graph-pair construction](graph-pair-construction.md) phase. That phase creates
-the forward/backward alternatives whose individual task contracts, compiled
-layouts, and measurements are consumed by the lowering described here.
+For training, stage partitioning is followed by [graph-pair
+construction](graph-pair-construction.md), which creates the forward/backward
+alternatives whose task contracts, compiled layouts and measurements this
+lowering consumes.
 
 ```text
 Export/AOT FX semantics
@@ -34,10 +34,12 @@ canonical ShadowSpillProgram
 
 Each compiled task has a deterministic `TaskStorageContract`:
 
-- input roots alias declared task-input groups;
-- fresh roots are identified by producer and result index;
-- output views retain shape, stride, dtype, layout, and relative offset;
-- mutations bind an output root to an explicit state input;
+- input roots name the canonical argument position of an input alias group;
+- fresh roots name one producer node and result index;
+- output views retain shape, stride, dtype, layout, and offset within their
+  root;
+- a mutation names the input position a task updates, and the output leaf that
+  replaces it where the compiled form returns one;
 - duplicate leaves reference the same root directly.
 
 The extractor uses FX provenance, dispatcher schemas, graph signatures, and a
@@ -62,10 +64,12 @@ semantic object identity.
 
 Task allocation profiling is a physical contract, not a semantic lowering
 fallback. Each structural task is warmed and probed with representative
-inputs. Floating anonymous values are deterministic standard-normal samples;
-registered state and caller inputs retain authentic values; integer and
-boolean control values come from callers or their producing tasks when
-available.
+inputs. Registered state and caller inputs keep their authentic values;
+floating and complex anonymous values are deterministic standard-normal
+samples, seeded per task, position and probe; optimizer state the step has yet
+to create is zero. An integer or boolean input has no synthetic form, so it
+must come from its caller or its producing task and profiling refuses the task
+when neither supplies one.
 
 The resulting `TaskAllocationContract` contains a strict invariant allocation path and a
 bounded optional path:
@@ -91,9 +95,9 @@ optimizer tasks. Mode-specific helpers only classify public results and state
 roles.
 
 No output copy is added merely to preserve mutation identity. When compiled
-code returns a replacement allocation for a mutated object, `after_task()`
-publishes the new lease generation, retires the prior lease behind the task
-completion fence, and rebinds registered PyTorch storage.
+code returns a replacement allocation for a mutated object, the replacement
+becomes the object's next generation at the task boundary that publishes it;
+see [task boundaries](task-boundaries.md) for what that boundary does.
 
 ## Generality boundary
 
@@ -102,5 +106,5 @@ operations work when their fake/meta behavior and alias/mutation schemas are
 correct. Opaque external workspace may still require measurement because it
 is not fully represented in FX or Inductor's visible buffer graph.
 
-Previous: [The ShadowSpillProgram](program.md). Next:
+Previous: [Intermediate representation](ir.md). Next:
 [Graph-pair construction](graph-pair-construction.md).

@@ -38,7 +38,13 @@ reclaimable rather than becoming anonymous memory.
 A model built on `meta` is rebound in place and handed back as the same
 object, because it held no values to copy. A model that was already
 materialised is copied into a new module whose tensors point at the pool, so
-the caller keeps the return value rather than the model it passed.
+the caller keeps the return value rather than the model it passed. Filling from
+a checkpoint rebinds the model it was given, so there is nothing to reassign.
+
+The entry points are `import_model_state()` and
+`import_model_state_from_file()`, with optimizer counterparts; their arguments
+and return values are in [the frontend
+API](../python/api/frontend.md#persistent-state).
 
 ## The contract
 
@@ -229,17 +235,15 @@ independently -- its first use is the optimizer's task, so it need not occupy
 device memory during forward and backward at all, and a task that requires the
 higher precision simply reads the object that has it.
 
-The alternative -- one object, converted on transfer -- is deliberately not
-taken. It would give a single alias different sizes on each side of the link,
-contradicting the residency model's assumption that device and spill hold the
-same bytes, the planner's transfer accounting, and the runtime's lane
-arithmetic. It would also land the high-precision copy on the device whenever
-the low-precision one was wanted, which is the opposite of what a separate
-object achieves.
+Two dtypes are therefore always two objects. An alias holds the same bytes on
+both sides of a transfer -- which is what the residency model, the planner's
+transfer accounting and the runtime's lane arithmetic all assume -- so a
+conversion on the way to the device is not something a single alias can
+express.
 
 ## See also
 
-- [Persistence](program.md) for how long a piece of state must survive, which is a
-  different question from where it lives.
-- [PressureFit](pressurefit.md) for how residency decides when state is on the
+- [The ShadowSpillProgram](program.md) for persistence: how long a piece of
+  state must survive, which is a different question from where it lives.
+- [Plan search](search.md) for how residency decides when state is on the
   device.

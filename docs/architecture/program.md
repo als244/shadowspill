@@ -130,25 +130,22 @@ A sink's value leaves its phase. Nothing later in the same phase reproduces
 the inputs it would need, so at the moment the next phase reads it there is
 nothing to recompute it from.
 
-The planner uses this to pin every group whose `forward` tasks are sinks of
-the `forward` phase to that group's `save` option, removing the choice from
-the search instead of offering it and always rejecting it.
+Costing a program's alternatives uses this to pin every group whose `forward`
+tasks are sinks of the `forward` phase to that group's `save` option, removing
+the choice from the search instead of offering it and always rejecting it.
 
 That rule names one phase on purpose, and the IR is the reason it can. A
 program that declares no `forward` phase -- the default phase is `compute` --
 matches no forward tasks, so nothing is pinned and every alternative stays
 open. Naming the phase is what confines a piece of training knowledge to
-Programs that say they are training. Rephrasing it as "sinks of whatever phase
-a group enters first" sounds more general and is strictly worse: it would pin
-the terminal groups of *any* program and delete the recomputation search for
-everything that is not training.
+programs that say they are training, and leaves the recomputation search
+intact for every program that does not.
 
-So the generality here is in the IR, not in the rule. `phase` carries no
-meaning, which lets one consumer attach meaning to one value without every
-other program inheriting it.
-
-The rule is graph-derived either way: it uses task phase and dependency edges,
-never model family, module name, stage number, or operator identity.
+So the generality is in the IR, not in the rule. `phase` carries no meaning,
+which lets one consumer attach meaning to one value without every other
+program inheriting it. The rule is graph-derived: it uses task phase and
+dependency edges, never model family, module name, stage number, or operator
+identity.
 
 ## What it deliberately does not hold
 

@@ -24,7 +24,9 @@ API. Budgets, lease states, and shared leases are described in
 
 A pool can grow at an idle boundary (`shadowspill_memory_pool_grow()`): the
 runtime takes a larger arena of the same kind, copies the live bytes, releases
-the old arena, and rebases every lease.
+the old arena, and rebases every lease. Both arenas are held while the copy
+runs, so a caller has to budget for that transient; the refusals are in the
+[runtime C API](../c/runtime.md).
 
 ## Memory a plan will own comes from the pool that will own it
 
@@ -34,14 +36,14 @@ state is taken from the spill pool as it is created rather than built in
 ordinary host memory and copied in, so the host is never asked for the whole
 of it beside the pool that is about to hold it. A host allocation made while
 that state is being created, and large enough to be worth an object, is served
-from the pool; anything smaller, and anything a plan does not keep, behaves as
-it always did and is given back.
+from the pool; anything smaller, and anything a plan does not keep, is an
+ordinary host allocation and is given back.
 
-The rest of what a plan owns already obeyed this rule. Gradients, activations
-and workspaces are runtime objects created in a pool, and the tensors a
-program is lowered from are fake and cost nothing. Model and optimizer state
-reaches a pool without a second copy of itself by one of the paths in
-[importing state](state-import.md).
+The rest of what a plan owns obeys the same rule. Gradients, activations and
+workspaces are runtime objects created in a pool, and the tensors a program is
+lowered from are fake and cost nothing. Model and optimizer state reaches a
+pool without a second copy of itself by one of the paths in [importing
+state](state-import.md).
 
 ## Construction order
 

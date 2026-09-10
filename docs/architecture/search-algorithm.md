@@ -5,8 +5,8 @@ contract — what the planner asks of a search and promises in return; this
 page is how you satisfy it, argument by argument, with a working example.
 
 A search is an object. You subclass `SearchAlgorithm`, give it a name,
-implement two methods, and pass an instance. There is no registry, no
-plugin manifest and no name to reserve, so a search living outside this
+implement one method, and pass an instance. There is no registration call,
+no plugin manifest and no name to reserve, so a search living outside this
 repository is a first-class one.
 
 ## The two types
@@ -14,7 +14,7 @@ repository is a first-class one.
 | | |
 |---|---|
 | `SearchAlgorithm` | The search itself, holding the options it was built with. Subclass this. |
-| `SearchOptions` | What one planning call is told about searching: `generic`, plus the `algorithm` instance. |
+| `SearchOptions` | What one planning call is told about searching: `generic`, the `algorithm` instance, and `workers`. |
 
 They compose one way only:
 
@@ -33,8 +33,8 @@ nothing to `GenericPlanningOptions` and changes nothing that reads it.
 
 ## What you implement
 
-Two methods, both abstract. A class that leaves either out cannot be
-instantiated, and a class with no `name` is refused at definition.
+`__call__` is abstract: a class that leaves it out cannot be instantiated. A
+concrete class with no `name` is refused at definition.
 
 ### `name`
 
@@ -43,8 +43,9 @@ search in a plan key and in a plan manifest.
 
 It is **not** the Python class's name. Renaming or moving the class must
 not orphan a stored corpus, so the string is written once and left alone.
-Two searches answering to one name would make a stored plan ambiguous, so
-pick something specific.
+Defining the class records the string, which is how a plan read back from an
+archive is given the search that made it; two searches answering to one name
+would make a stored plan ambiguous, so pick something specific.
 
 ```python
 class Beam(SearchAlgorithm):
@@ -85,9 +86,9 @@ Returns `None`. Raises `PlanInfeasibleError` when it can tell nothing
 fits.
 
 This is a *necessary-condition* check, not a search: what passes is what
-you could reach, not a promise that a plan exists. A search that cannot
-cheaply tell may do nothing at all — an empty body is a valid
-implementation.
+you could reach, not a promise that a plan exists. The inherited default
+says nothing at all, which is always a correct answer, so a search with no
+cheap way to tell simply does not override it.
 
 ### `__call__(...) -> ProgramPlanResult`
 
@@ -105,6 +106,9 @@ Answer with a schedule.
 | `placement` | `AdmissionFacts \| None` | The pool a layout must fit; measure against it as you go |
 | `progress` | `(str) -> None \| None` | One line per phase, or `None` |
 | `incumbent` | `ProgramPlanResult \| None` | A plan already in hand, offered as a bound |
+
+Your own options are not in that list: you were built with them and read
+them off `self.options`.
 
 Returns a `ProgramPlanResult`: the schedule, the alternative choices it
 fixed, the simulation that priced it, and diagnostics.
@@ -124,40 +128,28 @@ Three things are worth stating plainly:
 
 Raise `PlanInfeasibleError` when no schedule fits, and
 `PlanSearchExhaustedError` when one might exist but you did not reach it.
-Reporting the second as the first tells a caller to buy memory it does not
-need.
+[Plan search](search.md#what-a-search-answers-with) says why a caller needs
+the two kept apart.
 
 ## Defaults
 
 `SearchOptions()` with nothing named runs the search that ships, built
-with its own defaults.
+with its own defaults. `workers` defaults to zero, one thread per logical
+CPU, and is **not** part of the plan key: it says how much machine to spend
+rather than what to decide, so two runs at different worker counts ask the
+same question and read back the same answer. The plan report records what
+was used.
 
-`GenericPlanningOptions`:
+`GenericPlanningOptions` is what you are handed as `generic`:
 
 | field | default | meaning |
 |---|---|---|
 | `deterministic` | `False` | Make every candidate's outcome a pure function of its inputs |
 | `minimum_object_bytes_evict_eligible` | `1 << 20` | Objects below this stay resident from first to last access |
 
-`PressureFitOptions`, for the search that ships:
-
-| field | default |
-|---|---|
-| `initial_placement` | `InitialPlacement.GREEDY` |
-| `resolution_options` | every quarter, `0` through `1` |
-| `residency_strategies` | `("headroom-stall", "tight-stall")` |
-| `fetch_rules` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` |
-| `evaluate_coalesced` | `True` |
-| `max_repair_attempts` | `256` |
-| `capacity_refinement_bytes` | `256 MiB` |
-| `record_reduction_steps` | `False` |
-| `split_write_backs` | `False` |
-
-`workers` sits on `SearchOptions` beside `generic` and `algorithm`, but is
-**not** part of the plan key: it says how much machine to spend rather than
-what to decide, so two runs at different worker counts ask the same
-question and read back the same answer. The plan report records what was
-used.
+The shipped search's own options are `PressureFitOptions`, from
+`shadowspill.planner.search.algorithms.pressurefit`; its defaults are on
+[its page](pressurefit.md).
 
 ## Your options record
 
@@ -180,13 +172,14 @@ class BeamOptions(OptionRecord):
 `to_dict` and `from_dict` come from the base and are derived from your
 dataclass's own fields, so an option you add later is keyed, archived and
 replayed without a second edit. A stored record missing an option is
-refused rather than read as though the absent option held today's default.
+refused rather than read as though the absent option held the current
+default.
 
 ## A complete example
 
 Everything above, in the smallest search that actually works — it fixes
-every alternative one way, asks the planner's own emitter for a schedule,
-and prices it:
+every alternative one way, builds a schedule for it, and prices it with the
+simulator:
 
 ```python
 from dataclasses import dataclass
@@ -198,8 +191,8 @@ from shadowspill.planner import (
     SearchAlgorithm,
     SearchOptions,
     plan_program,
+    toolkit,
 )
-from shadowspill.planner import toolkit
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +222,7 @@ class FirstFit(SearchAlgorithm):
             program, initial_residency, final_residency, config, admission
         )
         resolved = toolkit.resolutions(program, toolkit.DEFAULT_RESOLUTION_OPTIONS)
-        ...   # build a schedule, simulate it, return a ProgramPlanResult
+        ...   # build a schedule, simulate() it, return a ProgramPlanResult
 
 
 plan = plan_program(
@@ -242,10 +235,12 @@ plan = plan_program(
 )
 ```
 
-Nothing in that file imports from inside `shadowspill.planner.search.algorithms.pressurefit`,
-and nothing registers anything. The planner keys the answer under
-`"first_fit"`, records `FirstFitOptions` beside it, and holds the result to
-any incumbent exactly as it would PressureFit's.
+`preflight` is left out, so the inherited one runs and says nothing.
+Nothing in that file imports from inside
+`shadowspill.planner.search.algorithms.pressurefit`, and nothing is
+registered. The planner keys the answer under `"first_fit"`, records
+`FirstFitOptions` beside it, and holds the result to any incumbent exactly
+as it would PressureFit's.
 
 ## What the planner does around you
 

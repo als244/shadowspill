@@ -13,14 +13,14 @@ capture/export and stage partitioning
         -> StepProgram
         -> ShadowSpillPlanningProblem
         -> resolved programs, one per complete graph-pair selection
-        -> the PressureFit search
+        -> the search
         -> fixed physical layout and admission
         -> AnnotatedProgramPlan
         -> materialized callable and PlanReport
 ```
 
-`build_step_program()` stops before PressureFit. `plan_program()` accepts that
-saved program with new budgets or transfer bandwidths, so budget sweeps do not
+`build_step_program()` stops before the search. `plan_program()` accepts that
+saved problem with new budgets or transfer bandwidths, so budget sweeps do not
 repeat capture, compilation, or profiling. Capturing a program needs the
 frontend; planning a saved one does not, so `plan_program()` lives in
 `shadowspill.planner` and a sweep never imports torch.
@@ -32,7 +32,7 @@ line between *what is asked* and *how it is answered*.
 
 | Layer | Entry | In | Out |
 |---|---|---|---|
-| the planner | `plan_program()` | a [`ShadowSpillPlanningProblem`](planning-problem.md), a store, and a `SearchOptions` naming the search | `AnnotatedProgramPlan` |
+| the planner | `plan_program()` | a [`ShadowSpillPlanningProblem`](planning-problem.md), a store, and a `SearchOptions`: the generic options and the search itself | `AnnotatedProgramPlan` |
 | the search | any [`SearchAlgorithm`](search.md) | a [program](program.md), boundary residency, machine facts, and the generic options -- its own options it already holds | `ProgramPlanResult` |
 
 **`plan_program()` is the entry point, and the only one.** It resolves the
@@ -44,15 +44,11 @@ the only one that knows what a budget is.
 
 **The search answers one question and is pluggable.** It receives a program
 with its alternatives still open, and everything about how to fix them and
-which schedule to choose is its own. [Plan search](search.md) states the
+which schedule to choose is its own -- including the order resolutions are
+tried in, which is part of how a search works rather than something the
+planner could choose on its behalf. [Plan search](search.md) states the
 contract in full; [PressureFit](pressurefit.md) is the implementation that
-ships, and `search_options.algorithm` is where another goes -- an object, so a
-search written outside this package needs no registration.
-
-Expanding a program into resolved programs and comparing across them is the
-search's own work rather than a third layer above it, because the order in
-which resolutions are tried is part of how a search works and not something
-the planner can choose on its behalf.
+ships, and `search_options.algorithm` is where another goes.
 
 ## The walk through the microbatches
 
@@ -98,21 +94,17 @@ geometry pays for every microbatch's round trip alone.
 [Graph-pair construction](graph-pair-construction.md) and [graph-pair
 selection](graph-pair-selection.md) leave the task alternatives *open* in the
 program: they say which implementations exist and which complete assignments
-are legal, not which one to use. Fixing them is the search's work. It resolves
-the program into the assignments it will compare, chooses the order to try
-them in, and ranks what it places -- and the planner sees one call and one
-answer, which is why it can be handed a different search without changing.
-
-The two levels stay separate in the diagnostics, so a report says which
-assignment won and what it cost to find out.
+are legal, not which one to use. Fixing them is the search's work, and the
+planner sees one call and one answer, which is why it can be handed a
+different search without changing. The two levels stay separate in the
+diagnostics, so a report says which assignment won and what it cost to find
+out.
 
 [PressureFit](pressurefit.md), the search that ships, evaluates residency,
 eviction, fetch-trigger and coalescing candidates within each resolved
 program, against logical object capacity after provider, fixed-service and
 allocator allowances. It requires the compiled planner and simulator and fails
-closed on a missing or ABI-incompatible library. Its own page defines its
-input/output contract, the problem it solves, its bounded algorithm, and its
-repair rules.
+closed on a missing or ABI-incompatible library.
 
 ## Physical admission
 
@@ -152,8 +144,8 @@ under a directory of its own for exactly that case.
 Each tree carries one policy, a `StoreMode`: `contribute` reads the tree and
 writes back what it lacks, `reuse` reads and persists nothing, `require` reads
 and refuses a miss, and `refresh` ignores what is there and writes over it.
-One mode per tree replaces reading, writing, and overwriting as separate
-switches, whose combinations included several that meant nothing.
+One mode per tree is one setting with four named states rather than separate
+read, write and overwrite switches.
 
 The [artifact store guide](../python/artifact-store.md) documents the layout
 and the per-directory contents.
@@ -168,8 +160,8 @@ times. Verbose console output is only presentation; disabling it does not
 remove the report.
 
 The [PlanReport interpretation guide](../python/plan-report.md) gives the
-inspection order, field tables, task/stage lookup workflow, PressureFit search
-hierarchy, and common investigations. The [JSON artifact
+inspection order, field tables, task/stage lookup workflow, search
+diagnostics, and common investigations. The [JSON artifact
 guide](../python/planning-json.md) documents the portable program and admitted
 plan schemas separately from the callable's in-memory report.
 

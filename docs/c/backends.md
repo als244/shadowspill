@@ -80,7 +80,9 @@ the provider object and zeroes the table; it
 runs after the runtime it served is gone, so every stream, event, mapping, and
 arena has already been returned through the table.
 `SHADOWSPILL_BACKEND_CREATE_SYMBOL` and `SHADOWSPILL_BACKEND_DESTROY_SYMBOL`
-name them for `dlsym()`. `shadowspill_backend_is_valid()` in
+name them for `dlsym()`, and `ShadowSpillBackendCreate` and
+`ShadowSpillBackendDestroy` are the function-pointer types to cast the results
+to. `shadowspill_backend_is_valid()` in
 `<shadowspill/runtime.h>` is the check both the runtime and the adapter apply
 to a table before using it.
 

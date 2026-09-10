@@ -80,5 +80,5 @@ Node-count partitioning is intentionally simple and is not necessarily a good
 performance policy. A production policy can inspect `node.meta`, module paths,
 operator targets, and the source module, while preserving the same complete
 and contiguous contract. Partitioning only defines stages; graph-pair
-construction, graph-pair selection, PressureFit, and physical admission
+construction, graph-pair selection, the plan search, and physical admission
 remain unchanged.

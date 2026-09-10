@@ -2,8 +2,8 @@
 
 The simulator deterministically replays an explicit `ShadowSpillProgram`,
 `MemorySchedule`, graph-pair selection, device configuration, and optional
-physical admission. It never invokes the planner. [PressureFit](pressurefit.md)
-calls it while evaluating candidates, and the same public API can evaluate a
+physical admission. It never invokes the planner. A [search](search.md) calls
+it while evaluating candidates, and the same public API can evaluate a
 supplied schedule independently.
 
 Runtime-global shared aliases retain their true sizes in the `ShadowSpillProgram`, but
@@ -22,10 +22,11 @@ The model includes:
 - object residency and task input readiness;
 - physical allocation deltas and reuse dependencies.
 
-Each `TaskInterval` records ready, start, and end time. Each
-`TransferInterval` records action trigger, queue/wire timing, bytes, and
-completion. `SimulationResult` contains makespan, per-device peaks, transfer
-utilization, stalls, and task/transfer intervals.
+Each `TaskInterval` records ready, start, and end time, and what it waited
+for. Each `TransferInterval` records the action and boundary that triggered
+it, its direction, queue and wire timing, and bytes. `SimulationResult`
+carries the makespan, the task and transfer intervals, per-device and spill
+peaks, and every capacity shortfall the plan waited on.
 
 ## Memory actions
 

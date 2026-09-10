@@ -1,12 +1,17 @@
 # Graph-pair selection
 
 Graph-pair selection constructs the finite set of complete program task
-selections that PressureFit evaluates. It consumes the occurrence-level
+selections a [search](search.md) evaluates. It consumes the occurrence-level
 options produced by [graph-pair construction](graph-pair-construction.md), but
-does not capture, compile, or profile graphs. It is also separate from
-[PressureFit](pressurefit.md): selection decides **which executable task
-alternative is active**, while PressureFit decides **where the resulting
-objects reside and when they move**.
+does not capture, compile, or profile graphs. It is also separate from the
+search itself: selection decides **which executable task alternative is
+active**, while the search decides **where the resulting objects reside and
+when they move**.
+
+The mechanism is search-agnostic and lives in
+`shadowspill.planner.search.toolkit`, which any search may call. Which of the
+selections to plan, and in what order, is then the search's own judgement --
+[PressureFit](pressurefit.md) plans them most-recomputed first.
 
 The common PyTorch training case gives each differentiated stage occurrence a
 `save` graph pair and a `recompute` graph pair. Structurally equivalent
@@ -47,7 +52,7 @@ one fixes:
 | Graph-pair option | One alternative in a group, `TaskAlternativeOption`: the tasks it activates and the aliases it retains. | Graph-pair construction |
 | Graph-pair choice | One option fixed for one group, `TaskAlternativeChoice`. | Selection, one per group |
 | Graph-pair selection | One option fixed for **every** group: one complete row. | Selection, as the bounded set below |
-| Graph-pair problem | The question one selection poses to PressureFit, and the diagnostics record its answer produces. | [PressureFit](pressurefit.md), one per selection |
+| Graph-pair problem | The question one selection poses to the search, and the diagnostics its answer produces. | The [search](search.md), one per selection |
 
 The two that are easiest to confuse differ only in how much they fix:
 
@@ -57,9 +62,10 @@ selection  {g0: save, g1: recompute, g2: save} one option, every group
 ```
 
 Two neighbouring terms are deliberately outside the family. A **candidate
-policy** — a residency strategy, fetch rule, and coalescing mode — is
-evaluated *within* one problem, so a plan is chosen by a selection and a
-policy together, and "selection" alone never means the policy.
+policy** is what a search varies *within* one problem — a residency strategy,
+fetch rule and coalescing mode in [the search that
+ships](pressurefit.md#built-in-candidate-policies) — so a plan is chosen by a
+selection and a policy together, and "selection" alone never means the policy.
 **Recomputation** keeps its own name wherever it is the subject: a graph pair
 either recomputes or it does not, and `recomputation_overhead_seconds` is the
 compute a selection spends above the cheapest option of every group.
@@ -78,10 +84,10 @@ owns mutually exclusive `TaskAlternativeOption` values, and a
 A graph-pair selection is the training-specific instance of that. The frontend
 builds each group's options from the forward/backward pairs of one structural
 contract, so a complete selection resolves the program by fixing one pair per
-occurrence. That is why [PressureFit](pressurefit.md) and [from a resolved
-program to leases](admission-leases.md) are written in terms of resolved
-programs while this page is written in terms of graph pairs: the same object,
-named from whichever side of the boundary is speaking.
+occurrence. That is why the planner's pages and [from a resolved program to
+leases](admission-leases.md) are written in terms of resolved programs while
+this page is written in terms of graph pairs: the same object, named from
+whichever side of the boundary is speaking.
 
 The serialized keys spell three of these differently — `task_alternative_groups`
 in the program JSON, `resolved_program` and `resolved_programs` in
@@ -91,7 +97,7 @@ from it, so a key moves only with a schema version and a recollected corpus.
 
 ## Inputs and output
 
-The planner consumes only immutable program facts:
+Selection consumes only immutable program facts:
 
 - ordered `TaskAlternativeGroup` values;
 - each option's `option_id`, active task IDs, and retained alias IDs;
@@ -100,11 +106,11 @@ The planner consumes only immutable program facts:
 
 It returns a tuple of complete `TaskAlternativeChoice` tuples. Each complete
 selection chooses exactly one option for every group and becomes one parent
-problem in PressureFit diagnostics.
+problem in the search's diagnostics.
 
-The graph-pair selector does not consider execution capacity, spill
-capacity, transfer bandwidth, residency, or simulated makespan. PressureFit
-evaluates those consequences after the resolutions have been built.
+Selection considers no execution capacity, spill capacity, transfer
+bandwidth, residency, or simulated makespan. The search evaluates those
+consequences after the resolutions have been built.
 
 ## Cost summaries
 
@@ -125,37 +131,37 @@ and
 
 These summaries order non-binary fallback choices. They are not standalone
 makespan estimates because they omit transfer overlap, residency interaction,
-and contention; PressureFit's simulator evaluates those jointly.
+and contention; [simulation](simulation.md) evaluates those jointly.
 
 ## The current selection policy
 
-The resolution options are the caller's to name. `plan_program()`,
-`pressurefit`, `plan_program()`, `plan_step()` and `plan_step_search()`
-all take `resolution_options`, the fractions of flexible groups to recompute,
-and the selector builds one selection per option; the library's default,
-`DEFAULT_RESOLUTION_OPTIONS` in `shadowspill.planner.search.toolkit`, is every
-quarter. A program carries none of this, because a program is a problem and
-how to search it is the caller's. What follows is the mechanism that turns the
-options into selections. The two cases that ignore them — no groups, and
-inventories small enough to enumerate — ignore them because they have nothing
-to choose.
+The resolution options are the caller's to name: the fractions of flexible
+groups to recompute, one selection per fraction. They are an option of the
+search rather than of the program, reaching it in the `SearchOptions` a
+planning call carries — `PressureFitOptions.resolution_options` for the search
+that ships, whose default is `DEFAULT_RESOLUTION_OPTIONS` in
+`shadowspill.planner.search.toolkit`, every quarter. A program carries none of
+this, because a program is a statement of work and how to search it is the
+caller's. What follows is the mechanism that turns the options into
+selections. The two cases that ignore them — no groups, and inventories small
+enough to enumerate — ignore them because they have nothing to choose.
 
 ### No groups
 
-A program without graph-pair groups yields one empty selection. PressureFit
-then operates as an ordinary residency and transfer planner.
+A program without graph-pair groups yields one empty selection, and the
+search plans residency and transfers for the one task set it already has.
 
 ### Small products
 
-The planner first applies any required terminal-save choices, then computes
+Selection first applies any required terminal-save choices, then computes
 the product of the remaining option counts. If the product is at most 64, it
 enumerates every legal combination in deterministic group/option order.
 
 ### Large binary save/recompute products
 
-If every flexible group has exactly one `save` and one `recompute` option, the
-planner emits one selection per resolution option, the option being the
-target fraction of flexible groups recomputed. The default options are every
+If every flexible group has exactly one `save` and one `recompute` option,
+one selection is emitted per resolution option, the option being the target
+fraction of flexible groups recomputed. The default options are every
 quarter:
 
 ```text
@@ -204,15 +210,11 @@ deduplication.
 Every graph-pair group whose forward tasks are sinks of the selected
 forward dependency graph is required to expose exactly one option named
 `save`. That option is forced in every resolution. Terminal forward
-groups are therefore not treated as recomputation degrees of freedom by the
-current policy. The rule names the `forward` phase deliberately: a program
-that declares no forward phase forces nothing and keeps every alternative
-open.
-See [phases and sinks](program.md#phases-and-sinks) for what sink means and why
-generalising the rule would be worse than naming the phase.
-
-The rule is graph-derived: it uses task phase and dependency edges, not model
-family, module name, stage number, or operator identity.
+groups are therefore not a recomputation degree of freedom. The rule names
+the `forward` phase deliberately: a program that declares no forward phase
+forces nothing and keeps every alternative open. See [phases and
+sinks](program.md#phases-and-sinks) for what a sink is and why the rule names
+one phase.
 
 ## Groups that are not a decision
 
@@ -228,10 +230,14 @@ which stage they belong to, so it holds for any program. `flexible_group_count`
 on the plan summary counts the groups that remain a real decision, and that is
 the population a resolution share is taken of.
 
+Either way the rule is graph-derived: it uses task phase, dependency edges and
+declared bytes, never model family, module name, stage number, or operator
+identity.
+
 ## Pseudocode
 
 ```text
-Resolutions(program, shares = DEFAULT_RESOLUTION_OPTIONS):
+Resolutions(program, shares):
     groups = program.task_alternative_groups
     if groups is empty:
         return [empty selection]
@@ -267,16 +273,15 @@ Resolutions(program, shares = DEFAULT_RESOLUTION_OPTIONS):
 
 ## Scope and limitations
 
-The current algorithm is intentionally bounded and fast. For large binary
-products it does not search mixed subsets beyond the one evenly distributed
-selection at each share it was given, and it does not use PressureFit
-feedback to refine a selection.
-Consequently, the best schedule among the emitted resolutions may be worse than a
-legal selection that was not emitted.
+The algorithm is intentionally bounded and fast. For large binary products it
+does not search mixed subsets beyond the one evenly distributed selection at
+each share it was given, and it does not use a search's feedback to refine a
+selection. Consequently, the best schedule among the emitted resolutions may
+be worse than a legal selection that was not emitted.
 
-That limitation belongs here, not inside PressureFit. A richer recomputation
-planner can generate a different finite set of resolutions without changing the
-PressureFit program, residency, action, simulation, or runtime contracts.
+That limitation belongs here, not inside the search. A richer recomputation
+policy can generate a different finite set of resolutions without changing the
+program, residency, action, simulation, or runtime contracts.
 
 Graph-pair construction and profiling are described in the dedicated
 [graph-pair construction](graph-pair-construction.md) page. The IR

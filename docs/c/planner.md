@@ -30,33 +30,38 @@ anonymous live-set multiset flattened per task from those steps, fresh outputs,
 replacements, handoffs, and task-allocation slots. Executable admission never
 constructs allocation steps from scalar workspace or output totals.
 
-A `ShadowSpillIndexedProblem` is the question a search is handed: the
-schedule-invariant `ShadowSpillSimulationProgram` and the `device_priority` to
-plan it against, before any schedule exists for it. A search resolves this into
-whatever it evaluates; deciding which resolved programs exist, and in what
-order to try them, belongs to the search and not to this API.
+A `ShadowSpillIndexedProblem` is the question a search is handed, before any
+schedule exists for it: a `ShadowSpillScheduleContext`, the `device_priority`
+to plan against, an `abi_version`, and optionally an incumbent. A search
+resolves this into whatever it evaluates; deciding which resolved programs
+exist, and in what order to try them, belongs to the search and not to this API.
 
-A problem may carry `incumbent`, the plan to beat: an indexed schedule for it
-already in hand — found at a smaller capacity, say — or NULL. A search given
-one measures it at this capacity before any candidate runs, exactly as it
-measures a candidate's plan (simulated, admitted, placed against the pool), and
-answers with it unless a candidate does strictly better, so a search handed one
-never answers worse than it.
+`incumbent` is the plan to beat: an indexed schedule for this problem already
+in hand — found at a smaller capacity, say — or NULL. A search given one
+measures it at this capacity before any candidate runs, exactly as it measures
+a candidate's plan (simulated, admitted, placed against the pool), and answers
+with it unless a candidate does strictly better, so a search handed one never
+answers worse than it.
 
 `ShadowSpillScheduleContext` is the part of a problem that is not about how it
-is searched: the machine its schedules run on, the topology they must fit, and
-the names its aliases and tasks are written under. Certifying a schedule,
-digesting it, and replaying it through the pool are the same questions
-whichever search placed the schedule, so those entry points take a context and
-never see a search's own input. Every problem embeds one.
+is searched: the `ShadowSpillSimulationProgram` its schedules run on, the
+ownership facts they must fit, and the JSON-escaped alias and task names they
+are written under. Certifying a schedule, digesting it, and replaying it through
+the pool are the same questions whichever search produced the schedule, so a
+context is what every problem embeds and what the library's own generic code
+works on. The entry points below take the two pieces they use directly — a
+simulation program and one set of admission facts — so a caller holding neither
+a problem nor a search can still certify or place a schedule.
 
-The context carries two independent sets of admission facts. `admission`
-switches on the dynamic-pool replay, which rejects a candidate whose schedule
-that policy cannot place. `placement` supplies the same topology for measuring
-layouts during the search without that filter, because a schedule the dynamic
-replay rejects can still have a valid dependency-certified fixed placement; a
-search that prefiltered through `admission` would discard plans that would
-have run. Either may be null.
+The context carries two independent sets of admission facts, and either may be
+null. `admission` switches on the dynamic-pool replay, which rejects a
+candidate whose schedule that policy cannot place; null skips the replay and
+leaves the schedule judged by simulation alone. `placement` supplies the same
+facts for measuring layouts during the search without that filter, because a
+schedule the dynamic replay rejects can still have a valid dependency-certified
+fixed placement; a search that prefiltered through `admission` would discard
+plans that would have run. Null leaves plans unplaced, which is how a caller
+opts out of measuring layouts during the search.
 
 `ShadowSpillAdmissionOperations` is parallel arrays in two families. Arrays
 indexed by operation hold `operation_capacity` entries — an operation's
@@ -106,15 +111,27 @@ order they arrive in.
 
 ## Functions
 
+Every call returns a `ShadowSpillStatus` except the last, whose return is the
+answer. Input pointers are borrowed; output structs are the caller's.
+
+| Call | Arguments |
+|---|---|
+| `shadowspill_evaluate_schedule_admission` | `const ShadowSpillSimulationProgram *simulation`, `const ShadowSpillAdmissionFacts *admission`, `const ShadowSpillIndexedSchedule *schedule`, `ShadowSpillScheduleAdmissionResult *result` |
+| `shadowspill_admission_operation_bounds` | the same first three, then `uint64_t *operation_capacity` and `uint64_t *lease_capacity`, the two array sizes the builder needs |
+| `shadowspill_build_admission_operations` | the same first three, then `ShadowSpillAdmissionOperations *result`, whose arrays the caller has sized from those bounds |
+| `shadowspill_build_lease_lifetimes` | `const ShadowSpillLeaseLifetimeProblem *problem`, `ShadowSpillLeaseLifetimeResult *result` |
+| `shadowspill_place_lifetimes` | `const ShadowSpillPlacementProblem *problem`, `ShadowSpillPlacementResult *result` |
+| `shadowspill_planner_struct_size` | `uint32_t which`, a `ShadowSpillPlannerStruct`; returns `uint64_t` |
+
 - `shadowspill_evaluate_schedule_admission()` checks one selected schedule
-  against the exact admission topology, reporting the decision digest, the
+  against the exact admission facts, reporting the decision digest, the
   allocation, reservation and fragmentation peaks, the physical byte delta
   each task and action causes, and the reuse dependencies the schedule
   implies. Every array on the `ShadowSpillScheduleAdmissionResult` is
   caller-owned.
 - `shadowspill_admission_operation_bounds()` reports how many operations and
   leases a schedule will produce, so the caller can size the arrays the
-  builder fills. It is pure arithmetic over the topology and schedule and
+  builder fills. It is pure arithmetic over the facts and schedule and
   allocates nothing.
 - `shadowspill_build_admission_operations()` derives the pool operations a
   schedule implies, with the provenance a fixed layout needs: where each
@@ -152,6 +169,15 @@ order they arrive in.
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
 [C API guide](README.md#abi-use).
+
+## Constants
+
+`SHADOWSPILL_PLANNER_NO_INDEX` is the absent-index sentinel every `uint32_t`
+index field uses — no task, no alias, no action, no allocation step.
+`SHADOWSPILL_PLANNER_DIGEST_BYTES` is the length of a schedule digest, 32
+bytes. `SHADOWSPILL_ADMISSION_NO_DEPENDENCY`, `_NO_OPERATION` and `_NO_LEASE`
+are the `uint64_t` equivalents for an operation that publishes no dependency, a
+lease that outlives the step, and an allocation step or alias holding no lease.
 
 ## Concurrency and ownership
 

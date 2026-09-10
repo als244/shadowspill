@@ -2,6 +2,7 @@
 
 Include `<shadowspill/simulator.h>`. The simulator is a deterministic,
 standalone evaluator for an already selected schedule.
+`SHADOWSPILL_SIMULATOR_NO_INDEX` is its absent-index sentinel.
 
 ## Input
 
@@ -65,7 +66,11 @@ counts without storing.
 
 ## Functions
 
-- `shadowspill_simulate()` validates and evaluates one indexed program.
+`shadowspill_simulate(const ShadowSpillSimulationProgram *program,
+ShadowSpillSimulationResult *result)` validates and evaluates one indexed
+program, returning a `ShadowSpillStatus`. `program` is borrowed; every buffer on
+`result` is the caller's, and each is filled up to its capacity field.
+
 `shadowspill_abi_version()` and `shadowspill_status_string()` cover loading
 and diagnostics for this boundary as for every other; see the
 [C API guide](README.md#abi-use).
