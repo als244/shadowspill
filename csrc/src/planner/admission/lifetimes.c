@@ -25,14 +25,13 @@
 /* --------------------------------------------------------------- lookups */
 
 /*
- * The three index tables the join needs, none of which the caller supplies.
+ * The index tables the join needs, none of which the caller supplies.
  *
  * `task_interval` and `transfer_of_action` turn a task or action index into
- * its simulated interval. `latest_step` and `lease_of_slot` are what make a
- * reallocated slot readable: a task may reallocate an earlier ordinal's
- * slot, which gives the same lease a new identity and emits no operation, so
- * a lease's identity comes from the last step that allocated its slot rather
- * than from the operation that created it.
+ * its simulated interval. The rest make a reallocated slot readable: a task
+ * may reallocate an earlier ordinal's slot, which gives the same lease a new
+ * identity and emits no operation, so a lease's identity comes from the last
+ * step that allocated its slot rather than from the operation that created it.
  */
 typedef struct {
     const ShadowSpillTaskInterval **task_interval;

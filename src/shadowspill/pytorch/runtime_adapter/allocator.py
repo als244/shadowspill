@@ -55,8 +55,7 @@ class InstalledAllocator:
     path: Path
     admission: PhysicalAdmission
     #: The neutral runtime this process bound. Callers that only need a
-    #: runtime call the neutral library with this, rather than going through
-    #: an entry point here that would fetch the same pointer and forward.
+    #: runtime call the neutral library with this directly.
     runtime_handle: int = 0
     fixed_execution_bytes: int = 0
 
@@ -237,8 +236,8 @@ def _initialize_provider_state(
     """
 
     # Tiny allocator/failure canaries and genuinely small non-BLAS workloads
-    # need not reserve a 32 MiB library workspace merely to initialize the
-    # runtime. A real matrix task in such a pool will still receive the normal
+    # need not reserve a library workspace merely to initialize the runtime.
+    # A real matrix task in such a pool will still receive the normal
     # allocator failure if its provider state cannot fit.
     if int(admission.allocator_pool_bytes) < 64 << 20:
         return 0

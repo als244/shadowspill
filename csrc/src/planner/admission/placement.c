@@ -7,11 +7,10 @@
  *
  * Finding that offset needs only the UNION of the address ranges the
  * overlapping leases occupy, never the leases themselves. A packed layout's
- * union collapses hard - measured at 10 to 17 disjoint address ranges where
- * 200 to 430 leases overlap - so the index below stores merged ranges rather
- * than leases.
- * That keeps a query proportional to how fragmented the layout is rather than
- * to how many leases are live.
+ * union collapses to far fewer disjoint ranges than there are overlapping
+ * leases, so the index below stores merged ranges rather than leases. That
+ * keeps a query proportional to how fragmented the layout is rather than to
+ * how many leases are live.
  */
 
 #include <shadowspill/planner.h>

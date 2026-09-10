@@ -2,7 +2,7 @@
 #define SHADOWSPILL_COMMON_PLATFORM_H
 
 /*
- * The three things the library needs from the operating system that POSIX and
+ * What the library needs from the operating system that POSIX and
  * Windows spell differently.
  *
  * Everything else it needs - threads, mutexes, atomics - it takes from

@@ -49,12 +49,9 @@ class PressureFitOptions(OptionRecord):
     #: business, which is why the share list is one of its options rather
     #: than the planner's.
     resolution_options: tuple[Fraction, ...] = DEFAULT_RESOLUTION_OPTIONS
-    # The defaults are the strategies and rules that carry a winner.
-    # interval-entry, relaxed-stall and the two transfer strategies were
-    # measured against their stall twins and never carried one, at a
-    # material cost in candidate-set work; all remain valid explicit
-    # options. What they were measured against is recorded beside the
-    # plan that dropped them.
+    #: The strategies and rules a winner comes from. Naming more of the
+    #: strategies or rules above widens the candidate set, and every
+    #: candidate in it is searched.
     residency_strategies: tuple[str, ...] = (
         "headroom-stall",
         "tight-stall",
@@ -65,21 +62,20 @@ class PressureFitOptions(OptionRecord):
         "latest-safe",
         "demand",
     )
+    #: Try a coalesced variant of every candidate as well, which doubles the
+    #: candidate set.
     evaluate_coalesced: bool = True
     #: How many monotonic repairs one candidate may make before it answers
-    #: with the best plan it reached. Raising it changes no candidate's
-    #: status and improves the mean makespan, with the wins concentrated
-    #: where memory is tightest; it costs planning time, which the workers
-    #: are what pays for.
+    #: with the best plan it reached. Raising it buys quality where memory is
+    #: tightest and costs planning time, which is what the workers pay for.
     max_repair_attempts: int = 256
     #: How much capacity a plan gives back at a time when its layout does
     #: not fit. The extent does not fall byte for byte with the capacity, so
     #: handing back the whole overage overshoots the capacity that would have
-    #: fit, and the plan built below that capacity is materially worse than
-    #: the one just under the line. Stepping instead costs rounds and buys
-    #: quality. Zero hands back the whole shortfall, which converges in the
-    #: fewest rounds and is the setting to reach for when planning time
-    #: matters more than the last percent.
+    #: fit and plans against a worse one. Stepping instead costs rounds and
+    #: buys quality; zero hands back the whole shortfall, which converges in
+    #: the fewest rounds and is the setting to reach for when planning time
+    #: matters more than plan quality.
     capacity_refinement_bytes: int = 256 * 1024 * 1024
     #: Record what each candidate's search actually did: one step per plan it
     #: held, with the objects the reducer cut to reach it and what became of
@@ -91,8 +87,8 @@ class PressureFitOptions(OptionRecord):
     #: a write-back at the boundary where the value was last written, and a
     #: release where the eviction was. The plan is simulated again and the
     #: split kept only if it got faster, so this widens what the search may
-    #: consider rather than deciding anything. Off until the corpora say
-    #: what it is worth.
+    #: consider rather than deciding anything. Off by default: it costs a
+    #: second simulation per split.
     split_write_backs: bool = False
 
     def __post_init__(self) -> None:

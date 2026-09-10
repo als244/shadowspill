@@ -11,22 +11,18 @@
  *
  * This is the authority on what a search's answer is: every candidate
  * offers the plans it places, and decoding trusts the record over any
- * re-ranking. It is never consulted during a candidate's own descent --
- * a mid-search read would make the descent depend on what other workers
- * had placed by then, which is timing. The object is deliberately generic:
- * it knows nothing about candidates, resolved programs or calls, so the
- * same code shares one record between the candidates of a single call or
- * between concurrent calls, depending only on which object the caller
- * passes.
+ * re-ranking. The object is deliberately generic: it knows nothing about
+ * candidates, resolved programs or calls, so the same code shares one record
+ * between the candidates of a single call or between concurrent calls,
+ * depending only on which object the caller passes.
  *
  * Two levels of synchronisation, because the two operations have very
- * different frequencies. `bound` runs at every local minimum of every
- * candidate in the default search mode and reads one atomic word, so it
- * never waits; a stale read costs at most a measurement that would have
- * been skipped. `offer` and `read` touch the whole record and take a spin
- * lock, which is affordable because a placement that succeeds is rare next
- * to the work that precedes it, and the critical section is a fixed-size
- * copy.
+ * different frequencies. `bound` gates every plan that simulated, in the
+ * default search mode, and reads one atomic word, so it never waits; a stale
+ * read costs at most a measurement that would have been skipped. `offer` and
+ * `read` touch the whole record and take a spin lock, which is affordable
+ * because a placement that succeeds is rare next to the work that precedes
+ * it, and the critical section is a fixed-size copy.
  */
 struct ShadowSpillPressureFitBestPlaced {
     /* Mirrors record.makespan_ns so the hot path needs no lock. */

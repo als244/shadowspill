@@ -1,4 +1,4 @@
-"""Publish canonical Programs from mode-specific bound task graphs."""
+"""Publish a canonical ShadowSpillProgram from one mode's bound task graph."""
 
 from __future__ import annotations
 

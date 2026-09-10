@@ -26,8 +26,8 @@ SCHEDULE_SCHEMA = artifact_schema("memory_schedule")
 
 class MemoryLocation(StrEnum):
     DEVICE = "device"
-    # The serialized value stays "host": the saved-ShadowSpillProgram corpus is verified
-    # against digests taken over it.
+    # Serialized as "host": stored programs carry that spelling and their
+    # digests are taken over it.
     SPILL = "host"
 
 

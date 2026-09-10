@@ -486,8 +486,7 @@ static int adopt_fresh_outputs(OperationBuild *build, uint32_t task) {
 }
 
 /* A release gives the memory back once the task that was using it finishes.
- * An alias handed off earlier in this task no longer owns anything to
- * release. */
+ * An alias handed off earlier in this task owns nothing to release. */
 static int apply_release_action(
     OperationBuild *build,
     uint32_t task,

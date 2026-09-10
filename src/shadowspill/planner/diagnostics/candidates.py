@@ -55,8 +55,7 @@ class CandidateDiagnostic:
     repairs_at_best: int | None = None
     #: Pressure repairs that asked for more than the shortfall because the
     #: same failure had repeated at the same task and moment, and how many of
-    #: those asks no cut could meet and were taken back. Zero on records
-    #: written before there was an escalation.
+    #: those asks no cut could meet and were taken back.
     pressure_escalations: int = 0
     escalations_taken_back: int = 0
     #: When this candidate ran, in nanoseconds from the start of the call that

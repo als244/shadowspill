@@ -18,8 +18,8 @@ from .common import _integer, _integer_pairs, _list, _mapping, _string, _string_
 
 
 def _interval_kind(item: Mapping[str, object], path: str) -> MemoryActionKind:
-    """The action behind a copy. Records written before the field existed
-    carry fetches and evictions only, so the direction names the kind."""
+    """The action behind a copy. A record naming none carries fetches and
+    evictions only, so the direction gives the kind."""
 
     value = item.get("kind")
     if value is None:

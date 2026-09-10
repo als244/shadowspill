@@ -107,13 +107,14 @@ int shadowspill_schedule_storage_assign(
     const ShadowSpillIndexedSchedule *source
 );
 
+/* The best placed makespan so far, or zero when nothing has been placed.
+ * Lock-free: the default search mode consults it for every plan that
+ * simulated. */
+uint64_t shadowspill_best_placed_bound(const ShadowSpillPressureFitBestPlaced *best);
+
 /* Records `record` and keeps its own copy of `plan` if it beats what is
  * held, returning non-zero if it did. Internal because the plan it keeps is
  * an internal storage type; the rest of the gate is public. */
-/* The best placed makespan so far, or zero when nothing has been placed.
- * Lock-free: the default search mode consults it at every local minimum. */
-uint64_t shadowspill_best_placed_bound(const ShadowSpillPressureFitBestPlaced *best);
-
 int shadowspill_best_placed_offer(
     ShadowSpillPressureFitBestPlaced *best,
     const ShadowSpillPressureFitBestPlacedRecord *record,
