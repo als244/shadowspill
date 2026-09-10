@@ -194,9 +194,8 @@ class RuntimeBridge:
             raise ValueError("execution and spill pools must be distinct")
         self.runtime = runtime
         self.library = runtime._installed.library
-        # Plan admission is the neutral runtime's own API, so the bridge
-        # calls it there rather than through an adapter that only cast
-        # the handle and passed it along.
+        # Plan admission is the neutral runtime's own API, and the bridge
+        # calls it directly.
         self.runtime_library = runtime_library()
         self.plan_handle = plan_handle
         self.execution_pool_id = execution_pool_id

@@ -6,8 +6,8 @@ uses what it wants and ignores the rest -- nothing here is required, and
 nothing here knows which search is running.
 
 ``validation``   whether a search was handed something it can work on
-``resolution``   a program and a set of shares, as resolved programs
-``alternatives``  what each alternative group offers, and what each costs
+``resolution``   what each alternative group costs, and which resolutions of
+                 a program are worth planning
 
 Two more toolkits sit outside this package because they are phases rather
 than helpers: `shadowspill.simulator` prices a schedule, and

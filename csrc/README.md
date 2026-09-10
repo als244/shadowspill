@@ -6,9 +6,11 @@ genuinely pluggable: the device backends and the PyTorch adapter.
 ```text
 csrc/
 ├── include/shadowspill/   every public header the library exports
+│   └── pressurefit/       the shipped search's own header, beside the generic
+│                          planner header rather than inside it
 ├── src/
 │   ├── common/            what all three share: the status decoder and the
-│   │                      three calls POSIX and Windows spell differently
+│   │                      calls POSIX and Windows spell differently
 │   ├── simulator/         deterministic schedule evaluator
 │   ├── planner/           the planning question, and answering it
 │   │   ├── admission/     search-agnostic certification: derives the pool
@@ -30,6 +32,7 @@ csrc/
 │       └── telemetry/
 ├── backends/              dlopened device backends: mock and provider
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
+    ├── include/shadowspill/  its one public header
     ├── lifecycle/         bootstrap, close, and the physical-memory ledger
     ├── allocator/         the callbacks PyTorch's pluggable allocator makes
     ├── failure/           what a failed call latches, and the report it makes
@@ -38,21 +41,20 @@ csrc/
 ```
 
 Everything under `src/` compiles into one shared object. The simulator, the
-planner and the runtime were three, with a strict dependency order between them
-and nothing that ever linked them apart; separating them bought no independent
-deployment and cost an ABI and a status vocabulary per component. They now
-share both: one `SHADOWSPILL_ABI_VERSION`, one `ShadowSpillStatus`.
+planner and the runtime have a strict dependency order between them and nothing
+that links them apart, so they share one `SHADOWSPILL_ABI_VERSION` and one
+`ShadowSpillStatus` rather than an ABI and a status vocabulary each.
 
-Backends stay separate because that is what they are for — each is dlopened and
+Backends are separate because that is what they are for: each is dlopened and
 compiled against the backend contract alone, and a provider backend needs a
-toolchain the rest of the tree must not require. The PyTorch adapter stays
+toolchain the rest of the tree must not require. The PyTorch adapter is
 separate because it links libtorch, which planning-only callers must not be
-made to carry. All three keep their own ABI versions, since they are genuinely
-compiled elsewhere.
+made to carry. Both keep their own ABI version, being genuinely compiled
+elsewhere.
 
-`src/common/platform.h` holds the three things the library asks of the
-operating system that POSIX and Windows spell differently: a monotonic clock,
-a thread yield, and a thread name. Everything else it needs - threads,
+`src/common/platform.h` holds what the library asks of the operating system
+that POSIX and Windows spell differently: a monotonic clock, a thread yield, a
+thread name, and the logical CPU count. Everything else it needs - threads,
 mutexes, atomics - comes from pthreads and `<stdatomic.h>`, which a Windows
 build gets from its toolchain rather than from a shim here.
 

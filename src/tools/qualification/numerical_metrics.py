@@ -123,9 +123,9 @@ def tensor_metrics(reference: torch.Tensor, actual: torch.Tensor) -> TensorMetri
     # Reduce in float64. A cosine is at most 1, but the numerator and the
     # denominator are separate reductions with independent rounding, so in
     # float32 over millions of small elements the ratio drifts either side of
-    # 1 by more than these thresholds allow -- this metric has reported 1.0013
-    # on real state, which is not a number a cosine can take. The inputs stay
-    # float32; only the accumulation widens.
+    # 1 by more than these thresholds allow -- above 1, which is not a number
+    # a cosine can take. The inputs stay float32; only the accumulation
+    # widens.
     left_norm = torch.linalg.vector_norm(left, dtype=torch.float64)
     right_norm = torch.linalg.vector_norm(right, dtype=torch.float64)
     denominator = left_norm * right_norm

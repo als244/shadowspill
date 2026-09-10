@@ -11,7 +11,7 @@ extern "C" {
 
 #define SHADOWSPILL_ADMISSION_REPLAY_NO_ID UINT64_MAX
 
-/* Replay names for the shared statuses; see <shadowspill/status.h>. */
+/* Replay statuses are in the shared vocabulary; see <shadowspill/status.h>. */
 
 /*
  * Operations describe ownership transitions, not transfer semantics. A route,
@@ -129,11 +129,11 @@ typedef struct ShadowSpillAdmissionReplayWorkspace
     ShadowSpillAdmissionReplayWorkspace;
 
 /*
- * Replays one ordered operation sequence through the production MemoryPool
- * policy. Input
- * and output buffers are borrowed for the call. Lease and dependency IDs are
- * contiguous zero-based indices bounded by their respective counts. The function
- * performs no backend operations and owns no storage after it returns.
+ * Replays one ordered operation sequence through the same policy
+ * ShadowSpillMemoryPool runs. Input and output buffers are borrowed for the
+ * call. Lease and dependency IDs are contiguous zero-based indices bounded by
+ * their respective counts. The function performs no backend operations and
+ * owns no storage after it returns.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_admission_replay_run(

@@ -16,7 +16,7 @@ class SharedResidencyFootprint:
     alias_group_ids: tuple[str, ...]
 
     def for_device(self, device_id: str) -> int:
-        """Return shared execution-resident bytes for one ShadowSpillProgram device."""
+        """Return shared execution-resident bytes for one of the program's devices."""
 
         for candidate, size_bytes in self.device_bytes:
             if candidate == device_id:

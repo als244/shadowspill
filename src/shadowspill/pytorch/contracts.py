@@ -1,8 +1,8 @@
 """Public value contracts for the PyTorch frontend.
 
-The planning error hierarchy these used to hold now lives in
-`shadowspill.errors`: it carries no torch types, and the planner has to
-raise and catch it without importing torch.
+The planning error hierarchy lives in `shadowspill.errors`, not here: it
+carries no torch types, so the planner can raise and catch it without
+importing torch.
 """
 
 from __future__ import annotations

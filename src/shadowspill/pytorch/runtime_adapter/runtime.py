@@ -162,11 +162,10 @@ class Runtime:
                 backend=backend,
             )
             self._installed = installed
-            # The neutral runtime this process bound. Holding it here is what
-            # lets the calls that need nothing else go straight to the neutral
-            # library, instead of through an entry point that would only fetch
-            # this pointer and forward. It is dropped on close, so a call after
-            # close fails on the closed guard rather than on a stale pointer.
+            # The neutral runtime this process bound. Holding it here lets the
+            # calls that need nothing else go straight to the neutral library.
+            # It is dropped on close, so a call after close fails on the
+            # closed guard rather than on a stale pointer.
             self._runtime_handle: int = installed.runtime_handle
             self._lock = threading.RLock()
             self._closed = False
@@ -359,8 +358,7 @@ class Runtime:
     ) -> int:
         """Register one runtime object, and populate it when a source is given.
 
-        Two neutral calls, made here rather than through an adapter entry
-        point that only forwarded them; the bridge and the state module both
+        Two neutral calls, made here; the bridge and the state module both
         register through this.
         """
 

@@ -435,7 +435,7 @@ static int submit_action(
             if (total > program->spill_capacity_bytes) {
                 /* The spill pool is the same question as the device pool,
                  * one level down: an eviction with nowhere to land waits for
-                 * room, which a release of a copy the plan no longer retains
+                 * room, which a release of a copy the plan does not retain
                  * eventually provides. */
                 defer_action(
                     work,

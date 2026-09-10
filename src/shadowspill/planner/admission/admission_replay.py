@@ -1,8 +1,9 @@
 """Cross-task physical admission through the production ``MemoryPool``.
 
-This module combines exact task-allocation evidence with persistent object
-generations and ordered memory actions. It translates that causal script into
-the same production ``MemoryPool`` decisions used by admission.
+These records combine exact task-allocation evidence with persistent object
+generations and ordered memory actions into one causal script, which
+:mod:`shadowspill.runtime.admission_replay` runs through the production
+``MemoryPool`` policy itself.
 """
 
 from __future__ import annotations

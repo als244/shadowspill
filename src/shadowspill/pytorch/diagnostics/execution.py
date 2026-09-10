@@ -482,10 +482,9 @@ class StepTimingSummary:
     #: this work at every boundary and running ahead hides whatever its lead
     #: covers; what is left here is the shortfall, not the cost of the work.
     #: This says nothing about a stream left idle inside a task, which no field
-    #: here measures. Where the frontend stayed ahead it is the floor between
-    #: two stream event records rather than a cost -- measured at a quarter of
-    #: a microsecond to about one -- so read a microsecond or two as nothing
-    #: and anything above that as real.
+    #: here measures. Where the frontend stayed ahead it is the timing floor
+    #: between two stream event records rather than a cost, so read a value
+    #: near that floor as nothing and anything well above it as real.
     real_inter_task_exposed_overhead_seconds: float
     #: The first task's wait ends where the span begins, so this is the one
     #: cost the span cannot contain: the fetches a step opens with.

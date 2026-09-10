@@ -195,8 +195,10 @@ shadowspill_pytorch_seal_physical_budget(
  * The C runtime never throws and latches complete first-failure diagnostics.
  * The private C++ PyTorch adapter raises a structured, task-attributed
  * exception for a failed nonzero request because CUDAPluggableAllocator does
- * not validate a null pointer before constructing a DataPtr. OOM statuses use
- * PyTorch's typed OutOfMemoryError; contract failures use RuntimeError.
+ * not validate a null pointer before constructing a DataPtr. Built against
+ * libtorch, OOM statuses raise PyTorch's typed OutOfMemoryError and contract
+ * failures raise RuntimeError; without it, every failure raises
+ * std::runtime_error instead.
  */
 SHADOWSPILL_PYTORCH_API void *shadowspill_pytorch_backend_malloc(
     ptrdiff_t bytes,

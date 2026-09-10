@@ -28,10 +28,9 @@ extern "C" {
  * One ABI version for everything shipped in libshadowspill.
  *
  * The simulator, the planner, the runtime, the admission replay and the
- * descriptor structs they exchange each carried a version of their own. They
- * are built and shipped together, so they cannot skew apart, and seven
- * numbers to bump meant seven chances to forget one - which is how a caller
- * ends up passing a struct one field short of what the library writes.
+ * descriptor structs they exchange are built and shipped together, so they
+ * cannot skew apart and one number covers them all. A caller that mirrors a
+ * struct checks this, not a per-component version.
  *
  * Backends and the PyTorch adapter keep their own versions: those are
  * compiled separately against a contract, and can genuinely differ from the
@@ -40,7 +39,7 @@ extern "C" {
 #define SHADOWSPILL_ABI_VERSION 2U
 
 /* The one version every stored artifact carries; mirrored by
- * shadowspill.schema.ARTIFACT_VERSION and embedded in the digests below. */
+ * shadowspill.schema.ARTIFACT_VERSION and folded into the schedule digest. */
 #define SHADOWSPILL_ARTIFACT_VERSION 1U
 
 /* The version the loaded library was built with. */

@@ -112,8 +112,8 @@ class GenericPlanningOptions(OptionRecord):
     changes nothing here, and so a caller can see at a glance which half of
     a request is universal.
 
-    How much of the machine to spend is not here: that is `workers`, an
-    argument to the call, because it changes how long an answer takes
+    How much of the machine to spend is not here: that is
+    `SearchOptions.workers`, because it changes how long an answer takes
     rather than which answer is right.
 
     Every field here is part of a planned program's identity: change one

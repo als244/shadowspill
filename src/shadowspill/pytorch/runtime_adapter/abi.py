@@ -509,11 +509,10 @@ def configure_adapter_library(library: Any) -> None:
     _configure_execution(library)
 
 
-#: Plan admission and object handles are the neutral runtime's own API. The
-#: adapter used to wrap each of these to marshal a `uintptr_t` in and out; the
-#: pointer it handed back was always the neutral object, so the bridge calls
-#: them directly. A handle is declared `c_size_t` rather than `c_void_p`
-#: because it is pointer-sized either way and reads back as a plain integer.
+#: Plan admission and object handles are the neutral runtime's own API, and
+#: the bridge calls them directly. A handle is declared `c_size_t` rather
+#: than `c_void_p` because it is pointer-sized either way and reads back as
+#: a plain integer.
 _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     ("shadowspill_plan_close", [ctypes.c_size_t], ctypes.c_uint32),
     ("shadowspill_plan_destroy", [ctypes.c_size_t], None),

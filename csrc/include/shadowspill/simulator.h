@@ -11,7 +11,7 @@ extern "C" {
 
 #define SHADOWSPILL_SIMULATOR_NO_INDEX UINT32_MAX
 
-/* Simulation names for the shared statuses; see <shadowspill/status.h>. */
+/* Simulation statuses are in the shared vocabulary; see <shadowspill/status.h>. */
 
 typedef enum ShadowSpillMemoryLocation {
     SHADOWSPILL_MEMORY_DEVICE = 0,
@@ -41,8 +41,7 @@ typedef enum ShadowSpillTransferDirection {
  * that frees the allocation it will reuse. Device capacity is a shortfall:
  * there is no room at all, so a fetch has nowhere to land or a task's outputs
  * and workspace do not fit. A plan that arranges its own capacity waits on
- * the first and never reaches the second, which is why real plans record
- * memory reuse and no capacity waits; the capacity mask is how an
+ * the first and never reaches the second; the capacity mask is how an
  * over-subscribed plan says so, and it is paired with a
  * `ShadowSpillCapacityViolation` giving the size of the shortfall.
  */
@@ -171,10 +170,10 @@ typedef enum ShadowSpillCapacityViolationReason {
 /*
  * One point where the plan wanted more memory than its budget allowed.
  *
- * A fetch that does not fit waits rather than failing, so pressure that
- * used to end the simulation now only slows it down. The stall says when the
- * plan waited and for how long; this says by how much it was short, which is
- * what a repair needs in order to know how much to change.
+ * A fetch that does not fit waits rather than failing, so pressure slows the
+ * simulation down instead of ending it. The stall says when the plan waited
+ * and for how long; this says by how much it was short, which is what a
+ * repair needs in order to know how much to change.
  */
 typedef struct ShadowSpillCapacityViolation {
     uint64_t time_ns;

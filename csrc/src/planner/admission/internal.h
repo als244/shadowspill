@@ -21,8 +21,9 @@ typedef struct ShadowSpillAdmissionAnnotation {
 
 /* Why a lease exists. The boundary above says where an operation sits in the
  * step; this says what it is for, which is what lifetime construction and the
- * fixed/dynamic split need. Values match
- * `pytorch.planning.admission.AdmissionReplayPurpose`. */
+ * fixed/dynamic split need. Declaration order matches `_PURPOSES` in
+ * `shadowspill.planner.admission.layout.lifetimes`, which decodes these codes
+ * into `AdmissionReplayPurpose`. */
 typedef enum ShadowSpillAdmissionPurpose {
     SHADOWSPILL_ADMISSION_PURPOSE_INITIAL_OBJECT = 0,
     SHADOWSPILL_ADMISSION_PURPOSE_TASK_WORKSPACE = 1,
@@ -124,7 +125,7 @@ typedef struct OperationTally {
     uint64_t evict_bytes;
 } OperationTally;
 
-/* topology.c */
+/* facts.c */
 int shadowspill_admission_counts(
     const ShadowSpillScheduleContext *context,
     const ShadowSpillIndexedSchedule *schedule,

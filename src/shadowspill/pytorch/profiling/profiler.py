@@ -233,7 +233,7 @@ class TaskProfiler:
             raise _profiling_error(artifact, error) from error
         else:
             # The compiled function does not own its example arguments. Keeping
-            # every unique contract's device examples alive until take_functions()
+            # every unique contract's device examples alive until take_selected()
             # makes isolated profiling scale with the sum of model-stage
             # inputs, rather than the largest contract. Retain only the executable.
             self._executables.release_occurrence_values(executable)
@@ -692,8 +692,8 @@ class TaskProfiler:
             raise
         # Drain before the next invocation. Retirement is asynchronous, so
         # without this a warmup loop runs every iteration while the previous
-        # ones still hold their ranges - measured at 4,271 leases and 7.4 GiB
-        # outstanding, against a pool that has to fit the task being measured.
+        # ones still hold their ranges, leaving more outstanding than a pool
+        # sized to fit the task being measured can hold.
         stream.synchronize()
         self._diagnose_allocator_idle(problem="task warmup")
 
