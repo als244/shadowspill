@@ -184,11 +184,6 @@ The cost is that it is fixed: the value is part of the captured update, so
 silently ignored, and the message says to name it. Choose the number when the
 simplicity is worth giving up the ability to change it.
 
-This is the same principle once more. A tensor's *declaration* -- its geometry
--- is what the capture is built against and what its identity records, and its
-*value* is supplied per step by the side that knows the schedule. A number
-fuses the two, which is why a number is captured per value.
-
 ### What this asks of an optimizer
 
 Naming a value in `plan_step(hyperparams=...)` makes ShadowSpill hold it in a
@@ -355,5 +350,5 @@ program being planned, which they are not.
 
 - [Importing state](state-import.md) for the same contract applied to model
   state, and for how dtype is decided.
-- [Graph pair selection](graph-pair-selection.md) for how the captured update
-  is stored and reused.
+- [The artifact store](../python/artifact-store.md) for how a captured update
+  is keyed, stored and reused across processes.

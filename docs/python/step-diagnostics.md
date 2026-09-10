@@ -17,8 +17,8 @@ another traced step. `runtime_trace=False` is the default, performs no
 native trace-buffer appends, and records no timing events: none of the
 measurement below runs in an untraced step.
 
-`profiler_annotations=True` is independent. It emits backend profiler ranges
-for tools such as NSYS but does not create `StepDiagnostics`.
+`profiler_annotations=True` is independent. It emits ranges for the backend's
+own profiler but does not create `StepDiagnostics`.
 
 ## Structure
 
@@ -365,10 +365,10 @@ step end is not a healthy steady state.
 | `events` | Raw bounded runtime-event records, including the transfer events the lanes were built from. |
 
 Trace storage is preallocated and bounded. Treat any overflow as incomplete
-evidence. The training frontend currently prepares 1,000,000 runtime-event
-slots and 1,000,000 allocation-event slots for a traced call; the recorded
-capacities, rather than that default, are authoritative for a specific
-result. `summary.trace_complete` provides the combined verdict.
+evidence. The training frontend prepares 1,000,000 runtime-event slots and
+1,000,000 allocation-event slots for a traced call; the recorded capacities,
+rather than that default, are authoritative for a specific result.
+`summary.trace_complete` provides the combined verdict.
 
 ## Exporting diagnostics
 

@@ -43,8 +43,10 @@ provider spelling required by the framework hook.
 - `native` as a synonym for the C library.
 - `core` for the invariant part of something; say what makes it invariant.
 - `compiled` for the C library. It means what torch.compile produced.
-- `context` unless it is a driver context; the PressureFit one is a
-  problem, a backend's opaque handle is its state.
+- `context` for a search's own input, which is a problem. The word has exactly
+  two uses: a driver context, and `ShadowSpillScheduleContext`, the part of a
+  planning problem that is not about how it is searched. A backend's opaque
+  handle is its state.
 - `host` for the secondary pool, which is generic; use `spill`. Keep it only
   where it means the CPU a backend runs on - `pinned_host()` names a pool
   that really is host memory, and a driver call that synchronizes the host

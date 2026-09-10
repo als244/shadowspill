@@ -3,7 +3,8 @@
 A [program](program.md) says what the work is. A **planning problem** asks a
 question about it: *run this program, starting here, ending there, on this
 machine — what should the schedule be?* The type is
-`ShadowSpillPlanningProblem`, and it is what a [search](search.md) is handed.
+`ShadowSpillPlanningProblem`, and it is what `plan_program()` is handed; a
+[search](search.md) receives its parts.
 
 The distinction is worth holding onto, because the two are otherwise easy to
 run together and they have different lifetimes.
@@ -55,8 +56,8 @@ would report predictions nothing measured.
 **No policy.** Not which search runs, not what that search may try, not how
 many workers it may use. A problem says what question it is, never how to
 answer it, so an option added to a search later cannot change the meaning of
-a problem already on disk. Policy travels beside the problem, as `options`
-and `search_options` — see [plan search](search.md).
+a problem already on disk. Policy travels beside the problem, as a
+`SearchOptions` — see [plan search](search.md).
 
 **No answer.** The plan, the schedule and the simulation come back from a
 search; none of them live here.

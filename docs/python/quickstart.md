@@ -1,5 +1,8 @@
 # Python quickstart
 
+Build a runtime, import the model's state into its spill pool, plan a step,
+then call it. The sections below follow that order.
+
 ## Create the runtime
 
 Construct `Runtime` before constructing or loading model state and before
@@ -159,21 +162,20 @@ torch.save(checkpoint, "checkpoint.pt")
 train_step.load_state_dict(checkpoint)
 ```
 
-The checkpoint has exactly `model`, `optimizer`, and `step`. Its model mapping
-is compatible with an ordinary `nn.Module.load_state_dict()` call.
-`state_dict()` synchronously copies into ordinary CPU memory outside runtime
-pools. After it returns, filesystem serialization can run on another thread or
-process while training continues because the checkpoint no longer aliases
-runtime-owned state. That independence has a price: the spill pool keeps the
-authoritative copy and is read in place, so the checkpoint is normally one
-further copy of model and optimizer state outside the pool, held for as long
-as you hold it. Budget for that beside the pinned pool itself.
+The checkpoint has exactly `model`, `optimizer`, and `step`, and its model
+mapping loads into an ordinary `nn.Module`. `state_dict()` copies synchronously
+into CPU memory outside the runtime pools, so serializing it can run on another
+thread while training continues -- at the cost of one further copy of model and
+optimizer state to budget for beside the pool itself.
 
-Take the checkpoint before closing. Optimizer state belongs to the plan, so
-`close()` releases it, and `state_dict()` afterwards raises rather than
-reporting an empty optimizer.
+Take the checkpoint before closing: optimizer state belongs to the plan, so
+`close()` releases it and `state_dict()` afterwards raises. See [checkpoints and
+closing](api/frontend.md#checkpoints-and-closing).
 
 ## Plan forward only
+
+`plan_forward()` plans inference: one flat example-input sequence, no optimizer,
+and no accumulation.
 
 ```python
 from shadowspill.pytorch import plan_forward
@@ -206,13 +208,12 @@ model = export_model_state(
 runtime.close()
 ```
 
-Closing copies nothing, and it moves no weights. The model's parameters keep
-the spill-pool storage `import_model_state()` gave them, and that storage
-already holds every step's updates; `export_model_state()` above is what
-copies the values into ordinary CPU tensors. Optimizer state has no equivalent
-home here: `plan_step()` built the optimizer and owns its state, so it ends
-with the plan. That is why the checkpoint above is taken before the close, not
-after. Resume from one with `load_state_dict()`.
+Closing copies nothing and moves no weights: the model's parameters keep the
+spill-pool storage `import_model_state()` gave them, which already holds every
+step's updates, and `export_model_state()` is the call that copies the values
+into ordinary CPU tensors.
 
 Both `Runtime` and planned callables are context managers. Explicit lifecycle
-calls make ownership and failure handling easiest to audit.
+calls make ownership and failure handling easiest to audit. [Errors, failures,
+and cleanup](failures.md) gives the close order and what a failure rolls
+back.

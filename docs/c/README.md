@@ -103,9 +103,9 @@ the translation unit is building the library itself, which the build says with
 `SHADOWSPILL_BUILDING`.
 
 The implementation is a different matter. It uses pthreads and C11 atomics
-directly, and reaches the operating system for exactly three things - a
-monotonic clock, a thread yield, and a thread name - which
-`csrc/src/common/platform.h` supplies for both platforms. So a Windows build
+directly, and reaches the operating system for exactly four things - a
+monotonic clock, a thread yield, a thread name, and the logical CPU count -
+which `csrc/src/common/platform.h` supplies for both platforms. So a Windows build
 needs a toolchain that provides pthreads and `<stdatomic.h>`: MinGW-w64 or
 clang does, MSVC needs `/experimental:c11atomics` and a pthreads shim. Linux
 is what CI builds and what every gate here runs on; Windows is portable by

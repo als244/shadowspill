@@ -9,13 +9,14 @@ benchmarking/
 ├── data_geometry.py                    the shared geometry vocabulary
 ├── _serialization.py                   shared encode/decode helpers
 ├── datasets/
-│   └── input_programs/                 immutable ShadowSpillProgram corpora
+│   └── input_programs/                 immutable StepProgram corpora
 ├── quickstart.py                       plan and run one model, story told
 ├── quickstart.md                       its guide: flags, phases, terms
+├── quickstart_reports/                 one directory per quickstart run
 ├── program_collection/
 │   ├── collect.py                      the launcher
 │   ├── configs/                        versioned collection matrices
-│   ├── corpus.py                       ShadowSpillProgram serialization and validation
+│   ├── corpus.py                       StepProgram serialization and validation
 │   └── planning_caches/                its build artifact stores
 └── planning_eval/
     ├── evaluate.py                     the launcher
@@ -68,8 +69,8 @@ what each tree holds and how a key is formed.
 A corpus lives under `datasets/input_programs/`, named for its collection
 configuration and the revision that collected it, and holds one `StepProgram`
 per case; a frontier's results live under `planning_eval/results/`, named the
-same way for the revision measured. Both, and the artifact stores, are
-git-ignored. What is tracked is what reproduces them: the versioned
+same way for the revision measured. Those, the quickstart reports, and the
+artifact stores are git-ignored. What is tracked is what reproduces them: the versioned
 configurations, the launchers, the schemas, and these guides. Which corpus is
 current is a fact about the checkout, read from `input_programs/` rather than
 from here.
