@@ -545,10 +545,16 @@ ShadowSpillStatus shadowspill_read_object(
     if (status != SHADOWSPILL_STATUS_OK) {
         goto read_done;
     }
+    /* The requirement is that the copy being read is the authoritative one: it
+       exists, it is current, and its version is the object's. Whether a copy
+       also lives somewhere else does not bear on that. Requiring sole residency
+       as well conflated "this copy is authoritative" with "this is the only
+       copy", so a caller could not read state that was also on the device --
+       which a checkpoint has to be able to do without first giving up residency
+       to get at it. */
     if (object == NULL || bytes != object->size_bytes ||
         location->lease == NULL || !location->current ||
-        location->version != object->authoritative_version ||
-        object->residency != SHADOWSPILL_OBJECT_SPILL_ONLY) {
+        location->version != object->authoritative_version) {
         status = SHADOWSPILL_STATUS_INVALID_STATE;
         goto read_done;
     }

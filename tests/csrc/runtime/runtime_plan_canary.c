@@ -500,6 +500,9 @@ static int plan_selects_nondefault_pool_pair(void) {
         .object_id = 7007U,
         .size_bytes = 64U,
         .initial_pool_id = 2U,
+        /* Persistent state keeps its spill copy, which is what lets the copy in
+           spill stay authoritative while a copy also sits on the device. */
+        .retain_spill_copy = 1U,
         .initially_resident = 1U,
     };
     uint8_t payload[64];
@@ -555,6 +558,15 @@ static int plan_selects_nondefault_pool_pair(void) {
         failed = shadowspill_submit_action_batch_handle(
                 runtime, initial_actions, compute
             ) != SHADOWSPILL_STATUS_OK ||
+            /* Fetched, so the object is on the device -- and a fetch leaves the
+               spill copy current, because it copied out of it. Reading from spill
+               is therefore sound, and a checkpoint needs exactly this: the
+               authoritative bytes, without giving up residency to get at them. */
+            shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_read_object(
+                runtime, object.object_id, 2U, restored, sizeof(restored)
+            ) != SHADOWSPILL_STATUS_OK ||
+            memcmp(restored, payload, sizeof(payload)) != 0 ||
             canary_before_task(
                 runtime, task_handle, compute, &binding, 1U
             ) != SHADOWSPILL_STATUS_OK ||
