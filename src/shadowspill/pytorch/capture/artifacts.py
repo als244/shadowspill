@@ -108,11 +108,6 @@ class TaskInputProvenance:
         if value is not None and not isinstance(value, torch.Tensor):
             raise TypeError("representative task input must be a Tensor")
 
-    def structural_identity(self) -> dict[str, object]:
-        """Return only fields that can change representative-value policy."""
-
-        return {"role": self.role.value}
-
 
 @dataclass(frozen=True, slots=True)
 class GraphArtifact:

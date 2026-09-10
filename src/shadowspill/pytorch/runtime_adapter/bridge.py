@@ -1261,21 +1261,6 @@ class RuntimeBridge:
             return
         torch.ops.shadowspill._dematerialize_storages([tensor])
 
-    def dematerialize_many(
-        self,
-        items: Sequence[tuple[torch.Tensor, str, int]],
-    ) -> None:
-        """Transactionally dematerialize distinct alias bundles."""
-
-        materialized = tuple(
-            item for item in items if item[0].untyped_storage().data_ptr() != 0
-        )
-        if not materialized:
-            return
-        torch.ops.shadowspill._dematerialize_storages(
-            [tensor for tensor, _, _ in materialized]
-        )
-
     def wait_idle(self) -> None:
         """Wait for runtime-global quiescence at lifecycle boundaries."""
 

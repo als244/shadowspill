@@ -63,10 +63,6 @@ class ProfileExecutable:
         return self.occurrence_values.summaries
 
     @property
-    def representative_probe_index(self) -> int:
-        return self.occurrence_values.probe_index
-
-    @property
     def function(self) -> Callable[..., object]:
         return self.compiled.function
 
