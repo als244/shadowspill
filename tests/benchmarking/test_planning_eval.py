@@ -58,7 +58,7 @@ _CONFIG = (
     / "benchmarking"
     / "planning_eval"
     / "configs"
-    / "full_pressurefit_frontier_v1.json"
+    / "full_search_frontier_v1.json"
 )
 
 
@@ -349,7 +349,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
     (directory / "point.json").write_text(
         json.dumps(
             {
-                "schema": artifact_schema("pressurefit_frontier_point"),
+                "schema": artifact_schema("search_frontier_point"),
                 "request_digest": request.digest,
                 "point_id": request.point_id,
                 "status": "error",

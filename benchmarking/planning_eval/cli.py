@@ -290,7 +290,7 @@ def _record_resume(
         ]
     )
     record = {
-        "schema": artifact_schema("pressurefit_frontier_resume"),
+        "schema": artifact_schema("search_frontier_resume"),
         "started_at": utc_now(),
         "baseline_id": paths.directory.name,
         "repository": provenance.to_dict(),

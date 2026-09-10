@@ -368,7 +368,7 @@ def _record_worker_attempt(
         value = read_object(path)
     else:
         value = {
-            "schema": artifact_schema("pressurefit_frontier_worker_attempts"),
+            "schema": artifact_schema("search_frontier_worker_attempts"),
             "attempts": [],
         }
     attempts = value.get("attempts")

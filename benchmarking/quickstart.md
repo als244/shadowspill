@@ -52,14 +52,12 @@ remove it when the narrow end is the thing being studied.
 
 The low end is there on purpose. A geometry cannot plan below the largest
 amount one task must hold at once: its inputs, outputs and mutations counted
-once per alias group, plus its workspace. For this model at sequence length
-1024 that floor is 15.8 GiB at 64 sequences per microbatch, 8.4 GiB at 32,
-and about 5.1 to 5.5 GiB from 16 down, where it stops falling because a
-parameter-sized activation and its gradient do not shrink with the
-microbatch. Plans need roughly 20 to 30 percent above the floor to leave room
-for the resident slice and the dynamic reserve, so budgets from 6 GiB up
-straddle the real limit rather than sitting above it. A budget where no
-geometry plans is reported and skipped, which is the answer, not a failure.
+once per alias group, plus its workspace. That floor falls as the microbatch
+narrows, then stops falling, because a parameter-sized activation and its
+gradient do not shrink with the microbatch. A plan needs headroom above the
+floor for the resident slice and the dynamic reserve, so the budgets worth
+naming straddle the limit rather than sitting safely above it. A budget where
+no geometry plans is reported and skipped, which is the answer, not a failure.
 
 ## Command line
 
@@ -89,8 +87,8 @@ What the search plans:
 | Argument | Meaning | Default |
 |---|---|---|
 | `--orderings` | Which microbatch orderings the search tries per geometry: `factors` lowers every `depth x breadth` factor pair of the accumulation count into its own program and plans each under every budget, so the winner at a budget may be any walk of any geometry; `depth-first` tries only the plain walk, one microbatch start to finish before the next. The loss stays paired and the backward walk reversed either way. The run phase plans the winner's ordering | `factors` |
-| `--resolution-options` | The shares of flexible groups to recompute, as `quarters`, `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point: on the llama3 frontier `eighths` cost 1.75x the search wall and beat the quarter rungs by a median of 0.00 % (mean 0.77 %). The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
-| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run (22 against 26 GB/s on one machine, one hour apart). The run phase keeps the live calibration | calibrated |
+| `--resolution-options` | The shares of flexible groups to recompute, as `quarters`, `eighths`, `halves`, or a comma-separated list of exact fractions such as `0,1/2,7/8,1`. More shares plan more programs per point, so the search wall grows with the count and the finer rungs may or may not be worth it for a given model. The options are part of every plan's identity in the store, and the runs plan the same options the search did | `quarters` |
+| `--transfer-bandwidths` | Plan the search against this calibration instead of the one the runtime measures at start: `FETCH,EVICT` in GB/s, optionally followed by the fetch and evict latencies in microseconds (`26,26,8,4`), or the path of another run's `search.json` to pin to what that run planned against, latencies included. Two runs are comparable only when they plan against the same lanes, and a fresh calibration differs run to run on one machine. The run phase keeps the live calibration | calibrated |
 | `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 | `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its live calibration differs from what the search planned against. `--no-incumbents` searches every point alone, for comparing the two | on |
 
@@ -104,7 +102,7 @@ Output and stores:
 | `--artifact-store` | Roots both store trees | `<output-dir>/artifact_store` |
 | `--build-store` | The captures, graph pairs, profiles and compiled artifacts to read and write; overrides `--artifact-store` for the build tree. Point it at another run's store to skip work already paid for there | the artifact store |
 | `--plan-store` | Where this run's plans go: every selection request, result and plan manifest; overrides `--artifact-store` for the planning tree | `<output-dir>/plan_store` |
-| `--build-store-mode`, `--plan-store-mode` | What this run does with each tree: `contribute` reads hits and writes misses, `reuse` reads and persists nothing, `require` refuses a miss | `contribute` |
+| `--build-store-mode`, `--plan-store-mode` | What this run does with each tree; the four modes are defined in [the artifact store guide](../docs/python/artifact-store.md#store-modes) | `contribute` |
 
 A run owns both trees by default, so everything it measured is in one place
 and nothing it reused is ambiguous. That means a fresh run pays capture,
@@ -169,7 +167,7 @@ it reads a matrix.
    try, and the calibrated transfer lanes.
 2. **Geometry search** — `plan_step_search` from the
    [frontend API](../docs/python/api/frontend.md). Every admitted split
-   plans through capture, profiling, lowering, and the PressureFit search
+   plans through capture, profiling, lowering, and the search
    ([planning orchestration](../docs/architecture/planning.md),
    [PressureFit](../docs/architecture/pressurefit.md)); each distinct
    microbatch shape compiles and profiles once, deduplicated by the
@@ -284,7 +282,7 @@ it reads a matrix.
    [step boundaries](../docs/architecture/step-boundaries.md).
 5. **Where the time went.** The command's own wall time by category —
    runtime calibration, model construction and import, the geometry
-   builds split by frontend phase, the PressureFit searches, per-budget
+   builds split by frontend phase, the searches, per-budget
    run planning, step execution, figures, and the unattributed rest — so
    the cost of what you just watched is never a mystery.
 6. **Where the host memory went.** The pinned spill arena, the peak and
