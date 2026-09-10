@@ -24,11 +24,12 @@ NEUTRAL_MODULES = (
     "shadowspill.planner",
     "shadowspill.planner.admission",
     "shadowspill.planner.plan_store",
-    "shadowspill.planner.artifact_store",
     "shadowspill.planner.program",
     "shadowspill.planner.selection",
     "shadowspill.runtime",
     "shadowspill.simulator",
+    "shadowspill.step",
+    "shadowspill.store",
 )
 
 #: `mlops` is a workload package; the neutral tree must not reach for one.

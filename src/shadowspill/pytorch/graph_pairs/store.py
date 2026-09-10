@@ -14,11 +14,10 @@ from pathlib import Path
 import torch
 
 from shadowspill.errors import CaptureError
-from shadowspill.planner.artifact_store import digest_directory
-from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 from shadowspill.schema import artifact_schema
+from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
 
 from ..partition.artifacts import StageExample
 from .artifacts import TaskGraphPairs

@@ -12,11 +12,6 @@ import torch.nn as nn
 
 from shadowspill.planner import SearchOptions
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.artifact_store import ArtifactStore, StoreMode
-from shadowspill.planner.program import (
-    StepProgram,
-)
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
@@ -26,6 +21,8 @@ from shadowspill.pytorch.state.model import (
     require_model_state_for_plan,
 )
 from shadowspill.pytorch.state.storage import restore_persistent_object_ids
+from shadowspill.step import StepDataOrdering, StepProgram
+from shadowspill.store import ArtifactStore, StoreMode
 
 
 def _cleanup_failed_plan(
@@ -106,8 +103,6 @@ def plan_forward(
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
-    minimum_object_bytes_evict_eligible: int = 1 << 20,
-    deterministic: bool = False,
     search_options: SearchOptions | None = None,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
@@ -154,18 +149,9 @@ def plan_forward(
     for bounded allocation-path insertions above the automatically profiled
     requirement. It never reduces the measured reserve.
 
-    ``minimum_object_bytes_evict_eligible`` keeps every object smaller than
-    it resident from its first to its last access instead of letting the
-    planner evict and fetch it mid-step; its opening fetch, release, and
-    terminal writeback are unchanged. The default is 1 MiB; zero makes every
-    object eligible.
-
-    ``deterministic`` makes the search reproduce exactly at any worker count:
-    a candidate's placement gate consults only its own placed plans rather
-    than the shared best-placed record. It costs wall time, because that
-    shared bound is what lets a candidate skip measuring a plan which cannot
-    win. It is part of the planned program's identity, so a plan searched
-    under it is a different artifact-store entry from one searched without.
+    What any search is told -- which objects are too small to be worth
+    cutting, and whether the search must reproduce exactly at any worker
+    count -- is `search_options.generic`, a `GenericPlanningOptions`.
 
     ``allocation_probe_seeds`` controls independent randomized activation
     probes per structural contract. ``allocation_probe_repetitions`` repeats each
@@ -220,10 +206,6 @@ def plan_forward(
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
                 shared_outputs=shared_outputs,
-                minimum_object_bytes_evict_eligible=(
-                    minimum_object_bytes_evict_eligible
-                ),
-                deterministic=deterministic,
                 search_options=search_options,
             )
     except BaseException as error:
@@ -250,8 +232,6 @@ def plan_step(
     execution_budget: int | None = None,
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
-    minimum_object_bytes_evict_eligible: int = 1 << 20,
-    deterministic: bool = False,
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
@@ -335,9 +315,8 @@ def plan_step(
     the store and are recorded on the report; naming the default is the same
     as naming nothing.
 
-    ``dynamic_scratch_reserve_bytes`` and
-    ``minimum_object_bytes_evict_eligible`` and ``deterministic`` have the
-    same semantics and defaults as :func:`plan_forward`.
+    ``dynamic_scratch_reserve_bytes`` has the same semantics and default as
+    :func:`plan_forward`.
 
     Allocation-path probe settings have the same semantics and defaults as
     :func:`plan_forward`.
@@ -396,10 +375,6 @@ def plan_step(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
-                minimum_object_bytes_evict_eligible=(
-                    minimum_object_bytes_evict_eligible
-                ),
-                deterministic=deterministic,
                 search_options=search_options,
                 incumbent=incumbent,
             )
@@ -443,7 +418,7 @@ def build_step_program(
     build_store_mode: StoreMode = "contribute",
     implementation_revision: str | None = None,
 ) -> StepProgram:
-    """Capture, profile, and lower a reusable step without running PressureFit.
+    """Capture, profile, and lower a reusable step without searching.
 
     Takes no plan-store arguments, because it writes no plans. What it
     produces is build work -- exports, graph pairs, profiles, a lowered
@@ -516,7 +491,7 @@ def build_step_program(
         _surface_failed_plan(
             runtime,
             planning_started=planning_started,
-            operation="make training step ShadowSpillProgram",
+            operation="build training step program",
             error=error,
         )
 

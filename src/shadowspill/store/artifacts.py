@@ -1,4 +1,4 @@
-"""Central, explicit, and inspectable artifact store for PyTorch planning."""
+"""The artifact store: two trees of content-addressed artifacts under one root."""
 
 from __future__ import annotations
 
@@ -20,25 +20,7 @@ from shadowspill.ir import ExecutionPlan, ShadowSpillProgram
 from shadowspill.ir.program import PROGRAM_SCHEMA
 from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 
-from .store_policy import STORE_MODES, StoreMode, StorePolicy
-
-#: What a run does with one tree of a store: whether it reads what is there,
-#: and what it does about what is not.
-#:
-#: ``contribute`` reads what the store holds and writes back what it does not,
-#: which is how a store fills up, and is the default. ``reuse`` reads it and
-#: persists nothing, so a store shared by several runs is never changed by any
-#: of them. ``require`` reads it and refuses a miss, which is what makes a
-#: store a fixed reference: two runs compared against it are then known to have
-#: stood on the same artifacts rather than on whatever each rebuilt. ``refresh``
-#: ignores what is there and writes over it, which is how a stale entry is
-#: replaced without discarding the rest of the store.
-#:
-#: These are the whole policy. Reading, writing and overwriting were three
-#: separate switches with combinations that meant nothing -- overwriting
-#: without rebuilding, requiring a hit while ignoring hits -- and one mode per
-#: tree says all of it without a contradiction to guard against.
-
+from .policy import STORE_MODES, StoreMode, StorePolicy
 
 _PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
 _CACHE_ENVIRONMENT_LOCK = threading.RLock()
@@ -97,8 +79,9 @@ class ArtifactStore:
     """Where one planning call reads and writes its artifacts.
 
     Two trees under one versioned root. ``build`` holds what a run pays for
-    and another run can reuse: exports, Inductor caches, graph pairs and
-    profiles. ``planning`` holds what a run decided: the program it was given,
+    and another run can reuse: exports, Inductor caches, graph pairs,
+    optimizer captures and profiles. ``planning`` holds what a run decided:
+    the program it was given,
     the requests put to the planner, its results, and the plans callables run,
     the last a readable index linking one planning call to the immutable
     artifacts behind it. Nothing under ``planning`` is written by a build, and
@@ -330,7 +313,7 @@ class ArtifactStore:
                 self.plan_store,
                 False,
                 {
-                    "planning": "PressureFit requests and results, and the"
+                    "planning": "search requests and results, and the"
                     " plans callables run"
                 },
                 _PLAN_STORE_README,
@@ -498,7 +481,7 @@ class ArtifactStore:
         )
 
     def archive_program(self, program: ShadowSpillProgram) -> Path:
-        """Persist the exact canonical ShadowSpillProgram supplied to PressureFit."""
+        """Persist the exact canonical ShadowSpillProgram the search was given."""
 
         path = (
             digest_directory(self.programs_archive, program.digest)
@@ -516,12 +499,12 @@ class ArtifactStore:
                     f"program store entry {path} cannot be read"
                 ) from exc
             if existing != encoded:
-                raise ValueError(f"ShadowSpillProgram cache entry {path} is corrupt")
+                raise ValueError(f"program cache entry {path} is corrupt")
         else:
             _atomic_text(path, encoded)
             operation = "write"
         self.record(
-            category="pressurefit",
+            category="search",
             kind="program",
             digest=program.digest,
             path=path,
@@ -534,7 +517,7 @@ class ArtifactStore:
         self,
         value: Mapping[str, object],
     ) -> tuple[str, Path]:
-        """Persist one complete, framework-free PressureFit call boundary."""
+        """Persist one complete, framework-free search call boundary."""
 
         encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(encoded.encode()).hexdigest()
@@ -547,15 +530,15 @@ class ArtifactStore:
                 existing = path.read_text()
             except OSError as exc:
                 raise ValueError(
-                    f"PressureFit request artifact {path} cannot be read"
+                    f"search request artifact {path} cannot be read"
                 ) from exc
             if existing != encoded:
-                raise ValueError(f"PressureFit request artifact {path} is corrupt")
+                raise ValueError(f"search request artifact {path} is corrupt")
         else:
             _atomic_text(path, encoded)
             operation = "write"
         self.record(
-            category="pressurefit",
+            category="search",
             kind="request",
             digest=digest,
             path=path,
@@ -840,12 +823,6 @@ while each keeps its own plans -- point `--build-store` at the shared one and
 `--plan-store` at your own, or give a single `--artifact-store` and get both
 under it.
 
-A store laid out before the build/planning split was moved into place the
-first time it was opened, except its Inductor cache: Inductor's entries embed
-the absolute paths of their kernel files, so a moved cache keeps writing to
-where it was. A `pytorch/inductor/` still here is that old cache, dead
-weight that may be deleted.
-
 Every returned `PlanReport` records the absolute path and access disposition of
 the artifacts touched by that call.  Do not edit content-addressed entries.
 """
@@ -855,8 +832,8 @@ _PLAN_STORE_README = """# ShadowSpill plan store
 The plans one run searched, kept apart from the artifact store they were
 searched over (named in `layout.json`) so that store can be shared.
 
-- `planning/requests/`: what each PressureFit search was asked for.
-- `planning/results/`: PressureFit's answer, the selected resolution and
+- `planning/requests/`: what each search was asked for.
+- `planning/results/`: the search's answer, the selected resolution and
   memory schedule with the search diagnostics.
 - `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
 

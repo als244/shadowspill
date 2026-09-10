@@ -1,13 +1,13 @@
 """What a store is allowed to do, in one place.
 
-Four stores hold four different kinds of artifact -- profiles, graph pairs,
-optimizer captures, plans -- and serialize them four different ways. What
-they may *do* is the same for all four, and comes from one `StoreMode` on
-the artifact store: read a hit, write a miss, overwrite what is there, or
-refuse a miss outright.
+Several stores hold different kinds of artifact -- profiles, graph pairs,
+compiled manifests, optimizer captures, plans -- and serialize them
+differently. What they may *do* is the same for all of them, and comes from
+one `StoreMode` on the artifact store: read a hit, write a miss, overwrite
+what is there, or refuse a miss outright.
 
-Keeping the policy here is what stops a mode from being honoured by three
-stores and quietly ignored by the fourth.
+Keeping the policy here is what stops a mode from being honoured by some
+stores and quietly ignored by another.
 """
 
 from __future__ import annotations
@@ -17,10 +17,14 @@ from typing import Literal
 
 #: What a run does with one tree of the artifact store.
 #:
-#: ``contribute``  read a hit, write a miss. The default.
-#: ``reuse``       read a hit, persist nothing.
-#: ``require``     read a hit, refuse a miss.
-#: ``refresh``     ignore hits, rebuild and replace.
+#: ``contribute``  read a hit, write a miss. The default, and how a store
+#:                 fills up.
+#: ``reuse``       read a hit, persist nothing, so a store several runs
+#:                 share is changed by none of them.
+#: ``require``     read a hit, refuse a miss, which is what makes a store a
+#:                 fixed reference two runs can be compared against.
+#: ``refresh``     ignore hits, rebuild and replace, which retires a stale
+#:                 entry without discarding the rest of the store.
 type StoreMode = Literal["contribute", "reuse", "require", "refresh"]
 
 #: The same four, as a value a CLI can offer and a config can validate

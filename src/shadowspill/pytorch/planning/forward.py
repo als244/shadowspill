@@ -32,7 +32,6 @@ from shadowspill.planner import (
     ProgramPlanResult,
     validate_schedule_feasibility,
 )
-from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
@@ -61,6 +60,7 @@ from shadowspill.pytorch.runtime_adapter.allocator import (
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
 from shadowspill.runtime import ObjectConsistency
+from shadowspill.store import ArtifactStore
 
 from ..callables import PlannedForward
 from ..diagnostics import PlanReport
@@ -754,8 +754,6 @@ def build_forward(
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
     shared_outputs: Sequence[SharedOutput] = (),
-    minimum_object_bytes_evict_eligible: int = 0,
-    deterministic: bool = False,
     search_options: SearchOptions | None = None,
 ) -> PlannedForward:
     """Compose the independently callable forward-planning boundaries."""

@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from shadowspill.planner.artifact_store import STORE_MODES, StoreMode
 from shadowspill.schema import artifact_schema
+from shadowspill.store import STORE_MODES, StoreMode
 
-_SCHEMA = artifact_schema("pressurefit_frontier_config")
+_SCHEMA = artifact_schema("search_frontier_config")
 _SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)(B|KiB|MiB|GiB|TiB)$")
 _SIZE_MULTIPLIERS = {
     "B": 1,

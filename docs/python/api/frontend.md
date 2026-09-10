@@ -103,12 +103,18 @@ Runtime.calibrate_transfer_capabilities(
 ) -> TransferCapabilities
 ```
 
-Measures all routes, or the `(source, destination)` pairs `routes` names, and
-atomically publishes the new matrix, which it also returns. The two copy sizes
-separate latency from bandwidth; `warmup_copies` are discarded and
-`measured_copies` are kept. This runtime must be locally idle, but ShadowSpill
-performs no cross-process barrier: callers may coordinate several processes and
-calibrate concurrently to measure contended links.
+| argument | type | default | meaning |
+|---|---|---|---|
+| `routes` | `Sequence[tuple[str, str]]` \| `None` | `None` | The `(source, destination)` pairs to measure; every registered route when `None`. |
+| `small_copy_bytes` | `int` | `4096` | The copy size that measures latency. |
+| `large_copy_bytes` | `int` | `256 << 20` | The copy size that measures bandwidth. |
+| `warmup_copies` | `int` | `4` | Copies performed and discarded before measuring. |
+| `measured_copies` | `int` | `16` | Copies kept per size. |
+
+It atomically publishes the new matrix, which it also returns. This runtime must
+be locally idle, but ShadowSpill performs no cross-process barrier: callers may
+coordinate several processes and calibrate concurrently to measure contended
+links.
 
 `Runtime.close()` verifies that no planning, callable, persistent imported
 state, public object reference, or caller-owned device output remains, then
@@ -266,16 +272,18 @@ release_model_state(
 ) -> None
 ```
 
-`export_*` copies the authoritative bytes into ordinary CPU allocations and
-rebinds the same registered tensor identities to them, returning the object it
-was given. `release_runtime=False`, the default, keeps the runtime objects for
-later reuse; `release_runtime=True` releases them after the copy.
+`export_model_state()` and `export_optimizer_state()` copy the authoritative
+bytes into ordinary CPU allocations and rebind the same registered tensor
+identities to them, returning the object they were given. `runtime` is the
+runtime that owns the state; `release_runtime=False`, the default, keeps the
+runtime objects for later reuse, and `release_runtime=True` releases them after
+the copy.
 
 `release_model_state()` releases those runtime objects without materializing
 any CPU copy and returns `None`: the module's registered tensors become invalid
 the moment their leases go, so the module must be discarded afterward. It is
-the teardown operation for callers that no longer need the state, such as
-qualification hosts that cannot hold an anonymous model copy beside the full
+the teardown operation for a caller that is done with the state, such as a
+qualification host that cannot hold an anonymous model copy beside the full
 pinned spill arena. A model the runtime does not own is left unchanged.
 
 ### Reading in place
@@ -325,16 +333,6 @@ Read what you need before the close, or import beforehand to keep it. Only
 `build_step_program()` requires an explicit import, because it returns no
 callable that could own the result.
 
-There are three ways model state comes to live in a pool, and none of them
-needs the host to hold it twice. `import_model_state()` takes a model the
-caller built and releases the host copy as it goes.
-`import_model_state_from_file()` fills the pool from a checkpoint by mapping
-the file, so the only host memory involved is reclaimable page cache. A
-planning call that returns a callable imports state the caller did not, and
-that state belongs to the callable and is released with it. What the host
-still holds in the first case is the model the caller constructed there, which
-is the caller's own object and outside this boundary.
-
 Everything else a plan owns is created in the pools rather than on the host:
 gradients, activations and workspaces are runtime objects the plan's actions
 move between pools, and the tensors the lowering builds them from are fake, so
@@ -343,17 +341,13 @@ there too: the optimizer declares what it keeps on meta, which allocates
 nothing, planning allocates that in the spill pool, and `optimizer_state_init`
 fills it in place.
 
-`import_optimizer_state()` and `export_optimizer_state()` apply the same
-storage policy to already materialized optimizer state, as a standalone
-ownership operation, and planning is agnostic of it. What planning looks at is
-the optimizer it is given, and that object is the reference: if *its* state was
-already imported, planning adopts it as it stands and it outlives the plan; if
-it was not, planning declares the state on meta, allocates it in the spill
-pool, and fills it through `optimizer_state_init`, and the plan owns the
-result. So importing optimizer state outside planning is always valid and
-never changes what planning does. State imported for an optimizer planning is
-never given is invisible to it. `PlannedTrainStep.load_state_dict()` remains
-the way to resume values into a plan that already owns its state.
+The optimizer planning is given is the reference for whose state that is. If
+*its* state was already imported, planning adopts it as it stands and it
+outlives the plan; if it was not, planning creates it as above and the plan owns
+the result. So `import_optimizer_state()` outside planning is always valid and
+never changes what planning does, and state imported for an optimizer planning
+is never given is invisible to it. `PlannedTrainStep.load_state_dict()` is the
+way to resume values into a plan that already owns its state.
 
 ## Planning entry points
 
@@ -368,10 +362,9 @@ that line:
 | `plan_step_search()` | Builds every geometry once and plans each under every budget. Executes nothing. | both sets |
 
 Under `plan_program()` sits one layer, on the [framework-neutral
-page](neutral.md): the search. `plan_program()` chooses which one runs
-through its `search` argument, and `pressurefit` is the one that ships --
-the name of that search algorithm and nothing else. A search takes no store
-at all.
+page](neutral.md): the search. Which one runs is
+`search_options.algorithm`, and `None` there means the one that ships. A
+search takes no store at all.
 
 ### Store arguments
 
@@ -410,8 +403,8 @@ the modes do to PyTorch's own compilation caches.
 ### Arguments the entry points share
 
 `plan_forward()`, `plan_step()` and `build_step_program()` take these with
-identical meaning; `plan_step_search()` takes the ones its per-geometry
-planning does not derive.
+identical meaning. `plan_step_search()` derives most of them per geometry; the
+ones it does take are listed in [its own section](#plan_step_search).
 
 | argument | type | default | what it must be |
 |---|---|---|---|
@@ -422,14 +415,17 @@ planning does not derive.
 | `execution_budget` | `int` \| `None` | `None` | Device bytes the plan may use; the pool's suballocatable capacity when `None`. A value at or below that capacity is taken as given, and the pool's whole `physical_capacity` is accepted as the same thing spelled the way it was configured. A value strictly between the two is ambiguous and refused, as is anything above the physical cap. |
 | `spill_budget` | `int` \| `None` | `None` | Spill bytes the plan may use; the pool's capacity when `None`, and never more than it. |
 | `dynamic_scratch_reserve_bytes` | `int` \| `None` | `None` | Device bytes held back for allocations the plan does not own. Measured when `None`; an explicit value can only raise the measured reserve, never lower it, and cannot exceed the execution budget. |
-| `minimum_object_bytes_evict_eligible` | `int` | `1 << 20` | Objects smaller than this stay resident from their first to their last access instead of being evicted and fetched mid-step; their opening fetch, release after the last access, and terminal writeback are unchanged. Default 1 MiB, the size under which a copy is latency-bound; zero makes every object eligible. Part of the plan identity. Not taken by `build_step_program()`, which runs no search. |
-| `deterministic` | `bool` | `False` | Reproduces the search exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record. It costs wall time, and it is part of the plan's identity, so a plan searched under it is a separate store entry. Not taken by `build_step_program()`. |
 | `execution_device` | `int` \| `str` \| `torch.device` \| `None` | `None` | Accelerator to plan for; PyTorch's current one when `None`. An explicit device must match the execution pool. |
 | `partition` | `PartitionSpec` | `"auto"` | `"auto"`, `"whole"`, or a `PartitionPolicy`. Partitioning only creates ordered stage occurrences; it does not choose graph-pair alternatives. See [custom partitioning](../../examples/custom-partitioning.md). |
 | `verbose` | `bool` | `True` | Reports each planning phase and unique structural contract as it starts. Diagnostics are retained on the plan report either way. |
 | `profiling_metadata` | `Sequence[object]` \| `None` | `None` | One JSON-compatible entry per example microbatch, distinguishing value-sensitive measurements that tensor geometry does not express. It reaches profile and plan identity, and is never passed to the model, objective, or runtime. |
 | `allocation_probe_seeds` | `int` | `1` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | `int` | `2` | Identical repeats per probe seed, which is what separates a real first-use reservation from noise. |
+
+What any search is told -- the evict-eligibility floor and whether the search
+must reproduce exactly at any worker count -- is `search_options.generic`, a
+[`GenericPlanningOptions`](neutral.md#searchoptions). These entry points take no
+second way to set it.
 
 Budgets of at least one GiB plan at whole-GiB granularity, rounded down, so a
 budget that follows a pool's measured capacity gives the same plan identity in
@@ -453,8 +449,6 @@ plan_forward(
     execution_budget=None,
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
-    minimum_object_bytes_evict_eligible=1 << 20,
-    deterministic=False,
     search_options=None,
     execution_device=None,
     partition='auto',
@@ -479,28 +473,53 @@ Beyond the shared and store arguments:
 | `example_inputs` | `Sequence[Any]` | required | One fixed example sequence, whose geometry fixes the callable's input signature. A leaf may be wrapped with `shared_input()`. |
 | `shared_outputs` | sequence of `SharedOutput` | `()` | Output leaves retained as runtime objects rather than copied out. |
 
-`shared_output(*path, retain_in=pool_name)` identifies a tensor leaf in the
-public output pytree and retains that value as a runtime object in the named
-pool. The corresponding result leaf is a `TensorRef`, not a copied
-caller-owned tensor. `TensorRef` records the logical runtime-object identity,
-residency generation, dtype, shape, stride, and storage offset without
-exposing a backend address.
+```text
+shared_output(*path, retain_in) -> SharedOutput
+```
+
+| argument | type | default | what it must be |
+|---|---|---|---|
+| `*path` | `str` \| `int` | required | The pytree path to one tensor leaf in the public output: mapping keys and sequence indices in order. |
+| `retain_in` | `str` \| `tuple[str, ...]` | required | The pool, or pools, that value is retained in. |
+
+`shared_output()` identifies a tensor leaf in the public output pytree and
+retains that value as a runtime object. The corresponding result leaf is a
+`TensorRef`, not a copied caller-owned tensor. `TensorRef` records the logical
+runtime-object identity (`object`), `generation`, `dtype`, `shape`, `stride`,
+`storage_offset`, `requires_grad` and `retained_pools`, without exposing a
+backend address.
 
 `TensorRef.close()` releases that public ownership. Closing the planned
 callable releases its plan ownership but does not invalidate an outstanding
 `TensorRef`; the runtime object is reclaimed after its final owner closes.
 One planned shared-output slot holds one generation at a time, so the next
-invocation fails clearly until the preceding reference is closed. Once
-closed, the next invocation updates the same logical object record in place.
-Its current physical lease and residency generation may be replaced; no new
-public object identity or value copy is introduced.
+invocation fails clearly until the preceding reference is closed, and then
+updates the same logical object in place rather than introducing a second
+identity or a value copy.
 
-`SharedInput` is the symmetric input declaration. Wrap a `TensorRef` with
-`shared_input(reference, require_in=pool_name)` in `example_inputs` when
-planning the consumer. The consumer plan binds the same runtime object; it
-does not create another logical object or copy the value through caller
-memory. At invocation time, pass an open `TensorRef` with the same runtime
-identity and tensor geometry:
+`SharedInput` is the symmetric input declaration.
+
+```text
+shared_input(
+    reference,
+    *,
+    require_in,
+    consistency=ObjectConsistency.CAUSAL,
+    profiling_value=None,
+) -> SharedInput
+```
+
+| argument | type | default | what it must be |
+|---|---|---|---|
+| `reference` | `TensorRef` | required | The open reference the producer handed back. |
+| `require_in` | `str` | required | A pool the reference guarantees the value is in. |
+| `consistency` | `ObjectConsistency` | `CAUSAL` | Ordering policy for the binding. |
+| `profiling_value` | `torch.Tensor` \| `None` | `None` | A CPU tensor standing in for the value while profiling. Required for an integer or Boolean control input, whose value decides what the capture does. |
+
+Wrap a `TensorRef` with it in `example_inputs` when planning the consumer. The
+consumer plan binds the same runtime object; it does not create another logical
+object or copy the value through caller memory. At invocation time, pass an open
+`TensorRef` with the same runtime identity and tensor geometry:
 
 ```python
 produced = producer(inputs)
@@ -516,19 +535,16 @@ consumer = plan_forward(
 result = consumer([state])
 ```
 
-`require_in` must name a pool guaranteed by the reference. The
-`ObjectConsistency` enumeration holds the two ordering policies a binding may
-take: `ObjectConsistency.CAUSAL`, the default, makes each task acquire the
+The `ObjectConsistency` enumeration holds the two ordering policies a binding
+may take: `ObjectConsistency.CAUSAL`, the default, makes each task acquire the
 object's current generation plus its published readiness dependency, while
 `ObjectConsistency.UNORDERED` deliberately omits cross-callable value ordering
 and retains the object and its lease safely regardless. Floating shared inputs
-receive a deterministic task-local profiling representative; integer and
-Boolean control inputs require an explicit CPU `profiling_value` on
-`SharedInput`.
+receive a deterministic task-local profiling representative when
+`profiling_value` is omitted.
 
 Several planned callables may remain admitted to one runtime and may bind the
-same `TensorRef`, and distinct callables may be submitted without synchronizing
-the dispatcher between them.
+same `TensorRef`.
 
 ### `plan_step()`
 
@@ -551,8 +567,6 @@ plan_step(
     execution_budget=None,
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
-    minimum_object_bytes_evict_eligible=1 << 20,
-    deterministic=False,
     execution_device=None,
     partition='auto',
     optimizer_ordering='stage_interleaved',
@@ -601,12 +615,12 @@ last stage forward and backward together, so the loss's saved state is consumed
 as it is produced instead of being held for the pass. The ordering is part of
 the plan's identity and is recorded on the report as a `StepDataOrdering`.
 
-`search_options` carries the algorithm and what it may try. For PressureFit that is a
-`PressureFitOptions`, whose `resolution_options` name the resolutions it
-plans: the shares of flexible groups to recompute, one resolved program each,
-as exact fractions such as `("0", "1/2", "1")`; see
-[`shadowspill.planner`](neutral.md). The whole record is part of the plan's
-identity in the store and is recorded on the report as `search_options`.
+`search_options` has three fields: `generic`, what any search understands;
+`algorithm`, the search itself carrying its own options, with `None` meaning the
+one that ships; and `workers`. `generic` and `algorithm` are part of the plan's
+identity in the store, `workers` is not, and the whole of it is recorded on the
+report as `search_options`. See
+[`SearchOptions`](neutral.md#searchoptions).
 
 `incumbent` is the plan to beat. A step run after a sweep executes the plan the
 sweep chose even when this call's calibration or budget differs, because the
@@ -674,7 +688,7 @@ Plans every admitted split of one step's sequence total into microbatches and
 accumulation rounds, under every requested budget pair, and executes nothing.
 Each distinct geometry pays capture, profiling and lowering once -- the build
 tree deduplicates by structural digest -- and every geometry-budget point then
-runs the PressureFit search. It returns a `StepSearchReport`.
+runs one search. It returns a `StepSearchReport`.
 
 <!-- source-signature: src/shadowspill/pytorch/step_search.py:plan_step_search -->
 ```text
@@ -724,34 +738,60 @@ plan_step_search(
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Overrides the calibration each step program embeds from the runtime. The report records both, so two searches can be compared or one pinned to another's. |
 | `min_tokens_per_microbatch` | `int` \| `None` | `None` | Skips a geometry whose microbatch is smaller, recording the reason. |
 | `max_tokens_per_microbatch` | `int` \| `None` | `None` | Skips a geometry whose microbatch is larger, recording the reason. |
-| `options` | `SearchOptions` \| `None` | `None` | What every search is told, unchanged at every point: determinism and the evict-eligibility floor. |
-| `workers` | `int` | `0` | How much of the machine each point's search may use; zero for every logical CPU. No part of the plan key. |
-| `orderings` | `(accumulation) -> Sequence[StepDataOrdering]` \| `None` | `None` | Which microbatch walks to try for a geometry. `None` is `default_orderings()`. |
-| `search_options` | `SearchOptions` \| `None` | `None` | As for `plan_step()`; every point is searched under it. Invalid options are rejected before any geometry is built. |
+| `orderings` | `(accumulation) -> Sequence[StepDataOrdering]` \| `None` | `None` | Which microbatch walks to try for a geometry. `None` tries the default set. |
+| `search_options` | `SearchOptions` \| `None` | `None` | As for `plan_step()`; every point is searched under it, worker count included. |
 | `incumbents` | `bool` | `True` | Plans each program's budgets ascending and hands every point the best plan found at a smaller budget as the plan to beat, so no program plans worse with more memory. `False` searches every point alone, which is how the two are compared. |
 | `verbose` | `bool` | `False` | Forwards each planning call's own phase progress. |
 | `progress` | `(str) -> None` \| `None` | `None` | Receives one line per geometry and point boundary, so a caller can tee a live log. |
 
-`StepSearchReport` carries the budgets and geometries searched, one
-`StepSearchGeometryBuild` per built geometry with its build wall clock broken
-down by frontend phase, one `StepSearchPoint` per geometry-ordering-budget
-combination, the geometries the token bounds skipped with their reasons, the
-resolution options and any bandwidth override the search used, and
-`winner_plans`, each budget pair's winning `AnnotatedProgramPlan` held in
-memory. A point carries its status, simulated makespan, `PlanSummary`,
+`StepSearchReport` carries `total_sequences_per_step` and `sequence_length`, the
+`budgets` searched, one `StepSearchGeometryBuild` per built geometry with its
+build wall clock broken down by frontend phase, one `StepSearchPoint` per
+geometry-ordering-budget combination, the geometries the token bounds `skipped`
+with their reasons, the `search_options` every point was searched under, any
+`transfer_bandwidths` override, and `winner_plans`, each budget pair's winning
+`AnnotatedProgramPlan` held in memory. A point carries its `status`,
+`makespan_seconds`, `summary` as a `PlanSummary`, `search_seconds`,
 `incumbent_budget_bytes` when it answered with a handed-in plan, and
 `graph_pair_selections`: one `GraphPairOutcome` per graph-pair selection the
-search evaluated, not only the one it answered with. `search_geometries()` is
-the underlying enumeration -- every divisor pair of the sequence total, largest
-microbatch first, with the bounds' skips and reasons -- and returns the
-admitted pairs and the skipped ones.
+search evaluated, not only the one it answered with.
 
 `orderings` lowers each ordering into its own program, sharing the geometry's
 capture and profiles, and plans it under every budget; the report's points and
 builds carry the ordering, and the winner at a budget may be any ordering of
-any geometry. The default, `default_orderings()`, is every `depth x breadth`
-factor pair of the accumulation count with the flags at their defaults; the
-search never toggles `reverse_breadth` or `pair_loss`.
+any geometry. The default is every `depth x breadth` factor pair of the
+accumulation count with the flags at their defaults; the search never toggles
+`reverse_breadth` or `pair_loss`.
+
+### `search_geometries()`
+
+The geometry enumeration `plan_step_search()` runs on its own: every divisor
+pair of the sequence total, largest microbatch first, with what the token bounds
+skipped and why.
+
+```text
+search_geometries(
+    total_sequences_per_step,
+    *,
+    sequence_length,
+    min_tokens_per_microbatch=None,
+    max_tokens_per_microbatch=None,
+) -> tuple[
+    tuple[tuple[int, int], ...],
+    tuple[tuple[int, int, str], ...],
+]
+```
+
+| argument | type | default | what it must be |
+|---|---|---|---|
+| `total_sequences_per_step` | `int` | required | Sequences one optimizer step consumes. |
+| `sequence_length` | `int` | required | Tokens per sequence, which is what makes the token bounds mean the same thing at every length. |
+| `min_tokens_per_microbatch` | `int` \| `None` | `None` | Skip a geometry whose microbatch is smaller. |
+| `max_tokens_per_microbatch` | `int` \| `None` | `None` | Skip a geometry whose microbatch is larger. |
+
+It returns two tuples: the admitted `(sequences_per_microbatch,
+accumulation_count)` pairs, and the skipped ones with the reason as a third
+element.
 
 Running a winner afterward is one warm `plan_step()` call at the chosen
 geometry, taking that budget's `winner_plans` entry as `incumbent` so it
@@ -796,10 +836,11 @@ labels. It must not mutate the graph.
 
 ## Planned callables
 
-Both callables expose `plan_report`, `state_dict()`, `load_state_dict()`,
-`close()`, and context manager support. `PlannedTrainStep` also exposes
-`invocation_timings()` and `mark_cycle_end()`, the step's time on the device
-clock; see [timing](timing.md).
+Both callables expose the `plan_report` attribute, `state_dict() -> dict[str,
+object]`, `load_state_dict(checkpoint) -> None` taking back exactly what
+`state_dict()` produced, `close() -> None`, and context manager support.
+`PlannedTrainStep` also exposes `invocation_timings()` and `mark_cycle_end()`,
+the step's time on the device clock; see [timing](timing.md).
 
 <!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedForward.__call__ -->
 ```text
@@ -908,10 +949,8 @@ imported, so there is no caller-owned pool for it to be left in. That state is
 taken from the spill pool as it is created rather than built on the host and
 copied in: while the optimizer initializes, a host allocation large enough to
 be worth an object is served from the pool, so the values are written where
-they will live. On a model with a state several times its own size that is the
-difference between a build that needs the pool and one that needs the pool
-again beside it. State the caller imported is untouched by this, because
-nothing is created for it.
+they will live. State the caller imported is untouched by this, because nothing
+is created for it.
 
 Releasing the plan therefore releases the state with it: a training callable's
 `state_dict()` and `load_state_dict()` answer only while it is open, and both
@@ -927,8 +966,7 @@ allocation outside the runtime pools, so it can be serialized while training
 continues. The spill pool keeps the authoritative copy throughout and is read
 in place, so the snapshot is normally the only copy of the state outside the
 pool; an object whose pool copy is not current is read into a buffer first and
-costs two until the snapshot is built. Even one copy of optimizer state is, on
-a large model, the largest transient the frontend asks for.
+costs two until the snapshot is built.
 
 ## Exceptions
 

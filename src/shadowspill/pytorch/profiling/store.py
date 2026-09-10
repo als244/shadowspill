@@ -9,8 +9,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Protocol
 
-from shadowspill.planner.artifact_store import digest_directory
-from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
+from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
 
 from .records import PROFILE_SCHEMA, ProfileKey, TaskMeasurement
 
