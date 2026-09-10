@@ -11,15 +11,16 @@ to any stored structure moves them all together.
 |---|---|---|
 | `ShadowSpillProgram` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
 | `ShadowSpillPlanningProblem` | `shadowspill.plan_program/v1` | One program plus residency, machine inputs, and admission topology. It carries no search options: a program is a problem, and how to search it is the caller's. |
-| `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture/profile result with recurrent and optional initial PressureFit Programs. |
+| `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture and profile result, as a recurrent `ShadowSpillPlanningProblem` and an optional initial one. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | The winning plan, physical admission, and simulator evidence for one budget/bandwidth point. |
 
-The ordinary reusable workflow is:
+Each one round-trips through `to_json()` and `from_json()`:
 
 ```python
 from pathlib import Path
 
-from shadowspill.planner.program import AnnotatedProgramPlan, StepProgram
+from shadowspill.planner.program import AnnotatedProgramPlan
+from shadowspill.step import StepProgram
 
 Path("step-program.json").write_text(step_program.to_json(), encoding="utf-8")
 loaded_program = StepProgram.from_json(
@@ -97,7 +98,7 @@ An abridged `ShadowSpillProgram` has this shape:
 | `objects` | Named tensor views into alias groups. |
 | `profiles` | Deduplicated task runtime/workspace measurements. |
 | `tasks` | Topologically ordered executable/control tasks. |
-| `task_alternative_groups` | Mutually exclusive task/retention alternatives. The Python attribute is `ShadowSpillProgram.task_alternative_groups`; the serialized key keeps its original spelling so an existing corpus stays readable. |
+| `task_alternative_groups` | Mutually exclusive task and retention alternatives, one option of which the search chooses per group. |
 
 ### Device, alias, and object records
 
@@ -135,7 +136,7 @@ Object roles are `input`, `parameter`, `buffer`, `activation`, `gradient`,
 Tasks appear in topological order. Dependencies and all object/profile
 references are validated during construction and loading.
 
-### Graph-pair groups
+### Task-alternative groups
 
 Each record has a `group_id` and an `options` array. Each option contains:
 
@@ -199,7 +200,7 @@ The capacity contract keys are:
 | `maximum_execution_budget_bytes` | Largest execution budget allowed without recompilation/reprofiling. |
 | `maximum_spill_budget_bytes` | Largest spill budget allowed by the source runtime. |
 | `fixed_execution_bytes` | Problem/provider/fixed-service bytes outside the callable pool. |
-| `object_reserve_bytes` | Capacity leeway: pool bytes withheld from PressureFit's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
+| `object_reserve_bytes` | Capacity leeway: pool bytes withheld from the search's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
 | `dynamic_scratch_reserve_bytes` | Measured or user-raised optional dynamic scratch requirement. |
 
 ## StepProgram format
@@ -268,9 +269,8 @@ shadowspill.annotated_program_plan/v1
 
 - `fetch_bytes_per_second` and `evict_bytes_per_second`;
 - `fetch_latency_ns` and `evict_latency_ns`, the per-transfer latencies the
-  same calibration measured, or `null` in a record written before they were
-  carried and in an override that names only bandwidths, where the program's
-  own latency applies;
+  same calibration measured, or `null` in an override that names only
+  bandwidths, where the program's own latency applies;
 - `scale_numerator` and `scale_denominator` for an exact rational benchmark
   scaling factor;
 - optional `calibration_digest` and `provenance`.
@@ -328,13 +328,10 @@ A candidate whose status is `infeasible` with failure kind `unplaceable`
 reached no plan that fit, so it has no answer regardless of what it
 simulated.
 
-A resolved program that was handed the plan to beat — a plan for it already in
-hand, found at a smaller budget, say — carries an `incumbent` block saying
-what became of it at this capacity. The search measures it before any
-candidate runs and answers with it unless a candidate does strictly better;
-when it answers with it, the resolved program's
-`selected_candidate_policy.candidate_id` is `incumbent`. `null` on a resolved
-program handed none, and absent from records written before there was one.
+A resolved program handed a plan to beat carries an `incumbent` block saying
+what became of it at this capacity, and `null` when it was handed none. When the
+search answers with that plan, `selected_candidate_policy.candidate_id` is
+`incumbent`.
 
 | Field | Meaning |
 |---|---|
@@ -346,26 +343,12 @@ program handed none, and absent from records written before there was one.
 
 `work` counts what the search did — residency and schedule cache hits,
 simulation calls, admission calls — and `work.sections` says where its time
-went. The sections are disjoint spans named for the stage that produced them:
-
-| Key | Span |
-|---|---|
-| `prepare_ns` | Deriving the residency problem. Problem level only. |
-| `setup_ns` | Schedule facts and the candidate workspace. |
-| `reduce_ns` | Choosing what stays resident, before any candidate repairs it. |
-| `emit_ns` | Turning residency gaps into an ordered schedule. |
-| `simulate_ns` | Replaying the schedule for a makespan. |
-| `repair_ns` | Moving a transfer or making room for one, including the reduction that takes. |
-| `digest_ns` | Naming the schedule. |
-| `place_ns` | Measuring whether the layout fits. |
-| `select_ns` | Deciding what to answer with, and materialising it. |
-| `teardown_ns` | Releasing what the evaluation held. |
-| `residual_ns` | The part of `total_ns` no named section claimed. |
-| `admit_ns` | Admitting the schedule. **Nested inside `simulate_ns`.** |
-
-`total_ns` equals the sum of every key above except `admit_ns`, at each level
-of the hierarchy, so a breakdown always accounts for the whole span rather
-than most of it.
+went, as disjoint spans named for the stage that produced them. The keys are
+the fields of
+[`PlanningSectionTiming`](plan-report-fields.md#planningsectiontiming).
+`total_ns` equals the sum of every one of them except `admit_ns`, which is
+nested inside `simulate_ns`, at each level of the hierarchy, so a breakdown
+always accounts for the whole span rather than most of it.
 
 Sections measure work, not elapsed time. A problem's sections are the sum of
 its candidates', so with several workers the total exceeds the time the call
@@ -396,7 +379,7 @@ entry is one plan the candidate held, in order:
 | `capacity_violations` | Places it came up short and waited. |
 | `outcome` | `simulated`, `measured`, `placed`, `refined`, `best`, `answer`. |
 
-See [Interpreting a PlanReport](plan-report.md#pressurefit-diagnostics) for the
+See [Interpreting a PlanReport](plan-report.md#search-diagnostics) for the
 meaning of a problem versus a policy.
 
 ### Simulation
@@ -427,7 +410,7 @@ trigger/completion deltas, and cross-lane memory-reuse dependencies.
 | `effective_facts` | Capacity-adjusted topology used by the accepted attempt. |
 | `fixed_layout` | Complete `shadowspill.fixed_physical_layout/v1` certificate. |
 | `fixed_layout_digest` | Integrity identity of that certificate. |
-| `attempts` | Ordered capacity-refinement trials and optional PressureFit diagnostics. |
+| `attempts` | Ordered capacity-refinement trials and optional search diagnostics. |
 
 The fixed-layout certificate binds program, schedule, and topology digests. It
 records pool/fixed/dynamic/scratch/required bytes, every placement, causal
@@ -436,22 +419,22 @@ leases, and transfer-action destination leases. Offsets are relative to the
 callable fixed slice, not raw process pointers.
 
 Each attempt records requested/effective object capacity, required bytes,
-pool capacity, accepted status, and the PressureFit evidence for that trial.
+pool capacity, accepted status, and the search evidence for that trial.
 
 ### Timing
 
 | Key | Meaning |
 |---|---|
 | `total_wall_time_ns` | Complete `plan_program()` wall time. |
-| `search_wall_time_ns` | Sum of PressureFit/cache-resolution intervals across attempts. |
+| `search_wall_time_ns` | Sum of the search and cache-resolution intervals across attempts. |
 | `physical_admission_wall_time_ns` | Sum of physical-layout construction intervals. |
 | `orchestration_wall_time_ns` | Remaining validated orchestration time. |
-| `refinement_attempts` | Per-attempt PressureFit and physical-admission timing. |
+| `refinement_attempts` | Per-attempt search and physical-admission timing. |
 
-The three component totals reconcile with total wall time. Search work time
-inside PressureFit diagnostics is normally larger than wall time, because the
-search evaluates many candidates at once and `sections` counts work rather
-than elapsed time; `span` is the wall-clock counterpart.
+The three component totals reconcile with total wall time. The work time in
+the search diagnostics is normally larger than wall time, because the search
+evaluates many candidates at once and `sections` counts work rather than
+elapsed time; `span` is the wall-clock counterpart.
 
 ## Loading and validation
 

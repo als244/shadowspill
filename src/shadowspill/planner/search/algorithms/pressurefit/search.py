@@ -1,14 +1,15 @@
 """Evaluating every resolution and choosing one winner.
 
-PressureFit is given a family of legal resolutions and has to
-return the best schedule across all of them. This module owns that loop:
-projecting each selection into what the library needs, dropping the ones that
-cannot fit before paying to evaluate them, running the rest, and merging their
-results into one answer.
+PressureFit is given a family of legal resolutions and has to return the best
+schedule across all of them. This module owns that loop: projecting each
+selection into what the library needs, dropping the ones that cannot fit
+before paying to evaluate them, running the rest, and merging their results
+into one answer.
 
-It deliberately knows nothing about which selections are worth trying - that is
-``recomputation`` - and nothing about what to do when admission refuses the
-winner, which is ``refinement``.
+It knows nothing about which resolutions are worth trying -- that is
+``toolkit.resolution`` and this package's `ordered_resolutions` -- and nothing
+about certifying the winner's physical layout, which is
+``planner.admission.refinement``.
 """
 
 from __future__ import annotations
@@ -66,6 +67,7 @@ from .candidates import (
     evaluate_program_problems,
     validate_program_problem,
 )
+from .capi import CandidateStatus
 from .options import PressureFitOptions
 
 
@@ -195,7 +197,13 @@ def _same_resolution(
     }
 
 
-_INCUMBENT_STATUS = {0: "valid", 2: "infeasible", 3: "infeasible", 7: "unplaceable"}
+#: The C status values, named, against the words a diagnostic reports.
+_INCUMBENT_STATUS: dict[int, str] = {
+    CandidateStatus.VALID: "valid",
+    CandidateStatus.SIMULATION_INFEASIBLE: "infeasible",
+    CandidateStatus.ADMISSION_INFEASIBLE: "infeasible",
+    CandidateStatus.UNPLACEABLE: "unplaceable",
+}
 
 
 def _incumbent_diagnostic(
@@ -543,6 +551,7 @@ def finish_pressurefit(
         ),
     )
     diagnostics = PlanningDiagnostics(
+        search=search_options.resolved_algorithm.name,
         selected_candidate_id=selected_candidate_id,
         selected_selection_id=problem.selection_id,
         selected_makespan_ns=simulation.makespan_ns,

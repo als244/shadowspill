@@ -1,4 +1,4 @@
-"""Content-addressed persistence for complete PressureFit selections."""
+"""Content-addressed persistence for the plans a search answers with."""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from shadowspill.ir import (
     ShadowSpillProgram,
     TaskAlternativeChoice,
 )
-from shadowspill.planner.artifact_store import ArtifactStore, digest_directory
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig, simulate
 from shadowspill.simulator.indexing import (
     index_simulation_template,
     simulate_template,
 )
+from shadowspill.store import CONTRIBUTE, ArtifactStore, StorePolicy, digest_directory
 
 from .admission import AdmissionFacts
 from .admission.indexing import (
@@ -41,7 +41,6 @@ from .search import (
     answer_no_worse_than,
 )
 from .serialization import _resident_slice_from_value
-from .store_policy import CONTRIBUTE, StorePolicy
 
 _SCHEMA = artifact_schema("plan_selection")
 
@@ -78,11 +77,11 @@ class PlanStore:
     different answer -- a plan searched over one candidate space is never
     read back for another, whatever the library's defaults are that day.
 
-    Worker count is part of it. It changes no candidate's identity and breaks
-    no tie, but candidates measure a layout only when the shared record says
-    it could win, so which worker places first decides which candidates are
-    ever measured, and two searches at different worker counts can answer
-    with different plans.
+    Worker count is not part of it. Two runs at different worker counts ask
+    the same question and must read back the same answer, even though the
+    shared placement gate means which worker places first can decide which
+    candidates are ever measured; the stored record says how many workers
+    produced the plan.
     """
 
     def __init__(
@@ -142,7 +141,6 @@ class PlanStore:
             config,
             admission,
             placement,
-            algorithm,
             chosen,
         )
         cached = (
@@ -170,7 +168,8 @@ class PlanStore:
                 final_residency=final_residency,
                 config=config,
                 generic=chosen.generic,
-                        admission=admission,
+                workers=chosen.workers,
+                admission=admission,
                 placement=placement,
                 progress=progress,
                 incumbent=incumbent,
@@ -327,7 +326,7 @@ class PlanStore:
             # without a plan in hand is the same plan.
             if _without_provenance(existing_payload) != _without_provenance(payload):
                 raise ValueError(
-                    "fresh PressureFit output differs from the stored planned program; "
+                    "a fresh search differs from the stored planned program; "
                     "use a 'refresh' store mode or a new implementation_revision: "
                     f"{path}"
                 )
@@ -359,7 +358,7 @@ class PlanStore:
         if self.artifact_recorder is None:
             return
         self.artifact_recorder(
-            category="pressurefit",
+            category="search",
             kind="selection",
             digest=key,
             path=path,
@@ -376,7 +375,6 @@ def _key(
     config: SimulationConfig,
     admission: AdmissionFacts | None,
     placement: AdmissionFacts | None,
-    algorithm: SearchAlgorithm,
     search_options: SearchOptions,
 ) -> str:
     payload = {
@@ -397,8 +395,8 @@ def _key(
         # question: a plan one search chose is not the answer another would
         # give, and a plan searched over one candidate space is not the
         # answer for a different one. The plan to beat is not part of it:
-        # see PlanStore.resolve.
-        "search": algorithm.name,
+        # see PlanStore.resolve. The search's name is inside
+        # `search_options`, so it is not repeated here.
         "search_options": search_options.to_dict(),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -481,7 +479,7 @@ def resolve_plan(
 ) -> PlanLookup:
     """Resolve one plan, planning only when the store does not have it.
 
-    The request and its ShadowSpillProgram are archived first, so a plan on disk can
+    The request and its program are archived first, so a plan on disk can
     always be traced back to what was asked for, the plan to beat included.
     """
 

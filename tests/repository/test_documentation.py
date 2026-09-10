@@ -596,7 +596,7 @@ def test_diagnostic_and_serialization_guides_cover_runtime_schemas() -> None:
         "## Tasks are keyed by execution ID",
         "## Unique stages and graph pairs",
         "## Interpreting a graph profile",
-        "## PressureFit diagnostics",
+        "## Search diagnostics",
         "## Physical-layout diagnostics",
         artifact_schema("plan_diagnostics"),
         "chosen_graph_pair_variant",

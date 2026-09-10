@@ -24,9 +24,9 @@ there is one place to read each measurement.
 
 Two names carry a trap worth stating. `semantic_contract_capture_ns` and
 `executable_contract_capture_ns` are durations, not instants: they are how
-long capturing the contract took. `started_ns` and `finished_ns` on the
-PressureFit records are the opposite, instants on the clock of the call that
-evaluated them.
+long capturing the contract took. `started_ns` and `finished_ns` on the search
+records are the opposite, instants on the clock of the call that evaluated
+them.
 
 ## What hangs off what
 
@@ -36,7 +36,7 @@ PlanReport
 ├── task_profiles[]                           TaskProfile (IR)
 ├── transfer_actions[]                        MemoryAction (IR)
 ├── transfer_capabilities                     TransferCapabilities → TransferProfile[]
-├── pressurefit_results[]                     ProgramPlanResult → ResidentSlice
+├── search_results[]                          ProgramPlanResult → ResidentSlice
 ├── summary            (property)             PlanSummary
 └── diagnostics                               PlanDiagnostics
     ├── phases[]                              PlanPhaseTiming
@@ -48,7 +48,7 @@ PlanReport
     ├── physical_layouts[]                    PlanPhysicalLayout
     │   ├── attempts[]                        PlanFixedLayoutAttempt → PlanningDiagnostics
     │   └── task_memory_envelopes[]           PlanTaskMemoryEnvelope
-    └── pressurefit_runs[]                    PlanningDiagnostics
+    └── search_runs[]                         PlanningDiagnostics
         └── resolved_programs[]               ResolvedProgramDiagnostics
             ├── choices[]                     TaskAlternativeChoiceDiagnostic
             ├── incumbent                     IncumbentDiagnostic
@@ -83,20 +83,16 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `transfer_capabilities` | The measured transfer matrix the simulator planned against. |
 | `optimizer_ordering` | How optimizer work was ordered, or `None` for a forward plan. |
 | `data_ordering` | The `StepDataOrdering` the step walked its microbatches under -- its `depth`, `breadth`, `reverse_breadth`, and `pair_loss` -- or `None` for a forward plan. |
-| `search` | Which search produced this plan. The key its own diagnostics section is written under. |
-| `workers` | How many threads the search was given. Recorded for visibility; excluded from anything compared across runs, because it changes how long an answer took and not which answer was right. |
-| `search_runs` | Per-role search invocations, each with its wall time and diagnostics. |
-| `search_results` | The selected plan for each role the report covers. |
-| `search_options` | What the search was told, as its own serialized record -- for PressureFit, the candidate space and the `resolution_options` the plan was searched over, as exact fractions of the flexible groups recomputing (the default is every quarter). `None` for a forward plan. |
+| `search_results` | The selected plan for each role the report covers, first-step first and recurrent last. |
+| `search_options` | What the search was told: the generic options, which algorithm ran, and that algorithm's own options. For the search that ships those include the candidate space and `resolution_options`, the shares of the flexible groups to recompute as exact fractions, every quarter by default. `None` for a forward plan. |
 | `planned_program_cache_hits`, `planned_program_cache_misses` | Whether the selected plan was read back from the store. Exactly one is 1. |
 | `fixed_slab_bytes` | The slab the fixed layout occupies. |
 | `captured_stage_count` | Stages the capture produced. |
 | `aot_unique_stage_contracts` | Distinct structural contracts among them. |
 | `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Graph pairs served from the store rather than compiled. |
-| `pressurefit_results` | The selected plans, first-step first and recurrent last. |
 
 Derived on access, not stored: `program`, `initial_program`,
-`pressurefit_result`, `initial_pressurefit_result`,
+`search_result`, `initial_search_result`,
 `predicted_device_peak_bytes`, `predicted_spill_peak_bytes`,
 `predicted_makespan_ns`, `summary`, `shared_aliases`,
 `shared_execution_bytes`, `shared_spill_bytes`,
@@ -152,7 +148,7 @@ can never disagree.
 | `store_directories` | The roots this call used, as name/path pairs: `root`, `build`, `build.inductor`, `planning`, `plan_store`. |
 | `cache_artifacts` | Every persistent artifact this call touched. |
 | `profiling_metadata` | Canonical planning-only workload metadata per input position. |
-| `pressurefit_runs` | One `PlanningDiagnostics` per search this call ran. |
+| `search_runs` | One `PlanningDiagnostics` per search this call ran. |
 | `physical_layouts` | One admission summary per execution phase. |
 
 ## PlanPhaseTiming
@@ -177,7 +173,7 @@ in-memory result; Inductor's private directory is reported as `managed`.
 
 | Field | Meaning |
 |---|---|
-| `category` | Which store directory it lives in. |
+| `category` | Which part of the store it belongs to: `pytorch`, `graphpairs`, `optimizers` or `profiling` in the build tree, `search` or `plans` in the planning tree. |
 | `kind` | What kind of document it is. |
 | `digest` | Its content digest, or `None` for a directory. |
 | `path` | Where it is on disk. |
@@ -441,9 +437,13 @@ the ceilings the runtime enforces on what is live at once.
 
 ## PlanningDiagnostics
 
-One PressureFit search: its problems, the policies it evaluated, and the
-totals. Reachable as `diagnostics.pressurefit_runs[...]`, on an admission
-attempt, and on a `ProgramPlanResult`.
+One search: its problems, the policies it evaluated, and the totals. Reachable
+as `diagnostics.search_runs[...]`, on an admission attempt, and on a
+`ProgramPlanResult`. The record has two halves. Which plan won, at what cost,
+and which search found it is what any search must say; the rest --
+`resolved_programs`, `work`, and the capacity it settled on -- is that search's
+own report, written under the name in `search`, so a reader that does not
+recognise the name reads the generic half and stops.
 
 | Field | Meaning |
 |---|---|
@@ -453,6 +453,8 @@ attempt, and on a `ProgramPlanResult`.
 | `resolved_programs` | Every resolved program this search evaluated. |
 | `work` | Exact operation counts and where the time went. |
 | `effective_object_capacity_bytes` | The capacity it finally planned against. |
+| `search` | Which search produced this, as that search names itself. The key its own half is written under. |
+| `workers` | How many threads it was given. Recorded for visibility and excluded from anything compared across runs, because it changes how long an answer took and not which answer was right. |
 
 Derived on access, not stored: `resolved_program_count`,
 `valid_resolved_program_count`, `candidate_policy_count`,
@@ -472,7 +474,7 @@ candidate.
 | `work` | Its operation counts and section times. |
 | `started_ns`, `finished_ns` | This problem's span, on the same clock its candidates use. Problems evaluated in one call overlap, because workers take whatever task is next. |
 | `evict_ineligible_aliases`, `evict_ineligible_bytes` | How many objects the evict-eligibility threshold kept resident, and their bytes. |
-| `fetched_bytes`, `evicted_bytes` | What this problem's own best plan moves, summed over the FETCH and EVICT actions of its selected schedule. The winner's traffic is also on `PlanSummary`; these are the alternatives', which is what says whether a problem that asks for less compute pays for it on the lanes instead. Zero when it placed nothing, and on a plan read back from a store written before these were recorded. |
+| `fetched_bytes`, `evicted_bytes` | What this problem's own best plan moves, summed over the FETCH and EVICT actions of its selected schedule. The winner's traffic is also on `PlanSummary`; these are the alternatives', which is what says whether a problem that asks for less compute pays for it on the lanes instead. Zero when it placed nothing. |
 | `incumbent` | What became of the plan to beat this problem was handed, or `None` when it was handed none. When that plan won, `selected_candidate_id` is `incumbent`. |
 
 Derived on access, not stored: `candidate_policy_count`,
@@ -481,10 +483,8 @@ problem's repairs summed over its candidates.
 
 ## IncumbentDiagnostic
 
-The plan to beat, measured at the problem's capacity before any candidate
-ran: a plan for the same resolved program already in hand, found at a smaller
-budget, say. The search answers with it unless a candidate does strictly
-better.
+What became of the plan to beat, measured at the problem's capacity before any
+candidate ran.
 
 | Field | Meaning |
 |---|---|
@@ -605,7 +605,7 @@ search itself. Recorded only when the caller asks for a trajectory.
 
 ## ProgramPlanResult
 
-`report.pressurefit_results[...]`. The selected logical schedule and the
+`report.search_results[...]`. The selected logical schedule and the
 simulator evidence behind it.
 
 | Field | Meaning |
