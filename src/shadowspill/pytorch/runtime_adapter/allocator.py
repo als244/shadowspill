@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -15,6 +16,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     ADAPTER_ABI_VERSION,
     AdapterCapabilities,
     AdapterConfig,
+    AdapterFailure,
     AdapterStatistics,
     PhysicalAdmission,
     PhysicalMemory,
@@ -22,7 +24,10 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RouteConfig,
     configure_adapter_library,
 )
-from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
+from shadowspill.pytorch.runtime_adapter.failures import (
+    format_bytes,
+    wait_allocator_idle,
+)
 from shadowspill.status import ABI_VERSION
 
 _REQUIRED_STORAGE_OPERATIONS = (
@@ -189,7 +194,7 @@ def install_allocator(
         device_budget_bytes=device_budget_bytes,
         provider_headroom_bytes=provider_headroom_bytes,
     )
-    _validate_physical_usage(library, device_budget_bytes)
+    _validate_physical_usage(library, device_budget_bytes, provider_headroom_bytes)
     frontend.memory.change_current_allocator(allocator)
     fixed_execution_bytes = _initialize_provider_state(
         library,
@@ -395,9 +400,7 @@ def _validate_install_request(
     if worker_poll_nanoseconds < 0:
         raise AllocatorInstallError("worker poll interval must be non-negative")
     if background_transfer_window_bytes < 0:
-        raise AllocatorInstallError(
-            "background transfer window must be non-negative"
-        )
+        raise AllocatorInstallError("background transfer window must be non-negative")
     if _installed is not None:
         raise AllocatorInstallError("ShadowSpill's allocator is already installed")
 
@@ -515,10 +518,41 @@ def _configure_record_stream(library: Any, allocator: Any) -> None:
 
 def _bootstrap_allocator(library: Any, config: AdapterConfig) -> None:
     status = int(library.shadowspill_pytorch_allocator_bootstrap(ctypes.byref(config)))
-    if status != 0:
-        raise AllocatorInstallError(
-            f"ShadowSpill runtime bootstrap failed with status {status}"
-        )
+    if status == 0:
+        return
+    raise AllocatorInstallError(
+        f"ShadowSpill runtime bootstrap failed with status {status}"
+        f"{_bootstrap_refusal(library, config)}"
+    )
+
+
+def _bootstrap_refusal(library: Any, config: AdapterConfig) -> str:
+    """What the bootstrap latched about why it refused, if it latched anything.
+
+    A budget refusal latches the bytes the process held against the budget it was
+    given. Saying only the status reads as "the device is full", which is the one
+    thing it does not mean: the cap is the caller's own, and the device is usually
+    far from full when it is exceeded.
+    """
+
+    failure = AdapterFailure()
+    if int(library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure))) == 0:
+        return ""
+    held = int(failure.runtime.requested_bytes)
+    budget = int(failure.runtime.free_bytes)
+    if held <= budget or budget == 0:
+        return ""
+    return (
+        f": the process held {format_bytes(held)} on the device against a declared"
+        f" execution budget of {format_bytes(budget)}, so it passed that budget by"
+        f" {format_bytes(held - budget)}. The budget has to cover what the process"
+        f" already holds, the provider headroom"
+        f" ({format_bytes(int(config.provider_headroom_bytes))} here) and the"
+        " suballocatable slab, and the slab is sized from the first two -- so a"
+        " headroom too small to cover what the process acquires while the pools are"
+        " created leaves the slab filling the rest and the total over the cap. This"
+        " is the caller's cap, not the device's capacity."
+    )
 
 
 def _read_physical_admission(
@@ -542,8 +576,30 @@ def _read_physical_admission(
     return admission
 
 
-def _validate_physical_usage(library: Any, device_budget_bytes: int) -> None:
+def _validate_physical_usage(
+    library: Any, device_budget_bytes: int, provider_headroom_bytes: int
+) -> None:
+    """Confirm the bootstrapped process fits the cap it declared.
+
+    A zero provider headroom is the caller asking to be told rather than
+    stopped, so the overshoot is reported on stderr and the bootstrap stands.
+    The adapter has already latched and printed the same numbers; this repeats
+    the decision on the Python side so both gates agree.
+    """
+
     physical = PhysicalMemory()
     status = int(library.shadowspill_pytorch_physical_memory(ctypes.byref(physical)))
-    if status != 0 or physical.process_bytes > device_budget_bytes:
+    if status != 0:
         raise AllocatorInstallError("bootstrap exceeds the physical device budget")
+    if physical.process_bytes <= device_budget_bytes:
+        return
+    if provider_headroom_bytes != 0:
+        raise AllocatorInstallError("bootstrap exceeds the physical device budget")
+    excess = int(physical.process_bytes) - device_budget_bytes
+    print(
+        f"ShadowSpill: the bootstrapped process holds {physical.process_bytes:,} "
+        f"bytes against a declared budget of {device_budget_bytes:,}, over by "
+        f"{excess:,}. provider_headroom is zero, so this is reported and the "
+        f"bootstrap continues.",
+        file=sys.stderr,
+    )
