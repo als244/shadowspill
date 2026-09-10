@@ -424,9 +424,6 @@ class ObjectCatalog:
     def alias_id(self, object_id: str) -> str:
         return self._record(object_id).alias_group_id
 
-    def object_size(self, object_id: str) -> int:
-        return self._record(object_id).size_bytes
-
     def mark_output(self, object_id: str) -> None:
         record = self._record(object_id)
         if record.role in {

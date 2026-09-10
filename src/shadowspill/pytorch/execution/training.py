@@ -666,10 +666,6 @@ class TrainingExecutor(AnnotatedExecutor):
     def _profile_range(self, name: str) -> AbstractContextManager[None]:
         return self._task_annotations.range(name)
 
-    @property
-    def optimizer_state_initialized(self) -> bool:
-        return self._optimizer_state_initialized
-
     def set_optimizer_state_initialized(self, value: bool) -> None:
         """Select the recurrent plan after a checkpoint restores lazy state."""
 
