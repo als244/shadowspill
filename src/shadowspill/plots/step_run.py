@@ -16,6 +16,8 @@ from pathlib import Path
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 
+from shadowspill.plots._axis import budget_label
+
 _GIB = 1 << 30
 
 
@@ -23,11 +25,20 @@ _GIB = 1 << 30
 class RunBudgetOutcome:
     """One executed budget, with the plan's prediction beside the measurement.
 
-    The step splits the same way on both clocks: the tasks' own compute, the
-    stall between them, and -- on the measured side only -- the opening
-    restore the simulator does not model. Keeping the parts rather than only
-    the totals is what lets a difference be attributed instead of just
-    reported.
+    The task window splits the same way on both clocks: the tasks' own compute,
+    the recomputation the plan chose to pay for, and the stall between tasks. Each
+    side's three parts sum to that side's task window, which is what lets a
+    difference be attributed rather than only reported.
+
+    Recomputation is the excess over the save-only floor, so it is a property of
+    the plan rather than of a run, and the profiled figure stands for both sides.
+    That makes the segment identical by construction and leaves the comparison to
+    compute and stall, which are measured on both clocks.
+
+    What falls outside the task window -- the opening restore and the writeback
+    after the last task -- is kept in the fields and written to the raw-data
+    table, but not drawn: it is the subject of the epilogue's own section rather
+    than of the figure a reader meets first.
     """
 
     execution_budget_bytes: int
@@ -40,14 +51,27 @@ class RunBudgetOutcome:
     #: Stalled between tasks, simulated and measured.
     simulated_idle_seconds: float
     real_idle_seconds: float
-    #: The opening restore, measured only: the simulator assumes the step's
-    #: initial objects are already resident.
+    #: The opening restore, measured only: origin on the compute stream through
+    #: the first task's compute start. The simulator prices nothing here, because
+    #: it assumes the step's initial objects are already resident, so this is the
+    #: whole of it rather than the first task's wait for its own inputs.
     prologue_seconds: float
-    #: The writeback after the last task, which the simulator prices and the
-    #: measured step spends after its last event.
+    #: The writeback after the last task as the *simulator* prices it, assuming
+    #: none of it overlaps the next step.
     terminal_tail_seconds: float
-    #: Every step this budget ran, in order. ``measured_step_seconds`` is
-    #: their median; keeping the rest is what says whether a budget was steady
+    #: The writeback the stream actually exposed after the last task. Smaller
+    #: than the priced tail wherever the next step absorbed some of it, so the
+    #: two are kept apart rather than averaged into one number.
+    real_terminal_tail_seconds: float = 0.0
+    #: What the chosen recomputation costs over the save-only floor. A
+    #: counterfactual, so there is nothing to measure it against: the same figure
+    #: stands on both clocks. Declared here, among the defaulted fields, because
+    #: a dataclass will not take a defaulted field before an undefaulted one.
+    recomputation_seconds: float = 0.0
+    #: Every step this budget ran, in order -- including the first, which pays
+    #: the plan's reconciliation, and the traced last one, which pays for its own
+    #: collection. ``measured_step_seconds`` is the median of the ones in
+    #: between; keeping all of them here is what says whether a budget was steady
     #: or erratic, which a median cannot.
     step_seconds: tuple[float, ...] = ()
 
@@ -112,8 +136,10 @@ def _raw_data(
                 "real_task_seconds",
                 "simulated_idle_seconds",
                 "real_idle_seconds",
+                "recomputation_seconds",
                 "prologue_seconds",
                 "terminal_tail_seconds",
+                "real_terminal_tail_seconds",
             )
         )
         writer.writerows(
@@ -128,8 +154,10 @@ def _raw_data(
                 item.real_task_seconds,
                 item.simulated_idle_seconds,
                 item.real_idle_seconds,
+                item.recomputation_seconds,
                 item.prologue_seconds,
                 item.terminal_tail_seconds,
+                item.real_terminal_tail_seconds,
             )
             for item in ordered
         )
@@ -177,7 +205,7 @@ def _throughput(
     )
     axes.set_xticks(budgets)
     axes.set_xticklabels(
-        [f"{value:g}" for value in budgets],
+        [budget_label(value) for value in budgets],
         rotation=45 if len(budgets) > 8 else 0,
         ha="right" if len(budgets) > 8 else "center",
     )
@@ -208,7 +236,7 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     under the previous step should drive it to nothing.
     """
 
-    labels = [f"{item.execution_budget_bytes / _GIB:g}" for item in ordered]
+    labels = [budget_label(item.execution_budget_bytes / _GIB) for item in ordered]
     places = range(len(ordered))
     # Capped like the search figures: past this the bars narrow rather
     # than the file growing without bound.
@@ -256,44 +284,52 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     )
 
     width = 0.38
-    for offset, (name, compute, idle, unmodelled) in enumerate(
+    for offset, (name, compute, recompute, idle) in enumerate(
         (
             (
                 "Simulated",
-                [item.profiled_task_seconds for item in ordered],
                 [
-                    item.simulated_idle_seconds + item.terminal_tail_seconds
+                    item.profiled_task_seconds - item.recomputation_seconds
                     for item in ordered
                 ],
-                [0.0 for _ in ordered],
+                [item.recomputation_seconds for item in ordered],
+                [item.simulated_idle_seconds for item in ordered],
             ),
             (
                 "Measured",
-                [item.real_task_seconds for item in ordered],
+                [
+                    item.real_task_seconds - item.recomputation_seconds
+                    for item in ordered
+                ],
+                [item.recomputation_seconds for item in ordered],
                 [item.real_idle_seconds for item in ordered],
-                [item.prologue_seconds for item in ordered],
             ),
         )
     ):
         centres = [place - width / 2 + width * offset for place in places]
-        parts.bar(centres, compute, width=width * 0.92, color="tab:blue", alpha=1.0)
+        # Each budget carries a pair: simulated on the left, measured on the
+        # right. Colour says which part of the step a segment is, so it cannot
+        # also say which clock -- opacity does that, and the simulated bar is the
+        # faded one. Without it the pair reads as one six-part stack.
+        opacity = 0.45 if name == "Simulated" else 0.95
+        parts.bar(centres, compute, width=width * 0.92, color="tab:blue", alpha=opacity)
+        parts.bar(
+            centres,
+            recompute,
+            width=width * 0.92,
+            bottom=compute,
+            color="tab:purple",
+            alpha=opacity,
+        )
         parts.bar(
             centres,
             idle,
             width=width * 0.92,
-            bottom=compute,
+            bottom=[a + b for a, b in zip(compute, recompute, strict=True)],
             color="tab:orange",
-            alpha=0.85,
+            alpha=opacity,
         )
-        parts.bar(
-            centres,
-            unmodelled,
-            width=width * 0.92,
-            bottom=[a + b for a, b in zip(compute, idle, strict=True)],
-            color="tab:green",
-            alpha=0.7,
-        )
-        for centre, a, b, c in zip(centres, compute, idle, unmodelled, strict=True):
+        for centre, a, b, c in zip(centres, compute, recompute, idle, strict=True):
             parts.annotate(
                 f"{name}\n{a + b + c:.2f} s",
                 (centre, a + b + c),
@@ -314,22 +350,21 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     parts.set_ylim(
         0.0,
         max(
-            item.profiled_task_seconds
-            + item.simulated_idle_seconds
-            + item.terminal_tail_seconds
+            max(
+                item.profiled_task_seconds + item.simulated_idle_seconds,
+                item.real_task_seconds + item.real_idle_seconds,
+            )
             for item in ordered
         )
         * 1.30,
     )
     parts.legend(
         handles=[
-            Patch(facecolor="tab:blue", label="Task Compute"),
-            Patch(facecolor="tab:orange", alpha=0.85, label="Stalled"),
-            Patch(
-                facecolor="tab:green",
-                alpha=0.7,
-                label="Opening Restore (measured; unmodelled)",
-            ),
+            # Listed bottom of the stack first, so the key reads in the
+            # order the bars are drawn.
+            Patch(facecolor="tab:blue", alpha=0.95, label="Effective Compute"),
+            Patch(facecolor="tab:purple", alpha=0.95, label="Recompute"),
+            Patch(facecolor="tab:orange", alpha=0.95, label="Stalled"),
         ],
         fontsize="x-small",
         loc="upper left",
