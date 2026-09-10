@@ -117,7 +117,8 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `task_alternative_group_count` | Task-alternative groups in the program, forced ones included. |
 | `flexible_group_count` | Groups that are a real decision, which is what a resolution share is taken of and so the denominator `recomputing_group_fraction` uses. A group is forced instead when structure leaves one option -- a sink of the forward phase has to keep its value -- or when its options retain the same bytes, which is one plan spelled twice. |
 | `transfer_bytes_fetched`, `transfer_bytes_evicted` | Traffic the simulation ran, summed from its transfer intervals. |
-| `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The per-direction bandwidth the simulator planned against. Solo calibration lives on the report's transfer profiles. |
+| `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The per-direction bandwidth the simulator planned against, already coarsened, so it is not the rate the runtime measured. Measured calibration lives on the report's transfer profiles. |
+| `fetch_latency_ns`, `evict_latency_ns` | The per-transfer latency each lane was priced with, coarsened the same way. Recorded beside the bandwidths because a plan read back from the store was priced against the calibration of whatever process searched it, which coarsening a profile today would not reproduce. |
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
 | `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, and repairs at best. When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 

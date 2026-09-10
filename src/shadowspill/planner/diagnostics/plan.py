@@ -804,13 +804,19 @@ class PlanSummary:
     #: are forced, by structure or by their options keeping the same bytes.
     flexible_group_count: int
     #: Scheduled transfer traffic, summed from the simulation's transfer
-    #: intervals, and the per-direction bandwidths the simulator planned
-    #: against, from the result's simulation config. Solo calibration lives
-    #: on the report's transfer profiles; a result does not know it.
+    #: intervals, and the per-direction calibration the simulator planned
+    #: against, from the result's simulation config: the coarsened rate and
+    #: per-transfer latency each lane was priced with, which is what a reader
+    #: comparing a plan against a measurement needs. Measured calibration
+    #: lives on the report's transfer profiles; a result does not know it, and
+    #: coarsening a profile here would answer for the wrong calibration
+    #: whenever a plan came from the store.
     transfer_bytes_fetched: int = 0
     transfer_bytes_evicted: int = 0
     fetch_bandwidth_bytes_per_second: int = 0
     evict_bandwidth_bytes_per_second: int = 0
+    fetch_latency_ns: int = 0
+    evict_latency_ns: int = 0
     #: Wall time each frontend planning phase spent, in seconds, in phase
     #: order. A view over the report's ``phase_timings_ns``, which stays the
     #: stored record.
@@ -845,6 +851,8 @@ class PlanSummary:
             "transfer_bytes_evicted": self.transfer_bytes_evicted,
             "fetch_bandwidth_bytes_per_second": (self.fetch_bandwidth_bytes_per_second),
             "evict_bandwidth_bytes_per_second": (self.evict_bandwidth_bytes_per_second),
+            "fetch_latency_ns": self.fetch_latency_ns,
+            "evict_latency_ns": self.evict_latency_ns,
             "planning_phase_seconds": dict(self.planning_phase_seconds),
             "selected_candidate": dict(self.selected_candidate),
         }
@@ -924,6 +932,8 @@ def summarize_selected_plan(
         transfer_bytes_evicted=evicted,
         fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,
         evict_bandwidth_bytes_per_second=device.evict_bandwidth_bytes_per_second,
+        fetch_latency_ns=device.fetch_latency_ns,
+        evict_latency_ns=device.evict_latency_ns,
         planning_phase_seconds=MappingProxyType(
             {name: duration / 1e9 for name, duration in phase_timings_ns}
         ),
