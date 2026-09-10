@@ -12,8 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The capacity a candidate is planning at, which starts as the device's
- * and falls as the candidate gives back what its layout overran. */
+/* The buffers one simulation writes its intervals and peaks into, reused
+ * across a candidate's plans. Tasks and devices are fixed by the program;
+ * transfers grow to the longest schedule simulated so far. */
 typedef struct SimulationWorkspace {
     ShadowSpillTaskInterval *tasks;
     ShadowSpillTransferInterval *transfers;
@@ -1756,9 +1757,9 @@ static void copy_analytic_error(
  * room did not become simulated room -- copies still in flight hold it, or
  * the emitter packed the freed bytes again -- so a repeat asks for twice
  * what the last round asked, up to the task's whole request: the same few
- * bytes again would be the same plan again, and a trace of one such candidate
- * showed 116 rounds at one task for the same 4.4 MiB. `escalation` is how
- * many times in a row the failure has repeated; `asked_beyond_shortfall`
+ * bytes again would be the same plan again, and a candidate can repeat that
+ * round without end. `escalation` is how many times in a row the failure has
+ * repeated; `asked_beyond_shortfall`
  * reports what the ask added over the shortfall, so a reduction that cannot
  * meet the larger ask can take exactly that back.
  */
@@ -2103,18 +2104,14 @@ static void initialize_diagnostic(
 /*
  * Whether this candidate gets another reduction.
  *
- * Effort is the only thing that stops it. Abandoning a candidate whose plan
- * is already slower than one in hand used to be free, because reductions
- * only ever added transfers and stall: a candidate behind the incumbent
- * could not overtake it. That stopped being true when a plan that does not
- * fit began waiting rather than failing -- a reduction now relieves the
- * waiting as often as it adds to it, so a candidate behind the incumbent is
- * exactly the one with something to gain, and cutting it off there abandons
- * the plans most worth finding.
+ * Effort is the only thing that stops it. A plan that does not fit waits
+ * rather than failing, so a reduction relieves the waiting as often as it
+ * adds to it: a candidate behind the plan in hand is exactly the one with
+ * something to gain, and cutting it off there would abandon the plans most
+ * worth finding.
  *
  * A candidate that runs out reports `SHADOWSPILL_PRESSUREFIT_CANDIDATE_REPAIR_EXHAUSTED`,
- * which says the effort ran out -- "we stopped looking", never "there is no
- * plan".
+ * which says the effort ran out, never that there is no plan.
  */
 static int may_repair_again(
     const ShadowSpillPressureFitOptions *candidate_options,
@@ -2220,7 +2217,7 @@ static void search_begin(
     search->problem = problem;
     /* The emitter measures against the capacity the plan being built kept,
      * which is the same array the reducer adds to its occupancy. Without
-     * this the emitter packs against a capacity the plan no longer has, and
+     * this the emitter packs against a capacity the plan does not have, and
      * refining capacity never shrinks the layout it produces. */
     search->facts = *facts;
     search->facts.extra_pressure = workspace->extra_pressure;
@@ -2340,8 +2337,8 @@ static void mark_search_step(
  * because a reduction that succeeds is exactly the interesting case: whether
  * makespan falls monotonically as a candidate reduces, or rises and later
  * recovers. The resolved program is identified by the problem it was compiled
- * from, since a policy alone is shared across all five and grouping by it
- * merges them.
+ * from, since a policy alone is shared across every resolved program and
+ * grouping by it merges them.
  */
 static void trace_reduction(const CandidateSearch *search) {
     static _Thread_local int enabled = -1;
@@ -2368,13 +2365,12 @@ static void trace_reduction(const CandidateSearch *search) {
 }
 
 /*
- * Diagnostic-only repair tracing for the planning-efficiency investigation
- * (docs/internal/plans/planning_efficiency_0818, E012). Enabled by
- * SHADOWSPILL_REPAIR_TRACE; never active in normal planning.
+ * Diagnostic-only repair tracing, enabled by SHADOWSPILL_REPAIR_TRACE and
+ * never active in normal planning.
  *
  * `makespan` and the transfer totals are what a dominance bound would be
- * built from, logged per repair so the investigation can see whether any of
- * them rises fast enough to cross an incumbent before the candidate converges
+ * built from, logged per repair so a reader can see whether any of them rises
+ * fast enough to cross the plan in hand before the candidate converges
  * anyway. `makespan` is only meaningful when status is OK: the simulator
  * assigns it on the success path alone.
  */
@@ -3537,7 +3533,7 @@ static int evaluate_incumbent(SearchWorker *worker, uint32_t index) {
 
 static void *worker_main(void *argument) {
     SearchWorker *worker = argument;
-    shadowspill_name_current_thread("shadowspill.plan");
+    shadowspill_name_current_thread("shadowspill.pln");
     while (worker->failed == 0) {
         const uint32_t task = atomic_fetch_add_explicit(
             &worker->search->next_task, 1U, memory_order_relaxed
@@ -3775,9 +3771,9 @@ ShadowSpillStatus shadowspill_pressurefit_evaluate_resolved(
     /* A problem's sections are the sum of its candidates', including their
      * totals and residuals, so the identity total == named + residual still
      * holds -- as an accounting identity over work done, which is what it has
-     * to be once several workers run at once. Wall time is no longer that
-     * sum and is not reported here: the whole point of the workers is that
-     * the call finishes sooner than the work it did. */
+     * to be once several workers run at once. Wall time is not that sum and
+     * is not reported here: the whole point of the workers is that the call
+     * finishes sooner than the work it did. */
     (void)started;
     program_search_destroy(&search, workers, worker_count);
     if (failed) {
