@@ -8,7 +8,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from shadowspill.planner.artifact_store import STORE_MODES
+from shadowspill.store import STORE_MODES
 
 from .config import load_collection_config
 from .controller import ControllerOptions, run_collection

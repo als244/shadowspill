@@ -104,3 +104,55 @@ def test_declared_flags_are_read(path: Path) -> None:
         f"{path.relative_to(ROOT)} declares options nothing reads: {unread}. "
         "A renamed flag and a renamed attribute have to move together."
     )
+
+
+def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> None:
+    """A deleted argument is silent at the call site until the call runs.
+
+    `plan_step(deterministic=...)` was accepted, ignored, and then removed; two
+    callers kept passing it and only a gate run found them, because nothing
+    imports those harnesses at test time. Compare every call's keywords against
+    the real signature instead of waiting for the call.
+    """
+
+    import ast
+    import inspect
+
+    from shadowspill.pytorch import api
+
+    entry_points = {
+        "plan_step": api.plan_step,
+        "plan_forward": api.plan_forward,
+        "build_step_program": api.build_step_program,
+    }
+    offences: list[str] = []
+    for root in ("src", "tests", "benchmarking", "reference", "workloads"):
+        directory = ROOT / root
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*.py"):
+            try:
+                tree = ast.parse(path.read_text())
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                called = (
+                    node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else getattr(node.func, "id", None)
+                )
+                function = entry_points.get(called)
+                if function is None:
+                    continue
+                accepted = set(inspect.signature(function).parameters)
+                for keyword in node.keywords:
+                    if keyword.arg is not None and keyword.arg not in accepted:
+                        offences.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno} "
+                            f"{called}({keyword.arg}=...)"
+                        )
+    assert not offences, "calls passing an argument that does not exist:\n" + "\n".join(
+        offences
+    )

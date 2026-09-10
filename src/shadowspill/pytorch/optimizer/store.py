@@ -25,8 +25,6 @@ from typing import TYPE_CHECKING
 import torch
 
 from shadowspill.errors import CaptureError
-from shadowspill.planner.artifact_store import digest_directory
-from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
 from shadowspill.pytorch.graph_pairs.serialization import (
@@ -34,6 +32,7 @@ from shadowspill.pytorch.graph_pairs.serialization import (
     atomic_json,
 )
 from shadowspill.schema import artifact_schema
+from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
 
 from .artifacts import (
     OptimizerTensorBinding,

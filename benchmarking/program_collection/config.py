@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from shadowspill.planner.artifact_store import STORE_MODES, StoreMode
+from shadowspill.store import STORE_MODES, StoreMode
 
 _SCHEMA = "shadowspill.program_corpus_collection/v1"
 _SIZE_PATTERN = re.compile(r"^([1-9][0-9]*)(B|KiB|MiB|GiB|TiB)$")

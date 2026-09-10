@@ -16,7 +16,7 @@ from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
-from shadowspill.planner.store_policy import StorePolicy
+from shadowspill.store import StorePolicy
 
 from ._examples import config, exact_capacity_program, exact_capacity_residency
 
@@ -266,7 +266,6 @@ def test_the_plan_to_beat_is_provenance_not_identity(tmp_path: Path) -> None:
         config(),
         None,
         None,
-        FEW_CANDIDATES.resolved_algorithm,
         FEW_CANDIDATES,
     )
     assert json.loads(cache.path(key).read_text())["incumbent"] is None
@@ -371,3 +370,32 @@ def test_a_store_holding_a_worse_plan_answers_with_the_better_plan_in_hand(
     )
     assert same.from_store
     assert same.result.schedule == every.result.schedule
+
+
+def test_the_worker_count_reaches_the_search_it_was_given_to(tmp_path: Path) -> None:
+    """A dropped `workers` is invisible: the plan is still right, just not
+    searched the way the caller asked, and the diagnostics record the default.
+    """
+
+    initial, final = exact_capacity_residency()
+    seen: list[int] = []
+
+    class Counting(PressureFit):
+        name = "counting"
+
+        def __call__(self, program, **named):  # type: ignore[no-untyped-def]
+            seen.append(named["workers"])
+            return super().__call__(program, **named)
+
+    PlanStore(tmp_path).resolve(
+        exact_capacity_program(),
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        search_options=SearchOptions(
+            generic=FEW_CANDIDATES.generic,
+            algorithm=Counting(FEW_CANDIDATES.resolved_algorithm.options),
+            workers=1,
+        ),
+    )
+    assert seen == [1]

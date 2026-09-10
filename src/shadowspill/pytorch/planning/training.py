@@ -26,11 +26,9 @@ from shadowspill.planner import (
     validate_schedule_feasibility,
 )
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
-from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import resolve_plan
-from shadowspill.planner.program import ShadowSpillPlanningProblem, StepProgram
+from shadowspill.planner.program import ShadowSpillPlanningProblem
 from shadowspill.planner.search import SearchOptions
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     capture_training_objective,
@@ -78,6 +76,8 @@ from shadowspill.pytorch.state.optimizer import (
     release_optimizer_state_from_plan,
 )
 from shadowspill.simulator import SimulationConfig
+from shadowspill.step import StepDataOrdering, StepProgram
+from shadowspill.store import ArtifactStore
 
 from ..callables import PlannedTrainStep
 from ..contracts import (
@@ -597,7 +597,7 @@ def build_training_programs(
     data_ordering: StepDataOrdering,
     timer: PlanningTimer,
 ) -> TrainingProgramArtifacts:
-    """Construct canonical initial/recurrent Programs from semantic and physical IR."""
+    """Construct canonical initial/recurrent programs from semantic and physical IR."""
 
     with timer.measure("program_lowering"):
         measurements, measurements_by_profile, compatibility_digests = (
@@ -1290,7 +1290,7 @@ def make_training_program(
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
 ) -> StepProgram:
-    """Build and release one self-contained pre-PressureFit step artifact."""
+    """Build and release one self-contained step artifact, before any search."""
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
@@ -1401,7 +1401,7 @@ def _public_step_program(
     timer: PlanningTimer,
     started: int,
 ) -> StepProgram:
-    """Archive Programs and publish only stable, serializable planning facts."""
+    """Archive programs and publish only stable, serializable planning facts."""
 
     with timer.measure("program_archival"):
         stores.store.archive_program(programs.recurrent.program)
@@ -1411,7 +1411,7 @@ def _public_step_program(
         programs.measurements_by_profile,
         minimum_bytes=programs.dynamic_scratch_reserve_bytes,
     )
-    recurrent = _pressurefit_program_artifact(
+    recurrent = _planning_problem_artifact(
         "recurrent",
         programs.recurrent,
         programs.recurrent_admission,
@@ -1427,7 +1427,7 @@ def _public_step_program(
         item.created_on_first_step for item in programs.initial.optimizer_objects
     )
     initial = (
-        _pressurefit_program_artifact(
+        _planning_problem_artifact(
             "initial",
             programs.initial,
             programs.initial_admission,
@@ -1464,7 +1464,7 @@ def _public_step_program(
     )
 
 
-def _pressurefit_program_artifact(
+def _planning_problem_artifact(
     role: Literal["initial", "recurrent"],
     lowered: LoweredTrainingProgram,
     admission: AdmissionFacts,
@@ -1498,7 +1498,7 @@ def _program_phase_timings(
     timer: PlanningTimer,
     elapsed: int,
 ) -> tuple[tuple[str, int], ...]:
-    """Return non-overlapping pre-PressureFit phases plus reconciled total wall."""
+    """Return non-overlapping pre-search phases plus reconciled total wall."""
 
     nested_capture = any(
         name
@@ -1540,8 +1540,6 @@ def build_training(
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
-    minimum_object_bytes_evict_eligible: int = 0,
-    deterministic: bool = False,
     search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
 ) -> PlannedTrainStep:

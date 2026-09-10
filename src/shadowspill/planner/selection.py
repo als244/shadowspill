@@ -1,4 +1,4 @@
-"""PressureFit and physical admission for a saved pre-PressureFit ShadowSpillProgram."""
+"""Search and physical admission for one saved planning problem."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from shadowspill.planner.admission.refinement import (
     placement_facts,
     resolve_fixed_layout_selection,
 )
-from shadowspill.planner.artifact_store import ArtifactStore
 from shadowspill.planner.plan_store import open_plan_store, resolve_plan
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
@@ -22,6 +21,7 @@ from shadowspill.planner.program import (
 )
 from shadowspill.planner.result import ProgramPlanResult
 from shadowspill.planner.search import SearchOptions
+from shadowspill.store import ArtifactStore
 
 
 def select_program(
@@ -37,9 +37,9 @@ def select_program(
 ) -> AnnotatedProgramPlan:
     """Select and physically admit one reusable problem.
 
-    `search` is which search runs and `search_options` is its own record;
-    both reach the plan key and neither is read here. `incumbent` is the
-    plan to beat, a result for the same program the answer is held to.
+    `search_options` says which search runs and what it is told; it reaches
+    the plan key and is not read here. `incumbent` is the plan to beat, a
+    result for the same program the answer is held to.
     """
 
     started = time.perf_counter_ns()
@@ -137,7 +137,7 @@ def _with_physical_prediction(
 
 def _progress_printer() -> Callable[[str], None]:
     def progress(message: str) -> None:
-        print(f"PressureFit: {message}", flush=True)
+        print(f"search: {message}", flush=True)
 
     return progress
 

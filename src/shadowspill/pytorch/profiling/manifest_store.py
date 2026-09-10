@@ -14,13 +14,12 @@ import tempfile
 from contextlib import suppress
 from pathlib import Path
 
-from shadowspill.planner.artifact_store import digest_directory
-from shadowspill.planner.store_policy import CONTRIBUTE, StorePolicy
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.profiling.records import ProfileKey
 from shadowspill.pytorch.profiling.store import PlanningArtifactRecorder
 from shadowspill.schema import artifact_schema
+from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
 
 _SCHEMA = artifact_schema("compiled_task_manifest")
 
