@@ -4,12 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# A conventional CUDA slab cannot be resized after a compiler/provider keeps
-# even one allocator-owned pointer alive. Reserve this physical allowance
-# before initialization; it remains inside the user's physical cap and is
-# reported explicitly in PlanReport. Small test/runtime configurations may
-# choose a lower value when their provider footprint is known.
-_DEFAULT_PROVIDER_HEADROOM = 1280 << 20
+# Third-party kernels -- cuBLAS, cuDNN, and any custom kernel a model pulls in
+# (flash-attention, fla, and the like) -- allocate their workspaces outside the
+# allocator, lazily, the first time each kernel runs. That is after the slab has
+# been sized, and a conventional CUDA slab cannot be resized once a provider
+# holds even one allocator-owned pointer, so the allowance has to be reserved up
+# front. It stays inside the user's physical cap and is reported in PlanReport.
+#
+# The figure is the worst case measured across the qualification corpus, rounded
+# the way the seal rounds: external high-water was 112 MiB for llama3 and olmoe
+# and 386 MiB for qwen35, identical at both the numerical and performance
+# geometries despite a 6 GiB spread in peak process memory -- the footprint
+# follows which kernels are compiled in, not problem size. The seal requires
+# round_up(measured + 64 MiB, 64 MiB) -- 192 MiB for llama3 and olmoe, 512 MiB
+# for qwen35 -- so this is exactly what the corpus's worst case demands rather
+# than a margin above it. A configuration whose provider footprint is known may
+# choose a lower value; one whose provider needs more is told by the seal, with
+# the figure, rather than left to guess.
+_DEFAULT_PROVIDER_HEADROOM = 512 << 20
 
 
 def _positive_bytes(value: int, name: str) -> int:
@@ -27,6 +39,12 @@ class DevicePool:
     ``physical_capacity`` is the complete process-attributable accelerator
     memory cap, including its problem and provider headroom. The runtime
     reports the derived suballocatable pool capacity after initialization.
+
+    ``provider_headroom`` of ``0`` means "give the slab everything and tell me
+    when a provider wants more": the runtime still bootstraps and still seals,
+    but a process that grows past its cap is reported on stderr with the
+    measured figures rather than refused. Use it to find out what a model's
+    providers actually need; a run that has to honour the cap gives them room.
     """
 
     physical_capacity: int
