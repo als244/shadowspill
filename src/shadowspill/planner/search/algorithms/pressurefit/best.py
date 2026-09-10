@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import TracebackType
 
-from ....capi import CPressureFitBestPlacedRecord, planner_api
+from .capi import CPressureFitBestPlacedRecord, pressurefit_api
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +50,7 @@ class BestPlaced:
     """A placed plan to beat, readable by a running search."""
 
     def __init__(self) -> None:
-        handle = planner_api().shadowspill_pressurefit_best_placed_create()
+        handle = pressurefit_api().shadowspill_pressurefit_best_placed_create()
         if not handle:
             raise MemoryError("could not allocate the shared best-placed record")
         self._handle: int | None = handle
@@ -67,7 +67,7 @@ class BestPlaced:
         if self._handle is None:
             return None
         record = CPressureFitBestPlacedRecord()
-        planner_api().shadowspill_pressurefit_best_placed_read(self._handle, record)
+        pressurefit_api().shadowspill_pressurefit_best_placed_read(self._handle, record)
         if record.makespan_ns == 0:
             return None
         return PlacedPlan(
@@ -79,7 +79,7 @@ class BestPlaced:
 
     def close(self) -> None:
         if self._handle is not None:
-            planner_api().shadowspill_pressurefit_best_placed_destroy(self._handle)
+            pressurefit_api().shadowspill_pressurefit_best_placed_destroy(self._handle)
             self._handle = None
 
     def __enter__(self) -> BestPlaced:

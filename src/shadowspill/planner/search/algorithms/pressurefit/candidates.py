@@ -26,15 +26,7 @@ from ....capi import (
     NO_INDEX,
     CIndexedProblem,
     CIndexedSchedule,
-    CPressureFitCandidateDiagnostic,
-    CPressureFitOptions,
-    CPressureFitPreflightResult,
-    CPressureFitRepairDiagnostics,
-    CPressureFitResult,
-    CPressureFitSectionTiming,
-    CPressureFitWorkDiagnostics,
     CScheduleContext,
-    planner_api,
 )
 from ....diagnostics import (
     CandidateDiagnostic,
@@ -45,6 +37,17 @@ from ....diagnostics import (
 )
 from ....diagnostics.counters import STEP_OUTCOMES
 from ....request import GenericPlanningOptions
+from .capi import (
+    CandidateStatus,
+    CPressureFitCandidateDiagnostic,
+    CPressureFitOptions,
+    CPressureFitPreflightResult,
+    CPressureFitRepairDiagnostics,
+    CPressureFitResult,
+    CPressureFitSectionTiming,
+    CPressureFitWorkDiagnostics,
+    pressurefit_api,
+)
 from .options import PressureFitOptions
 
 _STRATEGY_CODE = {
@@ -263,7 +266,7 @@ def _decode_candidate_status(
             work=value.work,
             steps=value.steps,
         )
-    if value.status == 7:
+    if value.status == CandidateStatus.UNPLACEABLE:
         return CandidateDiagnostic(
             candidate_id=value.candidate_id,
             selection_id=selection_id,
@@ -599,7 +602,7 @@ def validate_program_problem(
 
     problem, _buffers = _program_problem(simulation, admission)
     result = CPressureFitPreflightResult()
-    library = planner_api()
+    library = pressurefit_api()
     status = int(
         library.shadowspill_pressurefit_preflight(
             ctypes.byref(problem),
@@ -859,7 +862,7 @@ def evaluate_program_problems(
 
     if not problems:
         return ()
-    library = planner_api()
+    library = pressurefit_api()
     problem_options, _option_buffers = _problem_options(
         generic, search_options, best_placed=best_placed
     )

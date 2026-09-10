@@ -35,10 +35,10 @@ def test_pressurefit_fails_closed_without_the_library(
     )
 
     def missing_library() -> None:
-        raise RuntimeError("the planner unavailable")
+        raise RuntimeError("the search library unavailable")
 
-    monkeypatch.setattr(implementation, "planner_api", missing_library)
-    with pytest.raises(RuntimeError, match="the planner unavailable"):
+    monkeypatch.setattr(implementation, "pressurefit_api", missing_library)
+    with pytest.raises(RuntimeError, match="the search library unavailable"):
         pressurefit(
             training_chain_program(1),
             initial_residency=training_chain_initial(1),
