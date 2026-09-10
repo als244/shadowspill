@@ -62,6 +62,7 @@ from shadowspill.planner.search.toolkit.resolution import (
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
+from shadowspill.pytorch.planning import planned_transfer_bandwidths
 from shadowspill.pytorch.step_search import search_geometries
 from shadowspill.store import STORE_MODES
 from tools.qualification.model_state import release_case_model
@@ -196,7 +197,7 @@ def gib(value: float) -> str:
 
 
 def gb_s(value: float) -> str:
-    """Bandwidth in decimal GB/s, which is how the planner rounds rates."""
+    """Bandwidth in decimal GB/s, fine enough to show a coarsened rate exactly."""
 
     return f"{value / _GB:.1f} GB/s"
 
@@ -329,8 +330,8 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
     )
     if lanes is not None:
         print(
-            f"  planned against fetch {lanes.fetch_bytes_per_second / 1e9:.0f} GB/s,"
-            f" evict {lanes.evict_bytes_per_second / 1e9:.0f} GB/s"
+            f"  planned against fetch {gb_s(lanes.fetch_bytes_per_second)},"
+            f" evict {gb_s(lanes.evict_bytes_per_second)}"
             + (
                 " (pinned)"
                 if report.transfer_bandwidths is not None
@@ -865,14 +866,16 @@ def main() -> int:
     )
 
     # One calibration serves every geometry, so it is a property of the run.
-    # The planned rate is the concurrent one rounded to whole GB/s, which is
-    # what the simulator is built with; solo is what a copy gets alone.
+    # The planned figures come from the planner rather than from rounding a
+    # measurement here, so this banner says what the simulator will actually be
+    # built with. Effective is the measured rate planning coarsens, concurrent
+    # is what a copy gets against other traffic, solo is what it gets alone.
     pinned = arguments.transfer_bandwidths
     if pinned is not None:
         print(
             "  transfer lanes      "
-            f"pinned to fetch {pinned.fetch_bytes_per_second / 1e9:.0f} GB/s,"
-            f" evict {pinned.evict_bytes_per_second / 1e9:.0f} GB/s"
+            f"pinned to fetch {gb_s(pinned.fetch_bytes_per_second)},"
+            f" evict {gb_s(pinned.evict_bytes_per_second)}"
             + (
                 f", latency {pinned.fetch_latency_ns / 1e3:.0f}/"
                 f"{pinned.evict_latency_ns / 1e3:.0f} us"
@@ -883,18 +886,36 @@ def main() -> int:
         )
     else:
         capabilities = runtime.transfer_capabilities
-        for name, source, destination in (
-            ("fetch", "spill", "execution"),
-            ("evict", "execution", "spill"),
+        planned = planned_transfer_bandwidths(
+            capabilities.route("spill", "execution"),
+            capabilities.route("execution", "spill"),
+        )
+        # This producer always names both latencies; only an override naming
+        # bandwidths alone leaves them unset.
+        for name, source, destination, rate, latency_ns in (
+            (
+                "fetch",
+                "spill",
+                "execution",
+                planned.fetch_bytes_per_second,
+                planned.fetch_latency_ns or 0,
+            ),
+            (
+                "evict",
+                "execution",
+                "spill",
+                planned.evict_bytes_per_second,
+                planned.evict_latency_ns or 0,
+            ),
         ):
             profile = capabilities.route(source, destination)
-            planned = round(profile.bandwidth_bytes_per_second / _GB)
             print(
                 f"  {name + ' lane':<19} "
-                f"{planned:>3} GB/s planned"
-                f"   (concurrent {gb_s(profile.concurrent_bandwidth_bytes_per_second)},"
+                f"{gb_s(rate)} planned, latency {latency_ns / 1e3:.0f} us"
+                f"   (effective {gb_s(profile.bandwidth_bytes_per_second)},"
+                f" concurrent {gb_s(profile.concurrent_bandwidth_bytes_per_second)},"
                 f" solo {gb_s(profile.solo_bandwidth_bytes_per_second)},"
-                f" latency {profile.latency_nanoseconds / 1e3:.0f} us)"
+                f" latency {profile.latency_nanoseconds / 1e3:.1f} us)"
             )
     print()
 

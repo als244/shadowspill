@@ -15,6 +15,7 @@ from shadowspill.errors import (
     PlanningError,
     PlanSearchExhaustedError,
 )
+from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.quantization import (
     quantized_bandwidth,
     quantized_latency,
@@ -26,6 +27,7 @@ from shadowspill.pytorch.profiling import (
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.runtime import workspace_reserve_bytes
+from shadowspill.runtime.topology import TransferProfile
 from shadowspill.simulator import SimulationConfig
 
 from ..runtime_adapter import PlanMemory
@@ -254,6 +256,27 @@ def fixed_execution_bytes(memory: PlanMemory, profiles: ProfilingResult) -> int:
     return memory.installed.fixed_execution_bytes + profiles.fixed_slab_bytes
 
 
+def planned_transfer_bandwidths(
+    fetch: TransferProfile, evict: TransferProfile
+) -> TransferBandwidths:
+    """The calibration planning consumes, coarsened from what was measured.
+
+    Planning identity hashes its inputs, so a measured rate reaches the
+    simulator coarsened rather than exact, and the figure a plan was priced
+    against is not the figure the runtime measured. This is the only place a
+    measurement becomes a planning input, so a caller that wants to report
+    what a run plans against asks here instead of rounding a measurement
+    itself: a second rounding drifts from this one the moment the bands move.
+    """
+
+    return TransferBandwidths(
+        quantized_bandwidth(fetch.bandwidth_bytes_per_second),
+        quantized_bandwidth(evict.bandwidth_bytes_per_second),
+        fetch_latency_ns=quantized_latency(fetch.latency_nanoseconds),
+        evict_latency_ns=quantized_latency(evict.latency_nanoseconds),
+    )
+
+
 def build_simulation_config(
     memory: PlanMemory,
     workspace_reserve_bytes_: int,
@@ -261,13 +284,15 @@ def build_simulation_config(
 ) -> SimulationConfig:
     """Build the framework-neutral simulator input for one ShadowSpillProgram.
 
-    Calibrated rates and latencies are coarsened to a few representable
-    values, so slightly different calibrations reuse one stored plan; the
-    raw calibration stays in the runtime's transfer capabilities.
+    The calibration comes from `planned_transfer_bandwidths`, so what the
+    simulator is built with is what any caller reporting this run's lanes
+    sees; the raw calibration stays in the runtime's transfer capabilities.
     """
 
-    fetch = memory.transfers.route(memory.spill.name, memory.execution.name)
-    evict = memory.transfers.route(memory.execution.name, memory.spill.name)
+    planned = planned_transfer_bandwidths(
+        memory.transfers.route(memory.spill.name, memory.execution.name),
+        memory.transfers.route(memory.execution.name, memory.spill.name),
+    )
     return SimulationConfig.single_device(
         execution_device_id(memory.execution_device),
         device_capacity_bytes=simulation_capacity(
@@ -277,14 +302,16 @@ def build_simulation_config(
             fixed_slab_bytes=fixed_execution_bytes(memory, profiles),
         ),
         spill_capacity_bytes=memory.spill_budget,
-        fetch_bandwidth_bytes_per_second=quantized_bandwidth(
-            fetch.bandwidth_bytes_per_second
+        fetch_bandwidth_bytes_per_second=planned.fetch_bytes_per_second,
+        evict_bandwidth_bytes_per_second=planned.evict_bytes_per_second,
+        # Both latencies are always named above; an override that names only
+        # bandwidths is what leaves them None.
+        fetch_latency_ns=(
+            0 if planned.fetch_latency_ns is None else planned.fetch_latency_ns
         ),
-        evict_bandwidth_bytes_per_second=quantized_bandwidth(
-            evict.bandwidth_bytes_per_second
+        evict_latency_ns=(
+            0 if planned.evict_latency_ns is None else planned.evict_latency_ns
         ),
-        fetch_latency_ns=quantized_latency(fetch.latency_nanoseconds),
-        evict_latency_ns=quantized_latency(evict.latency_nanoseconds),
     )
 
 
@@ -348,6 +375,7 @@ __all__ = [
     "build_simulation_config",
     "capacity_leeway",
     "estimate_spill_reservation",
+    "planned_transfer_bandwidths",
     "public_infeasible_plan_error",
     "public_search_exhausted_error",
     "simulation_capacity",
