@@ -1,4 +1,4 @@
-"""Physically admitted PressureFit selection and simulator evidence."""
+"""A physically admitted plan, with the simulator evidence behind it."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ _ANNOTATED_PROGRAM_PLAN_SCHEMA = artifact_schema("annotated_program_plan")
 
 @dataclass(frozen=True, slots=True)
 class AnnotatedProgramPlan:
-    """PressureFit winner plus exact fixed-layout and simulator evidence."""
+    """The plan a search chose, plus exact fixed-layout and simulator evidence."""
 
     program: ShadowSpillPlanningProblem
     memory_budgets: MemoryBudgets
@@ -57,10 +57,10 @@ class AnnotatedProgramPlan:
     #: planned during this call.
     plan_from_store: bool
     wall_time_ns: int
-    #: Filled on first read. Computing the digest serialises the whole plan --
-    #: tens of megabytes -- and four callers want the same answer, so it is
-    #: worth keeping rather than paying for repeatedly. A one-slot box,
-    #: because the plan itself is frozen.
+    #: Filled on first read. Computing the digest serialises the whole plan,
+    #: and several callers want the same answer, so it is worth keeping
+    #: rather than paying for repeatedly. A one-slot box, because the plan
+    #: itself is frozen.
     _digest_cache: list[str] = field(default_factory=list, repr=False, compare=False)
 
     @property
@@ -92,7 +92,7 @@ class AnnotatedProgramPlan:
 
     @property
     def search_wall_time_ns(self) -> int:
-        """Cumulative PressureFit/cache-resolution wall time."""
+        """Cumulative search and cache-resolution wall time."""
 
         return sum(item.search_wall_time_ns for item in self.attempts)
 
@@ -104,7 +104,7 @@ class AnnotatedProgramPlan:
 
     @property
     def orchestration_wall_time_ns(self) -> int:
-        """Selection overhead outside measured PressureFit and admission calls."""
+        """Selection overhead outside the measured search and admission calls."""
 
         measured = self.search_wall_time_ns + self.physical_admission_wall_time_ns
         return max(0, self.wall_time_ns - measured)
@@ -418,7 +418,7 @@ class AnnotatedProgramPlan:
         if search_wall_time_ns != sum(
             item.search_wall_time_ns for item in attempts
         ):
-            raise ValueError("annotated PressureFit timing total differs")
+            raise ValueError("annotated search timing total differs")
         if admission_wall_time_ns != sum(
             item.physical_admission_wall_time_ns for item in attempts
         ):

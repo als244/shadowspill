@@ -1,4 +1,4 @@
-"""Reusable inputs for framework-independent PressureFit selection."""
+"""Reusable inputs for framework-independent planning."""
 
 from __future__ import annotations
 
@@ -29,10 +29,9 @@ _PLANNING_PROBLEM_SCHEMA = artifact_schema("plan_program")
 class TransferBandwidths:
     """The transfer calibration planning and simulation consume.
 
-    Bandwidths price every copy a plan makes. The latencies are optional so
-    a record written before they were carried still reads; ``None`` leaves
-    a program's own latency in place, which is what an override that names
-    only bandwidths should do.
+    Bandwidths price every copy a plan makes. The latencies are optional:
+    ``None`` leaves a program's own latency in place, which is what an
+    override naming only bandwidths should do.
     """
 
     fetch_bytes_per_second: int

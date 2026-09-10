@@ -68,7 +68,7 @@ class ForwardProfileArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class ForwardProgramArtifacts:
-    """Canonical ShadowSpillProgram plus exact PressureFit call inputs."""
+    """Canonical ShadowSpillProgram plus the exact inputs a search is given."""
 
     lowered: LoweredForwardProgram
     measurements: dict[str, TaskMeasurement]
@@ -123,7 +123,7 @@ class TrainingProfileArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class TrainingProgramArtifacts:
-    """Initial/recurrent Programs and their exact PressureFit call inputs."""
+    """Initial and recurrent programs, and the inputs a search is given for each."""
 
     initial: LoweredTrainingProgram
     recurrent: LoweredTrainingProgram

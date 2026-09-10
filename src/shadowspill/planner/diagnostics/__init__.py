@@ -1,9 +1,8 @@
-"""Structured PressureFit search, repair, and work diagnostics.
+"""Structured search, repair, and work diagnostics.
 
 One module per kind of record: what the search did (``counters``), each
-candidate it evaluated (``candidates``), each resolution it
-planned (``selections``), each capacity refinement it fell back to
-(``refinement``), and all of it together (``summary``).
+candidate it evaluated (``candidates``), each resolved program it planned
+(``resolved_programs``), and all of it together (``summary``).
 """
 
 from __future__ import annotations
