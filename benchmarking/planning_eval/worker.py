@@ -16,13 +16,13 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.program import (
     ShadowSpillPlanningProblem,
-    StepProgram,
 )
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
+from shadowspill.step import StepProgram
 
 from .config import FrontierConfig, load_frontier_config
 from .evidence import failed_point_evidence, successful_point_evidence
@@ -112,10 +112,10 @@ def evaluate_case(
     atomic_json(
         case_run_directory / "case.json",
         {
-            "schema": artifact_schema("pressurefit_frontier_case"),
+            "schema": artifact_schema("search_frontier_case"),
             "case": case.to_dict(),
             "program_role": program.role,
-            "pressurefit_program_digest": program.digest,
+            "program_digest": program.digest,
             "points": [item.to_dict() for item in requests],
         },
     )
@@ -150,7 +150,7 @@ def evaluate_case(
         counts[status] = counts.get(status, 0) + 1
     write_active_point(case_run_directory, None)
     result = {
-        "schema": artifact_schema("pressurefit_frontier_worker_result"),
+        "schema": artifact_schema("search_frontier_worker_result"),
         "passed": counts.get("error", 0) == 0,
         "case_id": case.case_id,
         "case": case.to_dict(),
@@ -212,7 +212,7 @@ def _evaluate_point(
             saved_case,
             plan,
             metadata={
-                "purpose": "pressurefit-frontier",
+                "purpose": "search-frontier",
                 "program_role": config.program_role,
             },
             step_program=step_program,

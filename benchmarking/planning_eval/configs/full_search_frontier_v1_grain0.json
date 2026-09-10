@@ -1,6 +1,6 @@
 {
-  "schema": "shadowspill.pressurefit_frontier_config/v1",
-  "name": "full-pressurefit-frontier-v1-grain0",
+  "schema": "shadowspill.search_frontier_config/v1",
+  "name": "full-search-frontier-v1-grain0",
   "expected_programs": 168,
   "expected_points_per_program": 15,
   "program_role": "recurrent",

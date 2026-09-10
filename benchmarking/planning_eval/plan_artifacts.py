@@ -21,9 +21,9 @@ from benchmarking.program_collection.corpus import (
 )
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
-    StepProgram,
 )
 from shadowspill.schema import artifact_schema
+from shadowspill.step import StepProgram
 
 _SELECTION_SCHEMA = artifact_schema("planning_corpus.selection")
 
@@ -71,7 +71,7 @@ def save_annotated_plan(
     manifest = {
         "schema": _SELECTION_SCHEMA,
         "source_step_program_digest": case.program_digest,
-        "source_pressurefit_program_digest": plan.program.digest,
+        "source_program_digest": plan.program.digest,
         "memory_budgets": plan.memory_budgets.to_dict(),
         "transfer_bandwidths": plan.transfer_bandwidths.to_dict(),
         "annotated_program_plan": {

@@ -19,9 +19,9 @@ from .matrix import FrontierPointRequest
 from .provenance import RepositoryProvenance, environment_provenance
 from .source import CorpusProgramCase
 
-_BASELINE_SCHEMA = artifact_schema("pressurefit_frontier_baseline")
-_STATUS_SCHEMA = artifact_schema("pressurefit_frontier_point_status")
-_POINT_SCHEMA = artifact_schema("pressurefit_frontier_point")
+_BASELINE_SCHEMA = artifact_schema("search_frontier_baseline")
+_STATUS_SCHEMA = artifact_schema("search_frontier_point_status")
+_POINT_SCHEMA = artifact_schema("search_frontier_point")
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,7 +383,7 @@ def write_active_point(
     atomic_json(
         case_directory / "active.json",
         {
-            "schema": artifact_schema("pressurefit_frontier_active"),
+            "schema": artifact_schema("search_frontier_active"),
             "updated_at": utc_now(),
             "point_id": None if request is None else request.point_id,
             "request_digest": None if request is None else request.digest,

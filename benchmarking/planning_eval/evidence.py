@@ -79,7 +79,7 @@ def successful_point_evidence(
             "identity": case.identity.to_dict(),
             "data_geometry": case.identity.data_geometry.to_dict(),
             "step_program_digest": case.program_digest,
-            "pressurefit_program_digest": request.program_digest,
+            "program_digest": request.program_digest,
         },
         "request": request.to_dict(),
         "timing": {
