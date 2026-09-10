@@ -42,7 +42,12 @@ class PressureFitOptions(OptionRecord):
 
     KIND: ClassVar[str] = "pressurefit"
 
-    initial_placement: InitialPlacement = InitialPlacement.GREEDY
+    #: Whether a cold object may be promoted to the opening boundary. The
+    #: default is `REQUIRED`, which places only what the declaration asks for
+    #: and what the first task cannot be given in time. `GREEDY` promotes more,
+    #: which moves those bytes out of the priced schedule and into the opening
+    #: restore -- so a greedy plan's makespan omits work the step still does.
+    initial_placement: InitialPlacement = InitialPlacement.REQUIRED
     #: Which resolved programs PressureFit plans: the share of the flexible
     #: alternative groups to recompute, one resolved program per share, as
     #: exact fractions. Expanding a program into these is PressureFit's own

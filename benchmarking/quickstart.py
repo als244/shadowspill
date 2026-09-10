@@ -663,14 +663,15 @@ def main() -> int:
     parser.add_argument(
         "--initial-placement",
         choices=("greedy", "required"),
-        default="greedy",
+        default=None,
         help="how objects the declaration leaves in spill may be placed before"
-        " the first task. 'greedy', the library default, promotes a cold object"
-        " to the opening boundary when its fetch would otherwise be late, which"
-        " moves those bytes out of the schedule and into the opening restore --"
-        " where the simulated makespan does not count them. 'required' places"
-        " only what the declaration asks for, plus what the first task reads and"
-        " so cannot be fetched in time",
+        " the first task. 'greedy' promotes a cold object to the opening boundary"
+        " when its fetch would otherwise be late, which moves those bytes out of"
+        " the schedule and into the opening restore -- where the simulated"
+        " makespan does not count them. 'required' places only what the"
+        " declaration asks for, plus what the first task reads and so cannot be"
+        " fetched in time. Defaults to whichever the library chooses, rather than"
+        " naming one here that a change to that choice would leave behind",
     )
     parser.add_argument(
         "--resolution-options",
@@ -767,6 +768,12 @@ def main() -> int:
         " alone, for comparing the two",
     )
     arguments = parser.parse_args()
+    # An unspecified placement is the library's to choose. Resolving it here
+    # rather than defaulting the flag keeps one answer to the question: a change
+    # to the library default reaches this tour, and the banner reports what the
+    # planner will actually do rather than what this file last believed.
+    if arguments.initial_placement is None:
+        arguments.initial_placement = PressureFitOptions().initial_placement.value
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
     try:
