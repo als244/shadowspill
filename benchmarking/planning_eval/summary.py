@@ -116,7 +116,7 @@ def write_frontier_summary(
     )
     expected_points = expected_programs * expected_points_per_program
     summary: dict[str, object] = {
-        "schema": artifact_schema("pressurefit_frontier_summary"),
+        "schema": artifact_schema("search_frontier_summary"),
         "baseline_id": paths.directory.name,
         "updated_at": utc_now(),
         "expected_programs": expected_programs,
@@ -160,10 +160,10 @@ def _csv_row(
     evict = _mapping(transfers.get("evict"))
     throughput = _mapping(result.get("throughput"))
     selection = _mapping(result.get("selection"))
-    pressurefit = _mapping(selection.get("search_diagnostics"))
-    pressurefit_summary = _mapping(pressurefit.get("summary"))
-    search_repairs = _mapping(pressurefit.get("repairs"))
-    search_work = _mapping(pressurefit.get("work"))
+    search = _mapping(selection.get("search_diagnostics"))
+    search_summary = _mapping(search.get("summary"))
+    search_repairs = _mapping(search.get("repairs"))
+    search_work = _mapping(search.get("work"))
     residency_work = _mapping(search_work.get("residency"))
     schedule_work = _mapping(search_work.get("schedule"))
     simulation_work = _mapping(search_work.get("simulation"))
@@ -213,17 +213,17 @@ def _csv_row(
         "evict_bytes": evict.get("bytes"),
         "device_peak_bytes": _mapping(simulation.get("device_peak")).get("total_bytes"),
         "spill_peak_bytes": simulation.get("spill_peak_bytes"),
-        "resolved_program_count": pressurefit_summary.get(
+        "resolved_program_count": search_summary.get(
             "resolved_program_count"
         ),
-        "valid_resolved_program_count": pressurefit_summary.get(
+        "valid_resolved_program_count": search_summary.get(
             "valid_resolved_program_count"
         ),
-        "candidate_policy_count": pressurefit_summary.get("candidate_policy_count"),
-        "candidate_evaluation_count": pressurefit_summary.get(
+        "candidate_policy_count": search_summary.get("candidate_policy_count"),
+        "candidate_evaluation_count": search_summary.get(
             "candidate_evaluation_count"
         ),
-        "valid_candidate_evaluation_count": pressurefit_summary.get(
+        "valid_candidate_evaluation_count": search_summary.get(
             "valid_candidate_evaluation_count"
         ),
         "repair_attempt_count": search_repairs.get("total_attempts"),

@@ -2,7 +2,7 @@
 
 This harness **plans**. It reads a frozen corpus of `StepProgram` inputs
 built by [program collection](../program_collection/README.md) and runs
-graph-pair selection, PressureFit, simulation, and physical admission over a
+graph-pair selection, the search, simulation, and physical admission over a
 grid of budgets and transfer bandwidths. It constructs no model, captures no
 graph, compiles no task, and profiles no kernel, so it takes no build
 arguments beyond `--corpus-dir`, the path the corpus lives at.
@@ -19,9 +19,9 @@ host with more cores finishes sooner.
 
 ```bash
 PYTHONUNBUFFERED=1 python -m benchmarking.planning_eval.evaluate \
-  --config benchmarking/planning_eval/configs/full_pressurefit_frontier_v1_repairs256.json \
+  --config benchmarking/planning_eval/configs/full_search_frontier_v1_repairs256.json \
   --corpus-dir benchmarking/datasets/input_programs/full_model_program_corpus_<rev> \
-  --output-dir benchmarking/planning_eval/results/full_pressurefit_frontier_<rev>_repairs256 \
+  --output-dir benchmarking/planning_eval/results/full_search_frontier_<rev>_repairs256 \
   --artifact-store benchmarking/planning_eval/planning_caches/frontier_<rev>
 ```
 
@@ -89,7 +89,7 @@ Blank lines separate points and Programs. Output is line-buffered to stdout
 and duplicated in `collection.log`, so the same command is easy to follow in
 tmux.
 
-Every point is journaled before PressureFit begins and atomically publishes
+Every point is journaled before the search begins and atomically publishes
 one of `succeeded`, `infeasible`, `search_exhausted`, or `error`. A worker
 exit or an active-point timeout is attributed to that point; the controller
 then advances and preserves the failure evidence.
@@ -117,8 +117,8 @@ then advances and preserves the failure evidence.
 ```
 
 Complete annotated plans include the source program, selections, schedule,
-simulator timeline, PressureFit diagnostics, admission refinements, and the
-PressureFit/admission/orchestration wall-time split. Compact CSV/JSONL rows
+simulator timeline, search diagnostics, admission refinements, and the
+search/admission/orchestration wall-time split. Compact CSV/JSONL rows
 link back to those canonical artifacts.
 
 `plan_digest` excludes wall-clock and store-hit observations and identifies a

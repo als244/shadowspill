@@ -1,6 +1,6 @@
 {
-  "schema": "shadowspill.pressurefit_frontier_config/v1",
-  "name": "full-pressurefit-frontier-v1-repairs256",
+  "schema": "shadowspill.search_frontier_config/v1",
+  "name": "full-search-frontier-v1-repairs256-della-h100",
   "expected_programs": 168,
   "expected_points_per_program": 15,
   "program_role": "recurrent",
@@ -9,9 +9,9 @@
   "max_worker_restarts_per_program": 64,
   "plan_store_mode": "refresh",
   "transfer_bandwidths": {
-    "fetch_bytes_per_second": 25443740177,
-    "evict_bytes_per_second": 25222719387,
-    "provenance": "median bidirectional-concurrent runtime-init calibration across the 168 full-model Program corpus; frozen globally for cross-Program frontier comparison"
+    "fetch_bytes_per_second": 51826499510,
+    "evict_bytes_per_second": 49953192514,
+    "provenance": "median bidirectional-concurrent runtime-init calibration across the 168 full-model Program corpus collected on della H100 (PCIe gen5); frozen globally for cross-Program frontier comparison"
   },
   "grids": [
     {
