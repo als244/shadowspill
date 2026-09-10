@@ -600,7 +600,7 @@ def main() -> int:
     for tree in ("build", "plan"):
         parser.add_argument(
             f"--{tree}-store-mode",
-            choices=("contribute", "reuse", "require"),
+            choices=("contribute", "reuse", "require", "refresh"),
             default="contribute",
         )
     parser.add_argument("--implementation-revision")
