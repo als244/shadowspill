@@ -17,9 +17,9 @@ from shadowspill.ir import (
 from shadowspill.planner.diagnostics import PlanningDiagnostics
 from shadowspill.planner.result import ProgramPlanResult
 from shadowspill.planner.search.toolkit.resolution import CostedAlternatives
-from shadowspill.planner.step_ordering import StepDataOrdering
 from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
 from shadowspill.schema import artifact_schema
+from shadowspill.step import StepDataOrdering
 
 from ..search import SearchOptions
 
@@ -571,7 +571,7 @@ class PlanTaskMemoryEnvelope:
 
 @dataclass(frozen=True, slots=True)
 class PlanFixedLayoutAttempt:
-    """One PressureFit-capacity/layout trial made during admission."""
+    """One capacity/layout trial made during admission."""
 
     requested_object_capacity_bytes: int
     effective_object_capacity_bytes: int
@@ -729,7 +729,7 @@ class PlanDiagnostics:
                 "cache_hits": self.planned_program_cache_hits,
                 "cache_misses": self.planned_program_cache_misses,
             },
-            "pressurefit": [
+            "search": [
                 {
                     "run_index": index,
                     **item.to_dict(),
@@ -975,7 +975,7 @@ class PlanReport:
 
     @property
     def program(self) -> ShadowSpillProgram:
-        """Canonical recurrent ShadowSpillProgram supplied directly to PressureFit.
+        """Canonical recurrent ShadowSpillProgram handed straight to the search.
 
         Forward plans have one ShadowSpillProgram.  Training plans expose the recurrent
         step here; :attr:`initial_program` names the optional lazy-state first
@@ -994,20 +994,20 @@ class PlanReport:
 
     @property
     def search_result(self) -> ProgramPlanResult:
-        """PressureFit call boundary and selected result for the recurrent plan."""
+        """The search call boundary and selected result for the recurrent plan."""
 
         if not self.search_results:
-            raise RuntimeError("PlanReport does not contain PressureFit evidence")
+            raise RuntimeError("PlanReport does not contain search evidence")
         return self.search_results[-1]
 
     @property
     def initial_search_result(self) -> ProgramPlanResult | None:
-        """Selected first-step PressureFit result, when one was planned."""
+        """The selected first-step result, when one was planned."""
 
         if self.initial_execution_plan is None:
             return None
         if len(self.search_results) < 2:
-            raise RuntimeError("PlanReport is missing first-step PressureFit evidence")
+            raise RuntimeError("PlanReport is missing first-step search evidence")
         return self.search_results[0]
 
     @property
