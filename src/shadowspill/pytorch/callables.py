@@ -491,7 +491,7 @@ class PlannedTrainStep:
                 self._trace_prepared = True
             self._executor.arm_compute_timing(trace_setup_ns=trace_setup_ns)
         try:
-            objectives, metrics = self._executor(inputs)
+            objectives, metrics = self._executor(inputs, self._step + 1)
         except BaseException as error:
             if runtime_trace:
                 try:

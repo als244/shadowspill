@@ -8,6 +8,7 @@ from .contracts import (
 )
 from .diagnostics import (
     DiagnosticsHandle,
+    InvocationTiming,
     LaneSummary,
     PhaseTimingComparison,
     PlanAllocationEvent,
@@ -81,6 +82,7 @@ __all__ = [
     "ExecutionTaskIdentity",
     "GraphPairOutcome",
     "InvocationResult",
+    "InvocationTiming",
     "LaneSummary",
     "MemoryPool",
     "ObjectConsistency",

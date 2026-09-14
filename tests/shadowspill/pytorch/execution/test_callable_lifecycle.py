@@ -19,8 +19,9 @@ class _Executor:
         self.error = error
         self.optimizer_released = False
 
-    def __call__(self, inputs: object) -> object:
-        del inputs
+    # A training callable passes its step number; a forward callable has none.
+    def __call__(self, inputs: object, step_number: int | None = None) -> object:
+        del inputs, step_number
         if self.error is None:
             raise AssertionError("this executor was given no failure to raise")
         raise self.error

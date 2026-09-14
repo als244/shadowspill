@@ -86,16 +86,12 @@ class PlanStore:
 
     def __init__(
         self,
-        root: str | Path | None = None,
+        root: str | Path,
         *,
         policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: _ArtifactRecorder | None = None,
     ) -> None:
-        self.root = (
-            Path(root).expanduser()
-            if root is not None
-            else Path.home() / ".cache" / "shadowspill" / "recomputation"
-        )
+        self.root = Path(root).expanduser()
         self.policy = policy
         self.artifact_recorder = artifact_recorder
 
@@ -110,7 +106,7 @@ class PlanStore:
         final_residency: tuple[ResidencySpec, ...],
         config: SimulationConfig,
         search_options: SearchOptions | None = None,
-            admission: AdmissionFacts | None = None,
+        admission: AdmissionFacts | None = None,
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
         incumbent: ProgramPlanResult | None = None,

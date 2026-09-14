@@ -392,6 +392,7 @@ pressurefit = PressureFit()
 set_default_algorithm(pressurefit)
 
 __all__ = [
+    "PressureFit",
     "PressureFitOptions",
     "ordered_resolutions",
     "pressurefit",
