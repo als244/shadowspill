@@ -42,10 +42,12 @@ from .step import (
     StepResult,
     StepTimingSummary,
 )
+from .timing import InvocationTiming
 
 __all__ = [
     "AllocatorTrace",
     "DiagnosticsHandle",
+    "InvocationTiming",
     "LaneSummary",
     "PhaseTimingComparison",
     "PlanAllocationABIStep",

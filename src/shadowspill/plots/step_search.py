@@ -1486,8 +1486,6 @@ def plot_step_search(
     """
 
     winners = _winners(report)
-    # The sequence length leads, so repeating a search at another length
-    # writes beside the first rather than over it.
     root = Path(directory)
     # One directory per question the figures answer, under `sim` because
     # every one of them reads a plan rather than a run. `real` is its

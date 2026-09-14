@@ -80,6 +80,9 @@ cycle, head and exposed tail beside the selected span ([timing](timing.md)):
 profiled task time against real task-event time, simulated against real
 waiting, the selected span, the simulator's makespan, and the call-level host
 totals. `PhaseTimingComparison` breaks the task time down by phase.
+`InvocationTiming` is the same cycle measured for every invocation, traced or
+not, returned by `PlannedTrainStep.invocation_timings()` and defined on the
+[timing](timing.md) page.
 
 `tasks` maps execution task ids to a `TaskRecord` each, and `transfers` is a
 `TransferRecords` pair of mappings, `fetch` and `evict`, from transfer id to

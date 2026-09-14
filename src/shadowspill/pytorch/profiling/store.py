@@ -35,17 +35,13 @@ class ProfileStore:
 
     def __init__(
         self,
-        root: str | Path | None = None,
+        root: str | Path,
         *,
         compiled_manifest_root: str | Path | None = None,
         policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: PlanningArtifactRecorder | None = None,
     ) -> None:
-        self.root = (
-            Path(root).expanduser()
-            if root is not None
-            else Path.home() / ".cache" / "shadowspill" / "profiles"
-        )
+        self.root = Path(root).expanduser()
         self.compiled_manifest_root = (
             Path(compiled_manifest_root).expanduser()
             if compiled_manifest_root is not None

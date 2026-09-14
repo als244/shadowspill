@@ -235,14 +235,16 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle() -> None:
         "shadowspill.pytorch.execution.training.torch.cuda.current_stream",
         return_value=object(),
     ):
-        selected = TrainingExecutor._begin_invocation(harness, (), cast(Any, timing))
+        # The caller numbers the step; a restored checkpoint makes it differ
+        # from this process's invocation count, and the trace follows the caller.
+        selected = TrainingExecutor._begin_invocation(harness, (), cast(Any, timing), 7)
 
     assert selected is run
     assert calls == [
         "origin",
         "wait_plan_idle",
         "statistics",
-        ("begin_runtime_trace", 4),
+        ("begin_runtime_trace", 7),
         "refresh_inputs",
     ]
     assert timing.statistics_before is bridge.statistics_value
