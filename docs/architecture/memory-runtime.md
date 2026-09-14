@@ -27,9 +27,21 @@ lease per pool location; aliases and views share the same object and lease.
 Generations prevent stale events, frees, bindings, or worker completions from
 modifying a successor.
 
+Every lease records the scope that allocated it and the plan that scope belonged
+to, together: a task id is plan-local, so neither half alone identifies the work
+on a pool more than one plan shares -- see [plan identity](plan-identity.md).
+When the scope ends, the lease has been freed inside it, promoted out of it to a
+named owner, or retained past it; all three are legitimate and all three must be
+accounted for. A lease that survives unaccounted costs the largest contiguous
+range rather than merely its own bytes: [what a scope owes when it
+ends](task-boundaries.md#what-a-scope-owes-when-it-ends) states the contract and
+why the position matters more than the size.
+
 Runtime-global shared leases are physically charged once and retained outside
 any one callable's movable-object schedule; which mutations and orderings each
-shared-residency policy permits is in [the program](program.md).
+shared-residency policy permits is in [the program](program.md), and how the
+object, its per-pool locations and their leases relate is in [shared
+objects](shared-objects.md).
 
 Every callable uses its own plan-local alias IDs and fixed-layout slice. A
 shared-input binding maps one of those local aliases to an existing
@@ -59,7 +71,7 @@ An admitted plan uses one complete step-level physical layout for
 schedule-managed allocations:
 
 - initial object generations;
-- strict task-allocation contract core slots;
+- the task-allocation contract's invariant slots;
 - persistent outputs and mutation replacements;
 - fetch and evict destinations.
 
@@ -112,13 +124,14 @@ has landed, which is when the simulator frees it too.
 ## Worker
 
 One C-owned worker services completions, releases, and both transfer lanes.
-It is named `shadowspill_worker` in profiler traces, and `shadowspill.wkr` at
-the OS level, where the name is shorter. The hot loop visits each completion
-frontier, drains immediately completed FIFO successors, handles retirements,
-and dispatches queued actions. A queued transfer is dispatched when it is the
-head of its lane queue and its preconditions hold. The default incomplete-head
-query cadence is `worker_poll_nanoseconds`, one microsecond; an
-already-complete head is followed immediately without an artificial delay.
+It names itself `shadowspill.wkr` to both the OS and the backend's profiler --
+one name, short enough that the OS thread-name limit keeps it whole. The hot
+loop visits each completion frontier, drains immediately completed FIFO
+successors, handles retirements, and dispatches queued actions. A queued
+transfer is dispatched when it is the head of its lane queue and its
+preconditions hold. The default incomplete-head query cadence is
+`worker_poll_nanoseconds`, one microsecond; an already-complete head is
+followed immediately without an artificial delay.
 
 Steady-state execution performs no host allocation and creates or destroys no
 backend event, because cold plan adoption reserves every inventory the hot path
@@ -178,7 +191,8 @@ spin. Neither the waiter nor the worker sleeps.
 
 Task boundaries have a page of their own: [task
 boundaries](task-boundaries.md) covers what `before_task` and `after_task` are
-each responsible for, how allocations find their task, which of a plan's
+each responsible for, how allocations find their task, what a scope owes its
+allocations when it ends and what actually releases a lease, which of a plan's
 actions run where, and exactly what is still in flight when the dispatching
 thread returns.
 
@@ -240,5 +254,5 @@ See [Interpreting StepResult diagnostics](../python/step-diagnostics.md) for
 allocator/lease evidence, runtime counters, transfer frontiers, task-boundary
 timing, and overflow handling.
 
-Previous: [Simulation](simulation.md). Continue with the [Python allocator
-guide](../python/allocator.md) or [Runtime C API](../c/runtime.md).
+Previous: [Shared objects](shared-objects.md). Next: [Task
+boundaries](task-boundaries.md).
