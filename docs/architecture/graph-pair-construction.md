@@ -196,7 +196,7 @@ Compilation/profiling records, for both halves of every pair:
 - semantic and executable storage-contract digests;
 - input, output, mutation, and replacement-transition bytes;
 - requested and charged workspace, including individual extents;
-- strict allocation-core and bounded dynamic-scratch behavior;
+- invariant allocation path and bounded dynamic-scratch behavior;
 - warmed backend-event runtime samples and stability diagnostics;
 - representative-input and profiling-metadata provenance.
 

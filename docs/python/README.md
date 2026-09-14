@@ -21,8 +21,8 @@ How to use the system and how to read what it produces.
 
 ## API reference
 
-Every public symbol, its arguments and its result, one page per layer and
-ordered outward from the framework-free core.
+Every public symbol, its arguments and its result, one page per layer,
+ordered outward from the framework-neutral layer to the PyTorch frontend.
 
 - [Framework-neutral Python APIs](api/neutral.md)
 - [Reusable planning artifacts](api/artifacts.md)

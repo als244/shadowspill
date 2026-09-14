@@ -41,7 +41,7 @@ Physical admission consumes:
 | `ProgramPlanResult` | Selected tasks, residency, ordered actions, and logical simulation. |
 | `AdmissionFacts` | Pool capacity, task allocation geometry, output/replacement ownership, handoffs, and alignment. |
 | `TaskAllocationContract` values | Stable task-local invariant allocation/free identities and geometry. |
-| Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the strict core. |
+| Dynamic-scratch reserve | Bounded capacity for optional allocator operations outside the invariant path. |
 | Terminal caller-owned aliases | Final execution leases that may outlive a later callable invocation. |
 
 It returns `FixedLayoutAdmission`, which contains:
@@ -247,7 +247,7 @@ The admission script applies the complete selected step in causal order:
 ```text
 initial execution objects
     -> validate each task's resident inputs
-    -> acquire that task's allocation-core leases
+    -> acquire that task's invariant-allocation leases
     -> begin task-completion retirements for anonymous temporaries
     -> publish output, mutation-replacement, and handoff ownership
     -> trigger release, write-back, eviction, and fetch actions in schedule order
@@ -377,9 +377,9 @@ zero. It reserves one compatible parent range from the runtime-owned execution
 pool, then adopts borrowed subleases at the certified relative offsets. A
 borrowed fixed lease does not independently own or free the parent range.
 
-## Strict core and dynamic exceptions
+## The invariant path and its dynamic exceptions
 
-### Allocation-core slots
+### Invariant allocation slots
 
 Each fixed task allocation is addressed by `(execution_task_id,
 allocation_ordinal)`. Runtime allocation callbacks reconcile the observed
@@ -523,9 +523,9 @@ Physical admission guarantees for the admitted fixed-shape contract:
   or envelope.
 
 It does not prove an unseen, data-dependent allocator path that was absent
-from the admitted core and exceeds dynamic scratch. Fixed-shape guards and
-stable required output/mutation allocation behavior remain part of the
-supported contract.
+from the admitted invariant path and exceeds dynamic scratch. Fixed-shape
+guards and stable required output/mutation allocation behavior remain part of
+the supported contract.
 
 ## Implementation map
 
@@ -544,5 +544,5 @@ supported contract.
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/src/runtime/memory/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 
-Previous: [PressureFit](pressurefit.md). Next:
-[Planning orchestration](planning.md).
+Previous: [PressureFit](pressurefit.md). Next: [From a resolved program to
+leases](admission-leases.md).

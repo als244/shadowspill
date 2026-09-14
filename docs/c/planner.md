@@ -181,11 +181,8 @@ lease that outlives the step, and an allocation step or alias holding no lease.
 
 ## Concurrency and ownership
 
-All problem input arrays are borrowed. Calls with distinct inputs and results
-are independent; the API performs no I/O and does not own global mutable
-planning state.
-
-`shadowspill_place_lifetimes()` follows the same rules: it borrows the problem
-arrays, writes only the caller's offsets array, and keeps all scratch state on
-the stack or in allocations it frees before returning. Concurrent calls on
-distinct problems and results are safe.
+All problem input arrays are borrowed, and a call writes only the caller's own
+result buffers. Calls with distinct inputs and results are independent; the API
+performs no I/O and does not own global mutable planning state.
+`shadowspill_place_lifetimes()` keeps its scratch state on the stack or in
+allocations it frees before returning.

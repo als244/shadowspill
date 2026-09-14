@@ -13,9 +13,9 @@ diagnostics = result.diagnostics.result()
 
 `DiagnosticsHandle.result()` (also available as `wait()`) resolves once and
 may synchronize recorded events. Resolve a traced step before launching
-another traced step. `runtime_trace=False` is the default, performs no
-native trace-buffer appends, and records no timing events: none of the
-measurement below runs in an untraced step.
+another traced step. `runtime_trace=False` is the default: the runtime
+appends nothing to its trace buffers and records no timing events, so none of
+the measurement below runs in an untraced step.
 
 `profiler_annotations=True` is independent. It emits ranges for the backend's
 own profiler but does not create `StepDiagnostics`.
@@ -318,10 +318,13 @@ for lane, records in (
 ## Allocator
 
 `AllocatorTrace.events` is the ordered allocation/free ledger. Every event
-includes sequence, task ID, allocation ID, generation, requested and charged
+includes sequence, task id, allocation id, generation, requested and charged
 bytes, slab offset, kind, and category.
 
-The terminal summary is the pool's geometry around the step:
+The remaining fields are the allocator's own pool, read from that pool's
+statistics before and after the step. A pool answers for its own occupancy and
+fragmentation; the runtime answers only for the event ring, which is why
+`overflow` sits here and the counters sit under `runtime`.
 
 | Field | Meaning |
 |---|---|

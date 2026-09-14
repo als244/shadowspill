@@ -25,8 +25,8 @@ PyTorch  ->  adapter (libshadowspill_pytorch.so)
 
 One header, one version, and two exported symbols. The runtime is handed the
 table at create and copies it; the adapter obtains the table by opening a
-library by name, so no compiled component above the backend links a provider
-or includes a provider header.
+library by name, so nothing above the backend links a provider or includes a
+provider header.
 
 ## What ShadowSpill builds from the table
 
@@ -79,3 +79,6 @@ ones named in `SHADOWSPILL_BACKENDS`.
    `libshadowspill_backend_<provider>.so` next to the others.
 4. Run the contract canary against the library, then the runtime canaries and
    the PyTorch canaries with `Runtime(backend="<provider>")`.
+
+Previous: [Step boundaries](step-boundaries.md). Next: [Memory
+pools](memory-pools.md).

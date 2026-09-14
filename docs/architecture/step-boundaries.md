@@ -182,6 +182,5 @@ wait and the restore submission from task dispatch. The cycle's own
 partition is `opening_delay_seconds`, `selected_span_seconds` and
 `exposed_tail_seconds` ([timing](../python/api/timing.md)).
 
-Previous: [Task boundaries](task-boundaries.md). The
-[simulation](simulation.md) page defines the prediction this cycle is
-measured against.
+Previous: [Failure, abort, and process exit](failure-and-exit.md). Next:
+[Backends](backends.md).

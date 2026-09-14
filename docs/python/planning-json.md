@@ -35,8 +35,9 @@ loaded_plan = AnnotatedProgramPlan.from_json(
 
 ## Canonical encoding and identity
 
-`to_json()` emits compact UTF-8 JSON with sorted object keys. Digests are
-SHA-256 over canonical content. Array order remains semantically meaningful
+`to_json()` emits compact JSON with sorted object keys and no insignificant
+whitespace. Digests are SHA-256 over the UTF-8 encoding of that canonical
+text. Array order remains semantically meaningful
 for tasks, actions, allocation operations, and attempts.
 
 Three identity rules matter:
@@ -185,7 +186,7 @@ user-chosen runtime pool names such as `execution` and `spill`.
 
 Each admission task contains `allocation_steps`, `workspace_extents`, fresh
 and replacement alias lists, and storage handoffs. Allocation steps record
-allocate/free order, charged bytes, stable task-local ordinals, optional
+`allocate`/`release` order, charged bytes, stable task-local ordinals, optional
 persistent alias ownership, and same-task reuse. They never contain pointers
 or slab offsets. `workspace_extents` is the anonymous peak reconstructed from
 those steps, not a second source of physical geometry. Missing allocation
@@ -377,7 +378,8 @@ entry is one plan the candidate held, in order:
 | `cut_aliases` | Objects the reducer cut to reach it. |
 | `repairs` | Repairs spent by the time it was reached. |
 | `capacity_violations` | Places it came up short and waited. |
-| `outcome` | `simulated`, `measured`, `placed`, `refined`, `best`, `answer`. |
+| `simulation_status` | What the simulator returned for it. |
+| `outcome` | Six flags -- `simulated`, `measured`, `placed`, `refined`, `best`, `answer` -- saying what became of it. |
 
 See [Interpreting a PlanReport](plan-report.md#search-diagnostics) for the
 meaning of a problem versus a policy.
@@ -413,9 +415,10 @@ trigger/completion deltas, and cross-lane memory-reuse dependencies.
 | `attempts` | Ordered capacity-refinement trials and optional search diagnostics. |
 
 The fixed-layout certificate binds program, schedule, and topology digests. It
-records pool/fixed/dynamic/scratch/required bytes, every placement, causal
-reuse dependencies, dynamic lifetimes, initial-object leases, task-allocation
-leases, and transfer-action destination leases. Offsets are relative to the
+records the pool, fixed-slice, resident-slice, dynamic-reserve, scratch-reserve
+and required byte counts, every placement, causal reuse dependencies, dynamic
+lifetimes, initial-object leases, task-allocation leases, and transfer-action
+destination leases. Offsets are relative to the
 callable fixed slice, not raw process pointers.
 
 Each attempt records requested/effective object capacity, required bytes,

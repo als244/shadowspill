@@ -78,7 +78,7 @@ The simulator receives `ActionPhysicalDelta` values for these reservations and
 reuses an evicted range cannot start before that eviction completes, even when
 the nominal object schedule would otherwise permit it.
 
-## Compiled production path
+## The production path
 
 `simulate()` always uses the installed C simulator and fails closed if the
 library or ABI is unavailable. The readable Python implementation is a
@@ -108,5 +108,5 @@ The [StepResult diagnostics guide](../python/step-diagnostics.md) defines the
 real-versus-simulated task and transfer fields, clock domains, selected-span
 summary, trace-integrity checks, and investigation workflow.
 
-Previous: [Planning orchestration](planning.md). Next:
-[Memory runtime](memory-runtime.md).
+Previous: [Fixed-offset placement](fixed-placement.md). Next: [Planning
+orchestration](planning.md).

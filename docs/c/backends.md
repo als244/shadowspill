@@ -4,8 +4,9 @@
 accelerator provider: one header, one version, `SHADOWSPILL_BACKEND_ABI_VERSION`.
 A backend is a flat table of driver-level calls that one shared object per
 provider implements and exports through two symbols. Everything built from
-those calls, pools, routes, lanes, event pools, calibration, is ShadowSpill's,
-so a backend carries no policy and owns nothing beyond the provider context.
+those calls -- pools, routes, lanes, event pools, calibration -- is
+ShadowSpill's, so a backend carries no policy and owns nothing beyond the
+provider context.
 [Backends](../architecture/backends.md) explains the boundary; this page is the
 reference.
 
@@ -41,7 +42,7 @@ nonzero on failure unless noted.
 | streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `wrap_stream(framework_stream_handle)` returning a token |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
 | events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
-| facts | `capabilities(&out)`, `physical_memory(&out)`, `statistics(&out)`, which returns nothing |
+| facts | `capabilities(&out)`, `physical_memory(&out)`, and `statistics(&out)`, the one entry here that returns nothing |
 | profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)` returning a range, `range_end(range)` |
 
 Memory: device memory is the backend's to allocate; host memory is
@@ -75,15 +76,14 @@ void shadowspill_backend_destroy(ShadowSpillBackend *backend);
 ```
 
 `shadowspill_backend_create()` fills the table and returns 0, or returns
-nonzero leaving nothing to destroy. `shadowspill_backend_destroy()` releases
-the provider object and zeroes the table; it
-runs after the runtime it served is gone, so every stream, event, mapping, and
-arena has already been returned through the table.
-`SHADOWSPILL_BACKEND_CREATE_SYMBOL` and `SHADOWSPILL_BACKEND_DESTROY_SYMBOL`
-name them for `dlsym()`, and `ShadowSpillBackendCreate` and
-`ShadowSpillBackendDestroy` are the function-pointer types to cast the results
-to. `shadowspill_backend_is_valid()` in
-`<shadowspill/runtime.h>` is the check both the runtime and the adapter apply
+nonzero leaving nothing to destroy. `shadowspill_backend_destroy()` releases the
+provider object and zeroes the table; it runs after the runtime it served is
+gone, so every stream, event, mapping, and arena has already been returned
+through the table. `SHADOWSPILL_BACKEND_CREATE_SYMBOL` and
+`SHADOWSPILL_BACKEND_DESTROY_SYMBOL` name them for `dlsym()`, and
+`ShadowSpillBackendCreate` and `ShadowSpillBackendDestroy` are the
+function-pointer types to cast the results to. `shadowspill_backend_is_valid()`
+in `<shadowspill/runtime.h>` is the check both the runtime and the adapter apply
 to a table before using it.
 
 ## Threading and lifetime

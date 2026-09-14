@@ -78,5 +78,4 @@ step and the one a sweep plans. A saved problem round-trips through
 `ShadowSpillPlanningProblem.from_value()` and is the unit the corpus stores
 — see [program collection](../../benchmarking/program_collection/README.md).
 
-Previous: [The ShadowSpillProgram](program.md). Next: [Plan
-search](search.md).
+Previous: [The ShadowSpillProgram](program.md). Next: [Plan search](search.md).

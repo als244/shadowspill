@@ -352,3 +352,6 @@ program being planned, which they are not.
   state, and for how dtype is decided.
 - [The artifact store](../python/artifact-store.md) for how a captured update
   is keyed, stored and reused across processes.
+
+Previous: [Importing state](state-import.md). Next: [The
+ShadowSpillProgram](program.md).

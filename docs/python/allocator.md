@@ -4,11 +4,11 @@ What happens underneath a planned callable, between PyTorch's allocator and the
 neutral C runtime. The API this page describes is not called directly: it is
 reached by constructing a [`Runtime`](api/frontend.md#runtime) and running a
 planned callable. Read it to understand a failure, a trace, or a profiler
-timeline. The compiled boundary itself is specified in [the PyTorch adapter C
+timeline. The adapter boundary itself is specified in [the PyTorch adapter C
 API](../c/pytorch-adapter.md).
 
-`Runtime` installs the ShadowSpill allocator through the compiled PyTorch
-adapter. Allocator selection is process-global and cannot be reversed after
+`Runtime` installs the ShadowSpill allocator through the PyTorch adapter
+library. Allocator selection is process-global and cannot be reversed after
 PyTorch initializes the accelerator, so construct exactly one runtime before
 any accelerator tensor allocation.
 
@@ -35,10 +35,10 @@ matching free.
 ## Storage rebinding
 
 Logical objects keep identity while their current execution address changes.
-Before a task, the native boundary snapshots current leases, inserts stream
-waits for unfinished fetches, and batch-rebinds PyTorch storages. After the
-compiled call, returned allocations are classified as outputs, mutations, or
-anonymous temporaries and published through the runtime. Generation ownership
+Before a task, the adapter snapshots current leases, inserts stream waits for
+unfinished fetches, and batch-rebinds PyTorch storages. After the compiled call,
+returned allocations are classified as outputs, mutations, or anonymous
+temporaries and published through the runtime. Generation ownership
 stays in the neutral runtime; ordinary task boundaries do not copy generation
 arrays into Python.
 
@@ -57,8 +57,9 @@ can satisfy the request; otherwise the runtime reports no progress.
 
 `profiler_annotations=True` enables backend profiler ranges such as task,
 compiled-call, fetch, evict, and allocation labels. It is independent of
-`runtime_trace=True`, which records the structured data returned through
-`StepDiagnostics`. Both are off by default, and both are per invocation.
+`runtime_trace=True`, which a training call takes to record the structured data
+returned through `StepDiagnostics`. Both are off by default, and both are per
+invocation.
 
-The C worker is a provider-independent native thread and does not execute
-Python or acquire the GIL.
+The C worker is a provider-independent thread of its own; it executes no
+Python and never acquires the GIL.

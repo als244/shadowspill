@@ -247,3 +247,5 @@ express.
   state must survive, which is a different question from where it lives.
 - [Plan search](search.md) for how residency decides when state is on the
   device.
+
+Previous: [The step artifacts](step.md). Next: [The optimizer](optimizer.md).

@@ -116,8 +116,7 @@ needed more contiguous pool than the pool has.
   search is skipped, since a candidate is skipped when the record already
   holds something it cannot beat, so per-candidate counters like
   `placements_attempted` move with it and so can the choice between plans
-  that tie. Each result owns its storage afterwards, including when the call
-  reports a failure, since problems that completed still hold theirs.
+  that tie.
 - `shadowspill_pressurefit_preflight()` fills a
   `ShadowSpillPressureFitPreflightResult` without evaluating candidate
   policies. Its `failure_kind` is a
@@ -237,9 +236,7 @@ explaining a plan and not otherwise.
 `CANDIDATE_DIAGNOSTIC`, `SECTION_TIMING`, `REDUCTION_STEP`,
 `BEST_PLACED_RECORD` or `RESULT`. The values continue
 `enum ShadowSpillPlannerStruct` rather than restarting, so one call answers for
-the generic planner and for this search, and a caller mirroring these layouts —
-the Python bindings do — compares its sizes at load rather than discovering a
-mismatch as corrupted counters.
+the generic planner and for this search.
 
 ## Ownership
 

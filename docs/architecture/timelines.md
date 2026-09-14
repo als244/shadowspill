@@ -129,3 +129,5 @@ The step-level result of all this is described field by field in
 [StepResult diagnostics](../python/step-diagnostics.md); the event and stream
 calls the intervals rest on are in the [backend
 contract](../c/backends.md).
+
+Previous: [PyTorch adapter](adapter.md).
