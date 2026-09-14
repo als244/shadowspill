@@ -51,9 +51,21 @@ static int ordered_task_capture(void) {
         .object_id = 9U,
         .size_bytes = 96U,
     };
-    int failed = shadowspill_allocation_telemetry_start(runtime, 8U) !=
+    /* A scope names a plan that exists, so open one for it to name. */
+    ShadowSpillPlan *scope_plan = NULL;
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    int failed = shadowspill_test_plan_create(runtime, &roles, &scope_plan) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_allocation_scope_begin(runtime, 0U, 42U) !=
+        shadowspill_allocation_telemetry_start(runtime, 8U) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_allocation_scope_begin(
+            runtime, 0U, shadowspill_plan_id(scope_plan), 42U
+        ) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_allocate(runtime, 0U, 64U, 1U, compute, &first) !=
             SHADOWSPILL_STATUS_OK ||
@@ -72,18 +84,18 @@ static int ordered_task_capture(void) {
 
     uint64_t count = 0U;
     ShadowSpillAllocationEvent events[8] = {{0}};
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     failed = failed || shadowspill_allocation_telemetry_read(
             runtime, NULL, 0U, &count
         ) != SHADOWSPILL_STATUS_OK || (count != 4U && count != 5U) ||
         shadowspill_allocation_telemetry_read(
             runtime, events, 8U, &count
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocation_events != count ||
-        statistics.allocation_event_capacity != 8U ||
-        statistics.allocation_event_overflow != 0U;
+        statistics.runtime.allocation_events != count ||
+        statistics.runtime.allocation_event_capacity != 8U ||
+        statistics.runtime.allocation_event_overflow != 0U;
     const uint8_t expected_logical_kinds[] = {
         SHADOWSPILL_ALLOCATION_CREATED,
         SHADOWSPILL_ALLOCATION_LOGICAL_FREED,
@@ -165,25 +177,21 @@ static int same_stream_retirement_is_task_batched(void) {
         ) != SHADOWSPILL_STATUS_OK;
     }
     shadowspill_mock_backend_statistics(&mock, &during);
-    ShadowSpillRuntimeStatistics during_runtime = {0};
-    failed = failed || shadowspill_runtime_statistics(
-            runtime, &during_runtime
-        ) != SHADOWSPILL_STATUS_OK ||
+    ShadowSpillTestStatistics during_runtime = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &during_runtime) != SHADOWSPILL_STATUS_OK ||
         during.operation_count != before.operation_count ||
-        during_runtime.pending_retirements != 1U ||
-        during_runtime.allocated_bytes != 64U ||
-        during_runtime.live_allocations != 1U ||
+        during_runtime.runtime.pending_retirements != 1U ||
+        during_runtime.execution.allocated_bytes != 64U ||
+        during_runtime.execution.live_allocations != 1U ||
         shadowspill_test_after_task(
             runtime, task.task_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
     shadowspill_mock_backend_statistics(&mock, &after);
-    ShadowSpillRuntimeStatistics runtime_statistics = {0};
-    failed = failed || shadowspill_runtime_statistics(
-            runtime, &runtime_statistics
-        ) != SHADOWSPILL_STATUS_OK ||
-        runtime_statistics.pending_retirements != 0U ||
-        runtime_statistics.allocated_bytes != 0U ||
+    ShadowSpillTestStatistics runtime_statistics = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &runtime_statistics) != SHADOWSPILL_STATUS_OK ||
+        runtime_statistics.runtime.pending_retirements != 0U ||
+        runtime_statistics.execution.allocated_bytes != 0U ||
         after.operation_count - during.operation_count >= 32U;
     if (failed) {
         fprintf(
@@ -194,12 +202,12 @@ static int same_stream_retirement_is_task_batched(void) {
             (unsigned long long)before.operation_count,
             (unsigned long long)during.operation_count,
             (unsigned long long)after.operation_count,
-            (unsigned long long)during_runtime.pending_retirements,
-            (unsigned long long)during_runtime.live_allocations,
-            (unsigned long long)during_runtime.allocated_bytes,
-            (unsigned long long)runtime_statistics.pending_retirements,
-            (unsigned long long)runtime_statistics.queued_actions,
-            (unsigned long long)runtime_statistics.allocated_bytes
+            (unsigned long long)during_runtime.runtime.pending_retirements,
+            (unsigned long long)during_runtime.execution.live_allocations,
+            (unsigned long long)during_runtime.execution.allocated_bytes,
+            (unsigned long long)runtime_statistics.runtime.pending_retirements,
+            (unsigned long long)runtime_statistics.runtime.queued_actions,
+            (unsigned long long)runtime_statistics.execution.allocated_bytes
         );
     }
     destroy_runtime(&mock, runtime, compute);
@@ -377,12 +385,12 @@ static int overflow_stops_recording_not_the_runtime(void) {
         return -1;
     }
     ShadowSpillRuntimeFailure failure = {0};
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     const int failed =
         /* The overflow is reported ... */
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocation_event_overflow != 1U ||
+        statistics.runtime.allocation_event_overflow != 1U ||
         /* ... and nothing was latched ... */
         shadowspill_runtime_failure(runtime, &failure) !=
             SHADOWSPILL_STATUS_OK ||

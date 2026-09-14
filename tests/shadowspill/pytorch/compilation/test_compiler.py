@@ -225,6 +225,7 @@ def test_manifest_hydration_restores_arguments_before_measurement(
     profiler = TaskProfiler(
         _TaskLibrary(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -312,6 +313,7 @@ def test_device_measurement_uses_events_and_reports_workspace(
     profiler = TaskProfiler(
         library,
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=2,
@@ -412,6 +414,7 @@ def test_workspace_boundary_always_stops_telemetry(
     profiler = TaskProfiler(
         library,
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -427,6 +430,7 @@ def test_workspace_boundary_always_stops_telemetry(
     failing = TaskProfiler(
         failing_library,
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -471,6 +475,7 @@ def test_workspace_releases_disposable_results_before_scope_end(
     profiler = TaskProfiler(
         Library(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -499,6 +504,7 @@ def test_output_allocation_lookup_is_exact() -> None:
     profiler = TaskProfiler(
         _Lookup(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -518,6 +524,7 @@ def test_output_allocation_lookup_is_exact() -> None:
     missing = TaskProfiler(
         _Missing(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -540,7 +547,7 @@ def test_profiler_rejects_empty_calibration(
     options: dict[str, int], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        TaskProfiler(object(), runtime_handle=0, device_ordinal=0, **options)
+        TaskProfiler(object(), runtime_handle=0, plan_id=1, device_ordinal=0, **options)
 
 
 def test_retention_audit_accepts_a_stable_live_byte_baseline(
@@ -549,6 +556,7 @@ def test_retention_audit_accepts_a_stable_live_byte_baseline(
     profiler = TaskProfiler(
         object(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -578,6 +586,7 @@ def test_retention_audit_rejects_unbounded_growth(
     profiler = TaskProfiler(
         object(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -608,6 +617,7 @@ def test_profiler_rejects_unknown_artifact_protocol() -> None:
     profiler = TaskProfiler(
         object(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -636,6 +646,7 @@ def test_compiler_function_transfer_deduplicates_structural_artifacts(
     profiler = TaskProfiler(
         library,
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -663,6 +674,7 @@ def test_compiler_failure_has_structural_problem_and_preserves_cause(
     profiler = TaskProfiler(
         object(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -695,6 +707,7 @@ def test_profile_failure_has_structural_problem_and_preserves_cause(
     profiler = TaskProfiler(
         object(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,
@@ -740,6 +753,7 @@ def test_measurement_releases_device_examples_between_structural_contracts(
     profiler = TaskProfiler(
         object(),
         runtime_handle=0,
+        plan_id=1,
         device_ordinal=0,
         warmup_iterations=1,
         sample_iterations=1,

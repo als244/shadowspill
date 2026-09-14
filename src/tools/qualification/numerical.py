@@ -731,6 +731,9 @@ def _planned_worker(
         )
         report = training.plan_report
         runtime_statistics = adapter_statistics()
+        # The adapter reports the pool it allocates from; the spill pool is asked
+        # for its own numbers, before close releases what it holds.
+        spill_statistics = runtime.pool_statistics("spill")
         stage_started = time.perf_counter()
         training.close()
         # Reference parity, checkpoint replay, and transfer evidence all read
@@ -817,17 +820,15 @@ def _planned_worker(
         "tensor",
         flush=True,
     )
-    replay_results, replay_exact_failures, replay_structure_failures = (
-        compare_states(
-            {
-                "model": uninterrupted_state["model"],
-                "optimizer": uninterrupted_state["optimizer"],
-            },
-            {
-                "model": final_state["model"],
-                "optimizer": final_state["optimizer"],
-            },
-        )
+    replay_results, replay_exact_failures, replay_structure_failures = compare_states(
+        {
+            "model": uninterrupted_state["model"],
+            "optimizer": uninterrupted_state["optimizer"],
+        },
+        {
+            "model": final_state["model"],
+            "optimizer": final_state["optimizer"],
+        },
     )
     print(
         f"shadowspill {model_implementation}/{family} compared "
@@ -891,9 +892,7 @@ def _planned_worker(
         },
         "planning_cache_request": {
             "directory": (
-                None
-                if artifact_store is None
-                else str(artifact_store.resolve())
+                None if artifact_store is None else str(artifact_store.resolve())
             ),
             "build_store_mode": build_store_mode,
             "plan_store_mode": plan_store_mode,
@@ -1009,14 +1008,12 @@ def _planned_worker(
         "observed_external_high_water_bytes": int(
             runtime_statistics.observed_external_high_water_bytes
         ),
-        "execution_pool_bytes": int(runtime_statistics.runtime.execution_pool_bytes),
+        "execution_pool_bytes": int(runtime_statistics.allocator_pool.capacity_bytes),
         "slab_peak_allocated_bytes": int(
-            runtime_statistics.runtime.peak_allocated_bytes
+            runtime_statistics.allocator_pool.peak_allocated_bytes
         ),
-        "spill_pool_bytes": int(runtime_statistics.runtime.spill_pool_bytes),
-        "spill_peak_allocated_bytes": int(
-            runtime_statistics.runtime.spill_peak_allocated_bytes
-        ),
+        "spill_pool_bytes": int(spill_statistics.capacity_bytes),
+        "spill_peak_allocated_bytes": int(spill_statistics.peak_allocated_bytes),
         "callback_failures": int(runtime_statistics.callback_failures),
         "pointer_lookup_failures": int(runtime_statistics.pointer_lookup_failures),
         "allocation_event_overflow": bool(
@@ -1041,22 +1038,22 @@ def _planned_worker(
             runtime_statistics.runtime.retirement_record_growth_rejections
         ),
         "memory_lease_record_capacity": int(
-            runtime_statistics.runtime.memory_lease_record_capacity
+            runtime_statistics.allocator_pool.memory_lease_record_capacity
         ),
         "memory_lease_record_peak_in_use": int(
-            runtime_statistics.runtime.memory_lease_record_peak_in_use
+            runtime_statistics.allocator_pool.memory_lease_record_peak_in_use
         ),
         "memory_lease_record_growth_rejections": int(
-            runtime_statistics.runtime.memory_lease_record_growth_rejections
+            runtime_statistics.allocator_pool.memory_lease_record_growth_rejections
         ),
         "lease_use_record_capacity": int(
-            runtime_statistics.runtime.lease_use_record_capacity
+            runtime_statistics.allocator_pool.lease_use_record_capacity
         ),
         "lease_use_record_peak_in_use": int(
-            runtime_statistics.runtime.lease_use_record_peak_in_use
+            runtime_statistics.allocator_pool.lease_use_record_peak_in_use
         ),
         "lease_use_record_growth_rejections": int(
-            runtime_statistics.runtime.lease_use_record_growth_rejections
+            runtime_statistics.allocator_pool.lease_use_record_growth_rejections
         ),
         "backend_device_allocations": int(
             runtime_statistics.backend.device_allocations

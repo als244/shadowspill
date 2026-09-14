@@ -178,7 +178,7 @@ static void deactivate_allocation_locked(
     allocation->active_previous_link = NULL;
 }
 
-ShadowSpillMemoryLease *shadowspill_find_execution_lease(
+ShadowSpillMemoryLease *shadowspill_find_lease(
     ShadowSpillMemoryPool *pool,
     uint64_t allocation_id
 ) {
@@ -194,7 +194,7 @@ ShadowSpillMemoryLease *shadowspill_find_execution_lease(
     return NULL;
 }
 
-ShadowSpillMemoryLease *shadowspill_find_execution_lease_by_pointer(
+ShadowSpillMemoryLease *shadowspill_find_lease_by_pointer(
     ShadowSpillMemoryPool *pool,
     const void *pointer
 ) {
@@ -303,7 +303,7 @@ static void initialize_memory_lease_record(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *record,
-    uint64_t origin_task_id
+    ShadowSpillAllocationOrigin origin
 ) {
     ShadowSpillMemoryLease *ownership_next = record->ownership_next;
     memset(record, 0, sizeof(*record));
@@ -317,7 +317,8 @@ static void initialize_memory_lease_record(
     record->generation = atomic_fetch_add_explicit(
         &runtime->next_generation, 1U, memory_order_relaxed
     );
-    record->origin_task_id = origin_task_id;
+    record->origin_plan_id = origin.plan_id;
+    record->origin_task_id = origin.task_id;
     record->origin_task_allocation_sequence = SHADOWSPILL_RUNTIME_NO_ID;
     record->origin_task_allocation_ordinal = SHADOWSPILL_RUNTIME_NO_ID;
     record->origin_task_allocation_is_scratch = 0U;
@@ -327,7 +328,7 @@ static void initialize_memory_lease_record(
 ShadowSpillMemoryLease *shadowspill_memory_pool_acquire_lease_record_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
-    uint64_t origin_task_id
+    ShadowSpillAllocationOrigin origin
 ) {
     ShadowSpillMemoryLease *record = pool->free_lease_records;
     if (record != NULL) {
@@ -351,7 +352,7 @@ ShadowSpillMemoryLease *shadowspill_memory_pool_acquire_lease_record_locked(
     if (pool->lease_record_in_use > pool->lease_record_peak_in_use) {
         pool->lease_record_peak_in_use = pool->lease_record_in_use;
     }
-    initialize_memory_lease_record(runtime, pool, record, origin_task_id);
+    initialize_memory_lease_record(runtime, pool, record, origin);
     return record;
 }
 
@@ -425,7 +426,7 @@ void shadowspill_memory_lease_release(ShadowSpillMemoryLease *lease) {
     pthread_mutex_unlock(&owner->lock);
 }
 
-static void publish_execution_record_locked(
+static void publish_lease_record_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *record,
     ShadowSpillAllocationCategory category
@@ -446,7 +447,7 @@ static void publish_execution_record_locked(
     );
 }
 
-static ShadowSpillStatus own_and_publish_execution_lease_locked(
+static ShadowSpillStatus own_and_publish_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *created,
     int plan_owned,
@@ -454,7 +455,7 @@ static ShadowSpillStatus own_and_publish_execution_lease_locked(
 ) {
     ShadowSpillMemoryPool *pool = created->pool;
     created->plan_owned = plan_owned;
-    publish_execution_record_locked(
+    publish_lease_record_locked(
         runtime,
         created,
         plan_owned ? SHADOWSPILL_ALLOCATION_PLANNED_OBJECT
@@ -476,14 +477,14 @@ static ShadowSpillStatus own_and_publish_execution_lease_locked(
     return status;
 }
 
-static ShadowSpillStatus create_execution_lease_locked(
+static ShadowSpillStatus create_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
     uint64_t alignment,
     int plan_owned,
     ShadowSpillMemoryPlacement placement,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 ) {
     if (record == NULL) {
@@ -498,7 +499,7 @@ static ShadowSpillStatus create_execution_lease_locked(
     }
     ShadowSpillMemoryLease *created =
         shadowspill_memory_pool_acquire_lease_record_locked(
-        runtime, pool, origin_task_id
+        runtime, pool, origin
     );
     if (created == NULL) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
@@ -517,7 +518,7 @@ static ShadowSpillStatus create_execution_lease_locked(
             : SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     shadowspill_publish_pool_geometry_locked(pool);
-    return own_and_publish_execution_lease_locked(
+    return own_and_publish_lease_locked(
         runtime, created, plan_owned, record
     );
 }
@@ -526,7 +527,7 @@ ShadowSpillStatus shadowspill_create_fixed_execution_lease_locked(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement,
     int plan_owned,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 ) {
     if (plan == NULL || placement == NULL || record == NULL ||
@@ -539,7 +540,7 @@ ShadowSpillStatus shadowspill_create_fixed_execution_lease_locked(
     ShadowSpillMemoryPool *pool = plan->execution_pool;
     ShadowSpillMemoryLease *created =
         shadowspill_memory_pool_acquire_lease_record_locked(
-        runtime, pool, origin_task_id
+        runtime, pool, origin
     );
     if (created == NULL) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
@@ -556,17 +557,17 @@ ShadowSpillStatus shadowspill_create_fixed_execution_lease_locked(
         shadowspill_memory_pool_try_recycle_lease_record_locked(created);
         return status;
     }
-    return own_and_publish_execution_lease_locked(
+    return own_and_publish_lease_locked(
         runtime, created, plan_owned, record
     );
 }
 
-ShadowSpillStatus shadowspill_create_execution_successor_locked(
+ShadowSpillStatus shadowspill_create_successor_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
     uint64_t alignment,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 ) {
     if (runtime == NULL || pool == NULL || record == NULL || bytes == 0U) {
@@ -575,7 +576,7 @@ ShadowSpillStatus shadowspill_create_execution_successor_locked(
     *record = NULL;
     ShadowSpillMemoryLease *created =
         shadowspill_memory_pool_acquire_lease_record_locked(
-        runtime, pool, origin_task_id
+        runtime, pool, origin
     );
     if (created == NULL) {
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
@@ -601,14 +602,14 @@ ShadowSpillStatus shadowspill_create_execution_successor_locked(
     return SHADOWSPILL_STATUS_OK;
 }
 
-static void publish_execution_successor_locked(
+static void publish_successor_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *successor
 ) {
     if (successor->active_previous_link != NULL) {
         return;
     }
-    publish_execution_record_locked(
+    publish_lease_record_locked(
         runtime,
         successor,
         SHADOWSPILL_ALLOCATION_PLANNED_OBJECT
@@ -616,7 +617,7 @@ static void publish_execution_successor_locked(
     shadowspill_publish_pool_geometry_locked(successor->pool);
 }
 
-int shadowspill_acquire_reserved_execution_lease_locked(
+int shadowspill_acquire_reserved_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *successor,
     ShadowSpillEventLease **dependency_event
@@ -625,12 +626,12 @@ int shadowspill_acquire_reserved_execution_lease_locked(
         successor, dependency_event
     );
     if (status == 0) {
-        publish_execution_successor_locked(runtime, successor);
+        publish_successor_lease_locked(runtime, successor);
     }
     return status;
 }
 
-void shadowspill_cancel_execution_reservation_locked(
+void shadowspill_cancel_reservation_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *lease
 ) {
@@ -660,27 +661,27 @@ void shadowspill_cancel_execution_reservation_locked(
         }
         return;
     }
-    shadowspill_release_execution_lease_locked(runtime, lease);
+    shadowspill_release_lease_locked(runtime, lease);
 }
 
-ShadowSpillStatus shadowspill_create_execution_lease_locked(
+ShadowSpillStatus shadowspill_create_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
     uint64_t alignment,
     int plan_owned,
     ShadowSpillMemoryPlacement placement,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 ) {
-    return create_execution_lease_locked(
+    return create_lease_locked(
         runtime,
         pool,
         bytes,
         alignment,
         plan_owned,
         placement,
-        origin_task_id,
+        origin,
         record
     );
 }
@@ -691,7 +692,7 @@ static ShadowSpillStatus reuse_pending_allocation_locked(
     uint64_t bytes,
     uint64_t alignment,
     ShadowSpillBackendStream stream,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     int exact_task_local_only,
     ShadowSpillMemoryLease **record
 ) {
@@ -722,8 +723,8 @@ static ShadowSpillStatus reuse_pending_allocation_locked(
         }
         const int task_local = candidate->retirement_requirements == NULL &&
             candidate->retirement_event == NULL &&
-            candidate->release_task_id == origin_task_id &&
-            origin_task_id != SHADOWSPILL_RUNTIME_NO_ID;
+            candidate->release_task_id == origin.task_id &&
+            origin.task_id != SHADOWSPILL_RUNTIME_NO_ID;
         if (exact_task_local_only && !task_local) {
             continue;
         }
@@ -758,7 +759,7 @@ static ShadowSpillStatus reuse_pending_allocation_locked(
     ShadowSpillMemoryLease *split = NULL;
     if (selected->charged_bytes > required) {
         split = shadowspill_memory_pool_acquire_lease_record_locked(
-            runtime, pool, origin_task_id
+            runtime, pool, origin
         );
         if (split == NULL) {
             return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
@@ -854,7 +855,8 @@ static ShadowSpillStatus reuse_pending_allocation_locked(
     );
     selected->requested_bytes = bytes;
     selected->alignment_bytes = alignment;
-    selected->origin_task_id = origin_task_id;
+    selected->origin_plan_id = origin.plan_id;
+    selected->origin_task_id = origin.task_id;
     selected->release_task_id = SHADOWSPILL_RUNTIME_NO_ID;
     selected->bound_object = NULL;
     selected->logical_freed = 0;
@@ -880,7 +882,7 @@ static ShadowSpillStatus reuse_pending_allocation_locked(
     return shadowspill_failure_status(runtime);
 }
 
-void shadowspill_release_execution_lease_locked(
+void shadowspill_release_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
 ) {
@@ -941,7 +943,7 @@ void shadowspill_release_execution_lease_locked(
     }
     if (causal_successor != NULL &&
         causal_successor->state == SHADOWSPILL_LEASE_RESERVED) {
-        publish_execution_successor_locked(runtime, causal_successor);
+        publish_successor_lease_locked(runtime, causal_successor);
     }
     shadowspill_memory_pool_try_recycle_lease_record_locked(allocation);
 }
@@ -982,6 +984,12 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
         shadowspill_current_task_allocation_is_scratch(runtime);
     const uint64_t task_invocation =
         shadowspill_current_task_invocation(runtime);
+    /* Here the work is the running thread's own scope, so the scope is the
+     * right source for both halves. */
+    const ShadowSpillAllocationOrigin origin = {
+        .plan_id = shadowspill_current_plan_id(runtime),
+        .task_id = task_id,
+    };
     ShadowSpillPlan *plan = shadowspill_current_plan(runtime);
     if (plan != NULL && plan->execution_pool != pool) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
@@ -1036,7 +1044,7 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
                 plan,
                 fixed_placement,
                 0,
-                task_id,
+                origin,
                 &record
             );
         }
@@ -1049,19 +1057,19 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
          */
         if (fixed_placement == NULL) {
             status = reuse_pending_allocation_locked(
-                runtime, pool, bytes, alignment, stream, task_id, 1, &record
+                runtime, pool, bytes, alignment, stream, origin, 1, &record
             );
         }
         if (fixed_placement == NULL &&
             status == SHADOWSPILL_STATUS_OK && record == NULL) {
-            status = shadowspill_create_execution_lease_locked(
+            status = shadowspill_create_lease_locked(
                 runtime,
                 pool,
                 bytes,
                 alignment,
                 0,
                 dynamic_placement,
-                task_id,
+                origin,
                 &record
             );
         }
@@ -1073,7 +1081,7 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
                 bytes,
                 alignment,
                 stream,
-                task_id,
+                origin,
                 0,
                 &record
             );
@@ -1203,7 +1211,7 @@ ShadowSpillStatus shadowspill_memory_pool_allocation_for_pointer(
     }
     shadowspill_memory_pool_lock_foreground(pool);
     ShadowSpillMemoryLease *record =
-        shadowspill_find_execution_lease_by_pointer(pool, pointer);
+        shadowspill_find_lease_by_pointer(pool, pointer);
     if (record == NULL) {
         shadowspill_memory_pool_unlock_foreground(pool);
         return SHADOWSPILL_STATUS_INVALID_STATE;
@@ -1252,7 +1260,7 @@ ShadowSpillStatus shadowspill_memory_pool_record_stream(
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     shadowspill_memory_pool_lock_foreground(pool);
-    ShadowSpillMemoryLease *allocation = shadowspill_find_execution_lease(
+    ShadowSpillMemoryLease *allocation = shadowspill_find_lease(
         pool, allocation_id
     );
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
@@ -1334,7 +1342,7 @@ ShadowSpillStatus shadowspill_memory_pool_free(
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     shadowspill_memory_pool_lock_foreground(pool);
-    ShadowSpillMemoryLease *allocation = shadowspill_find_execution_lease(
+    ShadowSpillMemoryLease *allocation = shadowspill_find_lease(
         pool, allocation_id
     );
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
@@ -1465,7 +1473,7 @@ ShadowSpillStatus shadowspill_memory_pool_free(
     );
 
     shadowspill_memory_pool_lock_foreground(pool);
-    allocation = shadowspill_find_execution_lease(pool, allocation_id);
+    allocation = shadowspill_find_lease(pool, allocation_id);
     if (allocation == NULL || allocation->generation != generation ||
         !allocation->retirement_preparing) {
         shadowspill_memory_pool_unlock_foreground(pool);

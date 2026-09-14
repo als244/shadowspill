@@ -38,21 +38,21 @@ static int best_fit_preserves_largest_range(void) {
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_allocate(runtime, 0U, 48U, 1U, compute, &allocations[4]
         ) != SHADOWSPILL_STATUS_OK;
-    ShadowSpillRuntimeStatistics statistics = {0};
-    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
         allocations[4].pointer != allocations[0].pointer ||
-        statistics.largest_free_range_bytes != 32U ||
+        statistics.execution.largest_free_range_bytes != 32U ||
         allocations[4].charged_bytes != 48U ||
-        statistics.pending_retirements != 3U;
+        statistics.runtime.pending_retirements != 3U;
     if (failed) {
         fprintf(
             stderr,
             "best-fit dynamic mismatch: chosen=%p expected=%p largest=%llu pending=%llu\n",
             allocations[4].pointer,
             allocations[0].pointer,
-            (unsigned long long)statistics.largest_free_range_bytes,
-            (unsigned long long)statistics.pending_retirements
+            (unsigned long long)statistics.execution.largest_free_range_bytes,
+            (unsigned long long)statistics.runtime.pending_retirements
         );
     }
     shadowspill_runtime_destroy(runtime);
@@ -90,14 +90,14 @@ static int same_stream_split_retires_cleanly(void) {
         shadowspill_memory_pool_free(runtime, 0U, split.allocation_id, compute) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
-    ShadowSpillRuntimeStatistics statistics = {0};
-    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.live_allocations != 0U ||
-        statistics.allocated_bytes != 0U ||
-        statistics.free_bytes != 128U ||
-        statistics.free_prefix_bytes != 128U ||
-        statistics.largest_free_range_bytes != 128U;
+        statistics.execution.live_allocations != 0U ||
+        statistics.execution.allocated_bytes != 0U ||
+        statistics.execution.free_bytes != 128U ||
+        statistics.execution.free_prefix_bytes != 128U ||
+        statistics.execution.largest_free_range_bytes != 128U;
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
@@ -161,14 +161,12 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
         }
         failed = failed || shadowspill_runtime_wait_idle(runtime) !=
                 SHADOWSPILL_STATUS_OK;
-        ShadowSpillRuntimeStatistics statistics = {0};
-        failed = failed || shadowspill_runtime_statistics(
-                runtime, &statistics
-            ) != SHADOWSPILL_STATUS_OK ||
-            statistics.live_allocations != 0U ||
-            statistics.allocated_bytes != 0U ||
-            statistics.free_bytes != POOL_BYTES ||
-            statistics.largest_free_range_bytes != POOL_BYTES;
+        ShadowSpillTestStatistics statistics = {0};
+        failed = failed || shadowspill_test_statistics(runtime, &statistics) != SHADOWSPILL_STATUS_OK ||
+            statistics.execution.live_allocations != 0U ||
+            statistics.execution.allocated_bytes != 0U ||
+            statistics.execution.free_bytes != POOL_BYTES ||
+            statistics.execution.largest_free_range_bytes != POOL_BYTES;
     }
     shadowspill_runtime_destroy(runtime);
     if (compute.words[0] != 0U) {
@@ -178,7 +176,96 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
     return failed ? -1 : 0;
 }
 
+static int live_allocations_name_what_statistics_only_counts(void) {
+    /* The count says how many ranges are held; the enumeration says where they
+       are. A refusal for want of a contiguous range is explained by offsets,
+       so this checks that the two agree and that the offsets come back. */
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(&mock, 256U, 0U, 1U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = {{0U, 0U}};
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+            SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0;
+
+    uint64_t count = 1234U;
+    failed = failed || shadowspill_memory_pool_live_allocations(
+            runtime, 0U, NULL, 0U, &count
+        ) != SHADOWSPILL_STATUS_OK || count != 0U;
+
+    ShadowSpillAllocation allocations[3] = {{0}};
+    const uint64_t sizes[] = {64U, 32U, 48U};
+    for (uint32_t index = 0U; !failed && index < 3U; ++index) {
+        failed = shadowspill_memory_pool_allocate(
+                runtime, 0U, sizes[index], 1U, compute, &allocations[index]
+            ) != SHADOWSPILL_STATUS_OK;
+    }
+
+
+    ShadowSpillLiveAllocation live[8] = {{0}};
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed || shadowspill_memory_pool_live_allocations(
+            runtime, 0U, live, 8U, &count
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_statistics(runtime, &statistics) !=
+            SHADOWSPILL_STATUS_OK ||
+        count != 3U ||
+        /* The enumeration and the counter must not disagree. */
+        count != statistics.execution.live_allocations;
+
+    /* Every allocation is accounted for by id, and its size came back. */
+    for (uint32_t index = 0U; !failed && index < 3U; ++index) {
+        int found = 0;
+        for (uint64_t entry = 0U; entry < count; ++entry) {
+            if (live[entry].allocation_id == allocations[index].allocation_id) {
+                found = live[entry].requested_bytes == sizes[index];
+            }
+        }
+        failed = !found;
+    }
+
+    /* A buffer too small reports the whole count rather than the part written,
+       so a caller can size it and ask again. */
+    count = 0U;
+    failed = failed || shadowspill_memory_pool_live_allocations(
+            runtime, 0U, live, 1U, &count
+        ) != SHADOWSPILL_STATUS_OK || count != 3U;
+
+    /* Releasing returns them: the enumeration follows the pool, not a log. */
+    for (uint32_t index = 0U; !failed && index < 3U; ++index) {
+        failed = shadowspill_memory_pool_free(
+                runtime, 0U, allocations[index].allocation_id, compute
+            ) != SHADOWSPILL_STATUS_OK;
+    }
+    failed = failed || shadowspill_runtime_wait_idle(runtime) !=
+            SHADOWSPILL_STATUS_OK;
+    failed = failed || shadowspill_memory_pool_live_allocations(
+            runtime, 0U, live, 8U, &count
+        ) != SHADOWSPILL_STATUS_OK || count != 0U;
+
+    /* An unknown pool is an argument error, not a silent empty answer. */
+    failed = failed || shadowspill_memory_pool_live_allocations(
+            runtime, 99U, live, 8U, &count
+        ) != SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+
+    shadowspill_runtime_destroy(runtime);
+    if (compute.words[0] != 0U) {
+        (void)mock.destroy_stream(mock.state, compute);
+    }
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
+    if (live_allocations_name_what_statistics_only_counts() != 0) {
+        fprintf(stderr, "runtime canary failed: live_allocations\n");
+        return EXIT_FAILURE;
+    }
     if (best_fit_preserves_largest_range() != 0) {
         fprintf(stderr, "runtime canary failed: best_fit_preserves_largest_range\n");
         return EXIT_FAILURE;
@@ -233,13 +320,13 @@ int main(void) {
         return EXIT_FAILURE;
     }
     ShadowSpillAllocation same_stream_reuse = {0};
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     if (shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &same_stream_reuse
         ) != SHADOWSPILL_STATUS_OK ||
         same_stream_reuse.pointer == allocation.pointer ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.pending_retirements != 1U ||
+        statistics.runtime.pending_retirements != 1U ||
         shadowspill_memory_pool_free(runtime, 0U, same_stream_reuse.allocation_id, compute) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK) {
@@ -249,11 +336,11 @@ int main(void) {
         ) != SHADOWSPILL_STATUS_INVALID_STATE) {
         return EXIT_FAILURE;
     }
-    if (shadowspill_runtime_statistics(runtime, &statistics) !=
+    if (shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocated_bytes != 0U || statistics.free_bytes != 256U ||
-        statistics.largest_free_range_bytes != 256U ||
-        statistics.pending_retirements != 0U) {
+        statistics.execution.allocated_bytes != 0U || statistics.execution.free_bytes != 256U ||
+        statistics.execution.largest_free_range_bytes != 256U ||
+        statistics.runtime.pending_retirements != 0U) {
         return EXIT_FAILURE;
     }
 
@@ -304,10 +391,10 @@ int main(void) {
         memcmp(
             original_payload, restored_payload, sizeof(original_payload)
         ) != 0 ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.spill_pool_bytes != 512U ||
-        statistics.spill_allocated_bytes != 128U ||
+        statistics.spill.capacity_bytes != 512U ||
+        statistics.spill.allocated_bytes != 128U ||
         shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_test_publish_initial(
@@ -404,16 +491,16 @@ int main(void) {
         shadowspill_memory_pool_free(runtime, 0U, blocker.allocation_id, compute) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_object_snapshot(runtime, object.object_id, &snapshot) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.evict_transfers != 1U ||
-        statistics.fetch_transfers != 1U ||
-        statistics.bytes_evicted != 128U ||
-        statistics.bytes_fetched != 128U ||
-        statistics.wait_events_inserted != 1U ||
-        statistics.allocated_bytes != 0U ||
+        statistics.runtime.evict_transfers != 1U ||
+        statistics.runtime.fetch_transfers != 1U ||
+        statistics.runtime.bytes_evicted != 128U ||
+        statistics.runtime.bytes_fetched != 128U ||
+        statistics.runtime.wait_events_inserted != 1U ||
+        statistics.execution.allocated_bytes != 0U ||
         snapshot.authoritative_version != 6U || snapshot.spill_current ||
         snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
         snapshot.execution_pointer != NULL) {
@@ -473,11 +560,11 @@ int main(void) {
         ) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.wait_events_inserted != 3U ||
-        statistics.fetch_transfers != 3U ||
-        statistics.allocated_bytes != 0U) {
+        statistics.runtime.wait_events_inserted != 3U ||
+        statistics.runtime.fetch_transfers != 3U ||
+        statistics.execution.allocated_bytes != 0U) {
         return EXIT_FAILURE;
     }
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||

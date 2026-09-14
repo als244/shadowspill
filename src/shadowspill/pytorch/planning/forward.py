@@ -308,6 +308,7 @@ def _capture_partitioned_forward(
 def profile_forward_tasks(
     captured: ForwardCaptureArtifacts,
     *,
+    plan_id: int,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
     stores: PlanningStores,
@@ -318,6 +319,7 @@ def profile_forward_tasks(
     profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
+        plan_id=plan_id,
         device_ordinal=captured.device_ordinal,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
@@ -773,6 +775,7 @@ def build_forward(
     )
     profiled = profile_forward_tasks(
         captured,
+        plan_id=memory.plan_id,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
         stores=artifacts,

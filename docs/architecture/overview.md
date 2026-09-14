@@ -75,7 +75,7 @@ on which it is.
 
 ## Libraries and responsibilities
 
-The compiled code is three kinds of shared object with one direction of
+The shipped libraries are three kinds of shared object with one direction of
 dependency, and a Python package above them:
 
 | Library | Holds | Knows about |
@@ -189,10 +189,15 @@ and carry readiness events, never that any byte has moved. A transfer
 dependency is placed on the compute stream instead of making the dispatcher
 wait on the host when stream ordering can express the dependency.
 
-The runtime owns explicit pool and directed-route registries. Each immutable
-plan independently binds its execution pool, spill pool, fetch route, and
-evict route. The worker services route submission, completion frontiers, and
-deferred releases without holding a general-purpose global runtime mutex.
+The runtime owns explicit pool, route and plan registries, and coordinates them
+rather than answering for their contents. It knows how many pools there are and
+which plan each issued id names; a pool answers for its own capacity, occupancy,
+fragmentation and lease records, and a plan for its own tasks and layout. Pools
+carry no role of their own -- each immutable plan independently binds its
+execution pool, spill pool, fetch route, and evict route -- so "the execution
+pool" is a statement about a plan and never about the runtime. The worker
+services route submission, completion frontiers, and deferred releases without
+holding a general-purpose global runtime mutex.
 
 At the Python boundary, `submit()` returns one invocation-owned result handle.
 Its `result()` method synchronizes that invocation's public completion event.
@@ -211,7 +216,8 @@ retirements; unrelated plans continue independently.
 | Search | Resolving a program into the alternatives it will compare, residency strategies, memory actions, and ranking what it places | The question it is handed, or whether its answer is physically admissible |
 | Simulator | Deterministic compute, transfer, capacity, and dependency replay | Candidate generation or physical placement |
 | Physical admission | Allocation lifetimes, task-allocation contract, fixed placements, dynamic scratch, and causal reuse dependencies | Which search produced the schedule, or its logical policy |
-| Runtime | Pools and their arenas, leases, objects, routes and lanes, calibration, event and timing pools, task boundaries, failure state, and worker progress | Graph capture or model semantics |
+| Runtime | The registries and the work across them: which pools, routes and plan ids exist and what each names, objects, calibration, event and timing pools, task boundaries, failure state, and worker progress | Graph capture or model semantics, or anything a pool or a plan answers for itself |
+| Memory pool | One arena and its suballocation: the leases in it, its capacity, occupancy, largest free range and fragmentation, and its lease-record reserves | Its role in any plan, or what another pool holds |
 | Backend | The driver-level table: device allocation, host memory registration, streams, copies, events, the provider's capabilities, physical memory and statistics, and profiler names and ranges | Any object lifetime or policy: pools, routes, lanes, event pooling |
 | PyTorch adapter | The pluggable allocator, object and storage views, task-boundary and tracing entry points, loading the backend by name | Provider headers or planning |
 
@@ -258,8 +264,8 @@ causal completion fence before a successor can reuse its bytes.
 - Every lease, event, transfer, and object publication is generation-checked;
   stale completion cannot mutate a successor.
 - Execution and spill accounting never exceed their configured physical caps.
-- Allocation behavior outside the admitted strict core is bounded by dynamic
-  scratch; a mismatch fails before an invalid address reaches a kernel.
+- Allocation behavior outside the admitted invariant path is bounded by
+  dynamic scratch; a mismatch fails before an invalid address reaches a kernel.
 - Planner, simulator, admission, and runtime identities remain available in
   diagnostics so an executed step can be reconciled mechanically.
 
@@ -288,8 +294,8 @@ causal completion fence before a successor can reuse its bytes.
 | Execution pools | Framework-accessible memory supplied by configured device backends |
 | Spill pools | Runtime-configured memory pools connected by directed transfer routes |
 | Runtime ownership | Runtime-owned pools, objects, leases, and callable registrations |
-| Transfer topology | Backend-provided ordered lanes serviced by the runtime worker |
-| Allocation variability | Admitted strict core plus bounded optional dynamic scratch |
+| Transfer lanes | Backend-provided ordered lanes serviced by the runtime worker |
+| Allocation variability | The admitted invariant allocation path plus bounded optional dynamic scratch |
 
 Unsupported behavior fails during capture, compilation, profiling, or
 admission instead of selecting a heuristic semantic fallback.
@@ -342,20 +348,24 @@ index](../README.md) annotates the same order; this is the map.
 
 **Execution**
 
-18. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
+18. [Plan identity](plan-identity.md) -- what names a plan, what a lease
+    records, and the registry that answers an id after its plan is gone.
+19. [Shared objects](shared-objects.md) -- one value reached by several plans:
+    its per-pool locations, and why binding it allocates nothing.
+20. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
     failure, and tracing.
-19. [Task boundaries](task-boundaries.md) -- what `before_task` and
+21. [Task boundaries](task-boundaries.md) -- what `before_task` and
     `after_task` do, and what is still in flight when the dispatcher returns.
-20. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
+22. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
     does with a failure, and why an exiting process is abandoned.
-21. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
+23. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
     and what step time means.
-22. [Backends](backends.md) -- the driver-level table a provider implements.
-23. [Memory pools](memory-pools.md), [transfers](transfers.md), and
+24. [Backends](backends.md) -- the driver-level table a provider implements.
+25. [Memory pools](memory-pools.md), [transfers](transfers.md), and
     [events](events.md) -- the runtime objects built on that table: arenas,
     routes and lanes with calibration, and event pools.
-24. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the runtime.
-25. [Timelines](timelines.md) -- how a traced step is measured on the device
+26. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the runtime.
+27. [Timelines](timelines.md) -- how a traced step is measured on the device
     clock.
 
 The [Python guide](../python/README.md) and [C guide](../c/README.md) document

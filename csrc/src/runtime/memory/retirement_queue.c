@@ -433,7 +433,7 @@ ShadowSpillRetirementWork shadowspill_handle_retirements(
                 allocation->offset,
                 allocation->charged_bytes
             );
-            shadowspill_release_execution_lease_locked(runtime, allocation);
+            shadowspill_release_lease_locked(runtime, allocation);
             released = 1;
         }
         if (allocation->pool == pool &&

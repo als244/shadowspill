@@ -136,16 +136,16 @@ ShadowSpillStatus shadowspill_trace_prepare(
     ShadowSpillTraceEvent *events = grow_events
         ? calloc((size_t)config->event_capacity, sizeof(*events))
         : NULL;
-    ShadowSpillAllocationEvent *execution_leases = grow_allocations
+    ShadowSpillAllocationEvent *grown_events = grow_allocations
         ? calloc(
             (size_t)config->allocation_event_capacity,
-            sizeof(*execution_leases)
+            sizeof(*grown_events)
         )
         : NULL;
     if ((grow_events && events == NULL) ||
-        (grow_allocations && execution_leases == NULL)) {
+        (grow_allocations && grown_events == NULL)) {
         free(events);
-        free(execution_leases);
+        free(grown_events);
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
 
@@ -163,14 +163,14 @@ ShadowSpillStatus shadowspill_trace_prepare(
             runtime->trace_event_capacity = config->event_capacity;
             events = NULL;
         }
-        if (execution_leases != NULL &&
+        if (grown_events != NULL &&
             runtime->allocation_event_capacity <
                 config->allocation_event_capacity) {
             free(runtime->allocation_events);
-            runtime->allocation_events = execution_leases;
+            runtime->allocation_events = grown_events;
             runtime->allocation_event_capacity =
                 config->allocation_event_capacity;
-            execution_leases = NULL;
+            grown_events = NULL;
         }
         runtime->trace_allocation_event_capacity =
             config->allocation_event_capacity;
@@ -178,7 +178,7 @@ ShadowSpillStatus shadowspill_trace_prepare(
     }
     pthread_mutex_unlock(&runtime->mutex);
     free(events);
-    free(execution_leases);
+    free(grown_events);
     if (status == SHADOWSPILL_STATUS_OK) {
         reserve_timing_events(runtime);
     }

@@ -34,6 +34,31 @@ def _runtime_handle(library: object) -> int:
     return int(handle.value)
 
 
+def _plan_description(library: object) -> PlanDescription:
+    """A description naming an id this runtime issued.
+
+    Plan creation refuses an id it did not hand out, so the id is taken rather
+    than written in, and every field is named: the description's first member is
+    the plan id, so a positional construction silently shifts the pool roles.
+    """
+
+    plan_id = ctypes.c_uint64()
+    status = int(
+        runtime_library().shadowspill_runtime_next_plan_id(
+            _runtime_handle(library), ctypes.byref(plan_id)
+        )
+    )
+    if status != 0 or plan_id.value == 0:
+        raise AssertionError(f"taking a plan id failed with status {status}")
+    return PlanDescription(
+        plan_id=int(plan_id.value),
+        execution_pool_id=0,
+        spill_pool_id=1,
+        fetch_route_id=0,
+        evict_route_id=1,
+    )
+
+
 def _wait_idle(library: object) -> int:
     return int(
         runtime_library().shadowspill_runtime_wait_idle(_runtime_handle(library))
@@ -45,7 +70,7 @@ def _create_plan(library: object) -> int:
     status = int(
         runtime_library().shadowspill_plan_create(
             _runtime_handle(library),
-            ctypes.byref(PlanDescription(0, 1, 0, 1)),
+            ctypes.byref(_plan_description(library)),
             ctypes.byref(handle),
         )
     )
@@ -214,13 +239,13 @@ def main() -> int:
             "allocator reused storage before its recorded stream: "
             f"before_complete={stream_complete_before} "
             f"before_pending={before_replacement.runtime.pending_retirements} "
-            f"before_free={before_replacement.runtime.free_bytes} "
+            f"before_free={before_replacement.allocator_pool.free_bytes} "
             f"stream_complete={stream.query()} "
             f"record_callbacks={debug.record_stream_callbacks} "
             f"pending={debug.runtime.pending_retirements} "
-            f"slab={debug.runtime.execution_pool_bytes} "
-            f"allocated={debug.runtime.allocated_bytes} "
-            f"free={debug.runtime.free_bytes} "
+            f"slab={debug.allocator_pool.capacity_bytes} "
+            f"allocated={debug.allocator_pool.allocated_bytes} "
+            f"free={debug.allocator_pool.free_bytes} "
             f"allocations={debug.allocation_callbacks} "
             f"frees={debug.free_callbacks}"
         )

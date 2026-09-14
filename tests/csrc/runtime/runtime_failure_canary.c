@@ -106,19 +106,19 @@ static int worker_failure(void) {
     if (pthread_create(&waiter, NULL, allocate_while_pending, &waiting) != 0) {
         return -1;
     }
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     for (uint32_t attempt = 0U; attempt < 1000U; ++attempt) {
-        if (shadowspill_runtime_statistics(runtime, &statistics) !=
+        if (shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK) {
             return -1;
         }
-        if (statistics.blocked_allocators == 1U) {
+        if (statistics.execution.blocked_allocators == 1U) {
             break;
         }
         const struct timespec delay = {.tv_nsec = 1000000L};
         (void)nanosleep(&delay, NULL);
     }
-    if (statistics.blocked_allocators != 1U) {
+    if (statistics.execution.blocked_allocators != 1U) {
         return -1;
     }
     shadowspill_mock_fail_next_operation(&mock);
@@ -235,13 +235,13 @@ static int fragmented_oom(void) {
         result = -1;
         goto done;
     }
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     ShadowSpillAllocation impossible = {0};
-    if (shadowspill_runtime_statistics(runtime, &statistics) !=
+    if (shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.free_bytes != 64U ||
-        statistics.largest_free_range_bytes != 32U ||
-        statistics.external_fragmentation_bytes != 32U ||
+        statistics.execution.free_bytes != 64U ||
+        statistics.execution.largest_free_range_bytes != 32U ||
+        statistics.execution.external_fragmentation_bytes != 32U ||
         shadowspill_memory_pool_allocate(runtime, 0U, 48U, 1U, stream, &impossible) !=
             SHADOWSPILL_STATUS_NO_PROGRESS) {
         result = -1;
@@ -294,28 +294,28 @@ static int failed_task_retirement_recovery(void) {
         result = -1;
         goto done;
     }
-    ShadowSpillRuntimeStatistics statistics = {0};
-    if (shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    if (shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.pending_retirements != 1U ||
-        statistics.retirement_records_unfenced != 1U ||
+        statistics.runtime.pending_retirements != 1U ||
+        statistics.runtime.retirement_records_unfenced != 1U ||
         shadowspill_runtime_recover_no_progress(runtime) !=
             SHADOWSPILL_STATUS_INVALID_STATE ||
         shadowspill_test_after_task(
             runtime, task.task_id, stream
         ) != SHADOWSPILL_STATUS_NO_PROGRESS ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.pending_retirements != 1U ||
-        statistics.retirement_records_fenced != 1U ||
-        statistics.retirement_records_unfenced != 0U ||
+        statistics.runtime.pending_retirements != 1U ||
+        statistics.runtime.retirement_records_fenced != 1U ||
+        statistics.runtime.retirement_records_unfenced != 0U ||
         shadowspill_runtime_recover_no_progress(runtime) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.pending_retirements != 0U ||
-        statistics.allocated_bytes != 0U ||
+        statistics.runtime.pending_retirements != 0U ||
+        statistics.execution.allocated_bytes != 0U ||
         shadowspill_memory_pool_allocate(runtime, 0U, 1U, 1U, stream, &recovered) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_memory_pool_free(runtime, 0U, recovered.allocation_id, stream) !=

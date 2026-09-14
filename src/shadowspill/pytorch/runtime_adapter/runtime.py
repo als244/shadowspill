@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import ctypes
+import gc
 import hashlib
 import json
 import threading
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
-from types import MappingProxyType
+from types import FrameType, MappingProxyType, ModuleType
 from typing import Any
 
 import torch
@@ -26,6 +29,12 @@ from shadowspill.memory import (
 )
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
 from shadowspill.pytorch.runtime_adapter.abi import (
+    INITIAL_ACTIONS_TASK_ID,
+    PROFILING_SCOPE_BASE,
+    RUNTIME_OBJECT_SCOPE_ID,
+    Allocation,
+    LiveAllocation,
+    MemoryPoolStatistics,
     ObjectDescription,
     PlanDescription,
     TransferCalibrationConfig,
@@ -81,10 +90,193 @@ class PlanMemory:
     execution_device: int
     transfers: TransferCapabilities
     plan_handle: int
+    #: This plan's identity for the life of the runtime. Every lease its tasks
+    #: make records it, and the allocation scopes opened for it name it too.
+    plan_id: int
 
 
 _runtime_lock = threading.Lock()
 _active_runtime: Runtime | None = None
+
+
+#: `SHADOWSPILL_RUNTIME_NO_ID`: the scope field when there was no scope.
+_NO_SCOPE = (1 << 64) - 1
+
+#: Scope ids above an execution task's range name a synthetic scope rather than
+#: a task of the program. Highest base first, so the search stops at the right
+#: one. `INITIAL_ACTIONS_TASK_ID` is a single id, not a base.
+_SYNTHETIC_SCOPES: tuple[tuple[int, str], ...] = (
+    (RUNTIME_OBJECT_SCOPE_ID, "runtime object"),
+    (PROFILING_SCOPE_BASE, "profiling scope"),
+    (1 << 61, "materialization task"),
+    (INITIAL_ACTIONS_TASK_ID, "initial actions"),
+)
+
+
+def _references_in(container: object) -> tuple[tuple[str, int], ...]:
+    """Where one container refers to other objects, as (where, identity) pairs.
+
+    Only the shapes a reference is actually held in: a mapping's values, a
+    sequence's items, a set's members, and the slots of an object carrying no
+    `__dict__`. An attribute on an ordinary object is not one of them -- it is
+    held in that object's `__dict__`, which is what the collector reports.
+    """
+
+    if isinstance(container, dict):
+        return tuple(
+            (
+                f".{key}"
+                if isinstance(key, str) and key.isidentifier()
+                else f"[{key!r}]",
+                id(value),
+            )
+            for key, value in tuple(container.items())
+        )
+    if isinstance(container, (list, tuple)):
+        return tuple((f"[{index}]", id(value)) for index, value in enumerate(container))
+    if isinstance(container, (set, frozenset)):
+        return tuple(("{...}", id(value)) for value in container)
+    slots = getattr(type(container), "__slots__", ())
+    named = (slots,) if isinstance(slots, str) else slots
+    found: list[tuple[str, int]] = []
+    for name in named:
+        try:
+            found.append((f".{name}", id(getattr(container, name))))
+        except AttributeError:
+            continue
+    return tuple(found)
+
+
+class PlanState(IntEnum):
+    """What became of one plan id, mirroring `ShadowSpillPlanState`.
+
+    An id stays answerable after its plan is gone. A closing plan releases the
+    ranges its own scopes made, so a live allocation naming a closed or destroyed
+    plan is a defect rather than an expected state, and this is what makes it
+    visible. Allocations taken outside any plan's scope carry no plan at all.
+    """
+
+    #: No plan was ever created with this id.
+    UNKNOWN = 0
+    #: Created and open: it may still admit work.
+    LIVE = 1
+    #: Closed, record still present: it admits no further work.
+    CLOSED = 2
+    #: Closed and the record freed. The id stays claimed, because a lease may
+    #: still carry it.
+    DESTROYED = 3
+
+
+@dataclass(frozen=True, slots=True)
+class PoolAllocation:
+    """One allocation a pool currently holds.
+
+    `offset` is a byte offset into the pool's arena, and is what explains a
+    contiguous-range refusal. `origin_task_id` is the scope that made it, so an
+    allocation still held after its scope ended can be attributed rather than
+    merely counted; `logical_freed` marks one the frontend has already given up,
+    which is awaiting retirement rather than outliving anything.
+    """
+
+    allocation_id: int
+    offset: int
+    charged_bytes: int
+    requested_bytes: int
+    #: The plan whose scope made it, or `None` when no plan did. A pool outlives
+    #: any one plan, so this is what separates a range an earlier plan left
+    #: behind from one the current plan made -- task ids cannot, being
+    #: plan-local and so shared between plans.
+    origin_plan_id: int | None
+    #: The scope that made it, or `None` when it was allocated outside any task
+    #: or allocation scope -- a provider's retained state, say, which belongs to
+    #: the process rather than to any scope.
+    origin_task_id: int | None
+    origin_task_invocation: int
+    origin_task_allocation_ordinal: int
+    #: The object this range is bound to, or `None` when it is bound to none.
+    #: An unbound range is workspace: it holds no value the program named.
+    object_id: int | None
+    references: int
+    scratch: bool
+    plan_owned: bool
+    #: Whether the plan ever owned it. Set without `plan_owned` means the range
+    #: was promoted out to a named owner and is no longer the plan's to release.
+    ever_plan_owned: bool
+    logical_freed: bool
+    framework_free_seen: bool
+
+    @property
+    def unclaimed_scope_workspace(self) -> bool:
+        """Workspace a scope made that nobody took ownership of.
+
+        Not every range a scope made is the scope's to reclaim. The contract has
+        three ends, and two of them transfer ownership: a range promoted out to a
+        named owner -- an output the caller holds, an object registered for
+        sharing -- belongs to that owner now, and a range the plan placed is
+        released by the plan's own teardown. One already logically freed is
+        awaiting retirement rather than surviving.
+
+        What is left is workspace nobody named, which is the thing that outlives a
+        scope by accident, and the only thing a closing plan may take back.
+        """
+
+        return (
+            self.origin_task_id is not None
+            and self.object_id is None
+            and not self.plan_owned
+            and not self.ever_plan_owned
+            and not self.logical_freed
+        )
+
+    @property
+    def role(self) -> str:
+        """What the range is for, as far as the runtime alone can tell.
+
+        The runtime knows whether a range is bound to an object the program
+        named, whether a plan placed it, and which scope made it -- enough to
+        separate a planned value from workspace, and workspace made inside a
+        profiling probe from workspace made by a task. It does not know whether
+        a planned object is a parameter or an activation: that is the program's
+        to say, and a caller holding one resolves `object_id` against it.
+        """
+
+        if self.origin_task_id == RUNTIME_OBJECT_SCOPE_ID:
+            # Backs an object the program named, but no plan owns it and any
+            # number may bind it, so it is neither planned nor unscoped.
+            return "runtime-object"
+        if self.plan_owned or self.object_id is not None:
+            return "planned"
+        if self.origin_task_id is None:
+            return "unscoped"
+        if self.origin_task_id >= PROFILING_SCOPE_BASE:
+            # Workspace a probe left behind is provider or custom-operation
+            # state the library keeps for itself, not anything the task owns.
+            return "op-internal"
+        return "workspace"
+
+    @property
+    def origin(self) -> str:
+        """The scope that made it, named rather than numbered.
+
+        Synthetic scopes carry ids far above any task of the program, so a bare
+        number reads as noise. Naming them is what lets a reader tell profiling
+        from execution without knowing the bases.
+
+        The plan comes first, because a task id is plan-local: task 1112 exists
+        in every plan, so the pair is the identity and neither half is one on
+        its own.
+        """
+
+        plan = "" if self.origin_plan_id is None else f"plan {self.origin_plan_id} "
+        if self.origin_task_id is None:
+            return f"{plan}no scope" if plan else "no scope"
+        scope = f"task {self.origin_task_id}"
+        for base, name in _SYNTHETIC_SCOPES:
+            if self.origin_task_id >= base:
+                offset = self.origin_task_id - base
+                scope = f"{name} #{offset}" if offset else name
+                break
+        return f"{plan}{scope}"
 
 
 class Runtime:
@@ -228,6 +420,450 @@ class Runtime:
         """Read-only initialized pool registry keyed by user names."""
 
         return self._pools
+
+    def live_allocations(self, pool: str = "execution") -> tuple[PoolAllocation, ...]:
+        """Every allocation the named pool currently holds, in pool order.
+
+        Statistics answer how many allocations are live; this answers which,
+        and where. Position is what explains a layout refused for want of a
+        contiguous range, because a small allocation in the wrong place costs
+        the largest free range while leaving the free total nearly untouched.
+
+        Each entry names the scope that made it, so an allocation that outlived
+        its scope can be attributed rather than merely counted.
+        """
+
+        registered = self._pools.get(pool)
+        if registered is None:
+            raise KeyError(f"no pool named {pool!r}")
+        library = runtime_library()
+        count = ctypes.c_uint64()
+        status = int(
+            library.shadowspill_memory_pool_live_allocations(
+                self._runtime_handle, registered.pool_id, None, 0, ctypes.byref(count)
+            )
+        )
+        if status != 0:
+            raise RuntimeConfigurationError(
+                f"live allocation query failed with status {status}"
+            )
+        if count.value == 0:
+            return ()
+        buffer = (LiveAllocation * count.value)()
+        copied = ctypes.c_uint64()
+        status = int(
+            library.shadowspill_memory_pool_live_allocations(
+                self._runtime_handle,
+                registered.pool_id,
+                buffer,
+                count.value,
+                ctypes.byref(copied),
+            )
+        )
+        if status != 0:
+            raise RuntimeConfigurationError(
+                f"live allocation query failed with status {status}"
+            )
+        entries = tuple(
+            PoolAllocation(
+                allocation_id=int(item.allocation_id),
+                offset=int(item.offset),
+                charged_bytes=int(item.charged_bytes),
+                requested_bytes=int(item.requested_bytes),
+                origin_plan_id=int(item.origin_plan_id) or None,
+                origin_task_id=(
+                    None
+                    if int(item.origin_task_id) == _NO_SCOPE
+                    else int(item.origin_task_id)
+                ),
+                origin_task_invocation=int(item.origin_task_invocation),
+                origin_task_allocation_ordinal=int(item.origin_task_allocation_ordinal),
+                object_id=(
+                    None if int(item.object_id) == _NO_SCOPE else int(item.object_id)
+                ),
+                references=int(item.references),
+                scratch=bool(item.scratch),
+                plan_owned=bool(item.plan_owned),
+                ever_plan_owned=bool(item.ever_plan_owned),
+                logical_freed=bool(item.logical_freed),
+                framework_free_seen=bool(item.framework_free_seen),
+            )
+            for item in buffer[: min(copied.value, count.value)]
+        )
+        return tuple(sorted(entries, key=lambda item: item.offset))
+
+    def pool_statistics(self, pool: str = "execution") -> MemoryPoolStatistics:
+        """What one pool holds, asked of that pool by name.
+
+        A runtime may own any number of pools and a pool carries no role of its
+        own, so its numbers are read per pool. The allocator's own pool also
+        arrives with the adapter's statistics, which is the one a caller on the
+        allocation path usually wants.
+        """
+
+        registered = self._pools.get(pool)
+        if registered is None:
+            raise RuntimeConfigurationError(f"unknown pool {pool!r}")
+        statistics = MemoryPoolStatistics()
+        status = int(
+            runtime_library().shadowspill_memory_pool_statistics(
+                self._runtime_handle,
+                ctypes.c_uint32(registered.pool_id),
+                ctypes.byref(statistics),
+            )
+        )
+        if status != 0:
+            raise RuntimeExecutionError(
+                f"failed to read statistics for pool {pool!r}: status={status}"
+            )
+        return statistics
+
+    def next_plan_id(self) -> int:
+        """Take an id no other plan on this runtime will be given.
+
+        Taken before the plan is created, so the same id can name the allocation
+        scopes opened for it -- profiling runs under the plan but outside any of
+        its tasks, so the runtime cannot infer the plan there.
+        """
+
+        plan_id = ctypes.c_uint64()
+        status = int(
+            runtime_library().shadowspill_runtime_next_plan_id(
+                self._runtime_handle, ctypes.byref(plan_id)
+            )
+        )
+        if status != 0 or plan_id.value == 0:
+            raise RuntimeExecutionError(f"failed to take a plan id: status={status}")
+        return int(plan_id.value)
+
+    def plan_state(self, plan_id: int) -> PlanState:
+        """What became of one plan id, after the plan itself may be gone."""
+
+        state = ctypes.c_uint32()
+        status = int(
+            runtime_library().shadowspill_runtime_plan_state(
+                self._runtime_handle, ctypes.c_uint64(plan_id), ctypes.byref(state)
+            )
+        )
+        if status != 0:
+            raise RuntimeExecutionError(
+                f"failed to read the state of plan {plan_id}: status={status}"
+            )
+        return PlanState(int(state.value))
+
+    def describe_live_allocations(self, pool: str = "execution") -> tuple[str, ...]:
+        """Every range the pool holds, one line each, in pool order.
+
+        The whole enumeration rather than the part a caller is entitled to act on:
+        what is there, which plan and scope made each range, what it is bound to,
+        and the flags that say who owns it now. Reading a pool's occupancy is the
+        question this answers; deciding what to do about it is not.
+        """
+
+        # A plan's state is asked once per plan, not once per range: a pool holds
+        # many ranges and usually one or two plans' worth.
+        held = self.live_allocations(pool)
+        states: dict[int, str] = {}
+        for item in held:
+            if item.origin_plan_id is not None and item.origin_plan_id not in states:
+                try:
+                    state = self.plan_state(item.origin_plan_id)
+                except RuntimeExecutionError:  # a report must not fail
+                    continue
+                states[item.origin_plan_id] = (
+                    "" if state is PlanState.LIVE else f" ({state.name.lower()})"
+                )
+        return tuple(
+            f"id={item.allocation_id} offset={item.offset}"
+            f" bytes={item.charged_bytes}"
+            f" requested={item.requested_bytes} {item.role} from {item.origin}"
+            f"{states.get(item.origin_plan_id or 0, '')}"
+            f" object={'-' if item.object_id is None else item.object_id}"
+            f" refs={item.references}"
+            f"{' scratch' if item.scratch else ''}"
+            f"{' planned' if item.plan_owned else ''}"
+            f"{' promoted' if item.ever_plan_owned and not item.plan_owned else ''}"
+            f"{' freed-pending-retirement' if item.logical_freed else ''}"
+            f"{' framework-freed' if item.framework_free_seen else ''}"
+            f"{' unclaimed' if item.unclaimed_scope_workspace else ''}"
+            for item in held
+        )
+
+    def plan_scoped_residue(self, plan_handle: int) -> tuple[str, ...]:
+        """Which of one plan's own ranges are still occupied, and by what.
+
+        A plan that closes owes the pool every range its tasks and its profiling
+        probes made, so anything still here is residue. Ranges carrying no plan --
+        a provider taking its own workspace between tasks -- belong to no plan and
+        are not counted.
+
+        This reports; it does not release. A reference can only be dropped by
+        whoever holds it, in that component's own teardown, and a pool of bytes is
+        the wrong place to reach into the object graph and decide on someone
+        else's behalf. What this gives the owner is the fact it needs: the range,
+        the scope that made it, the object occupying it, and where that object is
+        referenced from.
+
+        Returns one description per surviving range.
+        """
+
+        plan_id = int(
+            runtime_library().shadowspill_plan_id(ctypes.c_size_t(plan_handle))
+        )
+        if plan_id == 0:
+            return ()
+        remaining = tuple(
+            item
+            for item in self.live_allocations()
+            if item.origin_plan_id == plan_id and item.unclaimed_scope_workspace
+        )
+        if not remaining:
+            return ()
+        survivors = self.occupants(remaining)
+        occupying = [item for group in survivors.values() for item in group]
+        retainers = self.retainers(
+            occupying, ignore=(survivors, occupying, *survivors.values())
+        )
+        described: list[str] = []
+        for item in remaining:
+            objects = survivors.get(item.allocation_id, ())
+            if not objects:
+                where = "occupied by no frontend object"
+            else:
+                where = "occupied by " + ", ".join(
+                    f"{type(obj).__name__}{tuple(getattr(obj, 'shape', ()))}"
+                    " referenced from "
+                    + (", ".join(retainers.get(id(obj), ())[:2]) or "nothing nameable")
+                    for obj in objects[:2]
+                )
+            described.append(
+                f"offset={item.offset} bytes={item.charged_bytes}"
+                f" {item.role} from {item.origin}, {where}"
+            )
+        return tuple(described)
+
+    def force_release_plan_scope(self, plan_handle: int) -> tuple[int, int]:
+        """Take back everything one plan's own scopes allocated. Returns
+        (storages detached, leases reclaimed).
+
+        The forcing path, for a plan that is closing: its ranges go whether or not
+        the framework has released them. Two halves, because two layers own the
+        two facts.
+
+        The frontend half detaches the storages. A tensor occupying one of these
+        ranges stops referencing those bytes, so the Python object no longer points
+        at memory about to be reclaimed, and a later read raises on an empty
+        storage rather than reading whatever now lives there.
+
+        The runtime half reclaims the leases, in bytes, which is what it owns. A
+        lease the framework has not freed keeps its pointer indexed, so the free
+        that eventually arrives still resolves.
+
+        Ranges carrying no plan -- a provider's own workspace -- are not touched by
+        either half.
+        """
+
+        plan_id = int(
+            runtime_library().shadowspill_plan_id(ctypes.c_size_t(plan_handle))
+        )
+        if plan_id == 0:
+            return (0, 0)
+        held = tuple(
+            item
+            for item in self.live_allocations()
+            if item.origin_plan_id == plan_id and item.unclaimed_scope_workspace
+        )
+        detached = 0
+        if held:
+            storages = [
+                item
+                for group in self.occupants(held).values()
+                for item in group
+                if isinstance(item, torch.Tensor)
+                and item.untyped_storage().data_ptr() != 0
+            ]
+            if storages:
+                torch.ops.shadowspill._dematerialize_storages(storages)
+                detached = len(storages)
+                storages.clear()
+        reclaimed = ctypes.c_uint64()
+        status = int(
+            runtime_library().shadowspill_plan_reclaim_scoped_leases(
+                ctypes.c_size_t(plan_handle), ctypes.byref(reclaimed)
+            )
+        )
+        if status != 0:
+            raise RuntimeExecutionError(
+                f"failed to reclaim the ranges plan {plan_id} allocated:"
+                f" status={status}"
+            )
+        return (detached, int(reclaimed.value))
+
+    def occupants(
+        self, allocations: Sequence[PoolAllocation]
+    ) -> dict[int, tuple[object, ...]]:
+        """The frontend objects whose storage lies inside each given range.
+
+        Answers "what is this range, in the framework's terms". Every live
+        accelerator tensor is mapped back to the allocation that owns its
+        address, and matched against the allocations asked about.
+
+        A range with no match is held by something the framework does not own --
+        a library's retained state, say -- and that is itself the answer: there
+        is no reference for a caller to drop.
+
+        Addresses are compared rather than references kept. A runtime holding a
+        reference to a frontend object would either keep it alive, which is
+        wrong, or hold it weakly and be unable to act on it, so it holds
+        neither.
+        """
+
+        wanted = {item.allocation_id for item in allocations}
+        found: dict[int, list[object]] = {key: [] for key in wanted}
+        library = self._installed.library
+        record = Allocation()
+        # Walking every object touches deprecated framework attributes whose
+        # getters warn; the warning belongs to the object being looked at, not
+        # to this query.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            candidates = [
+                item for item in gc.get_objects() if isinstance(item, torch.Tensor)
+            ]
+        for candidate in candidates:
+            try:
+                if candidate.device.type in ("cpu", "meta"):
+                    continue
+                if candidate.is_meta or type(candidate).__name__ == "FakeTensor":
+                    # Export leaves these behind. They report a device and have no
+                    # storage, so asking for a data pointer warns and tells us
+                    # nothing: one cannot occupy a range in a pool.
+                    continue
+                address = candidate.untyped_storage().data_ptr()
+            except Exception:
+                continue
+            if not address:
+                continue
+            status = int(
+                library.shadowspill_pytorch_allocation_for_pointer(
+                    address, ctypes.byref(record)
+                )
+            )
+            if status == 0 and int(record.allocation_id) in found:
+                found[int(record.allocation_id)].append(candidate)
+        return {key: tuple(value) for key, value in found.items()}
+
+    def retainers(
+        self, held: Sequence[object], *, ignore: Sequence[object] = ()
+    ) -> dict[int, tuple[str, ...]]:
+        """What keeps each given object alive, named where the reference is held.
+
+        `occupants` answers which frontend object occupies a range; this answers
+        why that object is still reachable, which is what a caller needs to
+        release it. A reference can only be dropped where it is held, so what is
+        named is the container -- an attribute on a class, an entry in a module's
+        globals -- and not the object again. An object no container names is held
+        by a library, and that is itself the answer: Python has nothing to drop.
+
+        Keyed by `id`, so a caller reads answers back with the objects it passed
+        in. Stack frames are excluded, this query's own among them; every other
+        referrer is reported, including the caller's own container.
+
+        Descriptions, never references, for the reason `occupants` keeps none:
+        retaining what this walks would extend the lifetime of exactly the
+        objects under investigation.
+        """
+
+        if not held:
+            return {}
+        found: dict[int, list[str]] = {id(item): [] for item in held}
+        # This query's own containers refer to the objects it is asking about: the
+        # sequence passed in, and whatever the caller built it from. Reporting
+        # those would describe the question rather than the answer -- a dict keyed
+        # by allocation id is `occupants`' own result, not a holder worth naming.
+        mine = {id(held), *(id(item) for item in ignore)}
+        referrers = [
+            item
+            for item in gc.get_referrers(*held)
+            if not isinstance(item, FrameType) and id(item) not in mine
+        ]
+        # An attribute arrives as the owner's `__dict__`, which names neither the
+        # owner nor the attribute. One further hop resolves it, batched, because
+        # each hop walks the whole heap.
+        owners: dict[int, str] = {}
+        mappings = [item for item in referrers if isinstance(item, dict)]
+        if mappings:
+            for owner in gc.get_referrers(*mappings):
+                if isinstance(owner, (FrameType, dict)):
+                    continue
+                mapping = getattr(owner, "__dict__", None)
+                if mapping is None:
+                    continue
+                owners[id(mapping)] = (
+                    owner.__name__
+                    if isinstance(owner, ModuleType)
+                    else type(owner).__name__
+                )
+        # A list or tuple carries no name of its own, so it is named by whatever
+        # holds it: one more hop turns `list[2]` into `Owner.attribute[2]`.
+
+        # Named top down, because a container's label depends on its holder's:
+        # naming the container first and the dict afterwards cannot improve on
+        # `dict[49362]`, which says nothing about whose dict it is.
+        def _named(candidate: object) -> str | None:
+            """What holds this, as a module or a type, if anything names it."""
+
+            for holder in gc.get_referrers(candidate):
+                if isinstance(holder, FrameType):
+                    continue
+                if isinstance(holder, ModuleType):
+                    return holder.__name__
+                mapping = getattr(holder, "__dict__", None)
+                if isinstance(mapping, dict) and any(
+                    value is candidate for value in tuple(mapping.values())
+                ):
+                    return type(holder).__name__
+                if isinstance(holder, dict):
+                    for owner in gc.get_referrers(holder):
+                        if isinstance(owner, ModuleType):
+                            return f"{owner.__name__}(globals)"
+                        if getattr(owner, "__dict__", None) is holder:
+                            return type(owner).__name__
+                        # A decorator's cache lives in a closure cell, which is
+                        # reached by neither a module nor an instance dict. The
+                        # function that closed over it is the name worth having.
+                        if type(owner).__name__ == "cell":
+                            for closed in gc.get_referrers(owner):
+                                name = getattr(closed, "__qualname__", None)
+                                if name is not None:
+                                    module = getattr(closed, "__module__", "?")
+                                    return f"{module}.{name}"
+            return None
+
+        anonymous = [item for item in referrers if isinstance(item, (list, tuple, set))]
+        for container in anonymous:
+            for holder in gc.get_referrers(container):
+                if isinstance(holder, FrameType) or not isinstance(holder, dict):
+                    continue
+                keys = [
+                    key for key, value in tuple(holder.items()) if value is container
+                ]
+                if not keys:
+                    continue
+                whose = owners.get(id(holder)) or _named(holder) or "dict"
+                owners[id(container)] = f"{whose}[{keys[0]}]"
+                break
+
+        for referrer in referrers:
+            label = owners.get(id(referrer), type(referrer).__name__)
+            try:
+                references = _references_in(referrer)
+            except Exception:  # a diagnostic must not fail on what it inspects
+                continue
+            for where, target in references:
+                if target in found:
+                    found[target].append(f"{label}{where}")
+        return {key: tuple(dict.fromkeys(value)) for key, value in found.items()}
 
     @property
     def routes(self) -> Mapping[str, RuntimeRoute]:
@@ -576,11 +1212,13 @@ class Runtime:
                     f"route {execution!r} -> {spill!r} is not calibrated"
                 )
             plan_handle_value = ctypes.c_size_t()
+            plan_id = self.next_plan_id()
             status = int(
                 runtime_library().shadowspill_plan_create(
                     self._runtime_handle,
                     ctypes.byref(
                         PlanDescription(
+                            plan_id=plan_id,
                             execution_pool_id=execution_pool.pool_id,
                             spill_pool_id=spill_pool.pool_id,
                             fetch_route_id=fetch_route.route_id,
@@ -609,6 +1247,7 @@ class Runtime:
                 execution_device=resolved_device,
                 transfers=transfers,
                 plan_handle=plan_handle,
+                plan_id=plan_id,
             )
             self._planning_plan_handle = plan_handle
             return memory
@@ -1088,6 +1727,7 @@ def _adapter_path(configured: str | Path | None) -> Path:
 __all__ = [
     "MemoryPool",
     "PlanMemory",
+    "PoolAllocation",
     "Runtime",
     "RuntimeConfigurationError",
     "RuntimeRoute",

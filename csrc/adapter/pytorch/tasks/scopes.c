@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
+    uint64_t plan_id,
     uint64_t scope_id
 ) {
     if (shadowspill_pytorch_task_range_active()) {
@@ -25,7 +26,10 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_begin(
     const ShadowSpillStatus status = runtime == NULL
         ? SHADOWSPILL_STATUS_CLOSED
         : shadowspill_allocation_scope_begin(
-              runtime, shadowspill_pytorch_allocator_pool_id(), scope_id
+              runtime,
+              shadowspill_pytorch_allocator_pool_id(),
+              plan_id,
+              scope_id
           );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_task_range_end();

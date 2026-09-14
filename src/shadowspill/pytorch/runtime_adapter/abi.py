@@ -14,6 +14,10 @@ ADAPTER_ABI_VERSION: Final = 3
 #: from the adapter header, which decodes them in its failure report.
 PROFILING_SCOPE_BASE: Final = 1 << 62
 INITIAL_ACTIONS_TASK_ID: Final = 1 << 60
+#: The scope a runtime-owned object's storage is attributed to: no plan owns it,
+#: and any number of plans may bind the object it backs. Mirrors
+#: `SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID`.
+RUNTIME_OBJECT_SCOPE_ID: Final = (1 << 64) - 2
 
 
 class PoolConfig(ctypes.Structure):
@@ -83,22 +87,70 @@ class AdapterCapabilities(ctypes.Structure):
     ]
 
 
-class RuntimeStatistics(ctypes.Structure):
+class LiveAllocation(ctypes.Structure):
+    """One live allocation, mirroring `ShadowSpillLiveAllocation`."""
+
     _fields_ = [
-        ("execution_pool_bytes", ctypes.c_uint64),
+        ("allocation_id", ctypes.c_uint64),
+        ("offset", ctypes.c_uint64),
+        ("charged_bytes", ctypes.c_uint64),
+        ("requested_bytes", ctypes.c_uint64),
+        ("origin_plan_id", ctypes.c_uint64),
+        ("origin_task_id", ctypes.c_uint64),
+        ("origin_task_invocation", ctypes.c_uint64),
+        ("origin_task_allocation_ordinal", ctypes.c_uint64),
+        ("object_id", ctypes.c_uint64),
+        ("references", ctypes.c_uint32),
+        ("scratch", ctypes.c_uint8),
+        ("plan_owned", ctypes.c_uint8),
+        ("ever_plan_owned", ctypes.c_uint8),
+        ("logical_freed", ctypes.c_uint8),
+        ("framework_free_seen", ctypes.c_uint8),
+    ]
+
+
+class MemoryPoolStatistics(ctypes.Structure):
+    """What one pool holds, mirroring `ShadowSpillMemoryPoolStatistics`.
+
+    Per pool rather than flattened into named fields for two of them: a runtime
+    may own any number of pools, and which of them a plan uses as its execution
+    and spill pools is the plan's choice.
+    """
+
+    _fields_ = [
+        ("pool_id", ctypes.c_uint32),
+        ("kind", ctypes.c_uint8),
+        ("capacity_bytes", ctypes.c_uint64),
         ("requested_allocated_bytes", ctypes.c_uint64),
         ("peak_requested_allocated_bytes", ctypes.c_uint64),
         ("allocated_bytes", ctypes.c_uint64),
+        ("peak_allocated_bytes", ctypes.c_uint64),
         ("free_bytes", ctypes.c_uint64),
         ("free_prefix_bytes", ctypes.c_uint64),
         ("largest_free_range_bytes", ctypes.c_uint64),
         ("external_fragmentation_bytes", ctypes.c_uint64),
-        ("peak_allocated_bytes", ctypes.c_uint64),
-        ("spill_pool_bytes", ctypes.c_uint64),
-        ("spill_allocated_bytes", ctypes.c_uint64),
-        ("spill_peak_allocated_bytes", ctypes.c_uint64),
         ("live_allocations", ctypes.c_uint64),
         ("blocked_allocators", ctypes.c_uint64),
+        ("memory_lease_record_capacity", ctypes.c_uint64),
+        ("memory_lease_record_in_use", ctypes.c_uint64),
+        ("memory_lease_record_peak_in_use", ctypes.c_uint64),
+        ("memory_lease_record_growth_rejections", ctypes.c_uint64),
+        ("lease_use_record_capacity", ctypes.c_uint64),
+        ("lease_use_record_in_use", ctypes.c_uint64),
+        ("lease_use_record_peak_in_use", ctypes.c_uint64),
+        ("lease_use_record_growth_rejections", ctypes.c_uint64),
+    ]
+
+
+class RuntimeStatistics(ctypes.Structure):
+    """What the runtime holds that no pool does.
+
+    The work in flight, the records it owns, and how many pools there are to ask
+    about. A pool's own numbers are in `MemoryPoolStatistics`.
+    """
+
+    _fields_ = [
+        ("pool_count", ctypes.c_uint32),
         ("pending_retirements", ctypes.c_uint64),
         ("retirement_records_fenced", ctypes.c_uint64),
         ("retirement_records_evented", ctypes.c_uint64),
@@ -128,14 +180,6 @@ class RuntimeStatistics(ctypes.Structure):
         ("retirement_record_in_use", ctypes.c_uint64),
         ("retirement_record_peak_in_use", ctypes.c_uint64),
         ("retirement_record_growth_rejections", ctypes.c_uint64),
-        ("memory_lease_record_capacity", ctypes.c_uint64),
-        ("memory_lease_record_in_use", ctypes.c_uint64),
-        ("memory_lease_record_peak_in_use", ctypes.c_uint64),
-        ("memory_lease_record_growth_rejections", ctypes.c_uint64),
-        ("lease_use_record_capacity", ctypes.c_uint64),
-        ("lease_use_record_in_use", ctypes.c_uint64),
-        ("lease_use_record_peak_in_use", ctypes.c_uint64),
-        ("lease_use_record_growth_rejections", ctypes.c_uint64),
         ("caller_owned_allocations", ctypes.c_uint64),
     ]
 
@@ -337,6 +381,7 @@ class AdapterStatistics(ctypes.Structure):
         ("observed_external_high_water_bytes", ctypes.c_uint64),
         ("physical_budget_sealed", ctypes.c_uint64),
         ("runtime", RuntimeStatistics),
+        ("allocator_pool", MemoryPoolStatistics),
         ("backend", BackendStatistics),
     ]
 
@@ -345,6 +390,7 @@ class PlanDescription(ctypes.Structure):
     """The pools and routes one plan is created against."""
 
     _fields_ = [
+        ("plan_id", ctypes.c_uint64),
         ("execution_pool_id", ctypes.c_uint32),
         ("spill_pool_id", ctypes.c_uint32),
         ("fetch_route_id", ctypes.c_uint32),
@@ -616,6 +662,38 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
         ctypes.c_uint32,
     ),
     ("shadowspill_runtime_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),
+    ("shadowspill_plan_id", [ctypes.c_size_t], ctypes.c_uint64),
+    (
+        "shadowspill_plan_reclaim_scoped_leases",
+        [ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint64)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_memory_pool_statistics",
+        [ctypes.c_size_t, ctypes.c_uint32, ctypes.POINTER(MemoryPoolStatistics)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_runtime_next_plan_id",
+        [ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint64)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_runtime_plan_state",
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint32)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_memory_pool_live_allocations",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.POINTER(LiveAllocation),
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+        ],
+        ctypes.c_uint32,
+    ),
     (
         "shadowspill_runtime_calibrate_transfer_capabilities",
         [
@@ -848,7 +926,7 @@ def _configure_task_boundaries(library: Any) -> None:
     _signature(
         library,
         "shadowspill_pytorch_allocation_scope_begin",
-        [ctypes.c_uint64],
+        [ctypes.c_uint64, ctypes.c_uint64],
         ctypes.c_uint32,
     )
     _signature(

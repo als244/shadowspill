@@ -14,6 +14,18 @@ extern "C" {
 #define SHADOWSPILL_RUNTIME_TRACE_LABEL_MAX_BYTES 1024U
 #define SHADOWSPILL_RUNTIME_NO_ID UINT64_MAX
 
+/*
+ * The scope a runtime-owned object's storage is attributed to. No task makes it
+ * and no plan owns it -- the runtime does, when an object is registered -- and
+ * any number of plans may then bind that object, so it outlives all of them.
+ *
+ * Distinct from SHADOWSPILL_RUNTIME_NO_ID, which means no scope was open at all:
+ * a provider taking its own workspace between tasks. Both belong to no plan, but
+ * only this one backs something the program named, and the two want telling
+ * apart when reading what a pool holds.
+ */
+#define SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID (UINT64_MAX - UINT64_C(1))
+
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 typedef struct ShadowSpillPlan ShadowSpillPlan;
 typedef struct ShadowSpillTaskRecord ShadowSpillTaskHandle;
@@ -187,10 +199,25 @@ typedef struct ShadowSpillRuntimeConfig {
 } ShadowSpillRuntimeConfig;
 
 /*
- * Immutable pool and route roles selected by one admitted callable. Multiple
- * plans may share a runtime topology and runtime-owned logical objects.
+ * Immutable pool and route roles selected by one admitted plan. Multiple plans
+ * may share a runtime topology and runtime-owned logical objects, which is why
+ * each carries an id of its own.
  */
 typedef struct ShadowSpillPlanDescription {
+    /*
+     * This plan's identity, chosen by the caller and never interpreted here. It
+     * is carried onto every lease the plan's tasks make, so a pool shared by
+     * several plans can still say which one a range belongs to -- task ids
+     * cannot, being plan-local and therefore shared between plans.
+     *
+     * The caller names this same id on every allocation scope it opens for the
+     * plan, so one number spans the whole period the plan owns, the profiling
+     * that precedes its tasks included.
+     *
+     * Zero is not a valid plan id: it is what a lease made outside any plan
+     * reports, so no plan may hold it.
+     */
+    uint64_t plan_id;
     uint32_t execution_pool_id;
     uint32_t spill_pool_id;
     uint32_t fetch_route_id;
@@ -499,21 +526,49 @@ typedef struct ShadowSpillTraceSummary {
     uint8_t allocation_event_overflow;
 } ShadowSpillTraceSummary;
 
-typedef struct ShadowSpillRuntimeStatistics {
-    uint64_t execution_pool_bytes;
+/*
+ * What one pool holds, asked of that pool. A runtime may own any number of
+ * pools, and which of them a given plan uses as its execution and spill pools is
+ * the plan's choice, so a pool's own numbers are read per pool rather than
+ * flattened into named fields for two of them.
+ *
+ * `free_bytes` less `largest_free_range_bytes` is `external_fragmentation_bytes`,
+ * the number a contiguous-range refusal turns on: the free total says a request
+ * should fit, the largest range says whether it does.
+ */
+typedef struct ShadowSpillMemoryPoolStatistics {
+    uint32_t pool_id;
+    /* The pool kind from its description: device or pinned host. */
+    uint8_t kind;
+    uint64_t capacity_bytes;
     uint64_t requested_allocated_bytes;
     uint64_t peak_requested_allocated_bytes;
     uint64_t allocated_bytes;
+    uint64_t peak_allocated_bytes;
     uint64_t free_bytes;
     uint64_t free_prefix_bytes;
     uint64_t largest_free_range_bytes;
     uint64_t external_fragmentation_bytes;
-    uint64_t peak_allocated_bytes;
-    uint64_t spill_pool_bytes;
-    uint64_t spill_allocated_bytes;
-    uint64_t spill_peak_allocated_bytes;
     uint64_t live_allocations;
     uint64_t blocked_allocators;
+    uint64_t memory_lease_record_capacity;
+    uint64_t memory_lease_record_in_use;
+    uint64_t memory_lease_record_peak_in_use;
+    uint64_t memory_lease_record_growth_rejections;
+    uint64_t lease_use_record_capacity;
+    uint64_t lease_use_record_in_use;
+    uint64_t lease_use_record_peak_in_use;
+    uint64_t lease_use_record_growth_rejections;
+} ShadowSpillMemoryPoolStatistics;
+
+/*
+ * What the runtime holds that no pool does: the work in flight, the records it
+ * owns, and how many pools there are to ask about. Anything a pool knows about
+ * itself is in `ShadowSpillMemoryPoolStatistics`.
+ */
+typedef struct ShadowSpillRuntimeStatistics {
+    /* Pools are `pool_id` 0 through `pool_count - 1`. */
+    uint32_t pool_count;
     uint64_t pending_retirements;
     uint64_t retirement_records_fenced;
     uint64_t retirement_records_evented;
@@ -545,17 +600,55 @@ typedef struct ShadowSpillRuntimeStatistics {
     uint64_t retirement_record_in_use;
     uint64_t retirement_record_peak_in_use;
     uint64_t retirement_record_growth_rejections;
-    uint64_t memory_lease_record_capacity;
-    uint64_t memory_lease_record_in_use;
-    uint64_t memory_lease_record_peak_in_use;
-    uint64_t memory_lease_record_growth_rejections;
-    uint64_t lease_use_record_capacity;
-    uint64_t lease_use_record_in_use;
-    uint64_t lease_use_record_peak_in_use;
-    uint64_t lease_use_record_growth_rejections;
     /* Framework-owned plan outputs that still reference pool storage. */
     uint64_t caller_owned_allocations;
 } ShadowSpillRuntimeStatistics;
+
+/*
+ * One live allocation, as `shadowspill_memory_pool_live_allocations` reports
+ * it. Every field here is already recorded on the lease; this is the shape a
+ * caller reads them in.
+ *
+ * The three flags are what separate an allocation that is merely alive from one
+ * that has outlived the scope which made it. `scratch` was requested as task
+ * workspace rather than as a planned object; `plan_owned` is the converse, a
+ * range the plan placed. `logical_freed` means the frontend has already given
+ * it up and only retirement is outstanding, so it is not a survivor at all.
+ */
+typedef struct ShadowSpillLiveAllocation {
+    uint64_t allocation_id;
+    /* Byte offset into the pool's arena. Position, not size, is what explains
+     * a contiguous-range refusal, so this is the field to sort on. */
+    uint64_t offset;
+    uint64_t charged_bytes;
+    uint64_t requested_bytes;
+    /* The plan whose scope made it, as named in `ShadowSpillPlanDescription`
+     * or at `shadowspill_allocation_scope_begin`. Zero when none was named.
+     * A pool outlives any one plan, so this is what separates a range left
+     * behind by an earlier plan from one the current plan made. */
+    uint64_t origin_plan_id;
+    /* The scope that made it: SHADOWSPILL_RUNTIME_NO_ID when no scope was open,
+     * or SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID for a runtime-owned object's
+     * storage, which belongs to the runtime rather than to any plan. */
+    uint64_t origin_task_id;
+    uint64_t origin_task_invocation;
+    uint64_t origin_task_allocation_ordinal;
+    /* The object this range is bound to, or SHADOWSPILL_RUNTIME_NO_ID when it
+     * is bound to none. The runtime does not know what an object is *for* --
+     * a frontend that has the program can resolve the id to a role, which is
+     * why the id travels rather than a classification. */
+    uint64_t object_id;
+    uint32_t references;
+    uint8_t scratch;
+    uint8_t plan_owned;
+    /* Whether the plan ever owned it, which stays set after ownership moves on.
+     * `ever_plan_owned` without `plan_owned` is a range promoted out to a named
+     * owner -- an output the caller holds now -- and no longer the plan's to
+     * release. */
+    uint8_t ever_plan_owned;
+    uint8_t logical_freed;
+    uint8_t framework_free_seen;
+} ShadowSpillLiveAllocation;
 
 typedef struct ShadowSpillRuntimeFailure {
     uint32_t status;
@@ -642,7 +735,7 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_create(
 
 /*
  * Cold-path capacity reservation for neutral event records. Repeated calls
- * grow the pool for additional admitted callables, each waiting for an idle
+ * grow the pool for additional admitted plans, each waiting for an idle
  * boundary first. After the first call, steady execution never falls back to
  * process allocation when the pool is full.
  */
@@ -675,10 +768,91 @@ shadowspill_runtime_reserve_memory_lease_records(
     uint64_t minimum_free_records
 );
 
+/*
+ * What became of one plan id. A lease can outlive the plan that made it, so the
+ * id on a lease is answerable after the plan itself is gone -- CLOSED is how a
+ * range left behind by earlier work is told from one the current plan made.
+ */
+typedef enum ShadowSpillPlanState {
+    /* No plan was ever created with this id. */
+    SHADOWSPILL_PLAN_STATE_UNKNOWN = 0,
+    /* Created and open: it may still admit work. */
+    SHADOWSPILL_PLAN_STATE_LIVE = 1,
+    /* Closed, record still present: it admits no further work. */
+    SHADOWSPILL_PLAN_STATE_CLOSED = 2,
+    /* Closed and the record freed. The id stays claimed, because a lease may
+     * still carry it. */
+    SHADOWSPILL_PLAN_STATE_DESTROYED = 3
+} ShadowSpillPlanState;
+
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_plan_state(
+    ShadowSpillRuntime *runtime,
+    uint64_t plan_id,
+    ShadowSpillPlanState *state
+);
+
+/*
+ * The plan one id names, or NULL when no record holds it -- the id was never
+ * created with, or its plan has been destroyed. Valid only while the caller
+ * knows the plan is live, since a concurrent destroy would leave it dangling;
+ * ask `shadowspill_runtime_plan_state` to learn what became of an id without
+ * touching the record.
+ */
+SHADOWSPILL_API ShadowSpillPlan *shadowspill_runtime_plan(
+    ShadowSpillRuntime *runtime,
+    uint64_t plan_id
+);
+
+/*
+ * Take the next plan id for this runtime. This only ever counts up, so an id is
+ * unique for the life of the runtime and is not reissued when the plan holding
+ * it is destroyed. A lease is therefore never readable as belonging to a later
+ * plan that happens to have been given the same number.
+ *
+ * Taken before `shadowspill_plan_create` rather than returned by it, so the
+ * caller can name the id on the allocation scopes it opens first.
+ *
+ * An id may be used for one plan only. Plan creation enforces that outright:
+ * an id this did not issue is refused, and so is one that has already been
+ * created with, whether that plan is still live or has since been closed.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_next_plan_id(
+    ShadowSpillRuntime *runtime,
+    uint64_t *plan_id
+);
+
+/*
+ * `description->plan_id` must be an id from `shadowspill_runtime_next_plan_id`
+ * that no live plan on this runtime already holds; anything else is
+ * INVALID_ARGUMENT.
+ */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_create(
     ShadowSpillRuntime *runtime,
     const ShadowSpillPlanDescription *description,
     ShadowSpillPlan **plan
+);
+
+/*
+ * Take back every range this plan's own scopes allocated, whatever still points
+ * at it, and write how many were reclaimed.
+ *
+ * A plan owes the pool every range its tasks and its profiling probes made, and
+ * this is how the runtime collects when nothing else has. It works in leases and
+ * bytes, which is what the runtime owns; it does not consult the framework, and
+ * cannot, so a caller that may still read an object backed by one of these ranges
+ * must drop it first. That is what makes this the forcing path rather than the
+ * ordinary one, where a lease goes when the framework's own reference count
+ * reaches zero.
+ *
+ * Ranges carrying no plan -- a provider taking its own workspace between tasks --
+ * belong to no plan and are left alone.
+ *
+ * A lease the framework has not freed yet keeps its pointer and id indexed, so the
+ * free that eventually arrives still resolves instead of faulting.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_reclaim_scoped_leases(
+    ShadowSpillPlan *plan,
+    uint64_t *reclaimed
 );
 
 SHADOWSPILL_API ShadowSpillStatus shadowspill_plan_close(
@@ -931,6 +1105,11 @@ shadowspill_plan_admit_task(
     const ShadowSpillTaskHandle **handle
 );
 
+/* The id a plan was created with, the inverse of `shadowspill_runtime_plan`. */
+SHADOWSPILL_API uint64_t shadowspill_plan_id(
+    const ShadowSpillPlan *plan
+);
+
 /* Borrow immutable identity already resolved by task admission. */
 SHADOWSPILL_API uint64_t shadowspill_task_id(
     const ShadowSpillTaskHandle *handle
@@ -1114,11 +1293,18 @@ shadowspill_abort_task_handle(
  * structural profiling and other isolated measurements that need causal
  * retirement fences without pretending to execute an admitted task. The end
  * call records a completion event only when the scope retired allocations.
+ *
+ * `plan_id` names the plan the measurement is for. A scope deliberately runs
+ * outside any task, so there is no task here for the runtime to read a plan
+ * from, and the caller names it instead. Without it an allocation made here
+ * would be attributable to nothing -- which is the case these ids remove, since
+ * a profiling probe's retained workspace can outlive the scope that made it.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_allocation_scope_begin(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
+    uint64_t plan_id,
     uint64_t scope_id
 );
 
@@ -1257,6 +1443,36 @@ shadowspill_memory_pool_grow(
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_statistics(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatistics *statistics
+);
+
+/* What the pool `pool_id` names holds. Unknown pool ids are INVALID_ARGUMENT. */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_statistics(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    ShadowSpillMemoryPoolStatistics *statistics
+);
+
+/*
+ * Copies one entry per live allocation of the pool `pool_id` names into
+ * caller-owned storage, in no particular order, and always writes the total
+ * live count to `count` so a caller can size its buffer and call again.
+ *
+ * Statistics answer how many allocations are live; this answers which. A
+ * fixed layout refused for want of a contiguous range is not explained by a
+ * count, because a few bytes in the wrong place cost the largest free range
+ * while leaving the free total almost untouched -- so the offsets are the
+ * diagnosis.
+ *
+ * Writes min(capacity, live) entries and returns OK even when the buffer was
+ * too small; `*count` greater than `capacity` is how truncation is reported.
+ * `out` may be NULL when `capacity` is zero, which asks only for the count.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_live_allocations(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    ShadowSpillLiveAllocation *out,
+    uint64_t capacity,
+    uint64_t *count
 );
 
 /* Copies the immutable first-failure snapshot; status is OK before failure. */

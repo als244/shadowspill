@@ -23,7 +23,7 @@ from shadowspill.pytorch.profiling import (
     profile_unique_artifacts,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
+from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, runtime_library
 from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
@@ -74,9 +74,24 @@ def main() -> int:
         raise AssertionError("canary did not produce two task positions")
 
     phase("profile")
+    # A scope names an id this runtime issued. This canary creates no plan, which
+    # is allowed: the id has to be unique, not to name an admitted plan.
+    scope_plan_id = ctypes.c_uint64()
+    if (
+        int(
+            runtime_library().shadowspill_runtime_next_plan_id(
+                ctypes.c_size_t(installed.runtime_handle),
+                ctypes.byref(scope_plan_id),
+            )
+        )
+        != 0
+        or scope_plan_id.value == 0
+    ):
+        raise AssertionError("taking a plan id for the profiling scopes failed")
     profiler = TaskProfiler(
         installed.library,
         runtime_handle=installed.runtime_handle,
+        plan_id=int(scope_plan_id.value),
         device_ordinal=0,
         warmup_iterations=2,
         sample_iterations=3,
@@ -125,14 +140,12 @@ def main() -> int:
         != 0
     ):
         raise AssertionError("allocator statistics failed after profiling")
-    runtime = statistics.runtime
-    if int(runtime.allocated_bytes) > installed.fixed_execution_bytes:
+    pool = statistics.allocator_pool
+    if int(pool.allocated_bytes) > installed.fixed_execution_bytes:
         raise AssertionError("isolated profiling exceeded the fixed provider reserve")
-    if int(runtime.allocated_bytes) + int(runtime.free_bytes) != int(
-        runtime.execution_pool_bytes
-    ):
+    if int(pool.allocated_bytes) + int(pool.free_bytes) != int(pool.capacity_bytes):
         raise AssertionError("dynamic slab accounting does not reconcile")
-    if int(runtime.largest_free_range_bytes) > int(runtime.free_bytes):
+    if int(pool.largest_free_range_bytes) > int(pool.free_bytes):
         raise AssertionError("largest free range exceeds total free capacity")
     return 0
 

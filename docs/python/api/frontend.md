@@ -68,9 +68,9 @@ Runtime(
 |---|---|---|---|
 | `pools` | `Mapping[str, MemoryPoolConfig]` | required | Pool name to configuration. The PyTorch backend takes one `DevicePool` and any number of `PinnedHostPool` entries. |
 | `routes` | `Mapping[str, TransferRoute]` | required | Route name to directed pool pair. A plan can only move bytes along a route registered here. |
-| `library_path` | `str` \| `Path` \| `None` | `None` | The compiled PyTorch adapter to load; `None` resolves the one installed beside the package. |
+| `library_path` | `str` \| `Path` \| `None` | `None` | The PyTorch adapter library to load; `None` resolves the one installed beside the package. |
 | `calibrate` | `bool` | `True` | Measure every registered route at construction. With `False`, planning refuses a route that was never calibrated until `calibrate_transfer_capabilities()` has run. |
-| `worker_poll_nanoseconds` | `int` | `1_000` | How long the native transfer worker waits between polls. |
+| `worker_poll_nanoseconds` | `int` | `1_000` | How long the C transfer worker waits between polls. |
 | `background_transfer_window_bytes` | `int` | `64 << 20` | How far a lane may run ahead with transfers the plan did not schedule. |
 | `backend` | `str` \| `None` | `None` | Which backend shared object the adapter loads: `None` the one accelerator backend installed beside the libraries, a name resolves to `libshadowspill_backend_<name>.so` there, and a path is used as given. |
 
@@ -123,6 +123,124 @@ runtime](../../architecture/memory-runtime.md#failure-and-teardown) describes.
 Release or copy ordinary device outputs before this call. PyTorch's
 process-global allocator shim cannot be uninstalled, so it remains in a
 permanently closed state and rejects later device allocations.
+
+### What a pool holds
+
+`Runtime.pool_statistics(pool="execution")` reports one pool's own numbers:
+`capacity_bytes`, `allocated_bytes` and `peak_allocated_bytes`,
+`requested_allocated_bytes` and its peak, `free_bytes`, `free_prefix_bytes`,
+`largest_free_range_bytes`, `external_fragmentation_bytes`, `live_allocations`,
+`blocked_allocators`, and the lease-record reserves. They are asked of a pool by
+name rather than flattened into a runtime-wide record, because a runtime may own
+any number of pools and which of them a plan uses for execution and spill is the
+plan's choice. The allocator's own pool also arrives with the adapter's
+statistics as `allocator_pool`, which is the one a caller on the allocation path
+usually wants.
+
+Those numbers say how many ranges a pool holds.
+`Runtime.live_allocations(pool="execution")` says *which*, returning one
+`PoolAllocation` per live range in pool order. That is what a refusal for want of
+a contiguous range actually turns on: one small allocation in the wrong place
+costs the largest free range and leaves the free total almost untouched.
+
+| field | meaning |
+|---|---|
+| `allocation_id` | The lease's identity. |
+| `offset`, `charged_bytes`, `requested_bytes` | Where it sits in the arena, and its size charged and asked for. Position is what explains a refusal. |
+| `origin_plan_id` | The plan whose scope made it, or `None` when no plan did. A pool outlives any one plan, so this is what separates a range an earlier plan left behind from one the current plan made; a task id cannot, being plan-local. |
+| `origin_task_id` | The scope that made it, or `None` when it was made outside any task or allocation scope -- a provider's retained state, say. |
+| `origin_task_invocation`, `origin_task_allocation_ordinal` | Which invocation of that scope, and which allocation within it. |
+| `object_id` | The object the range is bound to, or `None`. An unbound range is workspace: it holds no value the program named. |
+| `references`, `scratch`, `plan_owned`, `ever_plan_owned`, `logical_freed`, `framework_free_seen` | The reference count; whether it was asked for as task workspace; whether the plan owns it now; whether the plan ever owned it, which set without `plan_owned` means the range was promoted out to a named owner and is no longer the plan's to release; whether the frontend has already given it up and only retirement is outstanding; and whether the framework's free has arrived. |
+
+Three properties read those fields rather than adding to them.
+
+`role` is what the range is for as far as the runtime alone can tell:
+`planned` where a plan placed it or an object is bound to it, `runtime-object`
+where it backs an object the program named that no plan owns, `workspace` where
+a task made it and nothing named it, `op-internal` where a profiling probe left
+it behind as provider or custom-operation state, and `unscoped` where no scope
+made it at all. It stops short of whether a planned object is a parameter or an
+activation: that is the program's to say, and a caller holding the program
+resolves `object_id` against it.
+
+`origin` names the scope rather than numbering it, and names the plan first,
+because a task id is plan-local -- task 1112 exists in every plan, so the pair is
+the identity and neither half is one on its own. It reads `plan 7 task 1112` for
+a task of the program; `plan 7 profiling scope #40`, `runtime object`,
+`materialization task` or `initial actions` for the synthetic scopes, whose ids
+sit far above any task and would read as noise as bare numbers; and `no scope`
+for a range no scope made.
+
+`unclaimed_scope_workspace` is workspace a scope made that nobody took ownership
+of. Not every range a scope made is the scope's to reclaim: one promoted out to a
+named owner -- an output the caller holds, an object registered for sharing --
+belongs to that owner now, one the plan placed is released by the plan's own
+teardown, and one already logically freed is awaiting retirement rather than
+surviving. What is left is the thing that outlives a scope by accident, and the
+only thing a closing plan may take back.
+
+`Runtime.describe_live_allocations(pool="execution")` renders the whole
+enumeration, one line per range: allocation id, offset, sizes, role, plan and
+scope, what it is bound to, and the flags that say who owns it now, `unclaimed`
+among them. A plan that has finished is named as such -- `plan 5 task 1112
+(closed)` -- since a range still held by a closed plan is the signature of
+something that should have gone. This reads a pool's occupancy; deciding what to
+do about it is a separate question.
+
+`Runtime.occupants(allocations)` maps each range to the framework objects whose
+storage lies inside it -- what the range is in PyTorch's terms. A range with no
+occupant is held by something the framework does not own, and that is itself the
+answer: there is no reference for a caller to drop.
+`Runtime.retainers(held)` then names where each of those objects is
+*referenced from*, since a reference can only be dropped where it is held.
+Pass `ignore` the containers the question itself built, so the answer names
+holders rather than the query. Both
+compare addresses and return descriptions; neither keeps a reference, which
+would otherwise extend the lifetime of what is being investigated.
+
+### What a closing plan leaves behind
+
+Nothing a plan's own scopes allocated outlives the plan.
+`Runtime.plan_scoped_residue(plan_handle)` returns one description per range of
+that plan's unclaimed scope workspace still standing in the execution pool: the
+range, the scope that made it, the object occupying it, and where that object is
+referenced from.
+Ranges carrying no plan -- a provider taking its own workspace between tasks --
+belong to no plan and are not counted. It reports and does not release, because a
+reference can only be dropped by whoever holds it, in that component's own
+teardown.
+
+`Runtime.force_release_plan_scope(plan_handle)` is the forcing path, for a plan
+that is closing: the ranges its own scopes made go whether or not the framework
+has released them, and it returns `(storages detached, leases reclaimed)`. The
+frontend half detaches the storages, so a tensor over one of those ranges stops
+referencing bytes about to be reclaimed and a later read raises on an empty
+storage rather than reading whatever now lives there. The runtime half reclaims
+the leases, in bytes, which is what it owns; a lease the framework has not freed
+keeps its pointer indexed, so the free that eventually arrives still resolves.
+
+Closing a planned callable runs both, as one of its cleanup steps: it names the
+residue, reclaims it, and reports what it took in a `RuntimeWarning` rather than
+raising, since a kernel is entitled to keep state between tasks and what is
+wanted during teardown is visibility. Setting
+`SHADOWSPILL_REPORT_LIVE_ALLOCATIONS` to a non-empty value adds a second
+`RuntimeWarning` carrying `describe_live_allocations()` for the whole execution
+pool, emitted before anything is released, so the residue can be read against the
+rest of the pool rather than on its own.
+
+### Plan identity
+
+`Runtime.next_plan_id()` takes an id no other plan on this runtime will be given,
+and `plan_state(plan_id)` says what became of one: `PlanState.UNKNOWN`, `LIVE`,
+`CLOSED`, or `DESTROYED`. The id is taken before the plan is created, so the same
+id can name the allocation scopes opened for it -- profiling runs under the plan
+but outside any of its tasks, where the runtime cannot infer it. An id stays
+answerable after its plan is gone, because a closing plan releases the ranges its
+scopes made and so a live allocation naming a closed or destroyed plan is a
+defect worth seeing. Plan resolution takes an id for each plan it creates and
+records it on `PlanMemory.plan_id`; see
+[plan identity](../../architecture/plan-identity.md).
 
 The immutable runtime values are `MemoryPool`, `TransferProfile`,
 `TransferCapabilities`, `ExecutionTaskIdentity`, `RuntimeFailureDiagnostics`,
@@ -836,9 +954,10 @@ labels. It must not mutate the graph.
 
 ## Planned callables
 
-Both callables expose the `plan_report` attribute, `state_dict() -> dict[str,
-object]`, `load_state_dict(checkpoint) -> None` taking back exactly what
-`state_dict()` produced, `close() -> None`, and context manager support.
+Both callables expose the `plan_report` attribute, `close() -> None`, context
+manager support, and a `state_dict()` / `load_state_dict()` pair that takes back
+exactly what `state_dict()` produced. `PlannedForward`'s pair is the model's own
+CPU state mapping; `PlannedTrainStep`'s is the three-key checkpoint below.
 `PlannedTrainStep` also exposes `invocation_timings()` and `mark_cycle_end()`,
 the step's time on the device clock; see [timing](timing.md).
 
@@ -940,9 +1059,10 @@ the updated weights throughout: a step both begins and ends with parameters
 spill-resident, so each update is already there. Running a step points those
 same `Parameter` objects at device memory; closing points them back.
 `export_model_state()` is the separate call that copies the values into
-ordinary CPU tensors.
+ordinary CPU tensors. Closing also takes back whatever the plan's own scopes
+left behind, as [above](#what-a-closing-plan-leaves-behind).
 
-Optimizer state has no equivalent home today. `plan_step()` builds the
+Optimizer state has no equivalent home. `plan_step()` builds the
 optimizer from the callable it is given and creates its state in storage the
 plan owns, and planning refuses an optimizer whose state the caller already
 imported, so there is no caller-owned pool for it to be left in. That state is
@@ -982,5 +1102,5 @@ structural contract, task kind, and operators when available.
 
 Runtime failures raise `RuntimeConfigurationError` for a configuration a
 runtime cannot accept and `RuntimeExecutionError` for a failure during
-execution; both retain the first native failure and its task identity, reported
-through `Runtime.last_failure` as `RuntimeFailureDiagnostics`.
+execution; both retain the first failure the C runtime reported and its task
+identity, reached through `Runtime.last_failure` as `RuntimeFailureDiagnostics`.
