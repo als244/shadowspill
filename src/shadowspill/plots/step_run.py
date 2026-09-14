@@ -111,14 +111,28 @@ def plot_step_run(
     return (
         _throughput(target / "throughput.png", ordered, tokens_per_step),
         _fidelity(target / "sim_fidelity.png", ordered),
-        _raw_data(target.parent / "raw_data", ordered, tokens_per_step),
+        write_run_tables(
+            ordered, target.parent / "raw_data", tokens_per_step=tokens_per_step
+        ),
     )
 
 
-def _raw_data(
-    target: Path, ordered: Sequence[RunBudgetOutcome], tokens_per_step: int
+def write_run_tables(
+    entries: Sequence[RunBudgetOutcome],
+    directory: str | Path,
+    *,
+    tokens_per_step: int,
 ) -> Path:
-    """The numbers both run figures draw, as one tidy table."""
+    """The numbers both run figures draw, as one tidy table.
+
+    Separate from drawing so a caller can keep the record current as it goes.
+    Figures are worth rendering once at the end; the tables behind them are
+    worth having after every budget, because a run that stops early should still
+    leave what it measured, and the figures can be redrawn from tables.
+    """
+
+    target = Path(directory)
+    ordered = sorted(entries, key=lambda item: item.execution_budget_bytes)
 
     target.mkdir(parents=True, exist_ok=True)
     path = target / "run_budgets.csv"

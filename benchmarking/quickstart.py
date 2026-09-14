@@ -60,10 +60,16 @@ from shadowspill.planner.search.toolkit.resolution import (
     DEFAULT_RESOLUTION_OPTIONS,
     validate_resolution_options,
 )
-from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
+from shadowspill.plots import (
+    RunBudgetOutcome,
+    plot_step_run,
+    plot_step_search,
+    write_run_tables,
+)
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
 from shadowspill.pytorch.planning import planned_transfer_bandwidths
+from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
 from shadowspill.pytorch.runtime_adapter.runtime import planned_execution_budget
 from shadowspill.pytorch.step_search import search_geometries
 from shadowspill.store import STORE_MODES
@@ -1455,7 +1461,26 @@ def main() -> int:
                 f" x {geometry[1]} microbatches, walked {ordering.label}"
             )
             print()
-            run_entries.append(run_one_budget(budget, geometry, incumbent))
+            # A budget whose plan could not be admitted is a result about that
+            # budget, not about the tour: an infeasible *plan* already skips with
+            # a message, and a refused layout should read the same way rather
+            # than discarding every budget after it. The figures for the budgets
+            # that did run are worth more than a stack trace.
+            try:
+                run_entries.append(run_one_budget(budget, geometry, incumbent))
+            except RuntimeExecutionError as error:
+                print(f"  {gib(budget)} could not be admitted: {error}")
+                plan_log.note(f"{gib(budget)} refused admission; skipping")
+                gc.collect()
+            if arguments.plots and run_entries:
+                # The record is kept current rather than written once at the
+                # end, so a run that stops early still leaves what it measured
+                # and its figures can be redrawn from the tables.
+                write_run_tables(
+                    run_entries,
+                    run_root / "figures" / "raw_data",
+                    tokens_per_step=tokens_per_step,
+                )
             # The frame that owned the closed plan is gone; collect what its
             # internals hold in cycles, so the host memory that plan still
             # occupies is free before the next budget plans.
