@@ -337,10 +337,10 @@ class TrainingExecutor(AnnotatedExecutor):
         stream.synchronize()
 
     def __call__(
-        self, inputs: Sequence[Sequence[Any]]
+        self, inputs: Sequence[Sequence[Any]], step_number: int
     ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...]]:
         timing = self._armed_execution_timing
-        run = self._begin_invocation(inputs, timing)
+        run = self._begin_invocation(inputs, timing, step_number)
         self._submit_initial_placement(run, timing)
         ordered = self._execute_program(run)
         self._handoff_public_outputs(run, ordered)
@@ -354,12 +354,17 @@ class TrainingExecutor(AnnotatedExecutor):
         self,
         inputs: Sequence[Sequence[Any]],
         timing: _ArmedExecutionTiming | None,
+        step_number: int,
     ) -> _PlanRun:
         stream = torch.cuda.current_stream()
         if timing is not None:
             timing.dispatch_call_started_ns = time.perf_counter_ns()
             timing.origin_event.record(stream)
-        timeline = self._timelines.begin(self._invocations + 1, stream)
+        # The caller numbers the step, so the timings carry the count a
+        # restored checkpoint resumed from. `_invocations` counts this
+        # process's calls and only decides whether there is a prior plan to
+        # drain.
+        timeline = self._timelines.begin(step_number, stream)
         if timing is not None:
             timing.timeline = timeline
         self._prior_invocation_drain_ns = 0
@@ -396,18 +401,20 @@ class TrainingExecutor(AnnotatedExecutor):
                 run = self._recurrent
             self._active_run = run
         if timing is not None:
-            self._begin_armed_runtime_trace(timing)
+            self._begin_armed_runtime_trace(timing, step_number)
         self._state.refresh_inputs(inputs)
         return run
 
-    def _begin_armed_runtime_trace(self, timing: _ArmedExecutionTiming) -> None:
+    def _begin_armed_runtime_trace(
+        self, timing: _ArmedExecutionTiming, step_number: int
+    ) -> None:
         """Open the current invocation's runtime trace after prior work is idle."""
 
         timing.statistics_before = self._bridge.statistics()
         # Transfers are measured on their lanes from the same origin event
         # the compute-stream markers use, so every lane shares one timeline.
         self._bridge.begin_runtime_trace(
-            step_id=self._invocations + 1,
+            step_id=step_number,
             origin_event_handle=int(timing.origin_event.cuda_event),
         )
 
