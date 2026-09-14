@@ -21,8 +21,8 @@ framework-neutral IR is more general: a `TaskAlternativeGroup` may expose any
 finite set of mutually exclusive `TaskAlternativeOption` values, and Programs
 may contain no groups at all.
 
-For example, two occurrences can share one set of structural graph pairs while still
-producing independent program groups:
+For example, two occurrences can share one set of structural graph pairs while
+still producing independent program groups:
 
 ```text
 structural contract A
@@ -287,5 +287,5 @@ Graph-pair construction and profiling are described in the dedicated
 [graph-pair construction](graph-pair-construction.md) page. The IR
 representation is described in [Intermediate representation](ir.md).
 
-Previous: [Graph-pair construction](graph-pair-construction.md). Next:
+Previous: [Writing a search algorithm](search-algorithm.md). Next:
 [PressureFit](pressurefit.md).

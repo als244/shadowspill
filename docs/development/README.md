@@ -1,5 +1,8 @@
 # Development guide
 
+What a change to this repository has to fit: where its code and tests belong,
+what it must pass, and the words every surface uses.
+
 - [Repository structure and validation](repository.md) — the Python and C
   trees, where a test for a given module goes, setup, and the lint, type and
   build commands a change has to pass.

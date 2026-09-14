@@ -5,8 +5,8 @@ The simulator, the planner and the runtime ship as one library,
 buffers; the public headers are authoritative for exact layouts, constants and
 signatures.
 
-The C pages remain flat because each one maps to a boundary a caller uses
-independently, whether or not it is a separate library; the table below is both
+The pages are flat because each one maps to a boundary a caller uses
+independently, whether or not it is a separate library. The table below is both
 the inventory and the reference index.
 
 | Component | Header | Reference | What the page covers |
@@ -49,12 +49,12 @@ differ: a backend's table entries and its two exported symbols return `int`,
 and the adapter adds two more calls whose return is the answer,
 `shadowspill_pytorch_backend_malloc` (the address) and
 `shadowspill_pytorch_profile_range_begin` (the range).
-One vocabulary covers the whole library: the three codes
-every component agrees on sit at 0-2, and each component owns a band after
-that, so a status decodes to exactly one meaning without knowing which
-component produced it. `shadowspill_status_string()` maps any of them to a
-stable human-readable category; retain structured result fields for
-diagnostics.
+
+One vocabulary covers the whole library: the three codes every component agrees
+on sit at 0-2, and each component owns a band after that, so a status decodes to
+exactly one meaning without knowing which component produced it.
+`shadowspill_status_string()` maps any of them to a stable human-readable
+category; retain structured result fields for diagnostics.
 
 ## Reading a header
 
@@ -108,8 +108,8 @@ monotonic clock, a thread yield, a thread name, and the logical CPU count -
 which `csrc/src/common/platform.h` supplies for both platforms. So a Windows build
 needs a toolchain that provides pthreads and `<stdatomic.h>`: MinGW-w64 or
 clang does, MSVC needs `/experimental:c11atomics` and a pthreads shim. Linux
-is what CI builds and what every gate here runs on; Windows is portable by
-construction rather than by test.
+is what every test and gate here runs on; Windows is portable by construction
+rather than by test.
 
 ## Build boundaries
 

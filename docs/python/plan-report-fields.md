@@ -85,7 +85,7 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `data_ordering` | The `StepDataOrdering` the step walked its microbatches under -- its `depth`, `breadth`, `reverse_breadth`, and `pair_loss` -- or `None` for a forward plan. |
 | `search_results` | The selected plan for each role the report covers, first-step first and recurrent last. |
 | `search_options` | What the search was told: the generic options, which algorithm ran, and that algorithm's own options. For the search that ships those include the candidate space and `resolution_options`, the shares of the flexible groups to recompute as exact fractions, every quarter by default. `None` for a forward plan. |
-| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether the selected plan was read back from the store. Exactly one is 1. |
+| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each selected plan was read back from the store. One count per plan the report covers -- the recurrent one, plus the initialization step where there is one -- so the two sum to the number of plans. |
 | `fixed_slab_bytes` | The slab the fixed layout occupies. |
 | `captured_stage_count` | Stages the capture produced. |
 | `aot_unique_stage_contracts` | Distinct structural contracts among them. |

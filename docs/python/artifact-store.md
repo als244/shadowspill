@@ -140,7 +140,9 @@ else.
 
 Two directories are deliberately not content-addressed, and both say why in
 their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch and
-subdivided by `implementation_revision`.
+subdivided by `implementation_revision`: one directory per revision, named for
+it and followed by twelve hex characters of its digest, or `default` when no
+revision was given.
 `planning/plans/<model class>/<capture identity>/<plan digest>/` groups plan
 manifests under the qualified name of the class they were planned for, because
 a person reading a store wants the plans for one model rather than a digest they
@@ -151,7 +153,7 @@ of each identity.
 
 | Argument | Effect |
 |---|---|
-| `artifact_store` | Roots both trees under one directory's own `v<N>/`. `None` uses a user cache location. |
+| `artifact_store` | Roots both trees under one directory's own `v<N>/`. `None` uses `~/.cache/shadowspill`. |
 | `build_store` | Roots `build/` elsewhere, overriding `artifact_store` for that tree. |
 | `plan_store` | Roots `planning/` elsewhere, overriding `artifact_store` for that tree. |
 
@@ -220,9 +222,10 @@ The four planning documents -- canonical `ShadowSpillProgram`, `ShadowSpillPlann
 [program and annotated-plan JSON](planning-json.md). The rest of the store is
 summarized here.
 
-Every record names its own schema and, where it is content-addressed by a key
-this store computed, repeats that key so a file found at the wrong path is
-detected rather than trusted.
+Every record names its own schema, and one addressed by a key this store
+computed repeats that key inside itself, so a file found at the wrong path is
+detected rather than trusted. A record addressed by the digest of its own bytes
+-- a canonical program, a selection request -- has nothing to repeat.
 
 **Compiled manifest** records what compiling one structural task produced:
 

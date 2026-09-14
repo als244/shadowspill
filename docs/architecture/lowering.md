@@ -71,8 +71,8 @@ to create is zero. An integer or boolean input has no synthetic form, so it
 must come from its caller or its producing task and profiling refuses the task
 when neither supplies one.
 
-The resulting `TaskAllocationContract` contains a strict invariant allocation path and a
-bounded optional path:
+The resulting `TaskAllocationContract` contains an invariant allocation path
+and a bounded optional path:
 
 - required outputs and mutations must match their expected ordinal, size,
   alignment, and ownership;
@@ -106,5 +106,5 @@ operations work when their fake/meta behavior and alias/mutation schemas are
 correct. Opaque external workspace may still require measurement because it
 is not fully represented in FX or Inductor's visible buffer graph.
 
-Previous: [Intermediate representation](ir.md). Next:
-[Graph-pair construction](graph-pair-construction.md).
+Previous: [Intermediate representation](ir.md). Next: [Graph-pair
+construction](graph-pair-construction.md).

@@ -58,15 +58,15 @@ its own opening delay.
 A traced step's `StepTimingSummary` carries the same three parts as
 `cycle_seconds`, `opening_delay_seconds` and `exposed_tail_seconds`, beside the
 selected span it already reported; `cycle_seconds` is `None` when the trace
-is resolved before anything closed the cycle, which is why the quickstart
-marks the cycle's end before resolving its traced step. See
+is resolved before anything closed the cycle, which is why the benchmarking
+quickstart marks the cycle's end before resolving its traced step. See
 [StepResult diagnostics](../step-diagnostics.md#summary).
 
 ## Where it is used
 
-The quickstart's `run_budgets.csv` and throughput figures report the median
-cycle of the steps after the first (the first pays the plan's opening); the
-performance gate's `median_step_seconds` is the median cycle over its
-measured steps and its simulator error compares that cycle with the
-predicted step. Both report the host's own wall time beside it, which
-decides nothing.
+The benchmarking quickstart's `run_budgets.csv` and throughput figures report
+the median cycle of the steps after the first, the first paying the plan's
+opening; the performance gate's `median_step_seconds` is the median cycle over
+its measured steps, and its simulator error compares that cycle with the
+predicted step. Both report the host's own wall time beside it, which decides
+nothing.

@@ -232,7 +232,7 @@ behavior.
 | Timing | `runtime_ns`, `samples_ns`, `timing_relative_mad`, `timing_half_drift`, `timing_unstable` | How stable is the task-duration estimate? |
 | Object bytes | `inputs`, `mutations`, `outputs` and logical/allocation totals | Which named values create pressure? |
 | Temporary bytes | workspace fields and extent lists | How much anonymous task memory was live? |
-| Allocation behavior | `allocation_contract_digest`, `allocation_contract`, `allocation_timeline` | Which strict core operations and observed lifetime events were admitted? |
+| Allocation behavior | `allocation_contract_digest`, `allocation_contract`, `allocation_timeline` | Which pointer-free allocator operations and observed lifetime events were admitted? |
 
 Logical bytes describe tensor views; allocation bytes describe the containing
 storage extents. Do not add input, mutation, and output totals blindly: a view
@@ -325,10 +325,10 @@ Each `PlanPhysicalLayout` describes one admitted role.
 | `resident_slice_bytes` | The slice at the end of the fixed range where every lease of an object `minimum_object_bytes_evict_eligible` kept resident has a static home; zero when it kept none. |
 | `dynamic_reserve_bytes` | Terminal outputs that may outlive the reusable slice. |
 | `scratch_reserve_bytes` | Bounded optional dynamic task allocations. |
-| `required_bytes`, `slack_bytes` | Total admitted bytes and remaining pool capacity. |
+| `required_bytes` | Total admitted bytes. The slack is `pool_capacity_bytes` minus this; it is a subtraction rather than a field. |
 | `reuse_dependency_count` | Cross-lane causal edges required for safe range reuse. |
 | `attempts` | Certification history. One entry, unless the certificate disagreed with the search's own layout measurement. |
-| `task_memory_envelopes` | Per-task strict-core and dynamic-scratch limits. |
+| `task_memory_envelopes` | Per-task allocator limits, fail-closed: maximum and live, requested and charged, with the dynamic-scratch pair beside them. |
 
 For every accepted layout, `required_bytes <= pool_capacity_bytes`. Capacity is
 given back inside the search, per candidate, so the reduction that made a plan
@@ -363,6 +363,6 @@ planning workflow.
 | Predicted step is slow | Selected resolved program, candidate policy, transfer bytes, task profiles, and simulator makespan. |
 | One task is unexpectedly large | Execution task → unique stage → chosen graph pair → forward/backward graph profile byte fields. |
 | Save and recompute look identical | Graph-pair saved-value counts/bytes, active tasks, and semantic root/output contracts. |
-| Plan repeatedly refines capacity | Physical-layout attempts, required/slack bytes, dynamic/scratch reserves, and search repairs. |
+| Plan repeatedly refines capacity | Physical-layout attempts, required bytes against pool capacity, dynamic/scratch reserves, and search repairs. |
 | Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, implementation revision, and allocation-probe policy. |
 | Real execution disagrees with the plan | Resolve a traced step and use the [Step diagnostics guide](step-diagnostics.md). |

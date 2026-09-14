@@ -14,8 +14,9 @@ does not depend on doing so.
 ## Exception taxonomy
 
 The planning exceptions are framework-free and live in `shadowspill.errors`,
-because the planner raises and catches them without importing a framework. The
-two runtime exceptions come from `shadowspill.pytorch`.
+because the planner raises and catches them without importing a framework.
+`InputGuardError` lives there too, though it is raised at a call rather than
+during planning. The two runtime exceptions come from `shadowspill.pytorch`.
 
 | Boundary | Exception | Meaning |
 |---|---|---|
@@ -88,11 +89,12 @@ structured frontend failure independently of the exception object's lifetime.
 `RuntimeFailureDiagnostics.as_dict()` produces a JSON-compatible mapping for
 logs and test artifacts.
 
-The record is organized into four groups:
+The record is organized into five groups:
 
 | Group | Representative fields |
 |---|---|
 | Failure identity | `operation`, `status`, `status_name`, `device_ordinal` |
+| Why it refused | `reason`, `reason_name`, `refused_action`, `object_state` |
 | Memory state | `requested_bytes`, `free_bytes`, `largest_free_range_bytes`, `object_id`, `allocation_id` |
 | Task identity | `execution_task_id`, semantic name, canonical task ID, internal task ID |
 | Allocation contract | task live bytes and limits, maximum-request limits, contract operation index, and expected/actual operation, ordinal, size, charge, and alignment |
@@ -125,19 +127,24 @@ available. It is different from waiting briefly for known progress. Its
 message is deliberately task-attributed:
 
 ```text
-ShadowSpill no-progress OOM
+ShadowSpill out of memory, with nothing left to release
 execution_task: execution_000017
 semantic_task: microbatch_0000.stage_0017.backward.recompute
 canonical_task: task_42
 device: 0
-requested: 117440512
-free: 39845888
-largest_free_range: 25165824
+requested: 112.00 MiB (117440512 bytes)
+pool free: 38.00 MiB (39845888 bytes)
+largest free range: 24.00 MiB (25165824 bytes)
 ```
 
-The requested, total-free, and largest-contiguous-range values distinguish
-capacity exhaustion from fragmentation. Object and allocation IDs are added
-when the failing request already has those identities.
+The title's second clause is what separates the two cases: an exhaustion with
+something still to release reads `ShadowSpill out of memory` alone. Sizes carry
+the readable form and the exact count, because neither alone says whether a
+request exceeded a budget. The requested, pool-free, and largest-contiguous-range
+values distinguish capacity exhaustion from fragmentation. Object and allocation
+ids are added when the failing request already has those identities. Where no
+task is known, an `operation:` line names the callback instead of the three task
+lines.
 
 ## Contract failures versus provider failures
 
@@ -156,14 +163,16 @@ bad kernel as an allocator OOM.
 An exception from `PlannedForward` or `PlannedTrainStep` triggers callable
 cleanup before the exception reaches the caller. Cleanup:
 
-- records and, when safe, synchronizes the first native failure;
+- records and, when safe, synchronizes the first failure the C runtime latched;
 - resolves or cancels pending diagnostics;
 - stops profiler annotations;
 - clears transient gradients for training;
 - releases optimizer state with the plan, because a failed step publishes no
   optimizer update, and restores model bindings to their pre-plan ownership
   state;
-- releases the compiled executor and admitted runtime plan; and
+- releases the compiled executor, reclaims any workspace this plan's own scopes
+  left behind -- reporting what it took as a `RuntimeWarning` rather than
+  raising -- and releases the admitted runtime plan; and
 - restores persistent object identities.
 
 Every independent cleanup action is attempted. A cleanup failure is appended
@@ -188,8 +197,8 @@ planned callable
 Closing copies nothing. A planned training callable points the model's
 parameters back at the spill-pool storage they were imported into, which
 already holds their updates, and releases optimizer state along with the plan
-that owns it. So `state_dict()` and `load_state_dict()` answer only while the
-callable is open; take the checkpoint before the close. See the
+that owns it. So a training callable's `state_dict()` and `load_state_dict()`
+answer only while it is open; take the checkpoint before the close. See the
 [frontend API](api/frontend.md).
 
 `Runtime.close()` rejects an active callable, an in-progress plan, persistent
@@ -204,5 +213,5 @@ idempotent teardown only as a last resort.
 See the [framework-neutral API](api/neutral.md) for the planning exception
 classes, the [frontend API](api/frontend.md) for the runtime ones, the
 [allocator guide](allocator.md) for callback behavior, and the [memory runtime
-architecture](../architecture/memory-runtime.md) for native ownership and
+architecture](../architecture/memory-runtime.md) for C-side ownership and
 teardown.

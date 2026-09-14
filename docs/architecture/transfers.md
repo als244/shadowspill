@@ -55,3 +55,5 @@ the window runs alone. Once dispatched, a lane is one FIFO in dispatch
 order, which is the stream's order and what completion follows. The window
 is `ShadowSpillRuntimeConfig.background_transfer_window_bytes`; zero removes
 the bound.
+
+Previous: [Memory pools](memory-pools.md). Next: [Events](events.md).

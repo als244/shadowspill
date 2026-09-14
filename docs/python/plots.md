@@ -12,15 +12,22 @@ plot_step_search(report, "figures")
 plot_step_run(outcomes, "figures", tokens_per_step=65536)
 ```
 
-`plot_step_search()` takes a `StepSearchReport` and writes everything under
-`sim/`, which needs only a plan. `plot_step_run()` takes one
-`RunBudgetOutcome` per executed budget -- the prediction and the measurement
-side by side, each split into task compute, stall, and what falls outside the
-task window, so that each side's parts sum to that side's step: the simulated
-step is the plan's makespan, and the measured step is the cycle, which carries
-an opening restore the simulator prices at zero -- and writes `real/`. Both write into the directory they are
-given and key nothing themselves, so what distinguishes one run from another
-is the caller's to choose: point a second run at a second directory.
+`plot_step_search()` takes a `StepSearchReport` and writes `sim/`, which needs
+only a plan. `plot_step_run()` takes one `RunBudgetOutcome` per executed budget,
+the prediction and the measurement side by side, and writes `real/`. Each also
+writes its half of `raw_data/`. Both write into the directory they are given and
+key nothing themselves, so what distinguishes one run from another is the
+caller's to choose: point a second run at a second directory.
+
+A `RunBudgetOutcome` splits the task window the same way on both clocks --
+the tasks' own compute, the recomputation the plan chose to pay for, and the
+stall between tasks -- so each side's three parts sum to that side's task
+window and a difference can be attributed rather than only reported. What falls
+outside that window is kept in the fields and written to `raw_data/` but drawn
+nowhere: the opening restore, which the simulator prices at zero because it
+assumes the step's initial objects are resident, and the writeback after the
+last task, which the simulator prices whole and the stream exposes only as far
+as the next step fails to absorb it.
 
 ## The tree
 
@@ -44,7 +51,7 @@ figures/
       bytes.png                         fetched and evicted GiB per step
       lane_utilization.png              share of lane-seconds
       by_geometry.png                   lane utilization per geometry
-      by_geometry_bytes.png             the same in raw bytes
+      by_geometry_bytes.png             the same, in GiB per step
       by_graph_pair_selection/
         <micro>x<accum>.png             lane bytes per selection
         <micro>x<accum>_shares.png      lane utilization per selection
@@ -59,7 +66,8 @@ figures/
                                         the step it came from
   raw_data/
     search.json                         the report itself, lossless
-    points.csv                          one row per geometry and budget
+    points.csv                          one row per geometry, ordering, and
+                                        budget
     graph_pair_selections.csv           one row per geometry, budget, and
                                         graph-pair selection
     run_budgets.csv                     one row per executed budget
@@ -117,9 +125,12 @@ side-by-side pair, and puts the two directions of the same budget in one
 column.
 
 **Colour is the series, position is the budget.** Within a group, bars run left
-to right in ascending microbatch size, or up the recompute ladder. The colour
-scheme is shared between the by-geometry and by-selection lane figures, so a
-colour means the same thing across both.
+to right in ascending microbatch size, or up the recompute ladder. One geometry
+keeps its colour across every by-geometry figure, so a split followed in one is
+the same split in the next; a by-selection figure colours by recompute level
+instead, because within one geometry that is what varies. What the lane figures
+share across both families is the direction convention: fetch solid, evict
+faded.
 
 **Red text is makespan.** Where selections are compared, the simulated step
 time of each appears above its bar in red, with a `Makespan` key in the legend.
@@ -130,9 +141,10 @@ share of groups it recomputes, to the nearest eighth — `0%`, `12.5%`, …,
 `87.5%`, `100% of Groups Recomputing` — rather than a raw count, so the ladder
 reads the same across geometries with different group counts.
 
-**Detail insets.** The throughput figure carries an inset covering the points
-within 1.25x of the best, because the interesting budgets crowd together at the
-top and the full range hides them.
+**A detail panel.** `sim/throughput/by_geometry.png` is two panels over one x
+axis: every geometry above, and below it only the band within 1.25x of the best
+throughput. A slow split compresses the fast ones into a band, and those are
+exactly the geometries a reader is choosing between.
 
 **A gap is data.** A geometry-budget point that never planned is still a row in
 the CSVs and still a gap in the line. Nothing is dropped for being infeasible.
@@ -144,11 +156,12 @@ somewhere the simulator does not model, and that is a thing to go and find.
 This is the convention the performance gate reports, so a number here and a
 number there mean the same thing. `real/sim_fidelity.png` draws it in two
 panels: the signed error per budget against the 5% and 10% bands above, and
-below it the two step breakdowns side by side, so an error can be attributed
-to compute, to stall, or to the opening restore. The terminal writeback sits
-inside the simulated makespan and is part of that bar's stall; the opening
-restore sits on the measured bar alone, because the simulator assumes the
-step's initial objects are already resident.
+below it the two task windows side by side, each stacked as effective compute,
+recompute and stall, with the simulated bar the faded one of the pair. So an
+error can be attributed to one of those three. Recompute is a counterfactual
+against the save-only floor rather than a measurement, so the same figure
+stands on both bars and the comparison is left to compute and stall. Nothing
+outside the task window is drawn.
 
 ## Redrawing from `raw_data/`
 
@@ -157,14 +170,17 @@ again in another style or another tool without replanning.
 
 `run_budgets.csv` keeps one row per budget, whose `measured_step_seconds` is a
 median; `steps.csv` keeps the steps behind it, one row each, because a median
-cannot say whether a budget was steady or erratic.
+cannot say whether a budget was steady or erratic. `plot_step_run()` writes both
+as its last step, and `write_run_tables()` writes them alone, so a run that
+measures one budget at a time keeps the record current and leaves what it
+measured even if it stops early.
 
 `search.json` is the report itself and is lossless: it is the same value
 `plot_step_search()` was handed, and `StepSearchReport.load()` reads it back to
 an equal report, so the whole `sim/` tree can be rebuilt from it alone. The CSVs
-are its tidy view. There are three rather than one per figure because all but
-the ladder are projections of the same per-point row, and writing that row
-twenty times under different names would be twenty copies to disagree with each
+are its tidy view. There are two rather than one per figure because all but the
+ladder are projections of the same per-point row, and writing that row twenty
+times under different names would be twenty copies to disagree with each
 other.
 
 ### `benchmarking/replot.py`
