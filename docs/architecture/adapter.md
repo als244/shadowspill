@@ -1,6 +1,6 @@
 # PyTorch adapter
 
-The adapter is the compiled component that speaks PyTorch on one side and the
+The adapter is the shared object that speaks PyTorch on one side and the
 neutral runtime on the other. It is the only place framework conventions and
 the process-global allocator live, and it holds no provider knowledge: the
 backend it loads is reached through the same flat table the runtime uses.
@@ -9,8 +9,8 @@ backend it loads is reached through the same flat table the runtime uses.
 
 PyTorch's pluggable allocator calls three C functions -- malloc, free,
 record_stream -- with no pointer of the caller's to carry state in, and its
-storages are rebound through libtorch's C++ API. Both need compiled code that
-knows PyTorch, and nothing else in ShadowSpill may: planning-only callers must
+storages are rebound through libtorch's C++ API. Both need a library that
+links libtorch, and nothing else in ShadowSpill may: planning-only callers must
 not carry libtorch, and the runtime must stay usable from any framework. So
 the adapter is the one library that links both, and it holds exactly what
 needs PyTorch -- the callbacks, the storage views, the stream wrapping and
@@ -55,7 +55,9 @@ directory saying what it holds, one file per concern.
 - `failure/` — what a failed call latches, and the report a person reads.
 - `tasks/` — the task boundary on the dispatching thread: the range a task
   opens, allocation scopes, before, after, abort, and the action batch that
-  runs with no task of its own.
+  runs with no task of its own. What a scope owes the allocations it made, and
+  what actually releases one, is [what a scope owes when it
+  ends](task-boundaries.md#what-a-scope-owes-when-it-ends).
 - `storage/` — PyTorch storages over runtime leases: the C primitives, and
   the torch operators over them, one file per dispatch key.
 - `internal.h`, `adapter.c` and `profiler.c` at the top: the one
@@ -81,3 +83,5 @@ allocation scopes; profiling; and failure and recovery. The Python layer wraps
 them in `shadowspill.pytorch.runtime_adapter`; anything reachable through the
 runtime handle the adapter publishes is called on the neutral library directly
 rather than restated here.
+
+Previous: [Events](events.md). Next: [Timelines](timelines.md).

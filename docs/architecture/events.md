@@ -6,6 +6,11 @@ runtime uses, so a backend never pools, seals, or measures anything itself.
 
 ## Event leases
 
+An event lease is not a memory lease. This page is about backend completion
+events and the reference counts that keep them alive; the ranges those events
+fence, and who owes their release, are in [what a scope owes when it
+ends](task-boundaries.md#what-a-scope-owes-when-it-ends).
+
 An `EventLease` is a runtime record that owns one backend event and tracks
 the completion it stands for: a generation, the object or allocation whose
 release it protects, a reference count, and whether the backend has reported
@@ -35,9 +40,9 @@ Each stream the runtime records completions on has a FIFO of leases. The
 worker queries only the head of each FIFO with `query_event`, follows an
 already-complete head immediately, and drains immediately completed
 successors, so the number of driver queries stays close to the number of
-completions. A completed lease lets its owner, an object residency, a task
-allocation, or a retiring range, move on; the lease itself returns to the
-pool with its event.
+completions. A completed lease lets whatever it protects move on -- an object
+residency, a task allocation, or a retiring range -- and returns to the pool
+with its event.
 
 ## The timing pool
 
@@ -56,3 +61,5 @@ timeline is in [timelines](timelines.md).
 A dedicated condition variable lets callers wait for the worker at explicit
 boundaries (`shadowspill_runtime_wait_idle()`) without polling; the worker
 signals it when it has nothing queued and nothing pending.
+
+Previous: [Transfers](transfers.md). Next: [PyTorch adapter](adapter.md).
