@@ -95,7 +95,8 @@ execution task ids in compute-stream order, and for `fetch` and `evict` a
 `TransferLane` holding the transfer ids in FIFO order and a `LaneSummary`.
 
 `allocator` is an `AllocatorTrace`, the ordered allocation and free ledger with
-the pool's geometry before and after the step; `runtime` is a `RuntimeTrace`,
+the allocator's own pool read before and after the step; `runtime` is a
+`RuntimeTrace`,
 the runtime's counter deltas, terminal queue state, trace capacity and overflow
 flags, and the raw runtime event records. Both are reached through
 `StepDiagnostics` rather than imported from `shadowspill.pytorch`.
@@ -127,7 +128,10 @@ measured one. `RunBudgetOutcome` is one executed budget: its
 `execution_budget_bytes`, the simulated and measured step seconds, the same
 split of the step on both clocks -- task compute, idle, and what falls outside
 the task window -- and `step_seconds`, every measured step in order, so a
-difference can be attributed rather than only reported. Outside the task window
+difference can be attributed rather than only reported. `recomputation_seconds`
+is the part of task compute the chosen recomputation costs over the save-only
+floor; it is a counterfactual rather than a measurement, so the same figure
+stands on both clocks. Outside the task window
 the two clocks differ in kind, so they are kept as separate fields rather than
 one: the simulated side prices a terminal writeback that overlaps nothing
 (`terminal_tail_seconds`), while the measured side pays an opening restore the
@@ -135,11 +139,20 @@ simulator does not model at all (`prologue_seconds`) plus whatever of its own
 writeback the next step did not absorb (`real_terminal_tail_seconds`). Each
 side's parts sum to that side's step.
 
+`write_run_tables(entries, directory, *, tokens_per_step)` writes the raw-data
+tables alone, without drawing anything. `plot_step_run()` calls it as its last
+step, and a caller that runs budgets one at a time calls it after each so the
+record stays current: figures are worth rendering once at the end, but the
+tables behind them are worth having after every budget, because a run that stops
+early should still leave what it measured and the figures can be redrawn from
+the tables.
+
 The [figures guide](../plots.md) describes the tree, what each figure
 represents, and the conventions they share.
 
 ## Defaults and overhead
 
-Tracing uses bounded preallocated native buffers. No trace record is appended
-when `runtime_trace=False`. Profiler ranges are controlled independently by
-`profiler_annotations`; enabling one does not enable the other.
+Tracing uses bounded preallocated buffers inside the C runtime. No trace record
+is appended when `runtime_trace=False`. Profiler ranges are controlled
+independently by `profiler_annotations`; enabling one does not enable the
+other.
