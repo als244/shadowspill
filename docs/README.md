@@ -108,31 +108,37 @@ is priced before any of it is committed.
 How a plan is run and measured: the runtime and its boundaries, the backend
 underneath, and the clocks a step is read on.
 
-19. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
+19. [Plan identity](architecture/plan-identity.md) — what names a plan, why
+    a task id cannot, what a lease records, and the registry that answers an
+    id after its plan is gone.
+20. [Shared objects](architecture/shared-objects.md) — one value reached by
+    several plans: the object, its per-pool locations, the leases those hold,
+    and why binding an object allocates nothing.
+21. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
     failure, and tracing.
-20. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+22. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-21. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
+23. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
     a failure is handled at each scope, and why a process that is exiting is
     abandoned rather than closed.
-22. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+24. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening
     restore, and what step time means.
-23. [Backends](architecture/backends.md) — the one component that knows a
+25. [Backends](architecture/backends.md) — the one component that knows a
     platform, the driver-level table it implements, and how a new provider
     plugs in.
-24. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
+26. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
     device and pinned host, as ShadowSpill objects built on the backend.
-25. [Transfers](architecture/transfers.md) — routes, the lane each owns,
+27. [Transfers](architecture/transfers.md) — routes, the lane each owns,
     dispatch order, and calibration on those lanes.
-26. [Events](architecture/events.md) — event leases and pools, sealing,
+28. [Events](architecture/events.md) — event leases and pools, sealing,
     completion tracking, and the timing pool behind traced intervals.
-27. [PyTorch adapter](architecture/adapter.md) — what the compiled adapter is
+29. [PyTorch adapter](architecture/adapter.md) — what the adapter library is
     made of, how its source is laid out, what it requires of a backend, and
     what it exposes upward.
-28. [Timelines](architecture/timelines.md) — the two clocks a traced step
+30. [Timelines](architecture/timelines.md) — the two clocks a traced step
     is measured on, the origin they share, and what an untraced step pays.
 
 ## Python

@@ -29,7 +29,9 @@ the same storage root share an object and retain their own geometry. Program
 identity is deterministic and independent of diagnostic wall times or cache
 paths.
 
-An alias group may declare one runtime-global shared-residency policy:
+An alias group may declare one runtime-global shared-residency policy.
+[Shared objects](shared-objects.md) is how the mechanism underneath works --
+objects, their per-pool locations, and the leases those locations hold:
 
 | Policy | Contract |
 |---|---|
@@ -86,8 +88,9 @@ Every `TaskSpec` carries a `phase`: a plain identifier string that defaults to
 `compute`. The IR never interprets it. It is validated as an identifier and
 carried through, and nothing in `shadowspill.ir`, the simulator, or the runtime
 compares it against a particular value. A PyTorch training program labels its
-tasks `forward`, `backward`, and `recomputation`; a program from anywhere else
-may use whatever names describe its own structure.
+tasks `forward`, `backward`, and `optimizer` -- a recomputing forward carries
+`forward` like any other -- and a program from anywhere else may use whatever
+names describe its own structure.
 
 What the phase is *for* is separating a task's dependency graph from the graph
 of the phase it belongs to, which is what the planner needs in order to decide
@@ -155,5 +158,5 @@ program serves an entire budget frontier without being rebuilt: the
 question changes, the program does not. Adding a planning option later
 therefore cannot change what a saved program means.
 
-Previous: [Intermediate representation](ir.md). Next: [The planning
+Previous: [The optimizer](optimizer.md). Next: [The planning
 problem](planning-problem.md).
