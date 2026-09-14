@@ -707,7 +707,7 @@ measure the combined compute, lane, readiness and capacity effect.
 | `headroom-transfer` | Prefer cuts that avoid write-back before other tie-breaks | Yes | The same early-fetch charge with the stall estimate out of first position, so it favors clean releases and lower eviction work over local overlap. |
 | `tight-stall` | Minimize estimated exposed stall first | No | Fits only the current logical residency/output pressure. It may retain more useful residency, but trigger-time fetch reservations can then expose pressure that admission or simulation must repair. |
 | `tight-transfer` | Prefer cuts that avoid write-back before other tie-breaks | No | Tight accounting with the transfer-oriented cut order: less eviction traffic, more risk that the gaps or fetch timing expose stall or trigger-time pressure. |
-| `relaxed-stall` (not in the default portfolio) | Minimize estimated exposed stall first | No | The same reduction controls as `tight-stall`, so it produces no distinct pressure behavior until another control is added. It stays a separate candidate identity in diagnostics. |
+| `relaxed-stall` (not in the default portfolio) | Minimize estimated exposed stall first | No | The same reduction controls as `tight-stall`, so it produces no distinct pressure behavior. It stays a separate candidate identity in diagnostics. |
 
 Headroom accounting charges a fetched residency span one boundary earlier
 than its logical entry. It is conservative boundary accounting, not a transfer
@@ -767,18 +767,18 @@ infeasibility across those resolved programs was not established.
 | `shadowspill.planner.search.algorithms.pressurefit` | The search object: input validation, expanding the program into resolved programs and ordering them, and the admission facts stamped onto the answer. It hands every resolution to one call and owns no threads. |
 | `…pressurefit.search` | Projecting each resolution into the planner ABI, the preflight that drops the ones that cannot fit, and merging the results into one answer. |
 | `csrc/src/planner/search/algorithms/pressurefit/problem.c` | Compiling one indexed problem from the projected arrays. |
-| `…/pressurefit/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
-| `…/pressurefit/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `…/pressurefit/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
-| `…/pressurefit/best_placed.c` | The shared record of the best plan the search has placed. |
+| `csrc/src/planner/search/algorithms/pressurefit/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
+| `csrc/src/planner/search/algorithms/pressurefit/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
+| `csrc/src/planner/search/algorithms/pressurefit/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
+| `csrc/src/planner/search/algorithms/pressurefit/best_placed.c` | The shared record of the best plan the search has placed. |
 | `csrc/src/planner/admission/` | Physical allocation and causal-reuse admission. |
 | `shadowspill.simulator` / `csrc/src/simulator` | Independent schedule replay and makespan authority. |
 
-The production path requires the compiled planner and simulator and fails
-closed on a missing or ABI-incompatible library. Readable Python
+The production path requires the C planner and simulator and fails closed on a
+missing or ABI-incompatible library. Readable Python
 implementations live only under `reference/python/pressurefit` and
 `reference/python/simulator`; they are differential-test oracles and never
 silently replace the library.
 
-Previous: [Writing a search algorithm](search-algorithm.md). Next:
-[Physical admission and offset handling](physical-admission.md).
+Previous: [Graph-pair selection](graph-pair-selection.md). Next: [Physical
+admission and offset handling](physical-admission.md).

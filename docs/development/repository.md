@@ -15,7 +15,7 @@ shadowspill/
 ├── qualification/         thin numerical and performance release gates
 ├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
-├── CMakeLists.txt         compiled-component build orchestrator
+├── CMakeLists.txt         build orchestrator for the C tree
 └── pyproject.toml         Python build, dependency, lint, type, and test configuration
 ```
 
@@ -43,7 +43,7 @@ src/shadowspill/
 │   │                      reading and writing them
 │   ├── artifacts.py       the store itself
 │   └── policy.py          StoreMode and the four gates it implies
-├── planner/               the planning question and the compiled bindings
+├── planner/               the planning question and its C bindings
 │   ├── admission/         neutral physical admission, after a search answers
 │   │   └── layout/        leases to fixed offsets, and the certificate
 │   ├── diagnostics/       PlanReport values
@@ -83,7 +83,7 @@ public headers, the one library under `src/` (common, simulator, planner,
 runtime with a directory per runtime component), the backends, and the
 PyTorch adapter.
 
-Everything under `src/` builds into one library. The backends share one
+Everything under `csrc/src/` builds into one library. The backends share one
 `CMakeLists.txt`, which builds the mock backend always and every provider
 whose toolchain is installed, or the providers named in `SHADOWSPILL_BACKENDS`
 (`-DSHADOWSPILL_BACKENDS=<provider>`, or through pip
@@ -125,11 +125,11 @@ suite.
 ```
 
 The script creates `.venv`, installs PyTorch with the machine accelerator
-backend, builds and installs the library, its backends and the adapter, installs development
-dependencies, installs the mlops operation library with its implementation
-providers, and verifies the device backend, component libraries, ABI
-loading, and PyTorch storage adapter. To use an existing virtual or Conda
-environment:
+backend, builds and installs the library, its backends and the adapter,
+installs development dependencies, installs the mlops operation library with
+its implementation providers, and verifies the device backend, component
+libraries, ABI loading, and PyTorch storage adapter. To use an existing virtual
+or Conda environment:
 
 ```bash
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
@@ -145,7 +145,7 @@ ruff check .
 mypy
 ```
 
-The CMake build enables warnings as errors and registers compiled canaries with
+The CMake build enables warnings as errors and registers the C canaries with
 CTest:
 
 ```bash
@@ -159,10 +159,10 @@ CMake's own default is empty, which is no `-O` at all, and an unoptimized
 planner is several times slower at exactly the work this project measures.
 Pass `-DCMAKE_BUILD_TYPE=Debug` when that is what you want.
 
-Python never loads out of this directory on its own. It searches the installed
-package and the editable `build/{wheel_tag}` location, in that order, and
-nothing else unless `SHADOWSPILL_LIBRARY_DIRECTORY` names a directory to try
-first:
+Python never picks up a build directory in the working tree on its own. It
+searches the installed package and the editable `build/{wheel_tag}` location, in
+that order, and nothing else unless `SHADOWSPILL_LIBRARY_DIRECTORY` names a
+directory to try first:
 
 ```bash
 SHADOWSPILL_LIBRARY_DIRECTORY=build/dev pytest tests/shadowspill

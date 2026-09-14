@@ -103,8 +103,8 @@ out.
 [PressureFit](pressurefit.md), the search that ships, evaluates residency,
 eviction, fetch-trigger and coalescing candidates within each resolved
 program, against logical object capacity after provider, fixed-service and
-allocator allowances. It requires the compiled planner and simulator and fails
-closed on a missing or ABI-incompatible library.
+allocator allowances. It requires the C planner and simulator and fails closed
+on a missing or ABI-incompatible library.
 
 ## Physical admission
 
@@ -165,5 +165,4 @@ diagnostics, and common investigations. The [JSON artifact
 guide](../python/planning-json.md) documents the portable program and admitted
 plan schemas separately from the callable's in-memory report.
 
-Previous: [Physical admission and offset handling](physical-admission.md). Next:
-[Simulation](simulation.md).
+Previous: [Simulation](simulation.md). Next: [Plan identity](plan-identity.md).

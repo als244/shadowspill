@@ -113,3 +113,6 @@ working, so anything running planning or execution in a subprocess should bound
 it in time and require the artifact it promised, rather than trusting an exit
 status alone. Program collection and planning evaluation already do; see
 [qualification](../../qualification/README.md).
+
+Previous: [Task boundaries](task-boundaries.md). Next: [Step
+boundaries](step-boundaries.md).

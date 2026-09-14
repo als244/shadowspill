@@ -199,10 +199,13 @@ Four numbers describe a layout, each computed where the information exists:
 - `peak_fragmentation_bytes` from admission replay
   (`<shadowspill/admission_replay.h>`) is the largest gap the replayed
   allocator actually left between live ranges while honouring the layout.
-- `external_fragmentation_bytes` in the runtime statistics is the same
-  quantity observed on the real pool: free bytes that no single request can
-  use because they are not contiguous.
+- `external_fragmentation_bytes` in a pool's statistics is the same quantity
+  observed on the real pool: free bytes that no single request can use because
+  they are not contiguous.
 
 The first two are predictions the layout is built against; the last two are
 what the allocator, replayed or real, made of it. A replayed peak larger than
 the prediction means the lifetimes were wrong, not the assignment.
+
+Previous: [From a resolved program to leases](admission-leases.md). Next:
+[Simulation](simulation.md).

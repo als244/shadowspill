@@ -98,7 +98,9 @@ pair_loss=True)` builds the one-at-a-time walk; `positions(pass_index)` and
 `backward_positions(pass_index)` give one pass's forward and backward order.
 `label` names the ordering in figures (`2x4rp`: the two counts, then `r` and `p`
 for the flags that are set) and `from_label()` reads one back. `to_dict()` and
-`from_dict()` carry it beside a `StepProgram` and a plan report.
+`from_dict(value, path)` carry it beside a `StepProgram` and a plan report; the
+`path` names the position being read, so a malformed document is refused where
+it went wrong.
 
 ### `StepProgram`
 
@@ -266,8 +268,9 @@ validate_schedule_feasibility(
 | `admission` | `AdmissionFacts` \| `None` | `None` | Pool topology to check alongside, when the caller has one. |
 | `search_options` | `SearchOptions` \| `None` | `None` | Which search to ask, and what it is told. `None` asks the one that ships with its defaults. |
 
-It is the `preflight()` of `search_options.algorithm`, nothing more. Use
-`simulate()` instead to validate an explicit schedule that already exists.
+It is the `preflight()` of `search_options.resolved_algorithm`, nothing more.
+Use `simulate()` instead to validate an explicit schedule that already
+exists.
 
 ### Results and diagnostics
 
@@ -361,9 +364,9 @@ not** -- it says how much machine to spend, not what to decide, so two runs
 at different worker counts ask the same question and read back the same
 answer. The plan report records what was used. `resolved_algorithm` is the
 search that will actually run: `algorithm`, or the one that ships. `to_dict()`
-writes the keyed half and `from_dict()` reads it back, rebuilding the search
-from its name and handing it its own options; `workers` appears in neither and
-comes back zero.
+writes the keyed half and `from_dict(value, path)` reads it back, rebuilding the
+search from its name and handing it its own options; `workers` appears in
+neither and comes back zero.
 
 A worker count is one thread per `(resolved program, candidate)` pair, so it is
 independent of how many resolved programs a call has. It does change how many
@@ -584,7 +587,7 @@ inspect what admission does without a runtime:
 | `workspace_reserve_bytes(maximum_task_workspace_bytes, *, policy=None)` | `int` | The conservative contiguous-workspace allowance a budget must hold back. |
 | `plan_slab_layout(slab_bytes, events, *, dynamic_allocation_ids=frozenset())` | `SlabLayout` | One deterministic address per complete allocation lifetime, which online best-fit cannot always find. |
 | `replay_slab_timeline(slab_bytes, events)` | `SlabReplay` | Replays the production two-ended policy over an allocation timeline and rejects spatial infeasibility. |
-| `admit_physical_budget(*, device_budget_bytes, spill_budget_bytes, baseline_bytes, observed_external_bytes, maximum_task_workspace_bytes, predicted_spill_peak_bytes, allocation_timeline=(), policy=None)` | `(PhysicalAdmission, SlabReplay)` | Computes the explicit reserves and spatially validates the slab, raising `AdmissionError` when the headroom leaves none. |
+| `admit_physical_budget(*, device_budget_bytes, spill_budget_bytes, baseline_bytes, observed_external_bytes, maximum_task_workspace_bytes, predicted_spill_peak_bytes, allocation_timeline=(), policy=None)` | `(PhysicalAdmission, SlabReplay)` | Computes the explicit reserves and spatially validates the slab, raising `shadowspill.runtime`'s own `AdmissionError`, a `ValueError` carrying `kind`, `required_bytes` and `capacity_bytes`, when the headroom leaves none. It is a distinct class from the planning `AdmissionError` above. |
 | `run_admission_replay(capacity_bytes, operations, *, lease_count, dependency_count, minimum_alignment=256, large_request_threshold_bytes=0)` | `AdmissionReplayResult` | Replays an ordered script through the exact production memory-pool policy. |
 
 `AdmissionPolicy` is the tunable margin policy those take; `AllocationEvent`

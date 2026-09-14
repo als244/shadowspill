@@ -4,9 +4,9 @@ Physical admission turns a schedule into a set of **leases** — one per object
 generation that occupies execution memory — and then places them at fixed
 addresses. This page is the contract for that derivation: what is fixed before
 it starts, what the walk produces, and the rules that decide a lease's
-identity. [Physical admission](physical-admission.md) covers what happens to the leases
-afterwards, and [fixed-offset placement](fixed-placement.md) covers how each
-one is given an address.
+identity. [Physical admission](physical-admission.md) covers what happens to
+the leases afterwards, and [fixed-offset placement](fixed-placement.md) covers
+how each one is given an address.
 
 ## What is fixed, and at which level
 
@@ -158,7 +158,7 @@ Two rules are easy to get wrong:
 ## Things that happen without an operation
 
 Two transitions move or reuse a lease and emit nothing. Both must be replayed
-from the topology; neither is visible in the sequence.
+from the setup that declares them; neither is visible in the sequence.
 
 **Slot reuse.** A task may free an allocation slot and reallocate it. The
 second allocation reuses the same lease and emits no operation of its own, so
@@ -253,3 +253,6 @@ device budget
     |-- dynamic_reserve      caller-owned outputs
     `-- scratch_reserve      unplanned allocator traffic
 ```
+
+Previous: [Physical admission and offset handling](physical-admission.md). Next:
+[Fixed-offset placement](fixed-placement.md).

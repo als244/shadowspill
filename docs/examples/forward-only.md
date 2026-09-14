@@ -27,4 +27,5 @@ run_forward.close()
 
 Forward outputs use caller-owned dynamic leases because the caller may retain
 them after another invocation. Release references when they are no longer
-needed. `PlannedForward` also supports `profiler_annotations=True`.
+needed. Each call and each `submit()` on a `PlannedForward` also accepts
+`profiler_annotations=True`.

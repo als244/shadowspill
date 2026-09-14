@@ -56,7 +56,7 @@ class Beam(SearchAlgorithm):
 
 Yours to define. Take your options record, validate it, and store it as
 `self.options`. Refuse the wrong type here rather than later — this is the
-earliest point a mistake can be named, and the planner will not check for
+earliest point a mistake can be named, and the planner does not check for
 you:
 
 ```python
@@ -251,4 +251,5 @@ hold you to it, and physically admits the winner. See
 [PressureFit](pressurefit.md) for what one real implementation does inside
 the seam.
 
-Previous: [Plan search](search.md). Next: [PressureFit](pressurefit.md).
+Previous: [Plan search](search.md). Next: [Graph-pair
+selection](graph-pair-selection.md).
