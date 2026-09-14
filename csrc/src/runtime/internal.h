@@ -17,6 +17,25 @@
 #include "plan/internal.h"
 #include "telemetry/internal.h"
 
+/*
+ * Plan ids are a dense counter from one, so the slot array is indexed by id
+ * directly. A hash table over these keys would hash the identity function and
+ * chain buckets that hold one entry each; this is that table with the indirection
+ * removed. `claimed` is what separates an id never created with from one whose
+ * plan has since been freed, since both have a NULL plan.
+ */
+typedef struct ShadowSpillPlanSlot {
+    ShadowSpillPlan *plan;
+    uint8_t claimed;
+} ShadowSpillPlanSlot;
+
+typedef struct ShadowSpillPlanRegistry {
+    ShadowSpillPlanSlot *slots;
+    uint64_t capacity;
+    pthread_mutex_t lock;
+    uint8_t lock_initialized;
+} ShadowSpillPlanRegistry;
+
 struct ShadowSpillRuntime {
     /* Cold lifecycle and the still-unmigrated action-list owner. */
     pthread_mutex_t mutex;
@@ -54,6 +73,12 @@ struct ShadowSpillRuntime {
     ShadowSpillObjectTable objects;
     pthread_mutex_t plans_lock;
     ShadowSpillPlan *plans;
+    /* Every plan id ever created with, and the plan it names. Its own lock, so
+     * asking what a lease's plan id means does not wait behind plan creation or
+     * teardown. `plan` goes NULL when the plan record is freed while the slot
+     * stays claimed: a lease can outlive its plan, and its id must still answer
+     * rather than come back as some later plan's. */
+    ShadowSpillPlanRegistry plans_by_id;
     uint8_t plans_lock_initialized;
     ShadowSpillEventPool events;
     ShadowSpillEventPool timing_events;
@@ -64,6 +89,7 @@ struct ShadowSpillRuntime {
     _Atomic(ShadowSpillTaskRecord *) worker_submission;
     _Atomic uint64_t next_worker_submission_sequence;
 
+    _Atomic uint64_t next_plan_id;
     _Atomic uint64_t next_allocation_id;
     _Atomic uint64_t next_generation;
     _Atomic uint64_t next_event_generation;

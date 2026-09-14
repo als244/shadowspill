@@ -106,7 +106,7 @@ static ShadowSpillStatus release_object_residency(
                 object->retired_generation = object->generation;
                 object->retired_execution_pointer = lease->pointer;
                 object->allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
-                shadowspill_release_execution_lease_locked(runtime, lease);
+                shadowspill_release_lease_locked(runtime, lease);
                 status = shadowspill_failure_status(runtime);
             }
         } else if (shadowspill_memory_pool_release_lease_locked(lease) != 0) {
@@ -320,7 +320,7 @@ ShadowSpillStatus shadowspill_register_object(
             shadowspill_memory_pool_acquire_lease_record_locked(
                 runtime,
                 initial_pool,
-                SHADOWSPILL_RUNTIME_NO_ID
+                SHADOWSPILL_ALLOCATION_ORIGIN_RUNTIME_OBJECT
             );
         const int reserve_status = initial_lease == NULL
             ? -1
@@ -589,7 +589,7 @@ ShadowSpillStatus shadowspill_object_bind_allocation(
     /* Snapshot the directly retained prior owner before taking object locks. */
     shadowspill_memory_pool_lock_foreground(pool);
     ShadowSpillMemoryLease *allocation =
-        shadowspill_find_execution_lease_by_pointer(pool, pointer);
+        shadowspill_find_lease_by_pointer(pool, pointer);
     ShadowSpillObject *previous_owner = allocation == NULL
         ? NULL : allocation->bound_object;
     shadowspill_memory_pool_unlock_foreground(pool);
@@ -605,7 +605,7 @@ ShadowSpillStatus shadowspill_object_bind_allocation(
         pthread_mutex_lock(&second->lock);
     }
     shadowspill_memory_pool_lock_foreground(pool);
-    allocation = shadowspill_find_execution_lease_by_pointer(pool, pointer);
+    allocation = shadowspill_find_lease_by_pointer(pool, pointer);
     ShadowSpillObjectLocation *location = shadowspill_object_location(
         object, pool->pool_id
     );
@@ -726,7 +726,7 @@ ShadowSpillStatus shadowspill_object_replace_allocation(
     pthread_mutex_lock(&object->lock);
     shadowspill_memory_pool_lock_foreground(pool);
     ShadowSpillMemoryLease *replacement =
-        shadowspill_find_execution_lease_by_pointer(pool, pointer);
+        shadowspill_find_lease_by_pointer(pool, pointer);
     ShadowSpillObjectLocation *location = shadowspill_object_location(
         object, pool->pool_id
     );
@@ -994,7 +994,7 @@ ShadowSpillStatus shadowspill_object_transfer_to_caller(
     }
 
     shadowspill_memory_pool_lock_foreground(execution_pool);
-    ShadowSpillMemoryLease *record = shadowspill_find_execution_lease(
+    ShadowSpillMemoryLease *record = shadowspill_find_lease(
         execution_pool, object->allocation_id
     );
     if (record == NULL || record->pointer == NULL || record->logical_freed ||
@@ -1083,12 +1083,16 @@ ShadowSpillStatus shadowspill_object_snapshot(
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     pthread_mutex_lock(&object->lock);
-    const ShadowSpillObjectLocation *execution = shadowspill_execution_location(
-        runtime, object
-    );
-    const ShadowSpillObjectLocation *spill = shadowspill_spill_location(
-        runtime, object
-    );
+    /*
+     * `ShadowSpillObjectSnapshot` names two pools by role in its own shape --
+     * `execution_version` and `spill_version` -- so this is where the snapshot's
+     * promise, not the runtime's, fixes which pools those are. Pools themselves
+     * carry no roles; a plan assigns them.
+     */
+    const ShadowSpillObjectLocation *execution =
+        shadowspill_object_location(object, 0U);
+    const ShadowSpillObjectLocation *spill =
+        shadowspill_object_location(object, 1U);
     *snapshot = (ShadowSpillObjectSnapshot){
         .object_id = object->object_id,
         .size_bytes = object->size_bytes,

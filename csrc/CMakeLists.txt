@@ -52,6 +52,7 @@ add_library(
   src/runtime/plan/admission_replay.c
   src/runtime/plan/fixed_layout.c
   src/runtime/plan/plan.c
+  src/runtime/plan/registry.c
   src/runtime/plan/plan_object_bindings.c
   src/runtime/sync/completion_tracker.c
   src/runtime/sync/event_pool.c

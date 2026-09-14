@@ -39,12 +39,37 @@ def _runtime_handle(library: object) -> int:
     return int(handle.value)
 
 
+def _plan_description(library: object) -> PlanDescription:
+    """A description naming an id this runtime issued.
+
+    Plan creation refuses an id it did not hand out, so the id is taken rather
+    than written in, and every field is named: the description's first member is
+    the plan id, so a positional construction silently shifts the pool roles.
+    """
+
+    plan_id = ctypes.c_uint64()
+    status = int(
+        runtime_library().shadowspill_runtime_next_plan_id(
+            _runtime_handle(library), ctypes.byref(plan_id)
+        )
+    )
+    if status != 0 or plan_id.value == 0:
+        raise AssertionError(f"taking a plan id failed with status {status}")
+    return PlanDescription(
+        plan_id=int(plan_id.value),
+        execution_pool_id=0,
+        spill_pool_id=1,
+        fetch_route_id=0,
+        evict_route_id=1,
+    )
+
+
 def _admit_task(library: object, description: TaskDescription) -> tuple[int, int]:
     plan = ctypes.c_size_t()
     status = int(
         runtime_library().shadowspill_plan_create(
             _runtime_handle(library),
-            ctypes.byref(PlanDescription(0, 1, 0, 1)),
+            ctypes.byref(_plan_description(library)),
             ctypes.byref(plan),
         )
     )
@@ -110,7 +135,7 @@ def main() -> int:
         != 0
     ):
         raise AssertionError("pre-request statistics query failed")
-    free_before_request = int(statistics.runtime.free_bytes)
+    free_before_request = int(statistics.allocator_pool.free_bytes)
     try:
         torch.empty((REQUEST_BYTES,), dtype=torch.uint8, device="cuda")
     except torch.OutOfMemoryError as error:

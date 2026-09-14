@@ -100,6 +100,8 @@ typedef struct ShadowSpillTaskTable {
 
 void shadowspill_abort_current_task(ShadowSpillRuntime *runtime);
 
+uint64_t shadowspill_current_plan_id(ShadowSpillRuntime *runtime);
+
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime);
 
 uint64_t shadowspill_current_task_allocation_ordinal(
@@ -134,6 +136,7 @@ ShadowSpillMemoryLease *shadowspill_current_task_retirements(
 int shadowspill_enter_allocation_scope(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
+    uint64_t plan_id,
     uint64_t task_id
 );
 

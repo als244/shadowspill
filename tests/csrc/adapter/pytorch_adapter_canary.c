@@ -306,13 +306,48 @@ static int objects(ShadowSpillRuntime *runtime) {
 /* Allocation scopes outside any task, ended and aborted. */
 static int scopes(ShadowSpillRuntime *runtime) {
     const uint64_t scope_id = SHADOWSPILL_PYTORCH_PROFILING_SCOPE_BASE | 3U;
+    /* A scope names a plan that exists, so this opens one to name. */
+    uint64_t plan_id = 0U;
     REQUIRE(
-        shadowspill_pytorch_allocation_scope_begin(scope_id) ==
+        shadowspill_runtime_next_plan_id(runtime, &plan_id) ==
+                SHADOWSPILL_STATUS_OK &&
+            plan_id != 0U,
+        "taking a plan id failed"
+    );
+    ShadowSpillPlan *scope_plan = NULL;
+    const ShadowSpillPlanDescription roles = {
+        .plan_id = plan_id,
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    REQUIRE(
+        shadowspill_plan_create(runtime, &roles, &scope_plan) ==
+            SHADOWSPILL_STATUS_OK,
+        "creating a plan for the scope failed"
+    );
+    REQUIRE(
+        shadowspill_runtime_plan(runtime, plan_id) == scope_plan,
+        "the registry does not name the plan it was given"
+    );
+    REQUIRE(
+        shadowspill_pytorch_allocation_scope_begin(0U, scope_id) ==
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT,
+        "a scope that names no plan must be refused"
+    );
+    REQUIRE(
+        shadowspill_pytorch_allocation_scope_begin(plan_id + 1000U, scope_id) ==
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT,
+        "a scope naming a plan that does not exist must be refused"
+    );
+    REQUIRE(
+        shadowspill_pytorch_allocation_scope_begin(plan_id, scope_id) ==
             SHADOWSPILL_STATUS_OK,
         "opening an allocation scope failed"
     );
     REQUIRE(
-        shadowspill_pytorch_allocation_scope_begin(scope_id) ==
+        shadowspill_pytorch_allocation_scope_begin(plan_id, scope_id) ==
             SHADOWSPILL_STATUS_INVALID_STATE,
         "a nested scope must be refused"
     );
@@ -325,7 +360,7 @@ static int scopes(ShadowSpillRuntime *runtime) {
         "closing the scope failed"
     );
     REQUIRE(
-        shadowspill_pytorch_allocation_scope_begin(scope_id + 1U) ==
+        shadowspill_pytorch_allocation_scope_begin(plan_id, scope_id + 1U) ==
             SHADOWSPILL_STATUS_OK,
         "opening a second scope failed"
     );
@@ -333,6 +368,19 @@ static int scopes(ShadowSpillRuntime *runtime) {
     REQUIRE(
         shadowspill_runtime_wait_idle(runtime) == SHADOWSPILL_STATUS_OK,
         "wait_idle after the scopes failed"
+    );
+    shadowspill_plan_destroy(scope_plan);
+    /* The record is gone; the id is not reusable and still answers. */
+    ShadowSpillPlanState state = SHADOWSPILL_PLAN_STATE_UNKNOWN;
+    REQUIRE(
+        shadowspill_runtime_plan_state(runtime, plan_id, &state) ==
+                SHADOWSPILL_STATUS_OK &&
+            state == SHADOWSPILL_PLAN_STATE_DESTROYED,
+        "a destroyed plan's id must report DESTROYED"
+    );
+    REQUIRE(
+        shadowspill_runtime_plan(runtime, plan_id) == NULL,
+        "a destroyed plan must not still be named"
     );
     return 0;
 }

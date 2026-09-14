@@ -62,11 +62,6 @@ typedef enum ShadowSpillMemoryPlacement {
     SHADOWSPILL_MEMORY_BEST_FIT_HIGH = 2,
 } ShadowSpillMemoryPlacement;
 
-enum {
-    SHADOWSPILL_EXECUTION_POOL_ID = 0U,
-    SHADOWSPILL_SPILL_POOL_ID = 1U,
-};
-
 /*
  * Owns one bounded arena and its suballocation geometry. A device pool's
  * arena is backend memory; a pinned-host pool's arena is host memory the pool
@@ -151,6 +146,7 @@ typedef struct ShadowSpillMemoryLease {
     uint64_t charged_bytes;
     uint64_t alignment_bytes;
     uint64_t offset;
+    uint64_t origin_plan_id;
     uint64_t origin_task_id;
     uint64_t origin_task_invocation;
     uint64_t origin_task_allocation_sequence;
@@ -544,28 +540,12 @@ static inline int shadowspill_memory_pool_has_release_source(
     ) != 0U;
 }
 
-ShadowSpillMemoryPool *shadowspill_execution_pool(ShadowSpillRuntime *runtime);
-
-const ShadowSpillMemoryPool *shadowspill_execution_pool_const(
-    const ShadowSpillRuntime *runtime
-);
-
-ShadowSpillMemoryPool *shadowspill_spill_pool(ShadowSpillRuntime *runtime);
 
 ShadowSpillObjectLocation *shadowspill_object_location(
     ShadowSpillObject *object,
     uint32_t pool_id
 );
 
-ShadowSpillObjectLocation *shadowspill_execution_location(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillObject *object
-);
-
-ShadowSpillObjectLocation *shadowspill_spill_location(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillObject *object
-);
 
 ShadowSpillObjectLocation *shadowspill_plan_execution_location(
     const ShadowSpillPlan *plan,
@@ -577,56 +557,91 @@ ShadowSpillObjectLocation *shadowspill_plan_spill_location(
     ShadowSpillObject *object
 );
 
-ShadowSpillMemoryLease *shadowspill_find_execution_lease(
+ShadowSpillMemoryLease *shadowspill_find_lease(
     ShadowSpillMemoryPool *pool,
     uint64_t allocation_id
 );
 
-ShadowSpillMemoryLease *shadowspill_find_execution_lease_by_pointer(
+ShadowSpillMemoryLease *shadowspill_find_lease_by_pointer(
     ShadowSpillMemoryPool *pool,
     const void *pointer
 );
 
-ShadowSpillStatus shadowspill_create_execution_lease_locked(
+/*
+ * Who a lease is made for. The two halves travel together because a task id is
+ * plan-local -- task 1112 exists in every plan -- so neither half identifies
+ * anything on its own once a pool carries more than one plan's work.
+ *
+ * It is a parameter rather than something read from the running thread's scope,
+ * because the origin belongs to the work and not to the thread doing it: a
+ * pre-task action batch creates leases for a task it is not running.
+ */
+typedef struct ShadowSpillAllocationOrigin {
+    uint64_t plan_id;
+    uint64_t task_id;
+} ShadowSpillAllocationOrigin;
+
+/* No plan and no scope made this: a provider taking its own workspace between
+ * tasks. A lease stamped with it reports no scope, which is what tells a plan's
+ * cleanup that the range is not its to reclaim. */
+#define SHADOWSPILL_ALLOCATION_ORIGIN_NONE             \
+    ((ShadowSpillAllocationOrigin){                    \
+        .plan_id = 0U,                                 \
+        .task_id = SHADOWSPILL_RUNTIME_NO_ID           \
+    })
+
+/* A runtime-owned object's storage. No plan either, but unlike the above it
+ * backs something the program named and any number of plans may bind it, so it
+ * is reported as its own scope rather than as nothing. */
+#define SHADOWSPILL_ALLOCATION_ORIGIN_RUNTIME_OBJECT       \
+    ((ShadowSpillAllocationOrigin){                        \
+        .plan_id = 0U,                                     \
+        .task_id = SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID     \
+    })
+
+ShadowSpillStatus shadowspill_create_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
     uint64_t alignment,
     int plan_owned,
     ShadowSpillMemoryPlacement placement,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 );
 
+/* Named for the role because it really is one: a fixed placement belongs to the
+ * plan's execution pool, which the plan chose. The other creators take whatever
+ * pool they are given and carry no role in their names. */
 ShadowSpillStatus shadowspill_create_fixed_execution_lease_locked(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedPlacementDescription *placement,
     int plan_owned,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 );
 
-ShadowSpillStatus shadowspill_create_execution_successor_locked(
+ShadowSpillStatus shadowspill_create_successor_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
     uint64_t bytes,
     uint64_t alignment,
-    uint64_t origin_task_id,
+    ShadowSpillAllocationOrigin origin,
     ShadowSpillMemoryLease **record
 );
 
-int shadowspill_acquire_reserved_execution_lease_locked(
+int shadowspill_acquire_reserved_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *lease,
     ShadowSpillEventLease **dependency_event
 );
 
-void shadowspill_cancel_execution_reservation_locked(
+void shadowspill_cancel_reservation_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *lease
 );
 
-void shadowspill_release_execution_lease_locked(
+void shadowspill_release_lease_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryLease *allocation
 );
@@ -634,7 +649,7 @@ void shadowspill_release_execution_lease_locked(
 ShadowSpillMemoryLease *shadowspill_memory_pool_acquire_lease_record_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
-    uint64_t origin_task_id
+    ShadowSpillAllocationOrigin origin
 );
 
 void shadowspill_memory_lease_retain(ShadowSpillMemoryLease *lease);

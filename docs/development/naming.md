@@ -30,10 +30,10 @@ implementations, hardware identity, physical-accounting reports, or framework
 adapter edges. They do not define generic pool, lease, route, planner,
 simulator, or runtime semantics.
 
-The supported default execution-pool factory is named `device()` because its
-contract is accelerator memory usable by PyTorch. Provider-specific APIs
-remain in their backend. PyTorch allocator callback symbols retain the
-provider spelling required by the framework hook.
+The default execution-pool factory is named `device()` because its contract is
+accelerator memory usable by PyTorch. Provider-specific APIs remain in their
+backend. PyTorch allocator callback symbols retain the provider spelling
+required by the framework hook.
 
 ## Avoid
 
@@ -41,6 +41,10 @@ provider spelling required by the framework hook.
 - `topology` for something that is not one; admission takes facts.
 - `progress` for the runtime thread; use `worker`.
 - `native` as a synonym for the C library.
+- `callable` anywhere in `csrc/`. It is the frontend's word for the span a
+  plan covers, and the C sources already have a word for that: `plan`. One
+  word per concept is what lets a struct field, a C parameter and a Python
+  attribute be read as the same thing.
 - `core` for the invariant part of something; say what makes it invariant.
 - `compiled` for the C library. It means what torch.compile produced.
 - `context` for a search's own input, which is a problem. The word has exactly
@@ -62,8 +66,8 @@ provider spelling required by the framework hook.
 - strategy names in public types when selection is an internal implementation
   detail.
 
-Canonical serialized IR action kinds are `fetch` and `evict`; public
-explanations and runtime labels use fetch and evict.
+Canonical serialized IR action kinds are `fetch` and `evict`, and public
+explanations and runtime labels use the same two words.
 
 ## Backend and device, never a provider name
 

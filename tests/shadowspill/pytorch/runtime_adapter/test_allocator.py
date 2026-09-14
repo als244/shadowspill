@@ -17,6 +17,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     FixedDependencyDescription,
     FixedLayoutDescription,
     FixedPlacementDescription,
+    MemoryPoolStatistics,
     ObjectBinding,
     ObjectDescription,
     ObjectLocationSnapshot,
@@ -105,13 +106,17 @@ class _Library:
 def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(AdapterConfig) == 88
     assert ctypes.sizeof(AdapterCapabilities) == 16
-    assert ctypes.sizeof(RuntimeStatistics) == 52 * 8
+    # A uint32 pool count, padded, then the runtime-wide counters. A pool's own
+    # numbers are in MemoryPoolStatistics: a uint32 id and a uint8 kind, padded,
+    # then its counters.
+    assert ctypes.sizeof(RuntimeStatistics) == 8 + 30 * 8
+    assert ctypes.sizeof(MemoryPoolStatistics) == 8 + 19 * 8
     assert ctypes.sizeof(AllocationEvent) == 80
     assert ctypes.sizeof(Allocation) == 48
     assert ctypes.sizeof(BackendStatistics) == 22 * 8
     assert ctypes.sizeof(RuntimeFailure) == 192
     assert ctypes.sizeof(AdapterFailure) == 216
-    assert ctypes.sizeof(AdapterStatistics) == 672
+    assert ctypes.sizeof(AdapterStatistics) == 664
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectDescription) == 32
     assert ctypes.sizeof(ObjectUpdate) == 16
@@ -177,7 +182,8 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.POINTER(Allocation),
     ]
     assert library.shadowspill_pytorch_allocation_scope_begin.argtypes == [
-        ctypes.c_uint64
+        ctypes.c_uint64,
+        ctypes.c_uint64,
     ]
     assert library.shadowspill_pytorch_allocation_scope_end.argtypes == [
         ctypes.c_uint64,
@@ -212,6 +218,12 @@ class _RuntimeLibrary:
     shadowspill_rekey_object = _Function()
     shadowspill_object_snapshot = _Function()
     shadowspill_object_location_snapshot = _Function()
+    shadowspill_memory_pool_live_allocations = _Function()
+    shadowspill_memory_pool_statistics = _Function()
+    shadowspill_plan_id = _Function()
+    shadowspill_plan_reclaim_scoped_leases = _Function()
+    shadowspill_runtime_next_plan_id = _Function()
+    shadowspill_runtime_plan_state = _Function()
     shadowspill_read_object = _Function()
     shadowspill_write_object = _Function()
     shadowspill_plan_create = _Function()
@@ -274,10 +286,10 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity(
 
         def shadowspill_pytorch_allocator_statistics(self, output: object) -> int:
             statistics = ctypes.cast(output, ctypes.POINTER(AdapterStatistics))[0]
-            statistics.runtime.allocated_bytes = self.allocated
-            statistics.runtime.free_bytes = self.free
-            statistics.runtime.free_prefix_bytes = self.free_prefix
-            statistics.runtime.largest_free_range_bytes = self.largest
+            statistics.allocator_pool.allocated_bytes = self.allocated
+            statistics.allocator_pool.free_bytes = self.free
+            statistics.allocator_pool.free_prefix_bytes = self.free_prefix
+            statistics.allocator_pool.largest_free_range_bytes = self.largest
             return 0
 
     admission = PhysicalAdmission()

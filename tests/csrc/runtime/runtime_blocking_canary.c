@@ -10,6 +10,8 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "runtime_test.h"
+
 #include "internal.h"
 
 typedef struct AllocationRequest {
@@ -100,11 +102,11 @@ static int a_blocked_allocator_resumes_when_the_free_lands(void) {
         );
         return -1;
     }
-    ShadowSpillRuntimeStatistics statistics = {0};
-    if (shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    if (shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.free_bytes != 128U ||
-        statistics.largest_free_range_bytes != 128U) {
+        statistics.execution.free_bytes != 128U ||
+        statistics.execution.largest_free_range_bytes != 128U) {
         return -1;
     }
     if (shadowspill_runtime_close(runtime) != SHADOWSPILL_STATUS_OK ||

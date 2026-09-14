@@ -1,12 +1,16 @@
 #include "../internal.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static int description_is_valid(
     const ShadowSpillRuntime *runtime,
     const ShadowSpillPlanDescription *description
 ) {
     if (runtime == NULL || description == NULL ||
+        description->plan_id == 0U ||
+        description->plan_id >=
+            atomic_load_explicit(&runtime->next_plan_id, memory_order_acquire) ||
         description->execution_pool_id >= runtime->pool_count ||
         description->spill_pool_id >= runtime->pool_count ||
         description->execution_pool_id == description->spill_pool_id ||
@@ -43,6 +47,8 @@ static void destroy_plan_record(ShadowSpillPlan *plan) {
     if (plan == NULL) {
         return;
     }
+    /* The id stays claimed; only the record goes. */
+    shadowspill_plan_registry_release(plan->runtime, plan->plan_id, plan);
     shadowspill_fixed_layout_destroy(plan);
     shadowspill_object_acquisitions_clear(plan);
     if (plan->tasks_initialized) {
@@ -82,6 +88,7 @@ ShadowSpillStatus shadowspill_plan_create(
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     plan->runtime = runtime;
+    plan->plan_id = description->plan_id;
     plan->execution_pool =
         &runtime->pools[description->execution_pool_id];
     plan->spill_pool = &runtime->pools[description->spill_pool_id];
@@ -116,6 +123,19 @@ ShadowSpillStatus shadowspill_plan_create(
         destroy_plan_record(plan);
         return SHADOWSPILL_STATUS_CLOSED;
     }
+    /* Claimed while holding the lock that publishes the plan, so two threads
+     * cannot both find an id free and then both take it. The registry outlives
+     * the plan record, so a closed plan's id stays claimed. */
+    const int claimed = shadowspill_plan_registry_claim(
+        runtime, plan->plan_id, plan
+    );
+    if (claimed != 0) {
+        pthread_mutex_unlock(&runtime->plans_lock);
+        destroy_plan_record(plan);
+        return claimed < 0
+            ? SHADOWSPILL_STATUS_INTERNAL_FAILURE
+            : SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
     plan->ownership_next = runtime->plans;
     plan->ownership_previous_link = &runtime->plans;
     if (runtime->plans != NULL) {
@@ -124,6 +144,50 @@ ShadowSpillStatus shadowspill_plan_create(
     runtime->plans = plan;
     pthread_mutex_unlock(&runtime->plans_lock);
     *output = plan;
+    return SHADOWSPILL_STATUS_OK;
+}
+
+uint64_t shadowspill_plan_id(const ShadowSpillPlan *plan) {
+    return plan == NULL ? 0U : plan->plan_id;
+}
+
+ShadowSpillStatus shadowspill_plan_reclaim_scoped_leases(
+    ShadowSpillPlan *plan,
+    uint64_t *reclaimed
+) {
+    if (plan == NULL || plan->runtime == NULL || reclaimed == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    *reclaimed = 0U;
+    ShadowSpillRuntime *runtime = plan->runtime;
+    const uint64_t plan_id = plan->plan_id;
+    if (plan_id == 0U || runtime->pools == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_STATE;
+    }
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        ShadowSpillMemoryPool *pool = &runtime->pools[pool_id];
+        shadowspill_memory_pool_lock_foreground(pool);
+        ShadowSpillMemoryLease *lease = pool->active_leases;
+        while (lease != NULL) {
+            /* The release unlinks the lease, so the successor is taken first. */
+            ShadowSpillMemoryLease *next = lease->active_next;
+            /*
+              * Only workspace this plan's scopes made and nobody took. A range
+              * bound to an object, placed by the plan, or promoted out to a
+              * caller has an owner that outlives the plan, and taking it back
+              * would free memory still in use. One already logically freed is
+              * awaiting retirement rather than surviving.
+              */
+            if (lease->origin_plan_id == plan_id &&
+                lease->bound_object == NULL && lease->plan_owned == 0 &&
+                lease->ever_plan_owned == 0 && lease->logical_freed == 0) {
+                shadowspill_release_lease_locked(runtime, lease);
+                ++*reclaimed;
+            }
+            lease = next;
+        }
+        shadowspill_memory_pool_unlock_foreground(pool);
+    }
     return SHADOWSPILL_STATUS_OK;
 }
 

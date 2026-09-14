@@ -476,7 +476,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             <= manifest.device_physical_capacity_bytes
             and int(execution_statistics.peak_process_physical_bytes)
             <= manifest.device_physical_capacity_bytes
-            and int(execution_statistics.runtime.spill_peak_allocated_bytes)
+            and int(runtime.pool_statistics("spill").peak_allocated_bytes)
             <= manifest.spill_budget_bytes
         )
         simulator_passed = abs(simulator_relative_error) <= _MAXIMUM_SIMULATOR_ERROR

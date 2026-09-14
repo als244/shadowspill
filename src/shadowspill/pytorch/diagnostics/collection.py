@@ -605,8 +605,10 @@ def _plan_index(value: str, prefix: str) -> int:
 
 
 def _build_allocator_trace(evidence: _TraceEvidence) -> AllocatorTrace:
-    before = evidence.statistics_before.runtime
-    after = evidence.statistics_after.runtime
+    # The allocator's own pool answers for occupancy and fragmentation; the
+    # runtime answers for the event ring.
+    before = evidence.statistics_before.allocator_pool
+    after = evidence.statistics_after.allocator_pool
     return AllocatorTrace(
         events=evidence.runtime_trace.allocation_events,
         live_allocations_before=int(before.live_allocations),
@@ -619,7 +621,7 @@ def _build_allocator_trace(evidence: _TraceEvidence) -> AllocatorTrace:
         largest_free_range_bytes_after=int(after.largest_free_range_bytes),
         external_fragmentation_bytes_after=int(after.external_fragmentation_bytes),
         blocked_allocators_after=int(after.blocked_allocators),
-        overflow=bool(after.allocation_event_overflow),
+        overflow=bool(evidence.statistics_after.runtime.allocation_event_overflow),
     )
 
 

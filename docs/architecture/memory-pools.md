@@ -45,6 +45,16 @@ lowered from are fake and cost nothing. Model and optimizer state reaches a
 pool without a second copy of itself by one of the paths in [importing
 state](state-import.md).
 
+## A pool answers for itself
+
+`shadowspill_memory_pool_statistics` reports one pool's numbers: capacity, what
+is allocated and free, the largest free range and the external fragmentation
+that follows from it, the live allocation count, and the lease-record reserves.
+The runtime reports only `pool_count` and what no pool knows, because a runtime
+may own any number of pools and a pool has no role of its own -- which pools
+serve as a given plan's execution and spill pools is that plan's choice, so
+numbers named for those roles would belong to the plan, not here.
+
 ## Construction order
 
 Runtime construction precedes workload-state construction: the runtime first
@@ -53,3 +63,5 @@ those actual arenas, then workload state is constructed and imported. That
 keeps the physical pages and DMA mapping of a large pinned spill arena
 independent of earlier anonymous model allocations, and gives planning a
 transfer profile measured on the memory the step will use.
+
+Previous: [Backends](backends.md). Next: [Transfers](transfers.md).

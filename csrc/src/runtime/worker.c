@@ -304,7 +304,7 @@ static int acquire_reserved_destination(
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillEventLease *dependency_event = NULL;
     const int status = action->kind == SHADOWSPILL_RUNTIME_FETCH
-        ? shadowspill_acquire_reserved_execution_lease_locked(
+        ? shadowspill_acquire_reserved_lease_locked(
             runtime, lease, &dependency_event
         )
         : shadowspill_memory_pool_acquire_reserved_lease_locked(
@@ -724,7 +724,7 @@ static int handle_action(
                         return 0;
                     }
                     ShadowSpillMemoryLease *allocation =
-                        shadowspill_find_execution_lease(
+                        shadowspill_find_lease(
                             action->plan_owner->execution_pool,
                             object->allocation_id
                         );
@@ -826,7 +826,7 @@ static int handle_action(
                     object->retired_generation = object->generation;
                     object->retired_execution_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;
-                    shadowspill_release_execution_lease_locked(runtime, allocation);
+                    shadowspill_release_lease_locked(runtime, allocation);
                     shadowspill_memory_pool_unlock_reclamation(
                         action->plan_owner->execution_pool
                     );
@@ -1067,7 +1067,7 @@ static int handle_action(
                 }
                 if (action->kind == SHADOWSPILL_RUNTIME_EVICT) {
                     ShadowSpillMemoryLease *allocation =
-                        shadowspill_find_execution_lease(
+                        shadowspill_find_lease(
                             action->plan_owner->execution_pool,
                             object->allocation_id
                         );
@@ -1090,7 +1090,7 @@ static int handle_action(
                     object->retired_generation = object->generation;
                     object->retired_execution_pointer = allocation->pointer;
                     allocation->release_task_id = action->task_id;
-                    shadowspill_release_execution_lease_locked(runtime, allocation);
+                    shadowspill_release_lease_locked(runtime, allocation);
                     shadowspill_memory_pool_unlock_reclamation(
                         action->plan_owner->execution_pool
                     );

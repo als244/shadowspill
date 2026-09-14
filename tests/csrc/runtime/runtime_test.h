@@ -25,6 +25,62 @@ typedef struct ShadowSpillTestRuntime {
 static ShadowSpillTestRuntime
     shadowspill_test_runtimes[SHADOWSPILL_TEST_MAX_RUNTIMES];
 
+/*
+ * The runtime's numbers together with the two pools a default topology gives
+ * roles to. A pool's own statistics are read per pool, so a test that wants both
+ * asks once here rather than repeating the pool ids at every call site.
+ */
+typedef struct ShadowSpillTestStatistics {
+    ShadowSpillRuntimeStatistics runtime;
+    ShadowSpillMemoryPoolStatistics execution;
+    ShadowSpillMemoryPoolStatistics spill;
+} ShadowSpillTestStatistics;
+
+static inline ShadowSpillStatus shadowspill_test_statistics(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillTestStatistics *out
+) {
+    ShadowSpillStatus status =
+        shadowspill_runtime_statistics(runtime, &out->runtime);
+    if (status == SHADOWSPILL_STATUS_OK) {
+        status = shadowspill_memory_pool_statistics(runtime, 0U, &out->execution);
+    }
+    if (status == SHADOWSPILL_STATUS_OK && out->runtime.pool_count > 1U) {
+        status = shadowspill_memory_pool_statistics(runtime, 1U, &out->spill);
+    }
+    return status;
+}
+
+/*
+ * An id no other plan on this runtime will be given. Minted rather than written
+ * in, because plan creation refuses an id it did not issue.
+ */
+static inline uint64_t shadowspill_test_plan_id(ShadowSpillRuntime *runtime) {
+    uint64_t plan_id = 0U;
+    return shadowspill_runtime_next_plan_id(runtime, &plan_id) ==
+            SHADOWSPILL_STATUS_OK
+        ? plan_id
+        : 0U;
+}
+
+/*
+ * Create a plan, taking a fresh id for it. A test cares that ids differ, not
+ * what they are, so the mint belongs with the creation: two calls with one
+ * description yield two plans rather than a refusal.
+ */
+static inline ShadowSpillStatus shadowspill_test_plan_create(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillPlanDescription *roles,
+    ShadowSpillPlan **plan
+) {
+    ShadowSpillPlanDescription description = *roles;
+    const ShadowSpillStatus status =
+        shadowspill_runtime_next_plan_id(runtime, &description.plan_id);
+    return status != SHADOWSPILL_STATUS_OK
+        ? status
+        : shadowspill_plan_create(runtime, &description, plan);
+}
+
 static inline ShadowSpillTestRuntime *shadowspill_test_runtime_record(
     ShadowSpillRuntime *runtime,
     int create
@@ -49,7 +105,7 @@ static inline ShadowSpillTestRuntime *shadowspill_test_runtime_record(
         .fetch_route_id = 0U,
         .evict_route_id = 1U,
     };
-    if (shadowspill_plan_create(runtime, &description, &plan) !=
+    if (shadowspill_test_plan_create(runtime, &description, &plan) !=
             SHADOWSPILL_STATUS_OK) {
         return NULL;
     }

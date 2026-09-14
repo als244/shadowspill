@@ -21,7 +21,7 @@ static void release_reserved_destination(
         shadowspill_memory_pool_lock_reservation(
             plan->execution_pool
         );
-        shadowspill_cancel_execution_reservation_locked(runtime, lease);
+        shadowspill_cancel_reservation_locked(runtime, lease);
         shadowspill_memory_pool_unlock_reservation(
             plan->execution_pool
         );
@@ -43,6 +43,13 @@ static ShadowSpillStatus try_reserve_action_destination_locked(
     ShadowSpillMemoryPool *pool
 ) {
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
+    /* The action's own task, not the thread's: a pre-task batch moves memory for
+     * a task it does not run. An unadmitted action has no plan to name. */
+    const ShadowSpillAllocationOrigin origin = {
+        .plan_id =
+            action->plan_owner != NULL ? action->plan_owner->plan_id : 0U,
+        .task_id = action->task_id,
+    };
     if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
         const ShadowSpillFixedPlacementDescription *fixed =
             action->admitted
@@ -69,37 +76,37 @@ static ShadowSpillStatus try_reserve_action_destination_locked(
             return SHADOWSPILL_STATUS_PLAN_VIOLATION;
         }
         status = fixed == NULL
-            ? shadowspill_create_execution_lease_locked(
+            ? shadowspill_create_lease_locked(
                   runtime,
                   pool,
                   action->object->size_bytes,
                   pool->minimum_alignment,
                   1,
                   SHADOWSPILL_MEMORY_BEST_FIT_LOW,
-                  action->task_id,
+                  origin,
                   &action->destination_lease
               )
             : shadowspill_create_fixed_execution_lease_locked(
                   action->plan_owner,
                   fixed,
                   1,
-                  action->task_id,
+                  origin,
                   &action->destination_lease
               );
         if (fixed == NULL && status == SHADOWSPILL_STATUS_OUT_OF_MEMORY) {
-            status = shadowspill_create_execution_successor_locked(
+            status = shadowspill_create_successor_lease_locked(
                 runtime,
                 pool,
                 action->object->size_bytes,
                 pool->minimum_alignment,
-                action->task_id,
+                origin,
                 &action->destination_lease
             );
         }
     } else {
         action->destination_lease =
             shadowspill_memory_pool_acquire_lease_record_locked(
-                runtime, pool, action->task_id
+                runtime, pool, origin
             );
         const int reserve_status = action->destination_lease == NULL
             ? -1

@@ -25,7 +25,7 @@ worker, trace buffers, and first-failure state.
   inventory at an idle cold-plan boundary, creating the backend events up
   front so a steady-state step makes no driver calls; see
   [events](../architecture/events.md). Repeated calls support additional
-  callables sharing the same runtime without racing existing work.
+  plans sharing the same runtime without racing existing work.
 - `shadowspill_runtime_reserve_retirement_records()` does the same for the
   immutable records queued between logical release and physical reclamation.
   A sealed inventory never falls back to `malloc` on the task or worker path.
@@ -132,14 +132,64 @@ structured no-progress status.
 Object pointers retained by task records and queued actions stay valid
 after table removal until their own references are released.
 
+## Plan identity
+
+A pool outlives any one plan and more than one plan may share it, so a lease
+records which plan's scope made it. Task ids cannot serve: the frontend mints
+them from the program's numbering, so task 1112 exists in every plan.
+
+- `shadowspill_runtime_next_plan_id()` hands out the ids. It only counts up, so
+  an id names one plan for the life of the runtime and is never reissued, not
+  even after the plan holding it is destroyed. Taken before the plan is created,
+  because allocation scopes opened for the plan name it too and the runtime has
+  no task there to read a plan from.
+- `shadowspill_plan_create()` requires that id in its description. An id the
+  runtime did not issue is refused, and so is one some plan has already been
+  created with. Zero is not a plan id: it is what a lease made outside any plan
+  reports.
+- `shadowspill_plan_id()` reports the id a plan holds.
+- `shadowspill_plan_reclaim_scoped_leases()` takes back every range the plan's own
+  scopes allocated, whatever still points at it, and reports how many. This is the
+  forcing path for a plan that is closing: it works in leases and bytes, does not
+  consult the framework, and so a caller that may still read an object backed by
+  one of those ranges must drop it first -- the PyTorch frontend detaches the
+  storages before calling it. A lease the framework has not freed keeps its pointer
+  indexed, so the free that eventually arrives still resolves. Ranges carrying no
+  plan are left alone.
+- `shadowspill_runtime_plan()` is the inverse, mapping an id back to its record,
+  or `NULL` once that record is gone. The pointer is valid only while the caller
+  knows the plan is live.
+- `shadowspill_runtime_plan_state()` says what became of an id without touching
+  the record: `UNKNOWN` for one no plan was created with, `LIVE` for an open
+  plan, `CLOSED` for one that admits nothing more while its record is still
+  present, and `DESTROYED` once that record is freed.
+
+The state outlives the record deliberately. A closing plan releases the ranges
+its own scopes made, so a live allocation naming a `CLOSED` or `DESTROYED` plan
+is a defect rather than an expected state, and the id is what makes that defect
+visible instead of invisible. The one intended exception is an object shared
+between plans, which outlives any one of them by design.
+
+Allocations taken outside any plan's scope are a separate case: they carry no
+plan at all, report `SHADOWSPILL_RUNTIME_NO_ID` for the scope, and are not a
+plan's to reclaim.
+
+`shadowspill_allocation_scope_begin()` takes the same id, and refuses one that
+names no live plan.
+
+The registry behind these is `csrc/src/runtime/plan/registry.c`, with its own
+lock so asking what an id means never waits behind plan creation or teardown.
+See [plan identity](../architecture/plan-identity.md) for the reasoning.
+
 ## Task and execution API
 
-`ShadowSpillPlan` owns one callable's immutable topology while sharing the
+`ShadowSpillPlan` owns one plan's immutable topology while sharing the
 runtime's pool, route, event, and object owners:
 
 - `shadowspill_plan_create()` creates a plan from a
-  `ShadowSpillPlanDescription`: the execution and spill pool ids and the fetch
-  and evict route ids, all explicit, none inferred from a runtime-wide role.
+  `ShadowSpillPlanDescription`: the plan id, then the execution and spill pool
+  ids and the fetch and evict route ids, all explicit, none inferred from a
+  runtime-wide role.
 - `shadowspill_plan_bind_object()` maps a program-local object identity to a
   retained `ShadowSpillObjectHandle` with a `ShadowSpillObjectConsistency` of
   causal or explicitly unordered.
@@ -227,8 +277,8 @@ The handle owns its exact expanded input-binding array as well. A successful
 array; the view remains valid through the matching `after_task()` or abort and
 requires no caller allocation or binding copy.
 One task handle is deliberately non-reentrant because its admitted action and
-validation records are reused in place; concurrent callables use distinct
-plan-owned handles and may remain active on the same runtime. Plan-local idle
+validation records are reused in place; plans running at the same time use
+handles of their own and may remain active on the same runtime. Plan-local idle
 waiting uses monotonic atomics and `cpu_relax`, not the runtime-global lifecycle
 condition variable.
 Initial placement and caller-output acquisition use their dedicated handles;
@@ -240,7 +290,8 @@ Structural profiling attributes allocator activity through a dedicated,
 non-execution boundary:
 
 - `shadowspill_allocation_scope_begin()` opens one allocator-attribution scope
-  against an explicitly selected pool.
+  against an explicitly selected pool, for the live plan whose id it is given
+  (see [Plan identity](#plan-identity)).
 - `shadowspill_allocation_scope_end()` retires its anonymous allocations behind
   the supplied stream fence and closes the scope.
 - `shadowspill_allocation_scope_abort()` rolls back an interrupted scope.
@@ -313,13 +364,74 @@ meaning to. Kinds below are named without their `SHADOWSPILL_TRACE_` prefix.
 | `FAILURE_LATCHED` | the `ShadowSpillStatus` being latched | the pool's free bytes at that moment |
 
 `shadowspill_runtime_statistics()` copies a lock-consistent
-`ShadowSpillRuntimeStatistics`: aggregate pool and action counters,
-including capacity, current/peak use, and rejected growth for event leases,
-retirement records, memory-lease records, and lease-use records. For event
-leases it adds `event_lease_driver_creates` and `event_lease_sealed`, and the
-timing pool's `timing_event_capacity`, `timing_event_in_use`,
+`ShadowSpillRuntimeStatistics`: what the runtime holds that no pool does -- the
+work in flight, the records it owns, and `pool_count`, the number of pools there
+are to ask about. The records are the event leases and the retirement records,
+each with capacity, current and peak use, and rejected growth. Event leases add
+`event_lease_driver_creates` and `event_lease_sealed`, and the timing pool
+contributes `timing_event_capacity`, `timing_event_in_use`,
 `timing_event_peak_in_use`, and `timing_event_driver_creates`; a create after
 sealing is a driver call the plan did not reserve for.
+
+`shadowspill_memory_pool_statistics()` reports one pool's own numbers -- its
+capacity, what is allocated and free in it, its largest free range and the
+fragmentation that follows, its live allocation count, and its memory-lease and
+lease-use record reserves.
+
+The split follows ownership. A runtime may own any number of pools, and which of
+them a plan uses as its execution and spill pools is that plan's choice, so a
+pool's numbers belong to the pool rather than to named fields for two of them.
+The PyTorch adapter's statistics carry the pool the allocator is bound to
+alongside the runtime's, since that is the one a caller on the allocation path
+wants.
+
+`shadowspill_memory_pool_live_allocations()` answers the question statistics
+cannot: not how many allocations a pool holds but *which*, and where.
+
+It covers the ranges the pool has *published*, and only the execution-lease paths
+publish. That makes it an execution-pool question in practice, which is what it
+exists for: a contiguous-range refusal is an execution-arena problem, and position
+is what explains one. Two things follow, and neither is an error to be reported.
+
+Storage the runtime holds for a registered object is reserved without being
+published, so it is absent from this list in either pool. Its lease carries
+`SHADOWSPILL_RUNTIME_OBJECT_SCOPE_ID` as its scope, its bytes are in the pool's
+statistics, and the storage itself is reached through the object registry.
+
+Asked of a spill pool, the call succeeds and reports nothing, because a spill
+copy -- an object's retained copy, or an eviction's destination -- is reserved
+rather than published. Spill-pool occupancy is a statistics question.
+
+It copies one `ShadowSpillLiveAllocation` per published live allocation into
+caller-owned storage: allocation id, byte offset into the arena, charged and
+requested bytes, the plan whose scope made it and the scope itself with that
+scope's invocation and ordinal, the object it is bound to or
+`SHADOWSPILL_RUNTIME_NO_ID` when it is bound to none, its reference count, and
+five flags: `scratch` for task workspace, `plan_owned` for a range the plan
+placed, `ever_plan_owned` which stays set after ownership moves on,
+`logical_freed` for one the frontend has given up and is awaiting retirement,
+and `framework_free_seen`.
+
+`ever_plan_owned` without `plan_owned` is the signature of a range promoted out
+to a named owner -- an output the caller holds now -- which is why the two are
+reported separately. It is what separates a scope's leftover workspace, which a
+closing plan may take back, from a range whose owner outlives the plan.
+
+The count written is always the total live count, so a caller may pass a null
+buffer with zero capacity to size one, and a buffer too small is reported by a
+count greater than the capacity rather than by an error.
+
+The object id travels rather than a role. The runtime does not know what an
+object is *for* -- that is the program's to say -- so a frontend holding the
+program resolves the id and reports a parameter or an activation, while the
+runtime reports only that the range is bound.
+
+The offsets are the point. A fixed layout refused for want of a contiguous
+range is not explained by a count, because a small allocation in the wrong place
+costs the largest free range while leaving the free total almost untouched, and
+because an allocation still held after its scope ended can only be attributed if
+something names the scope that made it.
+
 `shadowspill_runtime_failure()` returns the first latched failure as a
 `ShadowSpillRuntimeFailure`: the status, a `ShadowSpillFailureReason`, the
 pool, task, object and allocation it names, and, for an allocation-contract
