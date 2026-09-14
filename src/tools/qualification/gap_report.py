@@ -192,7 +192,9 @@ def _print_step(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> None
             for phase, item in phases.items()
         )
     )
-    starts = [tasks[key]["delta"]["start_seconds"] for key in timelines["compute"]]
+    starts = [
+        tasks[key]["delta"]["start_delta_seconds"] for key in timelines["compute"]
+    ]
     print(
         f"  task start drift: first {starts[0] * 1e3:+.1f} ms,"
         f" median {statistics.median(starts) * 1e3:+.1f} ms,"
