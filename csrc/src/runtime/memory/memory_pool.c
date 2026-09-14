@@ -29,26 +29,6 @@ const ShadowSpillMemoryPool *shadowspill_runtime_pool_const(
     return &runtime->pools[pool_id];
 }
 
-ShadowSpillMemoryPool *shadowspill_execution_pool(ShadowSpillRuntime *runtime) {
-    return shadowspill_runtime_pool(runtime, SHADOWSPILL_EXECUTION_POOL_ID);
-}
-
-const ShadowSpillMemoryPool *shadowspill_execution_pool_const(
-    const ShadowSpillRuntime *runtime
-) {
-    return runtime == NULL
-        ? NULL
-        : shadowspill_runtime_pool_const(
-              runtime, SHADOWSPILL_EXECUTION_POOL_ID
-          );
-}
-
-ShadowSpillMemoryPool *shadowspill_spill_pool(ShadowSpillRuntime *runtime) {
-    return runtime == NULL
-        ? NULL
-        : shadowspill_runtime_pool(runtime, SHADOWSPILL_SPILL_POOL_ID);
-}
-
 ShadowSpillObjectLocation *shadowspill_object_location(
     ShadowSpillObject *object,
     uint32_t pool_id
@@ -60,23 +40,6 @@ ShadowSpillObjectLocation *shadowspill_object_location(
     return &object->locations[pool_id];
 }
 
-ShadowSpillObjectLocation *shadowspill_execution_location(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillObject *object
-) {
-    return runtime == NULL
-        ? NULL
-        : shadowspill_object_location(object, SHADOWSPILL_EXECUTION_POOL_ID);
-}
-
-ShadowSpillObjectLocation *shadowspill_spill_location(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillObject *object
-) {
-    return runtime == NULL
-        ? NULL
-        : shadowspill_object_location(object, SHADOWSPILL_SPILL_POOL_ID);
-}
 
 ShadowSpillObjectLocation *shadowspill_plan_execution_location(
     const ShadowSpillPlan *plan,

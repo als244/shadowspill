@@ -444,6 +444,7 @@ def profile_training_tasks(
     captured: TrainingCaptureArtifacts,
     materialized: TrainingMaterializationArtifacts,
     *,
+    plan_id: int,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
     stores: PlanningStores,
@@ -458,6 +459,7 @@ def profile_training_tasks(
     profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
+        plan_id=plan_id,
         device_ordinal=captured.device_ordinal,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
@@ -1320,6 +1322,7 @@ def make_training_program(
         profiled = profile_training_tasks(
             captured,
             materialized,
+            plan_id=memory.plan_id,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             stores=artifacts,
@@ -1580,6 +1583,7 @@ def build_training(
         profiled = profile_training_tasks(
             captured,
             materialized,
+            plan_id=memory.plan_id,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
             stores=artifacts,

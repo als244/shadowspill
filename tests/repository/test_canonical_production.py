@@ -49,6 +49,46 @@ def test_avoided_vocabulary_stays_out_of_production_sources() -> None:
     assert offenders == []
 
 
+def test_neutral_runtime_calls_go_through_the_configured_library() -> None:
+    """A neutral call on the adapter's library object has no argtypes.
+
+    `runtime_library()` is what applies `_RUNTIME_SIGNATURES`; the adapter's
+    library carries only the adapter's. Calling a neutral function on the latter
+    leaves `argtypes` unset, so ctypes passes the pointer-sized runtime handle as
+    a C int, the callee dereferences the truncated value, and the process dies --
+    with nothing to see at import time and no type error. Cheap to state, so it
+    is stated here rather than waited for on a GPU.
+    """
+
+    offenders = [
+        f"{path.relative_to(ROOT)}:{number}: {match}"
+        for path in (PYTHON_ROOT / "pytorch").rglob("*.py")
+        for number, line in enumerate(path.read_text().splitlines(), start=1)
+        for match in re.findall(
+            r"_installed\.library\.(shadowspill_(?!pytorch_)\w+)", line
+        )
+    ]
+    assert offenders == []
+
+
+def test_frontend_vocabulary_stays_out_of_the_c_sources() -> None:
+    """`callable` is the frontend's word for the span a plan covers.
+
+    Scoped to the C sources rather than added to the shared avoided list,
+    because the word is correct on the Python side -- the frontend really does
+    hand out callables, one per plan.
+    """
+
+    avoided = re.compile(r"\bcallables?\b", re.IGNORECASE)
+    offenders = [
+        f"{path.relative_to(ROOT)}: {match}"
+        for path in _production_sources()
+        if C_ROOT in path.parents
+        for match in set(avoided.findall(path.read_text(encoding="utf-8")))
+    ]
+    assert offenders == []
+
+
 def test_removed_compatibility_names_do_not_return() -> None:
     forbidden = (
         "shadowspill_before_task(",

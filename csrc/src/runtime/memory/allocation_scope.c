@@ -3,10 +3,15 @@
 ShadowSpillStatus shadowspill_allocation_scope_begin(
     ShadowSpillRuntime *runtime,
     uint32_t pool_id,
+    uint64_t plan_id,
     uint64_t scope_id
 ) {
     ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
-    if (pool == NULL || scope_id == SHADOWSPILL_RUNTIME_NO_ID) {
+    /* A scope must name its plan. Allowing it not to would leave allocations
+     * made here attributable to nothing, which is the case this id exists to
+     * remove. */
+    if (pool == NULL || plan_id == 0U ||
+        scope_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const ShadowSpillStatus status =
@@ -14,7 +19,20 @@ ShadowSpillStatus shadowspill_allocation_scope_begin(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
-    return shadowspill_enter_allocation_scope(runtime, pool, scope_id) == 0
+    /*
+     * The id must be one this runtime issued. It need not name a plan that
+     * exists: profiling legitimately runs before a plan is created, and in a
+     * standalone measurement no plan is created at all. What matters for
+     * attribution is that the id came from the minter, so it is unique for the
+     * life of the runtime and cannot collide with another plan's.
+     */
+    if (plan_id >=
+        atomic_load_explicit(&runtime->next_plan_id, memory_order_acquire)) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    return shadowspill_enter_allocation_scope(
+               runtime, pool, plan_id, scope_id
+           ) == 0
         ? SHADOWSPILL_STATUS_OK
         : SHADOWSPILL_STATUS_INVALID_STATE;
 }

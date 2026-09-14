@@ -1,7 +1,7 @@
 # PyTorch adapter C API
 
-Include `<shadowspill/pytorch_adapter.h>`. This is the only compiled component
-that knows PyTorch allocator and storage conventions. It does four things:
+Include `<shadowspill/pytorch_adapter.h>`. This is the one library that knows
+PyTorch allocator and storage conventions. It does four things:
 installs PyTorch's allocator, bootstraps the process-global neutral runtime and
 publishes its handle, wraps provider streams and profiler ranges at task
 boundaries, and validates PyTorch storage views.
@@ -20,8 +20,9 @@ allocation scopes; profiling; failure and recovery. Every symbol is prefixed
 
 ## What the adapter requires of a backend
 
-The [backend contract](backends.md) and nothing else. `ShadowSpillPytorchAdapterConfig.backend_library`
-names the shared object to load; bootstrap opens it with `dlopen()`, resolves
+The [backend contract](backends.md) and nothing else.
+`ShadowSpillPytorchAdapterConfig.backend_library` names the shared object to
+load; bootstrap opens it with `dlopen()`, resolves
 `shadowspill_backend_create()` and `shadowspill_backend_destroy()`, validates
 the table with `shadowspill_backend_is_valid()`, and keeps it for the life of
 the runtime. The adapter links no provider library and includes no provider
@@ -38,7 +39,8 @@ runtime, and the backend library by path. The adapter hands back
 `ShadowSpillPytorchPhysicalAdmission` (the ledger as sealed),
 `ShadowSpillPytorchAdapterCapabilities` (the three contract versions and
 whether the storage operators were built), `ShadowSpillPytorchAdapterStatistics`
-(the callback counters with the runtime's and the backend's statistics inside)
+(the callback counters, with the runtime's statistics, the backend's, and
+`allocator_pool`, the statistics of the pool the allocator is bound to, inside)
 and `ShadowSpillPytorchAdapterFailure` (the first failure, with the runtime's
 record inside). `SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION` versions all of it.
 
@@ -96,7 +98,7 @@ task outputs.
 
 ## Objects and storage
 
-Only the three `shadowspill_pytorch_` entries below are this library's; they
+Only the four `shadowspill_pytorch_` entries below are this library's; they
 are here because each wraps a provider stream or a PyTorch storage view. The
 rest of the object vocabulary is the neutral runtime's, listed here for the
 shape of the workflow and specified in the [Runtime API](runtime.md#object-api);
@@ -133,17 +135,15 @@ the frontend calls those with the handle from
 
 ## Task boundaries and allocation scopes
 
-These publish the neutral plan owner without introducing frontend object
-semantics:
+`shadowspill_pytorch_submit_action_batch_handle()` triggers the neutral plan
+owner's pre-task action batch without introducing frontend object semantics. It
+is here because it wraps a provider stream, which is work only this library can
+do, and so are the two acquisition calls under [Objects and
+storage](#objects-and-storage).
 
-- `shadowspill_pytorch_submit_action_batch_handle()`
-- `shadowspill_pytorch_acquire_objects_handle()`
-- `shadowspill_pytorch_transfer_acquired_object_to_caller()`
-
-Each of those wraps a provider stream, which is work only this library can
-do. Everything else in plan admission needs nothing but handles the neutral
-runtime already owns, so the frontend calls those on the neutral library,
-passing the runtime from `shadowspill_pytorch_runtime_handle()`:
+Everything else in plan admission needs nothing but handles the neutral runtime
+already owns, so the frontend calls those on the neutral library, passing the
+runtime from `shadowspill_pytorch_runtime_handle()`:
 
 - `shadowspill_plan_bind_object()`, `shadowspill_plan_admit_task()`,
   `shadowspill_plan_publish_initial_allocation()`
@@ -165,8 +165,9 @@ Acquiring an object handle stays on the adapter while releasing one does not:
 acquiring resolves an id against the bound runtime, releasing needs only the
 handle.
 
-Plan creation receives explicit execution/spill pool IDs and fetch/evict route
-IDs. The adapter does not infer routes from global runtime roles.
+Plan creation receives the plan id together with explicit execution/spill pool
+IDs and fetch/evict route IDs. The adapter does not infer routes from global
+runtime roles.
 
 Task calls mirror the neutral runtime:
 
@@ -189,7 +190,11 @@ Task calls mirror the neutral runtime:
 - `shadowspill_pytorch_allocation_scope_begin()`,
   `shadowspill_pytorch_allocation_scope_end()`, and
   `shadowspill_pytorch_allocation_scope_abort()` attribute isolated profiling
-  allocations without creating a fake execution task.
+  allocations without creating a fake execution task. `begin` takes the plan the
+  measurements are for alongside the scope id, and refuses one that names no
+  live plan: a scope runs outside any task, so the runtime has none to read the
+  plan from, and anything a probe leaves behind would otherwise be attributable
+  to nothing. See [plan identity](../architecture/plan-identity.md).
 
 Fixed placement uses the plan-owned admission and sealing calls above. The
 certificate and its runtime projection are described in [Physical admission

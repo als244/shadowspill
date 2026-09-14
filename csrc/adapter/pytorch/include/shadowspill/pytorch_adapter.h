@@ -105,6 +105,10 @@ typedef struct ShadowSpillPytorchAdapterStatistics {
     uint64_t observed_external_high_water_bytes;
     uint64_t physical_budget_sealed;
     ShadowSpillRuntimeStatistics runtime;
+    /* The pool the allocator is bound to. A runtime may own several and a pool
+     * carries no role of its own, so the adapter reports the one it allocates
+     * from rather than leaving a caller to guess a pool id. */
+    ShadowSpillMemoryPoolStatistics allocator_pool;
     ShadowSpillBackendStatistics backend;
 } ShadowSpillPytorchAdapterStatistics;
 
@@ -300,9 +304,17 @@ shadowspill_pytorch_abort_task_handle(
     uintptr_t task_handle
 );
 
-/* Attribute isolated profiling allocations without opening a fake task. */
+/*
+ * Attribute isolated profiling allocations without opening a fake task.
+ * `plan_id` is the plan these measurements are for, which does not exist yet --
+ * profiling is what the plan will be built from - so the caller names it here
+ * and again in the description it creates that plan from.
+ */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_allocation_scope_begin(uint64_t scope_id);
+shadowspill_pytorch_allocation_scope_begin(
+    uint64_t plan_id,
+    uint64_t scope_id
+);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_allocation_scope_end(

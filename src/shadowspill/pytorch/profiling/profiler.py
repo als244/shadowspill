@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import itertools
 import statistics
 import time
 from collections.abc import Callable, Sequence
@@ -96,6 +97,14 @@ class _AllocationPathProbe:
     workspace: TaskWorkspaceProfile
 
 
+#: Profiling scope ids, minted once per process rather than once per profiler.
+#: A profiler is built per planning call, so a per-instance counter restarted at
+#: the base every call and two scopes in different calls wore the same number --
+#: which made an allocation's origin ambiguous exactly when several planning
+#: calls had run, and that is when it matters.
+_profiling_scope_ids = itertools.count(PROFILING_SCOPE_BASE)
+
+
 class TaskProfiler:
     """Warm and measure compiled tasks through an installed ShadowSpill slab."""
 
@@ -104,6 +113,7 @@ class TaskProfiler:
         library: Any,
         *,
         runtime_handle: int,
+        plan_id: int,
         device_ordinal: int,
         warmup_iterations: int = 3,
         sample_iterations: int = 5,
@@ -123,13 +133,16 @@ class TaskProfiler:
             )
         self._library = library
         self._runtime_handle = runtime_handle
+        # Named on every allocation scope: a scope runs outside any task,
+        # so the runtime cannot infer which plan the probe is measuring for.
+        self._plan_id = plan_id
         self._device_ordinal = device_ordinal
         self._warmups = warmup_iterations
         self._samples = sample_iterations
         self._telemetry_capacity = telemetry_capacity
         self._allocation_probe_seeds = allocation_probe_seeds
         self._allocation_probe_repetitions = allocation_probe_repetitions
-        self._next_scope_id = PROFILING_SCOPE_BASE
+        self._scope_ids = _profiling_scope_ids
         self._executables = ProfileExecutableStore(
             device_ordinal=device_ordinal,
             allocation_check=lambda operation: raise_if_allocator_failed(
@@ -758,9 +771,12 @@ class TaskProfiler:
         self._device_conditioned = True
 
     def _open_allocation_scope(self) -> int:
-        scope_id = self._next_scope_id
-        self._next_scope_id += 1
-        status = int(self._library.shadowspill_pytorch_allocation_scope_begin(scope_id))
+        scope_id = next(self._scope_ids)
+        status = int(
+            self._library.shadowspill_pytorch_allocation_scope_begin(
+                self._plan_id, scope_id
+            )
+        )
         if status != 0:
             raise CaptureError(
                 f"profiling allocation scope begin failed with status {status}"
@@ -833,7 +849,8 @@ class TaskProfiler:
         )
 
     def _requested_allocated_bytes(self) -> int:
-        return int(self._allocator_statistics().runtime.requested_allocated_bytes)
+        pool = self._allocator_statistics().allocator_pool
+        return int(pool.requested_allocated_bytes)
 
     def _allocator_statistics(self) -> AdapterStatistics:
         statistics = AdapterStatistics()
@@ -1143,8 +1160,7 @@ class TaskProfiler:
     def _measure_workspace_once(
         self, executable: Callable[[], object], stream: torch.cuda.Stream
     ) -> Any:
-        task_id = self._next_scope_id
-        self._next_scope_id += 1
+        task_id = next(self._scope_ids)
         execution_started = time.perf_counter_ns()
         start_allocation_telemetry(
             self._runtime_handle, capacity=self._telemetry_capacity
@@ -1154,7 +1170,9 @@ class TaskProfiler:
         primary_error: BaseException | None = None
         try:
             status = int(
-                self._library.shadowspill_pytorch_allocation_scope_begin(task_id)
+                self._library.shadowspill_pytorch_allocation_scope_begin(
+                    self._plan_id, task_id
+                )
             )
             if status != 0:
                 raise CaptureError(

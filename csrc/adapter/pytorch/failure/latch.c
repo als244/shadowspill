@@ -102,6 +102,13 @@ ShadowSpillStatus shadowspill_pytorch_allocator_statistics(
     ShadowSpillStatus status = shadowspill_runtime_statistics(
         runtime, &statistics->runtime
     );
+    if (status == SHADOWSPILL_STATUS_OK) {
+        status = shadowspill_memory_pool_statistics(
+            runtime,
+            shadowspill_pytorch_allocator_pool_id(),
+            &statistics->allocator_pool
+        );
+    }
     backend.statistics(backend.state, &statistics->backend);
     return status;
 }

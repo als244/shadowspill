@@ -5,6 +5,8 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "runtime_test.h"
+
 enum {
     COMPLETION_COUNT = 64,
     WAIT_IDLE_ROUNDS = 256,
@@ -106,7 +108,7 @@ int main(void) {
     }
 
     ShadowSpillBackendStatistics backend_statistics = {0};
-    ShadowSpillRuntimeStatistics runtime_statistics = {0};
+    ShadowSpillTestStatistics runtime_statistics = {0};
     mock.statistics(mock.state, &backend_statistics);
     (void)printf(
         "completion_count=%u event_queries=%llu queries_per_completion=%.3f\n",
@@ -115,38 +117,38 @@ int main(void) {
         (double)backend_statistics.event_queries /
             (double)(COMPLETION_COUNT + WAIT_IDLE_ROUNDS)
     );
-    if (shadowspill_runtime_statistics(runtime, &runtime_statistics) !=
+    if (shadowspill_test_statistics(runtime, &runtime_statistics) !=
             SHADOWSPILL_STATUS_OK ||
         /* Leases keep their backend events, so the driver saw one create per
          * lease record and no destroy until the pool goes away. */
         backend_statistics.events_created !=
-            runtime_statistics.event_lease_driver_creates ||
+            runtime_statistics.runtime.event_lease_driver_creates ||
         backend_statistics.events_created >
             COMPLETION_COUNT + WAIT_IDLE_ROUNDS ||
         backend_statistics.events_destroyed != 0U ||
-        runtime_statistics.pending_retirements != 0U ||
-        runtime_statistics.live_allocations != 0U ||
-        runtime_statistics.event_lease_capacity != COMPLETION_COUNT ||
-        runtime_statistics.event_lease_in_use != 0U ||
-        runtime_statistics.event_lease_peak_in_use == 0U ||
-        runtime_statistics.event_lease_peak_in_use > COMPLETION_COUNT ||
-        runtime_statistics.event_lease_growth_rejections != 0U ||
-        runtime_statistics.retirement_record_capacity != COMPLETION_COUNT ||
-        runtime_statistics.retirement_record_in_use != 0U ||
-        runtime_statistics.retirement_record_peak_in_use == 0U ||
-        runtime_statistics.retirement_record_peak_in_use > COMPLETION_COUNT ||
-        runtime_statistics.retirement_record_growth_rejections != 0U ||
-        runtime_statistics.memory_lease_record_capacity !=
+        runtime_statistics.runtime.pending_retirements != 0U ||
+        runtime_statistics.execution.live_allocations != 0U ||
+        runtime_statistics.runtime.event_lease_capacity != COMPLETION_COUNT ||
+        runtime_statistics.runtime.event_lease_in_use != 0U ||
+        runtime_statistics.runtime.event_lease_peak_in_use == 0U ||
+        runtime_statistics.runtime.event_lease_peak_in_use > COMPLETION_COUNT ||
+        runtime_statistics.runtime.event_lease_growth_rejections != 0U ||
+        runtime_statistics.runtime.retirement_record_capacity != COMPLETION_COUNT ||
+        runtime_statistics.runtime.retirement_record_in_use != 0U ||
+        runtime_statistics.runtime.retirement_record_peak_in_use == 0U ||
+        runtime_statistics.runtime.retirement_record_peak_in_use > COMPLETION_COUNT ||
+        runtime_statistics.runtime.retirement_record_growth_rejections != 0U ||
+        runtime_statistics.execution.memory_lease_record_capacity !=
             COMPLETION_COUNT ||
-        runtime_statistics.memory_lease_record_in_use != 0U ||
-        runtime_statistics.memory_lease_record_peak_in_use !=
+        runtime_statistics.execution.memory_lease_record_in_use != 0U ||
+        runtime_statistics.execution.memory_lease_record_peak_in_use !=
             COMPLETION_COUNT ||
-        runtime_statistics.memory_lease_record_growth_rejections != 0U ||
-        runtime_statistics.lease_use_record_capacity != COMPLETION_COUNT ||
-        runtime_statistics.lease_use_record_in_use != 0U ||
-        runtime_statistics.lease_use_record_peak_in_use != COMPLETION_COUNT ||
-        runtime_statistics.lease_use_record_growth_rejections != 0U ||
-        runtime_statistics.free_bytes !=
+        runtime_statistics.execution.memory_lease_record_growth_rejections != 0U ||
+        runtime_statistics.execution.lease_use_record_capacity != COMPLETION_COUNT ||
+        runtime_statistics.execution.lease_use_record_in_use != 0U ||
+        runtime_statistics.execution.lease_use_record_peak_in_use != COMPLETION_COUNT ||
+        runtime_statistics.execution.lease_use_record_growth_rejections != 0U ||
+        runtime_statistics.execution.free_bytes !=
             COMPLETION_COUNT * ALLOCATION_BYTES) {
         return EXIT_FAILURE;
     }

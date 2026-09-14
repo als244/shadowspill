@@ -61,6 +61,10 @@ class _Runtime:
         del kwargs
         self.prepared_error = error
 
+    def plan_scoped_residue(self, plan_handle: int) -> tuple[str, ...]:
+        assert plan_handle == 77
+        return ()
+
     def _release_plan(self, plan_handle: int) -> None:
         assert plan_handle == 77
         self.released = True

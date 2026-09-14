@@ -97,7 +97,13 @@ int main(void) {
         .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     ShadowSpillPlan *plan = NULL;
+    uint64_t plan_id = 0U;
+    if (shadowspill_runtime_next_plan_id(runtime, &plan_id) !=
+            SHADOWSPILL_STATUS_OK) {
+        FAIL("plan id");
+    }
     const ShadowSpillPlanDescription plan_description = {
+        .plan_id = plan_id,
         .execution_pool_id = 0U,
         .spill_pool_id = 1U,
         .fetch_route_id = 0U,

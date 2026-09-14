@@ -49,6 +49,7 @@ class _State:
 class _Runtime:
     def __init__(self) -> None:
         self.released = False
+        self.scoped_release_asked = False
 
     def _adopt_plan(self, plan_handle: int) -> None:
         assert plan_handle == 7
@@ -56,6 +57,11 @@ class _Runtime:
     def _release_plan(self, plan_handle: int) -> None:
         assert plan_handle == 7
         self.released = True
+
+    def plan_scoped_residue(self, plan_handle: int) -> tuple[str, ...]:
+        assert plan_handle == 7
+        self.scoped_release_asked = True
+        return ()
 
     def _prepare_failure_cleanup(self, error: BaseException, **kwargs: object) -> None:
         del error, kwargs

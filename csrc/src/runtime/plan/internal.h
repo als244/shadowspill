@@ -65,6 +65,7 @@ typedef struct ShadowSpillPlanObjectTable {
 
 struct ShadowSpillPlan {
     ShadowSpillRuntime *runtime;
+    uint64_t plan_id;
     ShadowSpillMemoryPool *execution_pool;
     ShadowSpillMemoryPool *spill_pool;
     ShadowSpillRouteState *fetch_route;
@@ -85,6 +86,23 @@ struct ShadowSpillPlan {
     struct ShadowSpillPlan *ownership_next;
     struct ShadowSpillPlan **ownership_previous_link;
 };
+
+int shadowspill_plan_registry_claim(
+    ShadowSpillRuntime *runtime,
+    uint64_t plan_id,
+    ShadowSpillPlan *plan
+);
+
+void shadowspill_plan_registry_release(
+    ShadowSpillRuntime *runtime,
+    uint64_t plan_id,
+    const ShadowSpillPlan *plan
+);
+
+int shadowspill_plan_registry_initialize(ShadowSpillRuntime *runtime);
+
+void shadowspill_plan_registry_destroy(ShadowSpillRuntime *runtime);
+
 
 int shadowspill_plan_object_table_initialize(
     ShadowSpillPlanObjectTable *table,

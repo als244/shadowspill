@@ -7,6 +7,10 @@
 typedef struct ShadowSpillTaskScope {
     ShadowSpillRuntime *runtime;
     ShadowSpillMemoryPool *allocation_pool;
+    /* The plan this scope belongs to. A task scope takes it from the task's
+     * plan; an allocation scope is told it, because those run before the plan
+     * they profile for exists. */
+    uint64_t plan_id;
     uint64_t task_id;
     const ShadowSpillTaskRecord *task;
     uint64_t invocation;
@@ -41,9 +45,16 @@ enum {
 static _Thread_local ShadowSpillTaskScope task_scope = {
     .runtime = NULL,
     .allocation_pool = NULL,
+    .plan_id = 0U,
     .task_id = SHADOWSPILL_RUNTIME_NO_ID,
     .task = NULL,
 };
+
+uint64_t shadowspill_current_plan_id(ShadowSpillRuntime *runtime) {
+    /* Zero, not NO_ID: zero is what a lease made under no plan records, and a
+     * thread outside any scope is exactly that case. */
+    return task_scope.runtime == runtime ? task_scope.plan_id : 0U;
+}
 
 uint64_t shadowspill_current_task_id(ShadowSpillRuntime *runtime) {
     return task_scope.runtime == runtime
@@ -124,14 +135,16 @@ ShadowSpillMemoryLease *shadowspill_current_task_retirements(
 int shadowspill_enter_allocation_scope(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
+    uint64_t plan_id,
     uint64_t task_id
 ) {
     if (runtime == NULL || pool == NULL || task_scope.runtime != NULL ||
-        task_id == SHADOWSPILL_RUNTIME_NO_ID) {
+        plan_id == 0U || task_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return -1;
     }
     task_scope.runtime = runtime;
     task_scope.allocation_pool = pool;
+    task_scope.plan_id = plan_id;
     task_scope.task_id = task_id;
     task_scope.task = NULL;
     task_scope.invocation = 0U;
@@ -279,7 +292,10 @@ int shadowspill_enter_claimed_task_scope(
             &record->invocation_active, memory_order_acquire
         ) == 0U ||
         shadowspill_enter_allocation_scope(
-            runtime, record->plan_owner->execution_pool, record->task_id
+            runtime,
+            record->plan_owner->execution_pool,
+            record->plan_owner->plan_id,
+            record->task_id
         ) != 0) {
         return -1;
     }

@@ -23,6 +23,7 @@ int main(void) {
     REPORT(ShadowSpillPytorchAdapterConfig);
     REPORT(ShadowSpillPytorchAdapterStatistics);
     REPORT(ShadowSpillPytorchAdapterFailure);
+    REPORT(ShadowSpillMemoryPoolStatistics);
     REPORT(ShadowSpillRuntimeStatistics);
     REPORT(ShadowSpillAllocationEvent);
     REPORT(ShadowSpillTraceConfig);

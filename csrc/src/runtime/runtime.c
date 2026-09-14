@@ -99,7 +99,7 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             } else {
                 pthread_mutex_lock(&pool->lock);
                 if (action->kind == SHADOWSPILL_RUNTIME_FETCH) {
-                    shadowspill_cancel_execution_reservation_locked(
+                    shadowspill_cancel_reservation_locked(
                         runtime, lease
                     );
                 } else {
@@ -158,6 +158,7 @@ static void release_resources(ShadowSpillRuntime *runtime) {
     destroy_actions(runtime);
     destroy_allocations(runtime);
     shadowspill_plan_destroy_all(runtime);
+    shadowspill_plan_registry_destroy(runtime);
     destroy_objects(runtime);
     free(runtime->allocation_events);
     runtime->allocation_events = NULL;
@@ -267,6 +268,7 @@ ShadowSpillStatus shadowspill_runtime_create(
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
     runtime->background_transfer_window_bytes =
         config->background_transfer_window_bytes;
+    atomic_init(&runtime->next_plan_id, 1U);
     atomic_init(&runtime->next_allocation_id, 1U);
     atomic_init(&runtime->next_generation, 1U);
     atomic_init(&runtime->next_event_generation, 1U);
@@ -305,6 +307,14 @@ ShadowSpillStatus shadowspill_runtime_create(
         return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
     }
     runtime->plans_lock_initialized = 1U;
+    if (shadowspill_plan_registry_initialize(runtime) != 0) {
+        pthread_mutex_destroy(&runtime->plans_lock);
+        runtime->plans_lock_initialized = 0U;
+        free(runtime->routes);
+        free(runtime->pools);
+        free(runtime);
+        return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    }
     if (shadowspill_event_pool_initialize(&runtime->events, 0U) != 0 ||
         shadowspill_event_pool_initialize(&runtime->timing_events, 1U) != 0 ||
         shadowspill_object_table_initialize(
@@ -489,6 +499,26 @@ ShadowSpillStatus shadowspill_runtime_reserve_memory_lease_records(
     return shadowspill_memory_pool_reserve_lease_records(
         pool, minimum_free_records
     );
+}
+
+ShadowSpillStatus shadowspill_runtime_next_plan_id(
+    ShadowSpillRuntime *runtime,
+    uint64_t *plan_id
+) {
+    if (runtime == NULL || plan_id == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    *plan_id = 0U;
+    ShadowSpillStatus status = shadowspill_current_status_locked(runtime);
+    if (status != SHADOWSPILL_STATUS_OK) {
+        return status;
+    }
+    /* Monotonic and never reissued, so an id identifies one plan for the life
+     * of the runtime even after that plan is gone. */
+    *plan_id = atomic_fetch_add_explicit(
+        &runtime->next_plan_id, 1U, memory_order_relaxed
+    );
+    return SHADOWSPILL_STATUS_OK;
 }
 
 ShadowSpillStatus shadowspill_runtime_wait_idle(
@@ -703,6 +733,62 @@ void shadowspill_runtime_destroy(ShadowSpillRuntime *runtime) {
     free(runtime);
 }
 
+ShadowSpillStatus shadowspill_memory_pool_live_allocations(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    ShadowSpillLiveAllocation *out,
+    uint64_t capacity,
+    uint64_t *count
+) {
+    if (runtime == NULL || count == NULL || (out == NULL && capacity != 0U)) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    /* Every entry is copied out under the pool's lock, so a caller reads one
+       consistent moment rather than a list mutating under it. The count is
+       always the whole list: a caller given a short buffer learns the size it
+       needs instead of a silently truncated answer. */
+    uint64_t live = 0U;
+    pthread_mutex_lock(&pool->lock);
+    for (ShadowSpillMemoryLease *lease = pool->active_leases; lease != NULL;
+         lease = lease->active_next) {
+        if (live < capacity) {
+            out[live] = (ShadowSpillLiveAllocation){
+                .allocation_id = lease->allocation_id,
+                .offset = lease->offset,
+                .charged_bytes = lease->charged_bytes,
+                .requested_bytes = lease->requested_bytes,
+                .origin_plan_id = lease->origin_plan_id,
+                .origin_task_id = lease->origin_task_id,
+                .origin_task_invocation = lease->origin_task_invocation,
+                .origin_task_allocation_ordinal =
+                    lease->origin_task_allocation_ordinal,
+                .object_id = lease->bound_object == NULL
+                    ? SHADOWSPILL_RUNTIME_NO_ID
+                    : lease->bound_object->object_id,
+                .references = atomic_load_explicit(
+                    &lease->references, memory_order_acquire
+                ),
+                .scratch = (uint8_t)(
+                    lease->origin_task_allocation_is_scratch != 0U
+                ),
+                .plan_owned = (uint8_t)(lease->plan_owned != 0),
+                .ever_plan_owned = (uint8_t)(lease->ever_plan_owned != 0),
+                .logical_freed = (uint8_t)(lease->logical_freed != 0),
+                .framework_free_seen =
+                    (uint8_t)(lease->framework_free_seen != 0),
+            };
+        }
+        ++live;
+    }
+    pthread_mutex_unlock(&pool->lock);
+    *count = live;
+    return SHADOWSPILL_STATUS_OK;
+}
+
 ShadowSpillStatus shadowspill_runtime_statistics(
     ShadowSpillRuntime *runtime,
     ShadowSpillRuntimeStatistics *statistics
@@ -710,18 +796,15 @@ ShadowSpillStatus shadowspill_runtime_statistics(
     if (runtime == NULL || statistics == NULL) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    ShadowSpillMemoryPool *execution_pool = shadowspill_runtime_pool(
-        runtime, SHADOWSPILL_EXECUTION_POOL_ID
-    );
-    ShadowSpillMemoryPool *spill_pool = shadowspill_runtime_pool(
-        runtime, SHADOWSPILL_SPILL_POOL_ID
-    );
-    if (execution_pool == NULL || spill_pool == NULL) {
+    if (runtime->pools == NULL || runtime->pool_count == 0U) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
     pthread_mutex_lock(&runtime->mutex);
-    pthread_mutex_lock(&execution_pool->lock);
-    pthread_mutex_lock(&spill_pool->lock);
+    /* Every pool, not two the runtime picked: which pools carry which role is a
+     * plan's choice, and a runtime may own more than two. */
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        pthread_mutex_lock(&runtime->pools[pool_id].lock);
+    }
     pthread_mutex_lock(&runtime->events.lock);
     pthread_mutex_lock(&runtime->retirements.lock);
     uint64_t retirement_records_fenced = 0U;
@@ -729,48 +812,30 @@ ShadowSpillStatus shadowspill_runtime_statistics(
     uint64_t retirement_records_preparing = 0U;
     uint64_t retirement_records_unfenced = 0U;
     uint64_t caller_owned_allocations = 0U;
-    for (const ShadowSpillMemoryLease *allocation =
-             execution_pool->active_leases;
-         allocation != NULL; allocation = allocation->active_next) {
-        if (allocation->pointer != NULL && allocation->ever_plan_owned &&
-            !allocation->plan_owned && !allocation->framework_free_seen) {
-            ++caller_owned_allocations;
-        }
-        if (!allocation->logical_freed || allocation->pointer == NULL) {
-            continue;
-        }
-        if (allocation->retirement_event != NULL) {
-            ++retirement_records_fenced;
-        } else if (allocation->retirement_requirements != NULL) {
-            ++retirement_records_evented;
-        } else if (allocation->retirement_preparing) {
-            ++retirement_records_preparing;
-        } else {
-            ++retirement_records_unfenced;
+    for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
+        for (const ShadowSpillMemoryLease *allocation =
+                 runtime->pools[pool_id].active_leases;
+             allocation != NULL; allocation = allocation->active_next) {
+            if (allocation->pointer != NULL && allocation->ever_plan_owned &&
+                !allocation->plan_owned && !allocation->framework_free_seen) {
+                ++caller_owned_allocations;
+            }
+            if (!allocation->logical_freed || allocation->pointer == NULL) {
+                continue;
+            }
+            if (allocation->retirement_event != NULL) {
+                ++retirement_records_fenced;
+            } else if (allocation->retirement_requirements != NULL) {
+                ++retirement_records_evented;
+            } else if (allocation->retirement_preparing) {
+                ++retirement_records_preparing;
+            } else {
+                ++retirement_records_unfenced;
+            }
         }
     }
     *statistics = (ShadowSpillRuntimeStatistics){
-        .execution_pool_bytes = execution_pool->ranges.capacity,
-        .requested_allocated_bytes = execution_pool->requested_allocated_bytes,
-        .peak_requested_allocated_bytes =
-            execution_pool->peak_requested_allocated_bytes,
-        .allocated_bytes = execution_pool->ranges.allocated,
-        .free_bytes =
-            shadowspill_memory_pool_free_bytes_locked(execution_pool),
-        .free_prefix_bytes = shadowspill_memory_pool_free_prefix_locked(
-            execution_pool
-        ),
-        .largest_free_range_bytes =
-            shadowspill_memory_pool_largest_free_locked(execution_pool),
-        .external_fragmentation_bytes =
-            shadowspill_memory_pool_free_bytes_locked(execution_pool) -
-            shadowspill_memory_pool_largest_free_locked(execution_pool),
-        .peak_allocated_bytes = execution_pool->ranges.peak_allocated,
-        .spill_pool_bytes = spill_pool->ranges.capacity,
-        .spill_allocated_bytes = spill_pool->ranges.allocated,
-        .spill_peak_allocated_bytes = spill_pool->ranges.peak_allocated,
-        .live_allocations = execution_pool->live_allocations,
-        .blocked_allocators = execution_pool->blocked_allocators,
+        .pool_count = runtime->pool_count,
         .pending_retirements = runtime->pending_retirements,
         .retirement_records_fenced = retirement_records_fenced,
         .retirement_records_evented = retirement_records_evented,
@@ -816,36 +881,57 @@ ShadowSpillStatus shadowspill_runtime_statistics(
         .retirement_record_peak_in_use = runtime->retirements.peak_in_use,
         .retirement_record_growth_rejections =
             runtime->retirements.growth_rejections,
-        .memory_lease_record_capacity =
-            execution_pool->lease_record_capacity +
-            spill_pool->lease_record_capacity,
-        .memory_lease_record_in_use =
-            execution_pool->lease_record_in_use +
-            spill_pool->lease_record_in_use,
-        .memory_lease_record_peak_in_use =
-            execution_pool->lease_record_peak_in_use +
-            spill_pool->lease_record_peak_in_use,
-        .memory_lease_record_growth_rejections =
-            execution_pool->lease_record_growth_rejections +
-            spill_pool->lease_record_growth_rejections,
-        .lease_use_record_capacity =
-            execution_pool->use_record_capacity +
-            spill_pool->use_record_capacity,
-        .lease_use_record_in_use =
-            execution_pool->use_record_in_use +
-            spill_pool->use_record_in_use,
-        .lease_use_record_peak_in_use =
-            execution_pool->use_record_peak_in_use +
-            spill_pool->use_record_peak_in_use,
-        .lease_use_record_growth_rejections =
-            execution_pool->use_record_growth_rejections +
-            spill_pool->use_record_growth_rejections,
         .caller_owned_allocations = caller_owned_allocations,
     };
     pthread_mutex_unlock(&runtime->retirements.lock);
     pthread_mutex_unlock(&runtime->events.lock);
-    pthread_mutex_unlock(&spill_pool->lock);
-    pthread_mutex_unlock(&execution_pool->lock);
+    for (uint32_t pool_id = runtime->pool_count; pool_id != 0U;) {
+        pthread_mutex_unlock(&runtime->pools[--pool_id].lock);
+    }
     pthread_mutex_unlock(&runtime->mutex);
+    return SHADOWSPILL_STATUS_OK;
+}
+
+ShadowSpillStatus shadowspill_memory_pool_statistics(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    ShadowSpillMemoryPoolStatistics *statistics
+) {
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL || statistics == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    pthread_mutex_lock(&pool->lock);
+    const uint64_t free_bytes =
+        shadowspill_memory_pool_free_bytes_locked(pool);
+    const uint64_t largest_free =
+        shadowspill_memory_pool_largest_free_locked(pool);
+    *statistics = (ShadowSpillMemoryPoolStatistics){
+        .pool_id = pool_id,
+        .kind = pool->kind,
+        .capacity_bytes = pool->ranges.capacity,
+        .requested_allocated_bytes = pool->requested_allocated_bytes,
+        .peak_requested_allocated_bytes = pool->peak_requested_allocated_bytes,
+        .allocated_bytes = pool->ranges.allocated,
+        .peak_allocated_bytes = pool->ranges.peak_allocated,
+        .free_bytes = free_bytes,
+        .free_prefix_bytes =
+            shadowspill_memory_pool_free_prefix_locked(pool),
+        .largest_free_range_bytes = largest_free,
+        .external_fragmentation_bytes = free_bytes - largest_free,
+        .live_allocations = pool->live_allocations,
+        .blocked_allocators = pool->blocked_allocators,
+        .memory_lease_record_capacity = pool->lease_record_capacity,
+        .memory_lease_record_in_use = pool->lease_record_in_use,
+        .memory_lease_record_peak_in_use = pool->lease_record_peak_in_use,
+        .memory_lease_record_growth_rejections =
+            pool->lease_record_growth_rejections,
+        .lease_use_record_capacity = pool->use_record_capacity,
+        .lease_use_record_in_use = pool->use_record_in_use,
+        .lease_use_record_peak_in_use = pool->use_record_peak_in_use,
+        .lease_use_record_growth_rejections =
+            pool->use_record_growth_rejections,
+    };
+    pthread_mutex_unlock(&pool->lock);
     return SHADOWSPILL_STATUS_OK;
 }

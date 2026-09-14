@@ -290,11 +290,11 @@ def _initialize_provider_state(
         raise AllocatorInstallError(
             f"CUDA provider allocation accounting failed (status {status})"
         )
-    runtime = statistics.runtime
-    fixed = int(runtime.allocated_bytes)
-    free = int(runtime.free_bytes)
+    pool = statistics.allocator_pool
+    fixed = int(pool.allocated_bytes)
+    free = int(pool.free_bytes)
     capacity = int(admission.allocator_pool_bytes)
-    largest = int(runtime.largest_free_range_bytes)
+    largest = int(pool.largest_free_range_bytes)
     if fixed + free != capacity or largest != free:
         raise AllocatorInstallError(
             "CUDA provider initialization fragmented the otherwise empty slab: "
@@ -339,16 +339,16 @@ def validate_dynamic_execution_reservation(
         raise AllocatorInstallError(
             f"fixed execution reservation accounting failed (status {status})"
         )
-    runtime = statistics.runtime
-    allocated = int(runtime.allocated_bytes)
-    free = int(runtime.free_bytes)
+    pool = statistics.allocator_pool
+    allocated = int(pool.allocated_bytes)
+    free = int(pool.free_bytes)
     capacity = int(installed.admission.allocator_pool_bytes)
     if allocated > reserved_bytes:
         raise AllocatorInstallError(
             "persistent provider allocations exceed the admitted slab reserve: "
             f"observed={allocated}, reserved={reserved_bytes}"
         )
-    largest = int(runtime.largest_free_range_bytes)
+    largest = int(pool.largest_free_range_bytes)
     usable_capacity = capacity - reserved_bytes
     if allocated + free != capacity or free < usable_capacity:
         raise AllocatorInstallError(

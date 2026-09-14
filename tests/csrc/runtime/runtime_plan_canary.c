@@ -8,6 +8,8 @@
 #include <shadowspill/backend_mock.h>
 #include <shadowspill/runtime.h>
 
+#include "runtime_test.h"
+
 static ShadowSpillStatus canary_before_task(
     ShadowSpillRuntime *runtime,
     const ShadowSpillTaskHandle *handle,
@@ -233,11 +235,111 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
             runtime, 2U, allocation.allocation_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &invalid_plan, &plan) !=
+        shadowspill_test_plan_create(runtime, &invalid_plan, &plan) !=
             SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
         plan != NULL;
     if (compute.words[0] != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
+    }
+    shadowspill_runtime_destroy(runtime);
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
+static int plan_ids_name_one_plan_for_the_life_of_the_runtime(void) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(&mock, 4096U, 4096U, 16U, 1000U, &topology);
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillPlan *first = NULL;
+    ShadowSpillPlan *reuse = NULL;
+    ShadowSpillPlan *unissued = NULL;
+    ShadowSpillPlan *unnamed = NULL;
+    ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
+        SHADOWSPILL_STATUS_OK;
+    uint64_t taken = 0U;
+    uint64_t next = 0U;
+    if (!failed) {
+        failed = shadowspill_runtime_next_plan_id(runtime, &taken) !=
+                SHADOWSPILL_STATUS_OK ||
+            shadowspill_runtime_next_plan_id(runtime, &next) !=
+                SHADOWSPILL_STATUS_OK ||
+            taken == 0U || next == taken;
+    }
+    if (!failed) {
+        roles.plan_id = taken;
+        failed = shadowspill_plan_create(runtime, &roles, &first) !=
+            SHADOWSPILL_STATUS_OK;
+    }
+    if (!failed) {
+        /* The same id while the first plan is live: refused, because a lease
+         * recording it would name two plans. */
+        failed = shadowspill_plan_create(runtime, &roles, &reuse) !=
+                SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
+            reuse != NULL;
+    }
+    if (!failed) {
+        /* An id this runtime never issued, and no id at all. */
+        roles.plan_id = next + 1000U;
+        failed = shadowspill_plan_create(runtime, &roles, &unissued) !=
+                SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
+            unissued != NULL;
+    }
+    if (!failed) {
+        roles.plan_id = 0U;
+        failed = shadowspill_plan_create(runtime, &roles, &unnamed) !=
+                SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
+            unnamed != NULL;
+    }
+    ShadowSpillPlanState state = SHADOWSPILL_PLAN_STATE_UNKNOWN;
+    if (!failed) {
+        failed = shadowspill_runtime_plan_state(runtime, taken, &state) !=
+                SHADOWSPILL_STATUS_OK ||
+            state != SHADOWSPILL_PLAN_STATE_LIVE ||
+            /* Taken but never created with: still nobody's. */
+            shadowspill_runtime_plan_state(runtime, next, &state) !=
+                SHADOWSPILL_STATUS_OK ||
+            state != SHADOWSPILL_PLAN_STATE_UNKNOWN;
+    }
+    if (!failed) {
+        /* Closing and destroying the holder does not put its id back in
+         * circulation, and the id stays answerable after the plan record is
+         * gone: that is what lets a lease which outlived its plan be named as
+         * that plan's rather than as some later plan's. */
+        failed = shadowspill_plan_close(first) != SHADOWSPILL_STATUS_OK ||
+            shadowspill_plan_id(first) != taken ||
+            /* Closed with the record still there, which is what separates
+               this state from DESTROYED. */
+            shadowspill_runtime_plan_state(runtime, taken, &state) !=
+                SHADOWSPILL_STATUS_OK ||
+            state != SHADOWSPILL_PLAN_STATE_CLOSED ||
+            shadowspill_runtime_plan(runtime, taken) != first;
+        shadowspill_plan_destroy(first);
+        first = NULL;
+        if (!failed) {
+            roles.plan_id = taken;
+            failed = shadowspill_runtime_plan_state(runtime, taken, &state) !=
+                    SHADOWSPILL_STATUS_OK ||
+                state != SHADOWSPILL_PLAN_STATE_DESTROYED ||
+                shadowspill_runtime_plan(runtime, taken) != NULL ||
+                shadowspill_plan_create(runtime, &roles, &reuse) !=
+                    SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
+                reuse != NULL;
+        }
+    }
+    if (first != NULL) {
+        (void)shadowspill_plan_close(first);
+        shadowspill_plan_destroy(first);
     }
     shadowspill_runtime_destroy(runtime);
     shadowspill_backend_destroy(&mock);
@@ -277,9 +379,9 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     ShadowSpillBackendStream second_compute = {{0U, 0U}};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &first) !=
+        shadowspill_test_plan_create(runtime, &roles, &first) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &second) !=
+        shadowspill_test_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_admit_task(first, &first_task, &first_handle) !=
             SHADOWSPILL_STATUS_OK ||
@@ -370,12 +472,12 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
         .kind = SHADOWSPILL_RUNTIME_FETCH,
     };
     const ShadowSpillActionBatchHandle *batch = NULL;
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &idle_plan) !=
+        shadowspill_test_plan_create(runtime, &roles, &idle_plan) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &busy_plan) !=
+        shadowspill_test_plan_create(runtime, &roles, &busy_plan) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_STATUS_OK ||
@@ -394,13 +496,13 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
                 runtime, batch, compute
             ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_plan_wait_idle(idle_plan) != SHADOWSPILL_STATUS_OK ||
-            shadowspill_runtime_statistics(runtime, &statistics) !=
+            shadowspill_test_statistics(runtime, &statistics) !=
                 SHADOWSPILL_STATUS_OK ||
-            statistics.queued_actions != 1U ||
+            statistics.runtime.queued_actions != 1U ||
             shadowspill_plan_wait_idle(busy_plan) != SHADOWSPILL_STATUS_OK ||
-            shadowspill_runtime_statistics(runtime, &statistics) !=
+            shadowspill_test_statistics(runtime, &statistics) !=
                 SHADOWSPILL_STATUS_OK ||
-            statistics.queued_actions != 0U;
+            statistics.runtime.queued_actions != 0U;
     }
     if (object_handle != NULL) {
         (void)shadowspill_object_handle_release(object_handle);
@@ -532,9 +634,9 @@ static int plan_selects_nondefault_pool_pair(void) {
     ShadowSpillAllocation reclaimed = {0};
     int failed = shadowspill_runtime_create(&config, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &alternate, &plan) !=
+        shadowspill_test_plan_create(runtime, &alternate, &plan) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &mismatched, &invalid) !=
+        shadowspill_test_plan_create(runtime, &mismatched, &invalid) !=
             SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
         invalid != NULL ||
         shadowspill_register_object(runtime, &object) !=
@@ -652,9 +754,9 @@ static int plans_bind_local_ids_to_explicit_runtime_objects(void) {
             SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &second_object) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &first) !=
+        shadowspill_test_plan_create(runtime, &roles, &first) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &second) !=
+        shadowspill_test_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_object_handle_acquire(
             runtime, 1001U, &first_object_handle
@@ -742,9 +844,9 @@ static int task_publications_resolve_plan_local_objects_once(void) {
         shadowspill_object_handle_acquire(
             runtime, second_object.object_id, &second_object_handle
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &first) !=
+        shadowspill_test_plan_create(runtime, &roles, &first) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &second) !=
+        shadowspill_test_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             first, 5U, first_object_handle, SHADOWSPILL_OBJECT_CAUSAL
@@ -846,7 +948,7 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
         .initially_resident = 1U,
     };
     ShadowSpillObjectSnapshot snapshot = {0};
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_register_object(runtime, &object) !=
@@ -854,9 +956,9 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
         shadowspill_object_handle_acquire(
             runtime, object.object_id, &public_reference
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &first) !=
+        shadowspill_test_plan_create(runtime, &roles, &first) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &second) !=
+        shadowspill_test_plan_create(runtime, &roles, &second) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             first, 1U, public_reference, SHADOWSPILL_OBJECT_CAUSAL
@@ -880,9 +982,9 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
                 runtime, object.object_id, &snapshot
             ) != SHADOWSPILL_STATUS_OK ||
             snapshot.residency != SHADOWSPILL_OBJECT_RELEASED ||
-            shadowspill_runtime_statistics(runtime, &statistics) !=
+            shadowspill_test_statistics(runtime, &statistics) !=
                 SHADOWSPILL_STATUS_OK ||
-            statistics.spill_allocated_bytes != 0U;
+            statistics.spill.allocated_bytes != 0U;
     }
     if (!failed) {
         shadowspill_plan_destroy(first);
@@ -905,10 +1007,10 @@ static int runtime_objects_survive_until_their_final_owner_closes(void) {
         failed = shadowspill_object_snapshot(
                 runtime, object.object_id, &snapshot
             ) != SHADOWSPILL_STATUS_INVALID_STATE ||
-            shadowspill_runtime_statistics(runtime, &statistics) !=
+            shadowspill_test_statistics(runtime, &statistics) !=
                 SHADOWSPILL_STATUS_OK ||
-            statistics.registered_objects != 0U ||
-            statistics.spill_allocated_bytes != 0U;
+            statistics.runtime.registered_objects != 0U ||
+            statistics.spill.allocated_bytes != 0U;
     }
     if (public_reference != NULL) {
         (void)shadowspill_object_handle_release(public_reference);
@@ -960,7 +1062,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
         shadowspill_object_handle_acquire(
             runtime, object.object_id, &object_handle
         ) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_create(runtime, &roles, &plan) !=
+        shadowspill_test_plan_create(runtime, &roles, &plan) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_plan_bind_object(
             plan, 9U, object_handle, SHADOWSPILL_OBJECT_CAUSAL
@@ -1040,6 +1142,10 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
 int main(void) {
     if (runtime_accepts_generic_and_sparse_topologies() != 0) {
         fprintf(stderr, "runtime plan canary failed: generic topology\n");
+        return EXIT_FAILURE;
+    }
+    if (plan_ids_name_one_plan_for_the_life_of_the_runtime() != 0) {
+        fprintf(stderr, "runtime plan canary failed: plan ids\n");
         return EXIT_FAILURE;
     }
     if (shared_runtime_accepts_overlapping_plan_tasks() != 0) {

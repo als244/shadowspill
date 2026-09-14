@@ -57,6 +57,31 @@ from shadowspill.pytorch.runtime_adapter.trace import (
     read_runtime_trace,
 )
 
+
+def _describe_occupants(
+    holders: tuple[Any, ...], retainers: Mapping[int, tuple[str, ...]]
+) -> str:
+    """Name what holds a range, and what in turn keeps that holder alive.
+
+    The holder says what the range is in the framework's terms; the retainer
+    says where the reference lives, which is the only place it can be dropped.
+    """
+
+    if not holders:
+        return ", held by no frontend object"
+    described = []
+    for item in holders[:3]:
+        kept = retainers.get(id(item), ())
+        where = f" via {', '.join(kept[:2])}" if kept else " retained by a library"
+        described.append(f"{type(item).__name__}{tuple(item.shape)}{where}")
+    more = f" +{len(holders) - 3}" if len(holders) > 3 else ""
+    return f", held by {'; '.join(described)}{more}"
+
+
+#: How many allocations a layout refusal lists before it says how many more.
+#: Enough to show a seam, short enough that the message stays readable.
+_REPORTED_ALLOCATIONS = 24
+
 _ACTION_KIND = {
     MemoryActionKind.RELEASE: 0,
     MemoryActionKind.EVICT: 1,
@@ -215,6 +240,15 @@ class RuntimeBridge:
         }
         self._size_by_alias: dict[str, int] = {
             item.alias_group_id: item.size_bytes for item in program.alias_groups
+        }
+        # An alias group's role, so a range the runtime reports as bound to an
+        # object can say what the object is for. The runtime deliberately does
+        # not know this; the program does.
+        self._role_by_alias: dict[str, str] = {
+            item.alias_group_id: item.role.value
+            if hasattr(item.role, "value")
+            else str(item.role)
+            for item in program.objects
         }
         self._zero_generations: dict[str, int] = {}
         self._registered: set[str] = set()
@@ -470,21 +504,84 @@ class RuntimeBridge:
             )
         )
         if status != 0:
-            runtime = self.statistics().runtime
+            pool = self.statistics().allocator_pool
             raise RuntimeExecutionError(
                 "admit fixed physical layout failed: "
                 f"status={status}, requested_slice={layout.slice_bytes}, "
-                f"allocated={int(runtime.allocated_bytes)}, "
-                f"free={int(runtime.free_bytes)}, "
-                f"free_prefix={int(runtime.free_prefix_bytes)}, "
+                f"allocated={int(pool.allocated_bytes)}, "
+                f"free={int(pool.free_bytes)}, "
+                f"free_prefix={int(pool.free_prefix_bytes)}, "
                 "largest_free_range="
-                f"{int(runtime.largest_free_range_bytes)}, "
+                f"{int(pool.largest_free_range_bytes)}, "
                 "external_fragmentation="
-                f"{int(runtime.external_fragmentation_bytes)}, "
-                f"live_allocations={int(runtime.live_allocations)}, "
-                f"pool_capacity={int(runtime.execution_pool_bytes)}"
+                f"{int(pool.external_fragmentation_bytes)}, "
+                f"live_allocations={int(pool.live_allocations)}, "
+                f"pool_capacity={int(pool.capacity_bytes)}"
+                f"{self._describe_pool_occupants()}"
             )
         self._fixed_layout_installed = True
+
+    def _role_of(self, item: Any) -> str:
+        """What a held range is for, resolving a bound object against the program.
+
+        The runtime reports a bound object by id because it does not know what
+        an object is for. This bridge holds the program, so a planned range can
+        say parameter or activation rather than merely planned.
+        """
+
+        if item.object_id is None:
+            return str(item.role)
+        alias = self._alias_by_runtime_object().get(int(item.object_id))
+        role = None if alias is None else self._role_by_alias.get(alias)
+        return role if role is not None else str(item.role)
+
+    def _alias_by_runtime_object(self) -> dict[int, str]:
+        """The inverse of the alias-to-runtime-object map, built on demand."""
+
+        return {value: key for key, value in self._runtime_object_ids.items()}
+
+    def _describe_pool_occupants(self) -> str:
+        """What is occupying the pool, for a layout that could not be placed.
+
+        A refusal for want of a contiguous range is not explained by how many
+        allocations are live: a small one in the wrong place costs the largest
+        free range and leaves the free total nearly untouched. The offsets are
+        the diagnosis, so they are listed in pool order with the scope that made
+        each one.
+        """
+
+        try:
+            held = self.runtime.live_allocations()
+        except Exception:  # a failure report must not fail
+            return ""
+        if not held:
+            return ""
+        shown = held[:_REPORTED_ALLOCATIONS]
+        try:
+            # Everything in this pool arrived through the framework's allocator,
+            # so a range with no frontend object is held by the framework's own
+            # internals rather than by anything a caller can drop. Saying which
+            # is what separates a reference to release from one to relocate.
+            holders = self.runtime.occupants(shown)
+            occupying = [item for objects in holders.values() for item in objects]
+            retainers = self.runtime.retainers(
+                occupying, ignore=(holders, occupying, *holders.values())
+            )
+        except Exception:
+            holders = {}
+            retainers = {}
+        lines = "".join(
+            f"\n  offset={item.offset} bytes={item.charged_bytes}"
+            f" {self._role_of(item)} from {item.origin}"
+            f"{' scratch' if item.scratch else ''}"
+            f"{' planned' if item.plan_owned else ''}"
+            f"{' freed-pending-retirement' if item.logical_freed else ''}"
+            f"{_describe_occupants(holders.get(item.allocation_id, ()), retainers)}"
+            for item in shown
+        )
+        omitted = len(held) - len(shown)
+        tail = f"\n  ... {omitted} more" if omitted > 0 else ""
+        return f"; the pool is held by:{lines}{tail}"
 
     def admit_initial_actions(
         self,

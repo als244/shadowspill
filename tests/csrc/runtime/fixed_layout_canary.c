@@ -181,17 +181,17 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
             runtime, dynamic_execution.task_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
-    ShadowSpillRuntimeStatistics statistics = {0};
-    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocated_bytes != 192U;
+        statistics.execution.allocated_bytes != 192U;
 
     failed = failed || shadowspill_test_clear_plan(runtime) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocated_bytes != 64U ||
-        statistics.largest_free_range_bytes != 128U;
+        statistics.execution.allocated_bytes != 64U ||
+        statistics.execution.largest_free_range_bytes != 128U;
 
     failed = failed || shadowspill_memory_pool_free(runtime, 0U, caller_owned.allocation_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
@@ -314,11 +314,11 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK;
-    ShadowSpillRuntimeStatistics statistics = {0};
-    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocated_bytes != 0U ||
-        statistics.largest_free_range_bytes != 64U;
+        statistics.execution.allocated_bytes != 0U ||
+        statistics.execution.largest_free_range_bytes != 64U;
     shadowspill_test_destroy_runtime(runtime);
     if (compute.words[0] != 0U) {
         failed = failed ||
@@ -395,15 +395,15 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
             SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
     ShadowSpillObjectSnapshot snapshot = {0};
-    ShadowSpillRuntimeStatistics statistics = {0};
+    ShadowSpillTestStatistics statistics = {0};
     failed = failed || shadowspill_object_snapshot(
             runtime, object.object_id, &snapshot
         ) != SHADOWSPILL_STATUS_OK ||
         snapshot.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
         snapshot.execution_pointer == NULL ||
-        shadowspill_runtime_statistics(runtime, &statistics) !=
+        shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.allocated_bytes != 64U;
+        statistics.execution.allocated_bytes != 64U;
     failed = failed || shadowspill_test_before_task(
             runtime, release_task.task_id, compute, NULL, 0U
         ) != SHADOWSPILL_STATUS_OK ||
@@ -560,11 +560,11 @@ static int eviction_completion_orders_fixed_reuse(void) {
             runtime, allocation_task.task_id, compute
         ) != SHADOWSPILL_STATUS_OK ||
         shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
-    ShadowSpillRuntimeStatistics statistics = {0};
-    failed = failed || shadowspill_runtime_statistics(runtime, &statistics) !=
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed || shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.wait_events_inserted == 0U ||
-        statistics.allocated_bytes != 64U ||
+        statistics.runtime.wait_events_inserted == 0U ||
+        statistics.execution.allocated_bytes != 64U ||
         shadowspill_unregister_object(runtime, object.object_id) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK;
@@ -734,15 +734,15 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
             ) != SHADOWSPILL_STATUS_OK ||
             shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK;
         ShadowSpillObjectSnapshot second = {0};
-        ShadowSpillRuntimeStatistics statistics = {0};
+        ShadowSpillTestStatistics statistics = {0};
         failed = failed || shadowspill_object_snapshot(
                 runtime, successor_object_id, &second
             ) != SHADOWSPILL_STATUS_OK ||
             second.residency != SHADOWSPILL_OBJECT_EXECUTION_READY ||
             second.execution_pointer != first.execution_pointer ||
-            shadowspill_runtime_statistics(runtime, &statistics) !=
+            shadowspill_test_statistics(runtime, &statistics) !=
                 SHADOWSPILL_STATUS_OK ||
-            (!same_object && statistics.wait_events_inserted == 0U);
+            (!same_object && statistics.runtime.wait_events_inserted == 0U);
 
         failed = failed || shadowspill_test_before_task(
                 runtime, release_task.task_id, compute, NULL, 0U

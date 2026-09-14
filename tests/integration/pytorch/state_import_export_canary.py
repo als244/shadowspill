@@ -175,7 +175,7 @@ def main() -> int:
     value = torch.randn(3, 32)
     persistent_id = record.persistent_object_id
     spill_pointer = record.pool_pointer
-    spill_bytes_before_plan = int(_statistics(runtime).runtime.spill_allocated_bytes)
+    spill_bytes_before_plan = int(runtime.pool_statistics("spill").allocated_bytes)
     with tempfile.TemporaryDirectory() as cache:
         phase("plan")
         planned = plan_forward(
@@ -197,7 +197,7 @@ def main() -> int:
         raise AssertionError("close did not restore the persistent object ID")
     if imported_model.projection.weight.untyped_storage().data_ptr() != spill_pointer:
         raise AssertionError("close replaced explicitly imported spill storage")
-    spill_bytes_after_plan = int(_statistics(runtime).runtime.spill_allocated_bytes)
+    spill_bytes_after_plan = int(runtime.pool_statistics("spill").allocated_bytes)
     if spill_bytes_after_plan != spill_bytes_before_plan:
         raise AssertionError("planning retained a duplicate model spill copy")
 
