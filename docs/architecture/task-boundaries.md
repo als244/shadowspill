@@ -276,6 +276,139 @@ immediately. `after_task` attaches one completion event to all of them, so the
 worker can return every range the task freed against a single fence instead of
 one event per free.
 
+## What a scope owes when it ends
+
+Every allocation belongs to exactly one scope: the task scope a thread is
+inside, or an allocation scope opened around work that is not a task. Either way
+the scope names the plan it belongs to — a task scope takes it from the task's
+plan, an allocation scope is told it, because a scope deliberately runs outside
+any task and so has none to read it from. That pair, plan and scope, is what a
+lease records; [plan identity](plan-identity.md) is why neither half is an
+identity alone.
+
+When the scope ends, each allocation it made has reached one of three states,
+and the rule is that all three are *accounted for* — not that the third never
+happens.
+
+**Freed inside the scope.** The ordinary end, and the mechanism above: the lease
+is linked to the scope and retired against the closing call's single completion
+event. Freed is not the same as reusable: a released range becomes
+available to a successor only once the stream that last used it establishes
+completion, which is [causal reuse](memory-runtime.md#causal-reuse).
+
+**Promoted out of the scope.** The deliberate exception, for a value that must
+outlive the work that produced it: the step's outputs, which the caller reads
+after the step returns. Promotion is explicit and recorded, which is what makes
+the value's new owner nameable — the caller holds it, and releases it when it
+drops the tensor.
+
+**Retained past the scope.** A framework may hold a tensor beyond the task that
+allocated it, and often should: a kernel that caches scratch across invocations,
+a library that keeps a handle's working buffer. The scope that made it is gone,
+but an owner still exists and will release it when it drops the tensor.
+
+The rule is therefore not that allocations die with their scope. It is that a
+surviving allocation is **attributable** — the runtime can say which scope made
+it, how large it is, and where it sits — so that residue is a fact someone can
+look at rather than a difference between runs that nobody can explain. What is
+worth refusing is not survival; it is *invisible* survival.
+
+### What actually releases a lease
+
+Nothing in ShadowSpill decides when a promoted value dies. The chain runs
+through the framework's own ownership, and it is worth following once because
+every rule above depends on it.
+
+```text
+Python name  ->  torch.Tensor  ->  Storage  ->  data_ptr  ->  lease -> pool range
+     |                                              |
+     +-- last reference dropped                     +-- the address the range starts at
+         (del, rebinding, scope exit, gc of a cycle)
+                    |
+                    v
+         torch frees the storage, which calls the pluggable
+         allocator's free(address, ...) callback
+                    |
+                    v
+         the adapter maps address -> allocation, then
+         memory_pool_free(...) releases or defers the lease
+```
+
+Three consequences a caller has to live with:
+
+- **Release is driven by the framework's reference count, not by a ShadowSpill
+  call.** A lease survives exactly as long as some Python object reaches the
+  tensor. Dropping the last name is what starts the release; nothing else does.
+- **A reference cycle defers release until the collector runs.** A tensor
+  reachable only from a cycle is alive as far as the framework is concerned, so
+  its lease is alive too. Code that must release before a boundary collects
+  first rather than assuming the last `del` was enough.
+- **The address is the identity.** The free callback receives a raw address and
+  maps it back to an allocation; it has no other handle. This is why reclaiming
+  a lease behind the framework's back is unsafe: the tensor is still reachable,
+  still holds that address, and a later free would either fail the lookup or —
+  worse, if the range has been reissued — return someone else's allocation.
+
+That last point is the whole argument against forced release as a default. The
+framework and the runtime agree on exactly one fact, the address, and forcing a
+lease out from under a live tensor breaks that agreement in the direction that
+cannot be detected.
+
+### Why it matters beyond the bytes
+
+A stranded lease is rarely expensive in itself — it is usually scratch, and
+scratch is small. The cost is *where* it sits. A scope's allocations are placed
+by the allocator as the scope runs, which for a task executing inside a plan
+means immediately above whatever contiguous arena the plan reserved. When that
+arena is released and the stray is not, the freed space cannot merge with the
+free range beyond it: the pool is left split in two, and a later request for a
+contiguous range larger than either half fails against a pool that is almost
+entirely free.
+
+That is the failure mode to keep in mind. Aggregate free bytes say nothing; a
+few bytes in the wrong place cost the largest contiguous range, which is the
+quantity a fixed layout actually needs.
+
+### Examples
+
+- A kernel's workspace, allocated through the framework's allocator while a
+  task runs and dropped when the kernel returns. Freed inside the scope, retired
+  with the scope's fence. **Legal.**
+- A step's objective values, produced by the last task that computes them and
+  read by the caller after the step returns. Promoted out of the scope; the
+  caller owns them and releases them by dropping them. **Legal.**
+- A buffer a framework caches on first use and keeps for the process — a
+  provider's retained handle state, say. Allocated before any scope is open, so
+  it belongs to no scope and is not subject to this rule. **Legal, and
+  deliberately placed low in the pool so it cannot split a later arena.**
+- A kernel's scratch buffer that its library caches and reuses on the next
+  invocation, held by the framework rather than by any scope. **Legal and
+  expected** — but it must be attributable, and its position matters, for the
+  reason above.
+- The same buffer, with nothing able to say which scope made it or that it is
+  still live. **The actual problem**: not that it survives, but that its
+  survival is invisible until a later layout fails.
+
+### Auditing it
+
+A scope can be closed and audited: at its end the runtime knows how many of its
+allocations are still live, because every allocation record carries the scope
+that made it. An audit names them — offset, size, and originating scope — rather
+than reporting a count, because a count cannot distinguish the legal cases above
+from the illegal one, and because the offset is what explains a fragmentation
+failure.
+
+Forced release is deliberately not the answer for retained allocations at all.
+An owner still holds them, and reclaiming a lease whose pointer the frontend
+still has trades a clean, explainable failure for a use-after-free. It remains
+available only as a loud escape hatch for teardown, where the alternative is
+abandoning the pool.
+
+Where an allocation is expected to outlive its scope, the mitigation is
+placement rather than lifetime: put it where it cannot split a later arena, as
+the provider's retained state already is. Attribution is what makes that
+possible, because an allocation nobody can name cannot be placed deliberately.
+
 ## What a plan's actions do here
 
 The plan says which objects to fetch, evict, write back or release, and
@@ -305,3 +438,6 @@ keep their claim until it runs.
 How each scope handles a failure, and why a process that is exiting is
 abandoned rather than closed, is in [failure, abort, and process
 exit](failure-and-exit.md).
+
+Previous: [Memory runtime](memory-runtime.md). Next: [Failure, abort, and
+process exit](failure-and-exit.md).
