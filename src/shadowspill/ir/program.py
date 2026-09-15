@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 
 from shadowspill.schema import artifact_schema
@@ -731,9 +732,18 @@ class ShadowSpillProgram:
                 )
             seen_tasks.add(task.task_id)
 
+    #: The digest, once computed: a program is immutable and its digest is asked
+    #: for by every store key, record and check that names it, and computing it
+    #: serializes the whole program.
+    _digest_cache: list[str] = dataclass_field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+
     @property
     def digest(self) -> str:
-        return digest_json(self.to_dict())
+        if not self._digest_cache:
+            self._digest_cache.append(digest_json(self.to_dict()))
+        return self._digest_cache[0]
 
     def to_dict(self) -> dict[str, JsonValue]:
         return {

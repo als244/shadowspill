@@ -564,3 +564,13 @@ def test_a_refused_miss_names_the_request_it_could_not_answer(tmp_path: Path) ->
     assert f"capacity {device.capacity_bytes} B" in message
     assert f"fetch {device.fetch_bandwidth_bytes_per_second} B/s" in message
     assert "'require'" in message
+
+
+def test_admission_facts_keep_their_digest_and_a_changed_copy_gets_a_new_one() -> None:
+    program = _placeable_program()
+    facts = _facts(program, 4096)
+    first = facts.digest
+    assert facts.digest == first and facts._digest_cache == [first]
+    changed = replace(facts, pool_capacity_bytes=8192)
+    assert changed.digest != first
+    assert replace(facts, pool_capacity_bytes=4096).digest == first
