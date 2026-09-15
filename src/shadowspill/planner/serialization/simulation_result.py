@@ -42,6 +42,14 @@ def _interval_kind(item: Mapping[str, object], path: str) -> MemoryActionKind:
 
 
 def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
+    """Restore one simulation result from its stored record.
+
+    One decoder reads one record. It is long because the record is wide,
+    not because it does several things: every line is one key, read in the
+    order the writer emits it. Splitting it would scatter one schema across
+    several files and leave no part easier to check against the writer.
+    """
+
     data = _mapping(value, path)
     tasks = _list(data.get("task_intervals"), f"{path}.task_intervals")
     transfers = _list(data.get("transfer_intervals"), f"{path}.transfer_intervals")

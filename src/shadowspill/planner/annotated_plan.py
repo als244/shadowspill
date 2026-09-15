@@ -182,6 +182,14 @@ class AnnotatedProgramPlan:
 
     @classmethod
     def from_dict(cls, value: object) -> AnnotatedProgramPlan:
+        """Restore one annotated plan from its stored record.
+
+        One decoder reads one record. It is long because the record is wide,
+        not because it does several things: every line is one key, read in the
+        order the writer emits it. Splitting it would scatter one schema across
+        several files and leave no part easier to check against the writer.
+        """
+
         from .admission.refinement import FixedLayoutAttempt
 
         data = _mapping(value, "annotated_program_plan")
