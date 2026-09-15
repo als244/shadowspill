@@ -1,6 +1,6 @@
 """Public PyTorch values and planning entrypoints for ShadowSpill."""
 
-from .api import build_step_program, plan_forward, plan_step
+from .api import build_step_programs, plan_forward, plan_step
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
     ObjectiveResult,
@@ -130,7 +130,7 @@ __all__ = [
     "TransferProfile",
     "TransferRecord",
     "TransferRecords",
-    "build_step_program",
+    "build_step_programs",
     "export_model_state",
     "export_optimizer_state",
     "import_model_state",

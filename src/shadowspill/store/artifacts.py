@@ -14,7 +14,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, Protocol, get_args
 
 from shadowspill.ir import ExecutionPlan, ShadowSpillProgram
 from shadowspill.ir.program import PROGRAM_SCHEMA
@@ -31,14 +31,31 @@ _PLAN_MANIFEST_SCHEMA = artifact_schema("plan_manifest")
 #: stored plan the answer beat, kept distinct from a first write so the
 #: ledger says which plans a run displaced.
 _ACCESS_KINDS = {
-    "certified",
     "improved",
     "managed",
+    "certified",
+    "verdict",
     "matched",
     "read",
-    "verdict",
     "write",
 }
+
+
+class ArtifactRecorder(Protocol):
+    """What a store tells about each artifact it reads or writes: the
+    signature of `ArtifactStore.record`."""
+
+    def __call__(
+        self,
+        *,
+        category: str,
+        kind: str,
+        digest: str | None,
+        path: str | Path,
+        access: str,
+        schema: str | None,
+        dependencies: tuple[str, ...] = (),
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +212,12 @@ class ArtifactStore:
     @property
     def compiled_manifests(self) -> Path:
         return self.profiling / "compiled_manifests"
+
+    @property
+    def steps(self) -> Path:
+        # Step programs by the identity a build has before any capture, so a
+        # build with a bypass key can answer without exporting.
+        return self.build / "steps"
 
     @property
     def programs_archive(self) -> Path:
@@ -443,7 +466,7 @@ class ArtifactStore:
         finally:
             with suppress(FileNotFoundError):
                 os.unlink(temporary)
-        _atomic_json(
+        atomic_json(
             manifest_path,
             {
                 "schema": _EXPORT_SCHEMA,
@@ -504,7 +527,7 @@ class ArtifactStore:
             if existing != encoded:
                 raise ValueError(f"program cache entry {path} is corrupt")
         else:
-            _atomic_text(path, encoded)
+            atomic_text(path, encoded)
             operation = "write"
         self.record(
             category="search",
@@ -538,7 +561,7 @@ class ArtifactStore:
             if existing != encoded:
                 raise ValueError(f"search request artifact {path} is corrupt")
         else:
-            _atomic_text(path, encoded)
+            atomic_text(path, encoded)
             operation = "write"
         self.record(
             category="search",
@@ -571,7 +594,7 @@ class ArtifactStore:
         if not self.plan_policy.write_enabled:
             return directory / "manifest.json"
         plan_path = directory / "execution_plan.json"
-        _atomic_text(plan_path, execution_plan.to_json())
+        atomic_text(plan_path, execution_plan.to_json())
         self.record(
             category="plans",
             kind="execution_plan",
@@ -584,7 +607,7 @@ class ArtifactStore:
         initial_path: Path | None = None
         if initial_execution_plan is not None:
             initial_path = directory / "initial_execution_plan.json"
-            _atomic_text(initial_path, initial_execution_plan.to_json())
+            atomic_text(initial_path, initial_execution_plan.to_json())
             self.record(
                 category="plans",
                 kind="initial_execution_plan",
@@ -595,7 +618,7 @@ class ArtifactStore:
                 dependencies=(initial_execution_plan.program.digest,),
             )
         manifest_path = directory / "manifest.json"
-        _atomic_json(
+        atomic_json(
             manifest_path,
             {
                 "schema": _PLAN_MANIFEST_SCHEMA,
@@ -724,10 +747,10 @@ def _write_guides(
         }
         if artifact_store is not None:
             value["artifact_store"] = str(artifact_store)
-        _atomic_json(layout, value)
+        atomic_json(layout, value)
     guide = root / "README.md"
     if replace or not guide.exists():
-        _atomic_text(guide, readme)
+        atomic_text(guide, readme)
 
 
 def _store_root(value: Any, name: str) -> Path:
@@ -772,11 +795,11 @@ def _read_json(path: Path) -> dict[str, object]:
     return value
 
 
-def _atomic_json(path: Path, value: Mapping[str, object]) -> None:
-    _atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
+def atomic_json(path: Path, value: Mapping[str, object]) -> None:
+    atomic_text(path, json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def _atomic_text(path: Path, value: str) -> None:
+def atomic_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent

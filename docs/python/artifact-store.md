@@ -1,7 +1,7 @@
 # Artifact store
 
 One content-addressed store, shared by `plan_step()`, `plan_forward()`,
-`build_step_program()`, and `plan_program()`. It holds two independent trees:
+`build_step_programs()`, and `plan_program()`. It holds two independent trees:
 
 ```text
 artifact_store/
@@ -65,6 +65,7 @@ by whoever plans, and the same saved program answers any of them.
 | Graph pair | normalized stage semantic contract, differentiation options, partition inputs | |
 | Compiled manifest | graph-pair contract, compiler and provider identity, physical storage contract | |
 | Profile | compiled manifest, hardware, representative-value policy, `profiling_metadata`, allocation-probe policy | |
+| Step program | the export bypass key, the model's structure, the inputs' signatures, the optimizer's type, step code and hyperparameters, the request's own settings, the machine, the profiling environment, the data ordering | the library's own version: the key stands for the code, the caller's and the library's |
 | `ShadowSpillPlanningProblem` | the canonical `ShadowSpillProgram` and its measured task costs, the role, initial and final residency, admission facts, the device and its simulated capacities and calibrated transfers, and the capacity contract | `SearchOptions`. A program is a problem, not a search |
 | Planned program | the canonical `ShadowSpillProgram` digest, both residency lists, every device's capacity, both bandwidths and both latencies, the spill capacity, the admission and placement digests, which search ran, and everything that search was told | `workers`, which changes how long an answer takes and not which answer is right; and the plan handed in as the one to beat, which is provenance rather than the question |
 
@@ -124,6 +125,7 @@ path through the same helper, `digest_directory`.
 | Optimizer capture | `build/optimizers/<2>/<digest>/optimizer_capture.pt` |
 | Compiled manifest | `build/profiling/compiled_manifests/<2>/<digest>/manifest.json` |
 | Profile measurement | `build/profiling/measurements/<2>/<digest>/measurement.json` |
+| Step program | `build/steps/<2>/<key>/step_program.json`, with `manifest.json` beside it |
 | Canonical program | `planning/programs/<2>/<digest>/program.json` |
 | Selection request | `planning/requests/<2>/<digest>/request.json` |
 | Planned program | `planning/results/<2>/<digest>/selection.json` |
@@ -163,8 +165,8 @@ paid for while each searches every point itself rather than reading back a
 plan another run found. A plan store gets its own `layout.json` naming the
 artifact store it was searched over.
 
-`build_step_program()` takes only `artifact_store` and `build_store`: it
-produces a program and plans nothing. `plan_program()` takes only
+`build_step_programs()` takes only `artifact_store` and `build_store`: it
+produces programs and plans nothing. `plan_program()` takes only
 `artifact_store` and `plan_store`: it plans a program it is given and builds
 nothing.
 
@@ -256,6 +258,23 @@ schema, key_digest, measurement{
 against, and the three `timing_*` fields say how much to trust it. The
 allocation contract and trace are what physical admission replays, and
 `provenance` records the hardware and policy the measurement was taken under.
+
+**Step archive** files a `StepProgram` under the identity its build had before
+any capture, which is what lets a build with an export bypass key answer
+without exporting:
+
+```text
+manifest.json:      schema, key_digest, step_program_digest, identity
+step_program.json:  the StepProgram, as build_step_programs() returned it
+```
+
+`identity` is the key's components in the clear -- the bypass key, the model's
+modules, parameters and buffers by name and geometry, the inputs' signature
+digests, the optimizer's type, step code and hyperparameters, the request's
+settings, the machine and the profiling environment, and the data ordering --
+so a reader can see why two builds were the same step. The archive is keyed by
+nothing the program contains: it is a second name for the same content, and
+the program's own digest in the manifest says which content.
 
 **Selection request** is the question a search was put:
 

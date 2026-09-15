@@ -1,8 +1,9 @@
 # Reusable planning and budget sweeps
 
-Use `build_step_program()` when capture, graph-pair construction, compilation,
-profiling, and canonical program lowering should occur once. The resulting
-`StepProgram` can be serialized and its recurrent or initial
+Use `build_step_programs()` when capture, graph-pair construction, compilation,
+profiling, and canonical program lowering should occur once. It returns one
+`StepProgram` per ordering asked for, the depth-first one alone by default; each
+can be serialized and its recurrent or initial
 `ShadowSpillPlanningProblem` planned repeatedly without executing the model or
 repeating compiler work. Capturing one needs the frontend; planning one
 again does not, so the second half of this example imports no torch.
@@ -14,7 +15,7 @@ import torch
 
 from shadowspill.planner import plan_program
 from shadowspill.planner.program import TransferBandwidths
-from shadowspill.pytorch import build_step_program
+from shadowspill.pytorch import build_step_programs
 from shadowspill.step import StepProgram
 
 
@@ -27,7 +28,7 @@ def zero_state(
         tensor.zero_()
 
 
-step_program = build_step_program(
+(step_program,) = build_step_programs(
     model,
     objective=objective,
     optimizer=torch.optim.AdamW,
@@ -75,9 +76,11 @@ the logical program. To hand a search a different algorithm or different
 generic options, pass `search_options=SearchOptions(...)`; omitting it uses the
 search that ships.
 
-The split runs through the store arguments too. `build_step_program()` takes
+The split runs through the store arguments too. `build_step_programs()` takes
 `artifact_store`, `build_store`, and `build_store_mode`, and no plan-store
-arguments at all, because it writes no plans. `plan_program()` takes
+arguments at all, because it writes no plans; with an `export_bypass_key` it
+reads each ordering's program back from the build store's step archive and
+captures only for the orderings not found there. `plan_program()` takes
 `artifact_store`, `plan_store`, and `plan_store_mode`, and no build
 arguments, because it builds nothing. Rooting the two trees separately is
 what lets one build store serve many sweeps that each keep their own plans.

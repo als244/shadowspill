@@ -15,7 +15,7 @@ from benchmarking.program_collection.corpus import (
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pytorch import (
     Runtime,
-    build_step_program,
+    build_step_programs,
     export_model_state,
     import_model_state,
 )
@@ -91,7 +91,7 @@ def collect_program(
             imported = True
             print("PROGRAM PHASE import_model complete", flush=True)
             print("PROGRAM PHASE capture_compile_profile_lower start", flush=True)
-            program = build_step_program(
+            (program,) = build_step_programs(
                 case.model,
                 objective=case.objective,
                 optimizer=case.optimizer,

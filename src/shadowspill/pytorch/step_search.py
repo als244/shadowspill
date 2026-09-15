@@ -51,10 +51,11 @@ from shadowspill.planner.serialization import (
     _optional_string,
     _string,
 )
-from shadowspill.pytorch.api import build_step_program
+from shadowspill.pytorch.api import build_step_programs
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationInfeasibleError
+from shadowspill.step import StepProgram
 from shadowspill.store import StoreMode
 
 _INFEASIBLE = (PlanInfeasibleError, SimulationInfeasibleError)
@@ -774,50 +775,51 @@ def plan_step_search(
         shape = f"{sequences} x {accumulation}"
         exhausted: Exception | None = None
         orderings_here = per_geometry[geometry_index - 1]
+        announce(
+            f"geometry {geometry_index}/{len(geometries)}: building {shape}"
+            f" ({len(orderings_here)} orderings)"
+        )
+        build_started = time.perf_counter()
+        steps: tuple[StepProgram, ...] = ()
+        try:
+            examples = example_microbatches(sequences, accumulation)
+            steps = build_step_programs(
+                model,
+                objective=objective,
+                optimizer=optimizer,
+                optimizer_state_init=optimizer_state_init,
+                hyperparams=hyperparams,
+                example_inputs=examples,
+                runtime=runtime,
+                execution=execution,
+                spill=spill,
+                optimizer_ordering=optimizer_ordering,
+                orderings=orderings_here,
+                verbose=verbose,
+                artifact_store=artifact_store,
+                build_store=build_store,
+                build_store_mode=build_store_mode,
+                export_bypass_key=export_bypass_key,
+            )
+        except Exception as error:
+            if not _device_exhausted(error):
+                raise
+            # Exhaustion happens while profiling, which every ordering of
+            # the geometry shares, so every ordering is infeasible.
+            exhausted = error
+            announce(
+                f"geometry {geometry_index}/{len(geometries)}: {shape}"
+                " exhausted the device after"
+                f" {time.perf_counter() - build_started:.1f} s;"
+                " every budget of every ordering is infeasible"
+            )
+        build_seconds = time.perf_counter() - build_started
         for ordering_index, ordering in enumerate(orderings_here, 1):
             name = f"{shape} {ordering.label}"
             where = (
                 f"geometry {geometry_index}/{len(geometries)};"
                 f" ordering {ordering_index}/{len(orderings_here)}"
             )
-            if exhausted is None:
-                announce(f"{where}: building {name}")
-                build_started = time.perf_counter()
-                try:
-                    examples = example_microbatches(sequences, accumulation)
-                    step = build_step_program(
-                        model,
-                        objective=objective,
-                        optimizer=optimizer,
-                        optimizer_state_init=optimizer_state_init,
-                        hyperparams=hyperparams,
-                        example_inputs=examples,
-                        runtime=runtime,
-                        execution=execution,
-                        spill=spill,
-                        optimizer_ordering=optimizer_ordering,
-                        depth=ordering.depth,
-                        breadth=ordering.breadth,
-                        reverse_breadth=ordering.reverse_breadth,
-                        pair_loss=ordering.pair_loss,
-                        verbose=verbose,
-                        artifact_store=artifact_store,
-                        build_store=build_store,
-                        build_store_mode=build_store_mode,
-                        export_bypass_key=export_bypass_key,
-                    )
-                except Exception as error:
-                    if not _device_exhausted(error):
-                        raise
-                    # Exhaustion happens while profiling, which every ordering
-                    # of the geometry shares, so the rest would only repeat it.
-                    exhausted = error
-                    announce(
-                        f"geometry {geometry_index}/{len(geometries)}: {shape}"
-                        " exhausted the device after"
-                        f" {time.perf_counter() - build_started:.1f} s;"
-                        " every budget of every ordering is infeasible"
-                    )
             if exhausted is not None:
                 for execution_budget, spill_budget in budgets:
                     point_index += 1
@@ -840,16 +842,18 @@ def plan_step_search(
                         )
                     )
                 continue
-            announce(
-                f"{where}: built {name} in {time.perf_counter() - build_started:.1f} s"
-            )
+            step = steps[ordering_index - 1]
+            announce(f"{where}: built {name}")
+            # The geometry's wall clock is charged to its first ordering; the
+            # phases say how it split, the shared capture and profiling on the
+            # first program and each lowering on its own.
             builds.append(
                 StepSearchGeometryBuild(
                     sequences_per_microbatch=sequences,
                     accumulation_count=accumulation,
                     ordering=ordering,
                     step_program_digest=step.digest,
-                    build_seconds=time.perf_counter() - build_started,
+                    build_seconds=build_seconds if ordering_index == 1 else 0.0,
                     phase_seconds=MappingProxyType(
                         {
                             name_: duration / 1e9

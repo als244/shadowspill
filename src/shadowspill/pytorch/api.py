@@ -389,7 +389,7 @@ def plan_step(
         )
 
 
-def build_step_program(
+def build_step_programs(
     model: nn.Module,
     *,
     objective: Any,
@@ -407,10 +407,7 @@ def build_step_program(
     execution_device: int | str | torch.device | None = None,
     partition: PartitionSpec = "auto",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
-    depth: int | None = None,
-    breadth: int | None = None,
-    reverse_breadth: bool = True,
-    pair_loss: bool = True,
+    orderings: Sequence[StepDataOrdering] | None = None,
     verbose: bool = True,
     artifact_store: str | os.PathLike[str] | None = None,
     build_store: str | os.PathLike[str] | None = None,
@@ -419,34 +416,47 @@ def build_step_program(
     allocation_probe_repetitions: int = 2,
     build_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
-) -> StepProgram:
+) -> tuple[StepProgram, ...]:
     """Capture, profile, and lower a reusable step without searching.
 
+    Returns one :class:`StepProgram` per ordering in ``orderings``, in that
+    order, from one capture, one materialization and one profiling; the
+    orderings differ only in the walk the lowering emits. ``None`` builds the
+    depth-first ordering alone. Every ordering must cover
+    ``len(example_inputs)`` microbatches.
+
+    Each program is a fully self-contained JSON boundary that can be passed
+    to :func:`plan_program` repeatedly with different budgets and transfer
+    bandwidths. Temporary compilation and materialization state is released
+    before this function returns; no runtime callable remains active.
+
     Takes no plan-store arguments, because it writes no plans. What it
-    produces is build work -- exports, graph pairs, profiles, a lowered
-    program -- so ``build_store`` and ``build_store_mode`` are the only store
-    controls that mean anything here. Pass the result to
-    :func:`plan_program`, which plans it and does take them.
-
-    ``depth``, ``breadth``, ``reverse_breadth`` and ``pair_loss`` mean what
-    they mean for :func:`plan_step`; the ordering is recorded in the program.
-
-    The returned :class:`StepProgram` is a fully self-contained JSON boundary.
-    It can be passed to :func:`plan_program` repeatedly with different
-    budgets and transfer bandwidths. Temporary compilation/materialization
-    state is released before this function returns; no runtime callable remains
-    active.
+    produces is build work -- exports, graph pairs, profiles, lowered
+    programs -- so ``build_store`` and ``build_store_mode`` are the only store
+    controls that mean anything here. With an ``export_bypass_key``, each
+    ordering's program is first looked up in the build store's step archive
+    under the identity the request has before any capture, and only the
+    orderings not found there are built; without one, every build captures.
+    The other arguments mean what they mean for :func:`plan_step`; the
+    ordering is recorded in each program.
     """
 
-    from .planning.training import make_training_program
+    from .planning.training import make_training_programs
 
-    data_ordering = StepDataOrdering.resolve(
-        microbatches=len(example_inputs),
-        depth=depth,
-        breadth=breadth,
-        reverse_breadth=reverse_breadth,
-        pair_loss=pair_loss,
+    microbatches = len(example_inputs)
+    resolved = (
+        (StepDataOrdering.depth_first(microbatches),)
+        if orderings is None
+        else tuple(orderings)
     )
+    if not resolved:
+        raise ValueError("at least one ordering is required")
+    for ordering in resolved:
+        if ordering.microbatches != microbatches:
+            raise ValueError(
+                f"ordering {ordering.label} covers {ordering.microbatches}"
+                f" microbatches, but {microbatches} example inputs were given"
+            )
     require_model_state_for_plan(model, runtime=runtime, pool=spill)
     planning_started = False
     try:
@@ -466,7 +476,7 @@ def build_step_program(
             export_bypass_key=export_bypass_key,
         )
         with cache.activate_pytorch():
-            result = make_training_program(
+            result = make_training_programs(
                 model,
                 objective=objective,
                 build_optimizer=optimizer,
@@ -476,7 +486,7 @@ def build_step_program(
                 memory=memory,
                 partition=partition,
                 optimizer_ordering=optimizer_ordering,
-                data_ordering=data_ordering,
+                data_orderings=resolved,
                 verbose=verbose,
                 artifact_store=cache,
                 profiling_metadata=profiling_metadata,
@@ -493,13 +503,13 @@ def build_step_program(
         _surface_failed_plan(
             runtime,
             planning_started=planning_started,
-            operation="build training step program",
+            operation="build training step programs",
             error=error,
         )
 
 
 __all__ = [
-    "build_step_program",
+    "build_step_programs",
     "plan_forward",
     "plan_step",
 ]

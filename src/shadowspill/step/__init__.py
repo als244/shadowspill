@@ -16,7 +16,8 @@ on separate machines.
 
 from __future__ import annotations
 
+from .archive import StepArchive
 from .ordering import StepDataOrdering
 from .program import StepProgram
 
-__all__ = ["StepDataOrdering", "StepProgram"]
+__all__ = ["StepArchive", "StepDataOrdering", "StepProgram"]

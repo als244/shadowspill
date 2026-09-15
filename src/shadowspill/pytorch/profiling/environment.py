@@ -8,6 +8,9 @@ from shadowspill.pytorch.accelerator import provider_version
 
 from .records import ProfileEnvironment
 
+#: The provider a build's tasks are profiled under.
+DEVICE_POOL_PROVIDER_ID = "shadowspill.device_pool"
+
 
 def profile_environment(
     *,
@@ -29,4 +32,4 @@ def profile_environment(
     )
 
 
-__all__ = ["profile_environment"]
+__all__ = ["DEVICE_POOL_PROVIDER_ID", "profile_environment"]
