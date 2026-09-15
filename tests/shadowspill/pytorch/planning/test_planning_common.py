@@ -36,6 +36,7 @@ from shadowspill.pytorch.planning.common import (
     workspace_reserve,
 )
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.pytorch.profiling.profiler import ProfilingWallTimes
 from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
 from shadowspill.runtime.topology import TransferProfile
 
@@ -49,14 +50,9 @@ def test_phase_timer_attributes_compilation_and_profiling_without_overlap() -> N
         ("compilation", 20),
         ("program_lowering", 13),
     ]
-    profiler = SimpleNamespace(
-        compilation_wall_time_ns=40,
-        saved_control_compilation_wall_time_ns=0,
-        profiling_wall_time_ns=60,
-        entrypoint_warmup_wall_time_ns=5,
+    timer.attribute_compilation_and_profiling(
+        ProfilingWallTimes(compilation_ns=40, profiling_ns=60, cached_warmup_ns=5)
     )
-
-    timer.attribute_compilation_and_profiling(profiler)  # type: ignore[arg-type]
 
     assert timer.values == [
         ("capture_lowering", 11),

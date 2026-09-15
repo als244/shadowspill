@@ -26,7 +26,7 @@ from shadowspill.pytorch.profiling import (
     ProfilingResult,
     TaskMeasurement,
 )
-from shadowspill.pytorch.profiling.profiler import TaskProfiler
+from shadowspill.pytorch.profiling.profiler import ProfilingWallTimes
 from shadowspill.runtime import workspace_reserve_bytes
 from shadowspill.runtime.topology import TransferProfile
 from shadowspill.simulator import SimulationConfig
@@ -62,7 +62,7 @@ class PlanningTimer:
 
     def attribute_compilation_and_profiling(
         self,
-        profiler: TaskProfiler,
+        wall_times: ProfilingWallTimes,
     ) -> None:
         """Replace compiler/profile intervals with disjoint work classes."""
 
@@ -75,12 +75,9 @@ class PlanningTimer:
         if {name for _index, name, _duration in indexed} != names:
             raise RuntimeError("planning profile intervals are incomplete")
         combined = sum(duration for _index, _name, duration in indexed)
-        compilation = (
-            profiler.compilation_wall_time_ns
-            - profiler.saved_control_compilation_wall_time_ns
-        )
-        profiling = profiler.profiling_wall_time_ns
-        cached_warmup = profiler.entrypoint_warmup_wall_time_ns
+        compilation = wall_times.compilation_ns
+        profiling = wall_times.profiling_ns
+        cached_warmup = wall_times.cached_warmup_ns
         measured = compilation + profiling + cached_warmup
         if measured > combined:
             raise RuntimeError(

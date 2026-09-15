@@ -91,9 +91,11 @@ def training_plan_report(
         ),
         task_stage_map=task_stage_map,
         unique_stages=unique_stages,
-        compiler_phase_timings_ns=profiled.profiler.compilation_phase_timings_ns,
+        compiler_phase_timings_ns=(
+            profiled.profiler.executables.compilation_phase_timings_ns
+        ),
         compiler_phase_timings_by_contract=(
-            profiled.profiler.compilation_phase_timings_by_contract
+            profiled.profiler.executables.compilation_phase_timings_by_contract
         ),
         store_directories=stores.store.diagnostics(),
         touched_cache_artifacts=cache_artifacts(stores.store),
