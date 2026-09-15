@@ -22,6 +22,9 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
+from shadowspill.pytorch.runtime_adapter.bridge import (
+    wait_idle,
+)
 from shadowspill.schema import artifact_schema
 from tools.qualification.model_state import release_case_model
 from tools.qualification.plan_record import write_plan_records
@@ -67,7 +70,7 @@ def _profile_metadata(microbatches: tuple[tuple[object, ...], ...]) -> list[obje
 def _wait_idle(training: Any) -> None:
     """Drain terminal actions at a qualification measurement boundary."""
 
-    training._executor._bridge.wait_idle()
+    wait_idle(training._executor._bridge)
 
 
 def _runtime_delta(before: Any, after: Any) -> dict[str, int]:

@@ -21,7 +21,9 @@ def _apply(model: nn.Module, groups: list[dict], values: dict) -> None:
 
     step = object.__new__(PlannedTrainStep)
     step._model = model
-    step._executor = SimpleNamespace(optimizer=SimpleNamespace(param_groups=groups))
+    step._executor = SimpleNamespace(
+        optimizer_state=SimpleNamespace(optimizer=SimpleNamespace(param_groups=groups))
+    )
     PlannedTrainStep._apply_hyperparams(step, values)
 
 
