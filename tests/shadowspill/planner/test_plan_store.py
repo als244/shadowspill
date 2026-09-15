@@ -542,3 +542,25 @@ def test_a_recorded_verdict_is_served_back(
 
     with pytest.raises(AssertionError, match="searched again"):
         cache.resolve(program, incumbent=feasible.result, **impossible)
+
+
+def test_a_refused_miss_names_the_request_it_could_not_answer(tmp_path: Path) -> None:
+    """The key alone says nothing a reader can compare with the store's records."""
+
+    initial, final = exact_capacity_residency()
+    program = exact_capacity_program()
+    requested = config()
+    device = requested.devices[0]
+    with pytest.raises(LookupError) as refused:
+        PlanStore(tmp_path, policy=StorePolicy.for_mode("require")).resolve(
+            program,
+            initial_residency=initial,
+            final_residency=final,
+            config=requested,
+            search_options=FEW_CANDIDATES,
+        )
+    message = str(refused.value)
+    assert f"program {program.digest[:12]}" in message
+    assert f"capacity {device.capacity_bytes} B" in message
+    assert f"fetch {device.fetch_bandwidth_bytes_per_second} B/s" in message
+    assert "'require'" in message

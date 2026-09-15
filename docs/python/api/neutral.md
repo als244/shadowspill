@@ -153,8 +153,10 @@ was derived from.
 tuple. `StorePolicy` turns one mode into the four gates the code checks --
 `read_enabled`, `write_enabled`, `overwrite` and `require_hit` -- which is what
 stops a caller spelling out a combination that means nothing;
-`StorePolicy.for_mode(mode)` builds one, `refuse_miss(what, key)` raises the
-refusal that names the fix, and `CONTRIBUTE` is the default policy. `digest_directory(root, digest)`
+`StorePolicy.for_mode(mode)` builds one, `refuse_miss(what, key, request=None)`
+raises the refusal that names the fix -- and, when the store passes `request`,
+what the key was made of, so a miss can be read against the records the store
+holds -- and `CONTRIBUTE` is the default policy. `digest_directory(root, digest)`
 is where one digest's entry lives under a tree. `atomic_json(path, value)` and
 `atomic_text(path, value)` are the writers every record goes through, written
 beside their destination and renamed into place, so a reader never sees a

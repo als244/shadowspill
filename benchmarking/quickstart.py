@@ -107,20 +107,12 @@ def _transfer_bandwidths(value: str) -> TransferBandwidths:
     path = Path(value)
     if path.suffix == ".json":
         try:
-            report = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
+            recorded = StepSearchReport.load(path).planned_lanes
+        except (OSError, ValueError) as error:
             raise argparse.ArgumentTypeError(f"{value}: {error}") from error
-        recorded = report.get("transfer_bandwidths") or next(
-            (
-                item.get("transfer_bandwidths")
-                for item in report.get("geometries", ())
-                if item.get("transfer_bandwidths")
-            ),
-            None,
-        )
         if recorded is None:
             raise argparse.ArgumentTypeError(f"{value} records no transfer calibration")
-        return TransferBandwidths.from_value(recorded, "transfer_bandwidths")
+        return recorded
     parts = [item.strip() for item in value.split(",")]
     if len(parts) not in (2, 4):
         raise argparse.ArgumentTypeError(
@@ -352,14 +344,7 @@ def print_search(report: StepSearchReport, tokens_per_step: int) -> None:
         "  seqs/microbatch x accumulation, then the walk as depth x breadth"
         " (r: reversed backward, p: paired loss); fastest simulated step wins"
     )
-    lanes = report.transfer_bandwidths or next(
-        (
-            item.transfer_bandwidths
-            for item in report.geometries
-            if item.transfer_bandwidths
-        ),
-        None,
-    )
+    lanes = report.planned_lanes
     if lanes is not None:
         print(
             f"  planned against fetch {gb_s(lanes.fetch_bytes_per_second)},"
@@ -778,11 +763,11 @@ def main() -> int:
         "--transfer-bandwidths",
         type=_transfer_bandwidths,
         default=None,
-        help="plan the search against this calibration instead of the one the"
-        " runtime measures at start: FETCH,EVICT in GB/s, optionally followed"
-        " by the fetch and evict latencies in microseconds, or the path of"
-        " another run's search.json to pin to what that run planned against."
-        " The run phase keeps the live calibration",
+        help="plan against this calibration instead of the one the runtime"
+        " measures at start: FETCH,EVICT in GB/s, optionally followed by the"
+        " fetch and evict latencies in microseconds, or the path of another"
+        " run's search.json to pin to what that run planned against. The run"
+        " phase plans against the same lanes as the search either way",
     )
     parser.add_argument("--plots", action="store_true")
     parser.add_argument(
@@ -1348,6 +1333,15 @@ def main() -> int:
                     print(f"  {path}")
                 print()
 
+        # The run plans against the lanes the search planned against, pinned
+        # or calibrated once for this run, so each budget asks the store the
+        # search's question and executes the plan the search chose. Priced
+        # against a fresh calibration, the same request would be a different
+        # key and, under `require`, a refusal.
+        lanes = (
+            arguments.transfer_bandwidths if report is None else report.planned_lanes
+        )
+
         def run_one_budget(
             budget: int,
             geometry: tuple[int, int],
@@ -1409,9 +1403,10 @@ def main() -> int:
                     search_options=policy,
                     # The search's winning plan is the plan to beat, so the
                     # step executes what the search chose, or better, even
-                    # when the replan's calibration or facts differ from the
-                    # search's and the store cannot hand the plan back.
+                    # when the replan's facts differ from the search's and
+                    # the store cannot hand the plan back.
                     incumbent=incumbent,
+                    transfer_bandwidths=lanes,
                 )
             charge("run planning", marker)
             note_host_memory(plan_log, f"planned {gib(budget)}")

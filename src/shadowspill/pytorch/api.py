@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from shadowspill.planner import SearchOptions
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
+from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
@@ -117,6 +118,7 @@ def plan_forward(
     build_store_mode: StoreMode = "contribute",
     plan_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
@@ -150,6 +152,13 @@ def plan_forward(
     ``dynamic_scratch_reserve_bytes`` optionally raises the physical reserve
     for bounded allocation-path insertions above the automatically profiled
     requirement. It never reduces the measured reserve.
+
+    ``transfer_bandwidths`` prices every copy at the given rates instead of
+    the calibration the runtime measured, as
+    :func:`shadowspill.planner.plan_program` takes them. A calibration moves
+    from run to run on one machine, and the plan is keyed by what it was
+    priced against, so a plan that has to be the one an earlier search chose
+    is planned against the lanes that search planned against.
 
     What any search is told -- which objects are too small to be worth
     cutting, and whether the search must reproduce exactly at any worker
@@ -209,6 +218,7 @@ def plan_forward(
                 allocation_probe_repetitions=allocation_probe_repetitions,
                 shared_outputs=shared_outputs,
                 search_options=search_options,
+                transfer_bandwidths=transfer_bandwidths,
             )
     except BaseException as error:
         _surface_failed_plan(
@@ -253,6 +263,7 @@ def plan_step(
     build_store_mode: StoreMode = "contribute",
     plan_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -317,8 +328,11 @@ def plan_step(
     the store and are recorded on the report; naming the default is the same
     as naming nothing.
 
-    ``dynamic_scratch_reserve_bytes`` has the same semantics and default as
-    :func:`plan_forward`.
+    ``dynamic_scratch_reserve_bytes`` and ``transfer_bandwidths`` have the
+    same semantics and defaults as :func:`plan_forward`. A step that runs
+    what :func:`plan_step_search` chose is planned against the report's
+    ``planned_lanes``, so it asks the store the search's question and
+    executes the plan the search chose.
 
     Allocation-path probe settings have the same semantics and defaults as
     :func:`plan_forward`.
@@ -379,6 +393,7 @@ def plan_step(
                 allocation_probe_repetitions=allocation_probe_repetitions,
                 search_options=search_options,
                 incumbent=incumbent,
+                transfer_bandwidths=transfer_bandwidths,
             )
     except BaseException as error:
         _surface_failed_plan(

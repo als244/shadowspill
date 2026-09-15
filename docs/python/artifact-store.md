@@ -185,7 +185,7 @@ so no combination that means nothing can be asked for.
 |---|---|---|
 | `contribute` (default) | yes | builds it and writes it back |
 | `reuse` | yes | builds it and persists nothing |
-| `require` | yes | refuses, naming the mode that would allow it |
+| `require` | yes | refuses, naming the request that missed and the mode that would allow it |
 | `refresh` | no | rebuilds and overwrites what was there |
 
 `reuse` is what makes a shared store safe to read from many runs at once, and
