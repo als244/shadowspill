@@ -518,7 +518,6 @@ is a plan for a different program.
 | `max_repair_attempts` | `int` | `256` | How many monotonic repairs one candidate may make before answering with the best plan it reached. |
 | `capacity_refinement_bytes` | `int` | `256 MiB` | How much capacity a plan gives back at a time when its layout does not fit. Zero hands back the whole shortfall, which converges in the fewest rounds; a smaller step overshoots less, because the layout's extent does not shrink byte for byte with the capacity. |
 | `record_reduction_steps` | `bool` | `False` | Record each candidate's reduction trajectory, one `ReductionStep` per plan it held. |
-| `split_write_backs` | `bool` | `False` | Let a plan split an eviction whose copy fits in idle evict-lane time, keeping the split only if the replan is faster. |
 
 `resolution_options` takes `Fraction` values, integers or strings such as
 `"3/8"`, sorted and deduplicated on the way in. It lives here rather than on the

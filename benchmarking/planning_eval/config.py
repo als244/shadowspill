@@ -126,9 +126,6 @@ class FrontierConfig:
     #: How many repairs one candidate may spend. Absent means the planner's
     #: own default.
     max_repair_attempts: int | None = None
-    #: Whether a plan that has simulated may split an eviction that held
-    #: something up. Absent means the planner's own default, which is off.
-    split_write_backs: bool | None = None
     #: Whether every candidate is measured against its own bound rather than
     #: the best plan any worker has placed so far. Absent means the planner's
     #: own default, which is off -- so two runs of the same points can settle
@@ -172,7 +169,6 @@ class FrontierConfig:
             "plan_store_mode": self.plan_store_mode,
             "capacity_refinement_bytes": self.capacity_refinement_bytes,
             "max_repair_attempts": self.max_repair_attempts,
-            "split_write_backs": self.split_write_backs,
             "deterministic": self.deterministic,
             "transfer_bandwidths": self.transfer_bandwidths.to_dict(),
             "grids": [grid.to_dict() for grid in self.grids],
@@ -206,7 +202,6 @@ def load_frontier_config(path: Path) -> FrontierConfig:
         optional={
             "capacity_refinement_bytes",
             "max_repair_attempts",
-            "split_write_backs",
             "deterministic",
         },
     )
@@ -267,11 +262,6 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             None
             if data.get("max_repair_attempts") is None
             else _integer(data.get("max_repair_attempts"), "config.max_repair_attempts")
-        ),
-        split_write_backs=(
-            None
-            if data.get("split_write_backs") is None
-            else bool(data.get("split_write_backs"))
         ),
         deterministic=(
             None

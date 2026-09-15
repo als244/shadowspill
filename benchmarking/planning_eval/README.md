@@ -66,10 +66,9 @@ One JSON file, validated strictly — an unknown or missing key is an error.
 | `transfer_bandwidths` | One global fetch/evict pair, with its provenance, frozen across the corpus so points from different Programs are comparable. |
 | `grids` | Cartesian products of execution budgets, spill budgets, and exact rational bandwidth scales. |
 
-Four optional fields reach the planner and are part of the config digest, so
+Three optional fields reach the planner and are part of the config digest, so
 two runs that differ only in one of them are told apart:
-`capacity_refinement_bytes`, `max_repair_attempts`, `split_write_backs`, and
-`deterministic`. Absent means the planner's own default.
+`capacity_refinement_bytes`, `max_repair_attempts` and `deterministic`. Absent means the planner's own default.
 
 The v1 grids expand to 15 points per program: four execution budgets at one
 spill budget across three bandwidth scales — half, one, and twice the frozen
