@@ -12,7 +12,8 @@ step rather than a planning answer; `ShadowSpillPlanningProblem`,
 Three of them form one chain:
 
 ```text
-build_step_program()  ->  StepProgram  (.recurrent is a ShadowSpillPlanningProblem)
+build_step_programs() ->  tuple[StepProgram, ...], one per ordering
+                          (.recurrent is a ShadowSpillPlanningProblem)
 plan_program()        ->  AnnotatedProgramPlan
 ```
 
@@ -22,9 +23,9 @@ store](../artifact-store.md#identity) for what each digest holds.
 
 ## `StepProgram`
 
-The result of [`build_step_program()`](frontend.md#build_step_program):
-everything capture, profiling and canonical lowering produced for one step,
-with nothing planned yet. It records the `StepDataOrdering` the step was
+One element of [`build_step_programs()`](frontend.md#build_step_programs)'s
+result: everything capture, profiling and canonical lowering produced for one
+step under one ordering, with nothing planned yet. It records the `StepDataOrdering` the step was
 lowered with, since a different walk is a different program. It contains:
 
 - `recurrent`, the `ShadowSpillPlanningProblem` for the repeated step;
@@ -43,9 +44,9 @@ it was produced. `to_json()` and `from_json()` carry it as a portable corpus.
 from pathlib import Path
 
 from shadowspill.step import StepProgram
-from shadowspill.pytorch import build_step_program
+from shadowspill.pytorch import build_step_programs
 
-step_program = build_step_program(
+(step_program,) = build_step_programs(
     model,
     objective=objective,
     optimizer=build_optimizer,

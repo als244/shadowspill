@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from shadowspill.planner.plan_store import PlanStore, open_plan_store
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileStore
+from shadowspill.step import StepArchive
 from shadowspill.store import ArtifactStore
 
 from ..graph_pairs import GraphPairStore
@@ -26,6 +27,7 @@ class PlanningStores:
     plans: PlanStore
     graph_pairs: GraphPairStore
     optimizer_captures: OptimizerCaptureStore
+    steps: StepArchive
 
     def archive_export(
         self,
@@ -76,6 +78,9 @@ def open_planning_stores(store: ArtifactStore) -> PlanningStores:
 
     return PlanningStores(
         store=store,
+        steps=StepArchive(
+            store.steps, policy=store.build_policy, artifact_recorder=store.record
+        ),
         profiles=ProfileStore(
             store.profile_measurements,
             compiled_manifest_root=store.compiled_manifests,

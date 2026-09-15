@@ -20,13 +20,19 @@ def optimizer_type_name(optimizer: torch.optim.Optimizer) -> str:
     return f"{type(optimizer).__module__}.{type(optimizer).__qualname__}"
 
 
-def optimizer_step_identity(
-    optimizer: torch.optim.Optimizer,
-) -> dict[str, Any] | None:
-    """What the optimizer's step does, as its code: bytecode, constants, names."""
+def code_identity(function: object) -> dict[str, Any] | None:
+    """What a callable does, as its code: bytecode, constants, names.
 
-    step = inspect.unwrap(type(optimizer).step)
-    code = getattr(step, "__code__", None)
+    None when the callable has no Python code object to read, such as a
+    builtin or a callable class instance without one.
+    """
+
+    if not callable(function):
+        return None
+    target = inspect.unwrap(function)
+    code = getattr(target, "__code__", None)
+    if code is None:
+        code = getattr(inspect.unwrap(type(target).__call__), "__code__", None)
     if code is None:
         return None
     return {
@@ -34,6 +40,14 @@ def optimizer_step_identity(
         "constants": tuple(repr(value) for value in code.co_consts),
         "names": code.co_names,
     }
+
+
+def optimizer_step_identity(
+    optimizer: torch.optim.Optimizer,
+) -> dict[str, Any] | None:
+    """What the optimizer's step does, as its code."""
+
+    return code_identity(type(optimizer).step)
 
 
 class OptimizerTensorRole(StrEnum):

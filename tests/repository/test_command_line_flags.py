@@ -123,7 +123,7 @@ def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> No
     entry_points = {
         "plan_step": api.plan_step,
         "plan_forward": api.plan_forward,
-        "build_step_program": api.build_step_program,
+        "build_step_programs": api.build_step_programs,
     }
     offences: list[str] = []
     for root in ("src", "tests", "benchmarking", "reference", "workloads"):

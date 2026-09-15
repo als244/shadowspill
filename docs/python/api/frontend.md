@@ -448,7 +448,7 @@ adopted and outlives the plan; state that has not been imported is imported
 in place by `plan_step()` or `plan_forward()`, which then own it, so closing
 the callable releases that state and empties the parameters that viewed it.
 Read what you need before the close, or import beforehand to keep it. Only
-`build_step_program()` requires an explicit import, because it returns no
+`build_step_programs()` requires an explicit import, because it returns no
 callable that could own the result.
 
 Everything else a plan owns is created in the pools rather than on the host:
@@ -474,7 +474,7 @@ that line:
 
 | Call | Does | Takes |
 |---|---|---|
-| `build_step_program()` | Captures, compiles, profiles and lowers a step. Runs no search, returns no callable. | build-store arguments only |
+| `build_step_programs()` | Captures, compiles, profiles and lowers a step, one program per ordering. Runs no search, returns no callable. | build-store arguments only |
 | `plan_program()` | Plans a program that has already been built. Captures nothing. Lives in [`shadowspill.planner`](neutral.md), because it needs no frontend. | plan-store arguments only |
 | `plan_step()`, `plan_forward()` | Both: build, then plan, then return a live callable. | both sets |
 | `plan_step_search()` | Builds every geometry once and plans each under every budget. Executes nothing. | both sets |
@@ -520,13 +520,13 @@ the modes do to PyTorch's own compilation caches.
 
 ### Arguments the entry points share
 
-`plan_forward()`, `plan_step()` and `build_step_program()` take these with
+`plan_forward()`, `plan_step()` and `build_step_programs()` take these with
 identical meaning. `plan_step_search()` derives most of them per geometry; the
 ones it does take are listed in [its own section](#plan_step_search).
 
 | argument | type | default | what it must be |
 |---|---|---|---|
-| `model` | `nn.Module` | required | The model to plan. Its state is adopted if the caller imported it and imported in place if not; `build_step_program()` requires the import. |
+| `model` | `nn.Module` | required | The model to plan. Its state is adopted if the caller imported it and imported in place if not; `build_step_programs()` requires the import. |
 | `runtime` | `Runtime` | required | Open runtime whose pools and routes are ready. |
 | `execution` | `str` | required | Name of the device pool in `runtime.pools`. |
 | `spill` | `str` | required | Name of the spill pool in `runtime.pools`. |
@@ -751,18 +751,29 @@ alone, so one capture serves every value it takes, while a float enters by
 value and would capture again for each one. See [the
 optimizer](../../architecture/optimizer.md).
 
-### `build_step_program()`
+### `build_step_programs()`
 
-Captures, compiles, profiles and lowers a reusable step, and returns a
-`StepProgram`. It runs no search and leaves no active callable: temporary
-compilation and materialization state is released before it returns. Because it
-writes no plans it takes no plan-store arguments; pass its result to
-`plan_program()`, which plans it and does take them, repeatedly and with
-different budgets and bandwidths if wanted.
+Captures, compiles, profiles and lowers a reusable step, and returns one
+`StepProgram` per ordering in `orderings`, in that order, from one capture, one
+materialization and one profiling; the orderings differ only in the walk the
+lowering emits, and `None` builds the depth-first ordering alone. It runs no
+search and leaves no active callable: temporary compilation and
+materialization state is released before it returns. Because it writes no
+plans it takes no plan-store arguments; pass a result to `plan_program()`,
+which plans it and does take them, repeatedly and with different budgets and
+bandwidths if wanted.
 
-<!-- source-signature: src/shadowspill/pytorch/api.py:build_step_program -->
+With an `export_bypass_key`, each ordering's program is first looked up in the
+build store's step archive under the identity the request has before any
+capture -- the key, the model's structure, the inputs' signatures, the
+optimizer's type, step code and hyperparameters, the request's own settings,
+the machine and the profiling environment -- and only the orderings not found
+there are built, from one capture. Without a key every call captures, and the
+content-addressed stores serve what they hold as before.
+
+<!-- source-signature: src/shadowspill/pytorch/api.py:build_step_programs -->
 ```text
-build_step_program(
+build_step_programs(
     model,
     *,
     objective,
@@ -779,10 +790,7 @@ build_step_program(
     execution_device=None,
     partition='auto',
     optimizer_ordering='stage_interleaved',
-    depth=None,
-    breadth=None,
-    reverse_breadth=True,
-    pair_loss=True,
+    orderings=None,
     verbose=True,
     artifact_store=None,
     build_store=None,
@@ -791,22 +799,25 @@ build_step_program(
     allocation_probe_repetitions=2,
     build_store_mode='contribute',
     export_bypass_key=None,
-) -> StepProgram
+) -> tuple[StepProgram, ...]
 ```
 
-Every argument means what it means for `plan_step()`. The model's state must
-already have been imported, since no callable is returned that could own it.
-The budgets and the ordering are recorded in the program: they describe the
-machine the step was profiled against and the walk it was lowered with, and a
-different walk is a different program.
+Every argument means what it means for `plan_step()`, and `orderings` takes
+`StepDataOrdering` values, each covering `len(example_inputs)` microbatches.
+The model's state must already have been imported, since no callable is
+returned that could own it. The budgets and the ordering are recorded in each
+program: they describe the machine the step was profiled against and the walk
+it was lowered with, and a different walk is a different program.
 
 ### `plan_step_search()`
 
 Plans every admitted split of one step's sequence total into microbatches and
 accumulation rounds, under every requested budget pair, and executes nothing.
-Each distinct geometry pays capture, profiling and lowering once -- the build
-tree deduplicates by structural digest -- and every geometry-budget point then
-runs one search. It returns a `StepSearchReport`.
+Each geometry pays capture, materialization and profiling once and lowering
+once per ordering, through `build_step_programs()`; with an `export_bypass_key`
+a geometry whose programs the build store already holds pays only their lookup.
+Every geometry-ordering-budget point then runs one search. It returns a
+`StepSearchReport`.
 
 <!-- source-signature: src/shadowspill/pytorch/step_search.py:plan_step_search -->
 ```text
@@ -863,9 +874,12 @@ plan_step_search(
 | `progress` | `(str) -> None` \| `None` | `None` | Receives one line per geometry and point boundary, so a caller can tee a live log. |
 
 `StepSearchReport` carries `total_sequences_per_step` and `sequence_length`, the
-`budgets` searched, one `StepSearchGeometryBuild` per built geometry with its
-build wall clock broken down by frontend phase, one `StepSearchPoint` per
-geometry-ordering-budget combination, the geometries the token bounds `skipped`
+`budgets` searched, one `StepSearchGeometryBuild` per program built, that is
+per ordering of each geometry, carrying the frontend phases that program was
+charged -- the shared capture and profiling on a geometry's first ordering, each
+lowering on its own -- with the geometry's build wall clock on the first
+ordering's entry and zero on the rest, so the entries sum to the build; one
+`StepSearchPoint` per geometry-ordering-budget combination, the geometries the token bounds `skipped`
 with their reasons, the `search_options` every point was searched under, any
 `transfer_bandwidths` override, and `winner_plans`, each budget pair's winning
 `AnnotatedProgramPlan` held in memory. A point carries its `status`,

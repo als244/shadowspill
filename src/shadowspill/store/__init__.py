@@ -13,15 +13,25 @@ out a combination that means nothing. `policy` lists the modes.
 
 from __future__ import annotations
 
-from .artifacts import ArtifactStore, PlanningArtifact, digest_directory
+from .artifacts import (
+    ArtifactRecorder,
+    ArtifactStore,
+    PlanningArtifact,
+    atomic_json,
+    atomic_text,
+    digest_directory,
+)
 from .policy import CONTRIBUTE, STORE_MODES, StoreMode, StorePolicy
 
 __all__ = [
     "CONTRIBUTE",
     "STORE_MODES",
+    "ArtifactRecorder",
     "ArtifactStore",
     "PlanningArtifact",
     "StoreMode",
     "StorePolicy",
+    "atomic_json",
+    "atomic_text",
     "digest_directory",
 ]

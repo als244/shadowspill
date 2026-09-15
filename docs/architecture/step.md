@@ -80,8 +80,8 @@ capture → lowering → StepProgram → ShadowSpillPlanningProblem → search �
                     StepDataOrdering travels with it, and with the plan report
 ```
 
-`build_step_program()` stops at the `StepProgram`; `plan_program()` takes one of
-its problems. The [planning orchestration](planning.md) page covers what happens
+`build_step_programs()` stops at the `StepProgram`, one per ordering;
+`plan_program()` takes one of a program's problems. The [planning orchestration](planning.md) page covers what happens
 after, and [reusable artifacts](../python/api/artifacts.md) documents the fields.
 
 Previous: [Graph-pair construction](graph-pair-construction.md). Next:

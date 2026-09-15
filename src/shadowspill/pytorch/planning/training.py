@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, NoReturn
 
@@ -58,6 +58,7 @@ from shadowspill.pytorch.profiling import (
     resolve_task_manifests,
     validate_compiled_profile,
 )
+from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     training_profiling_metadata,
@@ -137,6 +138,7 @@ from .common import (
     validate_cpu_model,
     workspace_reserve,
 )
+from .identity import machine_identity, step_identity, step_key
 from .reporting import (
     build_training_report,
     cache_artifacts,
@@ -482,7 +484,7 @@ def profile_training_tasks(
     )
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
-        provider_id="shadowspill.device_pool",
+        provider_id=DEVICE_POOL_PROVIDER_ID,
         export_bypass_key=stores.store.export_bypass_key,
     )
     manifests = _resolve_training_manifests(
@@ -1273,7 +1275,7 @@ def _rollback_training_failure(
     raise error
 
 
-def make_training_program(
+def make_training_programs(
     model: nn.Module,
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
@@ -1285,18 +1287,120 @@ def make_training_program(
     memory: PlanMemory,
     partition: PartitionSpec,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
-    data_ordering: StepDataOrdering,
+    data_orderings: Sequence[StepDataOrdering],
     verbose: bool,
     artifact_store: ArtifactStore,
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
-) -> StepProgram:
-    """Build and release one self-contained step artifact, before any search."""
+) -> tuple[StepProgram, ...]:
+    """Build one self-contained step artifact per ordering, before any search.
+
+    One capture, one materialisation and one profiling serve every ordering,
+    which differ only in the walk the lowering emits. With an export bypass
+    key, each ordering's program is looked up in the step archive first and
+    only the missing ones are built; a hit's phase timings are its lookup.
+    """
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
     artifacts = open_planning_stores(artifact_store)
+    orderings = tuple(data_orderings)
+    keys: dict[StepDataOrdering, str] = {}
+    identity: dict[str, object] | None = None
+    found: dict[StepDataOrdering, StepProgram] = {}
+    bypass_key = artifacts.store.export_bypass_key
+    if bypass_key is not None:
+        with timer.measure("step_lookup"):
+            identity = step_identity(
+                model,
+                objective=objective,
+                build_optimizer=build_optimizer,
+                hyperparams=hyperparams,
+                example_inputs=example_inputs,
+                partition=partition,
+                profiling_metadata=profiling_metadata,
+                optimizer_ordering=optimizer_ordering,
+                allocation_probe_seeds=allocation_probe_seeds,
+                allocation_probe_repetitions=allocation_probe_repetitions,
+                export_bypass_key=bypass_key,
+                machine=machine_identity(memory),
+                environment=profile_environment(
+                    device_ordinal=memory.execution_device,
+                    provider_id=DEVICE_POOL_PROVIDER_ID,
+                    export_bypass_key=bypass_key,
+                ).identity(),
+            )
+            for ordering in orderings:
+                keys[ordering] = step_key(identity, ordering)
+                archived = artifacts.steps.read(keys[ordering])
+                if archived is not None:
+                    found[ordering] = archived
+        lookup_ns = timer.values[-1][1]
+        for ordering, archived in found.items():
+            found[ordering] = replace(
+                archived,
+                phase_timings_ns=(("step_lookup", lookup_ns), ("total", lookup_ns)),
+            )
+    missing = tuple(item for item in orderings if item not in found)
+    if missing:
+        for ordering in missing:
+            artifacts.store.build_policy.refuse_miss("step program", ordering.label)
+        found.update(
+            _build_training_step_programs(
+                model,
+                missing,
+                objective=objective,
+                build_optimizer=build_optimizer,
+                optimizer_state_init=optimizer_state_init,
+                hyperparams=hyperparams,
+                example_inputs=example_inputs,
+                memory=memory,
+                partition=partition,
+                optimizer_ordering=optimizer_ordering,
+                artifacts=artifacts,
+                profiling_metadata=profiling_metadata,
+                allocation_probe_seeds=allocation_probe_seeds,
+                allocation_probe_repetitions=allocation_probe_repetitions,
+                timer=timer,
+                started=started,
+                keys=keys,
+                identity=identity,
+            )
+        )
+    return tuple(found[item] for item in orderings)
+
+
+def _build_training_step_programs(
+    model: nn.Module,
+    orderings: Sequence[StepDataOrdering],
+    *,
+    objective: Callable[..., torch.Tensor | ObjectiveResult],
+    build_optimizer: Callable[[Any], torch.optim.Optimizer],
+    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
+    | None,
+    hyperparams: Sequence[str],
+    example_inputs: Sequence[Sequence[Any]],
+    memory: PlanMemory,
+    partition: PartitionSpec,
+    optimizer_ordering: Literal["stage_interleaved", "tail"],
+    artifacts: PlanningStores,
+    profiling_metadata: Sequence[object] | None,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
+    timer: PlanningTimer,
+    started: int,
+    keys: Mapping[StepDataOrdering, str],
+    identity: Mapping[str, object] | None,
+) -> dict[StepDataOrdering, StepProgram]:
+    """Capture, profile and lower once, and publish one program per ordering.
+
+    The shared phases are charged to the first program's timings and each
+    later program carries only its own lowering, so the timings of a step's
+    programs add up to the build's wall clock rather than counting the
+    shared work once per ordering.
+    """
+
     captured = capture_training_graphs(
         model,
         objective=objective,
@@ -1318,6 +1422,7 @@ def make_training_program(
         stores=artifacts,
         timer=timer,
     )
+    results: dict[StepDataOrdering, StepProgram] = {}
     try:
         profiled = profile_training_tasks(
             captured,
@@ -1329,27 +1434,38 @@ def make_training_program(
             timer=timer,
         )
         captured = replace(captured, partitioned=profiled.partitioned)
-        programs = build_training_programs(
-            captured,
-            materialized,
-            profiled,
-            memory=memory,
-            optimizer_ordering=optimizer_ordering,
-            data_ordering=data_ordering,
-            timer=timer,
-        )
         _release_program_build_executables(profiled, captured.installed, timer)
-        result = _public_step_program(
-            captured,
-            profiled,
-            programs,
-            memory=memory,
-            optimizer_ordering=optimizer_ordering,
-            data_ordering=data_ordering,
-            stores=artifacts,
-            timer=timer,
-            started=started,
-        )
+        shared = tuple(timer.values)
+        for index, ordering in enumerate(orderings):
+            own_started = time.perf_counter_ns()
+            mark = len(timer.values)
+            programs = build_training_programs(
+                captured,
+                materialized,
+                profiled,
+                memory=memory,
+                optimizer_ordering=optimizer_ordering,
+                data_ordering=ordering,
+                timer=timer,
+            )
+            own = tuple(timer.values[mark:])
+            phases = (*shared, *own) if index == 0 else own
+            elapsed = time.perf_counter_ns() - (started if index == 0 else own_started)
+            program = _public_step_program(
+                captured,
+                profiled,
+                programs,
+                memory=memory,
+                optimizer_ordering=optimizer_ordering,
+                data_ordering=ordering,
+                stores=artifacts,
+                timer=timer,
+                phase_timings_ns=_program_phase_timings(phases, elapsed),
+            )
+            if identity is not None:
+                with timer.measure("step_archival"):
+                    artifacts.steps.write(keys[ordering], program, identity)
+            results[ordering] = program
     except BaseException as error:
         _rollback_training_failure(
             memory.runtime,
@@ -1366,7 +1482,7 @@ def make_training_program(
             lambda: None,
             operation="release training ShadowSpillProgram build state",
         )
-    return result
+    return results
 
 
 def _release_program_build_executables(
@@ -1402,7 +1518,7 @@ def _public_step_program(
     data_ordering: StepDataOrdering,
     stores: PlanningStores,
     timer: PlanningTimer,
-    started: int,
+    phase_timings_ns: tuple[tuple[str, int], ...],
 ) -> StepProgram:
     """Archive programs and publish only stable, serializable planning facts."""
 
@@ -1445,7 +1561,6 @@ def _public_step_program(
         if needs_initial
         else None
     )
-    elapsed = time.perf_counter_ns() - started
     return StepProgram(
         recurrent=recurrent,
         initial=initial,
@@ -1456,7 +1571,7 @@ def _public_step_program(
             PlanProfilingMetadata(index, item.digest, item.canonical_json)
             for index, item in enumerate(captured.workloads)
         ),
-        phase_timings_ns=_program_phase_timings(timer, elapsed),
+        phase_timings_ns=phase_timings_ns,
         store_directories=stores.store.diagnostics(),
         cache_artifacts=cache_artifacts(stores.store),
         transfer_capabilities_json=json.dumps(
@@ -1498,11 +1613,10 @@ def _planning_problem_artifact(
 
 
 def _program_phase_timings(
-    timer: PlanningTimer,
+    values: Sequence[tuple[str, int]],
     elapsed: int,
 ) -> tuple[tuple[str, int], ...]:
     """Return non-overlapping pre-search phases plus reconciled total wall."""
-
     nested_capture = any(
         name
         in {
@@ -1511,11 +1625,11 @@ def _program_phase_timings(
             "stage_partition_aot",
             "storage_layout_lowering",
         }
-        for name, _duration in timer.values
+        for name, _duration in values
     )
     phases = tuple(
         (name, duration)
-        for name, duration in timer.values
+        for name, duration in values
         if not (nested_capture and name == "capture_lowering")
     )
     if sum(duration for _name, duration in phases) > elapsed:

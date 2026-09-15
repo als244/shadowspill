@@ -73,8 +73,9 @@ and its options rather than the program alone.
 
 ## Where it comes from
 
-`build_step_program(...)` returns one per role; `.recurrent` is the steady
-step and the one a sweep plans. A saved problem round-trips through
+`build_step_programs(...)` returns one `StepProgram` per ordering, and each
+holds one problem per role; `.recurrent` is the steady step and the one a
+sweep plans. A saved problem round-trips through
 `ShadowSpillPlanningProblem.from_value()` and is the unit the corpus stores
 — see [program collection](../../benchmarking/program_collection/README.md).
 

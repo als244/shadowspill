@@ -61,7 +61,7 @@ _PUBLIC_C_REFERENCES = {
 }
 
 _REQUIRED_SIGNATURES = {
-    "src/shadowspill/pytorch/api.py:build_step_program",
+    "src/shadowspill/pytorch/api.py:build_step_programs",
     "src/shadowspill/pytorch/step_search.py:plan_step_search",
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
@@ -394,7 +394,7 @@ def test_examples_cover_complete_public_workflows() -> None:
         ),
         "forward-only.md": ("plan_forward(", "run_forward.close()"),
         "reusable-planning.md": (
-            "build_step_program(",
+            "build_step_programs(",
             "plan_program(",
             "StepProgram.from_json(",
             "annotated.to_json()",
