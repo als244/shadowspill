@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 import torch
 
 from shadowspill.ir import MemoryAction
-from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
+from shadowspill.runtime.abi import ObjectBinding
+from shadowspill.runtime.failures import RuntimeExecutionError
 
 from .common import PublishedStorage, plan_local_id
 
@@ -268,15 +268,6 @@ def after_task_and_update(
     )
 
 
-def dematerialize(
-    bridge: RuntimeBridge, tensor: torch.Tensor, alias_id: str, generation: int
-) -> None:
-    del alias_id, generation
-    if tensor.untyped_storage().data_ptr() == 0:
-        return
-    torch.ops.shadowspill._dematerialize_storages([tensor])
-
-
 def wait_plan_idle(bridge: RuntimeBridge) -> None:
     """Actively wait only for work owned by this admitted plan."""
 
@@ -311,7 +302,6 @@ __all__ = [
     "acquire_for_caller",
     "after_task_and_update",
     "before_task_and_acquire",
-    "dematerialize",
     "publish_initial_tensor",
     "rebind",
     "rebind_many",

@@ -6,18 +6,18 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.pytorch.runtime_adapter.telemetry import (
+    NO_ID,
+    CapturedAllocationEvent,
+    decode_allocation_events,
+)
+from shadowspill.runtime.abi import (
     AllocationEvent,
     BackendEvent,
     TraceConfig,
     TraceEvent,
     TraceSummary,
     runtime_library,
-)
-from shadowspill.pytorch.runtime_adapter.telemetry import (
-    NO_ID,
-    CapturedAllocationEvent,
-    decode_allocation_events,
 )
 from shadowspill.status import ABI_VERSION
 

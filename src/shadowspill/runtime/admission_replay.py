@@ -6,9 +6,9 @@ import ctypes
 from dataclasses import dataclass
 from enum import IntEnum
 
+from shadowspill.planner.admission.physical import PhysicalAdmissionError
 from shadowspill.status import ABI_VERSION, Status
 
-from .admission import AdmissionError
 from .admission_capi import (
     NO_ID,
     CAdmissionReplayDecision,
@@ -162,7 +162,7 @@ def run_admission_replay(
         )
     )
     if status == Status.REPLAY_INFEASIBLE:
-        raise AdmissionError(
+        raise PhysicalAdmissionError(
             "production MemoryPool replay cannot satisfy operation "
             f"{int(result.error_operation_index)} for lease "
             f"{int(result.error_lease_id)}: requested "

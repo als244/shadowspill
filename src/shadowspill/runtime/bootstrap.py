@@ -1,4 +1,15 @@
-"""Installation of ShadowSpill through PyTorch's supported allocator API."""
+"""Bootstrapping one runtime in this process, over a frontend's allocator.
+
+A ShadowSpill runtime is installed once per process and never uninstalled,
+because the framework allocator it is installed through is process-global and
+irreversible. This module owns that sequence -- validate the request, load the
+adapter library, bootstrap the runtime, read back what it physically admitted,
+and record what the process now holds -- and asks a
+:class:`~shadowspill.frontend.RuntimeFrontend` for the four steps only the
+framework can take.
+
+Nothing here knows which framework that is.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-import torch
-
+from shadowspill.frontend import RuntimeFrontend
 from shadowspill.libraries import library_candidates, resolve_library
-from shadowspill.pytorch.accelerator import accelerator_device
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.status import ABI_VERSION
+
+from .abi import (
     ADAPTER_ABI_VERSION,
     AdapterCapabilities,
     AdapterConfig,
@@ -24,25 +35,10 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     RouteConfig,
     configure_adapter_library,
 )
-from shadowspill.pytorch.runtime_adapter.failures import (
-    format_bytes,
-    wait_allocator_idle,
-)
-from shadowspill.status import ABI_VERSION
-
-_REQUIRED_STORAGE_OPERATIONS = (
-    "_import_cpu_storages",
-    "_export_cpu_storages",
-    "_make_runtime_cpu_storage",
-    "_acquire_storages",
-    "_before_task_storages",
-    "_dematerialize_storages",
-    "_after_task_storages",
-    "_transfer_acquired_storage_to_caller",
-)
+from .failures import format_bytes, wait_allocator_idle
 
 
-class AllocatorInstallError(RuntimeError):
+class RuntimeInstallError(RuntimeError):
     """Raised when the process-global PyTorch allocator cannot be installed."""
 
 
@@ -52,11 +48,10 @@ _PROVIDER_RESERVATION_GRANULARITY = 64 * _MIB
 
 
 @dataclass(frozen=True)
-class InstalledAllocator:
-    """Process-lifetime owners for PyTorch's selected allocator callbacks."""
+class InstalledRuntime:
+    """Process-lifetime owners for the runtime this process bootstrapped."""
 
     library: Any
-    allocator: Any
     path: Path
     admission: PhysicalAdmission
     #: The neutral runtime this process bound. Callers that only need a
@@ -65,7 +60,7 @@ class InstalledAllocator:
     fixed_execution_bytes: int = 0
 
 
-_installed: InstalledAllocator | None = None
+_installed: InstalledRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +82,7 @@ class RouteBootstrap:
     destination_pool_id: int
 
 
-def installed_allocator() -> InstalledAllocator | None:
+def installed_runtime() -> InstalledRuntime | None:
     """Return the process-lifetime allocator owner, if already selected."""
 
     return _installed
@@ -97,10 +92,10 @@ def _function_pointer(library: Any, name: str) -> int:
     try:
         symbol = getattr(library, name)
     except AttributeError as exc:
-        raise AllocatorInstallError(f"adapter has no {name!r} export") from exc
+        raise RuntimeInstallError(f"adapter has no {name!r} export") from exc
     pointer = ctypes.cast(symbol, ctypes.c_void_p).value
     if pointer is None:
-        raise AllocatorInstallError(f"adapter export {name!r} is null")
+        raise RuntimeInstallError(f"adapter export {name!r} is null")
     return pointer
 
 
@@ -110,9 +105,10 @@ def _function_pointer(library: Any, name: str) -> int:
 DEFAULT_BACKGROUND_WINDOW_BYTES: Final = 64 << 20
 
 
-def install_allocator(
+def install_runtime(
     library_path: str | Path,
     *,
+    frontend: RuntimeFrontend,
     device_ordinal: int,
     device_budget_bytes: int,
     provider_headroom_bytes: int,
@@ -122,7 +118,7 @@ def install_allocator(
     worker_poll_nanoseconds: int = 1_000,
     background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
-) -> InstalledAllocator:
+) -> InstalledRuntime:
     """Install the process-global allocator before PyTorch initializes the accelerator.
 
     ``backend`` selects the backend shared object the adapter loads: ``None``
@@ -130,11 +126,13 @@ def install_allocator(
     resolves to ``libshadowspill_backend_<name>.so`` there, and a path is used
     as given.
 
-    This is an internal frontend primitive. Public planning computes physical
-    admission before invoking it. Installation is intentionally irreversible
-    for the process lifetime.
+    ``frontend`` is the framework whose process allocator this runtime is
+    installed through; it is asked to refuse an unusable build, to prepare
+    and activate its allocator, and to initialize its provider's retained
+    workspaces. Public planning computes physical admission before invoking
+    this. Installation is intentionally irreversible for the process
+    lifetime.
     """
-
     global _installed
     _validate_install_request(
         device_ordinal,
@@ -148,10 +146,17 @@ def install_allocator(
     )
     path = _validated_adapter_path(library_path)
     backend_library = _backend_path(backend)
-    frontend = _accelerator_frontend()
+    frontend.refuse_unusable_build()
     library = _load_adapter(path)
-    allocator = _create_allocator(frontend, path)
-    _configure_record_stream(library, allocator)
+    missing_operations = tuple(frontend.missing_operations())
+    if missing_operations:
+        raise RuntimeInstallError(
+            "PyTorch adapter is missing canonical storage operations: "
+            + ", ".join(missing_operations)
+        )
+    frontend.prepare_allocator(
+        path, _function_pointer(library, "shadowspill_pytorch_backend_record_stream")
+    )
     pool_values = (PoolConfig * len(pools))(
         *(
             PoolConfig(
@@ -195,15 +200,15 @@ def install_allocator(
         provider_headroom_bytes=provider_headroom_bytes,
     )
     _validate_physical_usage(library, device_budget_bytes, provider_headroom_bytes)
-    frontend.memory.change_current_allocator(allocator)
+    frontend.activate_allocator()
     fixed_execution_bytes = _initialize_provider_state(
         library,
         admission,
+        frontend=frontend,
         device_ordinal=device_ordinal,
     )
-    _installed = InstalledAllocator(
+    _installed = InstalledRuntime(
         library,
-        allocator,
         path,
         admission,
         _published_runtime_handle(library),
@@ -228,16 +233,17 @@ def _initialize_provider_state(
     library: Any,
     admission: PhysicalAdmission,
     *,
+    frontend: RuntimeFrontend,
     device_ordinal: int,
 ) -> int:
-    """Create persistent PyTorch CUDA provider state before plan admission.
+    """Charge the frontend provider's persistent state before plan admission.
 
-    PyTorch lazily obtains its cuBLAS handle on the first matrix operation.
-    That handle's workspace is allocated through the selected allocator and
-    remains live. Creating it while the slab is otherwise empty makes its
-    physical cost explicit before planning. Dynamic allocation does not assign
-    a special address to this state; admission excludes its charged bytes and
-    verifies that the remaining capacity is physically usable.
+    A provider that creates a retained workspace lazily creates it in the
+    middle of a plan, splitting a slab admission had already certified.
+    Creating it here, while the slab is otherwise empty, makes its physical
+    cost explicit before planning. Dynamic allocation does not assign a special
+    address to this state; admission excludes its charged bytes and verifies
+    that the remaining capacity is physically usable.
     """
 
     # Tiny allocator/failure canaries and genuinely small non-BLAS workloads
@@ -247,33 +253,7 @@ def _initialize_provider_state(
     if int(admission.allocator_pool_bytes) < 64 << 20:
         return 0
 
-    get_handle = getattr(torch._C, "_cuda_getCurrentBlasHandle", None)
-    if get_handle is None or not callable(get_handle):
-        raise AllocatorInstallError(
-            "this PyTorch build lacks the required CUDA provider initializer"
-        )
-    torch.cuda.set_device(device_ordinal)
-    get_handle()
-
-    # Merely obtaining the handle does not force cuBLAS to create its retained
-    # workspace.  If its first GEMM runs later while a large profiling input is
-    # live, that small persistent allocation can split the otherwise empty
-    # slab and prevent a large fixed-layout arena from being reserved despite
-    # ample aggregate capacity.  Exercise the provider now, while the pool is
-    # empty, so its retained state has deterministic low-address placement.
-    device = accelerator_device(device_ordinal)
-    shape = (2048, 2048)
-    left = torch.empty(shape, dtype=torch.bfloat16, device=device)
-    right = torch.empty(shape, dtype=torch.bfloat16, device=device)
-    output = torch.empty(shape, dtype=torch.bfloat16, device=device)
-    try:
-        torch.mm(left, right, out=output)
-        torch.cuda.current_stream(device_ordinal).synchronize()
-    finally:
-        del output
-        del right
-        del left
-        torch.cuda.current_stream(device_ordinal).synchronize()
+    frontend.initialize_provider_workspaces(device_ordinal)
 
     message = wait_allocator_idle(
         library,
@@ -281,14 +261,14 @@ def _initialize_provider_state(
         problem="provider initialization",
     )
     if message is not None:
-        raise AllocatorInstallError(message)
+        raise RuntimeInstallError(message)
     statistics = AdapterStatistics()
     status = int(
         library.shadowspill_pytorch_allocator_statistics(ctypes.byref(statistics))
     )
     if status != 0:
-        raise AllocatorInstallError(
-            f"CUDA provider allocation accounting failed (status {status})"
+        raise RuntimeInstallError(
+            f"provider allocation accounting failed (status {status})"
         )
     pool = statistics.allocator_pool
     fixed = int(pool.allocated_bytes)
@@ -296,8 +276,8 @@ def _initialize_provider_state(
     capacity = int(admission.allocator_pool_bytes)
     largest = int(pool.largest_free_range_bytes)
     if fixed + free != capacity or largest != free:
-        raise AllocatorInstallError(
-            "CUDA provider initialization fragmented the otherwise empty slab: "
+        raise RuntimeInstallError(
+            "provider initialization fragmented the otherwise empty slab: "
             f"fixed={fixed}, free={free}, largest={largest}, capacity={capacity}"
         )
     required = fixed + _PROVIDER_GROWTH_MARGIN
@@ -309,7 +289,7 @@ def _initialize_provider_state(
 
 
 def validate_dynamic_execution_reservation(
-    installed: InstalledAllocator,
+    installed: InstalledRuntime,
     *,
     reserved_bytes: int,
 ) -> int:
@@ -328,7 +308,7 @@ def validate_dynamic_execution_reservation(
         problem="fixed execution reservation",
     )
     if message is not None:
-        raise AllocatorInstallError(message)
+        raise RuntimeInstallError(message)
     statistics = AdapterStatistics()
     status = int(
         installed.library.shadowspill_pytorch_allocator_statistics(
@@ -336,7 +316,7 @@ def validate_dynamic_execution_reservation(
         )
     )
     if status != 0:
-        raise AllocatorInstallError(
+        raise RuntimeInstallError(
             f"fixed execution reservation accounting failed (status {status})"
         )
     pool = statistics.allocator_pool
@@ -344,14 +324,14 @@ def validate_dynamic_execution_reservation(
     free = int(pool.free_bytes)
     capacity = int(installed.admission.allocator_pool_bytes)
     if allocated > reserved_bytes:
-        raise AllocatorInstallError(
+        raise RuntimeInstallError(
             "persistent provider allocations exceed the admitted slab reserve: "
             f"observed={allocated}, reserved={reserved_bytes}"
         )
     largest = int(pool.largest_free_range_bytes)
     usable_capacity = capacity - reserved_bytes
     if allocated + free != capacity or free < usable_capacity:
-        raise AllocatorInstallError(
+        raise RuntimeInstallError(
             "live execution allocation accounting is incompatible with the "
             "admitted dynamic capacity: "
             f"observed={allocated}, reserved={reserved_bytes}, free={free}, "
@@ -371,23 +351,23 @@ def _validate_install_request(
     background_transfer_window_bytes: int,
 ) -> None:
     if device_ordinal < 0:
-        raise AllocatorInstallError("device ordinal must be non-negative")
+        raise RuntimeInstallError("device ordinal must be non-negative")
     if device_budget_bytes <= 0:
-        raise AllocatorInstallError("device budget must be positive")
+        raise RuntimeInstallError("device budget must be positive")
     if provider_headroom_bytes < 0 or provider_headroom_bytes >= device_budget_bytes:
-        raise AllocatorInstallError(
+        raise RuntimeInstallError(
             "provider headroom must be non-negative and smaller than device budget"
         )
     if not pools:
-        raise AllocatorInstallError("pool registry must not be empty")
+        raise RuntimeInstallError("pool registry must not be empty")
     if allocator_pool_id < 0 or allocator_pool_id >= len(pools):
-        raise AllocatorInstallError("allocator pool ID is outside the pool registry")
+        raise RuntimeInstallError("allocator pool ID is outside the pool registry")
     if tuple(item.pool_id for item in pools) != tuple(range(len(pools))):
-        raise AllocatorInstallError("pool IDs must match their registry positions")
+        raise RuntimeInstallError("pool IDs must match their registry positions")
     if any(item.capacity_bytes < 0 for item in pools):
-        raise AllocatorInstallError("pool capacities must be non-negative")
+        raise RuntimeInstallError("pool capacities must be non-negative")
     if tuple(item.route_id for item in routes) != tuple(range(len(routes))):
-        raise AllocatorInstallError("route IDs must match their registry positions")
+        raise RuntimeInstallError("route IDs must match their registry positions")
     if any(
         item.source_pool_id < 0
         or item.source_pool_id >= len(pools)
@@ -396,13 +376,13 @@ def _validate_install_request(
         or item.source_pool_id == item.destination_pool_id
         for item in routes
     ):
-        raise AllocatorInstallError("route endpoints must name distinct known pools")
+        raise RuntimeInstallError("route endpoints must name distinct known pools")
     if worker_poll_nanoseconds < 0:
-        raise AllocatorInstallError("worker poll interval must be non-negative")
+        raise RuntimeInstallError("worker poll interval must be non-negative")
     if background_transfer_window_bytes < 0:
-        raise AllocatorInstallError("background transfer window must be non-negative")
+        raise RuntimeInstallError("background transfer window must be non-negative")
     if _installed is not None:
-        raise AllocatorInstallError("ShadowSpill's allocator is already installed")
+        raise RuntimeInstallError("ShadowSpill's allocator is already installed")
 
 
 def _backend_path(backend: str | None) -> Path:
@@ -427,13 +407,13 @@ def _backend_path(backend: str | None) -> Path:
         found.pop("mock", None)
         if len(found) != 1:
             names = ", ".join(sorted(found)) or "none"
-            raise AllocatorInstallError(
+            raise RuntimeInstallError(
                 "backend=None needs exactly one accelerator backend beside the"
                 f" ShadowSpill libraries; installed: {names}"
             )
         return next(iter(found.values())).resolve()
     if not isinstance(backend, str) or not backend:
-        raise AllocatorInstallError(
+        raise RuntimeInstallError(
             "backend must be a backend name, a library path, or None"
         )
     if "/" in backend or backend.endswith(".so"):
@@ -441,46 +421,27 @@ def _backend_path(backend: str | None) -> Path:
     else:
         resolved = resolve_library(f"libshadowspill_backend_{backend}.so")
         if resolved is None:
-            raise AllocatorInstallError(
+            raise RuntimeInstallError(
                 f"backend {backend!r} is not installed: no"
                 f" libshadowspill_backend_{backend}.so beside the ShadowSpill libraries"
             )
         path = resolved
     if not path.is_file():
-        raise AllocatorInstallError(f"backend library does not exist: {path}")
+        raise RuntimeInstallError(f"backend library does not exist: {path}")
     return path
 
 
 def _validated_adapter_path(library_path: str | Path) -> Path:
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
-        raise AllocatorInstallError(f"PyTorch adapter does not exist: {path}")
+        raise RuntimeInstallError(f"PyTorch adapter does not exist: {path}")
     return path
 
 
-def _accelerator_frontend() -> Any:
-    if torch.version.cuda is None:
-        raise AllocatorInstallError("a CUDA-enabled PyTorch build is required")
-    frontend: Any = torch.cuda
-    if frontend.is_initialized():
-        raise AllocatorInstallError(
-            "PyTorch CUDA was initialized before ShadowSpill allocator installation"
-        )
-    return frontend
-
-
 def _load_adapter(path: Path) -> Any:
+    """Load the adapter library and confirm it speaks this ABI."""
+
     library = ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-    missing_operations = [
-        name
-        for name in _REQUIRED_STORAGE_OPERATIONS
-        if not hasattr(torch.ops.shadowspill, name)
-    ]
-    if missing_operations:
-        raise AllocatorInstallError(
-            "PyTorch adapter is missing canonical storage operations: "
-            + ", ".join(missing_operations)
-        )
     configure_adapter_library(library)
     capabilities = AdapterCapabilities()
     status = int(
@@ -491,36 +452,15 @@ def _load_adapter(path: Path) -> Any:
         or capabilities.abi_version != ADAPTER_ABI_VERSION
         or capabilities.runtime_abi_version != ABI_VERSION
     ):
-        raise AllocatorInstallError("PyTorch adapter capability/ABI validation failed")
+        raise RuntimeInstallError("PyTorch adapter capability/ABI validation failed")
     return library
-
-
-def _create_allocator(frontend: Any, path: Path) -> Any:
-    return frontend.memory.CUDAPluggableAllocator(
-        str(path),
-        "shadowspill_pytorch_backend_malloc",
-        "shadowspill_pytorch_backend_free",
-    )
-
-
-def _configure_record_stream(library: Any, allocator: Any) -> None:
-    record_stream_pointer = _function_pointer(
-        library, "shadowspill_pytorch_backend_record_stream"
-    )
-    torch_allocator = allocator.allocator()
-    set_record_stream = getattr(torch_allocator, "set_record_stream_fn", None)
-    if set_record_stream is None or not callable(set_record_stream):
-        raise AllocatorInstallError(
-            "this PyTorch build lacks the required record-stream callback"
-        )
-    set_record_stream(record_stream_pointer)
 
 
 def _bootstrap_allocator(library: Any, config: AdapterConfig) -> None:
     status = int(library.shadowspill_pytorch_allocator_bootstrap(ctypes.byref(config)))
     if status == 0:
         return
-    raise AllocatorInstallError(
+    raise RuntimeInstallError(
         f"ShadowSpill runtime bootstrap failed with status {status}"
         f"{_bootstrap_refusal(library, config)}"
     )
@@ -572,7 +512,7 @@ def _read_physical_admission(
         or admission.provider_headroom_bytes != provider_headroom_bytes
         or admission.allocator_pool_bytes == 0
     ):
-        raise AllocatorInstallError("physical admission handshake failed")
+        raise RuntimeInstallError("physical admission handshake failed")
     return admission
 
 
@@ -590,11 +530,11 @@ def _validate_physical_usage(
     physical = PhysicalMemory()
     status = int(library.shadowspill_pytorch_physical_memory(ctypes.byref(physical)))
     if status != 0:
-        raise AllocatorInstallError("bootstrap exceeds the physical device budget")
+        raise RuntimeInstallError("bootstrap exceeds the physical device budget")
     if physical.process_bytes <= device_budget_bytes:
         return
     if provider_headroom_bytes != 0:
-        raise AllocatorInstallError("bootstrap exceeds the physical device budget")
+        raise RuntimeInstallError("bootstrap exceeds the physical device budget")
     excess = int(physical.process_bytes) - device_budget_bytes
     print(
         f"ShadowSpill: the bootstrapped process holds {physical.process_bytes:,} "

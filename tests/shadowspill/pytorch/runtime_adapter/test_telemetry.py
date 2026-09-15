@@ -5,7 +5,6 @@ import ctypes
 import pytest
 
 from shadowspill.pytorch.runtime_adapter import telemetry as telemetry_module
-from shadowspill.pytorch.runtime_adapter.abi import AllocationEvent as CAllocationEvent
 from shadowspill.pytorch.runtime_adapter.telemetry import (
     AllocationCategory,
     AllocationEventKind,
@@ -14,6 +13,7 @@ from shadowspill.pytorch.runtime_adapter.telemetry import (
     read_allocation_telemetry,
     summarize_task_workspace,
 )
+from shadowspill.runtime.abi import AllocationEvent as CAllocationEvent
 
 
 def _event(

@@ -649,8 +649,69 @@ violation says by how much.
 
 ## `shadowspill.runtime`
 
-Standalone physical-admission helpers, for tooling that wants to reproduce or
-inspect what admission does without a runtime:
+One runtime in this process, framework-neutral: it bootstraps over a frontend's
+process allocator, registers the configured pools and routes, calibrates the
+real directed transfers between their addresses, and is what every plan is
+placed on. Importing this package does not import a framework.
+
+### `Runtime`
+
+`Runtime` is opened with a `shadowspill.frontend.RuntimeFrontend` -- the one
+object through which it selects and synchronizes a device, installs the process
+allocator, and finds or detaches the framework objects holding a lease:
+
+<!-- source-signature: src/shadowspill/runtime/core.py:Runtime.__init__ -->
+```text
+Runtime(
+    *,
+    frontend: RuntimeFrontend,
+    pools: Mapping[str, MemoryPoolConfig],
+    routes: Mapping[str, TransferRoute],
+    library_path: str | Path | None = None,
+    calibrate: bool = True,
+    worker_poll_nanoseconds: int = 1_000,
+    background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
+    backend: str | None = None,
+)
+```
+
+PyTorch callers construct `shadowspill.pytorch.Runtime` instead, which supplies
+that frontend and takes the same remaining arguments; [the frontend
+page](frontend.md#runtime) documents them, the pools a runtime holds, and what a
+closing plan leaves behind. Allocator selection is process-global and
+irreversible, so exactly one runtime is opened per process, before any device
+tensor exists.
+
+`runtime.frontend` is the frontend it was opened with, and is the only route
+from a runtime to a framework.
+
+### What a runtime publishes
+
+| Value | Is |
+|---|---|
+| `MemoryPool` | one registered pool: its name, kind, capacity, and device ordinal if it has one |
+| `RuntimeRoute` | one directed pool pair bytes may move along |
+| `TransferCapabilities` | the measured matrix over every registered route |
+| `TransferProfile` | one route's measured bandwidth and latency |
+
+Planning reads the published `transfer_capabilities` snapshot rather than
+recalibrating.
+
+### What a failed call leaves
+
+| Value | Is |
+|---|---|
+| `RuntimeConfigurationError` | a runtime or plan asked for incompatible pool resources |
+| `RuntimeExecutionError` | a call failed against a live runtime, carrying the latched diagnostics |
+| `RuntimeFailureDiagnostics` | what the runtime latched about the first and most recent failure |
+| `ExecutionTaskIdentity` | which task a latched failure belongs to |
+
+[The frontend page](frontend.md#exceptions) shows what raises them.
+
+### Physical admission
+
+Standalone helpers, for tooling that wants to reproduce or inspect what
+admission does without a runtime:
 
 | Function | Returns | Purpose |
 |---|---|---|

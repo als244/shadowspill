@@ -11,9 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import torch
-
-from shadowspill.pytorch.runtime_adapter.failures import (
+from .failures import (
     RuntimeExecutionError,
     RuntimeFailureDiagnostics,
     read_allocator_failure,
@@ -44,7 +42,7 @@ def prepare_failure_cleanup(
     elif not synchronize_unlatched:
         return
     try:
-        torch.cuda.synchronize(int(runtime._installed.admission.device_ordinal))
+        runtime.frontend.synchronize(int(runtime._installed.admission.device_ordinal))
     except BaseException as synchronize_error:
         error.add_note(
             "Failed to synchronize the execution device during fault cleanup: "

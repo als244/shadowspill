@@ -13,16 +13,16 @@ import ctypes
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shadowspill.pytorch.runtime_adapter.abi import (
+from .abi import (
     INITIAL_ACTIONS_TASK_ID,
     PROFILING_SCOPE_BASE,
     RUNTIME_OBJECT_SCOPE_ID,
+    Allocation,
     LiveAllocation,
     runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-
 from .configuration import RuntimeConfigurationError
+from .failures import RuntimeExecutionError
 
 if TYPE_CHECKING:
     from .core import Runtime
@@ -153,6 +153,25 @@ class PoolAllocation:
         return f"{plan}{scope}"
 
 
+def allocation_id_for_address(runtime: Runtime, address: int) -> int | None:
+    """Which allocation owns ``address``, or None if the runtime owns none.
+
+    The one thing a frontend cannot answer about its own objects, and the reason
+    `occupants` takes this as an argument: the frontend knows where its objects
+    are, the runtime knows whose bytes those are.
+    """
+
+    record = Allocation()
+    status = int(
+        runtime._installed.library.shadowspill_pytorch_allocation_for_pointer(
+            address, ctypes.byref(record)
+        )
+    )
+    if status != 0:
+        return None
+    return int(record.allocation_id)
+
+
 def live_allocations(
     runtime: Runtime, pool: str = "execution"
 ) -> tuple[PoolAllocation, ...]:
@@ -270,4 +289,9 @@ def describe_live_allocations(
     )
 
 
-__all__ = ["PoolAllocation", "describe_live_allocations", "live_allocations"]
+__all__ = [
+    "PoolAllocation",
+    "allocation_id_for_address",
+    "describe_live_allocations",
+    "live_allocations",
+]
