@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Protocol
 
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.ir import (
@@ -21,7 +17,14 @@ from shadowspill.ir import (
 )
 from shadowspill.schema import artifact_schema
 from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
-from shadowspill.store import CONTRIBUTE, ArtifactStore, StorePolicy, digest_directory
+from shadowspill.store import (
+    CONTRIBUTE,
+    ArtifactRecorder,
+    ArtifactStore,
+    StorePolicy,
+    atomic_text,
+    digest_directory,
+)
 
 from .admission import AdmissionFacts
 from .admission.layout.model import FixedLayoutAdmission
@@ -41,20 +44,6 @@ from .serialization import (
 )
 
 _SCHEMA = artifact_schema("plan_selection")
-
-
-class _ArtifactRecorder(Protocol):
-    def __call__(
-        self,
-        *,
-        category: str,
-        kind: str,
-        digest: str | None,
-        path: str | Path,
-        access: str,
-        schema: str | None,
-        dependencies: tuple[str, ...] = (),
-    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +96,7 @@ class PlanStore:
         root: str | Path,
         *,
         policy: StorePolicy = CONTRIBUTE,
-        artifact_recorder: _ArtifactRecorder | None = None,
+        artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self.root = Path(root).expanduser()
         self.policy = policy
@@ -244,7 +233,7 @@ class PlanStore:
             "simulator_input": asdict(admission.simulator_input),
             "simulation": asdict(admission.simulation),
         }
-        _store(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
         self._record(lookup.key, lookup.result.program.digest, path, "certified")
 
     def _boundary(
@@ -429,7 +418,7 @@ class PlanStore:
                 )
             self._record(key, result.program.digest, path, "matched")
             return
-        _store(path, encoded)
+        atomic_text(path, encoded)
         self._record(
             key, result.program.digest, path, "improved" if improve else "write"
         )
@@ -472,7 +461,7 @@ class PlanStore:
                 "message": str(error),
             },
         }
-        _store(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
         self._record(key, program.digest, path, "verdict")
 
     def _record(
@@ -528,23 +517,6 @@ def _key(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def _store(path: Path, encoded: str) -> None:
-    """Write a record atomically: a reader sees the old record or the new one."""
-
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(descriptor, "w") as output:
-            output.write(encoded)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        with suppress(FileNotFoundError):
-            os.unlink(temporary)
 
 
 def _answer(payload: dict[str, object]) -> object:

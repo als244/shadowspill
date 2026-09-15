@@ -107,7 +107,7 @@ it went wrong.
 The recurrent and optional initial `ShadowSpillPlanningProblem` a captured step
 lowered to, with the provenance that says what produced them: the ordering, the
 measured profiles, and the digests that identify the content rather than the
-run. `build_step_program()` returns one; `to_json()` and `from_json()` round it
+run. `build_step_programs()` returns one per ordering; `to_json()` and `from_json()` round it
 through a file, and `digest` identifies what it would plan as. Its fields are
 documented in [reusable artifacts](artifacts.md#stepprogram).
 
@@ -154,8 +154,14 @@ tuple. `StorePolicy` turns one mode into the four gates the code checks --
 `read_enabled`, `write_enabled`, `overwrite` and `require_hit` -- which is what
 stops a caller spelling out a combination that means nothing;
 `StorePolicy.for_mode(mode)` builds one, `refuse_miss(what, key)` raises the
-refusal that names the fix, and `CONTRIBUTE` is the default policy.
-`digest_directory(root, digest)` is where one digest's entry lives under a tree.
+refusal that names the fix, and `CONTRIBUTE` is the default policy. `digest_directory(root, digest)`
+is where one digest's entry lives under a tree. `atomic_json(path, value)` and
+`atomic_text(path, value)` are the writers every record goes through, written
+beside their destination and renamed into place, so a reader never sees a
+partial record. `ArtifactRecorder` is the callback a store takes to publish
+each artifact it touched as a `PlanningArtifact`; the build store, the profile
+and manifest stores, the plan store and the step archive all take this one
+protocol.
 
 [The artifact store](../artifact-store.md) has the layout and what each digest
 covers.
@@ -180,8 +186,8 @@ simulation and the fixed-layout certificate recorded beside it and nothing is
 simulated or placed; when it holds a refusal, that refusal is raised again.
 
 Building a program is the frontend's job:
-[`build_step_program()`](frontend.md#build_step_program) captures, compiles,
-profiles and lowers one, and takes only build-store arguments. `plan_program()`
+[`build_step_programs()`](frontend.md#build_step_programs) captures, compiles,
+profiles and lowers them, and takes only build-store arguments. `plan_program()`
 plans one and takes only plan-store arguments. Nothing on this page needs a
 device or a model.
 
@@ -212,7 +218,7 @@ plan_program(
 
 | argument | type | default | meaning |
 |---|---|---|---|
-| `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally `build_step_program(...).recurrent` or a value read back with `ShadowSpillPlanningProblem.from_value()`. |
+| `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally `build_step_programs(...)[0].recurrent` or a value read back with `ShadowSpillPlanningProblem.from_value()`. |
 | `execution_budget` | `int` \| `None` | `None` | Device bytes to plan for; the problem's own budget when `None`, and never more than the capacity it was compiled and profiled under. |
 | `spill_budget` | `int` \| `None` | `None` | Spill bytes to plan for, with the same bound. |
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Fetch and evict rates to price copies at; the problem's embedded calibration when `None`. |

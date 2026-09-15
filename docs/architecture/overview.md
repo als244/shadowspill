@@ -146,8 +146,8 @@ flowchart TD
 | `AnnotatedProgramPlan` | One selected schedule, physical layout, simulation result, and planning diagnostics | The model or runtime |
 | `PlanReport` | The published callable's program, plan, execution mapping, profiles, artifact-store hits and misses, and diagnostics | Console logging |
 
-`build_step_program()` stops at `StepProgram`. `plan_program()` consumes
-one of its `ShadowSpillPlanningProblem` values under new budgets or transfer
+`build_step_programs()` stops at `StepProgram`, one per ordering.
+`plan_program()` consumes one of a program's `ShadowSpillPlanningProblem` values under new budgets or transfer
 bandwidths. `plan_step()` and `plan_forward()` run the complete pipeline.
 
 ## Runtime interaction

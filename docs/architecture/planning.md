@@ -19,9 +19,12 @@ capture/export and stage partitioning
         -> materialized callable and PlanReport
 ```
 
-`build_step_program()` stops before the search. `plan_program()` accepts that
-saved problem with new budgets or transfer bandwidths, so budget sweeps do not
-repeat capture, compilation, or profiling. Capturing a program needs the
+`build_step_programs()` stops before the search, with one program per
+ordering from one capture. `plan_program()` accepts a saved problem with new
+budgets or transfer bandwidths, so budget sweeps do not repeat capture,
+compilation, or profiling; with an export bypass key a build does not repeat
+them either, because the programs it produced last time are filed in the build
+store under the identity the request has before any capture. Capturing a program needs the
 frontend; planning a saved one does not, so `plan_program()` lives in
 `shadowspill.planner` and a sweep never imports torch.
 
@@ -137,8 +140,9 @@ the program and plan make this input explicit and serializable.
 
 `plan_program()` reads and writes one versioned store with two independent
 trees. `build/` holds what a run pays for and another run can reuse: exports,
-compiler caches, graph pairs, and profiles. `planning/` holds what a run
-decided: the canonical program each call was given, the requests put to the
+compiler caches, graph pairs, profiles, and, under an export bypass key, the
+step programs a build produced, filed by the identity the request has before
+any capture. `planning/` holds what a run decided: the canonical program each call was given, the requests put to the
 search, the plans it chose, and a readable manifest linking one call to the
 artifacts behind it. A planning call writes nothing under `build/` and a build
 writes nothing under `planning/`, which is what lets one build store serve many

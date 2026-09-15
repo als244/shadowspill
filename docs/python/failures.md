@@ -45,7 +45,10 @@ A `TaskPhaseError` retains `structural_contract`, `task_kind`, and `operators`
 when the failing task is known. `PlanInfeasibleError` retains the failure
 `kind`, `device_id`, `boundary_task_id`, `required_bytes`, and
 `capacity_bytes`; it and `PlanSearchExhaustedError` both retain `diagnostics`,
-the search evidence behind the refusal. The original PyTorch exception remains
+the search evidence behind the refusal. Both refusals are recorded in the
+planning store under the key the plan would have had, and the next request for
+that plan, made with no plan to beat in hand, raises the recorded refusal again
+without searching; see [the artifact store](artifact-store.md#what-each-record-contains). The original PyTorch exception remains
 the cause, so its traceback identifies the operator and model code that led to
 a capture or compilation failure.
 
@@ -64,7 +67,7 @@ runtime resolution
   -> callable publication
 ```
 
-If any phase fails, `plan_step()`, `plan_forward()`, or `build_step_program()`:
+If any phase fails, `plan_step()`, `plan_forward()`, or `build_step_programs()`:
 
 1. retains the original exception and traceback;
 2. records any allocator failure already latched by the C adapter;

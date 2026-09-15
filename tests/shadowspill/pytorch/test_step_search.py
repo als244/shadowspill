@@ -147,7 +147,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
             f"ShadowSpill failed to profile structural contract abc123: {cause}"
         ) from cause
 
-    monkeypatch.setattr(module, "build_step_program", exhaust)
+    monkeypatch.setattr(module, "build_step_programs", exhaust)
     lines: list[str] = []
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
@@ -192,7 +192,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
     def fail(*args: object, **kwargs: object) -> object:
         raise ProfilingError("an operator has no meta implementation")
 
-    monkeypatch.setattr(module, "build_step_program", fail)
+    monkeypatch.setattr(module, "build_step_programs", fail)
     with pytest.raises(ProfilingError, match="meta implementation"):
         plan_step_search(
             object(),  # type: ignore[arg-type]
@@ -225,7 +225,11 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     def refuse(*args: object, **kwargs: object) -> object:
         raise RuntimeError("PressureFit problem rejected the selected facts")
 
-    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(
+        module,
+        "build_step_programs",
+        lambda *a, **k: tuple(Step() for _ in k["orderings"]),
+    )
     monkeypatch.setattr(module, "plan_program", refuse)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
@@ -267,7 +271,11 @@ def test_the_resolution_options_reach_every_point(
         seen.append(kwargs["search_options"].algorithm.options.resolution_options)
         raise PlanInfeasibleError("stub", kind="analytic_capacity")
 
-    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(
+        module,
+        "build_step_programs",
+        lambda *a, **k: tuple(Step() for _ in k["orderings"]),
+    )
     monkeypatch.setattr(module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
@@ -328,7 +336,11 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
         plan_stores.append(kwargs["plan_store"])
         raise PlanInfeasibleError("stub", kind="analytic_capacity")
 
-    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(
+        module,
+        "build_step_programs",
+        lambda *a, **k: tuple(Step() for _ in k["orderings"]),
+    )
     monkeypatch.setattr(module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
@@ -361,7 +373,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
     def build(*args: object, **kwargs: object) -> object:
         raise AssertionError("no geometry may be built")
 
-    monkeypatch.setattr(module, "build_step_program", build)
+    monkeypatch.setattr(module, "build_step_programs", build)
     with pytest.raises(ValueError, match="outside"):
         plan_step_search(
             object(),  # type: ignore[arg-type]
@@ -464,7 +476,11 @@ def test_each_budget_is_handed_the_best_plan_below_it(
             return Plan(incumbent.simulation.makespan_ns, "incumbent")
         return Plan(makespan, candidate)
 
-    monkeypatch.setattr(module, "build_step_program", lambda *a, **k: Step())
+    monkeypatch.setattr(
+        module,
+        "build_step_programs",
+        lambda *a, **k: tuple(Step() for _ in k["orderings"]),
+    )
     monkeypatch.setattr(module, "summarize_selected_plan", lambda result: None)
     monkeypatch.setattr(module, "_graph_pair_outcomes", lambda result: ())
     monkeypatch.setattr(module, "plan_program", search)
