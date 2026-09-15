@@ -12,7 +12,11 @@ from shadowspill.planner.admission.refinement import (
     placement_facts,
     resolve_fixed_layout_selection,
 )
-from shadowspill.planner.plan_store import open_plan_store, resolve_plan
+from shadowspill.planner.plan_store import (
+    certified_result,
+    open_plan_store,
+    resolve_plan,
+)
 from shadowspill.planner.program import (
     AnnotatedProgramPlan,
     MemoryBudgets,
@@ -79,10 +83,9 @@ def select_program(
         progress=progress,
         certify=plans.certify,
     )
-    physical_result = _with_physical_prediction(
-        selection.result,
-        selection.admission.simulation,
-        facts=selection.facts,
+    physical_result = replace(
+        certified_result(selection.result, selection.admission),
+        admission_facts=selection.facts,
     )
     selected_transfer = transfer_bandwidths or program.transfer_bandwidths
     return AnnotatedProgramPlan(
@@ -108,31 +111,6 @@ def select_program(
         attempts=selection.attempts,
         plan_from_store=selection.from_store,
         wall_time_ns=time.perf_counter_ns() - started,
-    )
-
-
-def _with_physical_prediction(
-    selected: ProgramPlanResult,
-    simulation: object,
-    *,
-    facts: object,
-) -> ProgramPlanResult:
-    """Replace logical timing with dependency-certified physical simulation."""
-
-    from shadowspill.planner.admission import AdmissionFacts
-    from shadowspill.simulator import SimulationResult
-
-    if not isinstance(simulation, SimulationResult):
-        raise TypeError("physical simulation has an invalid type")
-    if not isinstance(facts, AdmissionFacts):
-        raise TypeError("effective facts has an invalid type")
-    return replace(
-        selected,
-        simulation=simulation,
-        diagnostics=selected.diagnostics.replace_selected_makespan(
-            simulation.makespan_ns
-        ),
-        admission_facts=facts,
     )
 
 

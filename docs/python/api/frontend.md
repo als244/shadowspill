@@ -202,7 +202,7 @@ would otherwise extend the lifetime of what is being investigated.
 ### What a closing plan leaves behind
 
 Nothing a plan's own scopes allocated outlives the plan.
-`Runtime.plan_scoped_residue(plan_handle)` returns one description per range of
+`plan_scoped_residue(runtime, plan_handle)` returns one description per range of
 that plan's unclaimed scope workspace still standing in the execution pool: the
 range, the scope that made it, the object occupying it, and where that object is
 referenced from.
@@ -211,7 +211,7 @@ belong to no plan and are not counted. It reports and does not release, because 
 reference can only be dropped by whoever holds it, in that component's own
 teardown.
 
-`Runtime.force_release_plan_scope(plan_handle)` is the forcing path, for a plan
+`force_release_plan_scope(runtime, plan_handle)` is the forcing path, for a plan
 that is closing: the ranges its own scopes made go whether or not the framework
 has released them, and it returns `(storages detached, leases reclaimed)`. The
 frontend half detaches the storages, so a tensor over one of those ranges stops
@@ -220,8 +220,9 @@ storage rather than reading whatever now lives there. The runtime half reclaims
 the leases, in bytes, which is what it owns; a lease the framework has not freed
 keeps its pointer indexed, so the free that eventually arrives still resolves.
 
-Closing a planned callable runs both, as one of its cleanup steps: it names the
-residue, reclaims it, and reports what it took in a `RuntimeWarning` rather than
+`reclaim_plan_scoped_residue(runtime, plan_handle)` runs both, and a closing
+planned callable calls it as one of its cleanup steps: it names the residue,
+reclaims it, and reports what it took in a `RuntimeWarning` rather than
 raising, since a kernel is entitled to keep state between tasks and what is
 wanted during teardown is visibility. Setting
 `SHADOWSPILL_REPORT_LIVE_ALLOCATIONS` to a non-empty value adds a second
@@ -820,7 +821,13 @@ accumulation rounds, under every requested budget pair, and executes nothing.
 Each geometry pays capture, materialization and profiling once and lowering
 once per ordering, through `build_step_programs()`; with an `export_bypass_key`
 a geometry whose programs the build store already holds pays only their lookup.
-Every geometry-ordering-budget point then runs one search. It returns a
+Every geometry-ordering-budget point then asks the planning store for the
+summary it keeps beside a certified plan, through `summarize_plan()`, and runs
+one search only where the store has no standing answer: a miss, a refusal with
+a plan to beat in hand, or a plan to beat that claims to be faster than the
+stored answer, which is the store's own rule. Whole plans are read for each
+budget's winner, which `winner_plans` hands the run that follows, and for a
+plan to beat the moment a later point has to beat it. It returns a
 `StepSearchReport`.
 
 <!-- source-signature: src/shadowspill/pytorch/step_search.py:plan_step_search -->
@@ -892,8 +899,9 @@ planned with, which a caller running a winner hands to `plan_step()` -- and
 memory. A point carries its `status`,
 `makespan_seconds`, `summary` as a `PlanSummary`, `search_seconds`,
 `incumbent_budget_bytes` when it answered with a handed-in plan, and
-`graph_pair_selections`: one `GraphPairOutcome` per graph-pair selection the
-search evaluated, not only the one it answered with.
+`graph_pair_selections`: one `GraphPairOutcome` (from `shadowspill.planner`)
+per graph-pair selection the search evaluated, not only the one it answered
+with.
 
 `orderings` lowers each ordering into its own program, sharing the geometry's
 capture and profiles, and plans it under every budget; the report's points and
