@@ -96,6 +96,50 @@ class PlanningTimer:
         self.values = retained[:first] + replacement + retained[first:]
 
 
+#: Phases that bracket finer ones. When the finer ones are present the
+#: bracket is dropped from a breakdown, so the breakdown's parts do not
+#: overlap and sum to at most the wall clock.
+NESTED_PHASES: dict[str, frozenset[str]] = {
+    "capture_lowering": frozenset(
+        {
+            "objective_export",
+            "export_archival",
+            "stage_partition_aot",
+            "storage_layout_lowering",
+        }
+    ),
+    "optimizer_capture": frozenset(
+        {
+            "optimizer_state_install",
+            "optimizer_discovery",
+            "optimizer_trace",
+            "optimizer_trace_read",
+        }
+    ),
+}
+
+
+def flatten_phases(values: Sequence[tuple[str, int]]) -> tuple[tuple[str, int], ...]:
+    """The phases with every bracket whose parts are present dropped."""
+
+    names = {name for name, _duration in values}
+    dropped = {bracket for bracket, parts in NESTED_PHASES.items() if names & parts}
+    return tuple(item for item in values if item[0] not in dropped)
+
+
+def program_phase_timings(
+    values: Sequence[tuple[str, int]], elapsed: int, *, total: bool = True
+) -> tuple[tuple[str, int], ...]:
+    """The non-overlapping phases of a build, checked against the wall clock
+    they fit in, with the wall clock itself last as ``total`` unless a caller
+    keeps that apart."""
+
+    phases = flatten_phases(values)
+    if sum(duration for _name, duration in phases) > elapsed:
+        raise RuntimeError("phase intervals overlap: measured time exceeds wall")
+    return (*phases, ("total", elapsed)) if total else phases
+
+
 class _MeasuredPhase:
     def __init__(self, timer: PlanningTimer, name: str) -> None:
         self._timer = timer

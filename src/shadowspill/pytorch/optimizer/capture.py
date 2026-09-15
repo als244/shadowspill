@@ -6,8 +6,9 @@ import copy
 import inspect
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Protocol
 
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
@@ -31,6 +32,17 @@ from .artifacts import (
 from .store import OptimizerCaptureStore, recurrent_capture_identity
 
 
+class PhaseTimer(Protocol):
+    """What the capture reports its phases to: `measure(name)` brackets one."""
+
+    def measure(self, name: str) -> AbstractContextManager[None]: ...
+
+
+class _NoTimer:
+    def measure(self, name: str) -> AbstractContextManager[None]:
+        return nullcontext()
+
+
 @dataclass(frozen=True, slots=True)
 class _OptimizerInventory:
     optimizer_type: str
@@ -49,6 +61,10 @@ class _OptimizerDiscovery:
     representative_values: dict[str, torch.Tensor]
     initial_sandbox: torch.optim.Optimizer
     initial_parameter_names: dict[int, str]
+    #: The sandbox before it moved onto fake tensors, and its names: what an
+    #: opaque fallback is captured from, since an opaque task keeps real values.
+    real_sandbox: torch.optim.Optimizer | None = None
+    real_name_by_sandbox_id: dict[int, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +160,7 @@ def capture_optimizer(
     *,
     parameter_stage_owners: Mapping[str, tuple[int, ...]] | None = None,
     store: OptimizerCaptureStore | None = None,
+    timer: PhaseTimer | None = None,
 ) -> OptimizerCapture:
     """Capture a recurrent tensor update without mutating the caller's state.
 
@@ -157,8 +174,10 @@ def capture_optimizer(
     the discovery of lazy state and the opaque first step run either way.
     """
 
-    inventory = _validate_optimizer_inputs(named_parameters, optimizer)
-    discovery = _discover_optimizer_state(inventory, optimizer)
+    phases = timer if timer is not None else _NoTimer()
+    with phases.measure("optimizer_discovery"):
+        inventory = _validate_optimizer_inputs(named_parameters, optimizer)
+        discovery = _discover_optimizer_state(inventory, optimizer)
     if isinstance(discovery, OptimizerCapture):
         return discovery
     captured = _capture_recurrent_optimizer(
@@ -166,6 +185,7 @@ def capture_optimizer(
         optimizer,
         parameter_stage_owners=parameter_stage_owners,
         store=store,
+        timer=phases,
     )
     if discovery.created_state_names:
         spillable_names = {
@@ -485,6 +505,7 @@ def _capture_recurrent_optimizer(
     *,
     parameter_stage_owners: Mapping[str, tuple[int, ...]] | None,
     store: OptimizerCaptureStore | None = None,
+    timer: PhaseTimer,
 ) -> OptimizerCapture:
     """Capture the stable recurrent update or publish a bounded opaque task."""
 
@@ -501,22 +522,30 @@ def _capture_recurrent_optimizer(
         if stored is not None:
             # The trace is what the store holds; the split of it into stage
             # tasks is graph analysis, derived here as it is on a miss.
-            _fake_recurrent_sandbox(discovery)
-            bindings = _tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id)
-            artifact = stored.restore(
-                bindings,
-                _optimizer_input_provenance(bindings, discovery.representative_values),
-            )
-            recurrent_tasks = _partition_optimizer_graph(
-                artifact,
-                bindings,
-                parameter_stage_owners=parameter_stage_owners,
-            )
+            with timer.measure("optimizer_trace_read"):
+                _fake_recurrent_sandbox(discovery)
+                bindings = _tensor_bindings(
+                    discovery.sandbox, discovery.name_by_sandbox_id
+                )
+                artifact = stored.restore(
+                    bindings,
+                    _optimizer_input_provenance(
+                        bindings, discovery.representative_values
+                    ),
+                )
+                recurrent_tasks = _partition_optimizer_graph(
+                    artifact,
+                    bindings,
+                    parameter_stage_owners=parameter_stage_owners,
+                )
             return _recurrent_capture(discovery, artifact, recurrent_tasks, bindings)
-    opaque = _prepare_recurrent_sandbox(discovery)
-    if opaque is not None:
-        return opaque
-    captured = _capture_optimizer_artifact(discovery)
+    # The trace decides whether the update is representable: it exports once
+    # and falls back to an opaque task when the export fails, so nothing is
+    # exported twice to find out first.
+    if discovery.initialized_state_dict is None:
+        _fake_recurrent_sandbox(discovery)
+    with timer.measure("optimizer_trace"):
+        captured = _capture_optimizer_artifact(discovery)
     if isinstance(captured, OptimizerCapture):
         return captured
     artifact, bindings = captured
@@ -565,36 +594,6 @@ def _hooked_optimizer_capture(
     )
 
 
-def _prepare_recurrent_sandbox(
-    discovery: _OptimizerDiscovery,
-) -> OptimizerCapture | None:
-    if discovery.initialized_state_dict is None:
-        sandbox = discovery.sandbox
-        names = discovery.name_by_sandbox_id
-        probe_bindings = _tensor_bindings(sandbox, names)
-        probe_snapshots = {
-            id(binding.tensor): binding.tensor.detach().clone()
-            for binding in probe_bindings
-        }
-        probe_grad_enabled = torch.is_grad_enabled()
-        try:
-            _export_optimizer_graph(sandbox)
-        except BaseException as exc:
-            _restore_binding_values(probe_bindings, probe_snapshots)
-            opaque_artifact = OpaqueOptimizerArtifact.capture(sandbox, probe_bindings)
-            return _opaque_optimizer_capture(
-                discovery,
-                opaque_artifact,
-                probe_bindings,
-                reason=_opaque_optimizer_reason(exc),
-            )
-        finally:
-            torch.set_grad_enabled(probe_grad_enabled)
-        _restore_binding_values(probe_bindings, probe_snapshots)
-        _fake_recurrent_sandbox(discovery)
-    return None
-
-
 def _fake_recurrent_sandbox(discovery: _OptimizerDiscovery) -> None:
     """Move the sandbox onto fake device tensors, keeping its representative values."""
 
@@ -603,6 +602,24 @@ def _fake_recurrent_sandbox(discovery: _OptimizerDiscovery) -> None:
     discovery.representative_values.update(
         _representative_optimizer_values(sandbox, names)
     )
+    # The fake conversion consumes the sandbox, so what an opaque fallback is
+    # captured from is a copy of it; on meta that copy is storage-free. Names
+    # follow the parameters, which is all a name map holds.
+    real = _copy_optimizer(sandbox)
+    pairs = tuple(
+        zip(_optimizer_parameters(sandbox), _optimizer_parameters(real), strict=True)
+    )
+    # A Parameter's deep copy is made from its data alone, so the gradients the
+    # discovery seeded are copied across by hand.
+    for original, copied in pairs:
+        if original.grad is not None and copied.grad is None:
+            copied.grad = original.grad.detach().clone()
+    discovery.real_sandbox = real
+    discovery.real_name_by_sandbox_id = {
+        id(copied): names[id(original)]
+        for original, copied in pairs
+        if id(original) in names
+    }
     sandbox, names = _fake_device_optimizer(sandbox, names)
     discovery.sandbox = sandbox
     discovery.name_by_sandbox_id = names
@@ -645,11 +662,20 @@ def _capture_optimizer_artifact(
         )
     except BaseException as exc:
         _restore_binding_values(bindings, snapshots)
-        opaque_artifact = OpaqueOptimizerArtifact.capture(sandbox, bindings)
+        # An opaque task runs the real update, so it is captured from the
+        # sandbox as it was before it moved onto fake tensors.
+        real = discovery.real_sandbox
+        real_names = discovery.real_name_by_sandbox_id
+        if real is None or real_names is None:
+            real, real_names = sandbox, names
+        discovery.sandbox = real
+        discovery.name_by_sandbox_id = real_names
+        real_bindings = _tensor_bindings(real, real_names)
+        opaque_artifact = OpaqueOptimizerArtifact.capture(real, real_bindings)
         return _opaque_optimizer_capture(
             discovery,
             opaque_artifact,
-            bindings,
+            real_bindings,
             reason=_opaque_optimizer_reason(exc),
         )
     finally:
