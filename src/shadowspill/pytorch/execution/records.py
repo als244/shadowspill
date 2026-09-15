@@ -158,7 +158,7 @@ def build_plan_run(
         initial_fetches=tuple(
             alias_group_id
             for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
-            if bridge.requires_storage(alias_group_id)
+            if bridge.objects.requires_storage(alias_group_id)
         ),
         public_by_microbatch=_public_outputs(entrypoints, bridge),
     )
@@ -197,7 +197,7 @@ def _build_task_record(
     gradient_outputs = _gradient_outputs(entrypoint, bridge)
     optimizer_outputs = _optimizer_outputs_for_entrypoint(entrypoint, bridge)
     handoff_aliases = frozenset(
-        bridge.alias_for_object(item.source_object_id)
+        bridge.objects.alias_for_object(item.source_object_id)
         for item in entrypoint.storage_handoffs
         if item.destination_object_id in task.outputs
     )
@@ -208,7 +208,9 @@ def _build_task_record(
         task=task,
         input_aliases=input_aliases,
         input_storage_aliases=tuple(
-            alias_id for alias_id in input_aliases if bridge.requires_storage(alias_id)
+            alias_id
+            for alias_id in input_aliases
+            if bridge.objects.requires_storage(alias_id)
         ),
         actions=actions,
         task_index=int(entrypoint.task_id.removeprefix("task_")),
@@ -251,13 +253,13 @@ def _forward_outputs(
     next_publication = 0
     replacement_leaves = set(entrypoint.replacement_output_leaves)
     for slot in entrypoint.output_slots:
-        alias_id = bridge.alias_for_object(slot.object_id)
+        alias_id = bridge.objects.alias_for_object(slot.object_id)
         replace = slot.leaf_index in replacement_leaves
         adopt = (replace or alias_id not in input_aliases) and alias_id not in produced
         publication_ordinal = None
         if adopt:
             produced.add(alias_id)
-            if bridge.requires_storage(alias_id):
+            if bridge.objects.requires_storage(alias_id):
                 publication_ordinal = next_publication
                 next_publication += 1
         result.append(
@@ -279,13 +281,13 @@ def _gradient_outputs(
 ) -> tuple[GradientOutputRecord, ...]:
     grouped: dict[str, tuple[str, list[int]]] = {}
     for slot in entrypoint.gradient_output_slots:
-        alias_id = bridge.alias_for_object(slot.object_id)
+        alias_id = bridge.objects.alias_for_object(slot.object_id)
         grouped.setdefault(alias_id, (slot.object_id, []))[1].append(slot.leaf_index)
     result: list[GradientOutputRecord] = []
     next_publication = 0
     for alias_id, (object_id, indices) in grouped.items():
         publication_ordinal = None
-        if bridge.requires_storage(alias_id):
+        if bridge.objects.requires_storage(alias_id):
             publication_ordinal = next_publication
             next_publication += 1
         result.append(
@@ -312,11 +314,11 @@ def _optimizer_outputs_for_entrypoint(
         entrypoint.output_slots,
         strict=True,
     ):
-        alias_id = bridge.alias_for_object(slot.object_id)
+        alias_id = bridge.objects.alias_for_object(slot.object_id)
         publication_ordinal = None
         if alias_id not in seen:
             seen.add(alias_id)
-            if bridge.requires_storage(alias_id):
+            if bridge.objects.requires_storage(alias_id):
                 publication_ordinal = next_publication
                 next_publication += 1
         result.append(
@@ -368,7 +370,7 @@ def _input_aliases(
     return {
         task_id: tuple(
             dict.fromkeys(
-                bridge.alias_for_object(object_id) for object_id in task.inputs
+                bridge.objects.alias_for_object(object_id) for object_id in task.inputs
             )
         )
         for task_id, task in tasks.items()
@@ -434,7 +436,7 @@ def _public_outputs(
         if entrypoint.phase != "forward" or entrypoint.microbatch is None:
             continue
         result[entrypoint.microbatch] = tuple(
-            bridge.alias_for_object(
+            bridge.objects.alias_for_object(
                 next(
                     slot.object_id
                     for slot in entrypoint.output_slots

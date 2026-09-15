@@ -117,7 +117,8 @@ array with ids; *execution* and *spill* are **roles a plan assigns** in its
 configuration the C layer supports today.
 
 The frontend nonetheless puts every registration in the spill pool --
-`bridge.py` registers host objects and placeholders with `pool_id=spill_pool_id`,
+the bridge (`runtime_adapter/bridge/objects.py`) registers host objects and
+placeholders with `pool_id=spill_pool_id`,
 and state adoption passes the spill pool -- and that is the right policy rather
 than a missing generalization. The execution pool is the scarce device arena a
 fixed layout reserves in one contiguous span. Storage resident there that the

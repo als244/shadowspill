@@ -10,6 +10,8 @@ import shadowspill.pytorch.callables as callable_module
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.runtime_adapter import RuntimeExecutionError
 
+from ._lifecycle import FakeRuntime, fake_plan_lifecycle
+
 
 class _Signature:
     def validate(self, inputs: object) -> None:
@@ -34,7 +36,11 @@ class _Executor:
     def prepare_invocation(self, inputs: object) -> object:
         return inputs
 
-    def release_optimizer_state(self) -> None:
+    @property
+    def optimizer_state(self) -> object:
+        return SimpleNamespace(release=self._release_optimizer_state)
+
+    def _release_optimizer_state(self) -> None:
         self.optimizer_released = True
 
 
@@ -54,6 +60,7 @@ def _planned_training(
 ) -> tuple[PlannedTrainStep, _Executor]:
     """Return a training callable whose every teardown operation succeeds."""
 
+    fake_plan_lifecycle(monkeypatch, plan_handle=77)
     monkeypatch.setattr(
         callable_module,
         "restore_persistent_object_ids",
@@ -79,7 +86,8 @@ def test_forward_failure_attempts_every_cleanup_without_masking_cause(
     original = RuntimeError("indexed task failed")
     executor = _Executor(original)
     state = _State(fail=True)
-    runtime = _Runtime(fail_release=True)
+    runtime = FakeRuntime(fail_release=True)
+    fake_plan_lifecycle(monkeypatch, plan_handle=77)
     persistent_restored: list[object] = []
     monkeypatch.setattr(
         callable_module,
@@ -127,7 +135,8 @@ def test_training_failure_releases_optimizer_state_and_closes(
     original = RuntimeError("optimizer kernel failed")
     executor = _Executor(original)
     state = _State()
-    runtime = _Runtime()
+    runtime = FakeRuntime()
+    fake_plan_lifecycle(monkeypatch, plan_handle=77)
     model = nn.Linear(1, 1)
     planned = PlannedTrainStep(
         model,

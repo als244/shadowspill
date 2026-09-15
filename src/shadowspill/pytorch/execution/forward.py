@@ -22,7 +22,20 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     TaskMemoryEnvelope,
     TaskPublication,
+    abort_task,
+    acquire_for_caller,
     actions_by_task,
+    admit_caller_acquisition,
+    admit_fixed_layout,
+    admit_initial_actions,
+    admit_task,
+    after_task_and_update,
+    before_task_and_acquire,
+    clear_tasks,
+    seal_fixed_layout,
+    submit_initial_actions,
+    transfer_outputs_to_caller,
+    wait_plan_idle,
 )
 from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
@@ -60,7 +73,7 @@ def _forward_publications(
     result: list[TaskPublication] = []
     replacement_leaves = set(entrypoint.replacement_output_leaves)
     for slot in entrypoint.output_slots:
-        alias_id = bridge.alias_for_object(slot.object_id)
+        alias_id = bridge.objects.alias_for_object(slot.object_id)
         replace_lease = slot.leaf_index in replacement_leaves
         adopt = (replace_lease or alias_id not in input_aliases) and (
             alias_id not in produced
@@ -68,7 +81,7 @@ def _forward_publications(
         if not adopt:
             continue
         produced.add(alias_id)
-        if bridge.requires_storage(alias_id):
+        if bridge.objects.requires_storage(alias_id):
             result.append(TaskPublication(alias_id, replace_lease))
     return tuple(result)
 
@@ -103,12 +116,13 @@ class _ExecutingStage(nn.Module):
         }
         self._device_ordinal = state.device.index or 0
         self._input_aliases = tuple(
-            bridge.alias_for_object(slot.object_id) for slot in entrypoint.input_slots
+            bridge.objects.alias_for_object(slot.object_id)
+            for slot in entrypoint.input_slots
         )
         self._input_storage_indices = tuple(
             index
             for index, alias_id in enumerate(self._input_aliases)
-            if bridge.requires_storage(alias_id)
+            if bridge.objects.requires_storage(alias_id)
         )
 
     def forward(self, *arguments: object) -> object:
@@ -127,7 +141,8 @@ class _ExecutingStage(nn.Module):
                 f"shadowspill.before_task.{self._trace_label}"
             ):
                 input_tensors = self._resolve_inputs(arguments)
-                self._bridge.before_task_and_acquire(
+                before_task_and_acquire(
+                    self._bridge,
                     self._task_handle,
                     self._device_ordinal,
                     tuple(
@@ -140,7 +155,7 @@ class _ExecutingStage(nn.Module):
             return prepared
         except BaseException:
             if runtime_scope_open:
-                self._bridge.abort_task(self._task_handle)
+                abort_task(self._bridge, self._task_handle)
             raise
 
     def _resolve_inputs(
@@ -178,7 +193,8 @@ class _ExecutingStage(nn.Module):
     ) -> object:
         with self._annotations.range(f"shadowspill.after_task.{self._trace_label}"):
             processed = self._process_outputs(output)
-            self._bridge.after_task_and_update(
+            after_task_and_update(
+                self._bridge,
                 self._task_handle,
                 self._device_ordinal,
                 processed.adopted,
@@ -203,7 +219,7 @@ class _ExecutingStage(nn.Module):
             tensor = output_leaves[slot.leaf_index]
             if not isinstance(tensor, torch.Tensor):
                 raise RuntimeError("task tensor output became static")
-            alias_id = self._bridge.alias_for_object(slot.object_id)
+            alias_id = self._bridge.objects.alias_for_object(slot.object_id)
             replacement = slot.leaf_index in replacement_leaves
             if replacement and alias_id not in produced:
                 adopted.append(
@@ -242,7 +258,7 @@ class _ExecutingStage(nn.Module):
         dematerialized: list[tuple[str, torch.Tensor]] = []
         adopted_aliases = {item.alias_id for item in adopted}
         handoff_sources = {
-            self._bridge.alias_for_object(item.source_object_id)
+            self._bridge.objects.alias_for_object(item.source_object_id)
             for item in self._entrypoint.storage_handoffs
             if item.destination_object_id in self._task.outputs
         }
@@ -301,7 +317,7 @@ class _ExecutingStage(nn.Module):
     ) -> None:
         if prepared.runtime_scope_open:
             prepared.runtime_scope_open = False
-            self._bridge.abort_task(self._task_handle)
+            abort_task(self._bridge, self._task_handle)
 
 
 class ForwardExecutor(AnnotatedExecutor):
@@ -336,16 +352,17 @@ class ForwardExecutor(AnnotatedExecutor):
         self._initial_fetches = tuple(
             alias_group_id
             for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
-            if bridge.requires_storage(alias_group_id)
+            if bridge.objects.requires_storage(alias_group_id)
         )
         initial_actions = tuple(
             self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
         )
         # Materialization uses a short-lived action batch. It is idle now and
         # must not become part of the immutable execution plan.
-        bridge.clear_tasks()
-        bridge.admit_fixed_layout(fixed_layout)
-        bridge.admit_initial_actions(
+        clear_tasks(bridge)
+        admit_fixed_layout(bridge, fixed_layout)
+        admit_initial_actions(
+            bridge,
             initial_actions,
             task_number=fixed_layout.initial_task_id,
             action_trace_labels=tuple(
@@ -365,11 +382,12 @@ class ForwardExecutor(AnnotatedExecutor):
             task = task_by_id[entrypoint.task_id]
             task_actions = grouped_actions.get(entrypoint.task_id, ())
             input_aliases = tuple(
-                bridge.alias_for_object(slot.object_id)
+                bridge.objects.alias_for_object(slot.object_id)
                 for slot in entrypoint.input_slots
             )
             publications = _forward_publications(entrypoint, input_aliases, bridge)
-            task_handle = bridge.admit_task(
+            task_handle = admit_task(
+                bridge,
                 task,
                 input_aliases,
                 task_actions,
@@ -399,9 +417,10 @@ class ForwardExecutor(AnnotatedExecutor):
                 self._task_annotations,
             )
             self._root.set_submodule(entrypoint.module_target, wrapper)
-        bridge.seal_fixed_layout()
+        seal_fixed_layout(bridge)
         self._public_output_aliases = tuple(
-            bridge.alias_for_object(object_id) for object_id in lowered.public_outputs
+            bridge.objects.alias_for_object(object_id)
+            for object_id in lowered.public_outputs
         )
         shared_indices = {item.public_leaf_index for item in self._shared_outputs}
         shared_aliases = {
@@ -424,8 +443,8 @@ class ForwardExecutor(AnnotatedExecutor):
                 if index not in shared_indices
             )
         )
-        self._caller_acquisition_handle = bridge.admit_caller_acquisition(
-            self._caller_output_aliases
+        self._caller_acquisition_handle = admit_caller_acquisition(
+            bridge, self._caller_output_aliases
         )
         self._active_shared_outputs: dict[int, TensorRef] = {}
         self._completion = ReusableCompletionEvent(state.device)
@@ -436,13 +455,14 @@ class ForwardExecutor(AnnotatedExecutor):
         if self._invocations:
             # Forward v1 is also non-cyclic: begin only after the preceding
             # invocation reaches its declared terminal residency.
-            self._bridge.wait_plan_idle()
+            wait_plan_idle(self._bridge)
             self._release_closed_shared_output_generations()
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
             self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
         )
-        self._bridge.submit_initial_actions(
+        submit_initial_actions(
+            self._bridge,
             initial_actions,
             task_number=self._initial_task_id,
         )
@@ -454,12 +474,14 @@ class ForwardExecutor(AnnotatedExecutor):
             for alias_id in self._caller_output_aliases
         )
         if self._caller_output_aliases:
-            bindings = self._bridge.acquire_for_caller(
+            bindings = acquire_for_caller(
+                self._bridge,
                 self._caller_output_aliases,
                 caller_tensors,
                 acquisition_handle=self._caller_acquisition_handle,
             )
-            self._bridge.transfer_outputs_to_caller(
+            transfer_outputs_to_caller(
+                self._bridge,
                 self._caller_output_aliases,
                 caller_tensors,
                 bindings,
@@ -508,9 +530,11 @@ class ForwardExecutor(AnnotatedExecutor):
                         f"shared output {format_path(output.path)} became non-tensor"
                     )
                 alias_id = self._public_output_aliases[output.public_leaf_index]
-                object_reference = self._bridge.acquire_object_reference(alias_id)
+                object_reference = self._bridge.objects.acquire_object_reference(
+                    alias_id
+                )
                 try:
-                    generation = self._bridge.current_generation(alias_id)
+                    generation = self._bridge.objects.current_generation(alias_id)
                     reference = TensorRef.from_tensor(
                         object_reference,
                         tensor,
@@ -541,7 +565,7 @@ class ForwardExecutor(AnnotatedExecutor):
                         "shared views of one object reference different generations"
                     )
                 continue
-            self._bridge.release_object_generation(
+            self._bridge.objects.release_object_generation(
                 alias_id,
                 expected_generation=reference.generation,
             )

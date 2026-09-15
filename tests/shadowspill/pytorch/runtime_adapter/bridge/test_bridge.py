@@ -1,3 +1,5 @@
+"""The bridge: task encoding, the abort boundary, zero-byte aliases."""
+
 from __future__ import annotations
 
 import threading
@@ -14,6 +16,10 @@ from shadowspill.pytorch.profiling import (
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     TaskMemoryEnvelope,
+    abort_task,
+    encode_task,
+    publish_initial_tensor,
+    rebind_many,
 )
 from tests.shadowspill.ir._examples import representative_program
 
@@ -51,7 +57,7 @@ def test_abort_task_only_closes_the_runtime_scope() -> None:
         spill_pool_id=1,
     )
 
-    bridge.abort_task(37)
+    abort_task(bridge, 37)
 
     assert library.aborted == 37
 
@@ -71,7 +77,8 @@ def test_execution_buffers_project_pointer_free_allocation_contract() -> None:
     )
     allocation_contract = TaskAllocationContract.capture(trace)
 
-    buffers = bridge._execution_buffers(
+    buffers = encode_task(
+        bridge,
         replace(program.tasks[0], task_id="task_000000"),
         (),
         (),
@@ -97,7 +104,8 @@ def test_task_trace_label_is_owned_by_the_admitted_description() -> None:
         execution_pool_id=0,
         spill_pool_id=1,
     )
-    buffers = bridge._execution_buffers(
+    buffers = encode_task(
+        bridge,
         replace(representative_program().tasks[0], task_id="task_000000"),
         (),
         (),
@@ -138,10 +146,10 @@ def test_zero_size_alias_uses_no_physical_runtime_operation() -> None:
     )
     tensor = torch.empty(0)
 
-    bridge.register_placeholder("alias_000099")
-    binding = bridge.publish_initial_tensor("alias_000099", tensor)
-    bridge.rebind_many(((tensor, "alias_000099", binding),))
+    bridge.objects.register_placeholder("alias_000099")
+    binding = publish_initial_tensor(bridge, "alias_000099", tensor)
+    rebind_many(bridge, ((tensor, "alias_000099", binding),))
 
-    assert not bridge.requires_storage("alias_000099")
+    assert not bridge.objects.requires_storage("alias_000099")
     assert binding.pointer is None
     assert binding.generation == 0
