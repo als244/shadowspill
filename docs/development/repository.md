@@ -25,6 +25,10 @@ under `src/shadowspill/`. The numerical gate is a package there,
 `src/tools/qualification/numerical/`, holding one case end to end: the
 request and its identity, the reference arm, the planned run, the two
 comparisons, the artifact, the verdict, and the matrix that launches cells.
+The throughput gate is the package beside it,
+`src/tools/qualification/performance/`, holding one cell in the order it
+runs: the manifest and its budgets, the readings taken off the runtime, the
+phases (calibrate, plan, warm, measure), and the verdict each gate reaches.
 
 `benchmarking/` holds the quickstart, which takes one model end to end, and
 two harnesses that split that job so its expensive half is paid once: program
@@ -58,8 +62,11 @@ src/shadowspill/
 │   │   ├── toolkit/       what any search may call
 │   │   └── algorithms/
 │   │       └── pressurefit/   the search that ships
+│   │           └── candidates/  the records the search returns, decoded
 │   └── serialization/     neutral artifact encode/decode
 ├── simulator/             the simulator and diagnostic timeline
+│   └── indexing/          the template, one schedule bound onto it, the result
+│                          decoded back, and the buffers all three hand to C
 ├── runtime/               physical admission and replay bindings
 ├── plots/                 step-run and step-search figures
 │   └── step_search/       one module per figure family, over shared series and axes
@@ -70,13 +77,20 @@ src/shadowspill/
     ├── partition/         stage policies, splitting, provenance, authentic controls
     ├── graph_pairs/       differentiation alternatives by structural contract
     ├── compilation/       Inductor adapter and executable storage manifests
+    │   └── inductor/      one compiled task: the manifest, the compiler that
+    │                      captures the lowering, the output geometry, the
+    │                      contract, the alias views, the cache
     ├── profiling/         representative inputs, timing, allocation contract, workspace
     │   └── profiler/      one task measured: the allocator boundary, the warmup and
     │                      timing, the workspace trace, the invariant path, the record
     ├── lowering/          ObjectCatalog and task binding into ShadowSpillProgram
+    │   ├── forward/        the forward program's tasks and objects
+    │   └── training/       the training step's, ordering and all
     ├── optimizer/         optimizer graph capture and ordering, by concern:
     │                      discovery, sandbox, bindings, trace, tasks, opaque
     ├── planning/          forward/training orchestration and physical admission
+    │   ├── admission/     what a plan needs physically, and whether it fits
+    │   ├── forward/       the forward plan by phase, as the training plan is
     │   └── training/      the training plan by phase: capture, materialize, profile,
     │                      programs, plan, admit, report; build and steps compose them
     ├── materialization/   selected callable and runtime state publication
@@ -90,6 +104,10 @@ src/shadowspill/
     │   └── runtime/       the Runtime object by concern: core, configuration, calibration,
     │                      plan, objects, failure, occupancy, retainers, residue
     ├── diagnostics/       PlanReport and StepDiagnostics
+    │   └── builders/      each record built where its own consumer reads it
+    ├── step_search/       a step planned at every geometry, budget and walk:
+    │                      the geometries, the sweep, the rule one point is
+    │                      answered by, the report
     ├── sharing/           runtime-owned TensorRef handles
     └── state/             persistent model/optimizer import
 ```

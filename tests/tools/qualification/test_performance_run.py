@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from tools.qualification.performance import (
+from tools.qualification.performance.manifest import (
     _manifest_with_overrides,
     _planning_spill_budget,
 )
