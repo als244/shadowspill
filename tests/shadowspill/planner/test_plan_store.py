@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
@@ -19,6 +20,7 @@ from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
+from shadowspill.schema import artifact_schema
 from shadowspill.store import StorePolicy
 
 from ._examples import (
@@ -539,6 +541,9 @@ def test_a_recorded_verdict_is_served_back(
         cache.resolve(program, **impossible)
     assert str(again.value) == str(first.value)
     assert again.value.kind == first.value.kind
+    # a summary read raises the recorded refusal the same way
+    with pytest.raises(PlanInfeasibleError, match=re.escape(str(first.value))):
+        cache.summary(program, **impossible)
 
     with pytest.raises(AssertionError, match="searched again"):
         cache.resolve(program, incumbent=feasible.result, **impossible)
@@ -574,3 +579,109 @@ def test_admission_facts_keep_their_digest_and_a_changed_copy_gets_a_new_one() -
     changed = replace(facts, pool_capacity_bytes=8192)
     assert changed.digest != first
     assert replace(facts, pool_capacity_bytes=4096).digest == first
+
+
+def _certified_placeable(
+    tmp_path: Path,
+) -> tuple[PlanStore, ShadowSpillProgram, dict[str, object], str]:
+    """A placeable plan resolved, certified, and therefore summarised."""
+
+    program = _placeable_program()
+    cache = PlanStore(tmp_path)
+    request: dict[str, object] = dict(
+        initial_residency=(),
+        final_residency=(),
+        config=config(),
+        search_options=FEW_CANDIDATES,
+    )
+    first = cache.resolve(program, **request)  # type: ignore[arg-type]
+    facts = _facts(program, config().devices[0].capacity_bytes)
+    resolve_fixed_layout_selection(
+        config(), facts, lambda _config: first, certify=cache.certify
+    )
+    return cache, program, request, first.key
+
+
+def test_a_summary_is_written_with_the_certificate_and_read_without_the_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Certifying a plan writes what it promises beside it; a summary read
+    answers from that record and never deserializes the plan."""
+
+    from shadowspill.planner.diagnostics import graph_pair_outcomes
+    from shadowspill.planner.diagnostics.plan import summarize_selected_plan
+    from shadowspill.planner.plan_store import certified_result
+
+    program = _placeable_program()
+    cache = PlanStore(tmp_path)
+    request: dict[str, object] = dict(
+        initial_residency=(),
+        final_residency=(),
+        config=config(),
+        search_options=FEW_CANDIDATES,
+    )
+    first = cache.resolve(program, **request)  # type: ignore[arg-type]
+    # a plan nobody has certified yet has no summary: the caller plans
+    assert not cache.summary_path(first.key).exists()
+    assert cache.summary(program, **request) is None  # type: ignore[arg-type]
+
+    facts = _facts(program, config().devices[0].capacity_bytes)
+    certified = resolve_fixed_layout_selection(
+        config(), facts, lambda _config: first, certify=cache.certify
+    )
+    expected = certified_result(first.result, certified.admission)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a summary read must not read the plan")
+
+    monkeypatch.setattr(PlanStore, "_read", refuse)
+    lookup = cache.summary(program, **request)  # type: ignore[arg-type]
+    assert lookup is not None
+    assert lookup.key == first.key
+    assert lookup.makespan_ns == certified.admission.simulation.makespan_ns
+    assert lookup.summary == summarize_selected_plan(expected)
+    assert lookup.graph_pair_outcomes == graph_pair_outcomes(expected)
+    assert not lookup.answered_with_incumbent
+    record = json.loads(cache.summary_path(first.key).read_text())
+    assert record["schema"] == artifact_schema("plan_summary")
+    assert record["key_digest"] == first.key
+    assert record["program_digest"] == program.digest
+    assert record["schedule_digest"] == first.result.schedule.digest
+
+
+def test_a_record_without_a_summary_learns_one_on_first_read(tmp_path: Path) -> None:
+    """A store written before summaries were kept answers from the plan once,
+    and keeps what it built when its mode allows writing."""
+
+    cache, program, request, key = _certified_placeable(tmp_path)
+    written = cache.summary(program, **request)  # type: ignore[arg-type]
+    cache.summary_path(key).unlink()
+
+    reuse = PlanStore(tmp_path, policy=StorePolicy.for_mode("reuse"))
+    learned = reuse.summary(program, **request)  # type: ignore[arg-type]
+    assert learned == written
+    assert not cache.summary_path(key).exists()
+
+    again = cache.summary(program, **request)  # type: ignore[arg-type]
+    assert again == written
+    assert cache.summary_path(key).exists()
+
+    # a miss is `None` and never a refusal, whatever the mode: the caller
+    # plans, and `resolve` applies the mode to the miss
+    empty = PlanStore(tmp_path / "empty", policy=StorePolicy.for_mode("require"))
+    assert empty.summary(program, **request) is None  # type: ignore[arg-type]
+
+
+def test_a_rewritten_plan_drops_its_summary_until_it_is_certified_again(
+    tmp_path: Path,
+) -> None:
+    cache, program, request, key = _certified_placeable(tmp_path)
+    assert cache.summary_path(key).exists()
+
+    refreshed = PlanStore(tmp_path, policy=StorePolicy.for_mode("refresh")).resolve(
+        program,
+        **request,  # type: ignore[arg-type]
+    )
+    assert not refreshed.from_store
+    assert not cache.summary_path(key).exists()
+    assert cache.summary(program, **request) is None  # type: ignore[arg-type]

@@ -17,7 +17,21 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
-from shadowspill.simulator import SimulationConfig
+from shadowspill.planner import GenericPlanningOptions
+from shadowspill.planner.diagnostics import (
+    CandidateDiagnostic,
+    PlanningDiagnostics,
+    ResolvedProgramDiagnostics,
+    TaskAlternativeChoiceDiagnostic,
+)
+from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.search import SearchOptions
+from shadowspill.simulator import DeviceSimulationConfig, SimulationConfig, simulate
+from tests.shadowspill.ir._examples import (
+    SAVE_SELECTION,
+    representative_plan,
+    representative_program,
+)
 
 DEVICE = DeviceSpec("cuda_0", "process_0", "cuda", 0)
 COMPUTE = ResourceSpec("cuda_0", ResourceKind.COMPUTE)
@@ -332,4 +346,65 @@ def training_chain_config(capacity: int) -> SimulationConfig:
         spill_capacity_bytes=10_000,
         fetch_bandwidth_bytes_per_second=8_000_000,
         evict_bandwidth_bytes_per_second=8_000_000,
+    )
+
+
+def representative_result() -> ProgramPlanResult:
+    """The representative plan as a selected result: one resolved program,
+    one valid candidate, simulated under a generous machine."""
+
+    program = representative_program()
+    plan = representative_plan()
+    config = SimulationConfig(
+        devices=(
+            DeviceSimulationConfig(
+                device_id="cuda_0",
+                capacity_bytes=1 << 20,
+                fetch_bandwidth_bytes_per_second=1 << 30,
+                evict_bandwidth_bytes_per_second=1 << 30,
+                fetch_latency_ns=0,
+                evict_latency_ns=0,
+            ),
+        ),
+        spill_capacity_bytes=1 << 20,
+    )
+    simulation = simulate(
+        program, plan.schedule, selections=SAVE_SELECTION, config=config
+    )
+    return ProgramPlanResult(
+        program=program,
+        search_options=SearchOptions(
+            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
+        ),
+        initial_residency=plan.schedule.initial_residency,
+        final_residency=plan.schedule.final_residency,
+        simulation_config=config,
+        schedule=plan.schedule,
+        selections=SAVE_SELECTION,
+        simulation=simulation,
+        diagnostics=PlanningDiagnostics(
+            selected_candidate_id="fixture",
+            selected_selection_id="fixture",
+            selected_makespan_ns=simulation.makespan_ns,
+            resolved_programs=(
+                ResolvedProgramDiagnostics(
+                    selection_id="fixture",
+                    choices=tuple(
+                        TaskAlternativeChoiceDiagnostic(item.group_id, item.option_id)
+                        for item in SAVE_SELECTION
+                    ),
+                    selected_candidate_id="fixture",
+                    selected_makespan_ns=simulation.makespan_ns,
+                    candidate_evaluations=(
+                        CandidateDiagnostic(
+                            candidate_id="fixture",
+                            selection_id="fixture",
+                            status="valid",
+                            makespan_ns=simulation.makespan_ns,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        admission_facts=None,
     )

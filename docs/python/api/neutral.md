@@ -186,6 +186,9 @@ search to any plan it was handed, and physically admits the winner. When the
 planning store already holds the answer, the plan is read back with the
 simulation and the fixed-layout certificate recorded beside it and nothing is
 simulated or placed; when it holds a refusal, that refusal is raised again.
+`summarize_plan()` asks the store the same question and reads only the summary
+it keeps beside a certified plan, for a caller that compares many plans and
+runs one.
 
 Building a program is the frontend's job:
 [`build_step_programs()`](frontend.md#build_step_programs) captures, compiles,
@@ -250,6 +253,47 @@ store treats it as provenance rather than identity: a request reads back the
 plan its search chose, whatever that search was handed, so a run that replans
 the budget it is about to execute gets the sweep's answer.
 
+### `summarize_plan()`
+
+What the planning store already holds for one problem, without its plan. The
+question is the one `plan_program()` would ask -- the same key -- and the
+answer is the summary the store writes beside a plan when it certifies it.
+Nothing but that summary is read, so a caller that compares many plans and
+runs one reads kilobytes per question and fetches a whole plan, through
+`plan_program()`, only for the one it will run; `plan_step_search()` is that
+caller.
+
+<!-- source-signature: src/shadowspill/planner/plan.py:summarize_plan -->
+```text
+summarize_plan(
+    problem,
+    *,
+    execution_budget=None,
+    spill_budget=None,
+    transfer_bandwidths=None,
+    search_options=None,
+    artifact_store=None,
+    plan_store=None,
+    plan_store_mode='contribute',
+) -> PlanSummaryLookup | None
+```
+
+The arguments mean what they mean for `plan_program()`. It returns a
+`PlanSummaryLookup` (from `shadowspill.planner.plan_store`): the `key` the
+plan is filed under, its `makespan_ns` as the certificate re-simulated it, its
+`summary` as a `PlanSummary`, the `graph_pair_outcomes` of every graph-pair
+selection the search evaluated, and `answered_with_incumbent`, whether the
+search answered with the plan it was handed to beat. It returns `None` when the
+store has no answer, or one nobody has certified yet; the caller then plans,
+and `plan_program()` applies the store's mode to the miss. A refusal the store
+recorded is raised as `plan_program()` would raise it. A store written before
+summaries were kept answers from the plan once and keeps the summary it built,
+when the mode allows writing.
+
+A plan to beat is not taken here. A plan in hand that claims to be faster than
+the stored answer is a question only a search settles, and `plan_program()`
+is where it is asked.
+
 ### `validate_schedule_feasibility()`
 
 Asks the search that will run whether any schedule could fit this machine,
@@ -298,6 +342,7 @@ Search diagnostics:
 - `CandidateDiagnostic`
 - `PlanningRepairDiagnostics`, `PlanningWorkDiagnostics`
 - `PlanningSectionTiming`, `ReductionStep`
+- `GraphPairOutcome`
 
 `ProgramPlanResult` is what a search answers with: the `program` it planned,
 the `search_options` it was told, the `initial_residency` and `final_residency`
@@ -329,6 +374,21 @@ in order, and is empty unless `record_reduction_steps` asked for it.
 
 `PlanningRepairDiagnostics` records what one candidate's monotonic repairs did
 and why they stopped.
+
+`GraphPairOutcome` is what one graph-pair selection cost, read off a finished
+result: its `selection_id`, how many groups it asked to recompute
+(`recompute_groups` of `group_count`), the `makespan_seconds` of its best plan
+or `None` when no candidate fit, the compute it asked for and the cheapest any
+selection could (`selected_compute_seconds`, `unconstrained_seconds`, their
+difference as `recomputation_overhead_seconds`, the rest of the makespan as
+`waiting_seconds`), how many candidates were `valid` of those evaluated, and
+the bytes its best plan fetched and evicted.
+`shadowspill.planner.diagnostics.graph_pair_outcomes(result)` derives one per
+resolved program of a `ProgramPlanResult`, ordered by how many groups
+recompute, from the program's task profiles and the search's own record --
+nothing is simulated. `AlternativeCosts`, beside it, is the cost table both it
+and `PlanSummary` read: every option's compute by group, each group's
+cheapest, and the compute no option can avoid.
 
 ### `shadowspill.planner.search`
 

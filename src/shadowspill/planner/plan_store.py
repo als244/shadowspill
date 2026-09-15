@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
@@ -28,8 +28,14 @@ from shadowspill.store import (
 
 from .admission import AdmissionFacts
 from .admission.layout.model import FixedLayoutAdmission
-from .diagnostics import PlanningDiagnostics
+from .diagnostics import (
+    INCUMBENT_CANDIDATE_ID,
+    GraphPairOutcome,
+    PlanningDiagnostics,
+    graph_pair_outcomes,
+)
 from .diagnostics.json import without_measurements
+from .diagnostics.plan import PlanSummary, summarize_selected_plan
 from .result import ProgramPlanResult
 from .search import (
     SearchAlgorithm,
@@ -37,13 +43,17 @@ from .search import (
     answer_no_worse_than,
 )
 from .serialization import (
+    _boolean,
     _fixed_layout_from_value,
+    _integer,
+    _list,
     _resident_slice_from_value,
     _simulation_admission_from_value,
     _simulation_result_from_value,
 )
 
 _SCHEMA = artifact_schema("plan_selection")
+_SUMMARY_SCHEMA = artifact_schema("plan_summary")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +68,26 @@ class PlanLookup:
     key: str = ""
     #: The fixed-layout certificate read back with the plan, when one is stored.
     certificate: FixedLayoutAdmission | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlanSummaryLookup:
+    """What a stored plan promises, read without the plan.
+
+    Everything a caller comparing many plans asks of each one -- the makespan,
+    the :class:`PlanSummary`, the outcome of every graph-pair selection the
+    search evaluated, and whether the search answered with the plan it was
+    handed -- from the small record the store keeps beside the plan.
+    """
+
+    #: The key the plan is filed under, which `plan_program` reads it by.
+    key: str
+    #: The makespan of the plan as its certificate re-simulated it.
+    makespan_ns: int
+    summary: PlanSummary
+    graph_pair_outcomes: tuple[GraphPairOutcome, ...]
+    #: True when the search answered with the plan it was handed to beat.
+    answered_with_incumbent: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +134,83 @@ class PlanStore:
 
     def path(self, key: str) -> Path:
         return digest_directory(self.root, key) / "selection.json"
+
+    def summary_path(self, key: str) -> Path:
+        return digest_directory(self.root, key) / "summary.json"
+
+    def summary(
+        self,
+        program: ShadowSpillProgram,
+        *,
+        initial_residency: tuple[ResidencySpec, ...],
+        final_residency: tuple[ResidencySpec, ...],
+        config: SimulationConfig,
+        search_options: SearchOptions | None = None,
+        admission: AdmissionFacts | None = None,
+        placement: AdmissionFacts | None = None,
+    ) -> PlanSummaryLookup | None:
+        """What the store knows about a question, without reading its plan.
+
+        The same key `resolve` computes, answered from the summary beside the
+        plan. A record that has a certified plan and no summary -- a store
+        written before summaries were kept -- answers from the plan once and
+        keeps the summary it built, when the mode allows writing, so a store
+        learns on first use. A recorded refusal is raised as `resolve` raises
+        it. `None` is a miss, or a plan nobody has certified yet: the caller
+        plans, and `resolve` applies the store's mode to the miss.
+
+        The plan to beat is not taken here. A plan in hand that claims to be
+        faster than the summary says is a question only a search settles, and
+        `resolve` is where it is asked.
+        """
+
+        if not self.policy.read_enabled:
+            return None
+        chosen = search_options if search_options is not None else SearchOptions()
+        key = _key(
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            admission,
+            placement,
+            chosen,
+        )
+        path = self.summary_path(key)
+        try:
+            value = json.loads(path.read_text())
+        except FileNotFoundError:
+            value = None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"plan summary {path} cannot be read") from exc
+        if value is not None:
+            if not isinstance(value, dict) or value.get("schema") != _SUMMARY_SCHEMA:
+                raise ValueError(f"plan summary {path} has an invalid schema")
+            if value.get("key_digest") != key:
+                raise ValueError(f"plan summary {path} has the wrong identity")
+            if value.get("program_digest") != program.digest:
+                raise ValueError(
+                    f"plan summary {path} has the wrong ShadowSpillProgram"
+                )
+            self._record(key, program.digest, path, "read", summary=True)
+            return _summary_from_value(value, key, path)
+        stored = self._read(
+            key,
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            admission,
+            chosen.resolved_algorithm,
+            chosen,
+        )
+        if isinstance(stored, _Verdict):
+            raise _verdict_error(stored)
+        if stored is None or stored.certificate is None:
+            return None
+        return self._write_summary(
+            key, certified_result(stored.result, stored.certificate)
+        )
 
     def resolve(
         self,
@@ -229,6 +336,8 @@ class PlanStore:
         payload = self._payload(path)
         if payload is None or "verdict" in payload:
             return
+        # The summary is what the certified plan promises, so it is written
+        # here, with the certificate, and by nothing that precedes one.
         payload["admission_certificate"] = {
             "facts_digest": admission.layout.facts_digest,
             "layout": admission.layout.to_dict(),
@@ -237,6 +346,7 @@ class PlanStore:
         }
         atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
         self._record(lookup.key, lookup.result.program.digest, path, "certified")
+        self._write_summary(lookup.key, certified_result(lookup.result, admission))
 
     def _boundary(
         self,
@@ -418,6 +528,9 @@ class PlanStore:
                 )
             self._record(key, result.program.digest, path, "matched")
             return
+        # A summary describes the plan it was written beside; a new plan has
+        # none until it is certified.
+        self.summary_path(key).unlink(missing_ok=True)
         atomic_text(path, encoded)
         self._record(
             key, result.program.digest, path, "improved" if improve else "write"
@@ -461,8 +574,39 @@ class PlanStore:
                 "message": str(error),
             },
         }
+        self.summary_path(key).unlink(missing_ok=True)
         atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
         self._record(key, program.digest, path, "verdict")
+
+    def _write_summary(self, key: str, result: ProgramPlanResult) -> PlanSummaryLookup:
+        """Write what a certified plan promises beside it, and return it.
+
+        The record is read back through the same reader a later call uses,
+        so what this call returns is exactly what the store will answer.
+        """
+
+        path = self.summary_path(key)
+        payload = {
+            "schema": _SUMMARY_SCHEMA,
+            "key_digest": key,
+            "program_digest": result.program.digest,
+            "schedule_digest": result.schedule.digest,
+            "makespan_ns": result.simulation.makespan_ns,
+            "answered_with_incumbent": (
+                result.diagnostics.selected_candidate_id == INCUMBENT_CANDIDATE_ID
+            ),
+            "summary": summarize_selected_plan(result).as_dict(),
+            "graph_pair_outcomes": [
+                item.as_dict() for item in graph_pair_outcomes(result)
+            ],
+        }
+        if self.policy.write_enabled:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_text(
+                path, json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            )
+            self._record(key, result.program.digest, path, "write", summary=True)
+        return _summary_from_value(payload, key, path)
 
     def _record(
         self,
@@ -470,18 +614,58 @@ class PlanStore:
         program_digest: str,
         path: Path,
         access: str,
+        *,
+        summary: bool = False,
     ) -> None:
         if self.artifact_recorder is None:
             return
         self.artifact_recorder(
             category="search",
-            kind="selection",
+            kind="summary" if summary else "selection",
             digest=key,
             path=path,
             access=access,
-            schema=_SCHEMA,
+            schema=_SUMMARY_SCHEMA if summary else _SCHEMA,
             dependencies=(program_digest,),
         )
+
+
+def certified_result(
+    result: ProgramPlanResult, certificate: FixedLayoutAdmission
+) -> ProgramPlanResult:
+    """The plan as its certificate re-simulated it: what a caller is handed.
+
+    The search's own simulation is logical. The certificate ran the same
+    schedule over the fixed layout, so the two agree on everything the
+    schedule decides, and the certified one is what the answer reports.
+    """
+
+    return replace(
+        result,
+        simulation=certificate.simulation,
+        diagnostics=result.diagnostics.replace_selected_makespan(
+            certificate.simulation.makespan_ns
+        ),
+    )
+
+
+def _summary_from_value(
+    value: dict[str, object], key: str, path: Path
+) -> PlanSummaryLookup:
+    where = f"plan summary {path}"
+    outcomes = _list(value.get("graph_pair_outcomes"), f"{where}.graph_pair_outcomes")
+    return PlanSummaryLookup(
+        key=key,
+        makespan_ns=_integer(value.get("makespan_ns"), f"{where}.makespan_ns"),
+        summary=PlanSummary.from_dict(value.get("summary"), f"{where}.summary"),
+        graph_pair_outcomes=tuple(
+            GraphPairOutcome.from_dict(item, f"{where}.graph_pair_outcomes[{index}]")
+            for index, item in enumerate(outcomes)
+        ),
+        answered_with_incumbent=_boolean(
+            value.get("answered_with_incumbent"), f"{where}.answered_with_incumbent"
+        ),
+    )
 
 
 def _request_summary(program: ShadowSpillProgram, config: SimulationConfig) -> str:
@@ -644,7 +828,7 @@ def _diagnostics_from_value(value: object, path: Path) -> PlanningDiagnostics:
         raise ValueError(f"planned program {path} has invalid diagnostics") from exc
 
 
-__all__ = ["PlanLookup", "PlanStore"]
+__all__ = ["PlanLookup", "PlanStore", "PlanSummaryLookup", "certified_result"]
 
 
 def open_plan_store(artifact_store: ArtifactStore) -> PlanStore:

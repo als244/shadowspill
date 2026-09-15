@@ -19,7 +19,7 @@ artifact_store/
     └── planning/         what a run decided
         ├── programs/     the canonical ShadowSpillProgram each planning call was given
         ├── requests/     what each search was asked for
-        ├── results/      its answer: resolution, schedule, diagnostics
+        ├── results/      its answer: resolution, schedule, diagnostics, and a summary of it
         └── plans/        the ExecutionPlan a callable runs, with its lineage
 ```
 
@@ -101,6 +101,11 @@ inputs, so adding one cannot invalidate anything.
   also records the plan the search was handed to beat, which never enters the
   key: a run that replans a budget without that plan in hand must still read
   back the answer the sweep chose.
+- A certified plan has a summary beside it: what the plan promises, in a few
+  kilobytes, so a caller comparing many plans reads the summaries and the
+  whole plan only for the one it will run. It is derived from the plan and
+  its certificate, never read as an input to anything, and written again
+  whenever they are.
 
 The distinction is worth keeping deliberately. A field that is hashed is a
 question; a field that is only saved is a note about the answer.
@@ -128,7 +133,7 @@ path through the same helper, `digest_directory`.
 | Step program | `build/steps/<2>/<key>/step_program.json`, with `manifest.json` beside it |
 | Canonical program | `planning/programs/<2>/<digest>/program.json` |
 | Selection request | `planning/requests/<2>/<digest>/request.json` |
-| Planned program | `planning/results/<2>/<digest>/selection.json` |
+| Planned program | `planning/results/<2>/<digest>/selection.json`, with `summary.json` beside it once certified |
 
 The digest in a path is the key described above, so a path is a question and
 its contents are the answer. The program archive is the one entry keyed by
@@ -307,6 +312,26 @@ entry an error rather than a silent wrong answer; what it does not do is
 simulate or place again, so a hit costs its deserialization. `incumbent` is
 provenance in both documents and in neither key: it names the plan the search
 was handed to beat.
+
+**Plan summary** is what a certified plan promises, beside it under the same
+key:
+
+```text
+schema, key_digest, program_digest, schedule_digest,
+makespan_ns, answered_with_incumbent, summary, graph_pair_outcomes
+```
+
+`makespan_ns` is the plan's makespan as its certificate re-simulated it,
+`summary` the `PlanSummary` as a plan report serialises it,
+`graph_pair_outcomes` one record per graph-pair selection the search
+evaluated, and `answered_with_incumbent` whether the search answered with the
+plan it was handed to beat. `summarize_plan()` reads it, checking the two
+digests and trusting the rest, and `plan_step_search()` answers every point
+from it that it can. It is written when the certificate is, by the same call,
+and dropped whenever the plan beside it is rewritten, so a record written
+before summaries were kept has none: the first summary read of such a record
+builds it from the plan and its certificate and keeps it when the store's mode
+allows writing. A verdict has no summary; the verdict is its own small record.
 
 **Verdict** is a search's refusal, under the key a plan would have had:
 

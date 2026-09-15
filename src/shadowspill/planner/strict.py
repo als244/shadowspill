@@ -48,6 +48,20 @@ def _optional_integer(value: object, path: str) -> int | None:
     return _integer(value, path)
 
 
+def _number(value: object, path: str) -> float:
+    """A JSON number, accepting the integer a float may have been written as."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{path}: expected a number")
+    return float(value)
+
+
+def _optional_number(value: object, path: str) -> float | None:
+    if value is None:
+        return None
+    return _number(value, path)
+
+
 def _boolean(value: object, path: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{path}: expected a boolean")

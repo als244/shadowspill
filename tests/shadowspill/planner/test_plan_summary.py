@@ -2,92 +2,22 @@
 
 from __future__ import annotations
 
-from shadowspill.planner import GenericPlanningOptions
-from shadowspill.planner.diagnostics import (
-    CandidateDiagnostic,
-    PlanningDiagnostics,
-    ResolvedProgramDiagnostics,
-)
 from shadowspill.planner.diagnostics.plan import PlanSummary, summarize_selected_plan
-from shadowspill.planner.result import ProgramPlanResult
-from shadowspill.planner.search import SearchOptions
-from shadowspill.simulator import (
-    DeviceSimulationConfig,
-    SimulationConfig,
-    simulate,
-)
-from tests.shadowspill.ir._examples import (
-    SAVE_SELECTION,
-    representative_plan,
-    representative_program,
-)
+from tests.shadowspill.ir._examples import SAVE_SELECTION
 
-
-def _result() -> ProgramPlanResult:
-    program = representative_program()
-    plan = representative_plan()
-    config = SimulationConfig(
-        devices=(
-            DeviceSimulationConfig(
-                device_id="cuda_0",
-                capacity_bytes=1 << 20,
-                fetch_bandwidth_bytes_per_second=1 << 30,
-                evict_bandwidth_bytes_per_second=1 << 30,
-                fetch_latency_ns=0,
-                evict_latency_ns=0,
-            ),
-        ),
-        spill_capacity_bytes=1 << 20,
-    )
-    simulation = simulate(
-        program, plan.schedule, selections=SAVE_SELECTION, config=config
-    )
-    return ProgramPlanResult(
-        program=program,
-        search_options=SearchOptions(
-            generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
-        ),
-        initial_residency=plan.schedule.initial_residency,
-        final_residency=plan.schedule.final_residency,
-        simulation_config=config,
-        schedule=plan.schedule,
-        selections=SAVE_SELECTION,
-        simulation=simulation,
-        diagnostics=PlanningDiagnostics(
-            selected_candidate_id="fixture",
-            selected_selection_id="fixture",
-            selected_makespan_ns=simulation.makespan_ns,
-            resolved_programs=(
-                ResolvedProgramDiagnostics(
-                    selection_id="fixture",
-                    choices=(),
-                    selected_candidate_id="fixture",
-                    selected_makespan_ns=simulation.makespan_ns,
-                    candidate_evaluations=(
-                        CandidateDiagnostic(
-                            candidate_id="fixture",
-                            selection_id="fixture",
-                            status="valid",
-                            makespan_ns=simulation.makespan_ns,
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        admission_facts=None,
-    )
+from ._examples import representative_result
 
 
 def test_summary_parts_identify_to_the_simulated_step() -> None:
     summary = summarize_selected_plan(
-        _result(),
+        representative_result(),
         phase_timings_ns=(("capture_lowering", 2_000_000_000), ("selection", 500)),
     )
     assert dict(summary.planning_phase_seconds) == {
         "capture_lowering": 2.0,
         "selection": 5e-7,
     }
-    result = _result()
+    result = representative_result()
     fetched = sum(
         item.bytes
         for item in result.simulation.transfer_intervals
