@@ -95,18 +95,18 @@ void shadowspill_set_capacity_error(
     result->error_requested_bytes = requested;
 }
 
-int shadowspill_report_deadlock(
+/*
+ * A fetch with nowhere to land waits rather than failing, so when the
+ * simulation can no longer advance, the action that is still waiting is the
+ * root cause. It was never queued -- its transfer record is untouched -- so
+ * it has to be recognised from the submission cursor before the queued
+ * transfers are examined.
+ */
+static int report_unsubmitted_action(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
     ShadowSpillSimulationResult *result
 ) {
-    /*
-     * A fetch with nowhere to land waits rather than failing, so when the
-     * simulation can no longer advance, the action that is still waiting is
-     * the root cause. It was never queued -- its transfer record is
-     * untouched -- so it has to be recognised from the submission cursor
-     * before the queued transfers below are examined.
-     */
     if (work->submitted_actions < program->action_count) {
         uint32_t action = work->submitted_actions;
         uint32_t trigger = program->action_trigger_tasks[action];
@@ -126,7 +126,7 @@ int shadowspill_report_deadlock(
                 shadowspill_device_used_bytes(program, work, device),
                 program->alias_size_bytes[alias]
             );
-            return 0;
+            return 1;
         }
         if (work->tasks[trigger].state == SHADOWSPILL_TASK_COMPLETE &&
             program->action_kinds[action] == SHADOWSPILL_MEMORY_EVICT) {
@@ -142,9 +142,18 @@ int shadowspill_report_deadlock(
                 work->spill_bytes,
                 program->alias_size_bytes[alias]
             );
-            return 0;
+            return 1;
         }
     }
+    return 0;
+}
+
+/* A transfer already on a lane that cannot finish: what it waits for. */
+static int report_stalled_transfer(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result
+) {
     for (uint32_t index = 0; index < program->action_count; ++index) {
         ShadowSpillTransferState *transfer = &work->transfers[index];
         if (transfer->state != SHADOWSPILL_TRANSFER_QUEUED) {
@@ -174,7 +183,7 @@ int shadowspill_report_deadlock(
                     used,
                     program->alias_size_bytes[alias]
                 );
-                return 0;
+                return 1;
             }
         }
         if (transfer->direction == SHADOWSPILL_TRANSFER_EVICT &&
@@ -197,10 +206,19 @@ int shadowspill_report_deadlock(
                     work->spill_bytes,
                     program->alias_size_bytes[alias]
                 );
-                return 0;
+                return 1;
             }
         }
     }
+    return 0;
+}
+
+/* A task that never launched: which of its inputs never arrived. */
+static int report_unlaunched_task(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result
+) {
     for (uint32_t task = 0; task < program->task_count; ++task) {
         ShadowSpillTaskState *state = &work->tasks[task];
         if (state->state != SHADOWSPILL_TASK_UNLAUNCHED) {
@@ -227,7 +245,7 @@ int shadowspill_report_deadlock(
                     alias,
                     program->task_device[task]
                 );
-                return 0;
+                return 1;
             }
         }
         uint32_t device = program->task_device[task];
@@ -264,7 +282,7 @@ int shadowspill_report_deadlock(
                 SHADOWSPILL_SIMULATOR_NO_INDEX,
                 device
             );
-            return 0;
+            return 1;
         }
         uint64_t requested = physical_delta > 0
             ? (uint64_t)physical_delta : 0U;
@@ -286,8 +304,22 @@ int shadowspill_report_deadlock(
                 used,
                 requested
             );
-            return 0;
+            return 1;
         }
+    }
+    return 0;
+}
+
+/* The first of the three questions that has an answer is the one reported. */
+int shadowspill_report_deadlock(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result
+) {
+    if (report_unsubmitted_action(program, work, result) ||
+        report_stalled_transfer(program, work, result) ||
+        report_unlaunched_task(program, work, result)) {
+        return 0;
     }
     shadowspill_set_error(
         result,
