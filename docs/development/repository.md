@@ -39,6 +39,8 @@ arguments beyond its corpus path.
 ```text
 src/shadowspill/
 ├── ir/                    framework-neutral values and indexed projections
+│   └── program/           the program: its vocabularies, specs, alternatives,
+│                          and the checks it must satisfy
 ├── step/                  a training step's shape and provenance, framework-free
 │   ├── ordering.py        StepDataOrdering: the walk through the microbatches
 │   └── program.py         StepProgram: the problems a captured step lowered to
@@ -50,6 +52,8 @@ src/shadowspill/
 │   ├── admission/         neutral physical admission, after a search answers
 │   │   └── layout/        leases to fixed offsets, and the certificate
 │   ├── diagnostics/       PlanReport values
+│   │   └── plan/          the report by part: what building it cost, the
+│   │                      graphs, the stages, the layout, the summary
 │   ├── search/            the search seam
 │   │   ├── toolkit/       what any search may call
 │   │   └── algorithms/
@@ -61,6 +65,8 @@ src/shadowspill/
 │   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
+    │   └── storage/       one task's contract: the records, the roots, the
+    │                      capture, the symbolic replay
     ├── partition/         stage policies, splitting, provenance, authentic controls
     ├── graph_pairs/       differentiation alternatives by structural contract
     ├── compilation/       Inductor adapter and executable storage manifests
@@ -78,6 +84,7 @@ src/shadowspill/
     │   └── training/      the training executor by concern: admission, boundary,
     │                      publication, timing, optimizer state
     ├── runtime_adapter/   Python-to-C runtime and allocator boundary
+    │   ├── abi/           the ctypes projection, one module per record kind
     │   ├── bridge/        one plan's program on the adapter: objects, admission,
     │   │                  boundaries, report
     │   └── runtime/       the Runtime object by concern: core, configuration, calibration,
