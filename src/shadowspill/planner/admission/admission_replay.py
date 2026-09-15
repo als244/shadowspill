@@ -14,9 +14,7 @@ from enum import StrEnum
 from shadowspill.runtime import (
     AdmissionReplayOperation as PoolAdmissionOperation,
 )
-from shadowspill.runtime import (
-    AdmissionReplayResult,
-)
+from shadowspill.runtime import AdmissionReplayResult
 
 
 class AdmissionReplayPurpose(StrEnum):

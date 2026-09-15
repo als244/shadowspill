@@ -327,6 +327,27 @@ It is the `preflight()` of `search_options.resolved_algorithm`, nothing more.
 Use `simulate()` instead to validate an explicit schedule that already
 exists.
 
+### Physical admission
+
+`shadowspill.planner.admission.physical` decides what a plan needs physically,
+before any runtime exists: the explicit reserves a budget must hold back, and
+whether the slab can actually hold the plan's allocations at some address. The
+runtime does not call it -- planning does, and then a runtime is opened against
+the budget it approved. Standalone, so tooling can reproduce or inspect the
+decision without a runtime:
+
+| Function | Returns | Purpose |
+|---|---|---|
+| `workspace_reserve_bytes(maximum_task_workspace_bytes, *, policy=None)` | `int` | The conservative contiguous-workspace allowance a budget must hold back. |
+| `plan_slab_layout(slab_bytes, events, *, dynamic_allocation_ids=frozenset())` | `SlabLayout` | One deterministic address per complete allocation lifetime, which online best-fit cannot always find. |
+| `replay_slab_timeline(slab_bytes, events)` | `SlabReplay` | Replays the production two-ended policy over an allocation timeline and rejects spatial infeasibility. |
+| `admit_physical_budget(*, device_budget_bytes, spill_budget_bytes, baseline_bytes, observed_external_bytes, maximum_task_workspace_bytes, predicted_spill_peak_bytes, allocation_timeline=(), policy=None)` | `(PhysicalAdmission, SlabReplay)` | Computes the explicit reserves and spatially validates the slab, raising `PhysicalAdmissionError`, a `ValueError` carrying `kind`, `required_bytes` and `capacity_bytes`, when the headroom leaves none. |
+| `run_admission_replay(capacity_bytes, operations, *, lease_count, dependency_count, minimum_alignment=256, large_request_threshold_bytes=0)` | `AdmissionReplayResult` | Replays an ordered script through the exact production memory-pool policy. |
+
+`AdmissionPolicy` is the tunable margin policy those take; `AllocationEvent`
+and `AllocationOperation` are the timeline they read; `SlabPlacement`,
+`SlabLayout` and `SlabReplay` are what the layout helpers answer with.
+
 ### Results and diagnostics
 
 Configuration and results:
@@ -707,23 +728,6 @@ recalibrating.
 | `ExecutionTaskIdentity` | which task a latched failure belongs to |
 
 [The frontend page](frontend.md#exceptions) shows what raises them.
-
-### Physical admission
-
-Standalone helpers, for tooling that wants to reproduce or inspect what
-admission does without a runtime:
-
-| Function | Returns | Purpose |
-|---|---|---|
-| `workspace_reserve_bytes(maximum_task_workspace_bytes, *, policy=None)` | `int` | The conservative contiguous-workspace allowance a budget must hold back. |
-| `plan_slab_layout(slab_bytes, events, *, dynamic_allocation_ids=frozenset())` | `SlabLayout` | One deterministic address per complete allocation lifetime, which online best-fit cannot always find. |
-| `replay_slab_timeline(slab_bytes, events)` | `SlabReplay` | Replays the production two-ended policy over an allocation timeline and rejects spatial infeasibility. |
-| `admit_physical_budget(*, device_budget_bytes, spill_budget_bytes, baseline_bytes, observed_external_bytes, maximum_task_workspace_bytes, predicted_spill_peak_bytes, allocation_timeline=(), policy=None)` | `(PhysicalAdmission, SlabReplay)` | Computes the explicit reserves and spatially validates the slab, raising `shadowspill.runtime`'s own `AdmissionError`, a `ValueError` carrying `kind`, `required_bytes` and `capacity_bytes`, when the headroom leaves none. It is a distinct class from the planning `AdmissionError` above. |
-| `run_admission_replay(capacity_bytes, operations, *, lease_count, dependency_count, minimum_alignment=256, large_request_threshold_bytes=0)` | `AdmissionReplayResult` | Replays an ordered script through the exact production memory-pool policy. |
-
-`AdmissionPolicy` is the tunable margin policy those take; `AllocationEvent`
-and `AllocationOperation` are the timeline they read; `SlabPlacement`,
-`SlabLayout` and `SlabReplay` are what the layout helpers answer with.
 
 The production-memory-pool replay interface is `AdmissionReplayOperation` and
 `AdmissionReplayOperationKind` (the script), `AdmissionReplayLeaseState`,
