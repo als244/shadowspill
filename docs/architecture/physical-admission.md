@@ -545,7 +545,7 @@ the supported contract.
 | `shadowspill.pytorch.planning.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |
 | `csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
-| `csrc/src/runtime/memory/memory_pool.c` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
+| `csrc/src/runtime/memory/memory_pool/` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |
 
 Previous: [PressureFit](pressurefit.md). Next: [From a resolved program to
 leases](admission-leases.md).

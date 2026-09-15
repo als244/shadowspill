@@ -39,26 +39,59 @@ add_library(
   src/planner/search/algorithms/pressurefit/candidates/memo.c
   src/planner/search/algorithms/pressurefit/candidates/workspace.c
   src/planner/search/algorithms/pressurefit/candidates/diagnostics.c
-  src/planner/search/algorithms/pressurefit/problem.c
-  src/planner/search/algorithms/pressurefit/residency.c
-  src/planner/search/algorithms/pressurefit/schedule.c
+  src/planner/search/algorithms/pressurefit/problem/buffers.c
+  src/planner/search/algorithms/pressurefit/problem/facts.c
+  src/planner/search/algorithms/pressurefit/problem/floor.c
+  src/planner/search/algorithms/pressurefit/problem/placement.c
+  src/planner/search/algorithms/pressurefit/problem/search.c
+  src/planner/search/algorithms/pressurefit/residency/workspace.c
+  src/planner/search/algorithms/pressurefit/residency/spans.c
+  src/planner/search/algorithms/pressurefit/residency/cuts.c
+  src/planner/search/algorithms/pressurefit/residency/index.c
+  src/planner/search/algorithms/pressurefit/residency/canonical.c
+  src/planner/search/algorithms/pressurefit/residency/tree.c
+  src/planner/search/algorithms/pressurefit/residency/heap.c
+  src/planner/search/algorithms/pressurefit/residency/reduce.c
+  src/planner/search/algorithms/pressurefit/residency/sparse.c
+  src/planner/search/algorithms/pressurefit/schedule/facts.c
+  src/planner/search/algorithms/pressurefit/schedule/storage.c
+  src/planner/search/algorithms/pressurefit/schedule/pressure.c
+  src/planner/search/algorithms/pressurefit/schedule/triggers.c
+  src/planner/search/algorithms/pressurefit/schedule/clamp.c
+  src/planner/search/algorithms/pressurefit/schedule/fetches.c
+  src/planner/search/algorithms/pressurefit/schedule/emit.c
 
   src/runtime/failure_state.c
   src/runtime/runtime.c
+  src/runtime/runtime_close.c
+  src/runtime/runtime_pools.c
+  src/runtime/runtime_statistics.c
   src/runtime/failure_reason.c
   src/runtime/worker/worker.c
   src/runtime/worker/actions.c
   src/runtime/worker/dispatch.c
   src/runtime/worker/completion.c
   src/runtime/memory/allocation_scope.c
-  src/runtime/memory/allocations.c
-  src/runtime/memory/memory_pool.c
+  src/runtime/memory/allocations/index.c
+  src/runtime/memory/allocations/records.c
+  src/runtime/memory/allocations/leases.c
+  src/runtime/memory/allocations/reuse.c
+  src/runtime/memory/allocations/allocate.c
+  src/runtime/memory/allocations/free.c
+  src/runtime/memory/memory_pool/arena.c
+  src/runtime/memory/memory_pool/records.c
+  src/runtime/memory/memory_pool/locks.c
+  src/runtime/memory/memory_pool/leases.c
+  src/runtime/memory/memory_pool/causal.c
   src/runtime/memory/ranges.c
   src/runtime/memory/retirement_queue.c
   src/runtime/objects/object_acquisition.c
   src/runtime/objects/object_actions.c
   src/runtime/objects/object_table.c
-  src/runtime/objects/objects.c
+  src/runtime/objects/object_registry.c
+  src/runtime/objects/object_owners.c
+  src/runtime/objects/object_allocations.c
+  src/runtime/objects/object_transfers.c
   src/runtime/plan/admission_replay.c
   src/runtime/plan/fixed_layout.c
   src/runtime/plan/plan.c
@@ -71,6 +104,9 @@ add_library(
   src/runtime/tasks/task_boundaries.c
   src/runtime/tasks/task_scope.c
   src/runtime/tasks/task_table.c
+  src/runtime/tasks/task_records.c
+  src/runtime/tasks/task_admission.c
+  src/runtime/tasks/task_handles.c
   src/runtime/telemetry/allocation_events.c
   src/runtime/telemetry/profiler.c
   src/runtime/telemetry/trace.c

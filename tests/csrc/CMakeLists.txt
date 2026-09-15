@@ -74,7 +74,11 @@ add_test(NAME shadowspill_runtime_plan_canary COMMAND shadowspill_runtime_plan_c
 add_executable(
   shadowspill_memory_pool_canary
   runtime/memory_pool_canary.c
-  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/arena.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/records.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/locks.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/leases.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/causal.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/ranges.c
 )
 target_include_directories(
