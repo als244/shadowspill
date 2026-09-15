@@ -81,11 +81,12 @@ typedef struct ShadowSpillPressureFitOptions {
        plans, never the shared record, so parallel evaluation is
        reproducible run to run. Costs additional placement measurements. */
     uint8_t deterministic;
-    /* Nonzero lets a plan that has simulated split an eviction whose copy
-       fits in idle evict-lane time: a write-back where the lane is free, a
+    /* Nonzero lets a plan that has simulated split an eviction something
+       waited on -- its copy overlapped a wait for device capacity -- into a
+       write-back at the boundary where the object was last written and a
        release where the eviction was. The plan is simulated again and the
        split kept only if it got faster, so this widens what the search may
-       consider rather than deciding anything by itself. */
+       consider rather than deciding anything by itself. Off by default. */
     uint8_t split_write_backs;
     /* Aliases smaller than this many bytes are not eligible to be cut: they
        stay resident from their first to their last access. Zero makes every
