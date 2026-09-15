@@ -33,6 +33,7 @@ from shadowspill.planner import (
     validate_schedule_feasibility,
 )
 from shadowspill.planner.plan_store import resolve_plan
+from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
@@ -389,8 +390,13 @@ def build_forward_program(
     *,
     memory: PlanMemory,
     timer: PlanningTimer,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> ForwardProgramArtifacts:
-    """Lower physical evidence into one canonical forward ShadowSpillProgram."""
+    """Lower physical evidence into one canonical forward ShadowSpillProgram.
+
+    `transfer_bandwidths` prices the simulator input at given lanes instead
+    of the runtime's calibration; see `build_simulation_config`.
+    """
 
     with timer.measure("program_lowering"):
         measurements = {
@@ -427,7 +433,9 @@ def build_forward_program(
             shared_residency_by_root=_shared_input_residency(captured, memory),
         )
         reserve = workspace_reserve(profiled.profiles.measurements)
-        simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
+        simulation_config = build_simulation_config(
+            memory, reserve, profiled.profiles, transfer_bandwidths=transfer_bandwidths
+        )
         execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
             memory, profiled.profiles
         )
@@ -757,8 +765,14 @@ def build_forward(
     allocation_probe_repetitions: int,
     shared_outputs: Sequence[SharedOutput] = (),
     search_options: SearchOptions | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> PlannedForward:
-    """Compose the independently callable forward-planning boundaries."""
+    """Compose the independently callable forward-planning boundaries.
+
+    `transfer_bandwidths` is the lanes to price copies at instead of the
+    runtime's calibration, as :func:`shadowspill.planner.plan_program` takes
+    them.
+    """
 
     started = time.perf_counter_ns()
     timer = PlanningTimer(verbose=verbose)
@@ -781,7 +795,13 @@ def build_forward(
         stores=artifacts,
         timer=timer,
     )
-    program = build_forward_program(captured, profiled, memory=memory, timer=timer)
+    program = build_forward_program(
+        captured,
+        profiled,
+        memory=memory,
+        timer=timer,
+        transfer_bandwidths=transfer_bandwidths,
+    )
     selected = plan_forward_program(
         program,
         search_options=search_options,

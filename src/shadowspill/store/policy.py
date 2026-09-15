@@ -57,17 +57,20 @@ class StorePolicy:
             require_hit=mode == "require",
         )
 
-    def refuse_miss(self, what: str, key: str) -> None:
+    def refuse_miss(self, what: str, key: str, *, request: str | None = None) -> None:
         """Raise when a miss is not allowed. Names what would fix it.
 
         Called by a store on the read path, after a lookup came back empty
-        and before any work is done to produce the artifact.
+        and before any work is done to produce the artifact. `request` says
+        what the key was made of, so a miss can be read against the records
+        the store holds without reconstructing the key.
         """
 
         if not self.require_hit:
             return
+        asked = "" if request is None else f" ({request})"
         raise LookupError(
-            f"{what} {key} is not in the store, and the store mode is "
+            f"{what} {key} is not in the store{asked}, and the store mode is "
             "'require', which refuses to produce one. Use 'reuse' to plan "
             "this without writing, or 'contribute' to add it."
         )

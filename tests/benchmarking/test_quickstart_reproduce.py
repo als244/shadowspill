@@ -11,6 +11,7 @@ import pytest
 
 from benchmarking.quickstart import _reproduced_arguments, _request_record
 from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.pytorch import StepSearchReport
 
 
 class _Parser:
@@ -56,9 +57,15 @@ def _run(tmp_path: Path) -> Path:
         fetch_bytes_per_second=25_500_000_000,
         evict_bytes_per_second=26_000_000_000,
     )
-    (run / "search.json").write_text(
-        json.dumps({"transfer_bandwidths": bandwidths.to_dict(), "geometries": []})
-    )
+    StepSearchReport(
+        total_sequences_per_step=64,
+        sequence_length=1024,
+        budgets=((8 << 30, 1 << 30),),
+        geometries=(),
+        points=(),
+        skipped=(),
+        transfer_bandwidths=bandwidths,
+    ).save(run / "search.json")
     return run
 
 
