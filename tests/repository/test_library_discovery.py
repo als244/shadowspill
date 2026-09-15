@@ -9,7 +9,7 @@ from shadowspill.libraries import (
     library_candidates,
     shadowspill_library_path,
 )
-from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
+from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
 
 
 def _editable_checkout(tmp_path: Path) -> Path:
@@ -79,7 +79,7 @@ def test_editable_build_libraries_are_discovered_without_environment() -> None:
 
     assert library.name.startswith("libshadowspill.so")
     try:
-        adapter = _adapter_path(None)
+        adapter = adapter_path(None)
     except RuntimeError:
         pytest.skip("the optional PyTorch adapter has not been built")
     assert adapter.name == "libshadowspill_pytorch.so"

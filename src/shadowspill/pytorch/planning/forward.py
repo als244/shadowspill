@@ -79,6 +79,7 @@ from ..partition import (
     partition_export,
 )
 from ..runtime_adapter import INITIAL_ACTIONS_TASK_ID, PlanMemory, Runtime
+from ..runtime_adapter.runtime import prepare_failure_cleanup
 from ..sharing import (
     ResolvedSharedInput,
     ResolvedSharedOutput,
@@ -659,7 +660,8 @@ def _rollback_forward_failure(
 ) -> NoReturn:
     """Recover a planning OOM before releasing materialized frontend state."""
 
-    runtime._prepare_failure_cleanup(
+    prepare_failure_cleanup(
+        runtime,
         error,
         operation=operation,
         synchronize_unlatched=False,

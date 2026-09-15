@@ -40,7 +40,16 @@ from shadowspill.pytorch.runtime_adapter.failures import (
     read_allocator_failure,
 )
 from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.runtime_adapter.runtime import (
+    Runtime,
+    acquire_object_reference,
+    live_allocations,
+    occupants,
+    register_object,
+    release_object_generation,
+    reserve_runtime_object_ids,
+    retainers,
+)
 from shadowspill.runtime import ObjectConsistency, ObjectRef
 from shadowspill.status import ABI_VERSION
 
@@ -286,7 +295,8 @@ class RuntimeBridge:
             raise RuntimeExecutionError(
                 "zero-byte shared objects are not supported by the public reference API"
             )
-        return self.runtime._acquire_object_reference(
+        return acquire_object_reference(
+            self.runtime,
             object_id=self._runtime_object_id(alias_id),
             size_bytes=self._size(alias_id),
         )
@@ -305,7 +315,8 @@ class RuntimeBridge:
             )
         if not self.requires_storage(alias_id):
             return
-        self.runtime._release_object_generation(
+        release_object_generation(
+            self.runtime,
             object_id=self._runtime_object_id(alias_id),
             expected_generation=expected_generation,
         )
@@ -323,7 +334,7 @@ class RuntimeBridge:
         existing = self._runtime_object_ids.get(alias_id)
         if existing is not None:
             return existing
-        runtime_object_id = self.runtime._reserve_runtime_object_ids(1)[0]
+        runtime_object_id = reserve_runtime_object_ids(self.runtime, 1)[0]
         self._record_runtime_object(alias_id, runtime_object_id)
         return runtime_object_id
 
@@ -551,7 +562,7 @@ class RuntimeBridge:
         """
 
         try:
-            held = self.runtime.live_allocations()
+            held = live_allocations(self.runtime)
         except Exception:  # a failure report must not fail
             return ""
         if not held:
@@ -562,21 +573,21 @@ class RuntimeBridge:
             # so a range with no frontend object is held by the framework's own
             # internals rather than by anything a caller can drop. Saying which
             # is what separates a reference to release from one to relocate.
-            holders = self.runtime.occupants(shown)
+            holders = occupants(self.runtime, shown)
             occupying = [item for objects in holders.values() for item in objects]
-            retainers = self.runtime.retainers(
+            holding = retainers(
                 occupying, ignore=(holders, occupying, *holders.values())
             )
         except Exception:
             holders = {}
-            retainers = {}
+            holding = {}
         lines = "".join(
             f"\n  offset={item.offset} bytes={item.charged_bytes}"
             f" {self._role_of(item)} from {item.origin}"
             f"{' scratch' if item.scratch else ''}"
             f"{' planned' if item.plan_owned else ''}"
             f"{' freed-pending-retirement' if item.logical_freed else ''}"
-            f"{_describe_occupants(holders.get(item.allocation_id, ()), retainers)}"
+            f"{_describe_occupants(holders.get(item.allocation_id, ()), holding)}"
             for item in shown
         )
         omitted = len(held) - len(shown)
@@ -859,7 +870,8 @@ class RuntimeBridge:
             return
         runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
-            self.runtime._register_object(
+            register_object(
+                self.runtime,
                 runtime_object_id,
                 expected,
                 pool_id=self.spill_pool_id,
@@ -944,7 +956,8 @@ class RuntimeBridge:
             return
         runtime_object_id = self._allocate_runtime_object_id(alias_id)
         self._require(
-            self.runtime._register_object(
+            register_object(
+                self.runtime,
                 runtime_object_id,
                 self._size(alias_id),
                 pool_id=self.spill_pool_id,

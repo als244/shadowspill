@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 
 import torch
@@ -29,20 +30,15 @@ class _Installed:
 
 
 class _Runtime:
+    """What `objects.reserve_runtime_object_ids` reads of a runtime."""
+
     def __init__(self, library: object) -> None:
         self._installed = _Installed(library)
-        self._next_object_id = 10_000
+        self._lock = threading.RLock()
+        self._next_persistent_object_id = 10_000
 
-    def _reserve_persistent_object_ids(
-        self, count: int, *, allow_in_progress_plan: bool = False
-    ) -> tuple[int, ...]:
-        del allow_in_progress_plan
-        first = self._next_object_id
-        self._next_object_id += count
-        return tuple(range(first, first + count))
-
-    def _reserve_runtime_object_ids(self, count: int) -> tuple[int, ...]:
-        return self._reserve_persistent_object_ids(count)
+    def _require_open(self) -> None:
+        return None
 
 
 def test_abort_task_only_closes_the_runtime_scope() -> None:

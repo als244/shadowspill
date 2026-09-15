@@ -13,7 +13,7 @@ from shadowspill.pytorch import (
     import_model_state,
     plan_forward,
 )
-from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
+from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
 
 from ..runtime_test_support import public_test_runtime
 
@@ -36,7 +36,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     if torch.cuda.is_initialized():
         pytest.skip("public allocator installation requires a fresh process")
     try:
-        _adapter_path(None)
+        adapter_path(None)
     except RuntimeError:
         pytest.skip("the built PyTorch adapter is not installed")
     torch.manual_seed(19)

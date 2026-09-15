@@ -18,9 +18,9 @@ from shadowspill.pytorch import (
     plan_step,
     read_model_state,
 )
-from shadowspill.pytorch.optimizer import capture as optimizer_module
+from shadowspill.pytorch.optimizer import trace as optimizer_trace
 from shadowspill.pytorch.runtime_adapter import RuntimeConfigurationError
-from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
+from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
 from shadowspill.pytorch.state.storage import persistent_state
 
 from ..runtime_test_support import public_test_runtime
@@ -67,7 +67,7 @@ def _require_adapter() -> None:
     if torch.cuda.is_initialized():
         pytest.skip("public allocator installation requires a fresh process")
     try:
-        _adapter_path(None)
+        adapter_path(None)
     except RuntimeError:
         pytest.skip("the built PyTorch adapter is not installed")
 
@@ -456,7 +456,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     def reject_graph(_optimizer: torch.optim.Optimizer) -> torch.fx.GraphModule:
         raise RuntimeError("optimizer graph intentionally unavailable")
 
-    monkeypatch.setattr(optimizer_module, "_export_optimizer_graph", reject_graph)
+    monkeypatch.setattr(optimizer_trace, "_export_optimizer_graph", reject_graph)
     torch.manual_seed(81)
     model = _TrainingNetwork()
     reference = _TrainingNetwork()

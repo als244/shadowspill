@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 import torch.nn as nn
@@ -47,35 +49,6 @@ class _State:
             raise RuntimeError("state cleanup failed")
 
 
-class _Runtime:
-    def __init__(self, *, fail_release: bool = False) -> None:
-        self.fail_release = fail_release
-        self.adopted = False
-        self.prepared_error: BaseException | None = None
-        self.released = False
-
-    def _adopt_plan(self, plan_handle: int) -> None:
-        assert plan_handle == 77
-        self.adopted = True
-
-    def _prepare_failure_cleanup(self, error: BaseException, **kwargs: object) -> None:
-        del kwargs
-        self.prepared_error = error
-
-    def plan_scoped_residue(self, plan_handle: int) -> tuple[str, ...]:
-        assert plan_handle == 77
-        return ()
-
-    def _release_plan(self, plan_handle: int) -> None:
-        assert plan_handle == 77
-        self.released = True
-        if self.fail_release:
-            raise RuntimeError("plan cleanup failed")
-
-    def _wait_plan_idle(self, plan_handle: int) -> None:
-        assert plan_handle == 77
-
-
 def _planned_training(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[PlannedTrainStep, _Executor]:
@@ -94,7 +67,7 @@ def _planned_training(
         executor,  # type: ignore[arg-type]
         _State(),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]
-        _Runtime(),  # type: ignore[arg-type]
+        FakeRuntime(),  # type: ignore[arg-type]
         77,
     )
     return planned, executor

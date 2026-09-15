@@ -16,6 +16,11 @@ from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime_adapter import Runtime
+from shadowspill.pytorch.runtime_adapter.runtime import (
+    abort_plan,
+    begin_plan,
+    prepare_failure_cleanup,
+)
 from shadowspill.pytorch.sharing import SharedOutput
 from shadowspill.pytorch.state.model import (
     adopt_model_state_for_plan,
@@ -36,7 +41,7 @@ def _cleanup_failed_plan(
 
     operations: list[tuple[str, Any]] = []
     if planning_started:
-        operations.append(("abort runtime plan", runtime._abort_plan))
+        operations.append(("abort runtime plan", lambda: abort_plan(runtime)))
     operations.append(
         (
             "restore persistent object identities",
@@ -59,7 +64,8 @@ def _surface_failed_plan(
 ) -> NoReturn:
     """Prepare allocator teardown, roll back, and preserve the first error."""
 
-    runtime._prepare_failure_cleanup(
+    prepare_failure_cleanup(
+        runtime,
         error,
         operation=operation,
         synchronize_unlatched=False,
@@ -180,7 +186,8 @@ def plan_forward(
 
     planning_started = False
     try:
-        memory = runtime._resolve_plan(
+        memory = begin_plan(
+            runtime,
             execution=execution,
             spill=spill,
             execution_budget=execution_budget,
@@ -349,7 +356,8 @@ def plan_step(
     )
     planning_started = False
     try:
-        memory = runtime._resolve_plan(
+        memory = begin_plan(
+            runtime,
             execution=execution,
             spill=spill,
             execution_budget=execution_budget,
@@ -475,7 +483,8 @@ def build_step_programs(
     require_model_state_for_plan(model, runtime=runtime, pool=spill)
     planning_started = False
     try:
-        memory = runtime._resolve_plan(
+        memory = begin_plan(
+            runtime,
             execution=execution,
             spill=spill,
             execution_budget=execution_budget,
@@ -509,7 +518,7 @@ def build_step_programs(
                 allocation_probe_repetitions=allocation_probe_repetitions,
             )
         try:
-            runtime._abort_plan()
+            abort_plan(runtime)
         finally:
             planning_started = False
         restore_persistent_object_ids(runtime)

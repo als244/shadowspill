@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import time
-import warnings
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -23,6 +21,13 @@ from shadowspill.pytorch.materialization import (
     TrainingMaterializedState,
 )
 from shadowspill.pytorch.runtime_adapter import Runtime
+from shadowspill.pytorch.runtime_adapter.runtime import (
+    adopt_plan,
+    prepare_failure_cleanup,
+    reclaim_plan_scoped_residue,
+    release_plan,
+    wait_plan_idle,
+)
 from shadowspill.pytorch.state.storage import (
     release_plan_owned_state,
     restore_persistent_object_ids,
@@ -54,7 +59,7 @@ class PlannedForward:
         self.plan_report = report
         self._runtime = runtime
         self._plan_handle = plan_handle
-        self._runtime._adopt_plan(plan_handle)
+        adopt_plan(self._runtime, plan_handle)
         self._closed = False
         self._closing = False
         self._profiler_annotations_active = False
@@ -171,45 +176,13 @@ class PlannedForward:
         self._close(primary_error=None)
 
     def _close_after_failure(self, error: BaseException, *, operation: str) -> None:
-        self._runtime._prepare_failure_cleanup(
+        prepare_failure_cleanup(
+            self._runtime,
             error,
             operation=operation,
             synchronize_unlatched=True,
         )
         self._close(primary_error=error)
-
-    def _reclaim_plan_scoped_residue(self) -> None:
-        """Reclaim what this plan's own scopes allocated and nobody released.
-
-        The contract is that nothing a plan's own scopes allocated outlives the
-        plan. Anything that does is named here, with the object occupying it and
-        where that object is referenced from, so the component holding it can
-        release it in its own teardown. Reported rather than raised: a kernel is
-        allowed to keep state between tasks, and what is wanted at close is
-        visibility rather than a failure during teardown.
-        """
-
-        if os.environ.get("SHADOWSPILL_REPORT_LIVE_ALLOCATIONS"):
-            # Everything the pool holds, before anything is released, so the
-            # residue can be read against the rest rather than on its own.
-            held = self._runtime.describe_live_allocations()
-            warnings.warn(
-                f"the execution pool holds {len(held)} range(s) as this callable"
-                " closes:\n  " + "\n  ".join(held),
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        survivors = self._runtime.plan_scoped_residue(self._plan_handle)
-        if not survivors:
-            return
-        detached, reclaimed = self._runtime.force_release_plan_scope(self._plan_handle)
-        warnings.warn(
-            f"closing this callable reclaimed {reclaimed} allocation(s) that its"
-            f" own scopes made and nothing released, detaching {detached}"
-            " storage(s) first:\n  " + "\n  ".join(survivors),
-            RuntimeWarning,
-            stacklevel=2,
-        )
 
     def _close(self, *, primary_error: BaseException | None) -> None:
         if self._closed or self._closing:
@@ -236,11 +209,13 @@ class PlannedForward:
                 ("release compiled executor", self._release_executor),
                 (
                     "reclaim allocations this plan's scopes left behind",
-                    self._reclaim_plan_scoped_residue,
+                    lambda: reclaim_plan_scoped_residue(
+                        self._runtime, self._plan_handle
+                    ),
                 ),
                 (
                     "release runtime plan",
-                    lambda: self._runtime._release_plan(self._plan_handle),
+                    lambda: release_plan(self._runtime, self._plan_handle),
                 ),
                 (
                     "restore persistent object identities",
@@ -263,7 +238,7 @@ class PlannedForward:
         self._profiler_annotations_active = False
 
     def _release_executor(self) -> None:
-        self._runtime._wait_plan_idle(self._plan_handle)
+        wait_plan_idle(self._plan_handle)
         executor = self._executor
         del self._executor
         del executor
@@ -306,7 +281,7 @@ class PlannedTrainStep:
         self.plan_report = report
         self._runtime = runtime
         self._plan_handle = plan_handle
-        self._runtime._adopt_plan(plan_handle)
+        adopt_plan(self._runtime, plan_handle)
         self._step = 0
         self._closed = False
         self._closing = False
@@ -606,45 +581,13 @@ class PlannedTrainStep:
         self._close(primary_error=None)
 
     def _close_after_failure(self, error: BaseException, *, operation: str) -> None:
-        self._runtime._prepare_failure_cleanup(
+        prepare_failure_cleanup(
+            self._runtime,
             error,
             operation=operation,
             synchronize_unlatched=True,
         )
         self._close(primary_error=error)
-
-    def _reclaim_plan_scoped_residue(self) -> None:
-        """Reclaim what this plan's own scopes allocated and nobody released.
-
-        The contract is that nothing a plan's own scopes allocated outlives the
-        plan. Anything that does is named here, with the object occupying it and
-        where that object is referenced from, so the component holding it can
-        release it in its own teardown. Reported rather than raised: a kernel is
-        allowed to keep state between tasks, and what is wanted at close is
-        visibility rather than a failure during teardown.
-        """
-
-        if os.environ.get("SHADOWSPILL_REPORT_LIVE_ALLOCATIONS"):
-            # Everything the pool holds, before anything is released, so the
-            # residue can be read against the rest rather than on its own.
-            held = self._runtime.describe_live_allocations()
-            warnings.warn(
-                f"the execution pool holds {len(held)} range(s) as this callable"
-                " closes:\n  " + "\n  ".join(held),
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        survivors = self._runtime.plan_scoped_residue(self._plan_handle)
-        if not survivors:
-            return
-        detached, reclaimed = self._runtime.force_release_plan_scope(self._plan_handle)
-        warnings.warn(
-            f"closing this callable reclaimed {reclaimed} allocation(s) that its"
-            f" own scopes made and nothing released, detaching {detached}"
-            " storage(s) first:\n  " + "\n  ".join(survivors),
-            RuntimeWarning,
-            stacklevel=2,
-        )
 
     def _close(self, *, primary_error: BaseException | None) -> None:
         if self._closed or self._closing:
@@ -680,11 +623,13 @@ class PlannedTrainStep:
                 ("release compiled executor", self._release_executor),
                 (
                     "reclaim allocations this plan's scopes left behind",
-                    self._reclaim_plan_scoped_residue,
+                    lambda: reclaim_plan_scoped_residue(
+                        self._runtime, self._plan_handle
+                    ),
                 ),
                 (
                     "release runtime plan",
-                    lambda: self._runtime._release_plan(self._plan_handle),
+                    lambda: release_plan(self._runtime, self._plan_handle),
                 ),
                 (
                     "restore persistent object identities",
@@ -707,7 +652,7 @@ class PlannedTrainStep:
         self._profiler_annotations_active = False
 
     def _release_executor(self) -> None:
-        self._runtime._wait_plan_idle(self._plan_handle)
+        wait_plan_idle(self._plan_handle)
         executor = self._executor
         del self._executor
         del executor

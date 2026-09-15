@@ -12,7 +12,8 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 from shadowspill.pytorch.capture.aot import capture_training_objective
 from shadowspill.pytorch.capture.fake import fake_device_model
 from shadowspill.pytorch.guards import capture_training_signatures
-from shadowspill.pytorch.planning import training as planning_training
+from shadowspill.pytorch.planning.common import PlanningTimer
+from shadowspill.pytorch.planning.training import capture as capture_module
 
 
 class _Tiny(nn.Module):
@@ -48,12 +49,12 @@ def test_positions_with_one_structure_export_once(monkeypatch: Any) -> None:
         exports += 1
         return capture_training_objective(*args, **kwargs)
 
-    monkeypatch.setattr(planning_training, "capture_training_objective", counting)
+    monkeypatch.setattr(capture_module, "capture_training_objective", counting)
     fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(_Tiny(), fake_mode, device_index=0)
     archive = _Archive()
-    timer = planning_training.PlanningTimer(verbose=False)
-    captures = planning_training._capture_training_objectives(
+    timer = PlanningTimer(verbose=False)
+    captures = capture_module._capture_training_objectives(
         model,
         _objective,
         microbatches,

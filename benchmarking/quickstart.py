@@ -70,7 +70,9 @@ from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
 from shadowspill.pytorch.planning import planned_transfer_bandwidths
 from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-from shadowspill.pytorch.runtime_adapter.runtime import planned_execution_budget
+from shadowspill.pytorch.runtime_adapter.runtime.configuration import (
+    resolve_execution_budget,
+)
 from shadowspill.pytorch.step_search import search_geometries
 from shadowspill.schema import artifact_schema
 from shadowspill.store import STORE_MODES
@@ -1162,7 +1164,7 @@ def plan_budgets(runtime: Runtime, request: Request) -> Budgets:
         requested_search=request.search_budgets,
         requested_run=request.run_budgets,
         planned={
-            item: planned_execution_budget(execution_pool, item)
+            item: resolve_execution_budget(item, execution_pool)
             for item in dict.fromkeys([*request.search_budgets, *request.run_budgets])
         },
     )
