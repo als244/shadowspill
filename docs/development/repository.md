@@ -106,7 +106,7 @@ The test tree mirrors the boundary under test, all the way down: a test for
 ```text
 tests/
 ├── shadowspill/           package tests matching src/shadowspill subpackages
-├── csrc/                  C, mock-backend, sanitizer, and device canaries
+├── csrc/                  C, mock-backend, sanitizer, and device canaries, one directory per library
 ├── integration/           fresh-process framework/backend integration
 ├── tools/                 source-tree tool tests
 ├── workloads/             workload definition tests

@@ -36,7 +36,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast
@@ -691,7 +691,7 @@ def _reproduced_arguments(
     return arguments
 
 
-def main() -> int:
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -860,6 +860,13 @@ def main() -> int:
         " which budget it came from. --no-incumbents searches every point"
         " alone, for comparing the two",
     )
+    return parser
+
+
+def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
+    """The flags, with the choices a flag alone can settle already settled."""
+
+    parser = _parser()
     arguments = parser.parse_args()
     if arguments.reproduce is not None:
         arguments = _reproduced_arguments(parser, arguments)
@@ -877,6 +884,28 @@ def main() -> int:
         validate_resolution_options(arguments.resolution_options)
     except ValueError as error:
         parser.error(f"--resolution-options: {error}")
+
+    return parser, arguments
+
+
+@dataclass(frozen=True)
+class Request:
+    """What the tour was asked to do, resolved from the flags."""
+
+    manifest: Any
+    search_budgets: list[int]
+    run_budgets: list[int]
+    physical_capacity: int
+    sequence_length: int
+    sequences_per_step: int
+    tokens_per_step: int
+    manual: int | None
+
+
+def resolve_request(
+    parser: argparse.ArgumentParser, arguments: argparse.Namespace
+) -> Request:
+    """The manifest and the budgets, or a parser error naming the flag."""
 
     implementation, family = arguments.model.split("_", 1)
     manifest = manifest_for(family, cast(ModelImplementation, implementation))
@@ -928,6 +957,37 @@ def main() -> int:
             "--sequences-per-microbatch chooses a geometry to run; give at"
             " least one --run-budget-gib"
         )
+    return Request(
+        manifest=manifest,
+        search_budgets=search_budgets,
+        run_budgets=run_budgets,
+        physical_capacity=physical_capacity,
+        sequence_length=sequence_length,
+        sequences_per_step=sequences_per_step,
+        tokens_per_step=tokens_per_step,
+        manual=manual,
+    )
+
+
+@dataclass(frozen=True)
+class RunPaths:
+    """Where one run writes, and the stores it reads and writes."""
+
+    root: Path
+    store: Path
+    build_store: Path | None
+    plan_store: Path
+
+
+def prepare_run_root(
+    arguments: argparse.Namespace, request: Request
+) -> RunPaths | None:
+    """Claim the run directory, record the request, copy the console into it.
+
+    `None` when the directory already holds a run and `--force-overwrite` was
+    not given; the refusal has been printed.
+    """
+
     # Everything a run leaves behind lands together: the search report, its
     # log, and one step trace per run budget.
     # One directory per run: the model, the revision it measured and when it
@@ -937,8 +997,8 @@ def main() -> int:
     run_root = arguments.output_dir or (
         Path("benchmarking/quickstart_reports")
         / f"{arguments.model}_{_revision()}_{_started_at()}"
-        / f"seq{sequence_length}"
-        / f"seqsperstep{sequences_per_step}"
+        / f"seq{request.sequence_length}"
+        / f"seqsperstep{request.sequences_per_step}"
     )
     # A run directory is written once, and silently replacing one loses a
     # measurement that cost real time. The default path carries the start
@@ -956,7 +1016,7 @@ def main() -> int:
             " somewhere else.",
             file=sys.stderr,
         )
-        return 1
+        return None
     for name in written:
         target = run_root / name
         # The artifact store is deliberately not cleared: it is a
@@ -1010,67 +1070,119 @@ def main() -> int:
         def __getattr__(self, name: str) -> object:
             return getattr(stdout, name)
 
-    sys.stdout = _Tee()  # type: ignore[assignment]
+    sys.stdout = _Tee()
     # However the run ends -- finished, interrupted, or failed -- the copy is
     # closed and the terminal is handed back, so a partial run still leaves a
     # readable record of how far it got.
-    atexit.register(lambda: (setattr(sys, "stdout", stdout), console.close()))
 
-    # Built before the banner so the banner can state the calibrated rates as
-    # measurements rather than a promise. Calibration happens once here and is
-    # reused by every geometry.
-    ledger: dict[str, float] = {}
-    command_started = time.perf_counter()
+    def restore_console() -> None:
+        sys.stdout = stdout
+        console.close()
 
-    def charge(category: str, started: float) -> None:
-        ledger[category] = ledger.get(category, 0.0) + (time.perf_counter() - started)
+    atexit.register(restore_console)
+
+    return RunPaths(run_root, store, build_store, plan_store)
+
+
+class Ledger(dict[str, float]):
+    """Where the wall clock went, by category, for the closing table."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = time.perf_counter()
+
+    def charge(self, category: str, started: float) -> None:
+        self[category] = self.get(category, 0.0) + (time.perf_counter() - started)
+
+
+def open_runtime(request: Request, ledger: Ledger) -> Runtime:
+    """The runtime, calibrated once here and reused by every geometry."""
 
     marker = time.perf_counter()
     runtime = Runtime(
         pools={
-            "execution": device(physical_capacity=physical_capacity),
-            "spill": pinned_host(capacity=manifest.spill_budget_bytes),
+            "execution": device(physical_capacity=request.physical_capacity),
+            "spill": pinned_host(capacity=request.manifest.spill_budget_bytes),
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),
             "evict": transfer_route(source="execution", destination="spill"),
         },
     )
-    charge("runtime construction and calibration", marker)
+    ledger.charge("runtime construction and calibration", marker)
+    return runtime
 
-    print("═" * 68)
-    print(f"  ShadowSpill quickstart — {arguments.model}")
-    print("═" * 68)
-    # A requested budget is the process's device-memory cap; the slab a plan may fill
-    # is what is left after the accelerator problem and the provider headroom. Planning
-    # resolves that, so both phases are given the resolved figure -- the search used to
-    # take its budgets literally and rank against a slab the cap cannot hold, which made
-    # it promise plans the run could not reproduce.
-    execution_pool = runtime.pools["execution"]
-    planned_budget = {
-        item: planned_execution_budget(execution_pool, item)
-        for item in dict.fromkeys([*search_budgets, *run_budgets])
-    }
-    requested_search, requested_run = search_budgets, run_budgets
-    # Two requests can resolve to one slab once they reach the pool's capacity, and
-    # planning the same budget twice would search it twice.
-    search_budgets = list(
-        dict.fromkeys(planned_budget[item] for item in requested_search)
-    )
-    run_budgets = list(dict.fromkeys(planned_budget[item] for item in requested_run))
 
-    def asked(values: list[int]) -> str:
+@dataclass(frozen=True)
+class Budgets:
+    """The budgets as requested and as the pool resolves them."""
+
+    requested_search: list[int]
+    requested_run: list[int]
+    planned: dict[int, int]
+
+    @property
+    def search(self) -> list[int]:
+        """Each search request's slab, once each.
+
+        Two requests can resolve to one slab once they reach the pool's
+        capacity, and planning the same budget twice would search it twice.
+        """
+
+        return list(dict.fromkeys(self.planned[item] for item in self.requested_search))
+
+    @property
+    def run(self) -> list[int]:
+        return list(dict.fromkeys(self.planned[item] for item in self.requested_run))
+
+    def asked(self, values: list[int]) -> str:
         """Each request, naming the slab it resolved to wherever that is smaller."""
 
         return ", ".join(
             gib(item)
-            if planned_budget[item] == item
-            else f"{gib(item)}->{gib(planned_budget[item])}"
+            if self.planned[item] == item
+            else f"{gib(item)}->{gib(self.planned[item])}"
             for item in values
         )
 
-    searched = asked(requested_search)
-    ran = asked(requested_run) or "none (search only)"
+
+def plan_budgets(runtime: Runtime, request: Request) -> Budgets:
+    """Resolve every requested budget against the pool it will run in.
+
+    A requested budget is the process's device-memory cap; the slab a plan may
+    fill is what is left after the accelerator problem and the provider
+    headroom. Planning resolves that, so both phases are given the resolved
+    figure -- the search used to take its budgets literally and rank against a
+    slab the cap cannot hold, which made it promise plans the run could not
+    reproduce.
+    """
+
+    execution_pool = runtime.pools["execution"]
+    return Budgets(
+        requested_search=request.search_budgets,
+        requested_run=request.run_budgets,
+        planned={
+            item: planned_execution_budget(execution_pool, item)
+            for item in dict.fromkeys([*request.search_budgets, *request.run_budgets])
+        },
+    )
+
+
+def print_banner(
+    arguments: argparse.Namespace, request: Request, runtime: Runtime, budgets: Budgets
+) -> None:
+    """The run's settings, and the lanes as the simulator will be built with them."""
+
+    manifest = request.manifest
+    sequence_length = request.sequence_length
+    sequences_per_step = request.sequences_per_step
+    tokens_per_step = request.tokens_per_step
+    execution_pool = runtime.pools["execution"]
+    print("═" * 68)
+    print(f"  ShadowSpill quickstart — {arguments.model}")
+    print("═" * 68)
+    searched = budgets.asked(budgets.requested_search)
+    ran = budgets.asked(budgets.requested_run) or "none (search only)"
     print(
         f"  sequence length     {sequence_length:>10,}      search budgets   {searched}"
     )
@@ -1185,38 +1297,87 @@ def main() -> int:
     print()
 
     note_host_memory(None, "runtime pools registered")
-    marker = time.perf_counter()
-    # Built inside the pool it will live in, so the parameters are written
-    # Declared on meta and materialised straight into the spill pool, so the
-    # model's values are written where they will live and no host memory
-    # proportional to it is ever allocated.
-    case = build_case(manifest, seed=arguments.seed, runtime=runtime)
-    charge("model construction in the spill pool", marker)
-    note_host_memory(None, "model constructed in the spill pool")
-    vocabulary = int(manifest.model_config.vocab_size)
+
+
+@dataclass(frozen=True)
+class _Steps:
+    """What one budget's steps measured, once the last result is released."""
+
+    diagnostics: Any
+    walls: tuple[float, ...]
+    median_step_seconds: float
+    simulated_step_seconds: float
+    host_seconds: float
+
+
+class Tour:
+    """One quickstart run: the model in the spill pool, the search, then each budget.
+
+    Holds what every phase reads -- the request, the run's paths, the runtime,
+    the ledger, the progress log -- and what the run phase changes: the case,
+    rebuilt between budgets so each starts from the same weights.
+    """
+
+    def __init__(
+        self,
+        arguments: argparse.Namespace,
+        request: Request,
+        paths: RunPaths,
+        budgets: Budgets,
+        runtime: Runtime,
+        ledger: Ledger,
+    ) -> None:
+        self.arguments = arguments
+        self.request = request
+        self.paths = paths
+        self.budgets = budgets
+        self.runtime = runtime
+        self.ledger = ledger
+        manifest = request.manifest
+        marker = time.perf_counter()
+        # Built inside the pool it will live in, so the parameters are written
+        # Declared on meta and materialised straight into the spill pool, so the
+        # model's values are written where they will live and no host memory
+        # proportional to it is ever allocated.
+        case = build_case(manifest, seed=arguments.seed, runtime=runtime)
+        ledger.charge("model construction in the spill pool", marker)
+        note_host_memory(None, "model constructed in the spill pool")
+        self.case = case
+        self.vocabulary = int(manifest.model_config.vocab_size)
+        # Built once and handed to both planning phases; see `search_policy`.
+        self.policy = search_policy(arguments)
+        self.trained = False
+        self.report: StepSearchReport | None = None
+        # Opened before the branch: a run that chose its geometry by hand still
+        # plans once per budget, and that is the same granular output a search
+        # produces. Only the search is optional; the log is not.
+        progress_log = paths.root / "progress.log"
+        progress_log.parent.mkdir(parents=True, exist_ok=True)
+        self.log_handle = progress_log.open("w")
+        self.plan_log = PlanLog(self.log_handle, sys.stdout)
+        print(f"  progress log: {progress_log}   (tail -f it to follow)")
 
     def example_microbatches(
+        self,
         sequences: int,
         accumulation: int,
         *,
         generator: torch.Generator | None = None,
     ) -> tuple[tuple[object, ...], ...]:
+        sequence_length = self.request.sequence_length
         shape = (1, sequences * sequence_length)
         lengths = (sequence_length,) * sequences
         return tuple(
             (
-                torch.randint(vocabulary, shape, generator=generator),
-                torch.randint(vocabulary, shape, generator=generator),
+                torch.randint(self.vocabulary, shape, generator=generator),
+                torch.randint(self.vocabulary, shape, generator=generator),
                 lengths,
             )
             for _ in range(accumulation)
         )
 
-    # Built once and handed to both planning phases; see `search_policy`.
-    policy = search_policy(arguments)
-
     def step_microbatches(
-        sequences: int, accumulation: int
+        self, sequences: int, accumulation: int
     ) -> tuple[tuple[object, ...], ...]:
         """The same tokens for every step, budget and geometry.
 
@@ -1227,22 +1388,31 @@ def main() -> int:
         was sampled.
         """
 
-        generator = torch.Generator().manual_seed(arguments.seed * 1_000_003)
-        return example_microbatches(sequences, accumulation, generator=generator)
+        generator = torch.Generator().manual_seed(self.arguments.seed * 1_000_003)
+        return self.example_microbatches(sequences, accumulation, generator=generator)
 
-    with case.implementations():
-        trained = False
-        report = None
-        # Opened before the branch: a run that chose its geometry by hand still
-        # plans once per budget, and that is the same granular output a search
-        # produces. Only the search is optional; the log is not.
-        progress_log = run_root / "progress.log"
-        progress_log.parent.mkdir(parents=True, exist_ok=True)
-        log_handle = progress_log.open("w")
-        plan_log = PlanLog(log_handle, sys.stdout)
-        print(f"  progress log: {progress_log}   (tail -f it to follow)")
-        if manual is not None:
-            geometry = (manual, sequences_per_step // manual)
+    @property
+    def lanes(self) -> TransferBandwidths | None:
+        """The lanes the run phase plans against.
+
+        The search's, pinned or calibrated once for this run, so each budget
+        asks the store the search's question and executes the plan the search
+        chose. Priced against a fresh calibration, the same request would be a
+        different key and, under `require`, a refusal.
+        """
+
+        if self.report is None:
+            return cast(TransferBandwidths | None, self.arguments.transfer_bandwidths)
+        return self.report.planned_lanes
+
+    def search(self) -> None:
+        """The geometry search, or the manual geometry's announcement."""
+
+        arguments, request, paths = self.arguments, self.request, self.paths
+        case, plan_log, ledger = self.case, self.plan_log, self.ledger
+        manifest, runtime = request.manifest, self.runtime
+        if request.manual is not None:
+            geometry = (request.manual, request.sequences_per_step // request.manual)
             print(
                 f"  geometry chosen manually: {geometry[0]} sequences per"
                 f" microbatch x {geometry[1]} accumulation rounds"
@@ -1261,27 +1431,27 @@ def main() -> int:
                     note_host_memory(plan_log, message.split(":")[0])
 
             with contextlib.redirect_stdout(plan_log):
-                report = plan_step_search(
+                report = self.report = plan_step_search(
                     case.model,
                     objective=case.objective,
                     optimizer=case.optimizer,
                     optimizer_state_init=optimizer_state_init,
                     hyperparams=("lr",),
-                    example_microbatches=example_microbatches,
-                    total_sequences_per_step=sequences_per_step,
-                    sequence_length=sequence_length,
+                    example_microbatches=self.example_microbatches,
+                    total_sequences_per_step=request.sequences_per_step,
+                    sequence_length=request.sequence_length,
                     budgets=[
                         (budget, manifest.spill_budget_bytes)
-                        for budget in search_budgets
+                        for budget in self.budgets.search
                     ],
                     runtime=runtime,
                     execution="execution",
                     spill="spill",
                     min_tokens_per_microbatch=arguments.min_tokens_per_microbatch,
                     max_tokens_per_microbatch=arguments.max_tokens_per_microbatch,
-                    artifact_store=store,
-                    build_store=build_store,
-                    plan_store=plan_store,
+                    artifact_store=paths.store,
+                    build_store=paths.build_store,
+                    plan_store=paths.plan_store,
                     build_store_mode=arguments.build_store_mode,
                     plan_store_mode=arguments.plan_store_mode,
                     verbose=True,
@@ -1294,13 +1464,13 @@ def main() -> int:
                             StepDataOrdering.depth_first(accumulation),
                         )
                     ),
-                    search_options=policy,
+                    search_options=self.policy,
                     transfer_bandwidths=arguments.transfer_bandwidths,
                     export_bypass_key=arguments.export_bypass_key,
                 )
             print()
-            print_search(report, tokens_per_step)
-            report_path = run_root / "search.json"
+            print_search(report, request.tokens_per_step)
+            report_path = paths.root / "search.json"
             print(f"  search report: {report.save(report_path)}")
             note_host_memory(plan_log, "geometry search finished")
             print()
@@ -1320,235 +1490,259 @@ def main() -> int:
                     if name.startswith("build: ")
                 ),
             )
+
+    def plot_search(self) -> None:
+        arguments, report = self.arguments, self.report
         if arguments.plots:
             if report is None:
                 print("  plots need a search; skipped for a manual geometry")
             else:
-                plot_dir = run_root / "figures"
+                plot_dir = self.paths.root / "figures"
                 marker = time.perf_counter()
                 written = plot_step_search(report, plot_dir)
-                charge("figures", marker)
+                self.ledger.charge("figures", marker)
                 print(rule("Figures"))
                 for path in written:
                     print(f"  {path}")
                 print()
 
-        # The run plans against the lanes the search planned against, pinned
-        # or calibrated once for this run, so each budget asks the store the
-        # search's question and executes the plan the search chose. Priced
-        # against a fresh calibration, the same request would be a different
-        # key and, under `require`, a refusal.
-        lanes = (
-            arguments.transfer_bandwidths if report is None else report.planned_lanes
+    def _run_steps(
+        self, training: Any, plan_report: Any, geometry: tuple[int, int]
+    ) -> _Steps:
+        """Run the steps on one plan and say what each one took."""
+
+        arguments, plan_log = self.arguments, self.plan_log
+        tokens_per_step = self.request.tokens_per_step
+        losses: dict[int, float] = {}
+        cycles: dict[int, float] = {}
+        hosts: dict[int, float] = {}
+
+        def report_cycles() -> None:
+            # A step's cycle closes when the next step begins, or at the
+            # end marker after the last one, so each line appears one
+            # step late. Through the log rather than print(), so every
+            # step time is in the run directory as well as on the
+            # terminal. Only planner phase lines are filtered out of
+            # stdout.
+            for timing in training.invocation_timings():
+                step = timing.step_number
+                cycles[step] = timing.cycle_seconds
+                note = ""
+                if step == 1 and plan_report.initial_search_result is not None:
+                    note = "   (first-step plan)"
+                # A cycle closes where the next step opens, so a step is
+                # reported one step late and the traced step's predecessor
+                # arrives beside it. Naming the traced one is what keeps that
+                # from reading as two traced steps.
+                if step == arguments.steps:
+                    note += "   (traced; not in the median)"
+                plan_log.write(
+                    f"  step {step:>3}   {timing.cycle_seconds:7.3f} s"
+                    f"   {tokens_per_step / timing.cycle_seconds:>10,.0f} tok/s"
+                    f"   loss {losses[step]:.4f}{note}\n"
+                )
+
+        def run_step(step: int, *, traced: bool) -> Any:
+            started = time.perf_counter()
+            result = training(
+                self.step_microbatches(*geometry),
+                hyperparams={"lr": LEARNING_RATE},
+                runtime_trace=traced,
+            )
+            losses[step] = statistics.fmean(float(value) for value in result.objectives)
+            hosts[step] = time.perf_counter() - started
+            report_cycles()
+            return result
+
+        if arguments.steps > 1:
+            print(rule("Steps"))
+            for step in range(1, arguments.steps):
+                result = run_step(step, traced=False)
+        print(rule("Traced step versus simulation"))
+        result = run_step(arguments.steps, traced=True)
+        # Close the last step's cycle where a next step would begin, so
+        # its time reads like every other step's, then resolve the trace
+        # with that cycle in it.
+        training.mark_cycle_end()
+        report_cycles()
+        # Every cycle runs origin to next origin, so consecutive cycles
+        # tile the run: their sum is the span from the first step's start
+        # to the last one's end, and tokens over that span is the one
+        # throughput a boundary between steps cannot hide in.
+        elapsed = sum(cycles.values())
+        walls = [cycles[step] for step in sorted(cycles)]
+        # Two of these steps are not the step this reports. The first pays
+        # the plan's reconciliation of its initial state. The last is the
+        # traced one, and tracing costs it tens of milliseconds of collection
+        # -- enough that it came out slower than its predecessor at almost
+        # every budget measured -- so including it biases the median upward
+        # every time. The qualification gate makes the same exclusion.
+        untraced = walls[:-1] if len(walls) > 1 else walls
+        measured = untraced[1:] if len(untraced) > 1 else untraced
+        # Both sides are the whole step -- the median on the device clock
+        # against the plan's makespan -- and these are the same two values
+        # the figures use, so the percentage here and the figure's relative
+        # error cannot drift apart. Written with the steps it summarizes,
+        # rather than after the epilogue, where it would read as part of the
+        # trace.
+        median_step = statistics.median(measured)
+        simulated_step = plan_report.summary.simulated_step_seconds
+        plan_log.write(
+            f"\n  end to end {elapsed:8.3f} s"
+            f"   ({elapsed / len(cycles):.3f} s per step)"
+            f"   {len(cycles) * tokens_per_step / elapsed:>10,.0f} tok/s"
+            f"   ({len(cycles)} steps, every boundary included)\n"
+        )
+        plan_log.write(
+            f"  median step {median_step:7.3f} s"
+            f"   simulated {simulated_step:7.3f} s"
+            f"   ({(median_step - simulated_step) / simulated_step:+.2%})"
+            f"   ({len(measured)} untraced"
+            f" step{'' if len(measured) == 1 else 's'} after the first)\n"
+        )
+        assert result.diagnostics is not None
+        diagnostics = result.diagnostics.result()
+        # The final StepResult's public outputs are caller-owned device
+        # tensors; the runtime refuses to close while they are alive.
+        del result
+        gc.collect()
+        return _Steps(
+            diagnostics=diagnostics,
+            walls=tuple(walls),
+            median_step_seconds=median_step,
+            simulated_step_seconds=simulated_step,
+            host_seconds=sum(hosts.values()),
         )
 
-        def run_one_budget(
-            budget: int,
-            geometry: tuple[int, int],
-            incumbent: AnnotatedProgramPlan | None = None,
-        ) -> RunBudgetOutcome:
-            """Plan one budget, run its steps, close it, and own nothing after.
+    def run_one_budget(
+        self,
+        budget: int,
+        geometry: tuple[int, int],
+        ordering: StepDataOrdering,
+        incumbent: AnnotatedProgramPlan | None = None,
+    ) -> RunBudgetOutcome:
+        """Plan one budget, run its steps, close it, and own nothing after.
 
-            Returns the budget beside its simulated and measured step times.
+        Returns the budget beside its simulated and measured step times.
 
-            One budget's plan must be entirely gone before the next one is
-            built: they hold model, optimizer, and compiled state at the same
-            scale, and the host has room for one of them beside the pinned
-            spill arena. Every reference to this budget's plan lives in this
-            frame, so returning is what releases them.
-            """
+        One budget's plan must be entirely gone before the next one is
+        built: they hold model, optimizer, and compiled state at the same
+        scale, and the host has room for one of them beside the pinned
+        spill arena. Every reference to this budget's plan lives in this
+        frame, so returning is what releases them.
+        """
 
-            nonlocal case, trained
-            if trained:
-                # Every budget starts from the same weights and a fresh
-                # optimizer, on the same tokens per step, so its losses agree
-                # with every other budget's bar reduction order: the run is a
-                # correctness check as well as a measurement.
-                marker = time.perf_counter()
-                release_case_model(case, runtime=runtime)
-                case = build_case(manifest, seed=arguments.seed, runtime=runtime)
-                charge("model construction", marker)
-                plan_log.note("model and optimizer state reset for a comparable run")
-            trained = True
-            microbatches = example_microbatches(*geometry)
+        arguments, request, paths = self.arguments, self.request, self.paths
+        manifest, runtime, ledger = request.manifest, self.runtime, self.ledger
+        plan_log, tokens_per_step = self.plan_log, request.tokens_per_step
+        if self.trained:
+            # Every budget starts from the same weights and a fresh
+            # optimizer, on the same tokens per step, so its losses agree
+            # with every other budget's bar reduction order: the run is a
+            # correctness check as well as a measurement.
             marker = time.perf_counter()
-            plan_sink: Any = contextlib.redirect_stdout(plan_log)
-            plan_log.note(f"run planning at execution {gib(budget)}")
-            with plan_sink:
-                training = plan_step(
-                    case.model,
-                    objective=case.objective,
-                    optimizer=case.optimizer,
-                    optimizer_state_init=optimizer_state_init,
-                    hyperparams=("lr",),
-                    example_inputs=microbatches,
-                    runtime=runtime,
-                    execution="execution",
-                    spill="spill",
-                    execution_budget=budget,
-                    optimizer_ordering="stage_interleaved",
-                    depth=ordering.depth,
-                    breadth=ordering.breadth,
-                    reverse_breadth=ordering.reverse_breadth,
-                    pair_loss=ordering.pair_loss,
-                    artifact_store=store,
-                    build_store=build_store,
-                    plan_store=plan_store,
-                    build_store_mode=arguments.build_store_mode,
-                    plan_store_mode=arguments.plan_store_mode,
-                    export_bypass_key=arguments.export_bypass_key,
-                    # The search policy the geometry search used, so the run
-                    # plans the plan the search promised rather than missing
-                    # the store and searching again under other options.
-                    search_options=policy,
-                    # The search's winning plan is the plan to beat, so the
-                    # step executes what the search chose, or better, even
-                    # when the replan's facts differ from the search's and
-                    # the store cannot hand the plan back.
-                    incumbent=incumbent,
-                    transfer_bandwidths=lanes,
-                )
-            charge("run planning", marker)
-            note_host_memory(plan_log, f"planned {gib(budget)}")
-            plan_report = training.plan_report
-            print_breakdown(plan_report, tokens_per_step)
-
-            losses: dict[int, float] = {}
-            cycles: dict[int, float] = {}
-            hosts: dict[int, float] = {}
-
-            def report_cycles() -> None:
-                # A step's cycle closes when the next step begins, or at the
-                # end marker after the last one, so each line appears one
-                # step late. Through the log rather than print(), so every
-                # step time is in the run directory as well as on the
-                # terminal. Only planner phase lines are filtered out of
-                # stdout.
-                for timing in training.invocation_timings():
-                    step = timing.step_number
-                    cycles[step] = timing.cycle_seconds
-                    note = ""
-                    if step == 1 and plan_report.initial_search_result is not None:
-                        note = "   (first-step plan)"
-                    # A cycle closes where the next step opens, so a step is
-                    # reported one step late and the traced step's predecessor
-                    # arrives beside it. Naming the traced one is what keeps that
-                    # from reading as two traced steps.
-                    if step == arguments.steps:
-                        note += "   (traced; not in the median)"
-                    plan_log.write(
-                        f"  step {step:>3}   {timing.cycle_seconds:7.3f} s"
-                        f"   {tokens_per_step / timing.cycle_seconds:>10,.0f} tok/s"
-                        f"   loss {losses[step]:.4f}{note}\n"
-                    )
-
-            def run_step(step: int, *, traced: bool) -> Any:
-                started = time.perf_counter()
-                result = training(
-                    step_microbatches(*geometry),
-                    hyperparams={"lr": LEARNING_RATE},
-                    runtime_trace=traced,
-                )
-                losses[step] = statistics.fmean(
-                    float(value) for value in result.objectives
-                )
-                hosts[step] = time.perf_counter() - started
-                report_cycles()
-                return result
-
-            if arguments.steps > 1:
-                print(rule("Steps"))
-                for step in range(1, arguments.steps):
-                    result = run_step(step, traced=False)
-            print(rule("Traced step versus simulation"))
-            result = run_step(arguments.steps, traced=True)
-            # Close the last step's cycle where a next step would begin, so
-            # its time reads like every other step's, then resolve the trace
-            # with that cycle in it.
-            training.mark_cycle_end()
-            report_cycles()
-            # Every cycle runs origin to next origin, so consecutive cycles
-            # tile the run: their sum is the span from the first step's start
-            # to the last one's end, and tokens over that span is the one
-            # throughput a boundary between steps cannot hide in.
-            elapsed = sum(cycles.values())
-            walls = [cycles[step] for step in sorted(cycles)]
-            # Two of these steps are not the step this reports. The first pays
-            # the plan's reconciliation of its initial state. The last is the
-            # traced one, and tracing costs it tens of milliseconds of collection
-            # -- enough that it came out slower than its predecessor at almost
-            # every budget measured -- so including it biases the median upward
-            # every time. The qualification gate makes the same exclusion.
-            untraced = walls[:-1] if len(walls) > 1 else walls
-            measured = untraced[1:] if len(untraced) > 1 else untraced
-            # Both sides are the whole step -- the median on the device clock
-            # against the plan's makespan -- and these are the same two values
-            # the figures use, so the percentage here and the figure's relative
-            # error cannot drift apart. Written with the steps it summarizes,
-            # rather than after the epilogue, where it would read as part of the
-            # trace.
-            median_step = statistics.median(measured)
-            simulated_step = plan_report.summary.simulated_step_seconds
-            plan_log.write(
-                f"\n  end to end {elapsed:8.3f} s"
-                f"   ({elapsed / len(cycles):.3f} s per step)"
-                f"   {len(cycles) * tokens_per_step / elapsed:>10,.0f} tok/s"
-                f"   ({len(cycles)} steps, every boundary included)\n"
+            release_case_model(self.case, runtime=runtime)
+            self.case = build_case(manifest, seed=arguments.seed, runtime=runtime)
+            ledger.charge("model construction", marker)
+            plan_log.note("model and optimizer state reset for a comparable run")
+        self.trained = True
+        case = self.case
+        microbatches = self.example_microbatches(*geometry)
+        marker = time.perf_counter()
+        plan_sink: Any = contextlib.redirect_stdout(plan_log)
+        plan_log.note(f"run planning at execution {gib(budget)}")
+        with plan_sink:
+            training = plan_step(
+                case.model,
+                objective=case.objective,
+                optimizer=case.optimizer,
+                optimizer_state_init=optimizer_state_init,
+                hyperparams=("lr",),
+                example_inputs=microbatches,
+                runtime=runtime,
+                execution="execution",
+                spill="spill",
+                execution_budget=budget,
+                optimizer_ordering="stage_interleaved",
+                depth=ordering.depth,
+                breadth=ordering.breadth,
+                reverse_breadth=ordering.reverse_breadth,
+                pair_loss=ordering.pair_loss,
+                artifact_store=paths.store,
+                build_store=paths.build_store,
+                plan_store=paths.plan_store,
+                build_store_mode=arguments.build_store_mode,
+                plan_store_mode=arguments.plan_store_mode,
+                export_bypass_key=arguments.export_bypass_key,
+                # The search policy the geometry search used, so the run
+                # plans the plan the search promised rather than missing
+                # the store and searching again under other options.
+                search_options=self.policy,
+                # The search's winning plan is the plan to beat, so the
+                # step executes what the search chose, or better, even
+                # when the replan's facts differ from the search's and
+                # the store cannot hand the plan back.
+                incumbent=incumbent,
+                transfer_bandwidths=self.lanes,
             )
-            plan_log.write(
-                f"  median step {median_step:7.3f} s"
-                f"   simulated {simulated_step:7.3f} s"
-                f"   ({(median_step - simulated_step) / simulated_step:+.2%})"
-                f"   ({len(measured)} untraced"
-                f" step{'' if len(measured) == 1 else 's'} after the first)\n"
-            )
-            print()
-            print(rule("Traced step versus simulation"))
-            assert result.diagnostics is not None
-            diagnostics = result.diagnostics.result()
-            print()
-            print_epilogue(diagnostics)
-            trace_path = run_root / "steps" / f"{budget / _GIB:g}gib.json"
-            trace_path.parent.mkdir(parents=True, exist_ok=True)
-            trace_path.write_text(
-                json.dumps(diagnostics.as_dict(), indent=2, sort_keys=True)
-            )
-            print(f"  step diagnostics: {trace_path}")
-            ledger["steps execution"] = ledger.get("steps execution", 0.0) + sum(
-                hosts.values()
-            )
-            # The final StepResult's public outputs are caller-owned device
-            # tensors; the runtime refuses to close while they are alive.
-            del result
-            gc.collect()
-            training.close()
-            step_summary = diagnostics.summary
-            return RunBudgetOutcome(
-                execution_budget_bytes=budget,
-                simulated_step_seconds=simulated_step,
-                measured_step_seconds=median_step,
-                step_seconds=tuple(walls),
-                profiled_task_seconds=step_summary.profiled_task_seconds,
-                real_task_seconds=step_summary.real_task_event_seconds,
-                simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
-                real_idle_seconds=step_summary.real_inter_task_idle_seconds,
-                recomputation_seconds=(
-                    plan_report.summary.recomputation_overhead_seconds
-                ),
-                # The whole opening, not the first task's wait for its own
-                # inputs: the restore runs before the first task's compute starts,
-                # and the simulator prices none of it, so it is the measured
-                # step's largest unmodelled part.
-                prologue_seconds=step_summary.opening_delay_seconds,
-                terminal_tail_seconds=(step_summary.simulator_terminal_tail_seconds),
-                real_terminal_tail_seconds=(step_summary.exposed_tail_seconds or 0.0),
-            )
+        ledger.charge("run planning", marker)
+        note_host_memory(plan_log, f"planned {gib(budget)}")
+        plan_report = training.plan_report
+        print_breakdown(plan_report, tokens_per_step)
 
+        steps = self._run_steps(training, plan_report, geometry)
+        diagnostics, walls = steps.diagnostics, steps.walls
+        median_step, simulated_step = (
+            steps.median_step_seconds,
+            steps.simulated_step_seconds,
+        )
+        print()
+        print(rule("Traced step versus simulation"))
+        print()
+        print_epilogue(diagnostics)
+        trace_path = paths.root / "steps" / f"{budget / _GIB:g}gib.json"
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_path.write_text(
+            json.dumps(diagnostics.as_dict(), indent=2, sort_keys=True)
+        )
+        print(f"  step diagnostics: {trace_path}")
+        ledger["steps execution"] = (
+            ledger.get("steps execution", 0.0) + steps.host_seconds
+        )
+        training.close()
+        step_summary = diagnostics.summary
+        return RunBudgetOutcome(
+            execution_budget_bytes=budget,
+            simulated_step_seconds=simulated_step,
+            measured_step_seconds=median_step,
+            step_seconds=walls,
+            profiled_task_seconds=step_summary.profiled_task_seconds,
+            real_task_seconds=step_summary.real_task_event_seconds,
+            simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
+            real_idle_seconds=step_summary.real_inter_task_idle_seconds,
+            recomputation_seconds=(plan_report.summary.recomputation_overhead_seconds),
+            # The whole opening, not the first task's wait for its own
+            # inputs: the restore runs before the first task's compute starts,
+            # and the simulator prices none of it, so it is the measured
+            # step's largest unmodelled part.
+            prologue_seconds=step_summary.opening_delay_seconds,
+            terminal_tail_seconds=(step_summary.simulator_terminal_tail_seconds),
+            real_terminal_tail_seconds=(step_summary.exposed_tail_seconds or 0.0),
+        )
+
+    def run(self) -> list[RunBudgetOutcome]:
+        """Every run budget, on the search's winner or the manual geometry."""
+
+        arguments, request, plan_log = self.arguments, self.request, self.plan_log
+        manifest, report = request.manifest, self.report
         run_entries: list[RunBudgetOutcome] = []
-        for budget in run_budgets:
+        for budget in self.budgets.run:
             incumbent: AnnotatedProgramPlan | None = None
-            if manual is not None:
-                geometry = (manual, sequences_per_step // manual)
+            if request.manual is not None:
+                geometry = (
+                    request.manual,
+                    request.sequences_per_step // request.manual,
+                )
                 ordering = StepDataOrdering.depth_first(geometry[1])
             else:
                 assert report is not None
@@ -1579,7 +1773,9 @@ def main() -> int:
             # than discarding every budget after it. The figures for the budgets
             # that did run are worth more than a stack trace.
             try:
-                run_entries.append(run_one_budget(budget, geometry, incumbent))
+                run_entries.append(
+                    self.run_one_budget(budget, geometry, ordering, incumbent)
+                )
             except RuntimeExecutionError as error:
                 print(f"  {gib(budget)} could not be admitted: {error}")
                 plan_log.note(f"{gib(budget)} refused admission; skipping")
@@ -1590,30 +1786,40 @@ def main() -> int:
                 # and its figures can be redrawn from the tables.
                 write_run_tables(
                     run_entries,
-                    run_root / "figures" / "raw_data",
-                    tokens_per_step=tokens_per_step,
+                    self.paths.root / "figures" / "raw_data",
+                    tokens_per_step=request.tokens_per_step,
                 )
             # The frame that owned the closed plan is gone; collect what its
             # internals hold in cycles, so the host memory that plan still
             # occupies is free before the next budget plans.
             gc.collect()
             note_host_memory(plan_log, f"closed the {gib(budget)} plan")
-        log_handle.close()
+        return run_entries
+
+    def close(self, run_entries: list[RunBudgetOutcome]) -> None:
+        """The run's figures, then the model's state back to the pool."""
+
+        arguments = self.arguments
+        self.log_handle.close()
         if arguments.plots and run_entries:
-            plot_dir = run_root / "figures"
+            plot_dir = self.paths.root / "figures"
             marker = time.perf_counter()
             written_run = plot_step_run(
                 run_entries,
                 plot_dir,
-                tokens_per_step=tokens_per_step,
+                tokens_per_step=self.request.tokens_per_step,
             )
-            charge("figures", marker)
+            self.ledger.charge("figures", marker)
             for path in written_run:
                 print(f"  figure: {path}")
             print()
-        release_case_model(case, runtime=runtime)
-    runtime.close()
-    total = time.perf_counter() - command_started
+        release_case_model(self.case, runtime=self.runtime)
+
+
+def print_closing(ledger: Ledger, manifest: Any) -> None:
+    """Where the time and the host memory went."""
+
+    total = time.perf_counter() - ledger.started
     ledger["everything else"] = max(0.0, total - sum(ledger.values()))
     print(rule("Where the time went"))
     for name, value in sorted(ledger.items(), key=lambda item: -item[1]):
@@ -1633,6 +1839,26 @@ def main() -> int:
             f"   ({gib(max(0, ceiling - peak))} unused at the peak)"
         )
     print()
+
+
+def main() -> int:
+    parser, arguments = parse_arguments()
+    request = resolve_request(parser, arguments)
+    paths = prepare_run_root(arguments, request)
+    if paths is None:
+        return 1
+    ledger = Ledger()
+    runtime = open_runtime(request, ledger)
+    budgets = plan_budgets(runtime, request)
+    print_banner(arguments, request, runtime, budgets)
+    tour = Tour(arguments, request, paths, budgets, runtime, ledger)
+    with tour.case.implementations():
+        tour.search()
+        tour.plot_search()
+        entries = tour.run()
+        tour.close(entries)
+    runtime.close()
+    print_closing(ledger, request.manifest)
     return 0
 
 
