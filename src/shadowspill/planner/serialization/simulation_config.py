@@ -15,7 +15,7 @@ from .common import _integer, _list, _mapping, _string
 def _simulation_config_to_dict(config: SimulationConfig) -> dict[str, object]:
     return {
         "devices": [asdict(item) for item in config.devices],
-        "host_capacity_bytes": config.spill_capacity_bytes,
+        "spill_capacity_bytes": config.spill_capacity_bytes,
     }
 
 
@@ -55,5 +55,5 @@ def _simulation_config_from_value(
             for index, raw in enumerate(devices)
             for item in (_mapping(raw, f"{path}.devices[{index}]"),)
         ),
-        _integer(data.get("host_capacity_bytes"), f"{path}.host_capacity_bytes"),
+        _integer(data.get("spill_capacity_bytes"), f"{path}.spill_capacity_bytes"),
     )

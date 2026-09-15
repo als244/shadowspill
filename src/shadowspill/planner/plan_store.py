@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
 
+from shadowspill.errors import PlanInfeasibleError, PlanSearchExhaustedError
 from shadowspill.ir import (
     MemorySchedule,
     ResidencySpec,
@@ -19,19 +20,11 @@ from shadowspill.ir import (
     TaskAlternativeChoice,
 )
 from shadowspill.schema import artifact_schema
-from shadowspill.simulator import SimulationConfig, simulate
-from shadowspill.simulator.indexing import (
-    index_simulation_template,
-    simulate_template,
-)
+from shadowspill.simulator import SimulationConfig, SimulationInfeasibleError
 from shadowspill.store import CONTRIBUTE, ArtifactStore, StorePolicy, digest_directory
 
 from .admission import AdmissionFacts
-from .admission.indexing import (
-    encode_schedule,
-    evaluate_schedule_admission,
-    index_admission_facts,
-)
+from .admission.layout.model import FixedLayoutAdmission
 from .diagnostics import PlanningDiagnostics
 from .diagnostics.json import without_measurements
 from .result import ProgramPlanResult
@@ -40,7 +33,12 @@ from .search import (
     SearchOptions,
     answer_no_worse_than,
 )
-from .serialization import _resident_slice_from_value
+from .serialization import (
+    _fixed_layout_from_value,
+    _resident_slice_from_value,
+    _simulation_admission_from_value,
+    _simulation_result_from_value,
+)
 
 _SCHEMA = artifact_schema("plan_selection")
 
@@ -61,11 +59,31 @@ class _ArtifactRecorder(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PlanLookup:
-    """One selected plan, and whether it was read back or planned now."""
+    """One selected plan, whether it was read back or planned now, and what
+    the store holds beside it."""
 
     result: ProgramPlanResult
     #: True when the plan was read back rather than planned now.
     from_store: bool
+    #: The key the plan is filed under, which `PlanStore.certify` writes beside.
+    key: str = ""
+    #: The fixed-layout certificate read back with the plan, when one is stored.
+    certificate: FixedLayoutAdmission | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Verdict:
+    """A search's recorded refusal: no plan, and why."""
+
+    outcome: str
+    error: str
+    kind: str | None
+    message: str
+
+
+#: The refusals a store records. A `RuntimeError` such as a preparation failure
+#: is not one of them: it may be the environment's, and is not recorded.
+_VERDICTS = (PlanInfeasibleError, SimulationInfeasibleError, PlanSearchExhaustedError)
 
 
 class PlanStore:
@@ -139,7 +157,7 @@ class PlanStore:
             placement,
             chosen,
         )
-        cached = (
+        stored = (
             self._read(
                 key,
                 program,
@@ -153,36 +171,120 @@ class PlanStore:
             if self.policy.read_enabled
             else None
         )
-        if cached is not None and not _claims_to_beat(incumbent, cached):
-            return PlanLookup(cached, True)
-        if cached is None:
+        if isinstance(stored, _Verdict):
+            # A verdict answers the question it was recorded for. With a plan
+            # in hand the search may answer with that plan instead, so the
+            # question is asked again.
+            if incumbent is None:
+                raise _verdict_error(stored)
+            stored = None
+        if stored is not None and not _claims_to_beat(incumbent, stored.result):
+            return stored
+        if stored is None:
             self.policy.refuse_miss("plan", key)
-        result = answer_no_worse_than(
-            algorithm(
-                program,
-                initial_residency=initial_residency,
-                final_residency=final_residency,
-                config=config,
-                generic=chosen.generic,
-                workers=chosen.workers,
-                admission=admission,
-                placement=placement,
-                progress=progress,
+        try:
+            result = answer_no_worse_than(
+                algorithm(
+                    program,
+                    initial_residency=initial_residency,
+                    final_residency=final_residency,
+                    config=config,
+                    generic=chosen.generic,
+                    workers=chosen.workers,
+                    admission=admission,
+                    placement=placement,
+                    progress=progress,
+                    incumbent=incumbent,
+                ),
                 incumbent=incumbent,
-            ),
-            incumbent=incumbent,
-            config=config,
-            placement=placement,
-        )
-        if cached is not None:
-            if result.simulation.makespan_ns >= cached.simulation.makespan_ns:
-                return PlanLookup(cached, True)
+                config=config,
+                placement=placement,
+            )
+        except _VERDICTS as error:
+            if incumbent is None:
+                self._write_verdict(
+                    key,
+                    program,
+                    initial_residency,
+                    final_residency,
+                    config,
+                    admission,
+                    algorithm,
+                    chosen,
+                    error,
+                )
+            raise
+        if stored is not None:
+            if result.simulation.makespan_ns >= stored.result.simulation.makespan_ns:
+                return stored
             self._write(
                 key, result, admission, algorithm, chosen, incumbent, improve=True
             )
-            return PlanLookup(result, False)
+            return PlanLookup(result, False, key)
         self._write(key, result, admission, algorithm, chosen, incumbent)
-        return PlanLookup(result, False)
+        return PlanLookup(result, False, key)
+
+    def certify(self, lookup: PlanLookup, admission: FixedLayoutAdmission) -> None:
+        """Write a plan's fixed-layout certificate beside it.
+
+        The certificate is a function of the plan and the facts it was
+        certified against, which its layout names by digest, so a later read
+        serves it without placing or simulating again.
+        """
+
+        if not self.policy.write_enabled or not lookup.key:
+            return
+        path = self.path(lookup.key)
+        payload = self._payload(path)
+        if payload is None or "verdict" in payload:
+            return
+        payload["admission_certificate"] = {
+            "facts_digest": admission.layout.facts_digest,
+            "layout": admission.layout.to_dict(),
+            "simulator_input": asdict(admission.simulator_input),
+            "simulation": asdict(admission.simulation),
+        }
+        _store(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        self._record(lookup.key, lookup.result.program.digest, path, "certified")
+
+    def _boundary(
+        self,
+        key: str,
+        program: ShadowSpillProgram,
+        initial_residency: tuple[ResidencySpec, ...],
+        final_residency: tuple[ResidencySpec, ...],
+        config: SimulationConfig,
+        admission: AdmissionFacts | None,
+        algorithm: SearchAlgorithm,
+        search_options: SearchOptions,
+    ) -> dict[str, object]:
+        """The request a record answers, as the record states it."""
+
+        return {
+            "schema": _SCHEMA,
+            "key_digest": key,
+            "program_digest": program.digest,
+            "initial_residency": [item.to_dict() for item in initial_residency],
+            "final_residency": [item.to_dict() for item in final_residency],
+            "simulation": {
+                "devices": [asdict(item) for item in config.devices],
+                "spill_capacity_bytes": config.spill_capacity_bytes,
+            },
+            "admission_digest": admission.digest if admission is not None else None,
+            "search": algorithm.name,
+            "search_options": search_options.to_dict(),
+        }
+
+    def _payload(self, path: Path) -> dict[str, object] | None:
+        try:
+            value = json.loads(path.read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"planned program {path} cannot be read") from exc
+        if not isinstance(value, dict) or value.get("schema") != _SCHEMA:
+            raise ValueError(f"planned program {path} has an invalid schema")
+        return value
 
     def _read(
         self,
@@ -194,37 +296,52 @@ class PlanStore:
         admission: AdmissionFacts | None,
         algorithm: SearchAlgorithm,
         search_options: SearchOptions,
-    ) -> ProgramPlanResult | None:
+    ) -> PlanLookup | _Verdict | None:
+        """Read the record for `key` back, trusting what it states.
+
+        The record's own digests and the request boundary it names are
+        checked; its schedule is validated against the program; nothing is
+        simulated. A record written before results were stored beside plans
+        is a miss, and the fresh answer overwrites it.
+        """
+
         path = self.path(key)
-        try:
-            value = json.loads(path.read_text())
-        except FileNotFoundError:
+        value = self._payload(path)
+        if value is None:
             return None
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ValueError(f"planned program {path} cannot be read") from exc
-        if not isinstance(value, dict) or value.get("schema") != _SCHEMA:
-            raise ValueError(f"planned program {path} has an invalid schema")
+        expected = self._boundary(
+            key,
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            admission,
+            algorithm,
+            search_options,
+        )
+        normalized = json.loads(
+            json.dumps(expected, sort_keys=True, separators=(",", ":"))
+        )
         if value.get("key_digest") != key:
             raise ValueError(f"planned program {path} has the wrong identity")
         if value.get("program_digest") != program.digest:
             raise ValueError(f"planned program {path} has the wrong ShadowSpillProgram")
-        expected_boundary = {
-            "initial_residency": [item.to_dict() for item in initial_residency],
-            "final_residency": [item.to_dict() for item in final_residency],
-            "simulation": {
-                "devices": [asdict(item) for item in config.devices],
-                "spill_capacity_bytes": config.spill_capacity_bytes,
-            },
-            "admission_digest": admission.digest if admission is not None else None,
-            "search": algorithm.name,
-            "search_options": search_options.to_dict(),
-        }
-        normalized_boundary = json.loads(
-            json.dumps(expected_boundary, sort_keys=True, separators=(",", ":"))
-        )
-        for field, expected in normalized_boundary.items():
-            if value.get(field) != expected:
+        for field, expected_value in normalized.items():
+            if value.get(field) != expected_value:
                 raise ValueError(f"planned program {path} has stale {field} evidence")
+        verdict = value.get("verdict")
+        if verdict is not None:
+            if not isinstance(verdict, dict):
+                raise ValueError(f"planned program {path} has an invalid verdict")
+            self._record(key, program.digest, path, "read")
+            return _Verdict(
+                outcome=str(verdict.get("outcome")),
+                error=str(verdict.get("error")),
+                kind=None if verdict.get("kind") is None else str(verdict.get("kind")),
+                message=str(verdict.get("message")),
+            )
+        if "simulation_result" not in value:
+            return None
         schedule = MemorySchedule.from_dict(value.get("schedule"))
         raw_selections = value.get("selections")
         if not isinstance(raw_selections, list):
@@ -234,29 +351,14 @@ class PlanStore:
             for index, item in enumerate(raw_selections)
         )
         schedule.validate(program, selections)
-        if admission is None:
-            simulation = simulate(
-                program,
-                schedule,
-                selections=selections,
-                config=config,
-            )
-        else:
-            template = index_simulation_template(program, selections, config)
-            indexed_admission = index_admission_facts(admission, template)
-            physical = evaluate_schedule_admission(
-                template,
-                indexed_admission,
-                encode_schedule(schedule, template),
-            )
-            simulation = simulate_template(
-                template,
-                schedule,
-                admission=physical.simulation_admission,
-            )
+        simulation = _simulation_result_from_value(
+            value.get("simulation_result"), f"{path}.simulation_result"
+        )
         diagnostics = _diagnostics_from_value(value.get("diagnostics"), path)
         if diagnostics.selected_makespan_ns != simulation.makespan_ns:
-            raise ValueError(f"planned program {path} has stale simulator evidence")
+            raise ValueError(
+                f"planned program {path} has inconsistent simulator evidence"
+            )
         result = ProgramPlanResult(
             program=program,
             search_options=search_options,
@@ -272,8 +374,9 @@ class PlanStore:
             ),
             admission_facts=admission,
         )
+        certificate = _certificate_from_value(value.get("admission_certificate"), path)
         self._record(key, program.digest, path, "read")
-        return result
+        return PlanLookup(result, True, key, certificate)
 
     def _write(
         self,
@@ -290,37 +393,35 @@ class PlanStore:
         path = self.path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, object] = {
-            "schema": _SCHEMA,
-            "key_digest": key,
-            "program_digest": result.program.digest,
-            "initial_residency": [item.to_dict() for item in result.initial_residency],
-            "final_residency": [item.to_dict() for item in result.final_residency],
-            "simulation": {
-                "devices": [asdict(item) for item in result.simulation_config.devices],
-                "spill_capacity_bytes": result.simulation_config.spill_capacity_bytes,
-            },
-            "admission_digest": admission.digest if admission is not None else None,
-            "search": algorithm.name,
-            "search_options": search_options.to_dict(),
+            **self._boundary(
+                key,
+                result.program,
+                result.initial_residency,
+                result.final_residency,
+                result.simulation_config,
+                admission,
+                algorithm,
+                search_options,
+            ),
             **_incumbent_field(incumbent),
             "schedule": result.schedule.to_dict(),
             "selections": [item.to_dict() for item in result.selections],
+            "simulation_result": asdict(result.simulation),
             "diagnostics": result.diagnostics.to_dict(),
             "resident_slice": result.resident_slice.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        if path.exists() and not self.policy.overwrite and not improve:
-            try:
-                existing = path.read_text()
-            except OSError as exc:
-                raise ValueError(f"planned program {path} cannot be read") from exc
-            try:
-                existing_payload = json.loads(existing)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"planned program {path} cannot be read") from exc
+        existing = None if self.policy.overwrite or improve else self._payload(path)
+        # A verdict, or a record from before results were stored beside plans,
+        # is superseded by an answer; anything else must be the same answer.
+        if (
+            existing is not None
+            and "verdict" not in existing
+            and "simulation_result" in existing
+        ):
             # Provenance is not the answer: the same plan found with or
             # without a plan in hand is the same plan.
-            if _without_provenance(existing_payload) != _without_provenance(payload):
+            if _answer(existing) != _answer(payload):
                 raise ValueError(
                     "a fresh search differs from the stored planned program; "
                     "use a 'refresh' store mode or a new export_bypass_key: "
@@ -328,21 +429,51 @@ class PlanStore:
                 )
             self._record(key, result.program.digest, path, "matched")
             return
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{key}.", suffix=".tmp", dir=path.parent
-        )
-        try:
-            with os.fdopen(descriptor, "w") as output:
-                output.write(encoded)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, path)
-        finally:
-            with suppress(FileNotFoundError):
-                os.unlink(temporary)
+        _store(path, encoded)
         self._record(
             key, result.program.digest, path, "improved" if improve else "write"
         )
+
+    def _write_verdict(
+        self,
+        key: str,
+        program: ShadowSpillProgram,
+        initial_residency: tuple[ResidencySpec, ...],
+        final_residency: tuple[ResidencySpec, ...],
+        config: SimulationConfig,
+        admission: AdmissionFacts | None,
+        algorithm: SearchAlgorithm,
+        search_options: SearchOptions,
+        error: BaseException,
+    ) -> None:
+        if not self.policy.write_enabled:
+            return
+        path = self.path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, object] = {
+            **self._boundary(
+                key,
+                program,
+                initial_residency,
+                final_residency,
+                config,
+                admission,
+                algorithm,
+                search_options,
+            ),
+            "verdict": {
+                "outcome": (
+                    "exhausted"
+                    if isinstance(error, PlanSearchExhaustedError)
+                    else "infeasible"
+                ),
+                "error": type(error).__name__,
+                "kind": getattr(error, "kind", None),
+                "message": str(error),
+            },
+        }
+        _store(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        self._record(key, program.digest, path, "verdict")
 
     def _record(
         self,
@@ -397,6 +528,64 @@ def _key(
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _store(path: Path, encoded: str) -> None:
+    """Write a record atomically: a reader sees the old record or the new one."""
+
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        with suppress(FileNotFoundError):
+            os.unlink(temporary)
+
+
+def _answer(payload: dict[str, object]) -> object:
+    """The part of a record that is the answer: not its provenance, and not
+    the certificate a later step wrote beside it."""
+
+    return _without_provenance(
+        {
+            name: value
+            for name, value in payload.items()
+            if name != "admission_certificate"
+        }
+    )
+
+
+def _certificate_from_value(value: object, path: Path) -> FixedLayoutAdmission | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"planned program {path} has an invalid certificate")
+    where = f"{path}.admission_certificate"
+    return FixedLayoutAdmission(
+        layout=_fixed_layout_from_value(value.get("layout"), f"{where}.layout"),
+        simulator_input=_simulation_admission_from_value(
+            value.get("simulator_input"), f"{where}.simulator_input"
+        ),
+        simulation=_simulation_result_from_value(
+            value.get("simulation"), f"{where}.simulation"
+        ),
+    )
+
+
+def _verdict_error(verdict: _Verdict) -> Exception:
+    """The refusal a stored verdict stands for, raised as the search raised it."""
+
+    if verdict.outcome == "exhausted":
+        return PlanSearchExhaustedError(verdict.message)
+    return PlanInfeasibleError(
+        verdict.message,
+        kind=verdict.kind if verdict.kind is not None else verdict.error,
+    )
 
 
 def _claims_to_beat(

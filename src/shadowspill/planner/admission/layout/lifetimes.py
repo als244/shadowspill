@@ -26,6 +26,7 @@ from shadowspill.planner.admission.lifetimes import (
 )
 from shadowspill.planner.admission.operations import AdmissionOperations
 from shadowspill.simulator import SimulationResult
+from shadowspill.simulator.indexing import IntervalArrays, interval_arrays_from_result
 
 from ..admission_replay import AdmissionReplayPurpose
 from ..setup import AdmissionSetup
@@ -207,18 +208,26 @@ def resolve_lease_lifetimes(
     if unknown:
         raise ValueError(f"dynamic terminal aliases are not in this program: {unknown}")
     dynamic = tuple(sorted(indices[alias] for alias in dynamic_alias_group_ids))
+    # A result the simulator produced carries its arrays; one read back from a
+    # store is re-encoded into the template's index space.
+    intervals = simulation.interval_arrays
+    if not isinstance(intervals, IntervalArrays):
+        intervals = interval_arrays_from_result(setup.template, simulation)
     try:
         leases = build_lease_lifetimes(
             operations,
             setup.indexed_facts,
             simulation,
+            intervals,
             dynamic_aliases=dynamic,
         )
     except RuntimeError:
         # The only caller error the library cannot describe is a terminal alias
         # that never reached a final lease. Resolve without them to name it.
         layout = LeaseLayout(
-            leases=build_lease_lifetimes(operations, setup.indexed_facts, simulation),
+            leases=build_lease_lifetimes(
+                operations, setup.indexed_facts, simulation, intervals
+            ),
             setup=setup,
         )
         missing = sorted(dynamic_alias_group_ids - layout.active_aliases.keys())
