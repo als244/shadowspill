@@ -36,7 +36,7 @@ from shadowspill.pytorch.planning.common import (
     workspace_reserve,
 )
 from shadowspill.pytorch.profiling import TaskMeasurement
-from shadowspill.pytorch.runtime_adapter.runtime import _adapter_path
+from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
 from shadowspill.runtime.topology import TransferProfile
 
 
@@ -204,14 +204,14 @@ def test_representatives_and_adapter_path_contract(tmp_path: Path) -> None:
     assert values[2] == "x"
 
     try:
-        configured = _adapter_path(None)
+        configured = adapter_path(None)
     except RuntimeError:
         configured = None
     missing = tmp_path / "missing.so"
     with pytest.raises(RuntimeError, match="not found"):
-        _adapter_path(missing)
+        adapter_path(missing)
     if configured is not None:
-        assert _adapter_path(configured) == configured
+        assert adapter_path(configured) == configured
 
 
 def _profile(source: str, destination: str, **measured: int) -> TransferProfile:

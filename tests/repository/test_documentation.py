@@ -46,7 +46,15 @@ _PUBLIC_PYTHON_MODULES = (
 _PUBLIC_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
 
 _PUBLIC_C_REFERENCES = {
-    _PUBLIC_HEADERS / "runtime.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "vocabulary.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "descriptions.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "diagnostics.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "lifecycle.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "pools.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "objects.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "plan.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "tasks.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "telemetry.h": DOCS / "c" / "runtime.md",
     _PUBLIC_HEADERS / "admission_replay.h": DOCS / "c" / "runtime.md",
     _PUBLIC_HEADERS / "backend.h": DOCS / "c" / "backends.md",
     _PUBLIC_HEADERS / "planner.h": DOCS / "c" / "planner.md",
@@ -62,7 +70,7 @@ _PUBLIC_C_REFERENCES = {
 
 _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/api.py:build_step_programs",
-    "src/shadowspill/pytorch/step_search.py:plan_step_search",
+    "src/shadowspill/pytorch/step_search/__init__.py:plan_step_search",
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
     "src/shadowspill/planner/plan.py:plan_program",
@@ -72,7 +80,7 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/callables.py:PlannedForward.submit",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.submit",
-    "src/shadowspill/pytorch/runtime_adapter/runtime.py:Runtime.__init__",
+    "src/shadowspill/pytorch/runtime_adapter/runtime/core.py:Runtime.__init__",
     "src/shadowspill/pytorch/state/model.py:export_model_state",
     "src/shadowspill/pytorch/state/model.py:import_model_state",
     "src/shadowspill/pytorch/state/model.py:import_model_state_from_file",
@@ -775,7 +783,13 @@ def test_every_plan_report_field_is_described_in_its_reference() -> None:
     """
 
     modules = (
-        "src/shadowspill/planner/diagnostics/plan.py",
+        "src/shadowspill/planner/diagnostics/plan/compilation.py",
+        "src/shadowspill/planner/diagnostics/plan/graphs.py",
+        "src/shadowspill/planner/diagnostics/plan/stages.py",
+        "src/shadowspill/planner/diagnostics/plan/layout.py",
+        "src/shadowspill/planner/diagnostics/plan/diagnostics.py",
+        "src/shadowspill/planner/diagnostics/plan/summary.py",
+        "src/shadowspill/planner/diagnostics/plan/report.py",
         "src/shadowspill/planner/diagnostics/summary.py",
         "src/shadowspill/planner/diagnostics/resolved_programs.py",
         "src/shadowspill/planner/diagnostics/candidates.py",
@@ -798,3 +812,71 @@ def test_every_plan_report_field_is_described_in_its_reference() -> None:
             if missing:
                 undocumented[node.name] = missing
     assert not undocumented, f"fields absent from plan-report-fields.md: {undocumented}"
+
+
+#: The directory drawings in the docs, and the directory each is rooted at. A
+#: drawing that enumerates packages is also checked for completeness; the
+#: others say in their own text that they stop at one level.
+_DOCUMENTED_TREES = (
+    ("docs/development/repository.md", "shadowspill/", ".", False),
+    ("docs/development/repository.md", "src/shadowspill/", "src/shadowspill", True),
+    ("docs/development/repository.md", "tests/", "tests", False),
+    ("csrc/README.md", "csrc/", "csrc", False),
+    ("qualification/README.md", "qualification/", "qualification", False),
+)
+
+_TREE_BLOCK = re.compile(r"```text\n(.*?)```", re.S)
+_TREE_ENTRY = re.compile(r"^((?:(?:│   |    )*)(?:├── |└── ))(\S+)")
+
+
+def _drawn_paths(block: str, root: Path) -> list[tuple[Path, bool]]:
+    """Every path one drawing names, and whether it is drawn as a directory."""
+
+    drawn: list[tuple[Path, bool]] = []
+    parents = [root]
+    for line in block.splitlines()[1:]:
+        entry = _TREE_ENTRY.match(line)
+        if entry is None:
+            continue
+        # the branch marker is four characters wide and is not a level
+        depth = (len(entry.group(1)) - 4) // 4
+        name = entry.group(2)
+        parent = parents[depth] if depth < len(parents) else parents[-1]
+        path = parent / name.rstrip("/")
+        del parents[depth + 1 :]
+        parents.append(path)
+        drawn.append((path, name.endswith("/")))
+    return drawn
+
+
+def test_documented_directory_trees_match_the_repository() -> None:
+    absent: dict[str, list[str]] = {}
+    undrawn: dict[str, list[str]] = {}
+    for document, heading, root, exhaustive in _DOCUMENTED_TREES:
+        for block in _TREE_BLOCK.findall((ROOT / document).read_text()):
+            if block.splitlines()[0].strip() != heading:
+                continue
+            drawn = _drawn_paths(block, ROOT / root)
+            where = f"{document} :: {heading}"
+            missing = [
+                path.relative_to(ROOT).as_posix()
+                for path, _directory in drawn
+                if not path.exists()
+            ]
+            if missing:
+                absent[where] = missing
+            if not exhaustive:
+                continue
+            named = {path for path, _directory in drawn}
+            for path, directory in [(ROOT / root, True), *drawn]:
+                if not directory or not path.is_dir():
+                    continue
+                for child in sorted(path.iterdir()):
+                    if not child.is_dir() or child.name.startswith((".", "_")):
+                        continue
+                    if child not in named:
+                        undrawn.setdefault(where, []).append(
+                            child.relative_to(ROOT).as_posix()
+                        )
+    assert not absent, f"documented paths that do not exist: {absent}"
+    assert not undrawn, f"packages the drawing omits: {undrawn}"
