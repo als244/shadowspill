@@ -132,6 +132,7 @@ from .common import (
     build_simulation_config,
     estimate_spill_reservation,
     fixed_execution_bytes,
+    program_phase_timings,
     public_infeasible_plan_error,
     public_search_exhausted_error,
     validate_budgets,
@@ -386,13 +387,14 @@ def materialize_training_state(
             # it keeps on meta, which allocates nothing; each entry is then
             # allocated here and filled by the caller. Capture below finds the
             # state already present and does not create any of its own.
-            installed_entries = install_declared_optimizer_state(
-                model,
-                optimizer,
-                runtime=runtime,
-                pool=memory.spill,
-                initialize=optimizer_state_init,
-            )
+            with timer.measure("optimizer_state_install"):
+                installed_entries = install_declared_optimizer_state(
+                    model,
+                    optimizer,
+                    runtime=runtime,
+                    pool=memory.spill,
+                    initialize=optimizer_state_init,
+                )
             optimizer_capture = capture_optimizer(
                 dict(model.named_parameters()),
                 optimizer,
@@ -401,6 +403,7 @@ def materialize_training_state(
                     dict(model.named_parameters()),
                 ),
                 store=stores.optimizer_captures,
+                timer=timer,
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
@@ -1460,7 +1463,7 @@ def _build_training_step_programs(
                 data_ordering=ordering,
                 stores=artifacts,
                 timer=timer,
-                phase_timings_ns=_program_phase_timings(phases, elapsed),
+                phase_timings_ns=program_phase_timings(phases, elapsed),
             )
             if identity is not None:
                 with timer.measure("step_archival"):
@@ -1610,33 +1613,6 @@ def _planning_problem_artifact(
         object_reserve_bytes=object_reserve,
         dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes_,
     )
-
-
-def _program_phase_timings(
-    values: Sequence[tuple[str, int]],
-    elapsed: int,
-) -> tuple[tuple[str, int], ...]:
-    """Return non-overlapping pre-search phases plus reconciled total wall."""
-    nested_capture = any(
-        name
-        in {
-            "objective_export",
-            "export_archival",
-            "stage_partition_aot",
-            "storage_layout_lowering",
-        }
-        for name, _duration in values
-    )
-    phases = tuple(
-        (name, duration)
-        for name, duration in values
-        if not (nested_capture and name == "capture_lowering")
-    )
-    if sum(duration for _name, duration in phases) > elapsed:
-        raise RuntimeError(
-            "program construction phase intervals overlap: measured time exceeds wall"
-        )
-    return (*phases, ("total", elapsed))
 
 
 def build_training(
