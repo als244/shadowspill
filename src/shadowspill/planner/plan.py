@@ -73,7 +73,7 @@ def plan_program(
     plan_store: str | os.PathLike[str] | None = None,
     verbose: bool = True,
     plan_store_mode: StoreMode = "contribute",
-    implementation_revision: str | None = None,
+    export_bypass_key: str | None = None,
 ) -> AnnotatedProgramPlan:
     """Plan one problem: search, simulate, and physically admit the winner.
 
@@ -116,7 +116,7 @@ def plan_program(
         artifact_store,
         plan_store=plan_store,
         plan_store_mode=plan_store_mode,
-        implementation_revision=implementation_revision,
+        export_bypass_key=export_bypass_key,
     )
     cache.initialize()
     return select_program(

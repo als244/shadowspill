@@ -698,7 +698,7 @@ def plan_step_search(
     plan_store_mode: StoreMode = "contribute",
     verbose: bool = False,
     progress: Callable[[str], None] | None = None,
-    implementation_revision: str | None = None,
+    export_bypass_key: str | None = None,
 ) -> StepSearchReport:
     """Plan every admitted geometry under every budget; execute nothing.
 
@@ -804,7 +804,7 @@ def plan_step_search(
                         artifact_store=artifact_store,
                         build_store=build_store,
                         build_store_mode=build_store_mode,
-                        implementation_revision=implementation_revision,
+                        export_bypass_key=export_bypass_key,
                     )
                 except Exception as error:
                     if not _device_exhausted(error):

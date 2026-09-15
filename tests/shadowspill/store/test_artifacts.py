@@ -43,7 +43,7 @@ def test_profiling_metadata_is_canonical_and_position_aligned() -> None:
 def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None:
     cache = ArtifactStore.resolve(
         tmp_path,
-        implementation_revision="mlops-build-17",
+        export_bypass_key="mlops-build-17",
     )
     cache.initialize()
 
@@ -129,7 +129,7 @@ def test_the_home_cache_is_the_default_store() -> None:
 
 def test_planning_cache_policy_flags_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="non-empty"):
-        ArtifactStore.resolve(tmp_path, implementation_revision=" ")
+        ArtifactStore.resolve(tmp_path, export_bypass_key=" ")
 
     with pytest.raises(ValueError, match="must be one of"):
         ArtifactStore.resolve(tmp_path, build_store_mode="readonly")  # type: ignore[arg-type]
@@ -188,7 +188,7 @@ def test_a_refreshing_build_store_publishes_an_isolated_pytorch_cache(
     cache = ArtifactStore.resolve(
         tmp_path,
         build_store_mode="refresh",
-        implementation_revision="fresh-cache-test",
+        export_bypass_key="fresh-cache-test",
     )
     previous = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
 

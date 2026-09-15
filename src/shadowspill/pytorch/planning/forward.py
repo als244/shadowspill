@@ -327,7 +327,7 @@ def profile_forward_tasks(
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
         provider_id="shadowspill.device_pool",
-        implementation_revision=stores.store.implementation_revision,
+        export_bypass_key=stores.store.export_bypass_key,
     )
     with timer.measure("compiler_manifest"):
         manifests = resolve_task_manifests(

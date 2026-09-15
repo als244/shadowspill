@@ -136,7 +136,7 @@ class BuildSpec:
     allocation_probe_seeds: int
     allocation_probe_repetitions: int
     build_store_mode: StoreMode
-    implementation_revision: str | None
+    export_bypass_key: str | None
 
     def __post_init__(self) -> None:
         if self.allocation_probe_seeds <= 0:
@@ -150,7 +150,7 @@ class BuildSpec:
             "allocation_probe_seeds": self.allocation_probe_seeds,
             "allocation_probe_repetitions": self.allocation_probe_repetitions,
             "build_store_mode": self.build_store_mode,
-            "implementation_revision": self.implementation_revision,
+            "export_bypass_key": self.export_bypass_key,
         }
 
 
@@ -372,7 +372,7 @@ def _build_spec(value: object, path: str) -> BuildSpec:
             "allocation_probe_seeds",
             "allocation_probe_repetitions",
             "build_store_mode",
-            "implementation_revision",
+            "export_bypass_key",
         },
         path,
     )
@@ -391,9 +391,9 @@ def _build_spec(value: object, path: str) -> BuildSpec:
         build_store_mode=_store_mode(
             data.get("build_store_mode"), f"{path}.build_store_mode"
         ),
-        implementation_revision=_optional_string(
-            data.get("implementation_revision"),
-            f"{path}.implementation_revision",
+        export_bypass_key=_optional_string(
+            data.get("export_bypass_key"),
+            f"{path}.export_bypass_key",
         ),
     )
 

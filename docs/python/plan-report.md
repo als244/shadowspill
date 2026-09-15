@@ -364,5 +364,5 @@ planning workflow.
 | One task is unexpectedly large | Execution task → unique stage → chosen graph pair → forward/backward graph profile byte fields. |
 | Save and recompute look identical | Graph-pair saved-value counts/bytes, active tasks, and semantic root/output contracts. |
 | Plan repeatedly refines capacity | Physical-layout attempts, required bytes against pool capacity, dynamic/scratch reserves, and search repairs. |
-| Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, implementation revision, and allocation-probe policy. |
+| Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, export bypass key, and allocation-probe policy. |
 | Real execution disagrees with the plan | Resolve a traced step and use the [Step diagnostics guide](step-diagnostics.md). |

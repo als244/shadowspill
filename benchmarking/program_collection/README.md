@@ -72,7 +72,7 @@ stable.
 `build` is the `BuildSpec`: `optimizer_ordering`, `allocation_probe_seeds`,
 `allocation_probe_repetitions`, `build_store_mode` (`contribute`, `reuse`, or
 `require` here; `refresh` is a per-run override only), and
-`implementation_revision`. Nothing in it is a planning setting.
+`export_bypass_key`. Nothing in it is a planning setting.
 
 `runtime` names the pool capacities and the budgets the build sees. They are
 recorded as provenance on each case, not planned against here.

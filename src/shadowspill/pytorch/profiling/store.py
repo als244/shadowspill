@@ -130,7 +130,7 @@ class ProfileStore:
         if existing != encoded:
             raise ValueError(
                 "fresh profiling differs from an existing cache entry; "
-                "use a 'refresh' store mode or a new implementation_revision: "
+                "use a 'refresh' store mode or a new export_bypass_key: "
                 f"{path}"
             )
         return True

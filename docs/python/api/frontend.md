@@ -501,7 +501,7 @@ own plans.
 | `plan_store` | path \| `None` | `None` | Roots the `planning/` tree somewhere of its own, overriding `artifact_store` for it. |
 | `build_store_mode` | `"contribute"` \| `"reuse"` \| `"require"` \| `"refresh"` | `"contribute"` | What this run does with the build tree. |
 | `plan_store_mode` | same four | `"contribute"` | What this run does with the planning tree. |
-| `implementation_revision` | `str` \| `None` | `None` | Names the operation implementations the artifacts were produced against, so compiled and profiled entries -- and the plans measured on them -- are not reused across a kernel change that leaves the exported graph identical. |
+| `export_bypass_key` | `str` \| `None` | `None` | The caller's name for the code the build is made from (model, objective, optimizer); compiled and profiled artifacts are filed under it, so a lower-level change that leaves the exported graph unchanged is told apart by a new key. |
 
 The four modes are the whole policy, and each tree takes its own:
 
@@ -580,7 +580,7 @@ plan_forward(
     shared_outputs=(),
     build_store_mode='contribute',
     plan_store_mode='contribute',
-    implementation_revision=None,
+    export_bypass_key=None,
 ) -> PlannedForward
 ```
 
@@ -703,7 +703,7 @@ plan_step(
     allocation_probe_repetitions=2,
     build_store_mode='contribute',
     plan_store_mode='contribute',
-    implementation_revision=None,
+    export_bypass_key=None,
 ) -> PlannedTrainStep
 ```
 
@@ -790,7 +790,7 @@ build_step_program(
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
     build_store_mode='contribute',
-    implementation_revision=None,
+    export_bypass_key=None,
 ) -> StepProgram
 ```
 
@@ -838,7 +838,7 @@ plan_step_search(
     plan_store_mode='contribute',
     verbose=False,
     progress=None,
-    implementation_revision=None,
+    export_bypass_key=None,
 ) -> StepSearchReport
 ```
 

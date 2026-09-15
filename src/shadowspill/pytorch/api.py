@@ -116,7 +116,7 @@ def plan_forward(
     shared_outputs: Sequence[SharedOutput] = (),
     build_store_mode: StoreMode = "contribute",
     plan_store_mode: StoreMode = "contribute",
-    implementation_revision: str | None = None,
+    export_bypass_key: str | None = None,
 ) -> PlannedForward:
     """Plan one fixed-shape forward program around ordinary PyTorch tasks.
 
@@ -137,9 +137,11 @@ def plan_forward(
     says what this run does with it: ``contribute`` reads what is there and
     writes back what is not, ``reuse`` reads and persists nothing, ``require``
     refuses a miss, and ``refresh`` ignores what is there and writes over it.
-    ``implementation_revision`` invalidates compiler and profile artifacts when
-    a lower-level custom implementation changes without changing its exported
-    graph.
+    ``export_bypass_key`` is the caller's name for the code the build is made
+    from -- model, objective and optimizer -- and every compiled, profiled and
+    archived artifact is filed under it, so a change to a lower-level
+    implementation that leaves the exported graph unchanged is told apart by a
+    new key.
 
     ``partition`` accepts ``"auto"``, ``"whole"``, or a
     :class:`PartitionPolicy`. Partitioning only creates ordered stage
@@ -192,7 +194,7 @@ def plan_forward(
             plan_store=plan_store,
             build_store_mode=build_store_mode,
             plan_store_mode=plan_store_mode,
-            implementation_revision=implementation_revision,
+            export_bypass_key=export_bypass_key,
         )
         with cache.activate_pytorch():
             return build_forward(
@@ -250,7 +252,7 @@ def plan_step(
     allocation_probe_repetitions: int = 2,
     build_store_mode: StoreMode = "contribute",
     plan_store_mode: StoreMode = "contribute",
-    implementation_revision: str | None = None,
+    export_bypass_key: str | None = None,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -356,7 +358,7 @@ def plan_step(
             plan_store=plan_store,
             build_store_mode=build_store_mode,
             plan_store_mode=plan_store_mode,
-            implementation_revision=implementation_revision,
+            export_bypass_key=export_bypass_key,
         )
         with cache.activate_pytorch():
             return build_training(
@@ -416,7 +418,7 @@ def build_step_program(
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
     build_store_mode: StoreMode = "contribute",
-    implementation_revision: str | None = None,
+    export_bypass_key: str | None = None,
 ) -> StepProgram:
     """Capture, profile, and lower a reusable step without searching.
 
@@ -461,7 +463,7 @@ def build_step_program(
             artifact_store,
             build_store=build_store,
             build_store_mode=build_store_mode,
-            implementation_revision=implementation_revision,
+            export_bypass_key=export_bypass_key,
         )
         with cache.activate_pytorch():
             result = make_training_program(
