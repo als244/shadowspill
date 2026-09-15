@@ -22,6 +22,9 @@ csrc/
 │   │       │              digests
 │   │       └── algorithms/
 │   │           └── pressurefit/  the search that ships, over the simulator
+│   │               └── candidates/  one candidate's stages, and the layers
+│   │                                beneath them: workspaces, memos, the
+│   │                                plan, the repairs, the work accounting
 │   └── runtime/           pools, leases, objects, transfers, and the worker,
 │       ├── memory/          split by subsystem: ranges, pools, leases,
 │       ├── objects/          retirement
@@ -29,7 +32,8 @@ csrc/
 │       ├── transfers/
 │       ├── sync/
 │       ├── plan/
-│       └── telemetry/
+│       ├── telemetry/
+│       └── worker/          one action handled, dispatched, completed
 ├── backends/              dlopened device backends: mock and provider
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
     ├── include/shadowspill/  its one public header
