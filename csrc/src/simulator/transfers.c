@@ -214,59 +214,72 @@ static void wait_for_transfer(
  * retries it. A plan that can never make room deadlocks instead, which the
  * main loop reports with the stall reasons that caused it.
  */
-static int submit_action(
+/*
+ * What one action names: the task that triggers it, the alias it moves, the
+ * device that alias is on, and the state that alias is in. Read once, so the
+ * steps below take one pointer rather than six values each.
+ */
+typedef struct ActionContext {
+    uint32_t task;
+    uint32_t alias;
+    uint32_t device;
+    uint8_t kind;
+    uint64_t size;
+    ShadowSpillAliasState *state;
+} ActionContext;
+
+/*
+ * What this action does to the device's physical total, and whether the
+ * device has room for it. Answers 0 on an error it has already set, and 1
+ * otherwise, having deferred the action when capacity is what it waits on.
+ */
+static int action_physical_delta(
     const ShadowSpillSimulationProgram *program,
     ShadowSpillSimulationWork *work,
     ShadowSpillSimulationResult *result,
     uint32_t action,
+    const ActionContext *of,
+    int64_t *physical_delta,
     int *deferred
 ) {
-    *deferred = 0;
-    uint32_t task = program->action_trigger_tasks[action];
-    uint32_t alias = program->action_aliases[action];
-    uint32_t device = program->alias_device[alias];
-    uint8_t kind = program->action_kinds[action];
-    ShadowSpillAliasState *state = &work->aliases[alias];
-    uint64_t size = program->alias_size_bytes[alias];
-    int64_t physical_delta = 0;
     if (program->use_admission_accounting != 0U) {
-        if (size > (uint64_t)INT64_MAX) {
+        if (of->size > (uint64_t)INT64_MAX) {
             shadowspill_set_error(
                 result,
                 SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
-                task,
-                alias,
-                device
+                of->task,
+                of->alias,
+                of->device
             );
             return 0;
         }
         int64_t default_physical_delta = 0;
-        if (kind == SHADOWSPILL_MEMORY_RELEASE) {
-            default_physical_delta = -(int64_t)size;
-        } else if (kind == SHADOWSPILL_MEMORY_FETCH &&
-            state->device_allocated == 0U) {
-            default_physical_delta = (int64_t)size;
+        if (of->kind == SHADOWSPILL_MEMORY_RELEASE) {
+            default_physical_delta = -(int64_t)of->size;
+        } else if (of->kind == SHADOWSPILL_MEMORY_FETCH &&
+            of->state->device_allocated == 0U) {
+            default_physical_delta = (int64_t)of->size;
         }
         if (!shadowspill_resolve_physical_delta(
                 program,
                 program->action_trigger_physical_deltas,
                 action,
                 default_physical_delta,
-                &physical_delta
+                physical_delta
             )) {
             shadowspill_set_error(
                 result,
                 SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
                 work,
-                task,
-                alias,
-                device
+                of->task,
+                of->alias,
+                of->device
             );
             return 0;
         }
         if (!shadowspill_physical_delta_fits(
-                program, work, device, physical_delta
+                program, work, of->device, *physical_delta
             )) {
             /* Nothing has been mutated yet, so waiting is free. */
             defer_action(
@@ -276,259 +289,325 @@ static int submit_action(
                 SHADOWSPILL_CAPACITY_FETCH_DEVICE,
                 SHADOWSPILL_MEMORY_DEVICE,
                 SHADOWSPILL_STALL_DEVICE_CAPACITY,
-                task,
-                alias,
-                device,
-                program->devices[device].capacity_bytes,
-                shadowspill_device_used_bytes(program, work, device),
-                physical_delta > 0 ? (uint64_t)physical_delta : 0U
+                of->task,
+                of->alias,
+                of->device,
+                program->devices[of->device].capacity_bytes,
+                shadowspill_device_used_bytes(program, work, of->device),
+                *physical_delta > 0 ? (uint64_t)*physical_delta : 0U
             );
             *deferred = 1;
             return 1;
         }
     }
-    if (kind == SHADOWSPILL_MEMORY_RELEASE) {
-        if (state->device_allocated == 0U || state->device_ready == 0U) {
-            shadowspill_set_error(
-                result,
-                SHADOWSPILL_STATUS_INVALID_RELEASE,
-                work,
-                task,
-                alias,
-                device
-            );
-            return 0;
-        }
-        if (state->fetch_pending != 0U || state->evict_pending != 0U) {
-            shadowspill_set_error(
-                result,
-                SHADOWSPILL_STATUS_RELEASE_TRANSFER_CONFLICT,
-                work,
-                task,
-                alias,
-                device
-            );
-            return 0;
-        }
-        if (state->write_back_pending != 0U) {
-            /* The release drops the copy the write-back is still reading,
-             * so it waits for the copy to land, as the runtime's does. */
-            wait_for_transfer(
-                work, action, SHADOWSPILL_STALL_SOURCE_READINESS
-            );
-            *deferred = 1;
-            return 1;
-        }
-        uint32_t last_reader = work->alias_last_reader[alias];
-        if (state->spill_ready == 0U &&
-            (work->alias_final_required[alias] != 0U ||
-             (last_reader != SHADOWSPILL_SIMULATOR_NO_INDEX &&
-              work->tasks[last_reader].state != SHADOWSPILL_TASK_COMPLETE))) {
-            /* Dropping the only current copy of a value still needed is a
-             * loss, reported here rather than at the fetch, task or final
-             * residency that would miss it. */
-            shadowspill_set_error(
-                result,
-                SHADOWSPILL_STATUS_INVALID_RELEASE,
-                work,
-                task,
-                alias,
-                device
-            );
-            return 0;
-        }
-        state->device_allocated = 0U;
-        state->device_ready = 0U;
-        work->device_object_bytes[device] -= program->alias_size_bytes[alias];
-        if (state->spill_allocated != 0U &&
-            program->alias_retain_spill_copy[alias] == 0U) {
-            state->spill_allocated = 0U;
-            state->spill_ready = 0U;
-            work->spill_bytes -= program->alias_size_bytes[alias];
-        }
-        if (program->use_admission_accounting != 0U &&
-            !shadowspill_apply_physical_delta(
-                program, work, device, physical_delta
-            )) {
-            shadowspill_set_error(
-                result,
-                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
-                work,
-                task,
-                alias,
-                device
-            );
-            return 0;
-        }
-        shadowspill_update_peaks(program, work);
+    return 1;
+}
+
+/* Dropping the device copy: what must be true of it, and what the drop frees. */
+static int submit_release(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result,
+    uint32_t action,
+    const ActionContext *of,
+    int64_t physical_delta,
+    int *deferred
+) {
+    if (of->state->device_allocated == 0U || of->state->device_ready == 0U) {
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_STATUS_INVALID_RELEASE,
+            work,
+            of->task,
+            of->alias,
+            of->device
+        );
+        return 0;
+    }
+    if (of->state->fetch_pending != 0U || of->state->evict_pending != 0U) {
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_STATUS_RELEASE_TRANSFER_CONFLICT,
+            work,
+            of->task,
+            of->alias,
+            of->device
+        );
+        return 0;
+    }
+    if (of->state->write_back_pending != 0U) {
+        /* The release drops the copy the write-back is still reading,
+         * so it waits for the copy to land, as the runtime's does. */
+        wait_for_transfer(
+            work, action, SHADOWSPILL_STALL_SOURCE_READINESS
+        );
+        *deferred = 1;
         return 1;
     }
-    ShadowSpillTransferState *transfer = &work->transfers[action];
-    transfer->alias = alias;
-    transfer->trigger_task = task;
-    transfer->device = device;
-    if ((transfer->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
-        transfer->ready_ns = work->now_ns;
+    uint32_t last_reader = work->alias_last_reader[of->alias];
+    if (of->state->spill_ready == 0U &&
+        (work->alias_final_required[of->alias] != 0U ||
+         (last_reader != SHADOWSPILL_SIMULATOR_NO_INDEX &&
+          work->tasks[last_reader].state != SHADOWSPILL_TASK_COMPLETE))) {
+        /* Dropping the only current copy of a value still needed is a
+         * loss, reported here rather than at the fetch, task or final
+         * residency that would miss it. */
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_STATUS_INVALID_RELEASE,
+            work,
+            of->task,
+            of->alias,
+            of->device
+        );
+        return 0;
     }
-    if (kind == SHADOWSPILL_MEMORY_EVICT ||
-        kind == SHADOWSPILL_MEMORY_WRITE_BACK) {
-        /* One copy of an object at a time: a second departure while the
-         * first is still on the lane has no single version to carry. */
-        if (state->device_allocated == 0U || state->device_ready == 0U ||
-            state->evict_pending != 0U || state->write_back_pending != 0U) {
-            shadowspill_set_error(
-                result,
-                kind == SHADOWSPILL_MEMORY_EVICT
-                    ? SHADOWSPILL_STATUS_INVALID_EVICT
-                    : SHADOWSPILL_STATUS_INVALID_WRITE_BACK,
-                work,
-                task,
-                alias,
-                device
-            );
-            return 0;
-        }
-        if (kind == SHADOWSPILL_MEMORY_WRITE_BACK &&
-            state->spill_ready != 0U) {
-            /* Nothing to copy: the spill copy already holds this version,
-             * so the action completes at its trigger and takes no lane. */
-            if (program->use_admission_accounting != 0U &&
-                !shadowspill_apply_physical_delta(
-                    program, work, device, physical_delta
-                )) {
-                shadowspill_set_error(
-                    result,
-                    SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
-                    work,
-                    task,
-                    alias,
-                    device
-                );
-                return 0;
-            }
-            shadowspill_update_peaks(program, work);
-            return 1;
-        }
-        /* Tested before anything is mutated, so a deferral leaves no trace
-         * and the retry sees exactly the state this call found. */
-        uint64_t total = 0U;
-        if (state->spill_allocated == 0U) {
-            if (shadowspill_add_overflow_u64(
-                    work->spill_bytes,
-                    program->alias_size_bytes[alias],
-                    &total
-                )) {
-                shadowspill_set_capacity_error(
-                    result,
-                    SHADOWSPILL_STATUS_EVICT_SPILL_CAPACITY,
-                    work,
-                    task,
-                    alias,
-                    device,
-                    SHADOWSPILL_MEMORY_SPILL,
-                    program->spill_capacity_bytes,
-                    work->spill_bytes,
-                    program->alias_size_bytes[alias]
-                );
-                return 0;
-            }
-            if (total > program->spill_capacity_bytes) {
-                /* The spill pool is the same question as the device pool,
-                 * one level down: an eviction with nowhere to land waits for
-                 * room, which a release of a copy the plan does not retain
-                 * eventually provides. */
-                defer_action(
-                    work,
-                    result,
-                    action,
-                    SHADOWSPILL_CAPACITY_EVICT_SPILL,
-                    SHADOWSPILL_MEMORY_SPILL,
-                    SHADOWSPILL_STALL_SPILL_CAPACITY,
-                    task,
-                    alias,
-                    device,
-                    program->spill_capacity_bytes,
-                    work->spill_bytes,
-                    program->alias_size_bytes[alias]
-                );
-                *deferred = 1;
-                return 1;
-            }
-        }
-        transfer->direction = SHADOWSPILL_TRANSFER_EVICT;
-        transfer->sequence = work->evict_sequence[device]++;
-        transfer->version = state->device_version;
-        if (state->spill_allocated == 0U) {
-            state->spill_allocated = 1U;
-            state->spill_ready = 0U;
-            work->spill_bytes = total;
-        }
-        if (kind == SHADOWSPILL_MEMORY_EVICT) {
-            state->evict_pending = 1U;
-        } else {
-            state->write_back_pending = 1U;
-        }
-    } else {
-        if ((state->device_allocated != 0U && state->evict_pending == 0U) ||
-            (state->spill_ready == 0U && state->evict_pending == 0U)) {
-            shadowspill_set_error(
-                result,
-                SHADOWSPILL_STATUS_INVALID_FETCH,
-                work,
-                task,
-                alias,
-                device
-            );
-            return 0;
-        }
-        /* Tested before anything is mutated, so a deferral leaves no trace
-         * and the retry sees exactly the state this call found. */
-        if (state->device_allocated == 0U &&
-            program->use_admission_accounting == 0U) {
-            uint64_t used = shadowspill_device_used_bytes(
-                program, work, device
-            );
-            if (size > program->devices[device].capacity_bytes ||
-                used > program->devices[device].capacity_bytes - size) {
-                defer_action(
-                    work,
-                    result,
-                    action,
-                    SHADOWSPILL_CAPACITY_FETCH_DEVICE,
-                    SHADOWSPILL_MEMORY_DEVICE,
-                    SHADOWSPILL_STALL_DEVICE_CAPACITY,
-                    task,
-                    alias,
-                    device,
-                    program->devices[device].capacity_bytes,
-                    used,
-                    size
-                );
-                *deferred = 1;
-                return 1;
-            }
-        }
-        transfer->direction = SHADOWSPILL_TRANSFER_FETCH;
-        transfer->sequence = work->fetch_sequence[device]++;
-        if (state->device_allocated == 0U) {
-            state->device_allocated = 1U;
-            state->device_ready = 0U;
-            work->device_object_bytes[device] +=
-                program->alias_size_bytes[alias];
-        }
-        state->fetch_pending = 1U;
+    of->state->device_allocated = 0U;
+    of->state->device_ready = 0U;
+    work->device_object_bytes[of->device] -= program->alias_size_bytes[of->alias];
+    if (of->state->spill_allocated != 0U &&
+        program->alias_retain_spill_copy[of->alias] == 0U) {
+        of->state->spill_allocated = 0U;
+        of->state->spill_ready = 0U;
+        work->spill_bytes -= program->alias_size_bytes[of->alias];
     }
     if (program->use_admission_accounting != 0U &&
         !shadowspill_apply_physical_delta(
-            program, work, device, physical_delta
+            program, work, of->device, physical_delta
         )) {
         shadowspill_set_error(
             result,
             SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
             work,
-            task,
-            alias,
-            device
+            of->task,
+            of->alias,
+            of->device
+        );
+        return 0;
+    }
+    shadowspill_update_peaks(program, work);
+    return 1;
+
+}
+
+/*
+ * A departure: an evict, which gives the device copy up, or a write-back,
+ * which keeps it. One copy of an object at a time, so a second departure
+ * while the first is still on the lane is refused rather than queued.
+ *
+ * Answers 0 on an error it has already set, 1 with the copy on the lane, and
+ * 2 when there was nothing to copy and the action is already finished.
+ */
+static int submit_departure(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result,
+    uint32_t action,
+    const ActionContext *of,
+    ShadowSpillTransferState *transfer,
+    int64_t physical_delta,
+    int *deferred
+) {
+    /* One copy of an object at a time: a second departure while the
+     * first is still on the lane has no single version to carry. */
+    if (of->state->device_allocated == 0U || of->state->device_ready == 0U ||
+        of->state->evict_pending != 0U || of->state->write_back_pending != 0U) {
+        shadowspill_set_error(
+            result,
+            of->kind == SHADOWSPILL_MEMORY_EVICT
+                ? SHADOWSPILL_STATUS_INVALID_EVICT
+                : SHADOWSPILL_STATUS_INVALID_WRITE_BACK,
+            work,
+            of->task,
+            of->alias,
+            of->device
+        );
+        return 0;
+    }
+    if (of->kind == SHADOWSPILL_MEMORY_WRITE_BACK &&
+        of->state->spill_ready != 0U) {
+        /* Nothing to copy: the spill copy already holds this version,
+         * so the action completes at its trigger and takes no lane. */
+        if (program->use_admission_accounting != 0U &&
+            !shadowspill_apply_physical_delta(
+                program, work, of->device, physical_delta
+            )) {
+            shadowspill_set_error(
+                result,
+                SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
+                work,
+                of->task,
+                of->alias,
+                of->device
+            );
+            return 0;
+        }
+        shadowspill_update_peaks(program, work);
+        return 2;
+    }
+    /* Tested before anything is mutated, so a deferral leaves no trace
+     * and the retry sees exactly the state this call found. */
+    uint64_t total = 0U;
+    if (of->state->spill_allocated == 0U) {
+        if (shadowspill_add_overflow_u64(
+                work->spill_bytes,
+                program->alias_size_bytes[of->alias],
+                &total
+            )) {
+            shadowspill_set_capacity_error(
+                result,
+                SHADOWSPILL_STATUS_EVICT_SPILL_CAPACITY,
+                work,
+                of->task,
+                of->alias,
+                of->device,
+                SHADOWSPILL_MEMORY_SPILL,
+                program->spill_capacity_bytes,
+                work->spill_bytes,
+                program->alias_size_bytes[of->alias]
+            );
+            return 0;
+        }
+        if (total > program->spill_capacity_bytes) {
+            /* The spill pool is the same question as the device pool,
+             * one level down: an eviction with nowhere to land waits for
+             * room, which a release of a copy the plan does not retain
+             * eventually provides. */
+            defer_action(
+                work,
+                result,
+                action,
+                SHADOWSPILL_CAPACITY_EVICT_SPILL,
+                SHADOWSPILL_MEMORY_SPILL,
+                SHADOWSPILL_STALL_SPILL_CAPACITY,
+                of->task,
+                of->alias,
+                of->device,
+                program->spill_capacity_bytes,
+                work->spill_bytes,
+                program->alias_size_bytes[of->alias]
+            );
+            *deferred = 1;
+            return 1;
+        }
+    }
+    transfer->direction = SHADOWSPILL_TRANSFER_EVICT;
+    transfer->sequence = work->evict_sequence[of->device]++;
+    transfer->version = of->state->device_version;
+    if (of->state->spill_allocated == 0U) {
+        of->state->spill_allocated = 1U;
+        of->state->spill_ready = 0U;
+        work->spill_bytes = total;
+    }
+    if (of->kind == SHADOWSPILL_MEMORY_EVICT) {
+        of->state->evict_pending = 1U;
+    } else {
+        of->state->write_back_pending = 1U;
+    }
+    return 1;
+}
+
+/* A fetch: the spill copy comes back to the device, if there is room for it. */
+static int submit_fetch(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result,
+    uint32_t action,
+    const ActionContext *of,
+    ShadowSpillTransferState *transfer,
+    int *deferred
+) {
+    if ((of->state->device_allocated != 0U && of->state->evict_pending == 0U) ||
+        (of->state->spill_ready == 0U && of->state->evict_pending == 0U)) {
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_STATUS_INVALID_FETCH,
+            work,
+            of->task,
+            of->alias,
+            of->device
+        );
+        return 0;
+    }
+    /* Tested before anything is mutated, so a deferral leaves no trace
+     * and the retry sees exactly the state this call found. */
+    if (of->state->device_allocated == 0U &&
+        program->use_admission_accounting == 0U) {
+        uint64_t used = shadowspill_device_used_bytes(
+            program, work, of->device
+        );
+        if (of->size > program->devices[of->device].capacity_bytes ||
+            used > program->devices[of->device].capacity_bytes - of->size) {
+            defer_action(
+                work,
+                result,
+                action,
+                SHADOWSPILL_CAPACITY_FETCH_DEVICE,
+                SHADOWSPILL_MEMORY_DEVICE,
+                SHADOWSPILL_STALL_DEVICE_CAPACITY,
+                of->task,
+                of->alias,
+                of->device,
+                program->devices[of->device].capacity_bytes,
+                used,
+                of->size
+            );
+            *deferred = 1;
+            return 1;
+        }
+    }
+    transfer->direction = SHADOWSPILL_TRANSFER_FETCH;
+    transfer->sequence = work->fetch_sequence[of->device]++;
+    if (of->state->device_allocated == 0U) {
+        of->state->device_allocated = 1U;
+        of->state->device_ready = 0U;
+        work->device_object_bytes[of->device] +=
+            program->alias_size_bytes[of->alias];
+    }
+    of->state->fetch_pending = 1U;
+    return 1;
+}
+
+/* Putting a copy on a lane, and charging what that does to the device. */
+static int submit_transfer(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result,
+    uint32_t action,
+    const ActionContext *of,
+    int64_t physical_delta,
+    int *deferred
+) {
+    ShadowSpillTransferState *transfer = &work->transfers[action];
+    transfer->alias = of->alias;
+    transfer->trigger_task = of->task;
+    transfer->device = of->device;
+    if ((transfer->stall_mask & SHADOWSPILL_STALL_DEVICE_CAPACITY) == 0U) {
+        transfer->ready_ns = work->now_ns;
+    }
+    const int submitted = of->kind == SHADOWSPILL_MEMORY_FETCH
+        ? submit_fetch(program, work, result, action, of, transfer, deferred)
+        : submit_departure(
+              program, work, result, action, of, transfer, physical_delta, deferred
+          );
+    if (submitted != 1) {
+        /* An error, or an action that finished without taking a lane. */
+        return submitted == 0 ? 0 : 1;
+    }
+    if (*deferred != 0) {
+        return 1;
+    }
+    if (program->use_admission_accounting != 0U &&
+        !shadowspill_apply_physical_delta(
+            program, work, of->device, physical_delta
+        )) {
+        shadowspill_set_error(
+            result,
+            SHADOWSPILL_STATUS_SIMULATION_INTERNAL_ERROR,
+            work,
+            of->task,
+            of->alias,
+            of->device
         );
         return 0;
     }
@@ -536,6 +615,42 @@ static int submit_action(
     work->pending_transfers += 1U;
     shadowspill_update_peaks(program, work);
     return 1;
+}
+
+static int submit_action(
+    const ShadowSpillSimulationProgram *program,
+    ShadowSpillSimulationWork *work,
+    ShadowSpillSimulationResult *result,
+    uint32_t action,
+    int *deferred
+) {
+    *deferred = 0;
+    const uint32_t alias = program->action_aliases[action];
+    const ActionContext of = {
+        .task = program->action_trigger_tasks[action],
+        .alias = alias,
+        .device = program->alias_device[alias],
+        .kind = program->action_kinds[action],
+        .size = program->alias_size_bytes[alias],
+        .state = &work->aliases[alias],
+    };
+    int64_t physical_delta = 0;
+    if (!action_physical_delta(
+            program, work, result, action, &of, &physical_delta, deferred
+        )) {
+        return 0;
+    }
+    if (*deferred != 0) {
+        return 1;
+    }
+    if (of.kind == SHADOWSPILL_MEMORY_RELEASE) {
+        return submit_release(
+            program, work, result, action, &of, physical_delta, deferred
+        );
+    }
+    return submit_transfer(
+        program, work, result, action, &of, physical_delta, deferred
+    );
 }
 
 int shadowspill_submit_ready_actions(
