@@ -7,17 +7,17 @@ from shadowspill.ir import (
     TaskAlternativeGroup,
     TaskAlternativeOption,
 )
-from tools.qualification.numerical import (
-    _failure_tensor_values,
-    _meets_tensor_tolerance,
-    _recomputation_savings_bytes,
-    _transfer_pressure_gate_passed,
+from tools.qualification.numerical.measures import (
+    failure_tensor_values,
+    recomputation_savings_bytes,
 )
-from tools.qualification.numerical_metrics import (
+from tools.qualification.numerical.metrics import (
     TensorMetrics,
     compare_states,
     state_digest,
 )
+from tools.qualification.numerical.tolerances import meets_tensor_tolerance
+from tools.qualification.numerical.verdict import transfer_pressure_gate_passed
 
 
 def test_state_metrics_are_path_specific_and_deterministic() -> None:
@@ -73,7 +73,7 @@ def test_failure_values_resolve_integer_optimizer_state_keys() -> None:
     reference = {"optimizer": {"state": {31: {"exp_avg": torch.tensor([1.0])}}}}
     actual = {"optimizer": {"state": {31: {"exp_avg": torch.tensor([2.0])}}}}
 
-    values = _failure_tensor_values(
+    values = failure_tensor_values(
         ["state/optimizer/state/31/exp_avg"], reference, actual
     )
 
@@ -86,16 +86,16 @@ def test_failure_values_resolve_integer_optimizer_state_keys() -> None:
 
 
 def test_numerical_gate_uses_one_global_tensor_policy() -> None:
-    assert _meets_tensor_tolerance(TensorMetrics(0.999, 0.025, 0.99, 1.0))
-    assert not _meets_tensor_tolerance(TensorMetrics(0.998, 0.0, 1.0, 0.0))
+    assert meets_tensor_tolerance(TensorMetrics(0.999, 0.025, 0.99, 1.0))
+    assert not meets_tensor_tolerance(TensorMetrics(0.998, 0.0, 1.0, 0.0))
     # an optimizer moment may drift twice as far as a weight: it is an
     # accumulator whose reduction order follows the plan
     moment = TensorMetrics(0.9995, 0.04, 0.995, 0.0)
-    assert _meets_tensor_tolerance(moment, key="state/optimizer/state/0/exp_avg_sq")
-    assert not _meets_tensor_tolerance(moment, key="state/model/layers.0.weight")
-    assert not _meets_tensor_tolerance(moment)
-    assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.026, 1.0, 0.0))
-    assert not _meets_tensor_tolerance(TensorMetrics(1.0, 0.0, 0.98, 0.0))
+    assert meets_tensor_tolerance(moment, key="state/optimizer/state/0/exp_avg_sq")
+    assert not meets_tensor_tolerance(moment, key="state/model/layers.0.weight")
+    assert not meets_tensor_tolerance(moment)
+    assert not meets_tensor_tolerance(TensorMetrics(1.0, 0.026, 1.0, 0.0))
+    assert not meets_tensor_tolerance(TensorMetrics(1.0, 0.0, 0.98, 0.0))
 
 
 def test_recomputation_diagnostics_count_only_retained_physical_savings() -> None:
@@ -111,12 +111,12 @@ def test_recomputation_diagnostics_count_only_retained_physical_savings() -> Non
     )
     sizes = {"a": 64, "b": 32, "c": 32}
 
-    assert _recomputation_savings_bytes(
+    assert recomputation_savings_bytes(
         groups,
         (TaskAlternativeChoice("group_0", "same_size"),),
         sizes,
     ) == (32, 0)
-    assert _recomputation_savings_bytes(
+    assert recomputation_savings_bytes(
         groups,
         (TaskAlternativeChoice("group_0", "recompute"),),
         sizes,
@@ -133,7 +133,7 @@ def test_recomputation_diagnostics_ignore_equal_footprints() -> None:
             ),
         ),
     )
-    assert _recomputation_savings_bytes(
+    assert recomputation_savings_bytes(
         groups,
         (TaskAlternativeChoice("group_0", "save"),),
         {"a": 64, "b": 64},
@@ -141,12 +141,12 @@ def test_recomputation_diagnostics_ignore_equal_footprints() -> None:
 
 
 def test_correctness_pressure_gate_requires_only_real_transfers() -> None:
-    assert _transfer_pressure_gate_passed(
+    assert transfer_pressure_gate_passed(
         required=True, evicted_bytes=1, fetched_bytes=1
     )
-    assert not _transfer_pressure_gate_passed(
+    assert not transfer_pressure_gate_passed(
         required=True, evicted_bytes=1, fetched_bytes=0
     )
-    assert _transfer_pressure_gate_passed(
+    assert transfer_pressure_gate_passed(
         required=False, evicted_bytes=0, fetched_bytes=0
     )
