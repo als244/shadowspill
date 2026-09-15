@@ -17,15 +17,17 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NoReturn
 
 from shadowspill.ir import (
     MemoryActionKind,
+    MemorySchedule,
     ResidencySpec,
     ShadowSpillProgram,
     TaskAlternativeChoice,
 )
 from shadowspill.planner.result import ResidentSlice
-from shadowspill.simulator import SimulationConfig
+from shadowspill.simulator import SimulationConfig, SimulationResult
 from shadowspill.simulator.indexing import (
     IndexedSimulationTemplate,
     index_simulation_template,
@@ -365,6 +367,152 @@ def run_problems(
     )
 
 
+def _resolved_program(
+    program: ShadowSpillProgram,
+    problem: SelectionProblem,
+    result: CProblemResult,
+    incumbent: ProgramPlanResult | None,
+) -> tuple[ResolvedProgramDiagnostics, str | None, int | None]:
+    """Decode one problem's candidates, and say which of them it answered with."""
+
+    candidates = tuple(
+        decode_candidate_diagnostic(
+            candidate,
+            selection_id=problem.selection_id,
+            simulation=problem.indexed_template,
+        )
+        for candidate in result.candidates
+    )
+    answered_by_incumbent = result.incumbent is not None and result.incumbent.selected
+    selected_candidate = (
+        None
+        if result.selected_candidate_index is None
+        else candidates[result.selected_candidate_index]
+    )
+    if answered_by_incumbent:
+        selected_id: str | None = INCUMBENT_CANDIDATE_ID
+    elif selected_candidate is not None:
+        selected_id = selected_candidate.candidate_id
+    else:
+        selected_id = None
+    fetched_bytes, evicted_bytes = _selected_traffic(program, result)
+    resolved = ResolvedProgramDiagnostics(
+        selection_id=problem.selection_id,
+        choices=tuple(
+            TaskAlternativeChoiceDiagnostic(item.group_id, item.option_id)
+            for item in problem.selections
+        ),
+        selected_candidate_id=selected_id,
+        selected_makespan_ns=(
+            None if selected_id is None else result.selected_makespan_ns
+        ),
+        candidate_evaluations=candidates,
+        work=result.work,
+        started_ns=result.started_ns,
+        finished_ns=result.finished_ns,
+        evict_ineligible_aliases=result.evict_ineligible_aliases,
+        evict_ineligible_bytes=result.evict_ineligible_bytes,
+        fetched_bytes=fetched_bytes,
+        evicted_bytes=evicted_bytes,
+        incumbent=_incumbent_diagnostic(result, incumbent),
+    )
+    candidate_index = None if answered_by_incumbent else result.selected_candidate_index
+    return resolved, selected_id, candidate_index
+
+
+def _no_plan(
+    resolved_programs: list[ResolvedProgramDiagnostics],
+    results: tuple[CProblemResult, ...],
+    config: SimulationConfig,
+) -> NoReturn:
+    """Raise what the search proved: exhausted its budget, or infeasible."""
+
+    frozen = tuple(
+        candidate
+        for problem in resolved_programs
+        for candidate in problem.candidate_evaluations
+    )
+    if any(item.status == "exhausted" for item in frozen):
+        raise PlanSearchExhaustedError(
+            "PressureFit exhausted its bounded candidate-repair budget "
+            "before proving a feasible schedule",
+            diagnostics=frozen,
+        )
+    first = frozen[0] if frozen else None
+    physical_slack = tuple(
+        candidate.error_required_bytes
+        for result in results
+        for candidate in result.candidates
+        if candidate.status == 3 and candidate.error_required_bytes > 0
+    )
+    raise PlanInfeasibleError(
+        "no simulator-valid PressureFit candidate satisfied the declared "
+        "capacity and residency constraints",
+        kind=(
+            first.failure_kind
+            if first is not None and first.failure_kind
+            else "no_candidate"
+        ),
+        required_bytes=min(physical_slack) if physical_slack else None,
+        capacity_bytes=(
+            config.devices[0].capacity_bytes if len(config.devices) == 1 else None
+        ),
+        diagnostics=frozen,
+    )
+
+
+def _materialize(
+    problem: SelectionProblem, result: CProblemResult
+) -> tuple[MemorySchedule, SimulationResult, PlanningWorkDiagnostics]:
+    """Produce the plan the search chose, and charge the work to the caller.
+
+    Materialising the winner is the caller's own ``select`` section: the
+    search has already chosen, and what remains is producing the plan it
+    chose. Admission and simulation here are the same work the search did,
+    so they add to the same counters.
+    """
+
+    indexed_schedule = result.selected_schedule
+    assert indexed_schedule is not None
+    schedule = decode_schedule(indexed_schedule, problem.indexed_template)
+    selected_started = time.perf_counter_ns()
+    admission_calls = 0
+    admission_ns = 0
+    simulation_admission = None
+    if problem.indexed_admission is not None:
+        admission_started = time.perf_counter_ns()
+        simulation_admission = evaluate_schedule_admission(
+            problem.indexed_template,
+            problem.indexed_admission,
+            indexed_schedule,
+        ).simulation_admission
+        admission_ns = time.perf_counter_ns() - admission_started
+        admission_calls = 1
+    # At full capacity, which is what the plan will actually run at. A plan
+    # built at a smaller capacity was *chosen* on how it behaves there, but
+    # the machine it runs on is the one the caller described, so that is what
+    # the reported timeline and the certificate measure.
+    simulation = simulate_template(
+        problem.indexed_template,
+        schedule,
+        admission=simulation_admission,
+    )
+    selected_ns = time.perf_counter_ns() - selected_started
+    return (
+        schedule,
+        simulation,
+        PlanningWorkDiagnostics(
+            simulation_calls=1,
+            admission_calls=admission_calls,
+            sections=PlanningSectionTiming(
+                total_ns=selected_ns,
+                select_ns=selected_ns,
+                admit_ns=admission_ns,
+            ),
+        ),
+    )
+
+
 def finish_pressurefit(
     program: ShadowSpillProgram,
     initial_residency: tuple[ResidencySpec, ...],
@@ -399,51 +547,10 @@ def finish_pressurefit(
     for problem_index, (problem, result) in enumerate(
         zip(problems, results, strict=True)
     ):
-        candidates = tuple(
-            decode_candidate_diagnostic(
-                candidate,
-                selection_id=problem.selection_id,
-                simulation=problem.indexed_template,
-            )
-            for candidate in result.candidates
+        resolved, selected_id, candidate_index = _resolved_program(
+            program, problem, result, incumbent
         )
-        answered_by_incumbent = (
-            result.incumbent is not None and result.incumbent.selected
-        )
-        selected_candidate = (
-            None
-            if result.selected_candidate_index is None
-            else candidates[result.selected_candidate_index]
-        )
-        if answered_by_incumbent:
-            selected_id: str | None = INCUMBENT_CANDIDATE_ID
-        elif selected_candidate is not None:
-            selected_id = selected_candidate.candidate_id
-        else:
-            selected_id = None
-        fetched_bytes, evicted_bytes = _selected_traffic(program, result)
-        resolved_programs.append(
-            ResolvedProgramDiagnostics(
-                selection_id=problem.selection_id,
-                choices=tuple(
-                    TaskAlternativeChoiceDiagnostic(item.group_id, item.option_id)
-                    for item in problem.selections
-                ),
-                selected_candidate_id=selected_id,
-                selected_makespan_ns=(
-                    None if selected_id is None else result.selected_makespan_ns
-                ),
-                candidate_evaluations=candidates,
-                work=result.work,
-                started_ns=result.started_ns,
-                finished_ns=result.finished_ns,
-                evict_ineligible_aliases=result.evict_ineligible_aliases,
-                evict_ineligible_bytes=result.evict_ineligible_bytes,
-                fetched_bytes=fetched_bytes,
-                evicted_bytes=evicted_bytes,
-                incumbent=_incumbent_diagnostic(result, incumbent),
-            )
-        )
+        resolved_programs.append(resolved)
         if selected_id is None:
             continue
         assert result.selected_makespan_ns is not None
@@ -454,9 +561,6 @@ def finish_pressurefit(
         # candidate.
         if held is not None and result.selected_makespan_ns != held.makespan_ns:
             continue
-        candidate_index = (
-            None if answered_by_incumbent else result.selected_candidate_index
-        )
         key = (
             result.selected_makespan_ns,
             problem_index,
@@ -466,91 +570,22 @@ def finish_pressurefit(
             selected = (key, problem_index, candidate_index, result)
 
     if selected is None:
-        frozen = tuple(
-            candidate
-            for problem in resolved_programs
-            for candidate in problem.candidate_evaluations
-        )
-        if any(item.status == "exhausted" for item in frozen):
-            raise PlanSearchExhaustedError(
-                "PressureFit exhausted its bounded candidate-repair budget "
-                "before proving a feasible schedule",
-                diagnostics=frozen,
-            )
-        first = frozen[0] if frozen else None
-        physical_slack = tuple(
-            candidate.error_required_bytes
-            for result in results
-            for candidate in result.candidates
-            if candidate.status == 3 and candidate.error_required_bytes > 0
-        )
-        raise PlanInfeasibleError(
-            "no simulator-valid PressureFit candidate satisfied the declared "
-            "capacity and residency constraints",
-            kind=(
-                first.failure_kind
-                if first is not None and first.failure_kind
-                else "no_candidate"
-            ),
-            required_bytes=min(physical_slack) if physical_slack else None,
-            capacity_bytes=(
-                config.devices[0].capacity_bytes if len(config.devices) == 1 else None
-            ),
-            diagnostics=frozen,
-        )
+        _no_plan(resolved_programs, results, config)
 
     _key, problem_index, candidate_index, result = selected
     problem = problems[problem_index]
-    indexed_schedule = result.selected_schedule
-    assert indexed_schedule is not None
-    schedule = decode_schedule(indexed_schedule, problem.indexed_template)
-    # Materialising the winner is the caller's own `select` section: the
-    # search has already chosen, and what remains is producing the plan it
-    # chose. Admission and simulation here are the same work the search did,
-    # so they add to the same counters.
-    selected_started = time.perf_counter_ns()
-    admission_calls = 0
-    admission_ns = 0
-    simulation_admission = None
-    if problem.indexed_admission is not None:
-        admission_started = time.perf_counter_ns()
-        simulation_admission = evaluate_schedule_admission(
-            problem.indexed_template,
-            problem.indexed_admission,
-            indexed_schedule,
-        ).simulation_admission
-        admission_ns = time.perf_counter_ns() - admission_started
-        admission_calls = 1
-    # At full capacity, which is what the plan will actually run at. A plan
-    # built at a smaller capacity was *chosen* on how it behaves there, but
-    # the machine it runs on is the one the caller described, so that is what
-    # the reported timeline and the certificate measure.
-    simulation = simulate_template(
-        problem.indexed_template,
-        schedule,
-        admission=simulation_admission,
-    )
-    selected_ns = time.perf_counter_ns() - selected_started
-    selected_candidate_id = (
-        INCUMBENT_CANDIDATE_ID
-        if candidate_index is None
-        else result.candidates[candidate_index].candidate_id
-    )
+    schedule, simulation, selected_work = _materialize(problem, result)
     aggregate_work = PlanningWorkDiagnostics()
     for problem_result in results:
         aggregate_work += problem_result.work
-    aggregate_work += PlanningWorkDiagnostics(
-        simulation_calls=1,
-        admission_calls=admission_calls,
-        sections=PlanningSectionTiming(
-            total_ns=selected_ns,
-            select_ns=selected_ns,
-            admit_ns=admission_ns,
-        ),
-    )
+    aggregate_work += selected_work
     diagnostics = PlanningDiagnostics(
         search=search_options.resolved_algorithm.name,
-        selected_candidate_id=selected_candidate_id,
+        selected_candidate_id=(
+            INCUMBENT_CANDIDATE_ID
+            if candidate_index is None
+            else result.candidates[candidate_index].candidate_id
+        ),
         selected_selection_id=problem.selection_id,
         selected_makespan_ns=simulation.makespan_ns,
         resolved_programs=tuple(resolved_programs),
