@@ -63,9 +63,7 @@ class PlanningRepairDiagnostics:
             + self.simulation_pressure_boundary_attempts
         )
 
-    def __add__(
-        self, other: PlanningRepairDiagnostics
-    ) -> PlanningRepairDiagnostics:
+    def __add__(self, other: PlanningRepairDiagnostics) -> PlanningRepairDiagnostics:
         if not isinstance(other, PlanningRepairDiagnostics):
             return NotImplemented
         return PlanningRepairDiagnostics(
@@ -214,9 +212,7 @@ class PlanningSectionTiming:
         return {name: getattr(self, name) for name in self.__dataclass_fields__}
 
     @classmethod
-    def from_value(
-        cls, value: object, path: str = "sections"
-    ) -> PlanningSectionTiming:
+    def from_value(cls, value: object, path: str = "sections") -> PlanningSectionTiming:
         data = _mapping(value, path)
         return cls(
             **{

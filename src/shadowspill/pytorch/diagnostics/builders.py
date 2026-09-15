@@ -111,7 +111,7 @@ def training_stage_inventory(
 
     index = _index_training_inventory(captures, lowered, execution_plan)
     stage_counts = tuple(len(capture.stages) for capture in captures)
-    task_map = _training_task_inventory(
+    task_map = _plan_task_stages(
         lowered,
         index,
         measurements,
@@ -199,7 +199,7 @@ def _chosen_training_variants(
     return chosen
 
 
-def _training_task_inventory(
+def _plan_task_stages(
     lowered: LoweredTrainingProgram,
     index: _TrainingInventoryIndex,
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 
 from shadowspill.ir.indexing import MEMORY_ACTION_CODE
+from shadowspill.ir.program import canonical_index
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming,
@@ -259,7 +260,7 @@ def _transfer_lanes(
 
     events = evidence.runtime_trace.events
     selected_task_numbers = {
-        _plan_index(task_id, "task_") for task_id in timing.task_order
+        canonical_index(task_id, "task_") for task_id in timing.task_order
     }
     scheduled = tuple(item for item in events if item.task_id in selected_task_numbers)
     dispatches = _lane_events(scheduled, RuntimeTraceEventKind.TRANSFER_DISPATCHED)
@@ -323,7 +324,7 @@ def _transfer_lanes(
                 )
             dispatch = lane_dispatches[interval.sequence]
             completion = lane_completions[interval.sequence]
-            task_number = _plan_index(interval.trigger_task_id, "task_")
+            task_number = canonical_index(interval.trigger_task_id, "task_")
             object_number = bridge.runtime_object_id(interval.alias_group_id)
             _validate_transfer_event(interval, dispatch, task_number, object_number)
             _validate_transfer_event(interval, completion, task_number, object_number)
@@ -595,13 +596,6 @@ def _validate_transfer_event(
 
 def _event_seconds(event: RuntimeTraceEvent | None, origin_ns: int) -> float | None:
     return None if event is None else (event.timestamp_ns - origin_ns) / 1e9
-
-
-def _plan_index(value: str, prefix: str) -> int:
-    suffix = value.removeprefix(prefix)
-    if not value.startswith(prefix) or not suffix.isdigit():
-        raise RuntimeError(f"non-canonical indexed identity {value!r}")
-    return int(suffix)
 
 
 def _build_allocator_trace(evidence: _TraceEvidence) -> AllocatorTrace:

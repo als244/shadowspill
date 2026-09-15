@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
-from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, TypeGuard
 
 import torch
@@ -139,22 +134,6 @@ def restore_cached_variant(value: object) -> GraphPairVariant:
     return GraphPairVariant(option_id, memory_budget, cached.restore())
 
 
-def atomic_json(path: Path, payload: dict[str, object]) -> None:
-    encoded = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(descriptor, "w") as output:
-            output.write(encoded)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-    finally:
-        with suppress(FileNotFoundError):
-            os.unlink(temporary)
-
-
 def _synthetic_fake_arguments(
     tensor_inputs: tuple[TensorGeometry, ...],
     alias_groups: tuple[int, ...],
@@ -210,7 +189,6 @@ def _geometry_storage_bytes(geometry: TensorGeometry) -> int:
 
 __all__ = [
     "CachedAotGraphPair",
-    "atomic_json",
     "restore_cached_variant",
     "valid_cached_variant",
 ]

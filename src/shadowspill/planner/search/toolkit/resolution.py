@@ -63,9 +63,7 @@ def validate_resolution_options(
     """
 
     if isinstance(values, str):
-        raise ValueError(
-            "resolution options are a sequence of shares, not one string"
-        )
+        raise ValueError("resolution options are a sequence of shares, not one string")
     chosen: list[Fraction] = []
     for value in values:
         if isinstance(value, bool) or not isinstance(value, Fraction | int | str):
@@ -159,7 +157,7 @@ def _group_fractions(
         )
     # Two shares of a small group count can round to the same resolution;
     # planning it twice would answer nothing new.
-    return _unique(result)
+    return tuple(dict.fromkeys(result))
 
 
 def _within_group_quantiles(
@@ -182,14 +180,16 @@ def _within_group_quantiles(
                 for order in memory_order
             )
         )
-    return _unique(
-        [
-            tuple(
-                forced.get(index, option_index)
-                for index, option_index in enumerate(item)
-            )
-            for item in raw
-        ]
+    return tuple(
+        dict.fromkeys(
+            [
+                tuple(
+                    forced.get(index, option_index)
+                    for index, option_index in enumerate(item)
+                )
+                for item in raw
+            ]
+        )
     )
 
 
@@ -215,18 +215,6 @@ def _resolution(
         TaskAlternativeChoice(group.group_id, group.options[index].option_id)
         for group, index in zip(options.groups, indices, strict=True)
     )
-
-
-def _unique(values: list[tuple[int, ...]]) -> tuple[tuple[int, ...], ...]:
-    result: list[tuple[int, ...]] = []
-    seen: set[tuple[int, ...]] = set()
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            result.append(value)
-    return tuple(result)
-
-
 
 
 _SAVE = "save"

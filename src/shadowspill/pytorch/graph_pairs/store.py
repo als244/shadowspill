@@ -15,9 +15,14 @@ import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.profiling import PlanningArtifactRecorder
 from shadowspill.schema import artifact_schema
-from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
+from shadowspill.store import (
+    CONTRIBUTE,
+    ArtifactRecorder,
+    StorePolicy,
+    atomic_json,
+    digest_directory,
+)
 
 from ..partition.artifacts import StageExample
 from .artifacts import TaskGraphPairs
@@ -25,7 +30,6 @@ from .build import build_default_graph_pairs
 from .rebind import rebind_task_graph_pairs
 from .serialization import (
     CachedAotGraphPair,
-    atomic_json,
     restore_cached_variant,
     valid_cached_variant,
 )
@@ -41,7 +45,7 @@ class GraphPairStore:
         root: str | Path | None = None,
         *,
         policy: StorePolicy = CONTRIBUTE,
-        artifact_recorder: PlanningArtifactRecorder | None = None,
+        artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self._pairs: dict[tuple[str, tuple[int, ...], bool], TaskGraphPairs] = {}
         self._root = None if root is None else Path(root).expanduser()

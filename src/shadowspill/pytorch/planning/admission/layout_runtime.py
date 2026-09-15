@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shadowspill.ir import MemoryActionKind, MemorySchedule, ShadowSpillProgram
+from shadowspill.ir import (
+    MemoryActionKind,
+    MemorySchedule,
+    ShadowSpillProgram,
+)
+from shadowspill.ir.program import canonical_index
 from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
 from shadowspill.planner.admission.layout.model import (
@@ -18,8 +23,7 @@ from shadowspill.pytorch.runtime_adapter.fixed_layout import (
     RuntimeFixedPlacement,
     RuntimePlacementKind,
 )
-
-_NO_ID = (1 << 64) - 1
+from shadowspill.runtime.admission_capi import NO_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +57,7 @@ def project_runtime_fixed_layout(
         raise ValueError("fixed layout belongs to a different ShadowSpillProgram")
     if layout.schedule_digest != schedule.digest:
         raise ValueError("fixed layout belongs to a different memory schedule")
-    if initial_task_id == _NO_ID:
+    if initial_task_id == NO_ID:
         raise ValueError("initial-placement task cannot use the no-ID sentinel")
 
     fixed_by_lease = {item.lease_id: item for item in layout.placements}
@@ -141,7 +145,7 @@ def _initial_placements(
             fixed_by_lease[initial_leases[alias_id]],
             task_id=initial_task_id,
             ordinal=ordinal,
-            object_id=_plan_index(alias_id, "alias_"),
+            object_id=canonical_index(alias_id, "alias_"),
             kind=RuntimePlacementKind.ACTION_DESTINATION,
         )
         for ordinal, alias_id in enumerate(aliases)
@@ -164,9 +168,9 @@ def _task_placements(
             result.append(
                 _fixed_runtime_placement(
                     fixed,
-                    task_id=_plan_index(task_id, "task_"),
+                    task_id=canonical_index(task_id, "task_"),
                     ordinal=ordinal,
-                    object_id=_NO_ID,
+                    object_id=NO_ID,
                     kind=RuntimePlacementKind.TASK_ALLOCATION,
                 )
             )
@@ -176,10 +180,10 @@ def _task_placements(
             raise ValueError(f"task allocation lease {lease_id} has no policy")
         result.append(
             RuntimeFixedPlacement(
-                task_id=_plan_index(task_id, "task_"),
+                task_id=canonical_index(task_id, "task_"),
                 ordinal=ordinal,
-                object_id=_NO_ID,
-                offset=_NO_ID,
+                object_id=NO_ID,
+                offset=NO_ID,
                 bytes=dynamic.bytes,
                 alignment=dynamic.alignment,
                 kind=RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION,
@@ -194,10 +198,10 @@ def _task_placements(
             )
         result.append(
             RuntimeFixedPlacement(
-                task_id=_plan_index(policy.task_id, "task_"),
+                task_id=canonical_index(policy.task_id, "task_"),
                 ordinal=policy.allocation_ordinal,
-                object_id=_NO_ID,
-                offset=_NO_ID,
+                object_id=NO_ID,
+                offset=NO_ID,
                 bytes=policy.bytes,
                 alignment=policy.alignment,
                 kind=RuntimePlacementKind.DYNAMIC_TASK_ALLOCATION,
@@ -242,7 +246,7 @@ def _action_placements(
                 task_id=identity.task_id,
                 ordinal=identity.ordinal,
                 object_id=identity.object_id,
-                offset=_NO_ID,
+                offset=NO_ID,
                 bytes=dynamic.bytes,
                 alignment=dynamic.alignment,
                 kind=RuntimePlacementKind.DYNAMIC_ACTION_DESTINATION,
@@ -288,7 +292,7 @@ def _runtime_dependencies(
             RuntimeFixedDependency(
                 predecessor_task_id=predecessor.task_id,
                 predecessor_action_ordinal=predecessor.ordinal,
-                successor_task_id=_plan_index(item.successor_task_id, "task_"),
+                successor_task_id=canonical_index(item.successor_task_id, "task_"),
                 successor_ordinal=min(ordinals),
                 successor_kind=RuntimePlacementKind.TASK_ALLOCATION,
             )
@@ -318,9 +322,9 @@ def _action_identities(
         ordinal = ordinals.get(action.trigger_task_id, 0)
         ordinals[action.trigger_task_id] = ordinal + 1
         result[index] = _ActionIdentity(
-            task_id=_plan_index(action.trigger_task_id, "task_"),
+            task_id=canonical_index(action.trigger_task_id, "task_"),
             ordinal=ordinal,
-            object_id=_plan_index(action.alias_group_id, "alias_"),
+            object_id=canonical_index(action.alias_group_id, "alias_"),
         )
         if action.kind is MemoryActionKind.RELEASE:
             continue
@@ -344,15 +348,6 @@ def _fixed_runtime_placement(
         alignment=placement.alignment,
         kind=kind,
     )
-
-
-def _plan_index(value: str, prefix: str) -> int:
-    if not value.startswith(prefix):
-        raise ValueError(f"runtime identity {value!r} lacks prefix {prefix!r}")
-    suffix = value.removeprefix(prefix)
-    if not suffix.isdigit():
-        raise ValueError(f"runtime identity {value!r} has a nonnumeric suffix")
-    return int(suffix)
 
 
 __all__ = ["DynamicTaskAllocationPolicy", "project_runtime_fixed_layout"]

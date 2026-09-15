@@ -29,10 +29,9 @@ from shadowspill.pytorch.accelerator import provider_version
 from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
 from shadowspill.pytorch.graph_pairs.serialization import (
     CachedGraphArtifact,
-    atomic_json,
 )
 from shadowspill.schema import artifact_schema
-from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
+from shadowspill.store import CONTRIBUTE, StorePolicy, atomic_json, digest_directory
 
 from .artifacts import (
     OptimizerTensorBinding,
@@ -42,7 +41,7 @@ from .artifacts import (
 )
 
 if TYPE_CHECKING:
-    from shadowspill.pytorch.profiling import PlanningArtifactRecorder
+    from shadowspill.store import ArtifactRecorder
 
 _OPTIMIZER_CAPTURE_SCHEMA = artifact_schema("optimizer_capture")
 
@@ -143,7 +142,7 @@ class OptimizerCaptureStore:
         root: str | Path | None = None,
         *,
         policy: StorePolicy = CONTRIBUTE,
-        artifact_recorder: PlanningArtifactRecorder | None = None,
+        artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self._root = None if root is None else Path(root).expanduser()
         self._policy = policy

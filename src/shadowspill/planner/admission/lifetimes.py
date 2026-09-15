@@ -24,6 +24,7 @@ from ..capi import (
     CLeaseLifetime,
     CLeaseLifetimeProblem,
     CLeaseLifetimeResult,
+    check_planner_status,
     planner_api,
 )
 from .indexing import IndexedAdmissionFacts
@@ -102,10 +103,7 @@ def build_lease_lifetimes(
             ctypes.byref(problem), ctypes.byref(result)
         )
     )
-    if status != 0:
-        raise RuntimeError(
-            f"building lease lifetimes failed with planner status {status}"
-        )
+    check_planner_status(status, "building lease lifetimes")
     return LeaseLifetimes(
         lifetimes=lifetimes,
         identities=identities,

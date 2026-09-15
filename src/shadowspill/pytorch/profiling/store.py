@@ -7,27 +7,15 @@ import os
 import tempfile
 from contextlib import suppress
 from pathlib import Path
-from typing import Protocol
 
-from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
+from shadowspill.store import (
+    CONTRIBUTE,
+    ArtifactRecorder,
+    StorePolicy,
+    digest_directory,
+)
 
 from .records import PROFILE_SCHEMA, ProfileKey, TaskMeasurement
-
-
-class PlanningArtifactRecorder(Protocol):
-    """Callback used to publish planning-cache evidence."""
-
-    def __call__(
-        self,
-        *,
-        category: str,
-        kind: str,
-        digest: str | None,
-        path: str | Path,
-        access: str,
-        schema: str | None,
-        dependencies: tuple[str, ...] = (),
-    ) -> None: ...
 
 
 class ProfileStore:
@@ -39,7 +27,7 @@ class ProfileStore:
         *,
         compiled_manifest_root: str | Path | None = None,
         policy: StorePolicy = CONTRIBUTE,
-        artifact_recorder: PlanningArtifactRecorder | None = None,
+        artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self.root = Path(root).expanduser()
         self.compiled_manifest_root = (
@@ -163,4 +151,4 @@ class ProfileStore:
             )
 
 
-__all__ = ["PlanningArtifactRecorder", "ProfileStore"]
+__all__ = ["ArtifactRecorder", "ProfileStore"]

@@ -250,18 +250,16 @@ class PlanStore:
         """The request a record answers, as the record states it."""
 
         return {
-            "schema": _SCHEMA,
+            **_request(
+                program,
+                initial_residency,
+                final_residency,
+                config,
+                admission,
+                search_options,
+            ),
             "key_digest": key,
-            "program_digest": program.digest,
-            "initial_residency": [item.to_dict() for item in initial_residency],
-            "final_residency": [item.to_dict() for item in final_residency],
-            "simulation": {
-                "devices": [asdict(item) for item in config.devices],
-                "spill_capacity_bytes": config.spill_capacity_bytes,
-            },
-            "admission_digest": admission.digest if admission is not None else None,
             "search": algorithm.name,
-            "search_options": search_options.to_dict(),
         }
 
     def _payload(self, path: Path) -> dict[str, object] | None:
@@ -484,6 +482,37 @@ class PlanStore:
         )
 
 
+def _request(
+    program: ShadowSpillProgram,
+    initial_residency: tuple[ResidencySpec, ...],
+    final_residency: tuple[ResidencySpec, ...],
+    config: SimulationConfig,
+    admission: AdmissionFacts | None,
+    search_options: SearchOptions,
+) -> dict[str, object]:
+    """What a question to the store is made of, as every record states it.
+
+    Which search, and what it was told, are part of it: a plan one search
+    chose is not the answer another would give, and a plan searched over one
+    candidate space is not the answer for a different one. The plan to beat is
+    not part of it: see `PlanStore.resolve`. The search's name is inside
+    `search_options`, so a record repeats it only where a reader wants it.
+    """
+
+    return {
+        "schema": _SCHEMA,
+        "program_digest": program.digest,
+        "initial_residency": [item.to_dict() for item in initial_residency],
+        "final_residency": [item.to_dict() for item in final_residency],
+        "simulation": {
+            "devices": [asdict(device) for device in config.devices],
+            "spill_capacity_bytes": config.spill_capacity_bytes,
+        },
+        "admission_digest": admission.digest if admission is not None else None,
+        "search_options": search_options.to_dict(),
+    }
+
+
 def _key(
     program: ShadowSpillProgram,
     initial_residency: tuple[ResidencySpec, ...],
@@ -494,26 +523,18 @@ def _key(
     search_options: SearchOptions,
 ) -> str:
     payload = {
-        "schema": _SCHEMA,
-        "program_digest": program.digest,
-        "initial_residency": [item.to_dict() for item in initial_residency],
-        "final_residency": [item.to_dict() for item in final_residency],
-        "simulation": {
-            "devices": [asdict(device) for device in config.devices],
-            "spill_capacity_bytes": config.spill_capacity_bytes,
-        },
-        "admission_digest": admission.digest if admission is not None else None,
+        **_request(
+            program,
+            initial_residency,
+            final_residency,
+            config,
+            admission,
+            search_options,
+        ),
         # Part of the identity: the search measures layouts against this
         # topology, so the same program under a different pool is a
         # different question and must not read a cached answer.
         "placement_digest": placement.digest if placement is not None else None,
-        # Which search, and what it was told. Both are part of the
-        # question: a plan one search chose is not the answer another would
-        # give, and a plan searched over one candidate space is not the
-        # answer for a different one. The plan to beat is not part of it:
-        # see PlanStore.resolve. The search's name is inside
-        # `search_options`, so it is not repeated here.
-        "search_options": search_options.to_dict(),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()

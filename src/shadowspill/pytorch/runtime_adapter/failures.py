@@ -11,9 +11,9 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     AdapterStatistics,
     runtime_library,
 )
+from shadowspill.runtime.admission_capi import optional_id
 from shadowspill.status import Status
 
-_NO_ID = (1 << 64) - 1
 _OUT_OF_MEMORY = Status.OUT_OF_MEMORY
 _NO_PROGRESS = Status.NO_PROGRESS
 _TASK_ALLOCATION_ENVELOPE_EXCEEDED = Status.TASK_ALLOCATION_ENVELOPE_EXCEEDED
@@ -236,9 +236,9 @@ def read_allocator_failure(
         requested_bytes=requested,
         free_bytes=int(failure.runtime.free_bytes),
         largest_free_range_bytes=int(failure.runtime.largest_free_range_bytes),
-        object_id=_optional_id(int(failure.runtime.object_id)),
-        allocation_id=_optional_id(int(failure.runtime.allocation_id)),
-        task_id=_optional_id(int(failure.runtime.task_id)),
+        object_id=optional_id(int(failure.runtime.object_id)),
+        allocation_id=optional_id(int(failure.runtime.allocation_id)),
+        task_id=optional_id(int(failure.runtime.task_id)),
         task_live_requested_bytes=int(failure.runtime.task_live_requested_bytes),
         task_live_charged_bytes=int(failure.runtime.task_live_charged_bytes),
         task_live_requested_limit_bytes=int(
@@ -256,10 +256,10 @@ def read_allocator_failure(
         task_allocation_operation_index=int(
             failure.runtime.task_allocation_operation_index
         ),
-        task_allocation_expected_ordinal=_optional_id(
+        task_allocation_expected_ordinal=optional_id(
             int(failure.runtime.task_allocation_expected_ordinal)
         ),
-        task_allocation_actual_ordinal=_optional_id(
+        task_allocation_actual_ordinal=optional_id(
             int(failure.runtime.task_allocation_actual_ordinal)
         ),
         task_allocation_expected_requested_bytes=int(
@@ -457,10 +457,6 @@ def raise_if_allocator_failed(library: Any, operation: str) -> None:
     if diagnostics.is_allocator_oom:
         raise allocator_oom_error(diagnostics)
     raise generic_runtime_error(diagnostics)
-
-
-def _optional_id(value: int) -> int | None:
-    return None if value == _NO_ID else value
 
 
 def _allocation_operation_name(value: int) -> str:

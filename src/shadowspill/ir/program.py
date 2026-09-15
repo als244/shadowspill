@@ -884,3 +884,12 @@ __all__ = [
     "TaskSpec",
     "ValidationError",
 ]
+
+
+def canonical_index(value: str, prefix: str) -> int:
+    """The dense index a canonical identity such as ``task_000012`` carries."""
+
+    suffix = value.removeprefix(prefix)
+    if not value.startswith(prefix) or not suffix.isdigit():
+        raise ValueError(f"identity {value!r} is not {prefix}<index>")
+    return int(suffix)

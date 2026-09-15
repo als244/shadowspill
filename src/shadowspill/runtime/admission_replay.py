@@ -18,6 +18,7 @@ from .admission_capi import (
     CAdmissionReplayResult,
     CAdmissionReuseDependency,
     admission_replay_api,
+    optional_id,
 )
 
 
@@ -197,8 +198,8 @@ def run_admission_replay(
             int(item.operation_index),
             int(item.sequence),
             int(item.lease_id),
-            _optional_id(int(item.predecessor_lease_id)),
-            _optional_id(int(item.dependency_id)),
+            optional_id(int(item.predecessor_lease_id)),
+            optional_id(int(item.dependency_id)),
             int(item.offset),
             int(item.requested_bytes),
             int(item.charged_bytes),
@@ -228,10 +229,6 @@ def run_admission_replay(
         decisions=decisions,
         dependencies=dependencies,
     )
-
-
-def _optional_id(value: int) -> int | None:
-    return None if value == NO_ID else value
 
 
 __all__ = [

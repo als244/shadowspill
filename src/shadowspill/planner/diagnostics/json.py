@@ -60,8 +60,7 @@ def without_measurements(value: object) -> object:
     return {
         key: without_measurements(item)
         for key, item in value.items()
-        if key not in ("sections", "span", "workers")
-        and not key.endswith("_time_ns")
+        if key not in ("sections", "span", "workers") and not key.endswith("_time_ns")
     }
 
 

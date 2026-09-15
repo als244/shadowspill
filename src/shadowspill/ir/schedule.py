@@ -330,8 +330,7 @@ class MemorySchedule:
                             <= task_order[task.task_id]
                         ),
                         path,
-                        "release drops the only current copy of a value still "
-                        "needed",
+                        "release drops the only current copy of a value still needed",
                     )
                     device_resident.remove(alias_id)
                     if not alias_by_id[alias_id].retain_spill_copy:

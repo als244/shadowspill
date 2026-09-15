@@ -19,6 +19,7 @@ from ..capi import (
     CLeaseLifetime,
     CPlacementProblem,
     CPlacementResult,
+    check_planner_status,
     planner_api,
 )
 
@@ -71,10 +72,11 @@ def place_records(
         excluded=mask,
     )
     result = CPlacementResult(required_bytes=0, offsets=offsets)
-    _check(
+    check_planner_status(
         planner_api().shadowspill_place_lifetimes(
             ctypes.byref(problem), ctypes.byref(result)
-        )
+        ),
+        "lease placement",
     )
     return tuple(offsets[:]), int(result.required_bytes)
 
@@ -109,11 +111,6 @@ def place_lifetimes(
         ],
     )
     return place_records((CLeaseLifetime * count).from_buffer(buffer), count, excluded)
-
-
-def _check(status: int) -> None:
-    if int(status) != 0:
-        raise RuntimeError(f"lease placement failed with planner status {status}")
 
 
 __all__ = ["Lifetime", "place_lifetimes", "place_records"]

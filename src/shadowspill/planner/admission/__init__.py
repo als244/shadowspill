@@ -18,11 +18,13 @@ from shadowspill.schema import artifact_schema
 
 from ..strict import (
     _integer,
+    _integer_tuple,
     _list,
     _mapping,
     _optional_integer,
     _optional_string,
     _string,
+    _string_tuple,
 )
 
 _SCHEMA = artifact_schema("admission_facts")
@@ -423,20 +425,6 @@ class AdmissionFacts:
                     f"task admission {task.task_id!r} references unknown aliases "
                     f"{unknown}"
                 )
-
-
-def _integer_tuple(value: object, path: str) -> tuple[int, ...]:
-    return tuple(
-        _integer(item, f"{path}[{index}]")
-        for index, item in enumerate(_list(value, path))
-    )
-
-
-def _string_tuple(value: object, path: str) -> tuple[str, ...]:
-    return tuple(
-        _string(item, f"{path}[{index}]")
-        for index, item in enumerate(_list(value, path))
-    )
 
 
 def _enum(
