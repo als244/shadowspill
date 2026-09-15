@@ -39,6 +39,8 @@ Everything from `CaptureError` down to `ObjectiveError` derives from
 catches that one. Two nestings inside it are worth knowing: `CompilationError`
 and `ProfilingError` share `TaskPhaseError`, and `PlanInfeasibleError` derives
 from `AdmissionError`, so catching admission also catches infeasibility.
+One admission failure is outside this table: `shadowspill.planner.admission.physical` raises `PhysicalAdmissionError`, a `ValueError`, when a budget's headroom leaves nothing to admit. That is the standalone helper documented on [the neutral API page](api/neutral.md#physical-admission); planning calls it and reports what it found as the `AdmissionError` above.
+
 `InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
 raised at a call, not during planning. So is the `require` store's refusal: a
 plain `LookupError`, because nothing about planning failed; the run asked for a
