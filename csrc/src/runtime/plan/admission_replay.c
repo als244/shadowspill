@@ -372,6 +372,244 @@ static int reserve_after_release_frontier(
     );
 }
 
+/* Reserve a range for a lease, or wait behind the release frontier. */
+static ShadowSpillStatus replay_acquire(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    ShadowSpillAdmissionReplayResult *result,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *lease,
+    int *status
+) {
+    const ShadowSpillAdmissionReplayOperation *operation =
+        &program->operations[operation_index];
+        if (operation->bytes == 0U || operation->alignment == 0U) {
+            return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+        }
+        *status = shadowspill_memory_pool_reserve_lease_locked(
+            &state->pool,
+            lease,
+            operation->bytes,
+            operation->alignment,
+            replay_placement(program, operation->bytes)
+        );
+        if (*status == 1) {
+            *status = reserve_after_release_frontier(
+                program,
+                state,
+                result,
+                operation_index,
+                lease,
+                operation->bytes,
+                operation->alignment
+            );
+        }
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* Start retiring a lease, on an event or on one it is promised. */
+static ShadowSpillStatus replay_begin_retirement(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *lease,
+    int *status
+) {
+    const ShadowSpillAdmissionReplayOperation *operation =
+        &program->operations[operation_index];
+        ShadowSpillEventLease *event = dependency_event(
+            program, state, operation->dependency_id
+        );
+        if (event == NULL) {
+            return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+        }
+        if (operation->dependency_expected != 0U) {
+            state->expected_dependency_ids[operation->lease_id] =
+                operation->dependency_id;
+            event = NULL;
+        }
+        *status = shadowspill_memory_pool_begin_retirement_locked(
+            lease, event, operation->dependency_expected != 0U
+        );
+
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* Give a retiring lease the event it was promised. */
+static ShadowSpillStatus replay_publish_dependency(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *lease,
+    int *status
+) {
+    const ShadowSpillAdmissionReplayOperation *operation =
+        &program->operations[operation_index];
+        ShadowSpillEventLease *event = dependency_event(
+            program, state, operation->dependency_id
+        );
+        if (event == NULL) {
+            return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+        }
+        *status = shadowspill_memory_pool_publish_retirement_dependency_locked(
+            lease, event
+        );
+        if (*status == 0) {
+            state->expected_dependency_ids[operation->lease_id] =
+                SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
+        }
+
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* Promise a successor the range a retiring lease still holds. */
+static ShadowSpillStatus replay_reserve(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    ShadowSpillAdmissionReplayResult *result,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *lease,
+    uint64_t *predecessor,
+    int *status
+) {
+    const ShadowSpillAdmissionReplayOperation *operation =
+        &program->operations[operation_index];
+        if (operation->bytes == 0U || operation->alignment == 0U) {
+            return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+        }
+        *status = shadowspill_memory_pool_reserve_lease_locked(
+            &state->pool,
+            lease,
+            operation->bytes,
+            operation->alignment,
+            replay_placement(program, operation->bytes)
+        );
+        if (*status == 1) {
+            *status = shadowspill_memory_pool_reserve_causal_successor_locked(
+                &state->pool,
+                lease,
+                operation->bytes,
+                operation->alignment
+            );
+        }
+        if (*status == 1) {
+            *status = reserve_after_release_frontier(
+                program,
+                state,
+                result,
+                operation_index,
+                lease,
+                operation->bytes,
+                operation->alignment
+            );
+        }
+        if (*status == 0 &&
+            lease->state != SHADOWSPILL_LEASE_SUCCESSOR_RESERVED) {
+            *status = shadowspill_memory_pool_mark_reserved_locked(lease);
+        }
+        *predecessor = lease_id(
+            program, state, lease->causal_predecessor
+        );
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* Take up a range a predecessor reserved for this lease. */
+static ShadowSpillStatus replay_acquire_reserved(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    ShadowSpillAdmissionReplayResult *result,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *lease,
+    uint64_t *predecessor,
+    uint64_t *dependency,
+    int *status
+) {
+    const ShadowSpillAdmissionReplayOperation *operation =
+        &program->operations[operation_index];
+        ShadowSpillMemoryLease *predecessor_lease =
+            lease->causal_predecessor;
+        *predecessor = lease_id(program, state, predecessor_lease);
+        if (*predecessor != SHADOWSPILL_ADMISSION_REPLAY_NO_ID &&
+            predecessor_lease->causal_event == NULL &&
+            predecessor_lease->causal_dependency_expected != 0U) {
+            const uint64_t expected =
+                state->expected_dependency_ids[*predecessor];
+            ShadowSpillEventLease *event = dependency_event(
+                program, state, expected
+            );
+            if (event == NULL ||
+                shadowspill_memory_pool_publish_retirement_dependency_locked(
+                    predecessor_lease, event
+                ) != 0) {
+                return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+            }
+            state->expected_dependency_ids[*predecessor] =
+                SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
+        }
+        ShadowSpillEventLease *event = NULL;
+        *status = shadowspill_memory_pool_acquire_reserved_lease_locked(
+            lease, &event
+        );
+        *dependency = event_id(program, state, event);
+        if (*status == 0 && event != NULL) {
+            if (append_dependency(
+                    result,
+                    *predecessor,
+                    operation->lease_id,
+                    *dependency,
+                    operation_index
+                ) != 0) {
+                (void)atomic_fetch_sub_explicit(
+                    &event->references, 1U, memory_order_release
+                );
+                return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+            }
+            (void)atomic_fetch_sub_explicit(
+                &event->references, 1U, memory_order_release
+            );
+        }
+
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* Finish a retirement, and give the range back. */
+static ShadowSpillStatus replay_complete_retirement(
+    const ShadowSpillAdmissionReplayProgram *program,
+    ReplayState *state,
+    uint64_t operation_index,
+    ShadowSpillMemoryLease *lease,
+    int *status
+) {
+    const ShadowSpillAdmissionReplayOperation *operation =
+        &program->operations[operation_index];
+        ShadowSpillEventLease *event = dependency_event(
+            program, state, operation->dependency_id
+        );
+        if (event == NULL) {
+            return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+        }
+        atomic_store_explicit(
+            &event->backend_complete, 1U, memory_order_release
+        );
+        if (state->retirement_completed_early[operation->lease_id] != 0U) {
+            state->retirement_completed_early[operation->lease_id] = 0U;
+            *status = 0;
+        } else {
+            *status = shadowspill_memory_pool_release_lease_locked(lease);
+        }
+
+    return SHADOWSPILL_STATUS_OK;
+}
+
+/* Give a lease's range back with nothing waiting on it. */
+static ShadowSpillStatus replay_release(
+    ShadowSpillMemoryLease *lease,
+    int *status
+) {
+        *status = shadowspill_memory_pool_release_lease_locked(lease);
+    return SHADOWSPILL_STATUS_OK;
+}
+
 static ShadowSpillStatus apply_operation(
     const ShadowSpillAdmissionReplayProgram *program,
     ReplayState *state,
@@ -393,169 +631,79 @@ static ShadowSpillStatus apply_operation(
     uint64_t predecessor = SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
     uint64_t dependency = SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
     int status = -1;
+    ShadowSpillStatus replayed = SHADOWSPILL_STATUS_OK;
     switch ((ShadowSpillAdmissionReplayOperationKind)operation->kind) {
         case SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE:
-            if (operation->bytes == 0U || operation->alignment == 0U) {
-                return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
-            }
-            status = shadowspill_memory_pool_reserve_lease_locked(
-                &state->pool,
+            replayed = replay_acquire(
+                program,
+                state,
+                result,
+                operation_index,
                 lease,
-                operation->bytes,
-                operation->alignment,
-                replay_placement(program, operation->bytes)
-            );
-            if (status == 1) {
-                status = reserve_after_release_frontier(
-                    program,
-                    state,
-                    result,
-                    operation_index,
-                    lease,
-                    operation->bytes,
-                    operation->alignment
-                );
-            }
-            break;
-        case SHADOWSPILL_ADMISSION_REPLAY_BEGIN_RETIREMENT: {
-            ShadowSpillEventLease *event = dependency_event(
-                program, state, operation->dependency_id
-            );
-            if (event == NULL) {
-                return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
-            }
-            if (operation->dependency_expected != 0U) {
-                state->expected_dependency_ids[operation->lease_id] =
-                    operation->dependency_id;
-                event = NULL;
-            }
-            status = shadowspill_memory_pool_begin_retirement_locked(
-                lease, event, operation->dependency_expected != 0U
+                &status
             );
             break;
-        }
-        case SHADOWSPILL_ADMISSION_REPLAY_PUBLISH_DEPENDENCY: {
-            ShadowSpillEventLease *event = dependency_event(
-                program, state, operation->dependency_id
+        case SHADOWSPILL_ADMISSION_REPLAY_BEGIN_RETIREMENT:
+            replayed = replay_begin_retirement(
+                program,
+                state,
+                operation_index,
+                lease,
+                &status
             );
-            if (event == NULL) {
-                return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
-            }
-            status = shadowspill_memory_pool_publish_retirement_dependency_locked(
-                lease, event
-            );
-            if (status == 0) {
-                state->expected_dependency_ids[operation->lease_id] =
-                    SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
-            }
             break;
-        }
+        case SHADOWSPILL_ADMISSION_REPLAY_PUBLISH_DEPENDENCY:
+            replayed = replay_publish_dependency(
+                program,
+                state,
+                operation_index,
+                lease,
+                &status
+            );
+            break;
         case SHADOWSPILL_ADMISSION_REPLAY_RESERVE:
-            if (operation->bytes == 0U || operation->alignment == 0U) {
-                return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
-            }
-            status = shadowspill_memory_pool_reserve_lease_locked(
-                &state->pool,
+            replayed = replay_reserve(
+                program,
+                state,
+                result,
+                operation_index,
                 lease,
-                operation->bytes,
-                operation->alignment,
-                replay_placement(program, operation->bytes)
-            );
-            if (status == 1) {
-                status = shadowspill_memory_pool_reserve_causal_successor_locked(
-                    &state->pool,
-                    lease,
-                    operation->bytes,
-                    operation->alignment
-                );
-            }
-            if (status == 1) {
-                status = reserve_after_release_frontier(
-                    program,
-                    state,
-                    result,
-                    operation_index,
-                    lease,
-                    operation->bytes,
-                    operation->alignment
-                );
-            }
-            if (status == 0 &&
-                lease->state != SHADOWSPILL_LEASE_SUCCESSOR_RESERVED) {
-                status = shadowspill_memory_pool_mark_reserved_locked(lease);
-            }
-            predecessor = lease_id(
-                program, state, lease->causal_predecessor
+                &predecessor,
+                &status
             );
             break;
-        case SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE_RESERVED: {
-            ShadowSpillMemoryLease *predecessor_lease =
-                lease->causal_predecessor;
-            predecessor = lease_id(program, state, predecessor_lease);
-            if (predecessor != SHADOWSPILL_ADMISSION_REPLAY_NO_ID &&
-                predecessor_lease->causal_event == NULL &&
-                predecessor_lease->causal_dependency_expected != 0U) {
-                const uint64_t expected =
-                    state->expected_dependency_ids[predecessor];
-                ShadowSpillEventLease *event = dependency_event(
-                    program, state, expected
-                );
-                if (event == NULL ||
-                    shadowspill_memory_pool_publish_retirement_dependency_locked(
-                        predecessor_lease, event
-                    ) != 0) {
-                    return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
-                }
-                state->expected_dependency_ids[predecessor] =
-                    SHADOWSPILL_ADMISSION_REPLAY_NO_ID;
-            }
-            ShadowSpillEventLease *event = NULL;
-            status = shadowspill_memory_pool_acquire_reserved_lease_locked(
-                lease, &event
+        case SHADOWSPILL_ADMISSION_REPLAY_ACQUIRE_RESERVED:
+            replayed = replay_acquire_reserved(
+                program,
+                state,
+                result,
+                operation_index,
+                lease,
+                &predecessor,
+                &dependency,
+                &status
             );
-            dependency = event_id(program, state, event);
-            if (status == 0 && event != NULL) {
-                if (append_dependency(
-                        result,
-                        predecessor,
-                        operation->lease_id,
-                        dependency,
-                        operation_index
-                    ) != 0) {
-                    (void)atomic_fetch_sub_explicit(
-                        &event->references, 1U, memory_order_release
-                    );
-                    return SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-                }
-                (void)atomic_fetch_sub_explicit(
-                    &event->references, 1U, memory_order_release
-                );
-            }
             break;
-        }
-        case SHADOWSPILL_ADMISSION_REPLAY_COMPLETE_RETIREMENT: {
-            ShadowSpillEventLease *event = dependency_event(
-                program, state, operation->dependency_id
+        case SHADOWSPILL_ADMISSION_REPLAY_COMPLETE_RETIREMENT:
+            replayed = replay_complete_retirement(
+                program,
+                state,
+                operation_index,
+                lease,
+                &status
             );
-            if (event == NULL) {
-                return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
-            }
-            atomic_store_explicit(
-                &event->backend_complete, 1U, memory_order_release
-            );
-            if (state->retirement_completed_early[operation->lease_id] != 0U) {
-                state->retirement_completed_early[operation->lease_id] = 0U;
-                status = 0;
-            } else {
-                status = shadowspill_memory_pool_release_lease_locked(lease);
-            }
             break;
-        }
         case SHADOWSPILL_ADMISSION_REPLAY_RELEASE:
-            status = shadowspill_memory_pool_release_lease_locked(lease);
+            replayed = replay_release(
+                lease,
+                &status
+            );
             break;
         default:
             return SHADOWSPILL_STATUS_INVALID_OPERATIONS;
+    }
+    if (replayed != SHADOWSPILL_STATUS_OK) {
+        return replayed;
     }
     if (status == 1) {
         return SHADOWSPILL_STATUS_REPLAY_INFEASIBLE;
