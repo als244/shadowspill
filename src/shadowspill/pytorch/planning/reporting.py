@@ -29,7 +29,7 @@ from ..diagnostics import (
 )
 from ..runtime_adapter import PlanMemory
 from .admission import FixedLayoutSelection, SelectedAdmission
-from .common import fixed_execution_bytes
+from .common import fixed_execution_bytes, program_phase_timings
 
 
 def cache_artifacts(cache: ArtifactStore) -> tuple[PlanCacheArtifact, ...]:
@@ -77,7 +77,10 @@ def build_forward_report(
     """Build complete forward planning evidence without writing it."""
 
     elapsed = time.perf_counter_ns() - started
-    phases = _report_phases(timings, elapsed)
+    phases = tuple(
+        PlanPhaseTiming(name, duration)
+        for name, duration in program_phase_timings(timings, elapsed, total=False)
+    )
     diagnostics = _forward_diagnostics(
         phases,
         elapsed,
@@ -241,32 +244,6 @@ def _forward_capture_identity(
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def _report_phases(
-    timings: tuple[tuple[str, int], ...],
-    elapsed: int,
-) -> tuple[PlanPhaseTiming, ...]:
-    nested_capture = any(
-        name
-        in {
-            "objective_export",
-            "export_archival",
-            "stage_partition_aot",
-            "storage_layout_lowering",
-        }
-        for name, _ in timings
-    )
-    phases = tuple(
-        PlanPhaseTiming(name, duration)
-        for name, duration in timings
-        if not (nested_capture and name == "capture_lowering")
-    )
-    if sum(item.duration_ns for item in phases) > elapsed:
-        raise RuntimeError(
-            "plan phase intervals overlap: measured phase time exceeds wall time"
-        )
-    return phases
 
 
 def _transfer_bytes(
