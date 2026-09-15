@@ -23,6 +23,7 @@ from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     training_profiling_metadata,
 )
+from shadowspill.runtime.plan import PlanMemory
 
 from ...contracts import (
     ObjectiveResult,
@@ -39,7 +40,6 @@ from ...materialization import representative_cpu_inputs
 from ...partition import (
     PartitionSpec,
 )
-from ...runtime_adapter import PlanMemory
 from ..artifacts import (
     TrainingCaptureArtifacts,
 )

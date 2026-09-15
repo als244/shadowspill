@@ -21,7 +21,7 @@ from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.pytorch.api import build_step_programs
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.runtime import Runtime
 from shadowspill.step import StepProgram
 from shadowspill.store import StoreMode
 

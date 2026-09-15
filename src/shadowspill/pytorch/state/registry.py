@@ -5,8 +5,8 @@ from __future__ import annotations
 import threading
 import weakref
 
-from shadowspill.pytorch.runtime_adapter.runtime import (
-    Runtime,
+from shadowspill.runtime import Runtime
+from shadowspill.runtime.objects import (
     release_persistent_state,
     retain_persistent_state,
 )

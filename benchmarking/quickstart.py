@@ -69,11 +69,11 @@ from shadowspill.plots import (
 from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
 from shadowspill.pytorch.diagnostics.execution import TaskRecord, TransferRecord
 from shadowspill.pytorch.planning import planned_transfer_bandwidths
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-from shadowspill.pytorch.runtime_adapter.runtime.configuration import (
+from shadowspill.pytorch.step_search import search_geometries
+from shadowspill.runtime.configuration import (
     resolve_execution_budget,
 )
-from shadowspill.pytorch.step_search import search_geometries
+from shadowspill.runtime.failures import RuntimeExecutionError
 from shadowspill.schema import artifact_schema
 from shadowspill.store import STORE_MODES
 from tools.qualification.model_state import release_case_model

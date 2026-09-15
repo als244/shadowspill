@@ -22,12 +22,12 @@ from shadowspill.pytorch import (
     import_optimizer_state,
     plan_forward,
 )
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.pytorch.state.storage import persistent_state
+from shadowspill.runtime.abi import (
     AdapterStatistics,
     ObjectSnapshot,
     runtime_library,
 )
-from shadowspill.pytorch.state.storage import persistent_state
 
 
 class _Model(nn.Module):

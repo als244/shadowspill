@@ -26,7 +26,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     after_task_and_update,
     describe_object_state,
 )
-from shadowspill.pytorch.runtime_adapter.failures import (
+from shadowspill.runtime.failures import (
     RuntimeFailureDiagnostics,
     allocator_oom_error,
     generic_runtime_error,

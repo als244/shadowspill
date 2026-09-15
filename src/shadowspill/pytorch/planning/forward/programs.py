@@ -14,9 +14,9 @@ from shadowspill.pytorch.profiling import (
     ResolvedTaskManifests,
 )
 from shadowspill.runtime import ObjectConsistency
+from shadowspill.runtime.plan import PlanMemory
 
 from ...lowering.forward import lower_partitioned_forward_program
-from ...runtime_adapter import PlanMemory
 from ..admission import (
     FixedLayoutSelection,
     SelectedAdmission,

@@ -7,15 +7,16 @@ import sys
 from pathlib import Path
 
 import torch
+from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.runtime.abi import (
     PlanDescription,
     TaskAllocationContractStep,
     TaskDescription,
     runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
-from shadowspill.pytorch.runtime_adapter.failures import (
+from shadowspill.runtime.bootstrap import install_runtime
+from shadowspill.runtime.failures import (
     ExecutionTaskIdentity,
     read_allocator_failure,
 )
@@ -84,8 +85,9 @@ def _admit_task(library: object, description: TaskDescription) -> int:
 
 
 def main() -> int:
-    installed = install_allocator(
+    installed = install_runtime(
         Path(sys.argv[1]).resolve(),
+        frontend=PyTorchProcessAllocator(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,

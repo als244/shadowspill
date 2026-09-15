@@ -8,7 +8,10 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import torch
 
 from shadowspill.pytorch.optimizer.capture import declare_optimizer_state
-from shadowspill.pytorch.runtime_adapter.runtime import MemoryPool, Runtime
+from shadowspill.runtime import (
+    MemoryPool,
+    Runtime,
+)
 
 from .storage import (
     NamedTensor,

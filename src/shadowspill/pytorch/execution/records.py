@@ -18,7 +18,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     TaskPublication,
     actions_by_task,
 )
-from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
+from shadowspill.runtime.failures import ExecutionTaskIdentity
 from shadowspill.simulator import SimulationResult
 
 

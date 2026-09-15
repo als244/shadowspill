@@ -21,8 +21,8 @@ from shadowspill.pytorch import (
     import_model_state,
     plan_step,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
-from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
+from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.bootstrap import installed_runtime
 
 
 class _Model(nn.Module):
@@ -63,7 +63,7 @@ def _assert_bitwise(
 
 
 def _statistics() -> AdapterStatistics:
-    installed = installed_allocator()
+    installed = installed_runtime()
     if installed is None:
         raise AssertionError("training did not install the allocator")
     result = AdapterStatistics()

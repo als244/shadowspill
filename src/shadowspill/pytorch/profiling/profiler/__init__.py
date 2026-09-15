@@ -13,7 +13,7 @@ from shadowspill.errors import ProfilingError
 from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
-from shadowspill.pytorch.runtime_adapter.failures import raise_if_allocator_failed
+from shadowspill.runtime.failures import raise_if_allocator_failed
 
 from ..executables import ProfileExecutable, ProfileExecutableStore
 from ..records import TaskMeasurement

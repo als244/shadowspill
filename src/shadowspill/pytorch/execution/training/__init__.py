@@ -33,7 +33,7 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     transfer_outputs_to_caller,
     wait_plan_idle,
 )
-from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
 from shadowspill.simulator import SimulationResult
 
 from ..annotations import AnnotatedExecutor, TaskBoundaryAnnotations

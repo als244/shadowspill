@@ -8,7 +8,7 @@ import torch.nn as nn
 
 import shadowspill.pytorch.callables as callable_module
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
-from shadowspill.pytorch.runtime_adapter import RuntimeExecutionError
+from shadowspill.runtime.failures import RuntimeExecutionError
 
 from ._lifecycle import FakeRuntime, fake_plan_lifecycle
 

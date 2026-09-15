@@ -37,7 +37,7 @@ from shadowspill.pytorch.planning.common import (
 )
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.pytorch.profiling.profiler import ProfilingWallTimes
-from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
+from shadowspill.runtime.configuration import adapter_path
 from shadowspill.runtime.topology import TransferProfile
 
 

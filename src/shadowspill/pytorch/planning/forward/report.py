@@ -9,9 +9,9 @@ from shadowspill.planner import (
     ProgramPlanResult,
 )
 from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
+from shadowspill.runtime.plan import PlanMemory
 
 from ...diagnostics import PlanReport
-from ...runtime_adapter import PlanMemory
 from ..admission import (
     FixedLayoutSelection,
     SelectedAdmission,

@@ -24,6 +24,7 @@ from shadowspill.pytorch.profiling.metadata import (
     ProfilingMetadata,
     canonicalize_profiling_metadata,
 )
+from shadowspill.runtime.plan import PlanMemory
 
 from ...guards import InputSignature, capture_input_signature
 from ...materialization import (
@@ -35,7 +36,6 @@ from ...partition import (
     PartitionSpec,
     partition_export,
 )
-from ...runtime_adapter import PlanMemory
 from ...sharing import (
     ResolvedSharedInput,
     ResolvedSharedOutput,

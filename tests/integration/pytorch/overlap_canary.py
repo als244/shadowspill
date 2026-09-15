@@ -8,8 +8,9 @@ import time
 from pathlib import Path
 
 import torch
+from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.runtime.abi import (
     AdapterStatistics,
     ObjectBinding,
     ObjectDescription,
@@ -19,7 +20,7 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskDescription,
     runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from shadowspill.runtime.bootstrap import install_runtime
 from tests.integration.pytorch.runtime_helpers import begin_task, two_pool_topology
 
 ELEMENTS = 16 << 20
@@ -240,8 +241,9 @@ def main() -> int:
     adapter_path = Path(sys.argv[1]).resolve()
     if torch.cuda.is_initialized():
         raise AssertionError("canary must start before PyTorch CUDA initialization")
-    installed = install_allocator(
+    installed = install_runtime(
         adapter_path,
+        frontend=PyTorchProcessAllocator(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,

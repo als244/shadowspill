@@ -5,14 +5,14 @@ from __future__ import annotations
 import ctypes
 from typing import Any
 
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
-from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
+from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.bootstrap import installed_runtime
 
 
 def adapter_statistics() -> AdapterStatistics:
     """Return one consistent snapshot from the installed PyTorch adapter."""
 
-    installed = installed_allocator()
+    installed = installed_runtime()
     if installed is None:
         raise RuntimeError("ShadowSpill allocator is not installed")
     result = AdapterStatistics()
@@ -27,7 +27,7 @@ def adapter_statistics() -> AdapterStatistics:
 def check_physical_budget() -> int:
     """Return zero only when current physical use remains within admission."""
 
-    installed = installed_allocator()
+    installed = installed_runtime()
     if installed is None:
         raise RuntimeError("ShadowSpill allocator is not installed")
     return int(installed.library.shadowspill_pytorch_check_physical_budget())

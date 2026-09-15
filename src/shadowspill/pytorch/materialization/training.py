@@ -14,6 +14,7 @@ from torch.export.graph_signature import InputKind
 from shadowspill.errors import PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
+from shadowspill.pytorch.bindings import dematerialize
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
 from shadowspill.pytorch.lowering.catalog import RegistrationBinding
@@ -29,17 +30,16 @@ from shadowspill.pytorch.optimizer import current_optimizer_bindings
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     admit_initial_actions,
-    dematerialize,
     publish_initial_tensor,
     submit_initial_actions,
     wait_idle,
 )
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
     persistent_state,
     restore_persistent_state,
 )
+from shadowspill.runtime import Runtime
 
 
 @dataclass(frozen=True, slots=True)
@@ -544,7 +544,7 @@ class TrainingMaterializedState(MaterializedState):
         task_number = (1 << 61) + ordinal
         actions = (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),)
         admit_initial_actions(self.bridge, actions, task_number=task_number)
-        dematerialize(self.bridge, tensor, alias_id, generation)
+        dematerialize([tensor])
         submit_initial_actions(
             self.bridge,
             actions,
