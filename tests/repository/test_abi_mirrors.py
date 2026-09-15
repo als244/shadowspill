@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.pytorch.runtime_adapter import abi
+from shadowspill.runtime import abi
 from shadowspill.schema import ARTIFACT_VERSION
 from shadowspill.status import ABI_VERSION, Status
 
