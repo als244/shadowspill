@@ -41,7 +41,7 @@ def test_public_simulator_fails_closed_without_the_library(
 ) -> None:
     # The library is loaded where the projection runs, which is the module
     # the public name is re-exported from.
-    implementation = importlib.import_module("shadowspill.simulator.indexing")
+    implementation = importlib.import_module("shadowspill.simulator.indexing.results")
 
     def missing_library() -> None:
         raise RuntimeError("the simulator unavailable")
