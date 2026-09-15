@@ -20,6 +20,14 @@ if TYPE_CHECKING:
 
 
 def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
+    """Restore one fixed physical layout from its stored record.
+
+    One decoder reads one record. It is long because the record is wide,
+    not because it does several things: every line is one key, read in the
+    order the writer emits it. Splitting it would scatter one schema across
+    several files and leave no part easier to check against the writer.
+    """
+
     from shadowspill.planner.admission.admission_replay import AdmissionReplayPurpose
     from shadowspill.planner.admission.layout.model import (
         FixedLayoutPlacement,
