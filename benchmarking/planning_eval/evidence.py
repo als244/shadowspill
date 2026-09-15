@@ -120,30 +120,20 @@ def successful_point_evidence(
                 "selection_digest": selection_digest,
                 "option_counts": dict(sorted(option_counts.items())),
                 "selections": selection_value,
-                "selected_candidate_id": (
-                    search_diagnostics.selected_candidate_id
-                ),
-                "selected_selection_id": (
-                    search_diagnostics.selected_selection_id
-                ),
-                "resolved_program_count": (
-                    search_diagnostics.resolved_program_count
-                ),
+                "selected_candidate_id": (search_diagnostics.selected_candidate_id),
+                "selected_selection_id": (search_diagnostics.selected_selection_id),
+                "resolved_program_count": (search_diagnostics.resolved_program_count),
                 "valid_resolved_program_count": (
                     search_diagnostics.valid_resolved_program_count
                 ),
-                "candidate_policy_count": (
-                    search_diagnostics.candidate_policy_count
-                ),
+                "candidate_policy_count": (search_diagnostics.candidate_policy_count),
                 "candidate_evaluation_count": (
                     search_diagnostics.candidate_evaluation_count
                 ),
                 "valid_candidate_evaluation_count": (
                     search_diagnostics.valid_candidate_evaluation_count
                 ),
-                "candidate_status_counts": (
-                    search_diagnostics.candidate_status_counts
-                ),
+                "candidate_status_counts": (search_diagnostics.candidate_status_counts),
                 "search_diagnostics": search_diagnostics.to_dict(),
             },
             "schedule": {

@@ -22,10 +22,12 @@ from shadowspill.pytorch.optimizer import (
 from shadowspill.pytorch.profiling import (
     ResolvedTaskManifests,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import (
-    InstalledAllocator,
-)
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.runtime.abi import INITIAL_ACTIONS_TASK_ID
+from shadowspill.runtime.bootstrap import (
+    InstalledRuntime,
+)
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 
 from ...callables import PlannedTrainStep
@@ -33,7 +35,6 @@ from ...execution import TrainingExecutor
 from ...lowering.training import (
     LoweredTrainingProgram,
 )
-from ...runtime_adapter import INITIAL_ACTIONS_TASK_ID, PlanMemory
 from ..admission import (
     SelectedAdmission,
     build_fixed_selected_admission,
@@ -66,7 +67,7 @@ def compile_selected_training_tasks(
     programs: TrainingProgramArtifacts,
     selections: TrainingSelections,
     *,
-    installed: InstalledAllocator,
+    installed: InstalledRuntime,
     timer: PlanningTimer,
 ) -> TrainingExecutableArtifacts:
     """Retain executable callables only for selected task variants."""

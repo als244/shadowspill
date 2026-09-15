@@ -24,7 +24,7 @@ from shadowspill.planner.diagnostics import (
 from shadowspill.planner.program_inputs import (
     TransferBandwidths,
 )
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.runtime import Runtime
 from shadowspill.store import StoreMode
 
 from .geometries import default_orderings, search_geometries

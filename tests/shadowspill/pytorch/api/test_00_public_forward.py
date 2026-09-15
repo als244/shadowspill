@@ -13,7 +13,7 @@ from shadowspill.pytorch import (
     import_model_state,
     plan_forward,
 )
-from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
+from shadowspill.runtime.configuration import adapter_path
 
 from ..runtime_test_support import public_test_runtime
 

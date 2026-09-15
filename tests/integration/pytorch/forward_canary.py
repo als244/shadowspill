@@ -26,12 +26,12 @@ from shadowspill.pytorch import (
     shared_input,
     shared_output,
 )
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.runtime.abi import (
     AdapterStatistics,
     ObjectSnapshot,
     runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import installed_allocator
+from shadowspill.runtime.bootstrap import installed_runtime
 
 
 class _ForwardModel(nn.Module):
@@ -52,7 +52,7 @@ class _ConsumerModel(nn.Module):
 
 
 def _statistics() -> AdapterStatistics:
-    installed = installed_allocator()
+    installed = installed_runtime()
     if installed is None:
         raise AssertionError("public forward did not install the allocator")
     result = AdapterStatistics()

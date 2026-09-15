@@ -13,13 +13,13 @@ import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import accelerator_device
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
+from shadowspill.runtime.abi import (
     PROFILING_SCOPE_BASE,
     AdapterStatistics,
     Allocation,
 )
-from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
-from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
+from shadowspill.runtime.failures import wait_allocator_idle
 
 #: Profiling scope ids, minted once per process rather than once per profiler.
 #: A profiler is built per planning call, so a per-instance counter restarted at

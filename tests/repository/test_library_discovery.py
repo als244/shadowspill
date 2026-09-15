@@ -9,7 +9,7 @@ from shadowspill.libraries import (
     library_candidates,
     shadowspill_library_path,
 )
-from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
+from shadowspill.runtime.configuration import adapter_path
 
 
 def _editable_checkout(tmp_path: Path) -> Path:

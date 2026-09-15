@@ -20,6 +20,7 @@ from shadowspill.pytorch.profiling import (
     profile_environment,
 )
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.simulator import SimulationConfig
 from shadowspill.step import StepDataOrdering, StepProgram
 from shadowspill.store import ArtifactStore
@@ -34,7 +35,6 @@ from ...lowering.training import (
 from ...partition import (
     PartitionSpec,
 )
-from ...runtime_adapter import PlanMemory
 from ..admission import (
     dynamic_scratch_reserve_bytes,
 )

@@ -6,8 +6,10 @@ import ctypes
 import sys
 from pathlib import Path
 
-from shadowspill.pytorch.runtime_adapter.abi import AdapterFailure, AdapterStatistics
-from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from shadowspill.pytorch.allocator import PyTorchProcessAllocator
+
+from shadowspill.runtime.abi import AdapterFailure, AdapterStatistics
+from shadowspill.runtime.bootstrap import install_runtime
 from shadowspill.status import Status
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
@@ -16,8 +18,9 @@ PLAN_VIOLATION = Status.PLAN_VIOLATION
 
 
 def main() -> int:
-    installed = install_allocator(
+    installed = install_runtime(
         Path(sys.argv[1]).resolve(),
+        frontend=PyTorchProcessAllocator(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=256 * MIB,

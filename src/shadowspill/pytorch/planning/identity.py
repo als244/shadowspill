@@ -27,7 +27,7 @@ from shadowspill.pytorch.optimizer.artifacts import (
 )
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.profiling.metadata import training_profiling_metadata
-from shadowspill.pytorch.runtime_adapter.runtime import PlanMemory
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.schema import artifact_schema
 from shadowspill.step import StepDataOrdering
 

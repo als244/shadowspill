@@ -16,6 +16,7 @@ from shadowspill.errors import (
     PlanningError,
     PlanSearchExhaustedError,
 )
+from shadowspill.planner.admission.physical import workspace_reserve_bytes
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.quantization import (
     quantized_bandwidth,
@@ -27,11 +28,9 @@ from shadowspill.pytorch.profiling import (
     TaskMeasurement,
 )
 from shadowspill.pytorch.profiling.profiler import ProfilingWallTimes
-from shadowspill.runtime import workspace_reserve_bytes
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.runtime.topology import TransferProfile
 from shadowspill.simulator import SimulationConfig
-
-from ..runtime_adapter import PlanMemory
 
 _MIB = 1 << 20
 _SPILL_LEEWAY_MINIMUM = 256 * _MIB

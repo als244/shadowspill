@@ -18,6 +18,7 @@ from shadowspill.pytorch.optimizer import (
 from shadowspill.pytorch.profiling import (
     TaskMeasurement,
 )
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 
 from ...lowering.profiles import CompiledLayoutIndex, ProfileMeasurementKey
@@ -26,7 +27,6 @@ from ...lowering.training import (
     TrainingStorageLayout,
     lower_partitioned_training_program,
 )
-from ...runtime_adapter import PlanMemory
 from ..admission import (
     build_admission_facts,
     output_bindings_for_entrypoints,

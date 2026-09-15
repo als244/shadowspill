@@ -22,7 +22,7 @@ from shadowspill.pytorch.profiling import (
     TaskMeasurement,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
-from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
+from shadowspill.runtime.bootstrap import InstalledRuntime
 from shadowspill.simulator import SimulationConfig
 
 from ..graph_pairs import PartitionedTrainingCapture
@@ -45,7 +45,7 @@ class ForwardCaptureArtifacts:
     signature: InputSignature
     cpu_inputs: tuple[object, ...]
     workload: ProfilingMetadata
-    installed: InstalledAllocator
+    installed: InstalledRuntime
     device_ordinal: int
     fake_model: nn.Module
     capture: ExportCapture
@@ -86,7 +86,7 @@ class TrainingCaptureArtifacts:
     signatures: tuple[InputSignature, ...]
     cpu_inputs: tuple[tuple[object, ...], ...]
     workloads: tuple[ProfilingMetadata, ...]
-    installed: InstalledAllocator
+    installed: InstalledRuntime
     device_ordinal: int
     fake_model: nn.Module
     captures: tuple[TrainingObjectiveCapture, ...]

@@ -7,10 +7,10 @@ import ctypes
 from shadowspill.errors import AdmissionError
 from shadowspill.ir import ExecutionPlan, MemoryActionKind, PhysicalAdmission
 from shadowspill.planner.admission.layout import FixedPhysicalLayout
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
-from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
+from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.bootstrap import InstalledRuntime
+from shadowspill.runtime.plan import PlanMemory
 
-from ...runtime_adapter import PlanMemory
 from ..common import round_up
 
 _MIB = 1 << 20
@@ -53,7 +53,7 @@ def reconcile_spill_pool(*, predicted_peak: int, budget: int) -> None:
 
 def physical_admission(
     memory: PlanMemory,
-    installed: InstalledAllocator,
+    installed: InstalledRuntime,
     *,
     workspace_reserve: int,
     predicted_spill_peak_bytes: int,
@@ -86,7 +86,7 @@ def physical_admission(
 
 
 def seal_physical_budget(
-    installed: InstalledAllocator,
+    installed: InstalledRuntime,
     execution_plan: ExecutionPlan,
     fixed_layout: FixedPhysicalLayout,
 ) -> None:

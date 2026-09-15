@@ -13,8 +13,8 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     admit_task,
     seal_fixed_layout,
 )
-from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
-from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
+from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.transfer_labels import TransferLabelIndex
 
 from ..records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,

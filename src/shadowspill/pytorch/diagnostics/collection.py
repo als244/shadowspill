@@ -13,7 +13,6 @@ from shadowspill.pytorch.diagnostics.timing import (
     ArmedExecutionTiming,
     ArmedTaskTiming,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     end_and_read_runtime_trace,
@@ -25,6 +24,7 @@ from shadowspill.pytorch.runtime_adapter.trace import (
     RuntimeTraceEvent,
     RuntimeTraceEventKind,
 )
+from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.simulator import SimulationResult, TaskInterval, TransferInterval
 
 from .execution import (

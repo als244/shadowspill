@@ -213,16 +213,12 @@ def _csv_row(
         "evict_bytes": evict.get("bytes"),
         "device_peak_bytes": _mapping(simulation.get("device_peak")).get("total_bytes"),
         "spill_peak_bytes": simulation.get("spill_peak_bytes"),
-        "resolved_program_count": search_summary.get(
-            "resolved_program_count"
-        ),
+        "resolved_program_count": search_summary.get("resolved_program_count"),
         "valid_resolved_program_count": search_summary.get(
             "valid_resolved_program_count"
         ),
         "candidate_policy_count": search_summary.get("candidate_policy_count"),
-        "candidate_evaluation_count": search_summary.get(
-            "candidate_evaluation_count"
-        ),
+        "candidate_evaluation_count": search_summary.get("candidate_evaluation_count"),
         "valid_candidate_evaluation_count": search_summary.get(
             "valid_candidate_evaluation_count"
         ),

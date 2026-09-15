@@ -19,9 +19,9 @@ from shadowspill.pytorch import (
     read_model_state,
 )
 from shadowspill.pytorch.optimizer import trace as optimizer_trace
-from shadowspill.pytorch.runtime_adapter import RuntimeConfigurationError
-from shadowspill.pytorch.runtime_adapter.runtime.configuration import adapter_path
 from shadowspill.pytorch.state.storage import persistent_state
+from shadowspill.runtime import RuntimeConfigurationError
+from shadowspill.runtime.configuration import adapter_path
 
 from ..runtime_test_support import public_test_runtime
 

@@ -11,6 +11,7 @@ from dataclasses import replace
 from shadowspill.ir import ExecutionPlan, MemoryActionKind
 from shadowspill.planner import ProgramPlanResult, SearchOptions
 from shadowspill.pytorch.profiling import ProfilingMetadata, ProfilingResult
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 from shadowspill.store import ArtifactStore
 
@@ -27,7 +28,6 @@ from ..diagnostics import (
     PlanTaskStage,
     PlanUniqueStage,
 )
-from ..runtime_adapter import PlanMemory
 from .admission import FixedLayoutSelection, SelectedAdmission
 from .common import fixed_execution_bytes, program_phase_timings
 
