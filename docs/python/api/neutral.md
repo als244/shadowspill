@@ -174,7 +174,10 @@ want the answer written down.
 
 `plan_program()` is the entry point, and the only one that touches disk. It
 fixes the machine from a budget, keys the answer, runs a search, holds that
-search to any plan it was handed, and physically admits the winner.
+search to any plan it was handed, and physically admits the winner. When the
+planning store already holds the answer, the plan is read back with the
+simulation and the fixed-layout certificate recorded beside it and nothing is
+simulated or placed; when it holds a refusal, that refusal is raised again.
 
 Building a program is the frontend's job:
 [`build_step_program()`](frontend.md#build_step_program) captures, compiles,

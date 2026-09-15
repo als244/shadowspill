@@ -98,6 +98,7 @@ def resolve_fixed_layout_selection(
     *,
     scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
+    certify: Callable[[PlanLookup, FixedLayoutAdmission], None] | None = None,
 ) -> FixedLayoutSelection:
     """Certify the layout of the plan the search selected.
 
@@ -108,6 +109,10 @@ def resolve_fixed_layout_selection(
 
     The returned record owns the exact effective facts and certificate;
     callers never reconstruct either from the original request.
+
+    A plan read back with a certificate for these facts is served with it:
+    nothing is placed or simulated again. A certificate made here is handed
+    to `certify`, which is how a store comes to hold one.
     """
 
     original_capacity = _single_device_capacity(config, facts.device_id)
@@ -130,13 +135,24 @@ def resolve_fixed_layout_selection(
         for item in selected.result.schedule.final_residency
         if item.location is MemoryLocation.DEVICE
     )
+    certificate = selected.certificate
+    if (
+        certificate is not None
+        and certificate.layout.facts_digest != effective_facts.digest
+    ):
+        certificate = None
     try:
-        admitted = build_fixed_layout_admission(
-            selected.result,
-            effective_facts,
-            dynamic_alias_group_ids=dynamic_aliases,
-            scratch_reserve_bytes=scratch_reserve_bytes,
-        )
+        if certificate is not None:
+            admitted = certificate
+        else:
+            admitted = build_fixed_layout_admission(
+                selected.result,
+                effective_facts,
+                dynamic_alias_group_ids=dynamic_aliases,
+                scratch_reserve_bytes=scratch_reserve_bytes,
+            )
+            if certify is not None:
+                certify(selected, admitted)
     except FixedLayoutInfeasibleError as error:
         attempts.append(
             FixedLayoutAttempt(
@@ -172,7 +188,12 @@ def resolve_fixed_layout_selection(
     )
     if progress is not None:
         progress(
-            "fixed layout accepted the search's capacity "
+            (
+                "fixed layout read back for"
+                if certificate is not None
+                else "fixed layout accepted"
+            )
+            + " the search's capacity "
             f"{effective_facts.object_capacity_bytes}: "
             f"fixed_slice={admitted.layout.fixed_slice_bytes}, "
             f"dynamic_reserve={admitted.layout.dynamic_reserve_bytes}, "

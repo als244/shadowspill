@@ -30,7 +30,15 @@ _PLAN_MANIFEST_SCHEMA = artifact_schema("plan_manifest")
 #: How a run touched an artifact. "improved" is a write that replaced a
 #: stored plan the answer beat, kept distinct from a first write so the
 #: ledger says which plans a run displaced.
-_ACCESS_KINDS = {"improved", "managed", "matched", "read", "write"}
+_ACCESS_KINDS = {
+    "certified",
+    "improved",
+    "managed",
+    "matched",
+    "read",
+    "verdict",
+    "write",
+}
 
 
 @dataclass(frozen=True, slots=True)

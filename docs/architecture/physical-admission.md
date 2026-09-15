@@ -492,7 +492,10 @@ program in a search.
 ladder to walk, because the plan it receives has already been measured against
 this pool, at the same capacity and from the same timeline; a rejection there is
 a disagreement between the search's measurement and the certificate rather than
-a capacity to retry.
+a capacity to retry. A plan read back from the planning store with a certificate
+for the same effective facts is served with that certificate, and nothing is
+placed or simulated; a certificate made here is handed back to the store, which
+is how the store comes to hold one.
 
 ## Diagnostics
 

@@ -42,7 +42,7 @@ PRODUCTION_FORBIDDEN = {
     # "host" survives only where it means the CPU: the pinned-host pool, and
     # the driver calls that name it.
     "host used for the spill pool or the dispatcher": re.compile(
-        r"\b(?<!pinned_)host(?!name|s\b)_[a-z0-9_]*\b(?<!host_capacity_bytes)"
+        r"\b(?<!pinned_)host(?!name|s\b)_[a-z0-9_]*\b"
     ),
     "old worker terminology": re.compile(
         r"\b(?:progress_thread|progress_main|progress_completions)\b",
