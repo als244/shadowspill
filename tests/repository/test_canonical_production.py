@@ -121,9 +121,14 @@ def test_removed_compatibility_names_do_not_return() -> None:
 
 
 def test_worker_hot_loop_has_no_sleeping_wait_primitive() -> None:
-    worker = (C_ROOT / "src" / "runtime" / "worker.c").read_text(encoding="utf-8")
     forbidden = ("pthread_cond", "futex", "nanosleep", "sched_yield", "usleep")
-    assert [token for token in forbidden if token in worker] == []
+    offenders = [
+        f"{path.relative_to(ROOT)}: {token}"
+        for path in sorted((C_ROOT / "src" / "runtime" / "worker").glob("*.[ch]"))
+        for token in forbidden
+        if token in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
 
 
 def test_only_shadowspill_is_installed_from_the_source_tree() -> None:

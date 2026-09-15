@@ -39,7 +39,10 @@ add_library(
   src/runtime/failure_state.c
   src/runtime/runtime.c
   src/runtime/failure_reason.c
-  src/runtime/worker.c
+  src/runtime/worker/worker.c
+  src/runtime/worker/actions.c
+  src/runtime/worker/dispatch.c
+  src/runtime/worker/completion.c
   src/runtime/memory/allocation_scope.c
   src/runtime/memory/allocations.c
   src/runtime/memory/memory_pool.c
