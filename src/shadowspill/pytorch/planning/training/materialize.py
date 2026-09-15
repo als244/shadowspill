@@ -27,9 +27,10 @@ from shadowspill.pytorch.state.optimizer import (
     install_declared_optimizer_state,
     release_optimizer_state_from_plan,
 )
+from shadowspill.runtime import Runtime
+from shadowspill.runtime.plan import PlanMemory
+from shadowspill.runtime.teardown import prepare_failure_cleanup
 
-from ...runtime_adapter import PlanMemory, Runtime
-from ...runtime_adapter.runtime import prepare_failure_cleanup
 from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingMaterializationArtifacts,

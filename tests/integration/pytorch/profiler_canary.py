@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from canary_phases import phase
+from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture.aot import capture_forward
@@ -23,8 +24,8 @@ from shadowspill.pytorch.profiling import (
     profile_unique_artifacts,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, runtime_library
-from shadowspill.pytorch.runtime_adapter.allocator import install_allocator
+from shadowspill.runtime.abi import AdapterStatistics, runtime_library
+from shadowspill.runtime.bootstrap import install_runtime
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 
@@ -42,8 +43,9 @@ class _Repeated(nn.Module):
 def main() -> int:
     adapter_path = Path(sys.argv[1]).resolve()
     phase("bootstrap")
-    installed = install_allocator(
+    installed = install_runtime(
         adapter_path,
+        frontend=PyTorchProcessAllocator(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,

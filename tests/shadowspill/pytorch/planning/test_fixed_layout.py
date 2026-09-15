@@ -32,7 +32,7 @@ from shadowspill.pytorch.planning.admission import (
     build_fixed_layout_admission,
     project_runtime_fixed_layout,
 )
-from shadowspill.pytorch.runtime_adapter import RuntimePlacementKind
+from shadowspill.runtime.fixed_layout import RuntimePlacementKind
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 

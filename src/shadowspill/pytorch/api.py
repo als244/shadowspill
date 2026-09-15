@@ -15,18 +15,18 @@ from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
 from shadowspill.pytorch.partition import PartitionSpec
-from shadowspill.pytorch.runtime_adapter import Runtime
-from shadowspill.pytorch.runtime_adapter.runtime import (
-    abort_plan,
-    begin_plan,
-    prepare_failure_cleanup,
-)
+from shadowspill.pytorch.runtime import Runtime
 from shadowspill.pytorch.sharing import SharedOutput
 from shadowspill.pytorch.state.model import (
     adopt_model_state_for_plan,
     require_model_state_for_plan,
 )
 from shadowspill.pytorch.state.storage import restore_persistent_object_ids
+from shadowspill.runtime.plan import (
+    abort_plan,
+    begin_plan,
+)
+from shadowspill.runtime.teardown import prepare_failure_cleanup
 from shadowspill.step import StepDataOrdering, StepProgram
 from shadowspill.store import ArtifactStore, StoreMode
 

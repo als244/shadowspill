@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import ctypes
 
-from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding
-from shadowspill.pytorch.runtime_adapter.allocator import (
+from shadowspill.runtime.abi import ObjectBinding
+from shadowspill.runtime.bootstrap import (
     PoolBootstrap,
     RouteBootstrap,
 )

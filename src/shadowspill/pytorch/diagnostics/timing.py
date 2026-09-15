@@ -11,7 +11,7 @@ import torch
 from shadowspill.ir import MemoryAction
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.lowering.training import TrainingTaskEntrypoint
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
+from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.simulator import SimulationResult
 
 

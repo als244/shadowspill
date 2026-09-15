@@ -10,10 +10,10 @@ import torch.nn as nn
 from shadowspill.ir import ExecutionPlan
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.diagnostics.builders import training_stage_inventory
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 
 from ...diagnostics import PlanReport
-from ...runtime_adapter import PlanMemory
 from ..artifacts import (
     TrainingAdmissionArtifacts,
     TrainingCaptureArtifacts,

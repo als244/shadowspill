@@ -37,10 +37,10 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     transfer_outputs_to_caller,
     wait_plan_idle,
 )
-from shadowspill.pytorch.runtime_adapter.failures import ExecutionTaskIdentity
-from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
-from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
 from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
+from shadowspill.runtime.failures import ExecutionTaskIdentity
+from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.transfer_labels import TransferLabelIndex
 
 from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
 

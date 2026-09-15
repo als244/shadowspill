@@ -10,15 +10,17 @@ from typing import Any, cast
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.abi import (
-    ObjectLocationSnapshot,
-    runtime_library,
-)
 from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
-from shadowspill.pytorch.runtime_adapter.runtime import (
+from shadowspill.runtime import (
     MemoryPool,
     Runtime,
     RuntimeConfigurationError,
+)
+from shadowspill.runtime.abi import (
+    ObjectLocationSnapshot,
+    runtime_library,
+)
+from shadowspill.runtime.objects import (
     register_object,
     require_state_operation_allowed,
     reserve_persistent_object_ids,

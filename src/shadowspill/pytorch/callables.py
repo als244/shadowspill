@@ -20,18 +20,18 @@ from shadowspill.pytorch.materialization import (
     MaterializedForwardState,
     TrainingMaterializedState,
 )
-from shadowspill.pytorch.runtime_adapter import Runtime
-from shadowspill.pytorch.runtime_adapter.runtime import (
-    adopt_plan,
-    prepare_failure_cleanup,
-    reclaim_plan_scoped_residue,
-    release_plan,
-    wait_plan_idle,
-)
 from shadowspill.pytorch.state.storage import (
     release_plan_owned_state,
     restore_persistent_object_ids,
 )
+from shadowspill.runtime import Runtime
+from shadowspill.runtime.plan import (
+    adopt_plan,
+    release_plan,
+    wait_plan_idle,
+)
+from shadowspill.runtime.residue import reclaim_plan_scoped_residue
+from shadowspill.runtime.teardown import prepare_failure_cleanup
 
 
 class PlannedForward:

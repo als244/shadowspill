@@ -31,9 +31,9 @@ from shadowspill.pytorch.profiling.profiler.workspace import (
     measure_workspace,
     output_allocation_views,
 )
-from shadowspill.pytorch.runtime_adapter import failures as failures_module
-from shadowspill.pytorch.runtime_adapter.abi import Allocation
 from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
+from shadowspill.runtime import failures as failures_module
+from shadowspill.runtime.abi import Allocation
 
 
 class _Add(nn.Module):

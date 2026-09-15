@@ -24,11 +24,11 @@ from shadowspill.pytorch.profiling import (
 )
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
-from shadowspill.pytorch.runtime_adapter.allocator import (
-    InstalledAllocator,
+from shadowspill.runtime.bootstrap import (
+    InstalledRuntime,
     validate_dynamic_execution_reservation,
 )
-from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
+from shadowspill.runtime.failures import wait_allocator_idle
 
 from ...graph_pairs import (
     resolve_partitioned_saved_controls,
@@ -267,7 +267,7 @@ def _profile_training_inventory(
 
 
 def release_build_executables(
-    profiled: TrainingProfileArtifacts, installed: InstalledAllocator
+    profiled: TrainingProfileArtifacts, installed: InstalledRuntime
 ) -> None:
     """Release the profiler's compiled callables and prove the pool is back
     where planning left it."""

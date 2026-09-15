@@ -15,6 +15,7 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 from shadowspill.errors import InputGuardError, PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
+from shadowspill.pytorch.bindings import dematerialize
 from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.live_storage import unique_live_tensors
 from shadowspill.pytorch.contracts import TensorSpec
@@ -27,12 +28,10 @@ from shadowspill.pytorch.materialization.replacement import (
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
     admit_initial_actions,
-    dematerialize,
     publish_initial_tensor,
     submit_initial_actions,
     wait_idle,
 )
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.pytorch.sharing import (
     ResolvedSharedInput,
     SharedInput,
@@ -43,6 +42,7 @@ from shadowspill.pytorch.state.storage import (
     persistent_state,
     restore_persistent_state,
 )
+from shadowspill.runtime import Runtime
 
 
 def representative_cpu_inputs(values: Any) -> Any:
@@ -509,15 +509,15 @@ class MaterializedForwardState(MaterializedState):
             registration_by_id,
         )
         if shared_items:
-            torch.ops.shadowspill._dematerialize_storages([representative])
+            dematerialize([representative])
             self.object_store[alias_id] = representative
             return
-        binding = publish_initial_tensor(self.bridge, alias_id, owner)
+        publish_initial_tensor(self.bridge, alias_id, owner)
         self.object_store[alias_id] = representative
         task_number = (1 << 61) + ordinal
         actions = (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),)
         admit_initial_actions(self.bridge, actions, task_number=task_number)
-        dematerialize(self.bridge, representative, alias_id, binding.generation)
+        dematerialize([representative])
         submit_initial_actions(
             self.bridge,
             actions,

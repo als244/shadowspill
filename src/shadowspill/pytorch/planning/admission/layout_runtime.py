@@ -17,13 +17,13 @@ from shadowspill.planner.admission.layout.model import (
     FixedPhysicalLayout,
     LeaseLifetime,
 )
-from shadowspill.pytorch.runtime_adapter.fixed_layout import (
+from shadowspill.runtime.admission_capi import NO_ID
+from shadowspill.runtime.fixed_layout import (
     RuntimeFixedDependency,
     RuntimeFixedLayout,
     RuntimeFixedPlacement,
     RuntimePlacementKind,
 )
-from shadowspill.runtime.admission_capi import NO_ID
 
 
 @dataclass(frozen=True, slots=True)

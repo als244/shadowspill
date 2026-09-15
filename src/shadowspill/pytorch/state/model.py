@@ -8,11 +8,11 @@ from typing import cast
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch.runtime_adapter.runtime import (
+from shadowspill.runtime import (
     MemoryPool,
     Runtime,
-    require_state_operation_allowed,
 )
+from shadowspill.runtime.objects import require_state_operation_allowed
 
 from .model_copy import copy_model_with_runtime_storages
 from .storage import (

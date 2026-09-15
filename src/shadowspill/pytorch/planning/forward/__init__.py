@@ -12,13 +12,13 @@ import torch.nn as nn
 
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.store import ArtifactStore
 
 from ...callables import PlannedForward
 from ...partition import (
     PartitionSpec,
 )
-from ...runtime_adapter import PlanMemory
 from ...sharing import (
     SharedOutput,
 )

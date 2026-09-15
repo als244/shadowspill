@@ -14,6 +14,7 @@ import torch.nn as nn
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
+from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 from shadowspill.store import ArtifactStore
 
@@ -24,7 +25,6 @@ from ...contracts import (
 from ...partition import (
     PartitionSpec,
 )
-from ...runtime_adapter import PlanMemory
 from ..common import (
     PlanningTimer,
 )

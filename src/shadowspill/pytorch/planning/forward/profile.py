@@ -10,10 +10,10 @@ from shadowspill.pytorch.profiling import (
     validate_compiled_profile,
 )
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
-from shadowspill.pytorch.runtime_adapter.allocator import (
+from shadowspill.runtime.bootstrap import (
     validate_dynamic_execution_reservation,
 )
-from shadowspill.pytorch.runtime_adapter.failures import wait_allocator_idle
+from shadowspill.runtime.failures import wait_allocator_idle
 
 from ..artifacts import (
     ForwardCaptureArtifacts,
