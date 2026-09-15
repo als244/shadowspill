@@ -28,6 +28,7 @@ from shadowspill.planner import (
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.program import ShadowSpillPlanningProblem
+from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
@@ -603,8 +604,13 @@ def build_training_programs(
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     data_ordering: StepDataOrdering,
     timer: PlanningTimer,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> TrainingProgramArtifacts:
-    """Construct canonical initial/recurrent programs from semantic and physical IR."""
+    """Construct canonical initial/recurrent programs from semantic and physical IR.
+
+    `transfer_bandwidths` prices the simulator input at given lanes instead
+    of the runtime's calibration; see `build_simulation_config`.
+    """
 
     with timer.measure("program_lowering"):
         measurements, measurements_by_profile, compatibility_digests = (
@@ -624,7 +630,9 @@ def build_training_programs(
         _report_training_program_inventory(recurrent, timer)
     with timer.measure("admission_facts"):
         reserve = workspace_reserve(profiled.profiles.measurements)
-        simulation_config = build_simulation_config(memory, reserve, profiled.profiles)
+        simulation_config = build_simulation_config(
+            memory, reserve, profiled.profiles, transfer_bandwidths=transfer_bandwidths
+        )
         execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
             memory, profiled.profiles
         )
@@ -1339,11 +1347,15 @@ def make_training_programs(
                 archived = artifacts.steps.read(keys[ordering])
                 if archived is not None:
                     found[ordering] = archived
+        # One lookup served every program found, so its wall clock is
+        # charged to the first of them and the rest carry nothing, the way a
+        # build charges its shared phases to the first program it makes.
         lookup_ns = timer.values[-1][1]
-        for ordering, archived in found.items():
+        for index, ordering in enumerate(item for item in orderings if item in found):
+            charged = lookup_ns if index == 0 else 0
             found[ordering] = replace(
-                archived,
-                phase_timings_ns=(("step_lookup", lookup_ns), ("total", lookup_ns)),
+                found[ordering],
+                phase_timings_ns=(("step_lookup", charged), ("total", charged)),
             )
     missing = tuple(item for item in orderings if item not in found)
     if missing:
@@ -1635,11 +1647,14 @@ def build_training(
     allocation_probe_repetitions: int,
     search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
-    `incumbent` is the plan to beat for the recurrent program, as
-    :func:`shadowspill.planner.plan_program` takes it.
+    `incumbent` is the plan to beat for the recurrent program, and
+    `transfer_bandwidths` the lanes to price copies at instead of the
+    runtime's calibration, both as :func:`shadowspill.planner.plan_program`
+    takes them.
     """
 
     started = time.perf_counter_ns()
@@ -1688,6 +1703,7 @@ def build_training(
             optimizer_ordering=optimizer_ordering,
             data_ordering=data_ordering,
             timer=timer,
+            transfer_bandwidths=transfer_bandwidths,
         )
         selections = plan_training_programs(
             programs,

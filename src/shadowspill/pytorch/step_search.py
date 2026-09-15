@@ -514,6 +514,27 @@ class StepSearchReport:
         found = (self.winner(*budget) for budget in self.budgets)
         return tuple(point for point in found if point is not None)
 
+    @property
+    def planned_lanes(self) -> TransferBandwidths | None:
+        """The lanes every point was priced against.
+
+        The pinned override when there was one, else what the first built
+        geometry planned with, which is the calibration the runtime measured
+        once for the run; `None` when nothing was built. A caller that runs a
+        winner plans against this, so its plan is the one the search chose.
+        """
+
+        if self.transfer_bandwidths is not None:
+            return self.transfer_bandwidths
+        return next(
+            (
+                item.transfer_bandwidths
+                for item in self.geometries
+                if item.transfer_bandwidths is not None
+            ),
+            None,
+        )
+
     def to_dict(self) -> dict[str, object]:
         """The whole search as one JSON-ready record for post-hoc analysis."""
 

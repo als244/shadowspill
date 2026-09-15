@@ -170,7 +170,9 @@ class PlanStore:
         if stored is not None and not _claims_to_beat(incumbent, stored.result):
             return stored
         if stored is None:
-            self.policy.refuse_miss("plan", key)
+            self.policy.refuse_miss(
+                "plan", key, request=_request_summary(program, config)
+            )
         try:
             result = answer_no_worse_than(
                 algorithm(
@@ -480,6 +482,20 @@ class PlanStore:
             schema=_SCHEMA,
             dependencies=(program_digest,),
         )
+
+
+def _request_summary(program: ShadowSpillProgram, config: SimulationConfig) -> str:
+    """The inputs of a plan key a reader compares first, on one line."""
+
+    device = config.devices[0]
+    return (
+        f"program {program.digest[:12]}, capacity {device.capacity_bytes} B,"
+        f" fetch {device.fetch_bandwidth_bytes_per_second} B/s"
+        f" at {device.fetch_latency_ns} ns,"
+        f" evict {device.evict_bandwidth_bytes_per_second} B/s"
+        f" at {device.evict_latency_ns} ns,"
+        f" spill {config.spill_capacity_bytes} B"
+    )
 
 
 def _request(

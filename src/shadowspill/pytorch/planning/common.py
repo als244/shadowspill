@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 
 import torch
 import torch.nn as nn
@@ -325,17 +326,41 @@ def build_simulation_config(
     memory: PlanMemory,
     workspace_reserve_bytes_: int,
     profiles: ProfilingResult,
+    *,
+    transfer_bandwidths: TransferBandwidths | None = None,
 ) -> SimulationConfig:
     """Build the framework-neutral simulator input for one ShadowSpillProgram.
 
     The calibration comes from `planned_transfer_bandwidths`, so what the
     simulator is built with is what any caller reporting this run's lanes
     sees; the raw calibration stays in the runtime's transfer capabilities.
+    `transfer_bandwidths` prices the copies at given rates instead, the way
+    `plan_program` takes them: a build that has to plan what an earlier
+    search planned, on a machine whose calibration has since moved, hands
+    over the lanes the search planned against. Given rates that name no
+    latency keep the calibrated one.
     """
 
-    planned = planned_transfer_bandwidths(
+    calibrated = planned_transfer_bandwidths(
         memory.transfers.route(memory.spill.name, memory.execution.name),
         memory.transfers.route(memory.execution.name, memory.spill.name),
+    )
+    planned = (
+        calibrated
+        if transfer_bandwidths is None
+        else replace(
+            transfer_bandwidths,
+            fetch_latency_ns=(
+                calibrated.fetch_latency_ns
+                if transfer_bandwidths.fetch_latency_ns is None
+                else transfer_bandwidths.fetch_latency_ns
+            ),
+            evict_latency_ns=(
+                calibrated.evict_latency_ns
+                if transfer_bandwidths.evict_latency_ns is None
+                else transfer_bandwidths.evict_latency_ns
+            ),
+        )
     )
     return SimulationConfig.single_device(
         execution_device_id(memory.execution_device),

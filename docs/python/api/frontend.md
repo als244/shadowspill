@@ -581,6 +581,7 @@ plan_forward(
     build_store_mode='contribute',
     plan_store_mode='contribute',
     export_bypass_key=None,
+    transfer_bandwidths=None,
 ) -> PlannedForward
 ```
 
@@ -590,6 +591,7 @@ Beyond the shared and store arguments:
 |---|---|---|---|
 | `example_inputs` | `Sequence[Any]` | required | One fixed example sequence, whose geometry fixes the callable's input signature. A leaf may be wrapped with `shared_input()`. |
 | `shared_outputs` | sequence of `SharedOutput` | `()` | Output leaves retained as runtime objects rather than copied out. |
+| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Rates to price every copy at instead of the calibration the runtime measured, as `plan_program()` takes them. A calibration moves from run to run on one machine and the plan is keyed by what it was priced against, so a plan that has to be the one an earlier search chose is planned against the lanes that search planned against. Rates naming no latency keep the calibrated one. |
 
 ```text
 shared_output(*path, retain_in) -> SharedOutput
@@ -704,6 +706,7 @@ plan_step(
     build_store_mode='contribute',
     plan_store_mode='contribute',
     export_bypass_key=None,
+    transfer_bandwidths=None,
 ) -> PlannedTrainStep
 ```
 
@@ -723,6 +726,7 @@ Beyond the shared and store arguments:
 | `pair_loss` | `bool` | `True` | Runs each microbatch's last stage forward and backward together. Vacuous at `breadth=1`. |
 | `search_options` | `SearchOptions` \| `None` | `None` | What the planner is told about searching: `generic` for what any search understands, `algorithm` for the search itself carrying its own options, and `workers`. `None` runs the search that ships with its defaults. |
 | `incumbent` | `AnnotatedProgramPlan` \| `None` | `None` | A plan already in hand for this same program; the search measures it at this budget and never answers with worse. |
+| `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | As for `plan_forward()`. A step that runs what `plan_step_search()` chose is planned against the report's `planned_lanes`, so it asks the store the search's question and executes the plan the search chose. |
 
 `depth` and `breadth` say how the step walks those microbatches: `depth`
 passes of `breadth` microbatches each, every microbatch of a pass running one
@@ -881,8 +885,11 @@ lowering on its own -- with the geometry's build wall clock on the first
 ordering's entry and zero on the rest, so the entries sum to the build; one
 `StepSearchPoint` per geometry-ordering-budget combination, the geometries the token bounds `skipped`
 with their reasons, the `search_options` every point was searched under, any
-`transfer_bandwidths` override, and `winner_plans`, each budget pair's winning
-`AnnotatedProgramPlan` held in memory. A point carries its `status`,
+`transfer_bandwidths` override, `planned_lanes` -- the lanes every point was
+priced against: the override, else the calibration the first built geometry
+planned with, which a caller running a winner hands to `plan_step()` -- and
+`winner_plans`, each budget pair's winning `AnnotatedProgramPlan` held in
+memory. A point carries its `status`,
 `makespan_seconds`, `summary` as a `PlanSummary`, `search_seconds`,
 `incumbent_budget_bytes` when it answered with a handed-in plan, and
 `graph_pair_selections`: one `GraphPairOutcome` per graph-pair selection the

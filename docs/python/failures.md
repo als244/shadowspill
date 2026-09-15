@@ -29,6 +29,7 @@ during planning. The two runtime exceptions come from `shadowspill.pytorch`.
 | Physical admission | `AdmissionError` | Runtime pools cannot admit the selected execution plan. |
 | Plan feasibility | `PlanInfeasibleError` | No schedule satisfies a declared capacity or another planning constraint. |
 | Bounded search | `PlanSearchExhaustedError` | Search ended without finding a plan or proving infeasibility. |
+| A store in `require` mode | `LookupError` | The store lacks the artifact and the mode refuses to produce it. The message names what missed, for a plan the program, capacity and lanes the key was made of, and the modes that would allow producing it. |
 | Objective capture | `ObjectiveError` | A training objective violates the scalar-loss and result contract. |
 | Call input validation | `InputGuardError` | Runtime inputs differ from the fixed planning template. No task has run and no state was mutated. |
 | Planned execution | `RuntimeExecutionError` | The runtime, allocator, worker, or a task-specific execution contract rejected the step. |
@@ -39,7 +40,9 @@ catches that one. Two nestings inside it are worth knowing: `CompilationError`
 and `ProfilingError` share `TaskPhaseError`, and `PlanInfeasibleError` derives
 from `AdmissionError`, so catching admission also catches infeasibility.
 `InputGuardError` is deliberately outside the hierarchy — it is a `ValueError`
-raised at a call, not during planning.
+raised at a call, not during planning. So is the `require` store's refusal: a
+plain `LookupError`, because nothing about planning failed; the run asked for a
+store it was not allowed to fill.
 
 A `TaskPhaseError` retains `structural_contract`, `task_kind`, and `operators`
 when the failing task is known. `PlanInfeasibleError` retains the failure

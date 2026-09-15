@@ -134,7 +134,11 @@ Transfer measurement belongs to runtime initialization. Every supported
 direction is calibrated independently and then under simultaneous
 bidirectional traffic. Planning consumes the conservative per-direction rates
 measured during concurrency, plus route latency. `TransferBandwidths` stored in
-the program and plan make this input explicit and serializable.
+the program and plan make this input explicit and serializable. A plan is
+keyed by the lanes it was priced against, and a calibration moves from run to
+run on one machine, so a caller that has to plan what an earlier search
+planned hands the frontend the lanes that search planned against rather than
+letting a fresh calibration ask the store a new question.
 
 ## The artifact store
 

@@ -17,6 +17,7 @@ from shadowspill.planner import (
     CandidateDiagnostic,
     PlanningRepairDiagnostics,
 )
+from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch import (
     TensorSpec,
 )
@@ -24,6 +25,7 @@ from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.planning.admission.physical import physical_admission
 from shadowspill.pytorch.planning.common import (
     PlanningTimer,
+    build_simulation_config,
     estimate_spill_reservation,
     planned_transfer_bandwidths,
     public_infeasible_plan_error,
@@ -269,3 +271,67 @@ def test_a_caller_reporting_the_lanes_gets_the_coarsened_planning_input() -> Non
     # Five-microsecond granularity above it, one microsecond below.
     assert planned.fetch_latency_ns == 10_000
     assert planned.evict_latency_ns == 4_000
+
+
+def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> None:
+    """A plan keyed by its lanes can be asked for again only at those lanes.
+
+    Given rates replace the calibration the runtime measured; rates that name
+    no latency keep the calibrated one, as a problem's own inputs do.
+    """
+
+    fetch = _profile(
+        "spill",
+        "execution",
+        latency_nanoseconds=9_400,
+        bandwidth_bytes_per_second=25_600_000_000,
+        solo_bandwidth_bytes_per_second=36_500_000_000,
+        concurrent_bandwidth_bytes_per_second=25_500_000_000,
+    )
+    evict = _profile(
+        "execution",
+        "spill",
+        latency_nanoseconds=4_200,
+        bandwidth_bytes_per_second=25_900_000_000,
+        solo_bandwidth_bytes_per_second=56_600_000_000,
+        concurrent_bandwidth_bytes_per_second=25_900_000_000,
+    )
+    routes = {("spill", "execution"): fetch, ("execution", "spill"): evict}
+    memory = SimpleNamespace(
+        transfers=SimpleNamespace(
+            route=lambda source, destination: routes[(source, destination)]
+        ),
+        spill=SimpleNamespace(name="spill"),
+        execution=SimpleNamespace(name="execution"),
+        execution_device=0,
+        execution_budget=8 << 30,
+        spill_budget=64 << 30,
+        installed=SimpleNamespace(fixed_execution_bytes=0),
+    )
+    profiles = SimpleNamespace(measurements=(), fixed_slab_bytes=0)
+
+    calibrated = build_simulation_config(memory, 0, profiles).devices[0]
+    pinned = build_simulation_config(
+        memory,
+        0,
+        profiles,
+        transfer_bandwidths=TransferBandwidths(24_000_000_000, 23_000_000_000),
+    ).devices[0]
+
+    assert pinned.fetch_bandwidth_bytes_per_second == 24_000_000_000
+    assert pinned.evict_bandwidth_bytes_per_second == 23_000_000_000
+    assert pinned.fetch_latency_ns == calibrated.fetch_latency_ns
+    assert pinned.evict_latency_ns == calibrated.evict_latency_ns
+    assert pinned.capacity_bytes == calibrated.capacity_bytes
+    named = build_simulation_config(
+        memory,
+        0,
+        profiles,
+        transfer_bandwidths=TransferBandwidths(
+            24_000_000_000,
+            23_000_000_000,
+            fetch_latency_ns=7_000,
+            evict_latency_ns=3_000,
+        ),
+    ).devices[0]
+    assert (named.fetch_latency_ns, named.evict_latency_ns) == (7_000, 3_000)

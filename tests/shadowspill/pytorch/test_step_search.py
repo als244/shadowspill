@@ -544,3 +544,29 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     assert [incumbent for _, incumbent in handed] == [None, None]
     assert [point.makespan_seconds for point in alone.points] == [100 / 1e9, 120 / 1e9]
     assert all(point.incumbent_budget_bytes is None for point in alone.points)
+
+
+def test_the_planned_lanes_are_the_override_else_the_first_calibration() -> None:
+    """A caller running a winner plans against what the search priced with."""
+
+    from shadowspill.pytorch import StepSearchGeometryBuild
+
+    calibrated = TransferBandwidths(25_600_000_000, 25_900_000_000)
+    pinned = TransferBandwidths(25_500_000_000, 26_000_000_000)
+    builds = (
+        StepSearchGeometryBuild(12, 1, StepDataOrdering.depth_first(1), "d0", 2.0),
+        StepSearchGeometryBuild(
+            6, 2, StepDataOrdering.depth_first(2), "d1", 3.0, {}, calibrated
+        ),
+    )
+    report = StepSearchReport(
+        total_sequences_per_step=12,
+        sequence_length=1024,
+        budgets=((1, 1),),
+        geometries=builds,
+        points=(),
+        skipped=(),
+    )
+    assert report.planned_lanes == calibrated
+    assert replace(report, transfer_bandwidths=pinned).planned_lanes == pinned
+    assert replace(report, geometries=()).planned_lanes is None
