@@ -42,8 +42,10 @@ figures/
     overheads/
       winners.png                       recompute and stall, seconds
       winners_shares.png                the same as a share of the step
-      by_geometry.png                   one bar per geometry per budget
-      by_geometry_shares.png            the same, as shares
+      by_geometry.png                   what one bar wastes, per geometry
+      by_geometry_shares.png            the same, as a share of its step
+      by_geometry_with_compute.png      the whole step, compute included
+      by_geometry_with_compute_shares.png   the same, as shares
       by_graph_pair_selection/
         <micro>x<accum>.png             one figure per geometry, seconds
         <micro>x<accum>_shares.png      the same, as shares
@@ -87,6 +89,14 @@ compared.
 **What is being spent.** Under `sim/`, `throughput/` is the headline rate,
 `overheads/` is where the step's time went, `transfers/` is what moved over the
 lanes, and `vs_unconstrained/` is the distance from the compute floor.
+
+**Waste, or the whole step.** `overheads/by_geometry.png` is the waste alone:
+each bar is the recomputation a plan chose plus the stall it could not avoid,
+which is the comparison between geometries at its own scale, with the makespan
+written above the bar because the bar no longer carries it. The
+`_with_compute` pair puts the same two segments on top of the compute floor,
+so a bar is the whole step and its three parts partition it exactly; there the
+number above the bar is the makespan itself.
 
 **What varies within a figure.** `winners.png` shows only each budget's winning
 geometry. `by_geometry.png` shows every geometry at every budget, each at its
