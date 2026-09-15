@@ -139,7 +139,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
 ) -> None:
     from shadowspill.errors import ProfilingError
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import sweep as module
 
     def exhaust(*args: object, **kwargs: object) -> object:
         cause = OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 GiB")
@@ -187,7 +187,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
 ) -> None:
     from shadowspill.errors import ProfilingError
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import sweep as module
 
     def fail(*args: object, **kwargs: object) -> object:
         raise ProfilingError("an operator has no meta implementation")
@@ -212,7 +212,8 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import planner as planner_module
+    from shadowspill.pytorch.step_search import sweep as module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -230,7 +231,8 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
         "build_step_programs",
         lambda *a, **k: tuple(Step() for _ in k["orderings"]),
     )
-    monkeypatch.setattr(module, "plan_program", refuse)
+    monkeypatch.setattr(planner_module, "summarize_plan", lambda *a, **k: None)
+    monkeypatch.setattr(planner_module, "plan_program", refuse)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -255,7 +257,8 @@ def test_the_resolution_options_reach_every_point(
 ) -> None:
     from shadowspill.errors import PlanInfeasibleError
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import planner as planner_module
+    from shadowspill.pytorch.step_search import sweep as module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -276,7 +279,8 @@ def test_the_resolution_options_reach_every_point(
         "build_step_programs",
         lambda *a, **k: tuple(Step() for _ in k["orderings"]),
     )
-    monkeypatch.setattr(module, "plan_program", infeasible)
+    monkeypatch.setattr(planner_module, "summarize_plan", lambda *a, **k: None)
+    monkeypatch.setattr(planner_module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -317,7 +321,8 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
 ) -> None:
     from shadowspill.errors import PlanInfeasibleError
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import planner as planner_module
+    from shadowspill.pytorch.step_search import sweep as module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -341,7 +346,8 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
         "build_step_programs",
         lambda *a, **k: tuple(Step() for _ in k["orderings"]),
     )
-    monkeypatch.setattr(module, "plan_program", infeasible)
+    monkeypatch.setattr(planner_module, "summarize_plan", lambda *a, **k: None)
+    monkeypatch.setattr(planner_module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -368,7 +374,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import sweep as module
 
     def build(*args: object, **kwargs: object) -> object:
         raise AssertionError("no geometry may be built")
@@ -429,7 +435,8 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     answer that was the handed-in plan by the budget it came from."""
 
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch import step_search as module
+    from shadowspill.pytorch.step_search import planner as planner_module
+    from shadowspill.pytorch.step_search import sweep as module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -481,9 +488,10 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         "build_step_programs",
         lambda *a, **k: tuple(Step() for _ in k["orderings"]),
     )
-    monkeypatch.setattr(module, "summarize_selected_plan", lambda result: None)
-    monkeypatch.setattr(module, "_graph_pair_outcomes", lambda result: ())
-    monkeypatch.setattr(module, "plan_program", search)
+    monkeypatch.setattr(planner_module, "summarize_plan", lambda *a, **k: None)
+    monkeypatch.setattr(planner_module, "summarize_selected_plan", lambda result: None)
+    monkeypatch.setattr(planner_module, "graph_pair_outcomes", lambda result: ())
+    monkeypatch.setattr(planner_module, "plan_program", search)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
         objective=None,
@@ -570,3 +578,154 @@ def test_the_planned_lanes_are_the_override_else_the_first_calibration() -> None
     assert report.planned_lanes == calibrated
     assert replace(report, transfer_bandwidths=pinned).planned_lanes == pinned
     assert replace(report, geometries=()).planned_lanes is None
+
+
+def test_points_answer_from_summaries_and_only_winners_read_plans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A warm store answers a point from the summary beside its plan. Whole
+    plans are read for each budget's winner, and for the plan to beat the
+    moment a later point has to beat it; a plan in hand that claims to beat
+    the stored answer is searched, as the store itself would search it."""
+
+    from shadowspill.errors import PlanInfeasibleError
+    from shadowspill.planner.diagnostics.plan import PlanSummary
+    from shadowspill.planner.plan_store import PlanSummaryLookup
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch.step_search import planner as planner_module
+    from shadowspill.pytorch.step_search import sweep as module
+
+    class Recurrent:
+        transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
+
+    class Step:
+        recurrent = Recurrent()
+        digest = "d0"
+        phase_timings_ns = (("total", 1),)
+
+    class Simulation:
+        def __init__(self, makespan_ns: int) -> None:
+            self.makespan_ns = makespan_ns
+
+    class Diagnostics:
+        def __init__(self, candidate: str) -> None:
+            self.selected_candidate_id = candidate
+
+    class Result:
+        def __init__(self, makespan_ns: int, candidate: str) -> None:
+            self.simulation = Simulation(makespan_ns)
+            self.diagnostics = Diagnostics(candidate)
+
+    class Plan:
+        def __init__(self, makespan_ns: int, candidate: str) -> None:
+            self.simulation = Simulation(makespan_ns)
+            self.result = Result(makespan_ns, candidate)
+
+    gib = 1 << 30
+    blank = PlanSummary(1.0, 1.0, 0.0, 0.0, 0.0, 0, 0, 0)
+
+    def stored(makespan_ns: int, incumbent: bool = False) -> PlanSummaryLookup:
+        return PlanSummaryLookup("key", makespan_ns, blank, (), incumbent)
+
+    # what the store's summaries say, by budget: a recorded refusal, a hit,
+    # a miss, a hit that answered with the plan to beat, a hit the plan in
+    # hand claims to beat, and a hit that beats everything before it
+    summaries: dict[int, PlanSummaryLookup | None] = {
+        6 * gib: stored(100),
+        8 * gib: None,
+        10 * gib: stored(95, incumbent=True),
+        12 * gib: stored(120),
+        14 * gib: stored(90),
+    }
+    asked: list[int] = []
+
+    def summarize(*args: object, **kwargs: object) -> object:
+        budget = kwargs["execution_budget"]
+        assert isinstance(budget, int)
+        asked.append(budget)
+        if budget == 4 * gib:
+            raise PlanInfeasibleError("recorded", kind="analytic_capacity")
+        return summaries[budget]
+
+    # what a search finds when it runs, by budget
+    found = {6 * gib: 100, 8 * gib: 95, 10 * gib: 95, 12 * gib: 130, 14 * gib: 90}
+    handed: list[tuple[int, int | None]] = []
+
+    def search(*args: object, **kwargs: object) -> object:
+        budget = kwargs["execution_budget"]
+        assert isinstance(budget, int)
+        incumbent = kwargs["incumbent"]
+        handed.append(
+            (budget, None if incumbent is None else incumbent.simulation.makespan_ns)
+        )
+        if incumbent is not None and incumbent.simulation.makespan_ns <= found[budget]:
+            return Plan(incumbent.simulation.makespan_ns, "incumbent")
+        return Plan(found[budget], "own")
+
+    monkeypatch.setattr(
+        module,
+        "build_step_programs",
+        lambda *a, **k: tuple(Step() for _ in k["orderings"]),
+    )
+    monkeypatch.setattr(planner_module, "summarize_plan", summarize)
+    monkeypatch.setattr(planner_module, "summarize_selected_plan", lambda result: blank)
+    monkeypatch.setattr(planner_module, "graph_pair_outcomes", lambda result: ())
+    monkeypatch.setattr(planner_module, "plan_program", search)
+    lines: list[str] = []
+    report = plan_step_search(
+        object(),  # type: ignore[arg-type]
+        objective=None,
+        optimizer=None,
+        example_microbatches=lambda sequences, accumulation: (),
+        total_sequences_per_step=1,
+        sequence_length=1,
+        budgets=[
+            (budget, gib)
+            for budget in (4, 6, 8, 10, 12, 14)
+            for budget in [budget * gib]
+        ],
+        runtime=None,  # type: ignore[arg-type]
+        execution="execution",
+        spill="spill",
+        progress=lines.append,
+    )
+
+    # every point asks for its summary first
+    assert asked == [budget * gib for budget in (4, 6, 8, 10, 12, 14)]
+    # the plan is read only where a search needs it: the plan to beat before
+    # the miss at 8 GiB is searched, the claim at 12 GiB is searched with it;
+    # then the winners a summary answered are read back, ascending
+    assert handed == [
+        (6 * gib, None),
+        (8 * gib, 100),
+        (12 * gib, 95),
+        (6 * gib, None),
+        (10 * gib, None),
+        (14 * gib, None),
+    ]
+    points = {point.execution_budget_bytes: point for point in report.points}
+    assert points[4 * gib].status == "infeasible"
+    assert "recorded" in (points[4 * gib].error or "")
+    assert [points[budget * gib].makespan_seconds for budget in (6, 8, 10, 12, 14)] == [
+        100 / 1e9,
+        95 / 1e9,
+        95 / 1e9,
+        95 / 1e9,
+        90 / 1e9,
+    ]
+    assert [
+        points[budget * gib].incumbent_budget_bytes for budget in (6, 8, 10, 12, 14)
+    ] == [
+        None,
+        None,
+        8 * gib,
+        8 * gib,
+        None,
+    ]
+    assert points[6 * gib].summary is blank
+    assert sorted(report.winner_plans) == [
+        (budget * gib, gib) for budget in (6, 8, 10, 12, 14)
+    ]
+    assert report.winner_plans[(8 * gib, gib)].simulation.makespan_ns == 95
+    assert report.winner_plans[(14 * gib, gib)].simulation.makespan_ns == 90
+    assert sum("plan read back" in line for line in lines) == 3

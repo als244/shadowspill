@@ -15,6 +15,8 @@ Three of them form one chain:
 build_step_programs() ->  tuple[StepProgram, ...], one per ordering
                           (.recurrent is a ShadowSpillPlanningProblem)
 plan_program()        ->  AnnotatedProgramPlan
+summarize_plan()      ->  PlanSummaryLookup | None, the same question answered
+                          from the summary beside the stored plan
 ```
 
 See [program and annotated-plan JSON](../planning-json.md) for the complete

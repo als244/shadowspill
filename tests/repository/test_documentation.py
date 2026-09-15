@@ -66,6 +66,7 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/api.py:plan_forward",
     "src/shadowspill/pytorch/api.py:plan_step",
     "src/shadowspill/planner/plan.py:plan_program",
+    "src/shadowspill/planner/plan.py:summarize_plan",
     "src/shadowspill/planner/search/algorithms/pressurefit/__init__.py:PressureFit.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedForward.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedForward.submit",

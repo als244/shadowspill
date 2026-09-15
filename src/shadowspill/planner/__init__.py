@@ -11,6 +11,7 @@ from .admission import (
 )
 from .diagnostics import (
     CandidateDiagnostic,
+    GraphPairOutcome,
     PlanningDiagnostics,
     PlanningRepairDiagnostics,
     PlanningSectionTiming,
@@ -19,7 +20,7 @@ from .diagnostics import (
     ResolvedProgramDiagnostics,
     TaskAlternativeChoiceDiagnostic,
 )
-from .plan import plan_program, validate_schedule_feasibility
+from .plan import plan_program, summarize_plan, validate_schedule_feasibility
 from .request import GenericPlanningOptions, InitialPlacement, OptionRecord
 from .result import (
     ProgramPlanResult,
@@ -42,6 +43,7 @@ __all__ = [
     "CandidateDiagnostic",
     "CostedAlternatives",
     "GenericPlanningOptions",
+    "GraphPairOutcome",
     "InitialPlacement",
     "OptionRecord",
     "PlanningDiagnostics",
@@ -65,6 +67,7 @@ __all__ = [
     "plan_program",
     "pressurefit",
     "resolutions",
+    "summarize_plan",
     "toolkit",
     "validate_resolution_options",
     "validate_schedule_feasibility",

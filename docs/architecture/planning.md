@@ -45,7 +45,11 @@ any plan it was handed, certifies the physical layout, and returns an
 `AnnotatedProgramPlan`. A plan the store already holds is read back with the
 simulation and the certificate recorded beside it, so a hit simulates and
 places nothing; a refusal the store recorded is raised again as it was. It is the only one of the two that touches disk, and
-the only one that knows what a budget is.
+the only one that knows what a budget is. Certifying a plan also writes a
+summary of it beside the plan -- its makespan, what it promises, what each
+graph-pair selection cost -- which `summarize_plan()` reads without the plan,
+so a caller comparing many plans deserializes the one it will run and no
+other.
 
 **The search answers one question and is pluggable.** It receives a program
 with its alternatives still open, and everything about how to fix them and

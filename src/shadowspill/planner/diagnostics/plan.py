@@ -25,6 +25,7 @@ from shadowspill.step import StepDataOrdering
 from ..search import SearchOptions
 
 
+
 @dataclass(frozen=True, slots=True)
 class PlanPhaseTiming:
     """One non-overlapping interval measured during frontend planning."""
@@ -916,31 +917,10 @@ def summarize_selected_plan(
     """Derive one selected plan's :class:`PlanSummary` from its result."""
 
     program = result.program
-    runtime_ns = {item.profile_id: item.runtime_ns for item in program.profiles}
-    task_ns = {item.task_id: runtime_ns[item.profile_id] for item in program.tasks}
-    selected_option = {item.group_id: item.option_id for item in result.selections}
-    variant_tasks: set[str] = set()
-    floor_ns = 0
-    graph_pair_selections = 0
-    for group in program.task_alternative_groups:
-        costs: dict[str, int] = {}
-        for option in group.options:
-            variant_tasks.update(option.active_task_ids)
-            costs[option.option_id] = sum(
-                task_ns[task_id] for task_id in option.active_task_ids
-            )
-        cheapest = min(costs.values())
-        floor_ns += cheapest
-        if costs[selected_option[group.group_id]] > cheapest:
-            graph_pair_selections += 1
-    floor_ns += sum(
-        task_ns[item.task_id]
-        for item in program.tasks
-        if item.task_id not in variant_tasks
-    )
-    selected_ns = sum(
-        task_ns[item.task_id] for item in program.selected_tasks(result.selections)
-    )
+    costs = AlternativeCosts.from_program(program)
+    chosen = {item.group_id: item.option_id for item in result.selections}
+    floor_ns = costs.floor_ns
+    selected_ns = costs.selected_ns(chosen)
     span_ns = max(item.end_ns for item in result.simulation.task_intervals)
     makespan_ns = result.simulation.makespan_ns
     fetched = 0
@@ -975,7 +955,7 @@ def summarize_selected_plan(
         recomputation_overhead_seconds=(selected_ns - floor_ns) / 1e9,
         idle_seconds=(span_ns - selected_ns) / 1e9,
         terminal_writeback_seconds=(makespan_ns - span_ns) / 1e9,
-        recomputing_group_count=graph_pair_selections,
+        recomputing_group_count=costs.recomputing(chosen),
         task_alternative_group_count=len(result.selections),
         flexible_group_count=CostedAlternatives.from_program(program).flexible_count,
         transfer_bytes_fetched=fetched,
