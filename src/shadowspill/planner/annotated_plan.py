@@ -415,18 +415,14 @@ class AnnotatedProgramPlan:
             timing.get("orchestration_wall_time_ns"),
             "annotated_program_plan.timing.orchestration_wall_time_ns",
         )
-        if search_wall_time_ns != sum(
-            item.search_wall_time_ns for item in attempts
-        ):
+        if search_wall_time_ns != sum(item.search_wall_time_ns for item in attempts):
             raise ValueError("annotated search timing total differs")
         if admission_wall_time_ns != sum(
             item.physical_admission_wall_time_ns for item in attempts
         ):
             raise ValueError("annotated physical-admission timing total differs")
         if (
-            search_wall_time_ns
-            + admission_wall_time_ns
-            + orchestration_wall_time_ns
+            search_wall_time_ns + admission_wall_time_ns + orchestration_wall_time_ns
             != total_wall_time_ns
         ):
             raise ValueError("annotated selection timing does not reconcile")

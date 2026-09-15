@@ -31,4 +31,3 @@ def _resident_slice_from_value(value: object, path: str) -> ResidentSlice:
             for index, item in enumerate(entries)
         ),
     )
-

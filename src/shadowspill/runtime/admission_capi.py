@@ -12,6 +12,12 @@ from shadowspill.libraries import (
 NO_ID = (1 << 64) - 1
 
 
+def optional_id(value: int) -> int | None:
+    """An identity the library reports, None where it reports none."""
+
+    return None if value == NO_ID else value
+
+
 class CAdmissionReplayOperation(ctypes.Structure):
     _fields_ = [
         ("sequence", ctypes.c_uint64),

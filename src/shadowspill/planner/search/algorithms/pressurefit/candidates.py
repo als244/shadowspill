@@ -828,9 +828,7 @@ def _decode_problem_result(
             incumbent=incumbent,
         )
     finally:
-        library.shadowspill_pressurefit_result_destroy(
-            ctypes.byref(problem_result)
-        )
+        library.shadowspill_pressurefit_result_destroy(ctypes.byref(problem_result))
 
 
 def evaluate_program_problems(

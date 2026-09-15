@@ -153,6 +153,8 @@ class CPlacementResult(ctypes.Structure):
         ("required_bytes", ctypes.c_uint64),
         ("offsets", ctypes.POINTER(ctypes.c_uint64)),
     ]
+
+
 class CScheduleContext(ctypes.Structure):
     """The part of a problem that is not about how it is searched."""
 
@@ -172,6 +174,8 @@ class CIndexedProblem(ctypes.Structure):
         ("device_priority", ctypes.POINTER(ctypes.c_uint32)),
         ("incumbent", ctypes.POINTER(CIndexedSchedule)),
     ]
+
+
 class CScheduleAdmissionResult(ctypes.Structure):
     """Caller-owned buffers for one exact indexed-schedule admission."""
 
@@ -200,24 +204,34 @@ class CScheduleAdmissionResult(ctypes.Structure):
     ]
 
 
-def _check_struct_layout(library: ctypes.CDLL) -> None:
+def check_struct_layout(
+    library: ctypes.CDLL, mirrored: tuple[tuple[int, str, type], ...], what: str
+) -> None:
     """Refuse a library whose structures are not the ones mirrored here.
 
     A mirror that has drifted does not fail loudly: it reads one field where
     the library wrote another, and the result is corrupted counters rather
     than an error. Comparing sizes catches the drift at load, where it can
-    still be understood.
+    still be understood. `mirrored` pairs each selector the library's
+    `shadowspill_planner_struct_size` answers for with the structure that
+    mirrors it, and `what` names the library in the refusal.
     """
 
-    mirrored = ((0, "CAdmissionFacts", CAdmissionFacts),)
     for which, name, structure in mirrored:
         expected = library.shadowspill_planner_struct_size(which)
         actual = ctypes.sizeof(structure)
         if expected and expected != actual:
             raise RuntimeError(
-                f"{name} does not match the compiled planner: "
+                f"{name} does not match the compiled {what}: "
                 f"library {expected} bytes, mirror {actual}"
             )
+
+
+def check_planner_status(status: int, operation: str) -> None:
+    """Raise when a planner library call did not answer zero."""
+
+    if int(status) != 0:
+        raise RuntimeError(f"{operation} failed with planner status {int(status)}")
 
 
 @cache
@@ -225,7 +239,7 @@ def planner_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
     library.shadowspill_planner_struct_size.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_struct_size.restype = ctypes.c_uint64
-    _check_struct_layout(library)
+    check_struct_layout(library, ((0, "CAdmissionFacts", CAdmissionFacts),), "planner")
     library.shadowspill_evaluate_schedule_admission.argtypes = [
         ctypes.POINTER(CProgram),
         ctypes.POINTER(CAdmissionFacts),

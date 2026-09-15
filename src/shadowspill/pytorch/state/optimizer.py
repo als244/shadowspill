@@ -181,8 +181,7 @@ def declare_varying_hyperparams(
                     "a bool selects what the update does, and what it does is "
                     "what was captured, so changing one means planning again"
                     if held_type == "bool"
-                    else "only a number, or a sequence of them, can be held "
-                    "in a tensor"
+                    else "only a number, or a sequence of them, can be held in a tensor"
                 )
                 raise TypeError(
                     f"{name!r} is {held_type}, which a step cannot set: {reason}"

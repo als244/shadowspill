@@ -16,6 +16,21 @@ from torch.fx import GraphModule, Node
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
+from shadowspill.planner.strict import (
+    _integer as strict_integer,
+)
+from shadowspill.planner.strict import (
+    _integer_tuple as strict_integer_tuple,
+)
+from shadowspill.planner.strict import (
+    _optional_integer as strict_optional_integer,
+)
+from shadowspill.planner.strict import (
+    _optional_string as strict_optional_string,
+)
+from shadowspill.planner.strict import (
+    _string as strict_string,
+)
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
     live_storage_identity,
@@ -285,46 +300,28 @@ def _records(
     return tuple(value)
 
 
+def _field(field: str) -> str:
+    return f"task storage contract field {field!r}"
+
+
 def _integer(record: Mapping[str, object], field: str) -> int:
-    value = record.get(field)
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError(f"task storage contract field {field!r} must be an integer")
-    return value
+    return strict_integer(record.get(field), _field(field))
 
 
 def _optional_integer(record: Mapping[str, object], field: str) -> int | None:
-    value = record.get(field)
-    if value is None:
-        return None
-    return _integer(record, field)
+    return strict_optional_integer(record.get(field), _field(field))
 
 
 def _optional_string(record: Mapping[str, object], field: str) -> str | None:
-    value = record.get(field)
-    if value is None or isinstance(value, str):
-        return value
-    raise ValueError(f"task storage contract field {field!r} must be a string or null")
+    return strict_optional_string(record.get(field), _field(field))
 
 
 def _string(record: Mapping[str, object], field: str) -> str:
-    value = record.get(field)
-    if not isinstance(value, str):
-        raise ValueError(f"task storage contract field {field!r} must be a string")
-    return value
+    return strict_string(record.get(field), _field(field))
 
 
 def _integer_tuple(record: Mapping[str, object], field: str) -> tuple[int, ...]:
-    value = record.get(field)
-    if not isinstance(value, list):
-        raise ValueError(f"task storage contract field {field!r} must be a list")
-    result: list[int] = []
-    for item in value:
-        if not isinstance(item, int) or isinstance(item, bool):
-            raise ValueError(
-                f"task storage contract field {field!r} must contain integers"
-            )
-        result.append(item)
-    return tuple(result)
+    return strict_integer_tuple(record.get(field), _field(field))
 
 
 def _storage_root_from_record(record: Mapping[str, object]) -> StorageRoot:
@@ -477,7 +474,7 @@ def capture_task_storage_contract(
         output_views,
         catalog.roots,
     )
-    return _make_storage_contract(
+    return make_storage_contract(
         catalog.roots,
         output_views,
         (*schema_mutations, *mutation_bindings),
@@ -703,7 +700,7 @@ def _validate_mutation_root(
         )
 
 
-def _make_storage_contract(
+def make_storage_contract(
     roots: tuple[StorageRoot, ...],
     output_views: tuple[OutputView, ...],
     mutations: tuple[MutationBinding, ...],

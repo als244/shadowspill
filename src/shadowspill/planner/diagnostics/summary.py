@@ -168,28 +168,27 @@ class PlanningDiagnostics:
             },
             # The search's own half, under its name. Nothing generic reads
             # inside it, so a search may put whatever it has here.
-            "search": {"summary": {
-                "resolved_program_count": self.resolved_program_count,
-                "valid_resolved_program_count": (
-                    self.valid_resolved_program_count
-                ),
-                "candidate_policy_count": self.candidate_policy_count,
-                "candidate_evaluation_count": self.candidate_evaluation_count,
-                "valid_candidate_evaluation_count": (
-                    self.valid_candidate_evaluation_count
-                ),
-                "candidate_status_counts": self.candidate_status_counts,
-            },
-            "work": self.work.to_dict(),
-            "repairs": self.repairs.to_dict(),
-            "capacity_refinement": {
-                "effective_object_capacity_bytes": (
-                    self.effective_object_capacity_bytes
-                ),
-            },
-            "resolved_programs": [
-                item.to_dict() for item in self.resolved_programs
-            ],
+            "search": {
+                "summary": {
+                    "resolved_program_count": self.resolved_program_count,
+                    "valid_resolved_program_count": (self.valid_resolved_program_count),
+                    "candidate_policy_count": self.candidate_policy_count,
+                    "candidate_evaluation_count": self.candidate_evaluation_count,
+                    "valid_candidate_evaluation_count": (
+                        self.valid_candidate_evaluation_count
+                    ),
+                    "candidate_status_counts": self.candidate_status_counts,
+                },
+                "work": self.work.to_dict(),
+                "repairs": self.repairs.to_dict(),
+                "capacity_refinement": {
+                    "effective_object_capacity_bytes": (
+                        self.effective_object_capacity_bytes
+                    ),
+                },
+                "resolved_programs": [
+                    item.to_dict() for item in self.resolved_programs
+                ],
             },
         }
 
@@ -240,8 +239,7 @@ class PlanningDiagnostics:
             workers=_integer(data.get("workers", 0), f"{path}.workers"),
             effective_object_capacity_bytes=_optional_integer(
                 refinement.get("effective_object_capacity_bytes"),
-                f"{path}.search.capacity_refinement"
-                ".effective_object_capacity_bytes",
+                f"{path}.search.capacity_refinement.effective_object_capacity_bytes",
             ),
         )
         declared_repairs = PlanningRepairDiagnostics.from_value(

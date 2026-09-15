@@ -116,9 +116,7 @@ def _evaluate_resolutions(
             incumbent=incumbent,
         )
     )
-    results = run_problems(
-        problems, generic, algorithm, workers=workers, best=best
-    )
+    results = run_problems(problems, generic, algorithm, workers=workers, best=best)
     # The candidates publish to the record themselves, as they place, so
     # there is nothing to offer here: by the time this returns, anything
     # worth sharing is already shared.
@@ -167,8 +165,7 @@ class PressureFit(SearchAlgorithm):
     def __init__(self, options: PressureFitOptions | None = None) -> None:
         if options is not None and not isinstance(options, PressureFitOptions):
             raise TypeError(
-                "PressureFit takes PressureFitOptions, not "
-                f"{type(options).__name__}"
+                f"PressureFit takes PressureFitOptions, not {type(options).__name__}"
             )
         self.options: PressureFitOptions = (
             options if options is not None else PressureFitOptions()

@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
 from shadowspill.errors import CaptureError, ProfilingError
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
 from .records import (
     ProfileEnvironment,
@@ -234,3 +235,15 @@ def _build_profiling_result(
 
 
 __all__ = ["ProfilableArtifact", "profile_unique_artifacts"]
+
+
+def unique_graph_artifacts(
+    artifacts: Sequence[ProfilableArtifact],
+) -> dict[str, GraphArtifact]:
+    """The graph artifacts among `artifacts`, one per compatibility digest."""
+
+    return {
+        artifact.compatibility_digest: artifact
+        for artifact in artifacts
+        if isinstance(artifact, GraphArtifact)
+    }

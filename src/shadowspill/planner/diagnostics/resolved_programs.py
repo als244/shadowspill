@@ -297,9 +297,7 @@ class ResolvedProgramDiagnostics:
                 f"{path}.selected_candidate_policy.makespan_ns",
             ),
             candidate_evaluations=candidates,
-            work=PlanningWorkDiagnostics.from_value(
-                data.get("work"), f"{path}.work"
-            ),
+            work=PlanningWorkDiagnostics.from_value(data.get("work"), f"{path}.work"),
             started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),
             finished_ns=_span(data.get("span"), "finished_ns", f"{path}.span"),
             evict_ineligible_aliases=_span(
@@ -331,9 +329,7 @@ class ResolvedProgramDiagnostics:
             if summary.get(name) != expected:
                 raise ValueError(f"{path}.summary.{name} does not reconcile")
         if (
-            PlanningRepairDiagnostics.from_value(
-                data.get("repairs"), f"{path}.repairs"
-            )
+            PlanningRepairDiagnostics.from_value(data.get("repairs"), f"{path}.repairs")
             != result.repairs
         ):
             raise ValueError(f"{path}.repairs does not reconcile")
