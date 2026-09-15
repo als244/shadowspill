@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shadowspill.pytorch.runtime_adapter.transfer_labels import TransferLabelIndex
+from shadowspill.runtime.transfer_labels import TransferLabelIndex
 from tests.shadowspill.ir._examples import (
     representative_program,
     representative_schedule,

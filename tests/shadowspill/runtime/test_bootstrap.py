@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.pytorch.runtime_adapter import failures as failures_module
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.runtime import failures as failures_module
+from shadowspill.runtime.abi import (
     AdapterCapabilities,
     AdapterConfig,
     AdapterFailure,
@@ -36,15 +36,35 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     configure_adapter_library,
     configure_runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import (
-    AllocatorInstallError,
-    InstalledAllocator,
+from shadowspill.runtime.bootstrap import (
+    InstalledRuntime,
     PoolBootstrap,
     RouteBootstrap,
+    RuntimeInstallError,
     _function_pointer,
-    install_allocator,
+    install_runtime,
     validate_dynamic_execution_reservation,
 )
+
+
+class _NoProcessAllocator:
+    """A frontend whose allocator is never reached: every case here refuses
+    before installation, or exercises the accounting after it."""
+
+    def refuse_unusable_build(self) -> None:
+        raise AssertionError("the request should have been refused first")
+
+    def missing_operations(self) -> tuple[str, ...]:
+        return ()
+
+    def prepare(self, library_path: Path, record_stream_pointer: int) -> None:
+        raise AssertionError("the request should have been refused first")
+
+    def activate(self) -> None:
+        raise AssertionError("the request should have been refused first")
+
+    def initialize_provider_workspaces(self, device_ordinal: int) -> None:
+        return None
 
 
 def _two_pool_topology(spill_bytes: int = 1) -> dict[str, object]:
@@ -295,9 +315,8 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity(
     admission = PhysicalAdmission()
     admission.allocator_pool_bytes = 128
     library = _StatisticsLibrary()
-    installed = InstalledAllocator(
+    installed = InstalledRuntime(
         library=library,
-        allocator=object(),
         path=Path("/adapter"),
         admission=admission,
         fixed_execution_bytes=16,
@@ -314,30 +333,29 @@ def test_execution_reservation_accepts_fragmented_dynamic_capacity(
     library.free_prefix = 96
     library.largest = 96
     assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
-    with pytest.raises(AllocatorInstallError, match="exceed"):
+    with pytest.raises(RuntimeInstallError, match="exceed"):
         validate_dynamic_execution_reservation(installed, reserved_bytes=16)
     library.largest = 64
     assert validate_dynamic_execution_reservation(installed, reserved_bytes=32) == 20
     library.free = 100
-    with pytest.raises(AllocatorInstallError, match="accounting"):
+    with pytest.raises(RuntimeInstallError, match="accounting"):
         validate_dynamic_execution_reservation(installed, reserved_bytes=32)
 
 
 def test_missing_callback_symbol_has_field_specific_error() -> None:
-    with pytest.raises(AllocatorInstallError, match="missing_callback"):
+    with pytest.raises(RuntimeInstallError, match="missing_callback"):
         _function_pointer(object(), "missing_callback")
 
 
 def test_installer_rejects_missing_library(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "shadowspill.pytorch.runtime_adapter.allocator._installed", None
-    )
+    monkeypatch.setattr("shadowspill.runtime.bootstrap._installed", None)
     missing = tmp_path / "libshadowspill_pytorch.so"
-    with pytest.raises(AllocatorInstallError, match="does not exist"):
-        install_allocator(
+    with pytest.raises(RuntimeInstallError, match="does not exist"):
+        install_runtime(
             missing,
+            frontend=_NoProcessAllocator(),
             device_ordinal=0,
             device_budget_bytes=1,
             provider_headroom_bytes=0,
@@ -375,5 +393,9 @@ def test_installer_rejects_invalid_physical_configuration(
         **_two_pool_topology(),
     }
     arguments.update(overrides)
-    with pytest.raises(AllocatorInstallError, match=message):
-        install_allocator(tmp_path / "missing.so", **arguments)
+    with pytest.raises(RuntimeInstallError, match=message):
+        install_runtime(
+            tmp_path / "missing.so",
+            frontend=_NoProcessAllocator(),
+            **arguments,
+        )

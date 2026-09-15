@@ -6,8 +6,8 @@ import pytest
 
 from shadowspill.errors import AdmissionError
 from shadowspill.memory import device, pinned_host, transfer_route
-from shadowspill.pytorch.runtime_adapter.runtime import MemoryPool
-from shadowspill.pytorch.runtime_adapter.runtime.configuration import (
+from shadowspill.runtime import MemoryPool
+from shadowspill.runtime.configuration import (
     RuntimeConfigurationError,
     resolve_dynamic_scratch_reserve,
     resolve_execution_budget,

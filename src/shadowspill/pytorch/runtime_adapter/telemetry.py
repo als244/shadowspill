@@ -12,8 +12,8 @@ from shadowspill.pytorch.profiling.records import (
     TaskAllocationOperation,
     TaskOutputInputBinding,
 )
-from shadowspill.pytorch.runtime_adapter.abi import AllocationEvent as CAllocationEvent
-from shadowspill.pytorch.runtime_adapter.abi import runtime_library
+from shadowspill.runtime.abi import AllocationEvent as CAllocationEvent
+from shadowspill.runtime.abi import runtime_library
 
 NO_ID = (1 << 64) - 1
 

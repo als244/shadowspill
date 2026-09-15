@@ -10,8 +10,8 @@ import torch
 
 from shadowspill.errors import PlanningError
 from shadowspill.ir import MemoryAction, MemoryActionKind
-from shadowspill.pytorch.runtime_adapter.abi import RuntimeAction
-from shadowspill.pytorch.runtime_adapter.failures import (
+from shadowspill.runtime.abi import RuntimeAction
+from shadowspill.runtime.failures import (
     RuntimeExecutionError,
     generic_runtime_error,
     read_allocator_failure,

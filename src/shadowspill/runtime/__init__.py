@@ -1,18 +1,22 @@
-"""Framework-neutral physical admission helpers."""
+"""One runtime in this process: opening it, driving it, and closing it.
 
-from .admission import (
-    AdmissionError,
-    AdmissionPolicy,
-    AllocationEvent,
-    AllocationOperation,
-    SlabLayout,
-    SlabPlacement,
-    SlabReplay,
-    admit_physical_budget,
-    plan_slab_layout,
-    replay_slab_timeline,
-    workspace_reserve_bytes,
-)
+This package is framework-neutral. `bootstrap` installs a runtime over a
+frontend's process allocator; `core` is the `Runtime` itself, owning the pools,
+routes, counters and the close; `configuration` checks what a caller asks of it;
+`plan` moves one plan through its life on the runtime; `objects` names,
+registers and references runtime objects; `occupancy` and `residue` read what a
+pool holds and what a closing plan left behind; `calibration` measures the
+transfer routes; `teardown` latches what a failed call left and makes cleanup
+safe; `admission_replay` checks a planned allocation script against the exact
+policy the real pool applies. `abi` is the ctypes projection all of them call
+through. What a plan needs *physically* is decided before any runtime exists, so
+that policy is `shadowspill.planner.admission.physical`.
+
+A framework appears only as a :mod:`shadowspill.frontend` protocol the caller
+passes to `Runtime`. Everything outside this package reaches a runtime through
+the names below.
+"""
+
 from .admission_replay import (
     AdmissionReplayDecision,
     AdmissionReplayLeaseState,
@@ -22,27 +26,38 @@ from .admission_replay import (
     AdmissionReuseDependency,
     run_admission_replay,
 )
+from .configuration import RuntimeConfigurationError
+from .core import Runtime
+from .failures import (
+    ExecutionTaskIdentity,
+    RuntimeExecutionError,
+    RuntimeFailureDiagnostics,
+)
 from .objects import ObjectConsistency, ObjectRef
+from .topology import (
+    MemoryPool,
+    RuntimeRoute,
+    TransferCapabilities,
+    TransferProfile,
+)
 
 __all__ = [
-    "AdmissionError",
-    "AdmissionPolicy",
     "AdmissionReplayDecision",
     "AdmissionReplayLeaseState",
     "AdmissionReplayOperation",
     "AdmissionReplayOperationKind",
     "AdmissionReplayResult",
     "AdmissionReuseDependency",
-    "AllocationEvent",
-    "AllocationOperation",
+    "ExecutionTaskIdentity",
+    "MemoryPool",
     "ObjectConsistency",
     "ObjectRef",
-    "SlabLayout",
-    "SlabPlacement",
-    "SlabReplay",
-    "admit_physical_budget",
-    "plan_slab_layout",
-    "replay_slab_timeline",
+    "Runtime",
+    "RuntimeConfigurationError",
+    "RuntimeExecutionError",
+    "RuntimeFailureDiagnostics",
+    "RuntimeRoute",
+    "TransferCapabilities",
+    "TransferProfile",
     "run_admission_replay",
-    "workspace_reserve_bytes",
 ]

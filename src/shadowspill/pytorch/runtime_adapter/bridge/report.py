@@ -12,14 +12,11 @@ import ctypes
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from shadowspill.pytorch.runtime_adapter import failures, trace
-from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics, ObjectSnapshot
-from shadowspill.pytorch.runtime_adapter.runtime import (
-    live_allocations,
-    occupants,
-    retainers,
-)
+from shadowspill.pytorch.runtime_adapter import trace
 from shadowspill.pytorch.runtime_adapter.trace import CapturedRuntimeTrace
+from shadowspill.runtime import failures
+from shadowspill.runtime.abi import AdapterStatistics, ObjectSnapshot
+from shadowspill.runtime.occupancy import allocation_id_for_address, live_allocations
 
 if TYPE_CHECKING:
     from . import RuntimeBridge
@@ -80,9 +77,15 @@ def describe_pool_occupants(bridge: RuntimeBridge) -> str:
         # so a range with no frontend object is held by the framework's own
         # internals rather than by anything a caller can drop. Saying which
         # is what separates a reference to release from one to relocate.
-        holders = occupants(bridge.runtime, shown)
+        frontend = bridge.runtime.frontend
+        holders = frontend.occupants(
+            shown,
+            lambda address: allocation_id_for_address(bridge.runtime, address),
+        )
         occupying = [item for objects in holders.values() for item in objects]
-        holding = retainers(occupying, ignore=(holders, occupying, *holders.values()))
+        holding = frontend.retainers(
+            occupying, ignore=(holders, occupying, *holders.values())
+        )
     except Exception:
         holders = {}
         holding = {}

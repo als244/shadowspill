@@ -54,6 +54,7 @@ src/shadowspill/
 │   └── policy.py          StoreMode and the four gates it implies
 ├── planner/               the planning question and its C bindings
 │   ├── admission/         neutral physical admission, after a search answers
+│   │   ├── physical.py    what a plan needs physically, before a runtime exists
 │   │   └── layout/        leases to fixed offsets, and the certificate
 │   ├── diagnostics/       PlanReport values
 │   │   └── plan/          the report by part: what building it cost, the
@@ -67,7 +68,15 @@ src/shadowspill/
 ├── simulator/             the simulator and diagnostic timeline
 │   └── indexing/          the template, one schedule bound onto it, the result
 │                          decoded back, and the buffers all three hand to C
-├── runtime/               physical admission and replay bindings
+├── frontend.py            the twelve methods a framework frontend implements,
+│                          and nothing else
+├── runtime/               one runtime in this process, framework-neutral:
+│   │                      bootstrap, core, configuration, plan, occupancy,
+│   │                      residue, calibration, teardown, the admission replay,
+│   │                      and the failures it reports
+│   ├── abi/               the ctypes projection of the C API, one module per
+│   │                      record kind
+│   └── objects/           runtime objects: the reference, and how one is made
 ├── plots/                 step-run and step-search figures
 │   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
@@ -97,12 +106,12 @@ src/shadowspill/
     ├── execution/         before/compiled/after task skeletons
     │   └── training/      the training executor by concern: admission, boundary,
     │                      publication, timing, optimizer state
-    ├── runtime_adapter/   Python-to-C runtime and allocator boundary
-    │   ├── abi/           the ctypes projection, one module per record kind
-    │   ├── bridge/        one plan's program on the adapter: objects, admission,
-    │   │                  boundaries, report
-    │   └── runtime/       the Runtime object by concern: core, configuration, calibration,
-    │                      plan, objects, failure, occupancy, retainers, residue
+    ├── accelerator.py     the device PyTorch drives, named once
+    ├── bindings.py        who holds a range, in PyTorch's terms, and detaching them
+    ├── frontend.py        PyTorch's answers to what the runtime cannot do itself
+    ├── runtime.py         a runtime opened with that frontend
+    ├── runtime_adapter/   what still needs PyTorch: one plan on the runtime
+    │   └── bridge/        objects, admission, boundaries, report
     ├── diagnostics/       PlanReport and StepDiagnostics
     │   └── builders/      each record built where its own consumer reads it
     ├── step_search/       a step planned at every geometry, budget and walk:

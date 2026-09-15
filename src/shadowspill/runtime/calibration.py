@@ -14,18 +14,18 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.status import ABI_VERSION
+
+from .abi import (
     TransferCalibrationConfig,
     TransferRouteKey,
     runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.abi import (
+from .abi import (
     TransferProfile as RuntimeTransferProfile,
 )
-from shadowspill.runtime.topology import TransferCapabilities, TransferProfile
-from shadowspill.status import ABI_VERSION
-
 from .configuration import RuntimeConfigurationError
+from .topology import TransferCapabilities, TransferProfile
 
 #: What `TransferProfile.provenance` records about when a route was measured.
 INITIALIZATION_PROVENANCE = 0

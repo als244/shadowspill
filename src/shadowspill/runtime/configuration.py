@@ -15,6 +15,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from shadowspill.errors import AdmissionError
+from shadowspill.frontend import RuntimeFrontend
 from shadowspill.libraries import resolve_library
 from shadowspill.memory import (
     DevicePool,
@@ -24,9 +25,9 @@ from shadowspill.memory import (
 from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
 )
-from shadowspill.pytorch.accelerator import accelerator_device, is_accelerator
-from shadowspill.pytorch.runtime_adapter.allocator import PoolBootstrap, RouteBootstrap
-from shadowspill.runtime.topology import MemoryPool, RuntimeRoute
+
+from .bootstrap import PoolBootstrap, RouteBootstrap
+from .topology import MemoryPool, RuntimeRoute
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -298,10 +299,15 @@ def resolve_dynamic_scratch_reserve(
     return requested
 
 
-def resolve_execution_device(value: object | None, pool: MemoryPool) -> int:
-    """Resolve and, when explicit, select the PyTorch execution device."""
+def resolve_execution_device(
+    frontend: RuntimeFrontend, value: object | None, pool: MemoryPool
+) -> int:
+    """Resolve, and when explicit select, the device a plan will execute on.
 
-    import torch
+    What a device argument may be is the frontend's question, so the ordinal
+    comes from the frontend; that it matches the pool the runtime was opened for
+    is the runtime's.
+    """
 
     pool_device = pool.device_ordinal
     if pool_device is None:
@@ -309,42 +315,16 @@ def resolve_execution_device(value: object | None, pool: MemoryPool) -> int:
             f"execution pool {pool.name!r} has no accelerator device"
         )
     if value is None:
-        resolved = int(torch.cuda.current_device())
+        resolved = frontend.current_device_ordinal()
     else:
-        if isinstance(value, bool):
-            raise TypeError(
-                "execution_device must be an accelerator device, ordinal, or None"
-            )
-        if isinstance(value, int):
-            resolved_device = accelerator_device(value)
-        else:
-            if not isinstance(value, (str, torch.device)):
-                raise TypeError(
-                    "execution_device must be an accelerator device, ordinal, or None"
-                )
-            try:
-                resolved_device = torch.device(value)
-            except (TypeError, RuntimeError) as exc:
-                raise TypeError(
-                    "execution_device must be an accelerator device, ordinal, or None"
-                ) from exc
-        if not is_accelerator(resolved_device):
-            raise RuntimeConfigurationError(
-                "the installed PyTorch adapter currently requires an accelerator "
-                "execution device"
-            )
-        resolved = (
-            int(torch.cuda.current_device())
-            if resolved_device.index is None
-            else int(resolved_device.index)
-        )
+        resolved = frontend.device_ordinal(value)
     if resolved != pool_device:
         raise RuntimeConfigurationError(
             f"execution_device={resolved} does not match execution pool "
             f"{pool.name!r} device={pool_device}"
         )
     if value is not None:
-        torch.cuda.set_device(resolved)
+        frontend.select_device(resolved)
     return resolved
 
 

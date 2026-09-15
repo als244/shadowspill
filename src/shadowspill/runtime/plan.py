@@ -13,10 +13,8 @@ import ctypes
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from shadowspill.pytorch.runtime_adapter.abi import PlanDescription, runtime_library
-from shadowspill.pytorch.runtime_adapter.allocator import InstalledAllocator
-from shadowspill.runtime.topology import MemoryPool, RuntimeRoute, TransferCapabilities
-
+from .abi import PlanDescription, runtime_library
+from .bootstrap import InstalledRuntime
 from .calibration import read_transfer_capabilities
 from .configuration import (
     RuntimeConfigurationError,
@@ -25,6 +23,7 @@ from .configuration import (
     resolve_execution_budget,
     resolve_execution_device,
 )
+from .topology import MemoryPool, RuntimeRoute, TransferCapabilities
 
 if TYPE_CHECKING:
     from .core import Runtime
@@ -35,7 +34,7 @@ class PlanMemory:
     """Resolved pool roles and capacities consumed by one planning call."""
 
     runtime: Runtime
-    installed: InstalledAllocator
+    installed: InstalledRuntime
     execution: MemoryPool
     spill: MemoryPool
     fetch: RuntimeRoute
@@ -82,7 +81,9 @@ def begin_plan(
             raise RuntimeConfigurationError(
                 "the current PyTorch frontend requires an accelerator execution pool"
             )
-        resolved_device = resolve_execution_device(execution_device, execution_pool)
+        resolved_device = resolve_execution_device(
+            runtime.frontend, execution_device, execution_pool
+        )
         resolved_execution = resolve_execution_budget(execution_budget, execution_pool)
         resolved_spill = resolve_budget(spill_budget, spill_pool, "spill_budget")
         resolved_scratch = resolve_dynamic_scratch_reserve(
