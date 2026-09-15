@@ -21,7 +21,7 @@
 extern "C" {
 #endif
 
-#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 3U
+#define SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION 1U
 
 /* Ids the frontend synthesises for work that is not a planned task: the
    profiling allocation scopes, and the pre-task placement batch. The
