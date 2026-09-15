@@ -16,6 +16,9 @@ from shadowspill.pytorch.diagnostics.timing import (
 from shadowspill.pytorch.runtime_adapter.abi import AdapterStatistics
 from shadowspill.pytorch.runtime_adapter.bridge import (
     RuntimeBridge,
+    end_and_read_runtime_trace,
+    statistics,
+    wait_idle,
 )
 from shadowspill.pytorch.runtime_adapter.trace import (
     CapturedRuntimeTrace,
@@ -147,15 +150,15 @@ def _resolve_trace_evidence(
         raise AssertionError("validated execution timing lost its compute stream")
     timing.stream.synchronize()
     # Terminal transfers must be included in the same invocation trace.
-    bridge.wait_idle()
-    runtime_trace = bridge.end_and_read_runtime_trace()
+    wait_idle(bridge)
+    runtime_trace = end_and_read_runtime_trace(bridge)
     statistics_before = timing.statistics_before
     if statistics_before is None:
         raise AssertionError("validated execution timing lost initial statistics")
     return _TraceEvidence(
         runtime_trace=runtime_trace,
         statistics_before=statistics_before,
-        statistics_after=bridge.statistics(),
+        statistics_after=statistics(bridge),
     )
 
 
@@ -277,7 +280,7 @@ def _transfer_lanes(
         opening_events, RuntimeTraceEventKind.TRANSFER_COMPLETED
     )
     alias_by_object = {
-        bridge.runtime_object_id(action.alias_group_id): action.alias_group_id
+        bridge.objects.runtime_object_id(action.alias_group_id): action.alias_group_id
         for action in timing.actions
     }
     execution_ids = {
@@ -325,7 +328,7 @@ def _transfer_lanes(
             dispatch = lane_dispatches[interval.sequence]
             completion = lane_completions[interval.sequence]
             task_number = canonical_index(interval.trigger_task_id, "task_")
-            object_number = bridge.runtime_object_id(interval.alias_group_id)
+            object_number = bridge.objects.runtime_object_id(interval.alias_group_id)
             _validate_transfer_event(interval, dispatch, task_number, object_number)
             _validate_transfer_event(interval, completion, task_number, object_number)
             key = (task_number, object_number, MEMORY_ACTION_CODE[interval.kind])

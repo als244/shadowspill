@@ -26,7 +26,14 @@ from shadowspill.pytorch.materialization.replacement import (
     ReplacementStorageViews,
 )
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.bridge import (
+    RuntimeBridge,
+    admit_initial_actions,
+    dematerialize,
+    publish_initial_tensor,
+    submit_initial_actions,
+    wait_idle,
+)
 from shadowspill.pytorch.runtime_adapter.runtime import Runtime
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
@@ -99,7 +106,7 @@ class TrainingMaterializedState(MaterializedState):
         if self._closed or self._model_on_cpu:
             return
         for item in self._registrations():
-            alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
             item.tensor.data = self._cpu_view(
                 self._planning_cpu_owners[alias_id], item.tensor
             )
@@ -112,7 +119,7 @@ class TrainingMaterializedState(MaterializedState):
             return
         registrations: dict[str, list[_Registration]] = {}
         for item in self._registrations():
-            alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
             registrations.setdefault(alias_id, []).append(item)
         for ordinal, (alias_id, items) in enumerate(registrations.items()):
             owner = torch.empty(
@@ -129,14 +136,14 @@ class TrainingMaterializedState(MaterializedState):
                 item.tensor.data = view
                 representative = item.tensor
                 assigned.add(id(item.tensor))
-            binding = self.bridge.publish_initial_tensor(alias_id, owner)
+            binding = publish_initial_tensor(self.bridge, alias_id, owner)
             self.object_store[alias_id] = representative
             for item in items:
                 self.object_tensors[item.binding.object_id] = item.tensor
             self._release_placeholder(
                 alias_id, representative, binding.generation, ordinal
             )
-        self.bridge.wait_idle()
+        wait_idle(self.bridge)
         self._model_on_cpu = False
 
     def adopt_execution_plan(
@@ -148,8 +155,8 @@ class TrainingMaterializedState(MaterializedState):
     ) -> None:
         """Switch from provisional identities and install fixed graph inputs."""
 
-        existing = self.bridge.registered_runtime_objects()
-        bridge.adopt_registered(existing)
+        existing = self.bridge.objects.registered_runtime_objects()
+        bridge.objects.adopt_registered(existing)
         self.bridge = bridge
         active_objects = {
             object_id
@@ -159,8 +166,8 @@ class TrainingMaterializedState(MaterializedState):
         for ordinal, fixed in enumerate(lowered.fixed_tensors):
             if fixed.object_id not in active_objects:
                 continue
-            alias_id = bridge.alias_for_object(fixed.object_id)
-            if alias_id in bridge.registered_aliases():
+            alias_id = bridge.objects.alias_for_object(fixed.object_id)
+            if alias_id in bridge.objects.registered_aliases():
                 continue
             source = torch.empty_strided(
                 tuple(fixed.value.shape),
@@ -169,14 +176,16 @@ class TrainingMaterializedState(MaterializedState):
                 device="cpu",
             )
             source.fill_(1)
-            bridge.register_spill_tensor(alias_id, source, retain_spill_copy=True)
+            bridge.objects.register_spill_tensor(
+                alias_id, source, retain_spill_copy=True
+            )
             owner = torch.empty(
                 source.untyped_storage().nbytes(),
                 dtype=torch.uint8,
                 device=self.device,
             )
             tensor = self._device_view(owner, source)
-            binding = bridge.publish_initial_tensor(alias_id, owner)
+            binding = publish_initial_tensor(bridge, alias_id, owner)
             self.object_store[alias_id] = tensor
             self.object_tensors[fixed.object_id] = tensor
             self._release_placeholder(
@@ -186,7 +195,7 @@ class TrainingMaterializedState(MaterializedState):
                 (1 << 20) + ordinal,
             )
         self._materialize_optimizer_state(optimizer, lowered)
-        bridge.wait_idle()
+        wait_idle(bridge)
 
     def _materialize_optimizer_state(
         self,
@@ -208,7 +217,7 @@ class TrainingMaterializedState(MaterializedState):
                 raise PlanningError(
                     f"optimizer state {item.name!r} is absent after initialization"
                 )
-            alias_id = self.bridge.alias_for_object(item.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.object_id)
             entries.setdefault(alias_id, []).append((item.object_id, actual.tensor))
 
         for ordinal, (alias_id, values) in enumerate(entries.items()):
@@ -242,7 +251,7 @@ class TrainingMaterializedState(MaterializedState):
                     assigned.add(id(tensor))
                 self.object_tensors[object_id] = tensor
                 representative = tensor
-            binding = self.bridge.publish_initial_tensor(alias_id, owner)
+            binding = publish_initial_tensor(self.bridge, alias_id, owner)
             self.object_store[alias_id] = representative
             self._release_placeholder(
                 alias_id,
@@ -254,7 +263,7 @@ class TrainingMaterializedState(MaterializedState):
     def refresh_inputs(self, values: Sequence[Sequence[Any]]) -> None:
         """Write every guarded microbatch into its persistent host slot."""
 
-        self.bridge.wait_idle()
+        wait_idle(self.bridge)
         for capture, microbatch, slots in zip(
             self.captures,
             values,
@@ -270,7 +279,7 @@ class TrainingMaterializedState(MaterializedState):
                 if is_accelerator(tensor.device):
                     tensor = tensor.detach().cpu()
                 if alias_id not in written:
-                    self.bridge.write_spill_tensor(alias_id, tensor)
+                    self.bridge.objects.write_spill_tensor(alias_id, tensor)
                     written.add(alias_id)
 
     def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
@@ -300,7 +309,7 @@ class TrainingMaterializedState(MaterializedState):
         for item in self._registrations():
             if item.binding.name not in self._state_names:
                 continue
-            alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
             result[item.binding.name] = self._cpu_view(owners[alias_id], item.tensor)
         missing = set(self._state_names) - set(result)
         if missing:
@@ -321,7 +330,7 @@ class TrainingMaterializedState(MaterializedState):
                     f"model state entry {item.binding.name!r} must be a tensor"
                 )
             destination = self._cpu_view(
-                owners[self.bridge.alias_for_object(item.binding.object_id)],
+                owners[self.bridge.objects.alias_for_object(item.binding.object_id)],
                 item.tensor,
             )
             if source.shape != destination.shape or source.dtype != destination.dtype:
@@ -330,12 +339,12 @@ class TrainingMaterializedState(MaterializedState):
                 )
             destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
-            self.bridge.write_spill_tensor(alias_id, owner)
+            self.bridge.objects.write_spill_tensor(alias_id, owner)
 
     def restore_cpu_and_unregister(self) -> None:
         if self._closed:
             return
-        self.bridge.wait_idle()
+        wait_idle(self.bridge)
         restore_persistent_state(self.runtime, self._persistent_state)
         owners = (
             self._planning_cpu_owners
@@ -348,14 +357,14 @@ class TrainingMaterializedState(MaterializedState):
         for item in self._registrations():
             if id(item.tensor) in assigned:
                 continue
-            alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
             if alias_id in self._persistent_aliases:
                 assigned.add(id(item.tensor))
                 continue
             item.tensor.data = self._cpu_view(owners[alias_id], item.tensor)
             assigned.add(id(item.tensor))
-        self.bridge.unregister(
-            self.bridge.registered_aliases() - self._persistent_aliases
+        self.bridge.objects.unregister(
+            self.bridge.objects.registered_aliases() - self._persistent_aliases
         )
         self.object_store.clear()
         self.object_tensors.clear()
@@ -381,7 +390,7 @@ class TrainingMaterializedState(MaterializedState):
                     retain_spill_copy=retain[alias_id],
                     ordinal=ordinal,
                 )
-        self.bridge.wait_idle()
+        wait_idle(self.bridge)
 
     def _initial_sources(
         self,
@@ -389,7 +398,7 @@ class TrainingMaterializedState(MaterializedState):
     ) -> dict[str, list[_InitialSource]]:
         entries: dict[str, list[_InitialSource]] = {}
         for item in registrations:
-            alias_id = self.bridge.alias_for_object(item.binding.object_id)
+            alias_id = self.bridge.objects.alias_for_object(item.binding.object_id)
             self._model_aliases.add(alias_id)
             entries.setdefault(alias_id, []).append((item.tensor, None))
         slot_maps: list[dict[int, str]] = []
@@ -401,7 +410,7 @@ class TrainingMaterializedState(MaterializedState):
                 value = flat[slot.leaf_index]
                 if not isinstance(value, torch.Tensor):
                     raise PlanningError("training tensor slot became static")
-                alias_id = self.bridge.alias_for_object(slot.object_id)
+                alias_id = self.bridge.objects.alias_for_object(slot.object_id)
                 if alias_id not in self._model_aliases:
                     self._input_aliases.add(alias_id)
                     slots[slot.leaf_index] = alias_id
@@ -435,7 +444,7 @@ class TrainingMaterializedState(MaterializedState):
                     f"registered model alias {alias_id!r} has no imported "
                     "runtime storage"
                 )
-            self.bridge.register_spill_tensor(
+            self.bridge.objects.register_spill_tensor(
                 alias_id,
                 source,
                 retain_spill_copy=retain_spill_copy,
@@ -465,7 +474,7 @@ class TrainingMaterializedState(MaterializedState):
                 registrations,
             )
             representative = view
-        binding = self.bridge.publish_initial_tensor(alias_id, owner)
+        binding = publish_initial_tensor(self.bridge, alias_id, owner)
         self.object_store[alias_id] = representative
         self._release_placeholder(
             alias_id,
@@ -534,9 +543,10 @@ class TrainingMaterializedState(MaterializedState):
     ) -> None:
         task_number = (1 << 61) + ordinal
         actions = (MemoryAction("task_000000", alias_id, MemoryActionKind.RELEASE),)
-        self.bridge.admit_initial_actions(actions, task_number=task_number)
-        self.bridge.dematerialize(tensor, alias_id, generation)
-        self.bridge.submit_initial_actions(
+        admit_initial_actions(self.bridge, actions, task_number=task_number)
+        dematerialize(self.bridge, tensor, alias_id, generation)
+        submit_initial_actions(
+            self.bridge,
             actions,
             task_number=task_number,
         )

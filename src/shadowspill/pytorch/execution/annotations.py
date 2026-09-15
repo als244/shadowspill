@@ -6,7 +6,13 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.runtime_adapter.bridge import (
+    RuntimeBridge,
+    profile_range_begin,
+    profile_range_end,
+    set_profiler_annotations,
+    wait_plan_idle,
+)
 
 
 class TaskBoundaryAnnotations:
@@ -20,7 +26,7 @@ class TaskBoundaryAnnotations:
         self.enabled = False
 
     def set_enabled(self, enabled: bool) -> None:
-        self._bridge.set_profiler_annotations(enabled)
+        set_profiler_annotations(self._bridge, enabled)
         self.enabled = enabled
 
     def range(self, name: str) -> AbstractContextManager[None]:
@@ -33,12 +39,12 @@ class TaskBoundaryAnnotations:
     def begin(self, name: str) -> int:
         """Open one range on an already-checked enabled path."""
 
-        return self._bridge.profile_range_begin(name)
+        return profile_range_begin(self._bridge, name)
 
     def end(self, range_id: int) -> None:
         """Close one range opened by :meth:`begin`."""
 
-        self._bridge.profile_range_end(range_id)
+        profile_range_end(self._bridge, range_id)
 
 
 class _EnabledRange(AbstractContextManager[None]):
@@ -52,10 +58,10 @@ class _EnabledRange(AbstractContextManager[None]):
         self._range_id = 0
 
     def __enter__(self) -> None:
-        self._range_id = self._bridge.profile_range_begin(self._name)
+        self._range_id = profile_range_begin(self._bridge, self._name)
 
     def __exit__(self, *exc: object) -> None:
-        self._bridge.profile_range_end(self._range_id)
+        profile_range_end(self._bridge, self._range_id)
 
 
 __all__ = ["TaskBoundaryAnnotations"]
@@ -83,7 +89,7 @@ class AnnotatedExecutor:
 
         if not self._task_annotations.enabled:
             return
-        self._bridge.wait_plan_idle()
+        wait_plan_idle(self._bridge)
         self.set_profiler_annotations(False)
 
     def record_invocation_completion(self) -> Callable[[], None]:

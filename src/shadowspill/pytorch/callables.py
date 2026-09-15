@@ -332,7 +332,7 @@ class PlannedTrainStep:
 
         if not hyperparams:
             return
-        groups = self._executor.optimizer.param_groups
+        groups = self._executor.optimizer_state.optimizer.param_groups
         buffers = dict(self._model.named_buffers())
         for name, value in hyperparams.items():
             in_groups = [
@@ -457,16 +457,18 @@ class PlannedTrainStep:
         if runtime_trace:
             if not self._trace_prepared:
                 started_ns = time.perf_counter_ns()
-                self._executor.prepare_execution_tracing()
+                self._executor.timing.prepare()
                 trace_setup_ns = time.perf_counter_ns() - started_ns
                 self._trace_prepared = True
-            self._executor.arm_compute_timing(trace_setup_ns=trace_setup_ns)
+            self._executor.timing.arm(
+                self._executor.run_in_force, trace_setup_ns=trace_setup_ns
+            )
         try:
             objectives, metrics = self._executor(inputs, self._step + 1)
         except BaseException as error:
             if runtime_trace:
                 try:
-                    self._executor.cancel_execution_timing()
+                    self._executor.timing.cancel()
                 except BaseException as timing_error:
                     error.add_note(
                         "Failed to cancel execution timing during fault cleanup: "
@@ -476,7 +478,7 @@ class PlannedTrainStep:
             raise
         self._step += 1
         diagnostics = (
-            DiagnosticsHandle(self._executor.collect_step_diagnostics)
+            DiagnosticsHandle(self._executor.timing.collect_step_diagnostics)
             if runtime_trace
             else None
         )
@@ -501,17 +503,17 @@ class PlannedTrainStep:
     def mark_cycle_end(self) -> None:
         """Close the last invocation's cycle where the next one would begin."""
         self._require_open("mark the cycle's end")
-        self._executor.mark_cycle_end()
+        self._executor.timing.mark_cycle_end()
 
     def invocation_timings(self) -> tuple[InvocationTiming, ...]:
         """Completed invocations on the device clock, once each, oldest first."""
         self._require_open("read invocation timings")
-        return self._executor.invocation_timings()
+        return self._executor.timing.invocation_timings()
 
     def _collect_prior_invocation_drain_seconds(self) -> float:
         """How long the last call waited for the previous invocation to drain."""
 
-        return self._executor.collect_prior_invocation_drain_seconds()
+        return self._executor.timing.prior_invocation_drain_seconds
 
     def state_dict(self) -> dict[str, object]:
         """Synchronously return CPU ``model``, ``optimizer``, and ``step`` state.
@@ -523,7 +525,7 @@ class PlannedTrainStep:
         self._require_open("read a checkpoint from")
         return {
             "model": self._state.state_dict(),
-            "optimizer": self._executor.optimizer_state_dict(),
+            "optimizer": self._executor.optimizer_state.state_dict(),
             "step": self._step,
         }
 
@@ -543,8 +545,8 @@ class PlannedTrainStep:
         if isinstance(step, bool) or not isinstance(step, int) or step < 0:
             raise TypeError("training checkpoint step must be non-negative")
         self._state.load_model_state(model_state)
-        initialized = self._executor.load_optimizer_state(optimizer_state)
-        self._executor.set_optimizer_state_initialized(initialized)
+        initialized = self._executor.optimizer_state.load(optimizer_state)
+        self._executor.optimizer_state.set_initialized(initialized)
         self._step = step
 
     def _require_open(self, action: str) -> None:
@@ -618,7 +620,7 @@ class PlannedTrainStep:
         operations.extend(
             (
                 ("clear parameter gradients", self._clear_parameter_gradients),
-                ("release optimizer state", self._executor.release_optimizer_state),
+                ("release optimizer state", self._executor.optimizer_state.release),
                 ("restore model state", self._state.restore_cpu_and_unregister),
                 ("release compiled executor", self._release_executor),
                 (
