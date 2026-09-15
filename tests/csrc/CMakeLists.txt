@@ -15,7 +15,9 @@ if(TARGET shadowspill_pytorch)
   )
 endif()
 
-add_executable(shadowspill_backend_contract_canary backend_contract_canary.c)
+add_executable(
+  shadowspill_backend_contract_canary backends/backend_contract_canary.c
+)
 target_include_directories(
   shadowspill_backend_contract_canary PRIVATE ${PROJECT_SOURCE_DIR}/csrc/include
 )
@@ -28,7 +30,7 @@ add_test(
   COMMAND shadowspill_backend_contract_canary $<TARGET_FILE:shadowspill_backend_mock>
 )
 
-add_executable(shadowspill_simulator_canary simulator_canary.c)
+add_executable(shadowspill_simulator_canary simulator/simulator_canary.c)
 target_link_libraries(
   shadowspill_simulator_canary
   PRIVATE shadowspill shadowspill_build_options
