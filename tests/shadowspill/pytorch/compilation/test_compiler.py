@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.compilation import inductor as inductor_module
 from shadowspill.pytorch.compilation.compiler import (
     CompiledTask,
     compile_artifact,
@@ -19,6 +18,7 @@ from shadowspill.pytorch.compilation.inductor import (
     compile_explicit_inductor_task,
     compile_inductor_task,
 )
+from shadowspill.pytorch.compilation.inductor import compiler as inductor_compiler
 from shadowspill.pytorch.optimizer import capture_optimizer
 from shadowspill.pytorch.profiling.inputs import (
     materialize_representative_inputs,
@@ -120,7 +120,7 @@ def test_inductor_cache_restores_the_exact_executable_manifest(
     first = compile_artifact(artifact, device_ordinal=0)
     first_output = first()
     monkeypatch.setattr(
-        inductor_module,
+        inductor_compiler,
         "_graph_lowering_contract",
         lambda *args, **kwargs: pytest.fail(
             "warm AOT/Inductor cache unexpectedly rebuilt GraphLowering"
