@@ -439,7 +439,7 @@ def test_a_stored_plan_is_read_back_without_simulating(
 ) -> None:
     """A hit trusts the record: the simulator is not run for it."""
 
-    import shadowspill.simulator.indexing as indexing
+    from shadowspill.simulator.indexing import results as indexing
 
     initial, final = exact_capacity_residency()
     cache = PlanStore(tmp_path)
