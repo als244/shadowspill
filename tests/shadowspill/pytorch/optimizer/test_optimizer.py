@@ -12,7 +12,9 @@ from shadowspill.pytorch.optimizer import (
     capture_optimizer,
     restore_optimizer_checkpoint_structure,
 )
-from shadowspill.pytorch.optimizer import capture as optimizer_module
+from shadowspill.pytorch.optimizer import discovery as discovery_module
+from shadowspill.pytorch.optimizer import sandbox as sandbox_module
+from shadowspill.pytorch.optimizer import trace as trace_module
 from shadowspill.pytorch.optimizer.artifacts import optimizer_value_identity
 
 
@@ -178,7 +180,7 @@ def test_output_created_lazy_state_retains_distinct_initial_plan() -> None:
 
 def test_optimizer_state_container_conversion_preserves_structure() -> None:
     source = torch.ones(2)
-    converted = optimizer_module._map_optimizer_tensors(
+    converted = sandbox_module.map_optimizer_tensors(
         {"list": [source, 3], "tuple": (source, "value")},
         lambda tensor: tensor + 1,
     )
@@ -382,7 +384,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
     def fail_export(_optimizer: torch.optim.Optimizer) -> torch.fx.GraphModule:
         raise RuntimeError("graph disabled")
 
-    monkeypatch.setattr(optimizer_module, "_export_optimizer_graph", fail_export)
+    monkeypatch.setattr(trace_module, "_export_optimizer_graph", fail_export)
     opaque_graph = capture_optimizer({"parameter": parameter}, optimizer)
     assert opaque_graph.recurrent_is_opaque
     assert opaque_graph.bindings[1].name == "gradient.parameter"
@@ -395,7 +397,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
         del arguments
         raise RuntimeError("fake inventory disabled")
 
-    monkeypatch.setattr(optimizer_module, "_fake_device_optimizer", fail_fake)
+    monkeypatch.setattr(discovery_module, "fake_device_optimizer", fail_fake)
     failed_fake = capture_optimizer(
         {"parameter": parameter}, _FailingAfterStateOptimizer([parameter])
     )
