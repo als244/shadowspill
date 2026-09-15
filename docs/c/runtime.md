@@ -1,8 +1,10 @@
 # Runtime C API
 
-Include `<shadowspill/runtime.h>`. The runtime owns memory pools, object
-residency, allocation records, transfer lanes, completion frontiers, the
-worker, trace buffers, and first-failure state.
+Include `<shadowspill/runtime.h>`, which is the umbrella over one header per
+subsystem in `<shadowspill/runtime/>`; the section below each heading names the
+part it comes from. The runtime owns memory pools, object residency,
+allocation records, transfer lanes, completion frontiers, the worker, trace
+buffers, and first-failure state.
 
 ## Lifecycle and calibration
 

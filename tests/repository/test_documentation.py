@@ -46,7 +46,15 @@ _PUBLIC_PYTHON_MODULES = (
 _PUBLIC_HEADERS = ROOT / "csrc" / "include" / "shadowspill"
 
 _PUBLIC_C_REFERENCES = {
-    _PUBLIC_HEADERS / "runtime.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "vocabulary.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "descriptions.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "diagnostics.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "lifecycle.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "pools.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "objects.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "plan.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "tasks.h": DOCS / "c" / "runtime.md",
+    _PUBLIC_HEADERS / "runtime" / "telemetry.h": DOCS / "c" / "runtime.md",
     _PUBLIC_HEADERS / "admission_replay.h": DOCS / "c" / "runtime.md",
     _PUBLIC_HEADERS / "backend.h": DOCS / "c" / "backends.md",
     _PUBLIC_HEADERS / "planner.h": DOCS / "c" / "planner.md",

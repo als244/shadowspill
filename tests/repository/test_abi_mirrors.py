@@ -139,7 +139,7 @@ def test_every_status_decodes_to_a_sentence() -> None:
 
 
 def test_every_failure_reason_decodes_to_a_sentence() -> None:
-    header = (_HEADERS / "runtime.h").read_text()
+    header = (_HEADERS / "runtime" / "vocabulary.h").read_text()
     reasons = re.findall(r"SHADOWSPILL_FAILURE_REASON_([A-Z_]+) = (\d+)", header)
     assert reasons, "the failure reason vocabulary is empty"
     source = (ROOT / "csrc" / "src" / "runtime" / "failure_reason.c").read_text()
