@@ -58,13 +58,15 @@ category; retain structured result fields for diagnostics.
 
 ## Reading a header
 
-`runtime.h` is the large one, and it is ordered rather than alphabetical.
-Section banners divide it into vocabulary, the descriptions a caller fills in,
-the diagnostic records the runtime fills in, and then the calls themselves in
-the order a program uses them: lifecycle, pools, objects, admitting a plan,
-task boundaries, allocation scopes, telemetry, and finally waiting and
-inspection. Grep for a banner rather than a name if you do not know what you
-are looking for yet.
+`runtime.h` is the large one, and it is an umbrella: it includes one header
+per subsystem from `include/shadowspill/runtime/`, in the order a program uses
+them. `vocabulary.h` is the statuses, reasons and enumerations; `descriptions.h`
+what a caller fills in; `diagnostics.h` the records the runtime fills in; then
+`lifecycle.h`, `pools.h`, `objects.h`, `plan.h`, `tasks.h` (task boundaries and
+the allocation scopes between them), and `telemetry.h` (tracing, waiting,
+recovery, and what a reader inspects afterwards). Open the part rather than the
+whole if you know which one you want; each also compiles on its own, so a
+caller may include just the part it uses.
 
 `pytorch_adapter.h` follows the same convention at a smaller scale, in the
 order its reference page describes.
