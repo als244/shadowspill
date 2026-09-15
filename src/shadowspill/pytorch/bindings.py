@@ -1,33 +1,32 @@
-"""Who holds a range, in the framework's terms.
+"""Who holds a range, in PyTorch's terms: the frontend's `LiveBindings`.
 
-`occupants` maps a pool range to the frontend objects whose storage lies inside
-it; `retainers` names where each of those objects is referenced from, which is
-what a caller needs to release one. Both compare addresses and return
-descriptions: neither keeps a reference, which would extend the lifetime of
-exactly what is being investigated.
+`occupants` maps a pool range to the tensors whose storage lies inside it;
+`retainers` names where each of those tensors is referenced from, which is what
+a caller needs to release one; `dematerialize` detaches them so the runtime can
+reclaim the bytes. All three compare addresses and return descriptions: none
+keeps a reference, which would extend the lifetime of exactly what is being
+investigated.
+
+Only PyTorch can walk its own live objects, and only the runtime knows which
+allocation owns an address, so `occupants` takes the lookup as an argument
+rather than reaching for a runtime.
 """
 
 from __future__ import annotations
 
-import ctypes
 import gc
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from types import FrameType, ModuleType
-from typing import TYPE_CHECKING
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.abi import Allocation
-
-from .occupancy import PoolAllocation
-
-if TYPE_CHECKING:
-    from .core import Runtime
+from shadowspill.runtime.occupancy import PoolAllocation
 
 
 def occupants(
-    runtime: Runtime, allocations: Sequence[PoolAllocation]
+    allocations: Sequence[PoolAllocation],
+    locate: Callable[[int], int | None],
 ) -> dict[int, tuple[object, ...]]:
     """The frontend objects whose storage lies inside each given range.
 
@@ -46,8 +45,6 @@ def occupants(
 
     wanted = {item.allocation_id for item in allocations}
     found: dict[int, list[object]] = {key: [] for key in wanted}
-    library = runtime._installed.library
-    record = Allocation()
     # Walking every object touches deprecated framework attributes whose
     # getters warn; the warning belongs to the object being looked at, not
     # to this query.
@@ -70,13 +67,9 @@ def occupants(
             continue
         if not address:
             continue
-        status = int(
-            library.shadowspill_pytorch_allocation_for_pointer(
-                address, ctypes.byref(record)
-            )
-        )
-        if status == 0 and int(record.allocation_id) in found:
-            found[int(record.allocation_id)].append(candidate)
+        allocation_id = locate(address)
+        if allocation_id is not None and allocation_id in found:
+            found[allocation_id].append(candidate)
     return {key: tuple(value) for key, value in found.items()}
 
 
@@ -225,4 +218,24 @@ def retainers(
     return {key: tuple(dict.fromkeys(value)) for key, value in found.items()}
 
 
-__all__ = ["occupants", "retainers"]
+def dematerialize(bindings: Sequence[object]) -> int:
+    """Detach these tensors from their leases; return how many were detached.
+
+    A tensor whose storage is already empty holds no lease and is skipped, so
+    the count is what the runtime may now reclaim.
+    """
+
+    storages = [
+        item
+        for item in bindings
+        if isinstance(item, torch.Tensor) and item.untyped_storage().data_ptr() != 0
+    ]
+    if not storages:
+        return 0
+    torch.ops.shadowspill._dematerialize_storages(storages)
+    detached = len(storages)
+    storages.clear()
+    return detached
+
+
+__all__ = ["dematerialize", "occupants", "retainers"]
