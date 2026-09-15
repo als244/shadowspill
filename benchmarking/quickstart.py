@@ -72,6 +72,7 @@ from shadowspill.pytorch.planning import planned_transfer_bandwidths
 from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
 from shadowspill.pytorch.runtime_adapter.runtime import planned_execution_budget
 from shadowspill.pytorch.step_search import search_geometries
+from shadowspill.schema import artifact_schema
 from shadowspill.store import STORE_MODES
 from tools.qualification.model_state import release_case_model
 from workloads.common.training import LEARNING_RATE, optimizer_state_init
@@ -627,11 +628,94 @@ def print_epilogue(diagnostics: Any) -> None:
     print()
 
 
+_REQUEST_SCHEMA = artifact_schema("quickstart_request")
+
+#: What a request is made of: every argument except the ones that say where
+#: this run writes or what it draws, which a reproduction chooses for itself.
+_NOT_REQUEST = frozenset({"reproduce", "output_dir", "force_overwrite", "plots"})
+_REPRODUCE_MAY_TAKE = frozenset({"--reproduce", "--output-dir", "--plots"})
+
+
+def _request_record(
+    arguments: argparse.Namespace,
+    store: Path,
+    build_store: Path | None,
+    plan_store: Path,
+) -> dict[str, object]:
+    """The request as given, with the stores resolved, for `--reproduce`."""
+
+    request: dict[str, object] = {}
+    for name, value in vars(arguments).items():
+        if name in _NOT_REQUEST:
+            continue
+        if isinstance(value, Path):
+            value = str(value)
+        elif isinstance(value, TransferBandwidths):
+            value = value.to_dict()
+        elif isinstance(value, tuple):
+            value = list(value)
+        request[name] = value
+    request["artifact_store"] = str(store)
+    request["build_store"] = None if build_store is None else str(build_store)
+    request["plan_store"] = str(plan_store)
+    return {
+        "schema": _REQUEST_SCHEMA,
+        "command": sys.argv[1:],
+        "revision": _revision(),
+        "started_at": _started_at(),
+        "request": request,
+    }
+
+
+def _reproduced_arguments(
+    parser: argparse.ArgumentParser, arguments: argparse.Namespace
+) -> argparse.Namespace:
+    """The request a run recorded, pinned to its calibration, refusing a miss."""
+
+    given = {token.split("=", 1)[0] for token in sys.argv[1:] if token.startswith("--")}
+    foreign = sorted(given - _REPRODUCE_MAY_TAKE)
+    if foreign or arguments.model is not None:
+        named = [*foreign, *([arguments.model] if arguments.model else [])]
+        parser.error(
+            "--reproduce takes the whole request from the run; "
+            f"{', '.join(named)} would contradict it"
+        )
+    run = arguments.reproduce
+    record_path = run / "request.json"
+    report_path = run / "search.json"
+    for path in (record_path, report_path):
+        if not path.is_file():
+            parser.error(f"--reproduce: {path} is missing")
+    try:
+        record = json.loads(record_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        parser.error(f"--reproduce: {record_path}: {error}")
+    if not isinstance(record, dict) or record.get("schema") != _REQUEST_SCHEMA:
+        parser.error(f"--reproduce: {record_path} is not a quickstart request")
+    request = record.get("request")
+    if not isinstance(request, dict):
+        parser.error(f"--reproduce: {record_path} records no request")
+    for name, value in request.items():
+        if name in ("artifact_store", "build_store", "plan_store"):
+            value = None if value is None else Path(value)
+        elif name == "resolution_options":
+            value = tuple(value)
+        setattr(arguments, name, value)
+    arguments.transfer_bandwidths = _transfer_bandwidths(str(report_path))
+    arguments.plan_store_mode = "require"
+    return arguments
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("model", choices=IDENTITIES)
+    parser.add_argument(
+        "model",
+        nargs="?",
+        choices=IDENTITIES,
+        help="which workload to run; taken from the run when --reproduce is given",
+    )
     parser.add_argument("--sequence-length", type=int)
     parser.add_argument("--sequences-per-step", type=int)
     parser.add_argument(
@@ -715,6 +799,24 @@ def main() -> int:
         " are written; defaults to benchmarking/quickstart_reports/"
         "<model>_<revision>_<MMDD_HHMM>/seq<length>/seqsperstep<n>",
     )
+    parser.add_argument(
+        "--reproduce",
+        type=Path,
+        default=None,
+        metavar="RUN",
+        help="repeat the run at RUN (its seq<length>/seqsperstep<n> directory)"
+        " exactly: every setting is read from its request.json, the search is"
+        " pinned to the calibration its search.json records, and plan-store"
+        " mode is require, so a plan the store lacks refuses instead of being"
+        " searched again. Only --output-dir and --plots may be given with it",
+    )
+    parser.add_argument(
+        "--export-bypass-key",
+        default=None,
+        help="the caller's name for the code this run builds from; with it, a"
+        " build reads each ordering's step program back from the build store"
+        " and captures only what is not there. Without it every build captures",
+    )
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -774,6 +876,10 @@ def main() -> int:
         " alone, for comparing the two",
     )
     arguments = parser.parse_args()
+    if arguments.reproduce is not None:
+        arguments = _reproduced_arguments(parser, arguments)
+    elif arguments.model is None:
+        parser.error("a model is required unless --reproduce names a run")
     # An unspecified placement is the library's to choose. Resolving it here
     # rather than defaulting the flag keeps one answer to the question: a change
     # to the library default reaches this tour, and the banner reports what the
@@ -890,6 +996,15 @@ def main() -> int:
     # the chosen plans, the per-step numbers -- and a run whose console has
     # scrolled away is a measurement that has to be taken again to be read.
     run_root.mkdir(parents=True, exist_ok=True)
+    # The request in full, so a later run can repeat it without the command.
+    (run_root / "request.json").write_text(
+        json.dumps(
+            _request_record(arguments, store, build_store, plan_store),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     console = (run_root / "console.log").open("w", encoding="utf-8")
     stdout = sys.stdout
 
@@ -1196,6 +1311,7 @@ def main() -> int:
                     ),
                     search_options=policy,
                     transfer_bandwidths=arguments.transfer_bandwidths,
+                    export_bypass_key=arguments.export_bypass_key,
                 )
             print()
             print_search(report, tokens_per_step)
@@ -1286,6 +1402,7 @@ def main() -> int:
                     plan_store=plan_store,
                     build_store_mode=arguments.build_store_mode,
                     plan_store_mode=arguments.plan_store_mode,
+                    export_bypass_key=arguments.export_bypass_key,
                     # The search policy the geometry search used, so the run
                     # plans the plan the search promised rather than missing
                     # the store and searching again under other options.

@@ -99,6 +99,8 @@ Output and stores:
 | `--plots` | Render the figures below | off |
 | `--output-dir` | Where this run writes: its console and progress logs, search report, traced steps, figures, and — unless a store flag points elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>_<MMDD_HHMM>/seq<length>/seqsperstep<n>` |
 | `--force-overwrite` | Replace an existing run at that directory. Its stores are kept, being content-addressed | off |
+| `--reproduce RUN` | Repeat the run at `RUN` (its `seq<length>/seqsperstep<n>` directory) exactly: every setting comes from its `request.json`, the search is pinned to the calibration its `search.json` records, and plan-store mode is `require`, so a plan the store lacks refuses instead of being searched again. Only `--output-dir` and `--plots` may be given with it | none |
+| `--export-bypass-key` | The caller's name for the code this run builds from. With it, a build reads each ordering's step program back from the build store and captures only what is not there; without it every build captures | none |
 | `--artifact-store` | Roots both store trees | `<output-dir>/artifact_store` |
 | `--build-store` | The captures, graph pairs, profiles and compiled artifacts to read and write; overrides `--artifact-store` for the build tree. Point it at another run's store to skip work already paid for there | the artifact store |
 | `--plan-store` | Where this run's plans go: every selection request, result and plan manifest; overrides `--artifact-store` for the planning tree | `<output-dir>/plan_store` |
@@ -129,6 +131,7 @@ benchmarking/quickstart_reports/
   mlops_llama3_<revision>_<MMDD_HHMM>/
     seq1024/
       seqsperstep64/
+        request.json            the request in full, as --reproduce reads it
         search.json             the search report, lossless
         console.log             everything the run printed, as it was
                                 printed: the geometry table, the chosen
