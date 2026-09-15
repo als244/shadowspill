@@ -99,7 +99,7 @@ class ArtifactStore:
     planning: Path
     build_store_mode: StoreMode = "contribute"
     plan_store_mode: StoreMode = "contribute"
-    implementation_revision: str | None = None
+    export_bypass_key: str | None = None
     plan_store: Path | None = None
     build_store: Path | None = None
     _ledger: _ArtifactLedger = field(
@@ -117,7 +117,7 @@ class ArtifactStore:
         plan_store: Any | None = None,
         build_store_mode: StoreMode = "contribute",
         plan_store_mode: StoreMode = "contribute",
-        implementation_revision: str | None = None,
+        export_bypass_key: str | None = None,
     ) -> ArtifactStore:
         for name, mode in (
             ("build_store_mode", build_store_mode),
@@ -126,12 +126,12 @@ class ArtifactStore:
             if mode not in get_args(StoreMode.__value__):
                 allowed = ", ".join(get_args(StoreMode.__value__))
                 raise ValueError(f"{name} must be one of {allowed}: got {mode!r}")
-        if implementation_revision is not None:
-            if not isinstance(implementation_revision, str):
-                raise TypeError("implementation_revision must be a string or None")
-            implementation_revision = implementation_revision.strip()
-            if not implementation_revision:
-                raise ValueError("implementation_revision must be non-empty")
+        if export_bypass_key is not None:
+            if not isinstance(export_bypass_key, str):
+                raise TypeError("export_bypass_key must be a string or None")
+            export_bypass_key = export_bypass_key.strip()
+            if not export_bypass_key:
+                raise ValueError("export_bypass_key must be non-empty")
         root = (
             _store_root(value, "artifact_store")
             if value is not None
@@ -153,7 +153,7 @@ class ArtifactStore:
             (root if plan_root is None else plan_root) / "planning",
             build_store_mode,
             plan_store_mode,
-            implementation_revision,
+            export_bypass_key,
             plan_store=plan_root,
             build_store=build_root,
         )
@@ -164,7 +164,7 @@ class ArtifactStore:
 
     @property
     def inductor(self) -> Path:
-        revision = self.implementation_revision or "default"
+        revision = self.export_bypass_key or "default"
         identity = hashlib.sha256(revision.encode()).hexdigest()[:12]
         return self.build / "inductor" / f"{_safe_label(revision)}-{identity}"
 
@@ -483,10 +483,7 @@ class ArtifactStore:
     def archive_program(self, program: ShadowSpillProgram) -> Path:
         """Persist the exact canonical ShadowSpillProgram the search was given."""
 
-        path = (
-            digest_directory(self.programs_archive, program.digest)
-            / "program.json"
-        )
+        path = digest_directory(self.programs_archive, program.digest) / "program.json"
         if not self.plan_policy.write_enabled:
             return path
         encoded = program.to_json()
@@ -495,9 +492,7 @@ class ArtifactStore:
             try:
                 existing = path.read_text()
             except OSError as exc:
-                raise ValueError(
-                    f"program store entry {path} cannot be read"
-                ) from exc
+                raise ValueError(f"program store entry {path} cannot be read") from exc
             if existing != encoded:
                 raise ValueError(f"program cache entry {path} is corrupt")
         else:
@@ -658,7 +653,7 @@ def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> 
                 raise ValueError(
                     "fresh PyTorch compiler artifact conflicts with an existing "
                     "entry; use a 'refresh' store mode or a new "
-                    f"implementation_revision: {destination_path}"
+                    f"export_bypass_key: {destination_path}"
                 )
         temporary = destination_path.with_name(
             f".{destination_path.name}.{os.getpid()}.tmp"
@@ -752,7 +747,6 @@ def digest_directory(root: Path, digest: str) -> Path:
     if len(digest) != 64:
         raise ValueError("content-addressed cache key must be SHA-256")
     return root / digest[:2] / digest
-
 
 
 def _safe_label(value: str) -> str:

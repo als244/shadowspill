@@ -130,14 +130,14 @@ ArtifactStore.resolve(
     plan_store=None,
     build_store_mode='contribute',
     plan_store_mode='contribute',
-    implementation_revision=None,
+    export_bypass_key=None,
 ) -> ArtifactStore
 ```
 
 `value` is the root both trees live under, or `None` for the default cache;
 `build_store` and `plan_store` root one tree elsewhere; the two modes say what
-this run may do with each tree; `implementation_revision` names the operation
-implementations the artifacts were produced against. Every entry point's store
+this run may do with each tree; `export_bypass_key` is the caller's name for
+the code the artifacts were produced from, under which they are filed. Every entry point's store
 arguments reach this one call, and [the frontend
 page](frontend.md#store-arguments) defines them. `initialize()` creates the
 tree, `artifacts()` returns the `PlanningArtifact` records this call touched,
@@ -203,7 +203,7 @@ plan_program(
     plan_store=None,
     verbose=True,
     plan_store_mode='contribute',
-    implementation_revision=None,
+    export_bypass_key=None,
 ) -> AnnotatedProgramPlan
 ```
 
@@ -219,7 +219,7 @@ plan_program(
 | `plan_store` | path \| `None` | `None` | Roots the planning tree of its own, so one store serves many runs that each own their plans. |
 | `verbose` | `bool` | `True` | Reports search progress as it runs. |
 | `plan_store_mode` | `"contribute"` \| `"reuse"` \| `"require"` \| `"refresh"` | `"contribute"` | What this call does with the planning tree. |
-| `implementation_revision` | `str` \| `None` | `None` | Marks the operation implementations the plan was measured against. |
+| `export_bypass_key` | `str` \| `None` | `None` | The caller's name for the code the plan was measured against; artifacts are filed under it. |
 
 Raises `TypeError` when `search_options` is neither a `SearchOptions` nor
 `None`. The store arguments mean exactly what [the frontend

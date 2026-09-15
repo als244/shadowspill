@@ -323,7 +323,7 @@ class PlanStore:
             if _without_provenance(existing_payload) != _without_provenance(payload):
                 raise ValueError(
                     "a fresh search differs from the stored planned program; "
-                    "use a 'refresh' store mode or a new implementation_revision: "
+                    "use a 'refresh' store mode or a new export_bypass_key: "
                     f"{path}"
                 )
             self._record(key, result.program.digest, path, "matched")

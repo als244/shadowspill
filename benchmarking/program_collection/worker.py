@@ -117,7 +117,7 @@ def collect_program(
                 ),
                 build_store=build_store,
                 build_store_mode=build_store_mode or request.build.build_store_mode,
-                implementation_revision=request.build.implementation_revision,
+                export_bypass_key=request.build.export_bypass_key,
             )
             print("PROGRAM PHASE capture_compile_profile_lower complete", flush=True)
     except BaseException as error:

@@ -103,7 +103,7 @@ class CompiledManifestStore:
                     raise ValueError(
                         "fresh compiled manifest differs from an existing cache "
                         "entry; use a 'refresh' store mode or a new "
-                        f"implementation_revision: {path}"
+                        f"export_bypass_key: {path}"
                     )
                 self._record(key, path, "matched", manifest.compatibility_digest)
                 return

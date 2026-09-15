@@ -99,7 +99,7 @@ class ProfileEnvironment:
     compute_capability: tuple[int, int]
     compiler_id: str
     provider_id: str
-    implementation_revision: str | None = None
+    export_bypass_key: str | None = None
 
     def identity(self) -> dict[str, object]:
         return {
@@ -109,7 +109,7 @@ class ProfileEnvironment:
             "compute_capability": self.compute_capability,
             "compiler_id": self.compiler_id,
             "provider_id": self.provider_id,
-            "implementation_revision": self.implementation_revision,
+            "export_bypass_key": self.export_bypass_key,
         }
 
 

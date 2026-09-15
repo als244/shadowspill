@@ -22,6 +22,8 @@
   not a runtime model argument.
 - `transfer_bandwidths` names the calibrated fetch/evict rates consumed by
   planning and simulation.
+- `export_bypass_key` is the caller's name for the code a build is made from
+  (model, objective, optimizer); build artifacts are filed under it.
 
 ## Provider boundaries
 
