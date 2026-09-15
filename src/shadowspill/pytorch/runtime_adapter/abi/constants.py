@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-ADAPTER_ABI_VERSION: Final = 3
+ADAPTER_ABI_VERSION: Final = 1
 
 #: Ids the frontend synthesises for work that is not a planned task, copied
 #: from the adapter header, which decodes them in its failure report.
