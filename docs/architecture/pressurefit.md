@@ -739,7 +739,7 @@ infeasibility across those resolved programs was not established.
 | `csrc/src/planner/search/algorithms/pressurefit/problem.c` | Compiling one indexed problem from the projected arrays. |
 | `csrc/src/planner/search/algorithms/pressurefit/residency.c` | Indexed anchor geometry, pressure accounting, legal cuts, scoring, and reduction. |
 | `csrc/src/planner/search/algorithms/pressurefit/schedule.c` | Gap transitions, fetch-window placement, action emission, and trigger constraints. |
-| `csrc/src/planner/search/algorithms/pressurefit/candidates.c` | The candidate cycle and its stages, the worker pool and the (resolved program, candidate) tasks it hands out, the memo tables, selection, and section timing. |
+| `csrc/src/planner/search/algorithms/pressurefit/candidates/` | The candidate cycle and its stages (`search.c`), the worker pool and the (resolved program, candidate) tasks it hands out (`workers.c`, `candidates.c`), the plan one residency becomes (`plan.c`), the repairs (`repair.c`), the memo tables (`memo.c`), the reused buffers (`workspace.c`), and section timing (`diagnostics.c`). |
 | `csrc/src/planner/search/algorithms/pressurefit/best_placed.c` | The shared record of the best plan the search has placed. |
 | `csrc/src/planner/admission/` | Physical allocation and causal-reuse admission. |
 | `shadowspill.simulator` / `csrc/src/simulator` | Independent schedule replay and makespan authority. |

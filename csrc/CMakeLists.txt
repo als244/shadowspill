@@ -31,7 +31,14 @@ add_library(
 
   # One search.
   src/planner/search/algorithms/pressurefit/best_placed.c
-  src/planner/search/algorithms/pressurefit/candidates.c
+  src/planner/search/algorithms/pressurefit/candidates/candidates.c
+  src/planner/search/algorithms/pressurefit/candidates/search.c
+  src/planner/search/algorithms/pressurefit/candidates/workers.c
+  src/planner/search/algorithms/pressurefit/candidates/plan.c
+  src/planner/search/algorithms/pressurefit/candidates/repair.c
+  src/planner/search/algorithms/pressurefit/candidates/memo.c
+  src/planner/search/algorithms/pressurefit/candidates/workspace.c
+  src/planner/search/algorithms/pressurefit/candidates/diagnostics.c
   src/planner/search/algorithms/pressurefit/problem.c
   src/planner/search/algorithms/pressurefit/residency.c
   src/planner/search/algorithms/pressurefit/schedule.c
