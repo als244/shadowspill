@@ -1,62 +1,11 @@
-"""PyTorch integration for the framework-neutral ShadowSpill runtime."""
+"""PyTorch's bridge from one plan to the runtime it runs on.
 
-from .abi import INITIAL_ACTIONS_TASK_ID
+What is left here is the part that needs PyTorch: the bridge that binds a plan's
+objects to storages and crosses the task boundary, and the telemetry and trace
+records read off a run. The runtime itself is
+:mod:`shadowspill.runtime`.
+"""
+
 from .bridge import RuntimeBridge, actions_by_task
-from .failures import (
-    ExecutionTaskIdentity,
-    RuntimeExecutionError,
-    RuntimeFailureDiagnostics,
-)
-from .fixed_layout import (
-    RuntimeFixedDependency,
-    RuntimeFixedLayout,
-    RuntimeFixedPlacement,
-    RuntimePlacementKind,
-)
-from .runtime import (
-    MemoryPool,
-    PlanMemory,
-    PlanState,
-    PoolAllocation,
-    Runtime,
-    RuntimeConfigurationError,
-    RuntimeRoute,
-    TransferCapabilities,
-    TransferProfile,
-    describe_live_allocations,
-    force_release_plan_scope,
-    live_allocations,
-    occupants,
-    plan_scoped_residue,
-    reclaim_plan_scoped_residue,
-    retainers,
-)
 
-__all__ = [
-    "INITIAL_ACTIONS_TASK_ID",
-    "ExecutionTaskIdentity",
-    "MemoryPool",
-    "PlanMemory",
-    "PlanState",
-    "PoolAllocation",
-    "Runtime",
-    "RuntimeBridge",
-    "RuntimeConfigurationError",
-    "RuntimeExecutionError",
-    "RuntimeFailureDiagnostics",
-    "RuntimeFixedDependency",
-    "RuntimeFixedLayout",
-    "RuntimeFixedPlacement",
-    "RuntimePlacementKind",
-    "RuntimeRoute",
-    "TransferCapabilities",
-    "TransferProfile",
-    "actions_by_task",
-    "describe_live_allocations",
-    "force_release_plan_scope",
-    "live_allocations",
-    "occupants",
-    "plan_scoped_residue",
-    "reclaim_plan_scoped_residue",
-    "retainers",
-]
+__all__ = ["RuntimeBridge", "actions_by_task"]

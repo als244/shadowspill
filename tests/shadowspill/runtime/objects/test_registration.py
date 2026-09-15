@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
-from shadowspill.pytorch.runtime_adapter.runtime import objects as objects_module
-from shadowspill.pytorch.runtime_adapter.runtime.objects import (
+from shadowspill.runtime import Runtime
+from shadowspill.runtime.objects import (
     acquire_object_reference,
 )
+from shadowspill.runtime.objects import registration as objects_module
 
 
 def test_runtime_object_reference_owns_and_releases_one_runtime_handle(

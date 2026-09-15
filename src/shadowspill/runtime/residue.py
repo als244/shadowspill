@@ -14,13 +14,14 @@ import os
 import warnings
 from typing import TYPE_CHECKING
 
-import torch
-
-from shadowspill.pytorch.runtime_adapter.abi import runtime_library
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-
-from .occupancy import PoolAllocation, describe_live_allocations, live_allocations
-from .retainers import occupants, retainers
+from .abi import runtime_library
+from .failures import RuntimeExecutionError
+from .occupancy import (
+    PoolAllocation,
+    allocation_id_for_address,
+    describe_live_allocations,
+    live_allocations,
+)
 
 if TYPE_CHECKING:
     from .core import Runtime
@@ -62,9 +63,14 @@ def plan_scoped_residue(runtime: Runtime, plan_handle: int) -> tuple[str, ...]:
     remaining = _unclaimed_by_plan(runtime, plan_handle)
     if not remaining:
         return ()
-    survivors = occupants(runtime, remaining)
+    frontend = runtime.frontend
+    survivors = frontend.occupants(
+        remaining, lambda address: allocation_id_for_address(runtime, address)
+    )
     occupying = [item for group in survivors.values() for item in group]
-    holders = retainers(occupying, ignore=(survivors, occupying, *survivors.values()))
+    holders = frontend.retainers(
+        occupying, ignore=(survivors, occupying, *survivors.values())
+    )
     described: list[str] = []
     for item in remaining:
         objects = survivors.get(item.allocation_id, ())
@@ -108,17 +114,15 @@ def force_release_plan_scope(runtime: Runtime, plan_handle: int) -> tuple[int, i
     held = _unclaimed_by_plan(runtime, plan_handle)
     if not held:
         return (0, 0)
-    detached = 0
-    storages = [
+    frontend = runtime.frontend
+    occupying = [
         item
-        for group in occupants(runtime, held).values()
+        for group in frontend.occupants(
+            held, lambda address: allocation_id_for_address(runtime, address)
+        ).values()
         for item in group
-        if isinstance(item, torch.Tensor) and item.untyped_storage().data_ptr() != 0
     ]
-    if storages:
-        torch.ops.shadowspill._dematerialize_storages(storages)
-        detached = len(storages)
-        storages.clear()
+    detached = frontend.dematerialize(occupying)
     reclaimed = ctypes.c_uint64()
     status = int(
         runtime_library().shadowspill_plan_reclaim_scoped_leases(

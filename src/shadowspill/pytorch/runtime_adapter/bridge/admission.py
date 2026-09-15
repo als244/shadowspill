@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.ir import MemoryAction, MutationSpec, TaskSpec
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.runtime.abi import (
     FixedDependencyDescription,
     FixedLayoutDescription,
     FixedPlacementDescription,
@@ -25,8 +25,8 @@ from shadowspill.pytorch.runtime_adapter.abi import (
     TaskDescription,
     TaskPublicationDescription,
 )
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-from shadowspill.pytorch.runtime_adapter.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.failures import RuntimeExecutionError
+from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
 from shadowspill.status import ABI_VERSION
 
 from .common import (

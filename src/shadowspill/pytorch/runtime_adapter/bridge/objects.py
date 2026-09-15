@@ -18,17 +18,20 @@ import torch
 
 from shadowspill.errors import PlanningError
 from shadowspill.ir import ShadowSpillProgram
-from shadowspill.pytorch.runtime_adapter.abi import ObjectBinding, ObjectSnapshot
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-from shadowspill.pytorch.runtime_adapter.runtime import (
-    PoolAllocation,
+from shadowspill.runtime import (
+    ObjectConsistency,
+    ObjectRef,
     Runtime,
+)
+from shadowspill.runtime.abi import ObjectBinding, ObjectSnapshot
+from shadowspill.runtime.failures import RuntimeExecutionError
+from shadowspill.runtime.objects import (
     acquire_object_reference,
     register_object,
     release_object_generation,
     reserve_runtime_object_ids,
 )
-from shadowspill.runtime import ObjectConsistency, ObjectRef
+from shadowspill.runtime.occupancy import PoolAllocation
 
 from .common import plan_local_id, require_status
 

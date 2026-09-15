@@ -13,14 +13,13 @@ from __future__ import annotations
 import ctypes
 from typing import TYPE_CHECKING
 
-from shadowspill.pytorch.runtime_adapter.abi import ObjectDescription, runtime_library
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-from shadowspill.runtime import ObjectRef
-
-from .configuration import RuntimeConfigurationError
+from ..abi import ObjectDescription, runtime_library
+from ..configuration import RuntimeConfigurationError
+from ..failures import RuntimeExecutionError
+from .references import ObjectRef
 
 if TYPE_CHECKING:
-    from .core import Runtime
+    from ..core import Runtime
 
 
 def reserve_persistent_object_ids(

@@ -9,30 +9,21 @@ from enum import IntEnum
 from pathlib import Path
 from types import MappingProxyType
 
+from shadowspill.frontend import RuntimeFrontend
 from shadowspill.memory import MemoryPoolConfig
 from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
 )
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.status import Status
+
+from .abi import (
     MemoryPoolStatistics,
     runtime_library,
 )
-from shadowspill.pytorch.runtime_adapter.allocator import (
+from .bootstrap import (
     DEFAULT_BACKGROUND_WINDOW_BYTES,
-    install_allocator,
+    install_runtime,
 )
-from shadowspill.pytorch.runtime_adapter.failures import (
-    RuntimeExecutionError,
-    RuntimeFailureDiagnostics,
-)
-from shadowspill.runtime import ObjectRef
-from shadowspill.runtime.topology import (
-    MemoryPool,
-    RuntimeRoute,
-    TransferCapabilities,
-)
-from shadowspill.status import Status
-
 from .calibration import (
     INITIALIZATION_PROVENANCE,
     RECALIBRATION_PROVENANCE,
@@ -40,7 +31,16 @@ from .calibration import (
     read_transfer_capabilities,
 )
 from .configuration import RuntimeConfigurationError, adapter_path, configure_topology
-from .objects import release_object_reference
+from .failures import (
+    RuntimeExecutionError,
+    RuntimeFailureDiagnostics,
+)
+from .objects import ObjectRef, release_object_reference
+from .topology import (
+    MemoryPool,
+    RuntimeRoute,
+    TransferCapabilities,
+)
 
 _RUNTIME_INVALID_STATE = Status.INVALID_STATE
 
@@ -86,6 +86,7 @@ class Runtime:
     def __init__(
         self,
         *,
+        frontend: RuntimeFrontend,
         pools: Mapping[str, MemoryPoolConfig],
         routes: Mapping[str, TransferRouteConfig],
         library_path: str | Path | None = None,
@@ -102,8 +103,9 @@ class Runtime:
                 raise RuntimeConfigurationError(
                     "a ShadowSpill Runtime is already initialized in this process"
                 )
-            installed = install_allocator(
+            installed = install_runtime(
                 path,
+                frontend=frontend,
                 device_ordinal=topology.device.device,
                 device_budget_bytes=topology.device.physical_capacity,
                 provider_headroom_bytes=topology.device.provider_headroom,
@@ -114,6 +116,7 @@ class Runtime:
                 background_transfer_window_bytes=background_transfer_window_bytes,
                 backend=backend,
             )
+            self._frontend = frontend
             self._installed = installed
             # The neutral runtime this process bound. Holding it here lets the
             # calls that need nothing else go straight to the neutral library.
@@ -142,6 +145,17 @@ class Runtime:
             _active_runtime = self
         if calibrate:
             self._calibrate(routes=None, provenance=INITIALIZATION_PROVENANCE)
+
+    @property
+    def frontend(self) -> RuntimeFrontend:
+        """The framework this runtime was opened with.
+
+        Every framework call the runtime makes goes through this, and through
+        nothing else: device selection and synchronization, the process
+        allocator, and finding or detaching the objects that hold a lease.
+        """
+
+        return self._frontend
 
     @property
     def pools(self) -> Mapping[str, MemoryPool]:

@@ -6,13 +6,14 @@ import ctypes
 from dataclasses import dataclass
 from typing import Any
 
-from shadowspill.pytorch.runtime_adapter.abi import (
+from shadowspill.status import Status
+
+from .abi import (
     AdapterFailure,
     AdapterStatistics,
     runtime_library,
 )
-from shadowspill.runtime.admission_capi import optional_id
-from shadowspill.status import Status
+from .admission_capi import optional_id
 
 _OUT_OF_MEMORY = Status.OUT_OF_MEMORY
 _NO_PROGRESS = Status.NO_PROGRESS
@@ -449,7 +450,7 @@ def wait_allocator_idle(
 
 
 def raise_if_allocator_failed(library: Any, operation: str) -> None:
-    """Raise a latched allocator failure before issuing dependent CUDA work."""
+    """Raise a latched allocator failure before issuing dependent device work."""
 
     diagnostics = read_allocator_failure(library, operation)
     if diagnostics is None:

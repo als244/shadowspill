@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from shadowspill.planner.admission.physical import PhysicalAdmissionError
 from shadowspill.runtime import (
-    AdmissionError,
     AdmissionReplayLeaseState,
     AdmissionReplayOperation,
     AdmissionReplayOperationKind,
@@ -155,7 +155,7 @@ def test_replay_waits_for_fifo_retirements_that_coalesce_one_range() -> None:
 
 
 def test_replay_reports_exact_infeasible_geometry() -> None:
-    with pytest.raises(AdmissionError) as caught:
+    with pytest.raises(PhysicalAdmissionError) as caught:
         run_admission_replay(
             128,
             (
@@ -176,7 +176,7 @@ def test_replay_reports_exact_infeasible_geometry() -> None:
 
 
 def test_replay_reports_the_physical_lease_blocking_best_window() -> None:
-    with pytest.raises(AdmissionError) as caught:
+    with pytest.raises(PhysicalAdmissionError) as caught:
         run_admission_replay(
             128,
             (

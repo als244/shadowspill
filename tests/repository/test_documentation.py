@@ -80,7 +80,8 @@ _REQUIRED_SIGNATURES = {
     "src/shadowspill/pytorch/callables.py:PlannedForward.submit",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.__call__",
     "src/shadowspill/pytorch/callables.py:PlannedTrainStep.submit",
-    "src/shadowspill/pytorch/runtime_adapter/runtime/core.py:Runtime.__init__",
+    "src/shadowspill/pytorch/runtime.py:Runtime.__init__",
+    "src/shadowspill/runtime/core.py:Runtime.__init__",
     "src/shadowspill/pytorch/state/model.py:export_model_state",
     "src/shadowspill/pytorch/state/model.py:import_model_state",
     "src/shadowspill/pytorch/state/model.py:import_model_state_from_file",
@@ -195,12 +196,22 @@ def _python_page_expectations() -> dict[Path, set[str]]:
     tree = ast.parse(_PYTORCH_MODULE.read_text(), filename=str(_PYTORCH_MODULE))
     found: set[str] = set()
     for node in tree.body:
-        if not isinstance(node, ast.ImportFrom) or node.level != 1:
+        if not isinstance(node, ast.ImportFrom):
             continue
-        page = {
-            "diagnostics": PYTHON_API / "diagnostics.md",
-            "program": PYTHON_API / "artifacts.md",
-        }.get(node.module, PYTHON_API / "frontend.md")
+        if node.level == 0:
+            # A name the frontend re-exports from the neutral tree is documented
+            # where it lives, on the neutral page.
+            module = node.module or ""
+            if not module.startswith("shadowspill.runtime"):
+                continue
+            page = PYTHON_API / "neutral.md"
+        elif node.level == 1:
+            page = {
+                "diagnostics": PYTHON_API / "diagnostics.md",
+                "program": PYTHON_API / "artifacts.md",
+            }.get(node.module, PYTHON_API / "frontend.md")
+        else:
+            continue
         for alias in node.names:
             public_name = alias.asname or alias.name
             if public_name in exports:

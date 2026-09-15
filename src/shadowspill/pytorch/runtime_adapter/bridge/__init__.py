@@ -16,9 +16,9 @@ from __future__ import annotations
 from typing import Any
 
 from shadowspill.ir import ShadowSpillProgram
-from shadowspill.pytorch.runtime_adapter.abi import runtime_library
-from shadowspill.pytorch.runtime_adapter.failures import RuntimeExecutionError
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.runtime import Runtime
+from shadowspill.runtime.abi import runtime_library
+from shadowspill.runtime.failures import RuntimeExecutionError
 
 from .admission import (
     EncodedTask,
@@ -35,7 +35,6 @@ from .boundaries import (
     acquire_for_caller,
     after_task_and_update,
     before_task_and_acquire,
-    dematerialize,
     publish_initial_tensor,
     rebind,
     rebind_many,
@@ -131,7 +130,6 @@ __all__ = [
     "before_task_and_acquire",
     "begin_runtime_trace",
     "clear_tasks",
-    "dematerialize",
     "describe_object_state",
     "describe_pool_occupants",
     "encode_task",
