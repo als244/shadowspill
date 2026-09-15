@@ -19,7 +19,7 @@ from .inputs import (
     RepresentativeInputSummary,
     materialize_representative_inputs,
 )
-from .runner import ProfilableArtifact
+from .runner import ProfilableArtifact, unique_graph_artifacts
 
 
 @dataclass(slots=True)
@@ -122,7 +122,7 @@ class ProfileExecutableStore:
     ) -> dict[str, ExecutableTaskManifest]:
         """Compile missing structural tasks and return their storage manifests."""
 
-        unique = _unique_graph_artifacts(artifacts)
+        unique = unique_graph_artifacts(artifacts)
         manifests: dict[str, ExecutableTaskManifest] = {}
         for index, digest in enumerate(sorted(unique), start=1):
             artifact = unique[digest]
@@ -279,16 +279,6 @@ class ProfileExecutableStore:
                 representatives.probe_index,
             ),
         )
-
-
-def _unique_graph_artifacts(
-    artifacts: Sequence[ProfilableArtifact],
-) -> dict[str, GraphArtifact]:
-    return {
-        artifact.compatibility_digest: artifact
-        for artifact in artifacts
-        if isinstance(artifact, GraphArtifact)
-    }
 
 
 def _selected_graph_artifacts(

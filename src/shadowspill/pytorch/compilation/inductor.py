@@ -48,6 +48,7 @@ from shadowspill.pytorch.capture.storage import (
     StorageRootKind,
     TaskStorageContract,
     capture_task_storage_contract,
+    make_storage_contract,
 )
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
 from shadowspill.pytorch.compilation.inductor_manifest import (
@@ -956,7 +957,7 @@ def _project_callable_contract(
         roots,
         output_views,
     )
-    return _make_storage_contract(roots, output_views, mutations)
+    return make_storage_contract(roots, output_views, mutations)
 
 
 def _project_visible_outputs(
@@ -1043,7 +1044,7 @@ def _graph_lowering_contract(
     roots, allocations = _build_executable_roots(graph, records, input_position_by_name)
     output_views = _lowered_output_views(records, roots)
     mutations = _project_mutations(semantic_contract, roots, output_views)
-    contract = _make_storage_contract(roots, output_views, mutations)
+    contract = make_storage_contract(roots, output_views, mutations)
     return _GraphLoweringManifest(contract, allocations)
 
 
@@ -1322,25 +1323,6 @@ def _lowered_output_views(
             layout=record.semantic_view.layout,
         )
         for record in records
-    )
-
-
-def _make_storage_contract(
-    roots: tuple[StorageRoot, ...],
-    output_views: tuple[OutputView, ...],
-    mutations: tuple[MutationBinding, ...],
-) -> TaskStorageContract:
-    identity = {
-        "roots": [root.identity() for root in roots],
-        "output_views": [view.identity() for view in output_views],
-        "mutations": [mutation.identity() for mutation in mutations],
-    }
-    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return TaskStorageContract(
-        roots,
-        output_views,
-        mutations,
-        hashlib.sha256(encoded.encode()).hexdigest(),
     )
 
 

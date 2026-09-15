@@ -202,9 +202,7 @@ class PlannedForward:
         survivors = self._runtime.plan_scoped_residue(self._plan_handle)
         if not survivors:
             return
-        detached, reclaimed = self._runtime.force_release_plan_scope(
-            self._plan_handle
-        )
+        detached, reclaimed = self._runtime.force_release_plan_scope(self._plan_handle)
         warnings.warn(
             f"closing this callable reclaimed {reclaimed} allocation(s) that its"
             f" own scopes made and nothing released, detaching {detached}"
@@ -378,9 +376,7 @@ class PlannedTrainStep:
             targets = in_groups or in_buffers
             if targets:
                 if not isinstance(value, int | float):
-                    raise TypeError(
-                        f"{name!r} holds one value, so it takes one number"
-                    )
+                    raise TypeError(f"{name!r} holds one value, so it takes one number")
                 with torch.no_grad():
                     for tensor in targets:
                         tensor.fill_(value)
@@ -641,9 +637,7 @@ class PlannedTrainStep:
         survivors = self._runtime.plan_scoped_residue(self._plan_handle)
         if not survivors:
             return
-        detached, reclaimed = self._runtime.force_release_plan_scope(
-            self._plan_handle
-        )
+        detached, reclaimed = self._runtime.force_release_plan_scope(self._plan_handle)
         warnings.warn(
             f"closing this callable reclaimed {reclaimed} allocation(s) that its"
             f" own scopes made and nothing released, detaching {detached}"

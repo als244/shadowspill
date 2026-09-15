@@ -40,7 +40,7 @@ from .records import (
     TaskOutputInputBinding,
 )
 from .runner import ProfilableArtifact, profile_unique_artifacts
-from .store import PlanningArtifactRecorder, ProfileStore
+from .store import ProfileStore
 
 __all__ = [
     "PROFILE_SCHEMA",
@@ -48,7 +48,6 @@ __all__ = [
     "AllocationPathProbe",
     "AmbiguousAllocationPathError",
     "DerivedAllocationInvariant",
-    "PlanningArtifactRecorder",
     "ProfilableArtifact",
     "ProfileEnvironment",
     "ProfileKey",

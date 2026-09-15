@@ -243,8 +243,7 @@ class InvocationTimelines:
                         float(timeline.origin.elapsed_time(timeline.span_start)) / 1e3
                     ),
                     selected_span_seconds=(
-                        float(timeline.span_start.elapsed_time(timeline.span_end))
-                        / 1e3
+                        float(timeline.span_start.elapsed_time(timeline.span_end)) / 1e3
                     ),
                     exposed_tail_seconds=(
                         float(timeline.span_end.elapsed_time(successor)) / 1e3

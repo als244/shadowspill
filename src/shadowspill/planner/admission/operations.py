@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from ..capi import (
     CAdmissionOperations,
     CIndexedSchedule,
+    check_planner_status,
     planner_api,
 )
 from .indexing import IndexedAdmissionFacts, IndexedMemorySchedule
@@ -88,14 +89,15 @@ def build_admission_operations(
 
     operation_capacity = ctypes.c_uint64(0)
     lease_capacity = ctypes.c_uint64(0)
-    _check(
+    check_planner_status(
         library.shadowspill_admission_operation_bounds(
             ctypes.byref(program),
             ctypes.byref(admission.value),
             ctypes.byref(indexed),
             ctypes.byref(operation_capacity),
             ctypes.byref(lease_capacity),
-        )
+        ),
+        "bounding admission operations",
     )
     operations = int(operation_capacity.value)
     leases = int(lease_capacity.value)
@@ -128,13 +130,14 @@ def build_admission_operations(
         lease_retires=lease_retires,
         lease_capacity=leases,
     )
-    _check(
+    check_planner_status(
         library.shadowspill_build_admission_operations(
             ctypes.byref(program),
             ctypes.byref(admission.value),
             ctypes.byref(indexed),
             ctypes.byref(result),
-        )
+        ),
+        "building admission operations",
     )
     count = int(result.operation_count)
     live = int(result.lease_count)
@@ -166,13 +169,6 @@ def build_admission_operations(
         evict_bytes=int(result.evict_bytes),
         arrays=OperationArrays(operations=result, schedule=indexed),
     )
-
-
-def _check(status: int) -> None:
-    if int(status) != 0:
-        raise RuntimeError(
-            f"building admission operations failed with planner status {status}"
-        )
 
 
 def _u32(values: tuple[int, ...]) -> ctypes.Array[ctypes.c_uint32]:

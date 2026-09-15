@@ -13,7 +13,7 @@ from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layou
 
 from .manifest_store import CompiledManifestStore
 from .records import ProfileEnvironment, ProfileKey, TaskMeasurement
-from .runner import ProfilableArtifact
+from .runner import ProfilableArtifact, unique_graph_artifacts
 from .store import ProfileStore
 
 
@@ -81,7 +81,7 @@ def resolve_task_manifests(
 ) -> ResolvedTaskManifests:
     """Load storage ABIs and compile only missing profile sidecars."""
 
-    unique = _unique_graph_artifacts(artifacts)
+    unique = unique_graph_artifacts(artifacts)
     sidecars = _manifest_cache(profile_cache)
     manifests, missing = _read_manifests(
         unique,
@@ -101,16 +101,6 @@ def resolve_task_manifests(
         cache_hits=len(unique) - len(missing),
         cache_misses=len(missing),
     )
-
-
-def _unique_graph_artifacts(
-    artifacts: Sequence[ProfilableArtifact],
-) -> dict[str, GraphArtifact]:
-    return {
-        artifact.compatibility_digest: artifact
-        for artifact in artifacts
-        if isinstance(artifact, GraphArtifact)
-    }
 
 
 def _manifest_cache(

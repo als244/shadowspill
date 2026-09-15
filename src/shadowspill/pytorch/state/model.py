@@ -89,9 +89,7 @@ def import_model_state[ModelT: nn.Module](
 def _meta_names(model: nn.Module) -> frozenset[str]:
     """The names of this model's tensors that carry no storage."""
 
-    return frozenset(
-        item.name for item in _model_tensors(model) if item.tensor.is_meta
-    )
+    return frozenset(item.name for item in _model_tensors(model) if item.tensor.is_meta)
 
 
 def _modules_without_reset(model: nn.Module) -> tuple[str, ...]:

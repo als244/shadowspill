@@ -13,6 +13,7 @@ from enum import IntEnum
 from functools import cache
 
 from shadowspill.libraries import load_shadowspill_library
+from shadowspill.planner.capi import check_struct_layout
 
 from ....capi import CIndexedProblem, CIndexedSchedule
 
@@ -193,32 +194,17 @@ class CandidateStatus(IntEnum):
     UNPLACEABLE = 6
 
 
-def _check_struct_layout(library: ctypes.CDLL) -> None:
-    """Refuse a library whose PressureFit structures are not these ones.
-
-    A mirror that has drifted does not fail loudly: it reads one field where
-    the library wrote another, and the result is corrupted counters rather than
-    an error. The selector values continue the planner's own enum, so one
-    library call answers for both halves.
-    """
-
-    mirrored = (
-        (1, "CPressureFitOptions", CPressureFitOptions),
-        (2, "CPressureFitWorkDiagnostics", CPressureFitWorkDiagnostics),
-        (3, "CPressureFitCandidateDiagnostic", CPressureFitCandidateDiagnostic),
-        (4, "CPressureFitSectionTiming", CPressureFitSectionTiming),
-        (5, "CPressureFitReductionStep", CPressureFitReductionStep),
-        (6, "CPressureFitBestPlacedRecord", CPressureFitBestPlacedRecord),
-        (7, "CPressureFitResult", CPressureFitResult),
-    )
-    for which, name, structure in mirrored:
-        expected = library.shadowspill_planner_struct_size(which)
-        actual = ctypes.sizeof(structure)
-        if expected and expected != actual:
-            raise RuntimeError(
-                f"{name} does not match the compiled search: "
-                f"library {expected} bytes, mirror {actual}"
-            )
+#: The structures this mirror shares with the library, by the selector the
+#: library's `shadowspill_planner_struct_size` answers for.
+_MIRRORED: tuple[tuple[int, str, type], ...] = (
+    (1, "CPressureFitOptions", CPressureFitOptions),
+    (2, "CPressureFitWorkDiagnostics", CPressureFitWorkDiagnostics),
+    (3, "CPressureFitCandidateDiagnostic", CPressureFitCandidateDiagnostic),
+    (4, "CPressureFitSectionTiming", CPressureFitSectionTiming),
+    (5, "CPressureFitReductionStep", CPressureFitReductionStep),
+    (6, "CPressureFitBestPlacedRecord", CPressureFitBestPlacedRecord),
+    (7, "CPressureFitResult", CPressureFitResult),
+)
 
 
 @cache
@@ -228,7 +214,7 @@ def pressurefit_api() -> ctypes.CDLL:
     library = load_shadowspill_library()
     library.shadowspill_planner_struct_size.argtypes = [ctypes.c_uint32]
     library.shadowspill_planner_struct_size.restype = ctypes.c_uint64
-    _check_struct_layout(library)
+    check_struct_layout(library, _MIRRORED, "search")
     library.shadowspill_pressurefit_search.argtypes = [
         ctypes.POINTER(CIndexedProblem),
         ctypes.c_uint32,

@@ -17,9 +17,13 @@ from pathlib import Path
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.profiling.records import ProfileKey
-from shadowspill.pytorch.profiling.store import PlanningArtifactRecorder
 from shadowspill.schema import artifact_schema
-from shadowspill.store import CONTRIBUTE, StorePolicy, digest_directory
+from shadowspill.store import (
+    CONTRIBUTE,
+    ArtifactRecorder,
+    StorePolicy,
+    digest_directory,
+)
 
 _SCHEMA = artifact_schema("compiled_task_manifest")
 
@@ -32,7 +36,7 @@ class CompiledManifestStore:
         root: Path,
         *,
         policy: StorePolicy = CONTRIBUTE,
-        artifact_recorder: PlanningArtifactRecorder | None = None,
+        artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self.root = root
         self.policy = policy

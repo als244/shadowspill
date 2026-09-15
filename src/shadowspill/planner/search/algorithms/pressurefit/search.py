@@ -394,9 +394,7 @@ def finish_pressurefit(
     """
 
     resolved_programs: list[ResolvedProgramDiagnostics] = []
-    selected: tuple[tuple[int, int, int], int, int | None, CProblemResult] | None = (
-        None
-    )
+    selected: tuple[tuple[int, int, int], int, int | None, CProblemResult] | None = None
     held = None if best is None else best.read()
     for problem_index, (problem, result) in enumerate(
         zip(problems, results, strict=True)

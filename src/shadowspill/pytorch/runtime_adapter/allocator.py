@@ -146,7 +146,7 @@ def install_allocator(
         worker_poll_nanoseconds,
         background_transfer_window_bytes,
     )
-    path = _adapter_path(library_path)
+    path = _validated_adapter_path(library_path)
     backend_library = _backend_path(backend)
     frontend = _accelerator_frontend()
     library = _load_adapter(path)
@@ -451,7 +451,7 @@ def _backend_path(backend: str | None) -> Path:
     return path
 
 
-def _adapter_path(library_path: str | Path) -> Path:
+def _validated_adapter_path(library_path: str | Path) -> Path:
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
         raise AllocatorInstallError(f"PyTorch adapter does not exist: {path}")

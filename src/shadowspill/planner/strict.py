@@ -61,6 +61,13 @@ def _pair(value: object, path: str) -> list[Any]:
     return result
 
 
+def _integer_tuple(value: object, path: str) -> tuple[int, ...]:
+    return tuple(
+        _integer(item, f"{path}[{index}]")
+        for index, item in enumerate(_list(value, path))
+    )
+
+
 def _string_tuple(value: object, path: str) -> tuple[str, ...]:
     return tuple(
         _string(item, f"{path}[{index}]")

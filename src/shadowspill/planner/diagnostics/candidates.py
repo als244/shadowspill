@@ -182,9 +182,7 @@ class CandidateDiagnostic:
             repairs=PlanningRepairDiagnostics.from_value(
                 data.get("repairs"), f"{path}.repairs"
             ),
-            work=PlanningWorkDiagnostics.from_value(
-                data.get("work"), f"{path}.work"
-            ),
+            work=PlanningWorkDiagnostics.from_value(data.get("work"), f"{path}.work"),
             started_ns=_span(data.get("span"), "started_ns", f"{path}.span"),
             finished_ns=_span(data.get("span"), "finished_ns", f"{path}.span"),
             steps=_steps(data.get("steps", []), f"{path}.steps"),

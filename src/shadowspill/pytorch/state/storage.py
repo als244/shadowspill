@@ -195,9 +195,7 @@ def register_tensor_storages(
         index: allocation
         for index, (anchor, _views) in enumerate(roots)
         if (
-            allocation := registry.pool_allocation(
-                int(anchor.untyped_storage()._cdata)
-            )
+            allocation := registry.pool_allocation(int(anchor.untyped_storage()._cdata))
         )
         is not None
     }
@@ -214,9 +212,7 @@ def register_tensor_storages(
                 # Planning took these bytes from this pool, so the object
                 # exists: the import only records which tensors view it.
                 # It now belongs to a state, so stop offering it.
-                registry.forget_pool_allocation(
-                    int(anchor.untyped_storage()._cdata)
-                )
+                registry.forget_pool_allocation(int(anchor.untyped_storage()._cdata))
                 taken.anchor = anchor
                 taken.views = views
                 created.append(taken)
@@ -234,7 +230,7 @@ def register_tensor_storages(
                 ),
                 f"import persistent object {object_id}",
             )
-            snapshot = _snapshot(
+            snapshot = _object_location_snapshot(
                 runtime._runtime_handle, object_id, selected_pool.pool_id
             )
             pool_pointer = int(snapshot.pointer or 0)
@@ -460,7 +456,7 @@ def _storage_bytes(
     """Return one root's bytes, copied out of the pool or viewed in it."""
 
     if not copy:
-        snapshot = _snapshot(
+        snapshot = _object_location_snapshot(
             runtime._runtime_handle, item.current_object_id, item.pool_id
         )
         if snapshot.current and snapshot.pointer:
@@ -573,7 +569,6 @@ def restore_persistent_object_ids(runtime: Runtime) -> None:
 PLANNING_MEMORY_MINIMUM_BYTES = 1 << 20
 
 
-
 def _take_pool_memory(
     runtime: Runtime,
     pool: MemoryPool,
@@ -590,9 +585,9 @@ def _take_pool_memory(
 
     if size_bytes <= 0:
         raise ValueError("planning memory needs a positive size")
-    object_id = runtime._reserve_persistent_object_ids(
-        1, allow_in_progress_plan=True
-    )[0]
+    object_id = runtime._reserve_persistent_object_ids(1, allow_in_progress_plan=True)[
+        0
+    ]
     _require_status(
         runtime._register_object(
             object_id,
@@ -733,13 +728,13 @@ def _validate_pool(
 def pool_object_pointer(runtime: Runtime, object_id: int, pool_id: int) -> int:
     """Where one registered object's bytes live in its pool."""
 
-    snapshot = _snapshot(runtime._runtime_handle, object_id, pool_id)
+    snapshot = _object_location_snapshot(runtime._runtime_handle, object_id, pool_id)
     if not snapshot.has_lease or not snapshot.current:
         raise RuntimeError(f"persistent object {object_id} has no authoritative lease")
     return int(snapshot.pointer or 0)
 
 
-def _snapshot(
+def _object_location_snapshot(
     runtime_handle: int, object_id: int, pool_id: int
 ) -> ObjectLocationSnapshot:
     result = ObjectLocationSnapshot()
