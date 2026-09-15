@@ -51,23 +51,21 @@ def build_lease_lifetimes(
     operations: AdmissionOperations,
     admission: IndexedAdmissionFacts,
     simulation: SimulationResult,
+    intervals: IntervalArrays,
     *,
     dynamic_aliases: tuple[int, ...] = (),
 ) -> LeaseLifetimes:
     """Resolve every lease to a lifetime, and split off the dynamic ones.
+
+    `intervals` are `simulation`'s intervals in the simulator's index space:
+    its own when it produced the result, a projection when the result was
+    read back.
 
     `dynamic_aliases` names caller-owned terminal aliases by index; the lease
     each one ends the step holding is moved out of the fixed prefix. Raising
     here means one of them never reached a final lease, which is a caller
     error rather than a planning outcome.
     """
-
-    intervals = simulation.interval_arrays
-    if not isinstance(intervals, IntervalArrays):
-        raise ValueError(
-            "lease lifetimes need the simulator's own intervals; "
-            "this result did not come from it"
-        )
 
     facts = admission.value
     steps = facts.task_allocation_offsets[facts.task_count]

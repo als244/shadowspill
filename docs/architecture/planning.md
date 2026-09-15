@@ -39,7 +39,9 @@ line between *what is asked* and *how it is answered*.
 artifact store, turns budgets and bandwidths into a `SimulationConfig` and
 `AdmissionFacts`, consults the planning store, runs the search, holds it to
 any plan it was handed, certifies the physical layout, and returns an
-`AnnotatedProgramPlan`. It is the only one of the two that touches disk, and
+`AnnotatedProgramPlan`. A plan the store already holds is read back with the
+simulation and the certificate recorded beside it, so a hit simulates and
+places nothing; a refusal the store recorded is raised again as it was. It is the only one of the two that touches disk, and
 the only one that knows what a budget is.
 
 **The search answers one question and is pluggable.** It receives a program
@@ -110,8 +112,10 @@ on a missing or ABI-incompatible library.
 
 The selected logical schedule is not callable until physical admission
 assigns its execution-pool ranges, proves every shared-range dependency, and
-re-simulates the resulting schedule. Whether it fits is settled during the
-search: each candidate measures its own plan's extent against the pool and
+re-simulates the resulting schedule. The certificate that produces is written
+beside the plan in the planning store, named for the facts it was certified
+against, and a later read for the same facts is served with it. Whether it
+fits is settled during the search: each candidate measures its own plan's extent against the pool and
 gives back what it overran, so the schedule reaching this stage has already
 been measured and there is no capacity to lower afterwards.
 

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from shadowspill.ir import MemoryActionKind, ResourceKind
 from shadowspill.simulator import (
+    CapacityViolation,
     DeviceMemoryPeak,
     MemorySnapshot,
     SimulationResult,
@@ -14,7 +15,15 @@ from shadowspill.simulator import (
     TransferInterval,
 )
 
-from .common import _integer, _integer_pairs, _list, _mapping, _string, _string_tuple
+from .common import (
+    _integer,
+    _integer_pairs,
+    _list,
+    _mapping,
+    _optional_string,
+    _string,
+    _string_tuple,
+)
 
 
 def _interval_kind(item: Mapping[str, object], path: str) -> MemoryActionKind:
@@ -38,6 +47,9 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
     transfers = _list(data.get("transfer_intervals"), f"{path}.transfer_intervals")
     peaks = _list(data.get("device_peaks"), f"{path}.device_peaks")
     timeline = _list(data.get("memory_timeline"), f"{path}.memory_timeline")
+    violations = _list(
+        data.get("capacity_violations", ()), f"{path}.capacity_violations"
+    )
     return SimulationResult(
         makespan_ns=_integer(data.get("makespan_ns"), f"{path}.makespan_ns"),
         task_intervals=tuple(
@@ -174,5 +186,30 @@ def _simulation_result_from_value(value: object, path: str) -> SimulationResult:
             )
             for index, raw in enumerate(timeline)
             for item in (_mapping(raw, f"{path}.memory_timeline[{index}]"),)
+        ),
+        capacity_violations=tuple(
+            CapacityViolation(
+                reason=_string(item.get("reason"), f"{where}.reason"),
+                location=_string(item.get("location"), f"{where}.location"),
+                time_ns=_integer(item.get("time_ns"), f"{where}.time_ns"),
+                capacity_bytes=_integer(
+                    item.get("capacity_bytes"), f"{where}.capacity_bytes"
+                ),
+                used_bytes=_integer(item.get("used_bytes"), f"{where}.used_bytes"),
+                requested_bytes=_integer(
+                    item.get("requested_bytes"), f"{where}.requested_bytes"
+                ),
+                device_id=_string(item.get("device_id"), f"{where}.device_id"),
+                task_id=_optional_string(item.get("task_id"), f"{where}.task_id"),
+                alias_group_id=_optional_string(
+                    item.get("alias_group_id"), f"{where}.alias_group_id"
+                ),
+            )
+            for index, raw in enumerate(violations)
+            for where in (f"{path}.capacity_violations[{index}]",)
+            for item in (_mapping(raw, where),)
+        ),
+        capacity_violation_count=_integer(
+            data.get("capacity_violation_count", 0), f"{path}.capacity_violation_count"
         ),
     )

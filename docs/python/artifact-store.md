@@ -269,7 +269,8 @@ simulation, search, search_options, admission, incumbent
 ```text
 schema, key_digest, program_digest, initial_residency, final_residency,
 simulation, search, search_options, admission_digest, incumbent,
-schedule, selections, resident_slice, diagnostics
+schedule, selections, simulation_result, resident_slice, diagnostics,
+admission_certificate{ facts_digest, layout, simulator_input, simulation }
 ```
 
 `search` names the algorithm and `search_options` is everything it was told,
@@ -277,10 +278,31 @@ both halves in full, so a plan searched over one candidate space is never read
 back for another. The search that ships carries its `resolution_options` there,
 the shares of the flexible groups to recompute as exact fractions (`"1/4"`).
 `selections` is the task-alternative choice per group and `schedule` the memory
-schedule it implies. Reading one re-derives the request fields and rejects a
-mismatch, which is what makes a stale entry an error rather than a silent wrong
-answer. `incumbent` is provenance in both documents and in neither key: it
-names the plan the search was handed to beat.
+schedule it implies. `simulation_result` is the simulation the search answered
+with, and `admission_certificate` the fixed layout certified for the plan, the
+simulator input it implies and the physical simulation that proved it, named
+for the admission facts it was certified against; the certificate is written
+after the plan, by the call that certified it. Reading one checks the request
+fields and both digests and rejects a mismatch, which is what makes a stale
+entry an error rather than a silent wrong answer; what it does not do is
+simulate or place again, so a hit costs its deserialization. `incumbent` is
+provenance in both documents and in neither key: it names the plan the search
+was handed to beat.
+
+**Verdict** is a search's refusal, under the key a plan would have had:
+
+```text
+schema, key_digest, program_digest, initial_residency, final_residency,
+simulation, search, search_options, admission_digest,
+verdict{ outcome, error, kind, message }
+```
+
+`outcome` is `infeasible` or `exhausted`, `error` the exception's name and
+`message` its text; a read raises the same refusal again. A verdict is written
+and read only when no plan to beat was handed in, because with one in hand the
+search may answer with that plan instead. A refusal that is a `RuntimeError`,
+such as a preparation failure, is not recorded: it may be the environment's.
+An answer found later, with a plan to beat, overwrites the verdict.
 
 **Plan manifest** is the readable record of one planning call, beside the
 `execution_plan.json` it produced:
@@ -316,6 +338,8 @@ disposition:
 | `matched` | It agreed with a freshly produced in-memory value, which was used instead. |
 | `write` | This call produced it. |
 | `improved` | A planned program this call replaced: a request handed a plan faster than the one on record searched again and won. |
+| `certified` | A planned program this call wrote the fixed-layout certificate beside, after certifying it. |
+| `verdict` | A refusal this call recorded under the key a plan would have had, so the next request for it is refused without a search. |
 | `managed` | A directory owned by another component, such as the Inductor cache. |
 
 Together they make a report a complete provenance index for the planning call.

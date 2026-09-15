@@ -7,10 +7,13 @@ from pathlib import Path
 
 import pytest
 
+from shadowspill.ir import ShadowSpillProgram, TaskProfile, TaskSpec
 from shadowspill.planner import (
     GenericPlanningOptions,
     SearchOptions,
 )
+from shadowspill.planner.admission import AdmissionFacts, TaskAdmissionSpec
+from shadowspill.planner.admission.refinement import resolve_fixed_layout_selection
 from shadowspill.planner.plan_store import PlanStore
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
@@ -18,7 +21,13 @@ from shadowspill.planner.search.algorithms.pressurefit.options import (
 )
 from shadowspill.store import StorePolicy
 
-from ._examples import config, exact_capacity_program, exact_capacity_residency
+from ._examples import (
+    COMPUTE,
+    DEVICE,
+    config,
+    exact_capacity_program,
+    exact_capacity_residency,
+)
 
 FEW_CANDIDATES = SearchOptions(
     generic=GenericPlanningOptions(minimum_object_bytes_evict_eligible=0),
@@ -399,3 +408,137 @@ def test_the_worker_count_reaches_the_search_it_was_given_to(tmp_path: Path) -> 
         ),
     )
     assert seen == [1]
+
+
+def _placeable_program() -> ShadowSpillProgram:
+    """One task and no objects: a layout the admission builder places as is."""
+
+    return ShadowSpillProgram(
+        devices=(DEVICE,),
+        alias_groups=(),
+        objects=(),
+        profiles=(TaskProfile("profile", 10, 0, "abi"),),
+        tasks=(TaskSpec("task", COMPUTE, "profile"),),
+    )
+
+
+def _facts(program: ShadowSpillProgram, pool_bytes: int) -> AdmissionFacts:
+    return AdmissionFacts(
+        "cuda_0",
+        pool_bytes,
+        pool_bytes,
+        1,
+        tuple(TaskAdmissionSpec(task.task_id) for task in program.tasks),
+    )
+
+
+def test_a_stored_plan_is_read_back_without_simulating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hit trusts the record: the simulator is not run for it."""
+
+    import shadowspill.simulator.indexing as indexing
+
+    initial, final = exact_capacity_residency()
+    cache = PlanStore(tmp_path)
+    request = dict(
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        search_options=FEW_CANDIDATES,
+    )
+    first = cache.resolve(exact_capacity_program(), **request)
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a hit must not simulate")
+
+    monkeypatch.setattr(indexing, "_run_projection", refuse)
+    second = cache.resolve(exact_capacity_program(), **request)
+    assert second.from_store
+    assert second.key
+    assert second.result.simulation == first.result.simulation
+    assert second.result.simulation.interval_arrays is None
+
+
+def test_a_certificate_is_written_beside_the_plan_and_read_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Certifying once writes the layout beside the plan; a later read for the
+    same facts is served with it, and nothing is placed or simulated again."""
+
+    import shadowspill.planner.admission.refinement as refinement
+
+    program = _placeable_program()
+    cache = PlanStore(tmp_path)
+    request = dict(
+        initial_residency=(),
+        final_residency=(),
+        config=config(),
+        search_options=FEW_CANDIDATES,
+    )
+    first = cache.resolve(program, **request)
+    assert first.certificate is None
+    facts = _facts(program, config().devices[0].capacity_bytes)
+    certified = resolve_fixed_layout_selection(
+        config(), facts, lambda _config: first, certify=cache.certify
+    )
+
+    read_back = cache.resolve(program, **request)
+    assert read_back.from_store
+    assert read_back.certificate is not None
+    assert read_back.certificate.layout == certified.admission.layout
+    assert read_back.certificate.simulation == certified.admission.simulation
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a certified plan must not be placed again")
+
+    monkeypatch.setattr(refinement, "build_fixed_layout_admission", refuse)
+    served = resolve_fixed_layout_selection(config(), facts, lambda _config: read_back)
+    assert served.admission.layout == certified.admission.layout
+    assert served.attempts[0].accepted
+
+    # Other facts are another certificate: this one is not used for them.
+    other = _facts(program, config().devices[0].capacity_bytes + 8)
+    with pytest.raises(AssertionError, match="placed again"):
+        resolve_fixed_layout_selection(config(), other, lambda _config: read_back)
+
+
+def test_a_recorded_verdict_is_served_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal is recorded under the plan's key and raised again from the
+    record; with a plan to beat in hand the question is searched again."""
+
+    from shadowspill.errors import PlanInfeasibleError
+
+    initial, final = exact_capacity_residency()
+    program = exact_capacity_program()
+    cache = PlanStore(tmp_path)
+    impossible = dict(
+        initial_residency=initial,
+        final_residency=final,
+        config=config(capacity=8),
+        search_options=FEW_CANDIDATES,
+    )
+    with pytest.raises(PlanInfeasibleError) as first:
+        cache.resolve(program, **impossible)
+
+    feasible = PlanStore(tmp_path / "feasible").resolve(
+        program,
+        initial_residency=initial,
+        final_residency=final,
+        config=config(),
+        search_options=FEW_CANDIDATES,
+    )
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a recorded verdict must not be searched again")
+
+    monkeypatch.setattr(PressureFit, "__call__", refuse)
+    with pytest.raises(PlanInfeasibleError) as again:
+        cache.resolve(program, **impossible)
+    assert str(again.value) == str(first.value)
+    assert again.value.kind == first.value.kind
+
+    with pytest.raises(AssertionError, match="searched again"):
+        cache.resolve(program, incumbent=feasible.result, **impossible)

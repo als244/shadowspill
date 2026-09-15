@@ -178,7 +178,7 @@ in-memory result; Inductor's private directory is reported as `managed`.
 | `kind` | What kind of document it is. |
 | `digest` | Its content digest, or `None` for a directory. |
 | `path` | Where it is on disk. |
-| `access` | `read`, `write`, `matched`, `improved`, or `managed`; the [artifact store](artifact-store.md#plan-diagnostics) defines each. |
+| `access` | `read`, `write`, `matched`, `improved`, `certified`, `verdict`, or `managed`; the [artifact store](artifact-store.md#plan-diagnostics) defines each. |
 | `schema` | The document's own schema, when it declares one. |
 | `dependencies` | Digests this artifact was derived from. |
 

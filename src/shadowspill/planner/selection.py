@@ -64,7 +64,7 @@ def select_program(
             final_residency=program.final_residency,
             config=candidate_config,
             search_options=search_options,
-                incumbent=incumbent,
+            incumbent=incumbent,
             # The pool topology, so the search can measure whether a plan
             # has a layout that fits. Not passed as `admission`: that
             # switches on the dynamic-pool replay, and the fixed-layout
@@ -77,6 +77,7 @@ def select_program(
         ),
         scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,
         progress=progress,
+        certify=plans.certify,
     )
     physical_result = _with_physical_prediction(
         selection.result,

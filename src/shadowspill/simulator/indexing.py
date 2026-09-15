@@ -699,6 +699,51 @@ class IntervalArrays:
     transfer_interval_count: int
 
 
+def interval_arrays_from_result(
+    template: IndexedSimulationTemplate, result: SimulationResult
+) -> IntervalArrays:
+    """Re-encode a result's intervals in the simulator's own index space.
+
+    A result the simulator produced carries its arrays already; one read back
+    from a store does not, and its consumers index by task and by (direction,
+    sequence) rather than by position, so the order here is immaterial.
+    """
+
+    stall_bits = {name: bit for bit, name in _STALL_REASONS}
+    directions = {TransferDirection.FETCH: 0, TransferDirection.EVICT: 1}
+    tasks = (CTaskInterval * max(1, len(result.task_intervals)))()
+    for index, task in enumerate(result.task_intervals):
+        tasks[index] = CTaskInterval(
+            task=template.task_index[task.task_id],
+            ready_ns=task.ready_ns,
+            start_ns=task.start_ns,
+            end_ns=task.end_ns,
+            workspace_bytes=task.workspace_bytes,
+            stall_mask=sum(stall_bits[name] for name in task.stall_reasons),
+        )
+    transfers = (CTransferInterval * max(1, len(result.transfer_intervals)))()
+    for index, transfer in enumerate(result.transfer_intervals):
+        transfers[index] = CTransferInterval(
+            alias=template.alias_index[transfer.alias_group_id],
+            trigger_task=template.task_index[transfer.trigger_task_id],
+            device=template.device_ids.index(transfer.device_id),
+            direction=directions[transfer.direction],
+            kind=_ACTION_CODE[transfer.kind],
+            sequence=transfer.sequence,
+            ready_ns=transfer.ready_ns,
+            start_ns=transfer.start_ns,
+            end_ns=transfer.end_ns,
+            bytes=transfer.bytes,
+            stall_mask=sum(stall_bits[name] for name in transfer.stall_reasons),
+        )
+    return IntervalArrays(
+        task_intervals=tasks,
+        task_interval_count=len(result.task_intervals),
+        transfer_intervals=transfers,
+        transfer_interval_count=len(result.transfer_intervals),
+    )
+
+
 def _run_projection(
     projection: _Projection,
     schedule: MemorySchedule,
