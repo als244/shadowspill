@@ -45,12 +45,15 @@ reports the derived suballocatable capacity after initialization.
 ## Runtime
 
 `Runtime` installs the allocator, registers the configured pools and routes,
-and calibrates the real directed transfers between their addresses. Construct
-it once, before any workload state exists: model and optimizer state are then
+and calibrates the real directed transfers between their addresses. It is
+`shadowspill.runtime.Runtime` with PyTorch supplied as its frontend -- [the
+neutral page](neutral.md#runtime) documents the runtime itself -- and takes the
+same arguments minus that one. Construct it once, before any workload state
+exists: model and optimizer state are then
 created and imported into an initialized runtime, and planning reads the
 published `transfer_capabilities` snapshot rather than recalibrating.
 
-<!-- source-signature: src/shadowspill/pytorch/runtime_adapter/runtime/core.py:Runtime.__init__ -->
+<!-- source-signature: src/shadowspill/pytorch/runtime.py:Runtime.__init__ -->
 ```text
 Runtime(
     *,
@@ -139,8 +142,8 @@ usually wants.
 
 Those numbers say how many ranges a pool holds. The occupancy queries say
 *which*, and whose. They are functions over a runtime rather than methods on it,
-exported by `shadowspill.pytorch.runtime_adapter`: reading occupancy needs the
-runtime's handle and pool registry and nothing of its state machine.
+in `shadowspill.runtime.occupancy`: reading occupancy needs the runtime's handle
+and pool registry and nothing of its state machine.
 `live_allocations(runtime, pool="execution")` returns one
 `PoolAllocation` per live range in pool order. That is what a refusal for want of
 a contiguous range actually turns on: one small allocation in the wrong place
