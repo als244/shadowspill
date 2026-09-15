@@ -17,7 +17,7 @@ from typing import Final
 from shadowspill.schema import artifact_schema
 from workloads.numerical import DEFAULT_DEVICE_BUDGETS
 
-from .matrix_logging import MatrixConsole, format_bytes, utc_now
+from ..matrix_logging import MatrixConsole, format_bytes, utc_now
 from .references import (
     DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
     canonical_reference_path,
@@ -83,55 +83,60 @@ def _budget_overrides(
     return result
 
 
-def _run_case(
-    *,
+@dataclass(frozen=True, slots=True)
+class _CaseOptions:
+    """What every case in the matrix is run the same way with."""
+
+    environment: dict[str, str]
+    reference_directory: Path
+    regenerate_reference: bool
+    seed: int
+    model_config: str
+    data_geometry: str | None
+    case_factory: str | None
+    case_options: list[str]
+    optimizer_ordering: str
+    data_ordering: str | None
+    empty_caches: bool
+    cache_directory: Path | None
+    detailed_artifacts: bool
+
+    def case_arguments(self) -> list[str]:
+        """The options both arms of a case are given, in their fixed order."""
+
+        arguments = [
+            "--seed",
+            str(self.seed),
+            "--model-config",
+            self.model_config,
+            "--optimizer-ordering",
+            self.optimizer_ordering,
+        ]
+        if self.data_geometry is not None:
+            arguments.extend(("--data-geometry", self.data_geometry))
+        if self.data_ordering is not None:
+            arguments.extend(("--data-ordering", self.data_ordering))
+        if self.case_factory is not None:
+            arguments.extend(("--case-factory", self.case_factory))
+        for value in self.case_options:
+            arguments.extend(("--case-option", value))
+        return arguments
+
+
+def _case_commands(
     family: str,
     implementation: str,
     device_budget: int,
-    output_directory: Path,
-    reference_directory: Path,
-    environment: dict[str, str],
-    regenerate_reference: bool,
-    seed: int,
-    model_config: str,
-    data_geometry: str | None,
-    case_factory: str | None,
-    case_options: list[str],
-    optimizer_ordering: str,
-    data_ordering: str | None,
-    empty_caches: bool,
-    cache_directory: Path | None,
-    detailed_artifacts: bool,
-    console: MatrixConsole,
-    progress: str,
-    case_log: Path,
-) -> CaseResult:
-    prefix = f"{implementation}_{family}"
-    reference = canonical_reference_path(
-        reference_directory,
-        model_name=family,
-        implementation=implementation,
-    )
-    artifact = output_directory / f"{prefix}.json"
+    reference: Path,
+    artifact: Path,
+    options: _CaseOptions,
+) -> list[list[str]]:
+    """The reference arm, when one must be made, and always the planned arm."""
+
     base = [sys.executable, "-m", "tools.qualification.numerical"]
-    options = [
-        "--seed",
-        str(seed),
-        "--model-config",
-        model_config,
-        "--optimizer-ordering",
-        optimizer_ordering,
-    ]
-    if data_geometry is not None:
-        options.extend(("--data-geometry", data_geometry))
-    if data_ordering is not None:
-        options.extend(("--data-ordering", data_ordering))
-    if case_factory is not None:
-        options.extend(("--case-factory", case_factory))
-    for value in case_options:
-        options.extend(("--case-option", value))
+    shared = options.case_arguments()
     commands: list[list[str]] = []
-    if regenerate_reference or not reference_artifact_exists(reference):
+    if options.regenerate_reference or not reference_artifact_exists(reference):
         commands.append(
             [
                 *base,
@@ -140,7 +145,7 @@ def _run_case(
                 str(reference),
                 "--model-implementation",
                 implementation,
-                *options,
+                *shared,
             ]
         )
     commands.append(
@@ -153,25 +158,39 @@ def _run_case(
             str(device_budget),
             "--model-implementation",
             implementation,
-            *options,
+            *shared,
         ]
     )
-    started = time.perf_counter()
+    return commands
+
+
+def _run_commands(
+    commands: list[list[str]],
+    *,
+    prefix: str,
+    options: _CaseOptions,
+    output_directory: Path,
+    console: MatrixConsole,
+    progress: str,
+    case_log: Path,
+) -> int:
+    """Run each arm in its own process, in the caches the options ask for."""
+
     return_code = 0
     for command_index, command in enumerate(commands):
-        command_environment = dict(environment)
+        command_environment = dict(options.environment)
         is_reference = command_index == 0 and len(commands) == 2
         plan_cache = (
             (output_directory / "artifact_store" / prefix)
-            if cache_directory is None
-            else cache_directory.expanduser().resolve() / prefix
+            if options.cache_directory is None
+            else options.cache_directory.expanduser().resolve() / prefix
         )
         cache_root: Path | None = None
-        if empty_caches:
+        if options.empty_caches:
             cache_parent = (
                 output_directory / ".empty_caches"
-                if cache_directory is None
-                else cache_directory.expanduser().resolve()
+                if options.cache_directory is None
+                else options.cache_directory.expanduser().resolve()
             )
             cache_parent.mkdir(parents=True, exist_ok=True)
             cache_root = Path(
@@ -185,7 +204,7 @@ def _run_case(
             command_environment["TRITON_CACHE_DIR"] = str(cache_root / "triton")
         if not is_reference:
             command.extend(("--artifact-store", str(plan_cache)))
-            if detailed_artifacts:
+            if options.detailed_artifacts:
                 command.append("--detailed-artifacts")
             else:
                 # Nothing to keep from a cell that only has to agree, so it
@@ -209,12 +228,19 @@ def _run_case(
                 shutil.rmtree(cache_root.parent)
         if return_code != 0:
             break
-    passed = False
-    failure_categories: tuple[str, ...] = ()
-    failures: tuple[str, ...] = ()
-    # A case that judges itself failed exits non-zero, having already written
-    # the artifact saying why, so the artifact is read whenever it exists
-    # rather than only on a clean exit.
+    return return_code
+
+
+def _case_verdict(
+    artifact: Path, return_code: int
+) -> tuple[bool, int, tuple[str, ...], tuple[str, ...]]:
+    """Read what the case says about itself, and say so when it said nothing.
+
+    A case that judges itself failed exits non-zero, having already written
+    the artifact saying why, so the artifact is read whenever it exists
+    rather than only on a clean exit.
+    """
+
     payload: dict[str, object] | None = None
     if artifact.is_file():
         try:
@@ -225,6 +251,9 @@ def _run_case(
             "numerical_qualification"
         ):
             payload = candidate
+    passed = False
+    failure_categories: tuple[str, ...] = ()
+    failures: tuple[str, ...] = ()
     if payload is not None:
         passed = bool(return_code == 0 and payload.get("passed") is True)
         # Read back from JSON, so every member is object until it is checked.
@@ -251,6 +280,44 @@ def _run_case(
         # of failure and must not be read as a numerical disagreement.
         failure_categories = ("process",)
         failures = (f"process: exited {return_code} without a usable artifact",)
+    return passed, return_code, failure_categories, failures
+
+
+def _run_case(
+    *,
+    family: str,
+    implementation: str,
+    device_budget: int,
+    output_directory: Path,
+    options: _CaseOptions,
+    console: MatrixConsole,
+    progress: str,
+    case_log: Path,
+) -> CaseResult:
+    """Run one cell of the matrix, and read the verdict it wrote."""
+
+    prefix = f"{implementation}_{family}"
+    reference = canonical_reference_path(
+        options.reference_directory,
+        model_name=family,
+        implementation=implementation,
+    )
+    artifact = output_directory / f"{prefix}.json"
+    started = time.perf_counter()
+    return_code = _run_commands(
+        _case_commands(
+            family, implementation, device_budget, reference, artifact, options
+        ),
+        prefix=prefix,
+        options=options,
+        output_directory=output_directory,
+        console=console,
+        progress=progress,
+        case_log=case_log,
+    )
+    passed, return_code, failure_categories, failures = _case_verdict(
+        artifact, return_code
+    )
     return CaseResult(
         family=family,
         implementation=implementation,
@@ -265,7 +332,9 @@ def _run_case(
     )
 
 
-def main() -> int:
+def _parser() -> argparse.ArgumentParser:
+    """Which cells to run, what to run them with, and where to put them."""
+
     parser = argparse.ArgumentParser(
         description=(
             "Run fresh-process compiled-reference/planned parity, checkpoint "
@@ -380,7 +449,14 @@ def main() -> int:
             "evidence is the default"
         ),
     )
-    arguments = parser.parse_args()
+    return parser
+
+
+def _budgets(
+    parser: argparse.ArgumentParser, arguments: argparse.Namespace
+) -> dict[str, int]:
+    """Every selected model must have a name and a budget before anything runs."""
+
     try:
         invalid_names = [
             name
@@ -406,14 +482,64 @@ def main() -> int:
                 "custom model budgets must be explicit with --budget: "
                 + ", ".join(missing_budgets)
             )
-        environment = dict(os.environ)
     except (argparse.ArgumentTypeError, FileNotFoundError, RuntimeError) as exc:
         parser.error(str(exc))
+    return overrides
 
+
+def _summary(
+    results: list[CaseResult],
+    selected_cases: list[tuple[str, str]],
+    *,
+    empty_caches: bool,
+) -> dict[str, object]:
+    """The matrix artifact: one record per case, and whether all of them passed."""
+
+    return {
+        "schema": artifact_schema("model_correctness_matrix"),
+        "passed": len(results) == len(selected_cases)
+        and all(item.passed for item in results),
+        "empty_caches": empty_caches,
+        "cases": [
+            {
+                "family": item.family,
+                "implementation": item.implementation,
+                "device_budget_bytes": item.device_budget_bytes,
+                "elapsed_seconds": item.elapsed_seconds,
+                "return_code": item.return_code,
+                "reference": item.reference,
+                "artifact": item.artifact,
+                "passed": item.passed,
+                "failure_categories": list(item.failure_categories),
+                "failures": list(item.failures),
+            }
+            for item in results
+        ],
+    }
+
+
+def main() -> int:
+    parser = _parser()
+    arguments = parser.parse_args()
+    overrides = _budgets(parser, arguments)
+    options = _CaseOptions(
+        environment=dict(os.environ),
+        reference_directory=arguments.reference_dir.expanduser().resolve(),
+        regenerate_reference=arguments.regenerate_reference,
+        seed=arguments.seed,
+        model_config=arguments.model_config,
+        data_geometry=arguments.data_geometry,
+        case_factory=arguments.case_factory,
+        case_options=arguments.case_option,
+        optimizer_ordering=arguments.optimizer_ordering,
+        data_ordering=arguments.data_ordering,
+        empty_caches=arguments.empty_caches,
+        cache_directory=arguments.cache_dir,
+        detailed_artifacts=arguments.detailed_artifacts,
+    )
     output_directory = arguments.output_dir.expanduser().resolve()
     output_directory.mkdir(parents=True, exist_ok=True)
-    reference_directory = arguments.reference_dir.expanduser().resolve()
-    reference_directory.mkdir(parents=True, exist_ok=True)
+    options.reference_directory.mkdir(parents=True, exist_ok=True)
     selected_cases = [
         (family, implementation)
         for family in arguments.models
@@ -430,14 +556,14 @@ def main() -> int:
             [
                 f"UTC: {utc_now()}",
                 f"OUTPUT: {output_directory}",
-                f"REFERENCES: {reference_directory}",
+                f"REFERENCES: {options.reference_directory}",
                 "CASES: "
                 + ", ".join(
                     f"{implementation}_{family}"
                     for family, implementation in selected_cases
                 ),
-                f"EMPTY CACHES: {arguments.empty_caches}",
-                f"SEED: {arguments.seed}",
+                f"EMPTY CACHES: {options.empty_caches}",
+                f"SEED: {options.seed}",
             ],
         )
         for ordinal, (family, implementation) in enumerate(selected_cases, start=1):
@@ -446,47 +572,21 @@ def main() -> int:
             identity = f"{implementation}_{family}"
             case_log = output_directory / f"{identity}.log"
             case_log.unlink(missing_ok=True)
-            reference = canonical_reference_path(
-                reference_directory,
-                model_name=family,
+            started_at = _announce_case(
+                console,
+                options,
+                family=family,
                 implementation=implementation,
-            )
-            reference_state = (
-                "regenerating"
-                if arguments.regenerate_reference
-                or not reference_artifact_exists(reference)
-                else "reusing canonical"
-            )
-            started_at = utc_now()
-            console.emit()
-            console.block(
-                f"CASE START {progress} {identity}",
-                [
-                    f"MODEL: {implementation}/{family}",
-                    f"DEVICE BUDGET: {format_bytes(budget)}",
-                    f"REFERENCE: {reference} ({reference_state})",
-                    f"LOG: {case_log}",
-                    f"START: {started_at}",
-                ],
+                budget=budget,
+                progress=progress,
+                case_log=case_log,
             )
             result = _run_case(
                 family=family,
                 implementation=implementation,
                 device_budget=budget,
                 output_directory=output_directory,
-                reference_directory=reference_directory,
-                environment=environment,
-                regenerate_reference=arguments.regenerate_reference,
-                seed=arguments.seed,
-                model_config=arguments.model_config,
-                data_geometry=arguments.data_geometry,
-                case_factory=arguments.case_factory,
-                case_options=arguments.case_option,
-                optimizer_ordering=arguments.optimizer_ordering,
-                data_ordering=arguments.data_ordering,
-                empty_caches=arguments.empty_caches,
-                cache_directory=arguments.cache_dir,
-                detailed_artifacts=arguments.detailed_artifacts,
+                options=options,
                 console=console,
                 progress=progress,
                 case_log=case_log,
@@ -510,27 +610,7 @@ def main() -> int:
             if not result.passed and not arguments.keep_going:
                 break
 
-        summary = {
-            "schema": artifact_schema("model_correctness_matrix"),
-            "passed": len(results) == len(selected_cases)
-            and all(item.passed for item in results),
-            "empty_caches": arguments.empty_caches,
-            "cases": [
-                {
-                    "family": item.family,
-                    "implementation": item.implementation,
-                    "device_budget_bytes": item.device_budget_bytes,
-                    "elapsed_seconds": item.elapsed_seconds,
-                    "return_code": item.return_code,
-                    "reference": item.reference,
-                    "artifact": item.artifact,
-                    "passed": item.passed,
-                    "failure_categories": list(item.failure_categories),
-                    "failures": list(item.failures),
-                }
-                for item in results
-            ],
-        }
+        summary = _summary(results, selected_cases, empty_caches=options.empty_caches)
         summary_path = output_directory / "summary.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
         console.emit()
@@ -552,6 +632,43 @@ def main() -> int:
             ],
         )
     return 0 if summary["passed"] else 1
+
+
+def _announce_case(
+    console: MatrixConsole,
+    options: _CaseOptions,
+    *,
+    family: str,
+    implementation: str,
+    budget: int,
+    progress: str,
+    case_log: Path,
+) -> str:
+    """Say what is about to run, and return the time it started."""
+
+    reference = canonical_reference_path(
+        options.reference_directory,
+        model_name=family,
+        implementation=implementation,
+    )
+    reference_state = (
+        "regenerating"
+        if options.regenerate_reference or not reference_artifact_exists(reference)
+        else "reusing canonical"
+    )
+    started_at = utc_now()
+    console.emit()
+    console.block(
+        f"CASE START {progress} {implementation}_{family}",
+        [
+            f"MODEL: {implementation}/{family}",
+            f"DEVICE BUDGET: {format_bytes(budget)}",
+            f"REFERENCE: {reference} ({reference_state})",
+            f"LOG: {case_log}",
+            f"START: {started_at}",
+        ],
+    )
+    return started_at
 
 
 if __name__ == "__main__":

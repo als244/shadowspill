@@ -21,7 +21,10 @@ shadowspill/
 
 `qualification/` contains launchers and protocol descriptions only. Reusable
 logic lives under `src/tools/qualification/`, and product behavior remains
-under `src/shadowspill/`.
+under `src/shadowspill/`. The numerical gate is a package there,
+`src/tools/qualification/numerical/`, holding one case end to end: the
+request and its identity, the reference arm, the planned run, the two
+comparisons, the artifact, the verdict, and the matrix that launches cells.
 
 `benchmarking/` holds the quickstart, which takes one model end to end, and
 two harnesses that split that job so its expensive half is paid once: program
@@ -55,18 +58,30 @@ src/shadowspill/
 ├── simulator/             the simulator and diagnostic timeline
 ├── runtime/               physical admission and replay bindings
 ├── plots/                 step-run and step-search figures
+│   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
     ├── capture/           Export/AOT capture and semantic storage contracts
     ├── partition/         stage policies, splitting, provenance, authentic controls
     ├── graph_pairs/       differentiation alternatives by structural contract
     ├── compilation/       Inductor adapter and executable storage manifests
     ├── profiling/         representative inputs, timing, allocation contract, workspace
+    │   └── profiler/      one task measured: the allocator boundary, the warmup and
+    │                      timing, the workspace trace, the invariant path, the record
     ├── lowering/          ObjectCatalog and task binding into ShadowSpillProgram
-    ├── optimizer/         optimizer graph capture and ordering
+    ├── optimizer/         optimizer graph capture and ordering, by concern:
+    │                      discovery, sandbox, bindings, trace, tasks, opaque
     ├── planning/          forward/training orchestration and physical admission
+    │   └── training/      the training plan by phase: capture, materialize, profile,
+    │                      programs, plan, admit, report; build and steps compose them
     ├── materialization/   selected callable and runtime state publication
     ├── execution/         before/compiled/after task skeletons
+    │   └── training/      the training executor by concern: admission, boundary,
+    │                      publication, timing, optimizer state
     ├── runtime_adapter/   Python-to-C runtime and allocator boundary
+    │   ├── bridge/        one plan's program on the adapter: objects, admission,
+    │   │                  boundaries, report
+    │   └── runtime/       the Runtime object by concern: core, configuration, calibration,
+    │                      plan, objects, failure, occupancy, retainers, residue
     ├── diagnostics/       PlanReport and StepDiagnostics
     ├── sharing/           runtime-owned TensorRef handles
     └── state/             persistent model/optimizer import

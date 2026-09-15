@@ -3,22 +3,23 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from tools.qualification.numerical import _case_identity
-from tools.qualification.numerical_matrix import (
+from tools.qualification.numerical.matrix import (
     _DEFAULT_IMPLEMENTATIONS,
     _budget_overrides,
     _parse_bytes,
 )
-from tools.qualification.references import (
+from tools.qualification.numerical.references import (
     DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
     canonical_reference_path,
     reference_artifact_exists,
     reference_inputs_path,
 )
+from tools.qualification.numerical.request import CaseRequest
 from workloads.numerical import DEFAULT_DEVICE_BUDGETS
 
 
@@ -70,19 +71,18 @@ def test_budget_override_rejects_unknown_family() -> None:
 
 
 def test_case_identity_covers_model_and_data_configuration() -> None:
-    common = {
-        "model_name": "llama3",
-        "model_implementation": "pytorch",
-        "seed": 7,
-        "model_config": {"n_layers": 2},
-        "data_geometry": [{"token_shape": [1, 16]}],
-        "case_factory": None,
-        "case_options": {},
-    }
-    first = _case_identity(**common)  # type: ignore[arg-type]
-    changed = dict(common)
-    changed["data_geometry"] = [{"token_shape": [1, 32]}]
-    assert _case_identity(**changed) != first  # type: ignore[arg-type]
+    request = CaseRequest(
+        family="llama3",
+        model_implementation="pytorch",
+        seed=7,
+        model_config={"n_layers": 2},
+        data_geometry=[{"token_shape": [1, 16]}],
+        case_factory=None,
+        case_options={},
+    )
+    other = replace(request, data_geometry=[{"token_shape": [1, 32]}])
+
+    assert request.identity() != other.identity()
 
 
 def test_canonical_reference_path_is_grouped_by_model_and_provider(
