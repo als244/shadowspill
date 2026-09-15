@@ -411,7 +411,7 @@ def publish_plan_report(
             "allocation_probe_seeds": report.allocation_probe_seeds,
             "allocation_probe_repetitions": report.allocation_probe_repetitions,
             "execution_device": report.execution_device,
-            "implementation_revision": cache.implementation_revision,
+            "export_bypass_key": cache.export_bypass_key,
             "phase_timings_ns": [list(item) for item in report.phase_timings_ns],
             "artifacts": [item.as_dict() for item in artifacts_before_plan],
         },

@@ -260,7 +260,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             build_store_mode=arguments.build_store_mode,
             plan_store_mode=arguments.plan_store_mode,
             profiling_metadata=_profile_metadata(case.microbatches),
-            implementation_revision=arguments.implementation_revision,
+            export_bypass_key=arguments.export_bypass_key,
         )
         planning_seconds = time.perf_counter() - planning_started
         report = training.plan_report
@@ -612,7 +612,7 @@ def main() -> int:
             choices=("contribute", "reuse", "require", "refresh"),
             default="contribute",
         )
-    parser.add_argument("--implementation-revision")
+    parser.add_argument("--export-bypass-key")
     parser.add_argument(
         "--spill-budget-gib",
         type=int,

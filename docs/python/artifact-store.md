@@ -61,7 +61,7 @@ by whoever plans, and the same saved program answers any of them.
 
 | Artifact | Its key holds | Deliberately excluded |
 |---|---|---|
-| Export | callable semantics, graph signature, fixed input geometry, implementation revision | |
+| Export | callable semantics, graph signature, fixed input geometry, export bypass key | |
 | Graph pair | normalized stage semantic contract, differentiation options, partition inputs | |
 | Compiled manifest | graph-pair contract, compiler and provider identity, physical storage contract | |
 | Profile | compiled manifest, hardware, representative-value policy, `profiling_metadata`, allocation-probe policy | |
@@ -140,7 +140,7 @@ else.
 
 Two directories are deliberately not content-addressed, and both say why in
 their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch and
-subdivided by `implementation_revision`: one directory per revision, named for
+subdivided by `export_bypass_key`: one directory per revision, named for
 it and followed by twelve hex characters of its digest, or `default` when no
 revision was given.
 `planning/plans/<model class>/<capture identity>/<plan digest>/` groups plan
@@ -204,7 +204,7 @@ cleared on the way in and out, so an earlier plan in this process cannot
 serve an entry the mode was told not to read. `refresh` publishes what it
 built there back into the store afterwards; `reuse` and `require` discard it.
 
-`implementation_revision` is the other invalidation control. It marks the
+`export_bypass_key` is the other invalidation control. It marks the
 lower-level implementations a build was measured against, so a kernel change
 that does not change the exported graph still gives compiler and profile
 artifacts a new identity. It also names the Inductor cache subdirectory, so a
@@ -291,7 +291,7 @@ execution_device, execution_pool, spill_pool,
 execution_budget_bytes, spill_budget_bytes,
 requested_dynamic_scratch_reserve_bytes,
 allocation_probe_seeds, allocation_probe_repetitions,
-implementation_revision, execution_plan_digest,
+export_bypass_key, execution_plan_digest,
 execution_plan, initial_execution_plan,
 artifacts, phase_timings_ns
 ```

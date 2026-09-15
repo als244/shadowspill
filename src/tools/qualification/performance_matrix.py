@@ -291,7 +291,7 @@ def main() -> int:
             "the matrix default is a throughput probe without that copy"
         ),
     )
-    parser.add_argument("--implementation-revision")
+    parser.add_argument("--export-bypass-key")
     parser.add_argument(
         "--cells",
         nargs="*",
@@ -395,10 +395,8 @@ def main() -> int:
                         str(planning_budgets[manifest.identity]),
                     )
                 )
-            if arguments.implementation_revision is not None:
-                command.extend(
-                    ("--implementation-revision", arguments.implementation_revision)
-                )
+            if arguments.export_bypass_key is not None:
+                command.extend(("--export-bypass-key", arguments.export_bypass_key))
             started = time.perf_counter()
             started_at = utc_now()
             console.emit()

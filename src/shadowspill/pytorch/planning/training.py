@@ -483,7 +483,7 @@ def profile_training_tasks(
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
         provider_id="shadowspill.device_pool",
-        implementation_revision=stores.store.implementation_revision,
+        export_bypass_key=stores.store.export_bypass_key,
     )
     manifests = _resolve_training_manifests(
         inventory,

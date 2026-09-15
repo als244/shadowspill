@@ -538,7 +538,7 @@ def _planned_worker(
     profiling_metadata: list[object] | None,
     build_store_mode: str,
     plan_store_mode: str,
-    implementation_revision: str | None,
+    export_bypass_key: str | None,
     detailed_artifacts: bool,
 ) -> None:
     identity = _case_identity(
@@ -611,7 +611,7 @@ def _planned_worker(
             profiling_metadata=workload_metadata,
             build_store_mode=build_store_mode,
             plan_store_mode=plan_store_mode,
-            implementation_revision=implementation_revision,
+            export_bypass_key=export_bypass_key,
             # One plan per tree: the search's shared placement gate would
             # otherwise settle on a different plan run to run, and a plan is
             # a reduction order the comparison below can see.
@@ -896,7 +896,7 @@ def _planned_worker(
             ),
             "build_store_mode": build_store_mode,
             "plan_store_mode": plan_store_mode,
-            "implementation_revision": implementation_revision,
+            "export_bypass_key": export_bypass_key,
         },
         "device_budget_bytes": device_budget,
         "tolerances": {
@@ -1314,7 +1314,7 @@ def _orchestrate(
     profiling_metadata_argument: str | None,
     build_store_mode: str,
     plan_store_mode: str,
-    implementation_revision: str | None,
+    export_bypass_key: str | None,
     reference_directory: Path,
     regenerate_reference: bool,
     detailed_artifacts: bool,
@@ -1373,8 +1373,8 @@ def _orchestrate(
     for tree, mode in (("build", build_store_mode), ("plan", plan_store_mode)):
         if mode != "contribute":
             planned_options.extend((f"--{tree}-store-mode", mode))
-    if implementation_revision is not None:
-        planned_options.extend(("--implementation-revision", implementation_revision))
+    if export_bypass_key is not None:
+        planned_options.extend(("--export-bypass-key", export_bypass_key))
     if detailed_artifacts:
         planned_options.append("--detailed-artifacts")
     subprocess.run(
@@ -1466,7 +1466,7 @@ def main() -> int:
             " require refuses",
         )
     parser.add_argument(
-        "--implementation-revision",
+        "--export-bypass-key",
         help="explicit implementation identity for custom-kernel invalidation",
     )
     parser.add_argument(
@@ -1564,7 +1564,7 @@ def main() -> int:
             profiling_metadata_argument=arguments.profiling_metadata,
             build_store_mode=arguments.build_store_mode,
             plan_store_mode=arguments.plan_store_mode,
-            implementation_revision=arguments.implementation_revision,
+            export_bypass_key=arguments.export_bypass_key,
             reference_directory=arguments.reference_dir,
             regenerate_reference=arguments.regenerate_reference,
             detailed_artifacts=arguments.detailed_artifacts,
@@ -1609,7 +1609,7 @@ def main() -> int:
             profiling_metadata=profiling_metadata_value,
             build_store_mode=arguments.build_store_mode,
             plan_store_mode=arguments.plan_store_mode,
-            implementation_revision=arguments.implementation_revision,
+            export_bypass_key=arguments.export_bypass_key,
             detailed_artifacts=arguments.detailed_artifacts,
         )
     return 0
