@@ -103,7 +103,6 @@ meaning; the defaults are:
 | `max_repair_attempts` | `256` |
 | `capacity_refinement_bytes` | `256 MiB` |
 | `record_reduction_steps` | `False` |
-| `split_write_backs` | `False` |
 
 The first three axes are the candidate set: two strategies, four fetch rules
 and ordinary/coalesced emission are 16 candidate policies per resolved
@@ -117,9 +116,8 @@ Each remaining option is defined by the section of the cycle that reads it:
 `max_repair_attempts` under
 [repair](#repair-moving-a-transfer-or-making-room-for-one),
 `capacity_refinement_bytes` under
-[place](#place-measuring-whether-the-layout-fits), `split_write_backs` under
-[split](#split-clean-early-release-late), and `record_reduction_steps` under
-[trajectories](#trajectories).
+[place](#place-measuring-whether-the-layout-fits), and
+`record_reduction_steps` under [trajectories](#trajectories).
 
 `minimum_object_bytes_evict_eligible`, from the generic half, takes objects out
 of the search entirely: one smaller than it is never cut, so it is never
@@ -374,13 +372,12 @@ plan's timing and reading this page are the same activity.
 ```text
 per resolved program:  prepare -> setup -> [ per strategy ] -> select -> teardown
 per strategy:          reduce  -> [ per fetch rule x coalescing mode ]
-per candidate:         ( emit -> simulate -> repair (admission) [-> split]
+per candidate:         ( emit -> simulate -> repair (admission)
                               -> digest -> place -> settle -> repair )*
 ```
 
 The first `repair` answers an admission refusal and the last a simulated
-shortfall or a plan that waited; `split` runs only with `split_write_backs`
-set, and its second simulation is timed inside `simulate_ns`.
+shortfall or a plan that waited.
 
 ### Before the cycle: preflight and problem construction
 
@@ -474,7 +471,7 @@ results, so a schedule that recurs across candidates is not simulated twice.
 Residency gaps determine whether an alias is released or evicted and the
 legal window for its next fetch. The selected fetch rule picks exactly one
 task boundary in that window. Emission sorts actions by task, then release,
-evict, fetch, write-back, then alias identity, and finally applies whatever trigger
+evict, fetch, then alias identity, and finally applies whatever trigger
 constraints earlier repairs recorded. A constraint that cannot be satisfied
 ends the candidate here.
 
@@ -537,41 +534,6 @@ runs out of repairs answers with what it has.
 Reductions this section triggers are measured inside it, so `repair_ns`
 answers what the repair machinery actually costs rather than what its
 bookkeeping costs.
-
-### Split — clean early, release late
-
-An eviction does two things at one boundary: it copies the object to spill and
-it drops the device copy. The copy has to happen somewhere, but not
-necessarily there.
-
-An eviction only costs time when something is waiting for the room it frees,
-and the room is not free until the copy has landed. A simulated plan says
-where that happened: every task and transfer interval carries the time it was
-ready, the time it started, and a mask naming what it waited for. An eviction
-whose copy overlaps a wait for device capacity is split in two: a `WRITE_BACK`
-at the boundary where the object was last written, and a `RELEASE` where the
-eviction was, which costs nothing because the spill copy is already current by
-then.
-
-The last write is where the copy goes because it is the earliest boundary at
-which the copy is correct, and so the furthest from the boundary that was
-waiting for it. Nothing here chooses a time on the lane: the simulator owns
-it, and prices the queue several copies form when they move at once.
-
-Residency is untouched, so the device copy lives exactly as long as it did and
-device capacity does not move. What moves is when the spill copy is written,
-which is why the split is a proposal rather than a decision: the plan is
-simulated again and kept only if the makespan improved. A plan that did not
-improve is put back as it was — which the simulation memo prices without work
-— and so is one a configured pool then refuses to place.
-
-Evictions nothing waited on are left alone: moving such a copy spends lane
-time, holds spill capacity longer and adds an action, to buy nothing. Two more
-are never split whatever waited: one whose object keeps no spill copy, because
-releasing it frees the spill copy too and the split would throw away exactly
-what the write-back wrote; and one whose object no task wrote before it,
-because then the spill copy was already current and the emitter would have
-released rather than evicted.
 
 ### Digest — naming the schedule
 

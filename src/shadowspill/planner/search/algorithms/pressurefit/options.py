@@ -88,13 +88,6 @@ class PressureFitOptions(OptionRecord):
     #: grows with the search -- worth paying to attribute planner time or
     #: explain a plan, and not worth paying in a sweep.
     record_reduction_steps: bool = False
-    #: Let a plan that has simulated split an eviction something waited on:
-    #: a write-back at the boundary where the value was last written, and a
-    #: release where the eviction was. The plan is simulated again and the
-    #: split kept only if it got faster, so this widens what the search may
-    #: consider rather than deciding anything. Off by default: it costs a
-    #: second simulation per split.
-    split_write_backs: bool = False
 
     def __post_init__(self) -> None:
         if self.capacity_refinement_bytes < 0:
@@ -127,8 +120,6 @@ class PressureFitOptions(OptionRecord):
             raise ValueError("record_reduction_steps must be a boolean")
         if not isinstance(self.evaluate_coalesced, bool):
             raise ValueError("evaluate_coalesced must be a boolean")
-        if not isinstance(self.split_write_backs, bool):
-            raise ValueError("split_write_backs must be a boolean")
         # Normalized here rather than at the point of use, so what the plan
         # key records is exactly what is planned.
         object.__setattr__(

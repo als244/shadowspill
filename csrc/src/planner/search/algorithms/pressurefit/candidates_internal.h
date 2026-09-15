@@ -144,32 +144,6 @@ int shadowspill_delay_indexed_fetch(
     ShadowSpillFetchTriggerConstraint *constraint
 );
 
-/*
- * Split the evictions that held something up: a `WRITE_BACK` at the boundary
- * where the object was last written, and a `RELEASE` where the eviction was.
- *
- * An eviction exists to free device memory, and the memory is only free once
- * its copy has landed, so an eviction costs time exactly when something was
- * waiting for room while it ran. `simulation` -- a simulation of this
- * schedule as it stands -- says which ones those were. The rest are left
- * alone: moving a copy nothing waited on spends lane time and holds spill
- * capacity longer to buy nothing.
- *
- * Where the copy actually runs is not decided here. The write-back is
- * triggered at the last write because that is the earliest boundary at which
- * the copy is correct; the simulator owns the lane and prices the queue that
- * forms when several copies move at once. Residency is untouched, so the
- * device copy lives exactly as long as it did.
- *
- * The caller simulates again and keeps the result only if the plan got
- * faster. Returns how many evictions were split, or -1.
- */
-int shadowspill_split_blocking_evictions(
-    const ShadowSpillScheduleFacts *facts,
-    const ShadowSpillSimulationResult *simulation,
-    ShadowSpillScheduleStorage *storage
-);
-
 int shadowspill_advance_indexed_fetch_to_release(
     const ShadowSpillScheduleFacts *facts,
     uint32_t action_index,

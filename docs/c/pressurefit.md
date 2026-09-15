@@ -26,11 +26,7 @@ gives back at a time when its layout does not fit
 candidate records its reduction trajectory (`record_reduction_steps`), how many
 threads the call searches on (`workers`, zero for one per logical CPU and one
 for the calling thread), whether the placement gate consults the shared record
-or only the candidate's own placed plans (`deterministic`), whether a plan that
-has simulated may split an eviction something waited on into a write-back at
-the boundary where the object was last written and a release where the
-eviction was (`split_write_backs`, off by default; the split is simulated
-again and kept only if it was faster), the shared best-placed record to measure against,
+or only the candidate's own placed plans (`deterministic`), the shared best-placed record to measure against,
 and which objects are too small to be worth cutting
 (`minimum_object_bytes_evict_eligible`, 1 MiB by default through the Python
 request, zero for none): those stay resident from first to last access, take
