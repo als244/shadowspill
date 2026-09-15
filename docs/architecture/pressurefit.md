@@ -184,7 +184,10 @@ decision:
   (`started_ns`/`finished_ns`, nanoseconds from the start of the call, so
   candidates that overlap ran at the same time), schedule digests, capacity
   refinements, and -- when asked for -- each candidate's reduction trajectory;
-- the original `admission_facts`, when supplied.
+- the original `admission_facts`, when supplied, and the `placement_facts`
+  the layout was measured against;
+- the `resident_slice`: the objects kept resident under
+  `minimum_object_bytes_evict_eligible` and the bytes reserved for them.
 
 `validate_schedule_feasibility()` is the separate necessary-condition
 preflight on a program and its legal task selections. It does not validate an
@@ -371,9 +374,13 @@ plan's timing and reading this page are the same activity.
 ```text
 per resolved program:  prepare -> setup -> [ per strategy ] -> select -> teardown
 per strategy:          reduce  -> [ per fetch rule x coalescing mode ]
-per candidate:         ( emit -> simulate -> repair
-                              -> digest -> place -> settle )*
+per candidate:         ( emit -> simulate -> repair (admission) [-> split]
+                              -> digest -> place -> settle -> repair )*
 ```
+
+The first `repair` answers an admission refusal and the last a simulated
+shortfall or a plan that waited; `split` runs only with `split_write_backs`
+set, and its second simulation is timed inside `simulate_ns`.
 
 ### Before the cycle: preflight and problem construction
 
@@ -400,9 +407,10 @@ anything, it inherits what preparation produced.
 Seeding residency happens here too. The default `InitialPlacement.REQUIRED`
 uses only the anchor hull. `InitialPlacement.GREEDY` also considers
 spill-origin aliases first consumed after task 0, orders them
-deterministically by first-use time, estimated fetch-deadline miss, transfer
-cost, size, and alias order, and preplaces each one that fits initial
-capacity.
+deterministically -- by first use, then the least slack between the fetch's
+deadline and the earliest it could land after task 0, then the largest
+estimated deadline miss when the fetches queue on one lane, then size, then
+alias -- and preplaces each one that fits initial capacity.
 
 The objects under `minimum_object_bytes_evict_eligible` are settled here as
 well, because everything below assumes they are already gone. Each holds one
@@ -466,7 +474,7 @@ results, so a schedule that recurs across candidates is not simulated twice.
 Residency gaps determine whether an alias is released or evicted and the
 legal window for its next fetch. The selected fetch rule picks exactly one
 task boundary in that window. Emission sorts actions by task, then release,
-evict, fetch, then alias identity, and finally applies whatever trigger
+evict, fetch, write-back, then alias identity, and finally applies whatever trigger
 constraints earlier repairs recorded. A constraint that cannot be satisfied
 ends the candidate here.
 
@@ -776,9 +784,9 @@ infeasibility across those resolved programs was not established.
 
 The production path requires the C planner and simulator and fails closed on a
 missing or ABI-incompatible library. Readable Python
-implementations live only under `reference/python/pressurefit` and
-`reference/python/simulator`; they are differential-test oracles and never
-silently replace the library.
+implementations live only under `reference/python/pressurefit`,
+`reference/python/admission` and `reference/python/simulator`; they are
+differential-test oracles and never silently replace the library.
 
 Previous: [Graph-pair selection](graph-pair-selection.md). Next: [Physical
 admission and offset handling](physical-admission.md).
