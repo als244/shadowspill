@@ -250,7 +250,9 @@ def default_cells() -> tuple[FullModelManifest, ...]:
     )
 
 
-def main() -> int:
+def _parser() -> argparse.ArgumentParser:
+    """Which cells to run, in which protocol, and where to put what they write."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output-directory",
@@ -310,6 +312,154 @@ def main() -> int:
             "for example mlops_qwen35=100; repeatable"
         ),
     )
+    return parser
+
+
+def _protocol(arguments: argparse.Namespace) -> str:
+    """Name the protocol the cells will run, for the matrix banner."""
+
+    if arguments.plan_only:
+        mode = "plan only"
+    elif arguments.checkpoint:
+        mode = "checkpoint, warm step, restore, 3x4 measured steps"
+    else:
+        mode = "throughput probe without checkpoint, warm step, 3x4 measured steps"
+    if arguments.measure_only:
+        mode += "; reported without gates"
+    return mode
+
+
+def _cell_command(
+    manifest: FullModelManifest,
+    arguments: argparse.Namespace,
+    output: Path,
+    artifact: Path,
+    planning_budgets: dict[str, int],
+) -> list[str]:
+    """The command line one cell is run as, in its own process."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "tools.qualification.performance",
+        manifest.family,
+        manifest.implementation,
+        str(artifact),
+        "--artifact-store",
+        str(output / "artifact_store" / manifest.identity),
+    ]
+    for tree in ("build", "plan"):
+        store_mode = getattr(arguments, f"{tree}_store_mode")
+        if store_mode is not None:
+            command.extend((f"--{tree}-store-mode", store_mode))
+        root = getattr(arguments, f"{tree}_store")
+        if root is not None:
+            command.extend((f"--{tree}-store", str(root)))
+    if arguments.plan_only:
+        command.append("--plan-only")
+    elif not arguments.checkpoint:
+        # The matrix default is a checkpoint-free throughput probe: the
+        # anonymous full-state copy cannot coexist with the full pinned
+        # spill arena on qualification hosts.  Checkpoint/replay
+        # coverage stays in the numerical matrix and behind
+        # --checkpoint here.
+        command.append("--skip-checkpoint")
+    if arguments.measure_only:
+        command.append("--measure-only")
+    if manifest.identity in planning_budgets:
+        command.extend(
+            ("--planning-spill-budget-gib", str(planning_budgets[manifest.identity]))
+        )
+    if arguments.export_bypass_key is not None:
+        command.extend(("--export-bypass-key", arguments.export_bypass_key))
+    return command
+
+
+def _run_cell(
+    manifest: FullModelManifest,
+    arguments: argparse.Namespace,
+    *,
+    output: Path,
+    planning_budgets: dict[str, int],
+    console: MatrixConsole,
+    prefix: str,
+) -> dict[str, object]:
+    """Run one cell, and record what it wrote or failed to write."""
+
+    artifact = output / f"{manifest.identity}.json"
+    failure_path = artifact.with_suffix(".failure.json")
+    log = output / f"{manifest.identity}.log"
+    # A rerun must never be classified from artifacts of an older run.
+    artifact.unlink(missing_ok=True)
+    failure_path.unlink(missing_ok=True)
+    log.unlink(missing_ok=True)
+    command = _cell_command(manifest, arguments, output, artifact, planning_budgets)
+    started = time.perf_counter()
+    started_at = utc_now()
+    console.emit()
+    console.block(
+        f"CELL START {prefix} {manifest.identity}",
+        _cell_start_details(
+            manifest,
+            planning_budget_gib=planning_budgets.get(manifest.identity),
+            checkpoint=arguments.checkpoint,
+            plan_only=arguments.plan_only,
+            log=log,
+            started_at=started_at,
+        ),
+    )
+    return_code = console.stream(command, cell_log_path=log, prefix=prefix)
+    elapsed = time.perf_counter() - started
+    artifact_payload: dict[str, object] | None = None
+    if artifact.is_file():
+        artifact_payload = json.loads(artifact.read_text())
+    # Measure-only asks whether the cell ran, not whether it was good
+    # enough; the cell subprocess already declines to fail on gates.
+    passed = bool(
+        (artifact_payload is not None)
+        if arguments.measure_only
+        else (artifact_payload.get("passed") if artifact_payload else False)
+    )
+    failure_record: dict[str, object] | None = None
+    if failure_path.is_file():
+        failure_record = json.loads(failure_path.read_text())
+    elif return_code != 0 and artifact_payload is None:
+        failure_record = _write_parent_failure(
+            manifest_identity=manifest.identity,
+            return_code=return_code,
+            log=log,
+            failure_path=failure_path,
+        )
+    ran = return_code == 0 and passed
+    if arguments.measure_only:
+        status = "MEASURED" if ran else "ERROR"
+    else:
+        status = "PASS" if ran else "FAIL"
+    console.block(
+        f"CELL {status} {prefix} {manifest.identity}",
+        _cell_result_details(
+            artifact_payload,
+            failure_record,
+            started_at=started_at,
+            elapsed=elapsed,
+            measure_only=arguments.measure_only,
+        ),
+    )
+    return {
+        "identity": manifest.identity,
+        "return_code": return_code,
+        "passed": passed,
+        "elapsed_seconds": elapsed,
+        "artifact": str(artifact),
+        "artifact_exists": artifact.is_file(),
+        "failure_artifact": (str(failure_path) if failure_record is not None else None),
+        "failure": failure_record,
+        "log": str(log),
+    }
+
+
+def main() -> int:
+    parser = _parser()
     arguments = parser.parse_args()
     if arguments.checkpoint and arguments.plan_only:
         parser.error("--checkpoint has no effect with --plan-only")
@@ -329,14 +479,6 @@ def main() -> int:
         chosen = [item for item in manifests() if item.identity in selected]
     else:
         chosen = list(default_cells())
-    if arguments.plan_only:
-        mode = "plan only"
-    elif arguments.checkpoint:
-        mode = "checkpoint, warm step, restore, 3x4 measured steps"
-    else:
-        mode = "throughput probe without checkpoint, warm step, 3x4 measured steps"
-    if arguments.measure_only:
-        mode += "; reported without gates"
     rows: list[dict[str, object]] = []
     failed = False
     matrix_started = time.perf_counter()
@@ -348,121 +490,20 @@ def main() -> int:
                 f"OUTPUT: {output}",
                 f"CELLS: {len(chosen)} of {len(manifests())}: "
                 + ", ".join(manifest.identity for manifest in chosen),
-                f"PROTOCOL: {mode}",
+                f"PROTOCOL: {_protocol(arguments)}",
             ],
         )
         for ordinal, manifest in enumerate(chosen, start=1):
-            prefix = f"[{ordinal}/{len(chosen)}]"
-            artifact = output / f"{manifest.identity}.json"
-            failure_path = artifact.with_suffix(".failure.json")
-            log = output / f"{manifest.identity}.log"
-            # A rerun must never be classified from artifacts of an older run.
-            artifact.unlink(missing_ok=True)
-            failure_path.unlink(missing_ok=True)
-            log.unlink(missing_ok=True)
-            command = [
-                sys.executable,
-                "-m",
-                "tools.qualification.performance",
-                manifest.family,
-                manifest.implementation,
-                str(artifact),
-                "--artifact-store",
-                str(output / "artifact_store" / manifest.identity),
-            ]
-            for tree in ("build", "plan"):
-                mode = getattr(arguments, f"{tree}_store_mode")
-                if mode is not None:
-                    command.extend((f"--{tree}-store-mode", mode))
-                root = getattr(arguments, f"{tree}_store")
-                if root is not None:
-                    command.extend((f"--{tree}-store", str(root)))
-            if arguments.plan_only:
-                command.append("--plan-only")
-            elif not arguments.checkpoint:
-                # The matrix default is a checkpoint-free throughput probe: the
-                # anonymous full-state copy cannot coexist with the full pinned
-                # spill arena on qualification hosts.  Checkpoint/replay
-                # coverage stays in the numerical matrix and behind
-                # --checkpoint here.
-                command.append("--skip-checkpoint")
-            if arguments.measure_only:
-                command.append("--measure-only")
-            if manifest.identity in planning_budgets:
-                command.extend(
-                    (
-                        "--planning-spill-budget-gib",
-                        str(planning_budgets[manifest.identity]),
-                    )
-                )
-            if arguments.export_bypass_key is not None:
-                command.extend(("--export-bypass-key", arguments.export_bypass_key))
-            started = time.perf_counter()
-            started_at = utc_now()
-            console.emit()
-            console.block(
-                f"CELL START {prefix} {manifest.identity}",
-                _cell_start_details(
-                    manifest,
-                    planning_budget_gib=planning_budgets.get(manifest.identity),
-                    checkpoint=arguments.checkpoint,
-                    plan_only=arguments.plan_only,
-                    log=log,
-                    started_at=started_at,
-                ),
+            row = _run_cell(
+                manifest,
+                arguments,
+                output=output,
+                planning_budgets=planning_budgets,
+                console=console,
+                prefix=f"[{ordinal}/{len(chosen)}]",
             )
-            return_code = console.stream(command, cell_log_path=log, prefix=prefix)
-            elapsed = time.perf_counter() - started
-            artifact_payload: dict[str, object] | None = None
-            if artifact.is_file():
-                artifact_payload = json.loads(artifact.read_text())
-            # Measure-only asks whether the cell ran, not whether it was good
-            # enough; the cell subprocess already declines to fail on gates.
-            passed = bool(
-                (artifact_payload is not None)
-                if arguments.measure_only
-                else (artifact_payload.get("passed") if artifact_payload else False)
-            )
-            failure_record: dict[str, object] | None = None
-            if failure_path.is_file():
-                failure_record = json.loads(failure_path.read_text())
-            elif return_code != 0 and artifact_payload is None:
-                failure_record = _write_parent_failure(
-                    manifest_identity=manifest.identity,
-                    return_code=return_code,
-                    log=log,
-                    failure_path=failure_path,
-                )
-            ran = return_code == 0 and passed
-            if arguments.measure_only:
-                status = "MEASURED" if ran else "ERROR"
-            else:
-                status = "PASS" if ran else "FAIL"
-            console.block(
-                f"CELL {status} {prefix} {manifest.identity}",
-                _cell_result_details(
-                    artifact_payload,
-                    failure_record,
-                    started_at=started_at,
-                    elapsed=elapsed,
-                    measure_only=arguments.measure_only,
-                ),
-            )
-            row = {
-                "identity": manifest.identity,
-                "return_code": return_code,
-                "passed": passed,
-                "elapsed_seconds": elapsed,
-                "artifact": str(artifact),
-                "artifact_exists": artifact.is_file(),
-                "failure_artifact": (
-                    str(failure_path) if failure_record is not None else None
-                ),
-                "failure": failure_record,
-                "log": str(log),
-            }
             rows.append(row)
-            if return_code != 0 or not passed:
+            if row["return_code"] != 0 or not row["passed"]:
                 failed = True
                 if not arguments.keep_going:
                     break

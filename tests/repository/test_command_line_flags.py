@@ -60,13 +60,20 @@ def _cli_modules() -> list[Path]:
     nothing to check.
     """
 
-    tracked = subprocess.run(
-        ["git", "ls-files", "*.py"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.split()
+    # Tracked and untracked alike: a module moved into a package is untracked
+    # until the move is committed, and a flag that drifts in a module this
+    # search cannot see is exactly the drift this test exists to catch.
+    tracked = [
+        name
+        for arguments in (["--cached"], ["--others", "--exclude-standard"])
+        for name in subprocess.run(
+            ["git", "ls-files", *arguments, "*.py"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+    ]
     # This file names the call it looks for, so it matches its own search.
     here = Path(__file__).resolve()
     candidates = [
@@ -86,19 +93,46 @@ def _cli_modules() -> list[Path]:
     ]
 
 
+def _readers(path: Path) -> list[Path]:
+    """Where a flag this module declares may be read.
+
+    A one-file command reads its own namespace. A command that is a package
+    declares its flags in the entry and hands the namespace to the phases
+    beside it, so the package is the unit: a flag nothing in it reads is still
+    a flag nothing reads, which is what this checks.
+    """
+
+    if path.name not in ("__init__.py", "__main__.py"):
+        return [path]
+    return sorted(item for item in path.parent.glob("*.py"))
+
+
+def _names_read(paths: list[Path]) -> set[str]:
+    """Any attribute access or string constant, over every reader.
+
+    The parsed namespace is passed around under several names (`arguments`,
+    `args`, `options`), so the attribute name is what can be matched.
+    """
+
+    names: set[str] = set()
+    for path in paths:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        names |= {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        }
+        names |= {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+    return names
+
+
 @pytest.mark.parametrize("path", _cli_modules(), ids=lambda p: str(p.relative_to(ROOT)))
 def test_declared_flags_are_read(path: Path) -> None:
-    source = path.read_text()
-    tree = ast.parse(source, filename=str(path))
+    tree = ast.parse(path.read_text(), filename=str(path))
     declared = _declared_flags(tree)
-
-    # Any attribute access of that name counts: the parsed namespace is passed
-    # around under several names (`arguments`, `args`, `options`).
-    read = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} | {
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
+    read = _names_read(_readers(path))
     unread = sorted(name for name in declared if name not in read)
     assert not unread, (
         f"{path.relative_to(ROOT)} declares options nothing reads: {unread}. "
