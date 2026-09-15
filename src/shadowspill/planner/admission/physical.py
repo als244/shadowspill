@@ -163,7 +163,7 @@ class AdmissionPolicy:
             raise ValueError("spill leeway percent must be non-negative")
 
 
-class AdmissionError(ValueError):
+class PhysicalAdmissionError(ValueError):
     """Physical admission failure with machine-readable capacity evidence."""
 
     def __init__(
@@ -278,7 +278,7 @@ def replay_slab_timeline(
                 free_bytes = sum(bytes_ for _, bytes_ in ranges)
                 largest = max((bytes_ for _, bytes_ in ranges), default=0)
                 evidence = _free_range_evidence(ranges, live)
-                raise AdmissionError(
+                raise PhysicalAdmissionError(
                     f"allocation {event.allocation_id!r} needs {event.bytes} bytes "
                     f"at position {event.position}, but the slab has {free_bytes} "
                     f"free bytes and a {largest}-byte largest range; "
@@ -399,7 +399,7 @@ def plan_slab_layout(
     if required > slab_bytes:
         largest = max(lifetimes, key=lambda item: item.bytes, default=None)
         largest_id = None if largest is None else largest.identities[0]
-        raise AdmissionError(
+        raise PhysicalAdmissionError(
             "static slab layout needs "
             f"{required} bytes while capacity is {slab_bytes}; "
             f"largest_allocation={largest_id!r}",
@@ -649,7 +649,7 @@ def admit_physical_budget(
     )
     fixed_device_bytes = baseline_bytes + provider_headroom
     if fixed_device_bytes >= device_budget_bytes:
-        raise AdmissionError(
+        raise PhysicalAdmissionError(
             "problem and provider headroom leave no device slab",
             kind="fixed_device_budget",
             required_bytes=fixed_device_bytes + 1,
@@ -660,7 +660,7 @@ def admit_physical_budget(
         maximum_task_workspace_bytes, policy=policy
     )
     if workspace_reserve > slab_bytes:
-        raise AdmissionError(
+        raise PhysicalAdmissionError(
             "workspace reserve exceeds the admitted slab",
             kind="workspace_budget",
             required_bytes=workspace_reserve,
@@ -675,7 +675,7 @@ def admit_physical_budget(
         policy.spill_granularity_bytes,
     )
     if spill_reservation > spill_budget_bytes:
-        raise AdmissionError(
+        raise PhysicalAdmissionError(
             "host peak plus explicit leeway exceeds the host budget",
             kind="spill_budget",
             required_bytes=spill_reservation,

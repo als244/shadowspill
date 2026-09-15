@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from shadowspill.runtime import (
-    AdmissionError,
+from shadowspill.planner.admission.physical import (
     AllocationEvent,
     AllocationOperation,
+    PhysicalAdmissionError,
     admit_physical_budget,
     plan_slab_layout,
     replay_slab_timeline,
@@ -59,7 +59,7 @@ def test_spatial_replay_reports_fragmentation_not_only_total_free() -> None:
         event(4, "right", AllocationOperation.FREE, 32),
         event(5, "large", AllocationOperation.ALLOCATE, 48),
     )
-    with pytest.raises(AdmissionError, match="largest range") as captured:
+    with pytest.raises(PhysicalAdmissionError, match="largest range") as captured:
         replay_slab_timeline(96, timeline)
     assert captured.value.kind == "slab_fragmentation"
     assert captured.value.free_bytes == 64
@@ -250,7 +250,7 @@ def test_admission_failures_identify_the_physical_category(
         "predicted_spill_peak_bytes": 1 * GIB,
     }
     arguments.update(overrides)
-    with pytest.raises(AdmissionError) as captured:
+    with pytest.raises(PhysicalAdmissionError) as captured:
         admit_physical_budget(**arguments)
     assert captured.value.kind == kind
 
