@@ -93,7 +93,7 @@ def compile_selected_training_tasks(
         )
         _verify_compiled_manifest_identity(profiled.manifests, compiled)
         release_build_executables(profiled, installed)
-    timer.attribute_compilation_and_profiling(profiled.profiler)
+    timer.attribute_compilation_and_profiling(profiled.profiler.wall_times)
     return TrainingExecutableArtifacts(compiled)
 
 

@@ -227,7 +227,7 @@ def _build_training_step_programs(
         captured = replace(captured, partitioned=profiled.partitioned)
         with timer.measure("compilation"):
             release_build_executables(profiled, captured.installed)
-        timer.attribute_compilation_and_profiling(profiled.profiler)
+        timer.attribute_compilation_and_profiling(profiled.profiler.wall_times)
         shared = tuple(timer.values)
         for index, ordering in enumerate(orderings):
             own_started = time.perf_counter_ns()
