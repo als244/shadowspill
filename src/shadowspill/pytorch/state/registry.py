@@ -5,7 +5,11 @@ from __future__ import annotations
 import threading
 import weakref
 
-from shadowspill.pytorch.runtime_adapter.runtime import Runtime
+from shadowspill.pytorch.runtime_adapter.runtime import (
+    Runtime,
+    release_persistent_state,
+    retain_persistent_state,
+)
 
 from .records import PersistentState, PersistentStorage
 
@@ -58,8 +62,8 @@ class PersistentStateRegistry:
             key = id(state.target)
             if key in self._states:
                 raise RuntimeError("state is already persistent in this Runtime")
-            self.runtime._retain_persistent_state(
-                allow_in_progress_plan=allow_in_progress_plan
+            retain_persistent_state(
+                self.runtime, allow_in_progress_plan=allow_in_progress_plan
             )
             self._states[key] = state
 
@@ -68,7 +72,7 @@ class PersistentStateRegistry:
             state = self._states.pop(id(target), None)
             if state is None or state.target is not target:
                 raise RuntimeError("state is not persistent in this Runtime")
-            self.runtime._release_persistent_state()
+            release_persistent_state(self.runtime)
             return state
 
     def values(self) -> tuple[PersistentState, ...]:

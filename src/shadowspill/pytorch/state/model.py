@@ -8,7 +8,11 @@ from typing import cast
 import torch
 import torch.nn as nn
 
-from shadowspill.pytorch.runtime_adapter.runtime import MemoryPool, Runtime
+from shadowspill.pytorch.runtime_adapter.runtime import (
+    MemoryPool,
+    Runtime,
+    require_state_operation_allowed,
+)
 
 from .model_copy import copy_model_with_runtime_storages
 from .storage import (
@@ -312,7 +316,7 @@ def release_model_state(
     again. A model that is not owned by ``runtime`` is left unchanged.
     """
 
-    runtime._require_state_operation_allowed()
+    require_state_operation_allowed(runtime)
     release_persistent_tensors(model, runtime=runtime)
 
 

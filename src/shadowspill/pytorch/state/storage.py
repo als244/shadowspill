@@ -19,6 +19,9 @@ from shadowspill.pytorch.runtime_adapter.runtime import (
     MemoryPool,
     Runtime,
     RuntimeConfigurationError,
+    register_object,
+    require_state_operation_allowed,
+    reserve_persistent_object_ids,
 )
 
 from ..contracts import contiguous_stride
@@ -199,7 +202,8 @@ def register_tensor_storages(
         )
         is not None
     }
-    object_ids = runtime._reserve_persistent_object_ids(
+    object_ids = reserve_persistent_object_ids(
+        runtime,
         len(roots) - len(adopted),
         allow_in_progress_plan=_allow_in_progress_plan,
     )
@@ -220,7 +224,8 @@ def register_tensor_storages(
             object_id = next(pending)
             size_bytes = int(anchor.untyped_storage().nbytes())
             _require_status(
-                runtime._register_object(
+                register_object(
+                    runtime,
                     object_id,
                     size_bytes,
                     pool_id=selected_pool.pool_id,
@@ -349,7 +354,7 @@ def export_tensors(
 ) -> PersistentState | None:
     """Copy authoritative runtime bytes into ordinary CPU storage roots."""
 
-    runtime._require_state_operation_allowed()
+    require_state_operation_allowed(runtime)
     registry = registry_for(runtime)
     state = registry.get(target)
     if state is None:
@@ -510,7 +515,7 @@ def adopt_persistent_tensor(
             ),
             f"refresh persistent object {item.current_object_id}",
         )
-    item.current_object_id = bridge.adopt_persistent_object(
+    item.current_object_id = bridge.objects.adopt_persistent_object(
         alias_id,
         current_object_id=item.current_object_id,
         pool_id=item.pool_id,
@@ -585,11 +590,12 @@ def _take_pool_memory(
 
     if size_bytes <= 0:
         raise ValueError("planning memory needs a positive size")
-    object_id = runtime._reserve_persistent_object_ids(1, allow_in_progress_plan=True)[
+    object_id = reserve_persistent_object_ids(runtime, 1, allow_in_progress_plan=True)[
         0
     ]
     _require_status(
-        runtime._register_object(
+        register_object(
+            runtime,
             object_id,
             size_bytes,
             pool_id=pool.pool_id,
@@ -711,8 +717,8 @@ def _validate_pool(
     *,
     allow_in_progress_plan: bool = False,
 ) -> MemoryPool:
-    runtime._require_state_operation_allowed(
-        allow_in_progress_plan=allow_in_progress_plan
+    require_state_operation_allowed(
+        runtime, allow_in_progress_plan=allow_in_progress_plan
     )
     try:
         selected = runtime.pools[pool]

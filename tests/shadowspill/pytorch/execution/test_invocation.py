@@ -10,6 +10,8 @@ import shadowspill.pytorch.callables as callable_module
 from shadowspill.pytorch.callables import PlannedForward
 from shadowspill.pytorch.invocation import InvocationResult
 
+from ._lifecycle import FakeRuntime, fake_plan_lifecycle
+
 
 class _Signature:
     def validate(self, inputs: object) -> None:
@@ -44,27 +46,6 @@ class _State:
 
     def restore_cpu_and_unregister(self) -> None:
         self.restored = True
-
-
-class _Runtime:
-    def __init__(self) -> None:
-        self.released = False
-        self.scoped_release_asked = False
-
-    def _adopt_plan(self, plan_handle: int) -> None:
-        assert plan_handle == 7
-
-    def _release_plan(self, plan_handle: int) -> None:
-        assert plan_handle == 7
-        self.released = True
-
-    def plan_scoped_residue(self, plan_handle: int) -> tuple[str, ...]:
-        assert plan_handle == 7
-        self.scoped_release_asked = True
-        return ()
-
-    def _prepare_failure_cleanup(self, error: BaseException, **kwargs: object) -> None:
-        del error, kwargs
 
 
 def test_invocation_result_synchronizes_once() -> None:
@@ -122,7 +103,8 @@ def test_submitted_forward_requires_explicit_result_before_reuse(
 ) -> None:
     executor = _Executor()
     state = _State()
-    runtime = _Runtime()
+    runtime = FakeRuntime()
+    fake_plan_lifecycle(monkeypatch, plan_handle=7)
     monkeypatch.setattr(
         callable_module,
         "restore_persistent_object_ids",
@@ -160,7 +142,8 @@ def test_close_resolves_a_pending_submission_without_recursive_cleanup(
 ) -> None:
     executor = _Executor()
     state = _State()
-    runtime = _Runtime()
+    runtime = FakeRuntime()
+    fake_plan_lifecycle(monkeypatch, plan_handle=7)
     monkeypatch.setattr(
         callable_module,
         "restore_persistent_object_ids",

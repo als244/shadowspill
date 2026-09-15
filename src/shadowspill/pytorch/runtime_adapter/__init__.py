@@ -16,11 +16,20 @@ from .fixed_layout import (
 from .runtime import (
     MemoryPool,
     PlanMemory,
+    PlanState,
+    PoolAllocation,
     Runtime,
     RuntimeConfigurationError,
     RuntimeRoute,
     TransferCapabilities,
     TransferProfile,
+    describe_live_allocations,
+    force_release_plan_scope,
+    live_allocations,
+    occupants,
+    plan_scoped_residue,
+    reclaim_plan_scoped_residue,
+    retainers,
 )
 
 __all__ = [
@@ -28,6 +37,8 @@ __all__ = [
     "ExecutionTaskIdentity",
     "MemoryPool",
     "PlanMemory",
+    "PlanState",
+    "PoolAllocation",
     "Runtime",
     "RuntimeBridge",
     "RuntimeConfigurationError",
@@ -41,4 +52,11 @@ __all__ = [
     "TransferCapabilities",
     "TransferProfile",
     "actions_by_task",
+    "describe_live_allocations",
+    "force_release_plan_scope",
+    "live_allocations",
+    "occupants",
+    "plan_scoped_residue",
+    "reclaim_plan_scoped_residue",
+    "retainers",
 ]

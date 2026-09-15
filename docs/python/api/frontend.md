@@ -50,7 +50,7 @@ it once, before any workload state exists: model and optimizer state are then
 created and imported into an initialized runtime, and planning reads the
 published `transfer_capabilities` snapshot rather than recalibrating.
 
-<!-- source-signature: src/shadowspill/pytorch/runtime_adapter/runtime.py:Runtime.__init__ -->
+<!-- source-signature: src/shadowspill/pytorch/runtime_adapter/runtime/core.py:Runtime.__init__ -->
 ```text
 Runtime(
     *,
@@ -137,8 +137,11 @@ plan's choice. The allocator's own pool also arrives with the adapter's
 statistics as `allocator_pool`, which is the one a caller on the allocation path
 usually wants.
 
-Those numbers say how many ranges a pool holds.
-`Runtime.live_allocations(pool="execution")` says *which*, returning one
+Those numbers say how many ranges a pool holds. The occupancy queries say
+*which*, and whose. They are functions over a runtime rather than methods on it,
+exported by `shadowspill.pytorch.runtime_adapter`: reading occupancy needs the
+runtime's handle and pool registry and nothing of its state machine.
+`live_allocations(runtime, pool="execution")` returns one
 `PoolAllocation` per live range in pool order. That is what a refusal for want of
 a contiguous range actually turns on: one small allocation in the wrong place
 costs the largest free range and leaves the free total almost untouched.
@@ -180,7 +183,7 @@ teardown, and one already logically freed is awaiting retirement rather than
 surviving. What is left is the thing that outlives a scope by accident, and the
 only thing a closing plan may take back.
 
-`Runtime.describe_live_allocations(pool="execution")` renders the whole
+`describe_live_allocations(runtime, pool="execution")` renders the whole
 enumeration, one line per range: allocation id, offset, sizes, role, plan and
 scope, what it is bound to, and the flags that say who owns it now, `unclaimed`
 among them. A plan that has finished is named as such -- `plan 5 task 1112
@@ -188,11 +191,11 @@ among them. A plan that has finished is named as such -- `plan 5 task 1112
 something that should have gone. This reads a pool's occupancy; deciding what to
 do about it is a separate question.
 
-`Runtime.occupants(allocations)` maps each range to the framework objects whose
+`occupants(runtime, allocations)` maps each range to the framework objects whose
 storage lies inside it -- what the range is in PyTorch's terms. A range with no
 occupant is held by something the framework does not own, and that is itself the
 answer: there is no reference for a caller to drop.
-`Runtime.retainers(held)` then names where each of those objects is
+`retainers(held)` then names where each of those objects is
 *referenced from*, since a reference can only be dropped where it is held.
 Pass `ignore` the containers the question itself built, so the answer names
 holders rather than the query. Both
@@ -830,7 +833,7 @@ budget's winner, which `winner_plans` hands the run that follows, and for a
 plan to beat the moment a later point has to beat it. It returns a
 `StepSearchReport`.
 
-<!-- source-signature: src/shadowspill/pytorch/step_search.py:plan_step_search -->
+<!-- source-signature: src/shadowspill/pytorch/step_search/__init__.py:plan_step_search -->
 ```text
 plan_step_search(
     model,
