@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import StrEnum
 
 from shadowspill.ir import ShadowSpillProgram
@@ -341,10 +342,18 @@ class AdmissionFacts:
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("admission task IDs must be unique")
 
+    #: The digest, once computed: the facts are immutable, every plan key and
+    #: certificate names them, and computing it serializes every task's facts.
+    _digest_cache: list[str] = dataclass_field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
+
     @property
     def digest(self) -> str:
-        encoded = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(encoded.encode()).hexdigest()
+        if not self._digest_cache:
+            encoded = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+            self._digest_cache.append(hashlib.sha256(encoded.encode()).hexdigest())
+        return self._digest_cache[0]
 
     def to_dict(self) -> dict[str, object]:
         return {
