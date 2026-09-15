@@ -80,8 +80,11 @@ The C entry points in `<shadowspill/pytorch_adapter.h>`, grouped in the
 [adapter C API](../c/pytorch-adapter.md): bootstrap, physical admission and
 close; the allocator callbacks; objects and storage; task boundaries and
 allocation scopes; profiling; and failure and recovery. The Python layer wraps
-them in `shadowspill.pytorch.runtime_adapter`; anything reachable through the
-runtime handle the adapter publishes is called on the neutral library directly
-rather than restated here.
+them in two places, along the same line this header draws. What needs the
+framework -- the allocator install, the storage bridge at a task boundary -- is
+wrapped in `shadowspill.pytorch`; everything reachable through the runtime handle
+the adapter publishes is called from `shadowspill.runtime`, which imports no
+framework at all, rather than restated in the frontend. The rule is the same one
+stated for the header: a call the neutral runtime already owns is made there.
 
 Previous: [Events](events.md). Next: [Timelines](timelines.md).

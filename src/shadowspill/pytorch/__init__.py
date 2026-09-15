@@ -1,5 +1,17 @@
 """Public PyTorch values and planning entrypoints for ShadowSpill."""
 
+from shadowspill.runtime import (
+    MemoryPool,
+    RuntimeConfigurationError,
+    TransferCapabilities,
+    TransferProfile,
+)
+from shadowspill.runtime.failures import (
+    ExecutionTaskIdentity,
+    RuntimeExecutionError,
+    RuntimeFailureDiagnostics,
+)
+
 from .api import build_step_programs, plan_forward, plan_step
 from .callables import PlannedForward, PlannedTrainStep
 from .contracts import (
@@ -39,16 +51,7 @@ from .diagnostics import (
 )
 from .invocation import InvocationResult
 from .partition import PartitionPolicy, PartitionSpec
-from .runtime_adapter import (
-    ExecutionTaskIdentity,
-    MemoryPool,
-    Runtime,
-    RuntimeConfigurationError,
-    RuntimeExecutionError,
-    RuntimeFailureDiagnostics,
-    TransferCapabilities,
-    TransferProfile,
-)
+from .runtime import Runtime
 from .sharing import (
     ObjectConsistency,
     SharedInput,
