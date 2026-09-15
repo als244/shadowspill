@@ -223,7 +223,7 @@ def _resolve_training_manifests(
             inventory.compile_tasks,
             environment=environment,
             profile_cache=stores.profiles,
-            compiler=profiler,
+            compiler=profiler.executables,
             progress=lambda index, total, state, digest: timer.progress(
                 f"compiled manifest {index}/{total} {state}: {digest[:12]}"
             ),
@@ -272,7 +272,7 @@ def release_build_executables(
     """Release the profiler's compiled callables and prove the pool is back
     where planning left it."""
 
-    profiled.profiler.discard_compiled_tasks()
+    profiled.profiler.executables.discard()
     message = wait_allocator_idle(
         installed.library, installed.runtime_handle, problem="compiled task release"
     )
