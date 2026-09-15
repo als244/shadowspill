@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from shadowspill.schema import artifact_schema
@@ -44,8 +43,10 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
         f"{path}.action_destination_leases",
     )
 
-    def lifetime(item: dict[str, Any], item_path: str) -> LeaseLifetime:
-        return LeaseLifetime(
+    def lifetime_fields(item: dict[str, Any], item_path: str) -> dict[str, Any]:
+        """A lease lifetime's fields, for the lifetime or the placement built on it."""
+
+        return dict(
             lease_id=_integer(item.get("lease_id"), f"{item_path}.lease_id"),
             bytes=_integer(item.get("bytes"), f"{item_path}.bytes"),
             alignment=_integer(item.get("alignment"), f"{item_path}.alignment"),
@@ -93,7 +94,7 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
         required_bytes=_integer(data.get("required_bytes"), f"{path}.required_bytes"),
         placements=tuple(
             FixedLayoutPlacement(
-                **asdict(lifetime(item, f"{path}.placements[{index}]")),
+                **lifetime_fields(item, f"{path}.placements[{index}]"),
                 offset=_integer(
                     item.get("offset"), f"{path}.placements[{index}].offset"
                 ),
@@ -188,7 +189,7 @@ def _fixed_layout_from_value(value: object, path: str) -> FixedPhysicalLayout:
             for item in (_mapping(raw, f"{path}.action_destination_leases[{index}]"),)
         ),
         dynamic_lifetimes=tuple(
-            lifetime(item, f"{path}.dynamic_lifetimes[{index}]")
+            LeaseLifetime(**lifetime_fields(item, f"{path}.dynamic_lifetimes[{index}]"))
             for index, raw in enumerate(dynamic)
             for item in (_mapping(raw, f"{path}.dynamic_lifetimes[{index}]"),)
         ),

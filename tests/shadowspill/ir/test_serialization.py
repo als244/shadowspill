@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from shadowspill.ir import (
@@ -150,3 +151,17 @@ def test_ir_import_does_not_load_framework_or_backends() -> None:
     assert "torch" not in imported
     assert "mlops" not in imported
     assert not any(name.startswith("shadowspill.runtime") for name in imported)
+
+
+def test_a_program_digest_is_computed_once_and_a_copy_computes_its_own() -> None:
+    """Every key and record names the digest, and computing it serializes the
+    whole program, so it is kept; a copy made by `replace` starts without it."""
+
+    program = representative_program()
+    first = program.digest
+    assert program.digest == first
+    assert program._digest_cache == [first]
+    copy = replace(program, devices=program.devices)
+    assert copy._digest_cache == []
+    assert copy.digest == first
+    assert ShadowSpillProgram.from_dict(program.to_dict()).digest == first
