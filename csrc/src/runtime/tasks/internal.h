@@ -223,4 +223,35 @@ ShadowSpillStatus shadowspill_after_task_record(
     ShadowSpillBackendStream compute_stream
 );
 
+/* The task table's own parts; see task_table.c for what each file is. */
+uint64_t shadowspill_task_bucket(
+    const ShadowSpillTaskTable *table,
+    uint64_t task_id
+);
+
+ShadowSpillTaskRecord *shadowspill_task_find_unlocked(
+    const ShadowSpillTaskTable *table,
+    uint64_t task_id
+);
+
+void shadowspill_task_destroy_record(ShadowSpillTaskRecord *record);
+
+int shadowspill_task_compare_release_bindings(const void *left, const void *right);
+
+int shadowspill_task_same_description(
+    const ShadowSpillTaskRecord *record,
+    const ShadowSpillTaskDescription *description,
+    uint8_t boundary_kind
+);
+
+ShadowSpillTaskRecord *shadowspill_task_create_record(
+    ShadowSpillPlan *plan,
+    const ShadowSpillTaskDescription *description,
+    uint8_t boundary_kind
+);
+
+int shadowspill_task_valid_allocation_contract(
+    const ShadowSpillTaskDescription *description
+);
+
 #endif

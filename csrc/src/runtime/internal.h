@@ -41,6 +41,12 @@ struct ShadowSpillRuntime {
     pthread_mutex_t mutex;
     pthread_mutex_t failure_lock;
     ShadowSpillIdleWakeup idle_wakeup;
+    /* One flag per primitive that has no safe destroy before it is created, so
+     * a runtime that failed partway through creation is torn down by asking
+     * what it reached rather than by unwinding at each place it can fail. */
+    uint8_t mutex_initialized;
+    uint8_t failure_lock_initialized;
+    uint8_t idle_wakeup_initialized;
     pthread_t worker_thread;
     int worker_started;
     _Atomic uint8_t closing;
@@ -165,5 +171,9 @@ static inline void shadowspill_cpu_relax(void) {
 void *shadowspill_worker_main(void *pointer);
 
 void shadowspill_notify_worker(ShadowSpillRuntime *runtime);
+
+/* Shared between the runtime's own files; see runtime_open.c for the order. */
+void shadowspill_runtime_release_resources(ShadowSpillRuntime *runtime);
+void shadowspill_runtime_release_primitives(ShadowSpillRuntime *runtime);
 
 #endif

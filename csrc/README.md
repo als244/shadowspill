@@ -6,6 +6,10 @@ genuinely pluggable: the device backends and the PyTorch adapter.
 ```text
 csrc/
 ├── include/shadowspill/   every public header the library exports
+│   ├── runtime/           the runtime API by subsystem, included by the
+│   │                      umbrella `runtime.h`: vocabulary, descriptions,
+│   │                      diagnostics, lifecycle, pools, objects, plan,
+│   │                      tasks, telemetry
 │   └── pressurefit/       the shipped search's own header, beside the generic
 │                          planner header rather than inside it
 ├── src/
@@ -22,13 +26,27 @@ csrc/
 │   │       │              digests
 │   │       └── algorithms/
 │   │           └── pressurefit/  the search that ships, over the simulator
-│   │               └── candidates/  one candidate's stages, and the layers
-│   │                                beneath them: workspaces, memos, the
-│   │                                plan, the repairs, the work accounting
+│   │               ├── candidates/  one candidate's stages, and the layers
+│   │               │                beneath them: workspaces, memos, the
+│   │               │                plan, the repairs, the work accounting
+│   │               ├── problem/     one problem prepared once: its buffers,
+│   │               │                the facts derived from the program, the
+│   │               │                floor it may not go below, the placement
+│   │               ├── residency/   reducing what is resident, one cut at a
+│   │               │                time: spans, cuts, the index, the tree,
+│   │               │                the heap, the loop that drives them
+│   │               └── schedule/    where the transfers go: pressure,
+│   │                                triggers, the clamp, and what is emitted
 │   └── runtime/           pools, leases, objects, transfers, and the worker,
-│       ├── memory/          split by subsystem: ranges, pools, leases,
-│       ├── objects/          retirement
-│       ├── tasks/
+│       │                  split by subsystem; the runtime object itself is
+│       │                  opened, closed, grown and read in four files here
+│       ├── memory/          the arena and what it hands out
+│       │   ├── memory_pool/   arena, records, locks, leases, causal handoff
+│       │   └── allocations/   one allocation: indexed, owned, made, freed
+│       ├── objects/          the table, its owners, its allocations, and
+│       │                     handing an object to the caller
+│       ├── tasks/            the table, the record, admission, the handles,
+│       │                     the boundaries, and the scopes between them
 │       ├── transfers/
 │       ├── sync/
 │       ├── plan/
@@ -62,9 +80,12 @@ thread name, and the logical CPU count. Everything else it needs - threads,
 mutexes, atomics - comes from pthreads and `<stdatomic.h>`, which a Windows
 build gets from its toolchain rather than from a shim here.
 
-Public headers live in `include/shadowspill/`. A private header named
-`internal.h` belongs to the directory holding it, and is included by path from
-anywhere else, so `"internal.h"` always means this directory's.
+Public headers live in `include/shadowspill/`. `runtime.h` is an umbrella: it
+includes one header per subsystem from `include/shadowspill/runtime/`, so a
+caller may take the whole API as before or just the part it uses, and each part
+compiles on its own. A private header named `internal.h` belongs to the
+directory holding it, and is included by path from anywhere else, so
+`"internal.h"` always means this directory's.
 The adapter adds one refinement: a directory whose header the C++ storage
 operators include -- `allocator/`, `failure/`, `tasks/`, `storage/` -- keeps
 that header free of C11 atomics, and its C files include the adapter's state
