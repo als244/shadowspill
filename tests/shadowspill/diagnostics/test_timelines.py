@@ -6,15 +6,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from shadowspill.ir import MemoryActionKind
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
-from shadowspill.pytorch.diagnostics.collection import (
+from shadowspill.diagnostics.collection import (
     _lane_summary,
     _object_relations,
     _transfer_record,
 )
-from shadowspill.pytorch.diagnostics.execution import TransferRecord
-from shadowspill.pytorch.runtime_adapter.trace import (
+from shadowspill.diagnostics.step import TransferRecord
+from shadowspill.ir import MemoryActionKind
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.runtime.trace import (
     RuntimeTraceEvent,
     RuntimeTraceEventKind,
 )

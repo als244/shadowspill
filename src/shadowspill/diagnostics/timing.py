@@ -1,32 +1,36 @@
-"""Mutable timing state used only while one execution trace is armed."""
+"""What one invocation timed, and the markers it timed with.
+
+Every instant here is a `Marker` the runtime recorded on the compute stream, and
+every stream is the integer handle the framework names it by. Nothing in this
+module needs a framework: the frontend says when to record, and the runtime says
+when the device got there.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
-
-import torch
 
 from shadowspill.ir import MemoryAction
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
-from shadowspill.pytorch.lowering.training import TrainingTaskEntrypoint
 from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.timing import Marker
 from shadowspill.simulator import SimulationResult
+from shadowspill.task.entrypoints import TaskEntrypoint
 
 
 @dataclass(slots=True)
 class ArmedTaskTiming:
     """Reusable event and host-clock state for one execution task."""
 
-    entrypoint: TrainingTaskEntrypoint
+    entrypoint: TaskEntrypoint
     expected_profile_seconds: float
     execution_ordinal: int
     semantic_name: str
-    readiness_event: torch.cuda.Event
-    inputs_ready_event: torch.cuda.Event
-    start_event: torch.cuda.Event
-    end_event: torch.cuda.Event
+    readiness_event: Marker
+    inputs_ready_event: Marker
+    start_event: Marker
+    end_event: Marker
     #: Four instants that partition one task's frontend cycle with no gap:
     #: entering the opening boundary, leaving it for the compiled call, the
     #: call returning, and leaving the closing boundary. Every duration
@@ -53,9 +57,9 @@ class ArmedTaskTiming:
 class ArmedExecutionTiming:
     """Mutable trace state spanning one complete planned invocation."""
 
-    origin_event: torch.cuda.Event
-    start_event: torch.cuda.Event
-    end_event: torch.cuda.Event
+    origin_event: Marker
+    start_event: Marker
+    end_event: Marker
     tasks: dict[str, ArmedTaskTiming]
     task_order: tuple[str, ...]
     started: bool = False
@@ -64,7 +68,7 @@ class ArmedExecutionTiming:
     dispatch_call_finished_ns: int = 0
     prior_invocation_drain_ns: int = 0
     dispatch_initial_actions_ns: int = 0
-    stream: torch.cuda.Stream | None = None
+    stream: int | None = None
     statistics_before: AdapterStatistics | None = None
     actions: tuple[MemoryAction, ...] = ()
     #: The invocation's always-on timeline, whose cycle the summary reports
@@ -93,13 +97,24 @@ class InvocationTimeline:
     origin to successor, so it is known only once a successor exists.
     """
 
-    origin: torch.cuda.Event
-    span_start: torch.cuda.Event
-    span_end: torch.cuda.Event
+    origin: Marker
+    span_start: Marker
+    span_end: Marker
     step_number: int = 0
-    successor: torch.cuda.Event | None = None
+    successor: Marker | None = None
     started: bool = False
     finished: bool = False
+
+    def release(self) -> None:
+        """Give this timeline's three markers back to the runtime.
+
+        The successor belongs to whoever recorded it -- the next invocation's
+        origin, or the end marker -- so it is not released here.
+        """
+
+        self.origin.release()
+        self.span_start.release()
+        self.span_end.release()
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,26 +155,26 @@ class InvocationTimelines:
     successor of the previous one; `mark_end()` records a marker that
     completes the current invocation's cycle where the next invocation's
     origin would; `drain()` returns every invocation whose cycle is complete,
-    once each. Timelines are reused only after they were drained, so an event
+    once each. Timelines are reused only after they were drained, so a marker
     is never re-recorded while a reading of it is pending; a caller that never
     drains loses the oldest timelines past `capacity`, never a running one.
     """
 
     def __init__(
         self,
-        event_factory: Callable[[], Any],
+        runtime_handle: int,
         *,
         capacity: int = 16,
     ) -> None:
         if capacity < 2:
             raise ValueError("invocation timeline capacity must be at least 2")
-        self._event_factory = event_factory
+        self._runtime_handle = runtime_handle
         self._capacity = capacity
         self._timelines: list[InvocationTimeline] = []
         self._pending: list[InvocationTimeline] = []
         self._free: list[InvocationTimeline] = []
         self._current: InvocationTimeline | None = None
-        self._end_marker: Any = None
+        self._end_marker: Marker | None = None
 
     @property
     def current(self) -> InvocationTimeline | None:
@@ -171,12 +186,15 @@ class InvocationTimelines:
 
         return self._current is not None and not self._current.started
 
+    def _marker(self) -> Marker:
+        return Marker(self._runtime_handle)
+
     def _acquire(self) -> InvocationTimeline:
         if self._free:
             return self._free.pop()
         if len(self._timelines) < self._capacity:
             timeline = InvocationTimeline(
-                self._event_factory(), self._event_factory(), self._event_factory()
+                self._marker(), self._marker(), self._marker()
             )
             self._timelines.append(timeline)
             return timeline
@@ -185,7 +203,7 @@ class InvocationTimelines:
         dropped = self._pending.pop(0)
         return dropped
 
-    def begin(self, step_number: int, stream: Any) -> InvocationTimeline:
+    def begin(self, step_number: int, stream: int) -> InvocationTimeline:
         """Record where an invocation begins on the stream; return its timeline."""
 
         timeline = self._acquire()
@@ -201,26 +219,26 @@ class InvocationTimelines:
         self._pending.append(timeline)
         return timeline
 
-    def start_span(self, stream: Any) -> None:
+    def start_span(self, stream: int) -> None:
         timeline = self._current
         if timeline is not None and not timeline.started:
             timeline.span_start.record(stream)
             timeline.started = True
 
-    def end_span(self, stream: Any) -> None:
+    def end_span(self, stream: int) -> None:
         timeline = self._current
         if timeline is not None and not timeline.finished:
             timeline.span_end.record(stream)
             timeline.finished = True
 
-    def mark_end(self, stream: Any) -> None:
+    def mark_end(self, stream: int) -> None:
         """Complete the current invocation's cycle where the next one would begin."""
 
         timeline = self._current
         if timeline is None or timeline.successor is not None:
             return
         if self._end_marker is None:
-            self._end_marker = self._event_factory()
+            self._end_marker = self._marker()
         self._end_marker.record(stream)
         timeline.successor = self._end_marker
 
@@ -231,23 +249,33 @@ class InvocationTimelines:
         keep: list[InvocationTimeline] = []
         for timeline in self._pending:
             successor = timeline.successor
+            origin, span_start = timeline.origin, timeline.span_start
+            span_end = timeline.span_end
             if successor is None or not (timeline.started and timeline.finished):
                 keep.append(timeline)
                 continue
-            successor.synchronize()
+            # A successor exists, so this cycle is closed and the only thing
+            # left is the device reaching its end. Wait for that one instant --
+            # not for the stream, and not for anything after it -- so a caller
+            # that closes a cycle can read it in the next breath.
+            successor.wait()
+            cycle = successor.nanoseconds_since(origin)
+            if cycle is None:
+                keep.append(timeline)
+                continue
+            opening = span_start.nanoseconds_since(origin)
+            span = span_end.nanoseconds_since(span_start)
+            tail = successor.nanoseconds_since(span_end)
+            if opening is None or span is None or tail is None:
+                keep.append(timeline)
+                continue
             done.append(
                 InvocationTiming(
                     step_number=timeline.step_number,
-                    cycle_seconds=float(timeline.origin.elapsed_time(successor)) / 1e3,
-                    opening_delay_seconds=(
-                        float(timeline.origin.elapsed_time(timeline.span_start)) / 1e3
-                    ),
-                    selected_span_seconds=(
-                        float(timeline.span_start.elapsed_time(timeline.span_end)) / 1e3
-                    ),
-                    exposed_tail_seconds=(
-                        float(timeline.span_end.elapsed_time(successor)) / 1e3
-                    ),
+                    cycle_seconds=cycle / 1e9,
+                    opening_delay_seconds=opening / 1e9,
+                    selected_span_seconds=span / 1e9,
+                    exposed_tail_seconds=tail / 1e9,
                 )
             )
             if timeline is self._current:
@@ -257,6 +285,19 @@ class InvocationTimelines:
             self._free.append(timeline)
         self._pending = keep
         return tuple(done)
+
+    def release(self) -> None:
+        """Give every marker back to the runtime; the timelines are spent."""
+
+        for timeline in self._timelines:
+            timeline.release()
+        if self._end_marker is not None:
+            self._end_marker.release()
+            self._end_marker = None
+        self._timelines.clear()
+        self._pending.clear()
+        self._free.clear()
+        self._current = None
 
 
 __all__ = [

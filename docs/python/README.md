@@ -32,6 +32,8 @@ ordered outward from the framework-neutral layer to the PyTorch frontend.
 
 The supported user entrypoints are imported from `shadowspill.memory` and
 `shadowspill.pytorch`. The lower-level packages `shadowspill.ir`,
-`shadowspill.step`, `shadowspill.store`, `shadowspill.planner`,
-`shadowspill.simulator` and `shadowspill.runtime` are public for tooling,
-experiments, and independent planning.
+`shadowspill.step`, `shadowspill.task`, `shadowspill.store`,
+`shadowspill.profiling`, `shadowspill.planner`, `shadowspill.search`,
+`shadowspill.simulator`, `shadowspill.diagnostics` and `shadowspill.runtime`
+are public for tooling, experiments, and independent planning. None of them
+imports a framework, so any of them can be read without one.
