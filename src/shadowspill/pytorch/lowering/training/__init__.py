@@ -1,12 +1,13 @@
 """Partitioned training lowering built from shared lowering primitives."""
 
+from shadowspill.task.entrypoints import TaskEntrypoint
+
 from .artifacts import (
     FixedTensorBinding,
     GradientBinding,
     LoweredTrainingProgram,
     OptimizerObjectBinding,
     TrainingStorageLayout,
-    TrainingTaskEntrypoint,
 )
 from .objects import lower_training_storage_layout
 from .program import lower_partitioned_training_program
@@ -16,8 +17,8 @@ __all__ = [
     "GradientBinding",
     "LoweredTrainingProgram",
     "OptimizerObjectBinding",
+    "TaskEntrypoint",
     "TrainingStorageLayout",
-    "TrainingTaskEntrypoint",
     "lower_partitioned_training_program",
     "lower_training_storage_layout",
 ]

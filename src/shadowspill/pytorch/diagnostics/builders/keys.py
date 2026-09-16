@@ -7,9 +7,7 @@ from shadowspill.pytorch.capture.artifacts import AotGraphPair
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
 )
-from shadowspill.pytorch.lowering.training import (
-    TrainingTaskEntrypoint,
-)
+from shadowspill.task.entrypoints import TaskEntrypoint
 
 
 def _stage_key(stage: DifferentiatedStage) -> str:
@@ -39,17 +37,17 @@ def _pair_key(pair: AotGraphPair) -> dict[str, object]:
 
 
 def _entrypoint_key(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
 ) -> tuple[int, int, str, str]:
     if (
-        entrypoint.microbatch is None
-        or entrypoint.stage_index is None
-        or entrypoint.variant is None
+        entrypoint.options.repetition is None
+        or entrypoint.options.stage_index is None
+        or entrypoint.options.variant is None
     ):
         raise ValueError("entrypoint has no graph-stage identity")
     return (
-        entrypoint.microbatch,
-        entrypoint.stage_index,
-        entrypoint.variant,
-        entrypoint.phase,
+        entrypoint.options.repetition,
+        entrypoint.options.stage_index,
+        entrypoint.options.variant,
+        entrypoint.options.phase,
     )

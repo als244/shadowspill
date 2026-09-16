@@ -48,6 +48,31 @@ src/shadowspill/
 ├── step/                  a training step's shape and provenance, framework-free
 │   ├── ordering.py        StepDataOrdering: the walk through the microbatches
 │   └── program.py         StepProgram: the problems a captured step lowered to
+├── diagnostics/           what one traced step turned out to cost, as
+│   │                      immutable evidence, and the reading of it
+│   ├── step.py            the summary, the two timelines, and the clock each
+│   │                      is read against
+│   ├── timing.py          what one invocation measures about itself: the
+│   │                      markers, the armed records, the invocation timelines
+│   └── collection.py      resolving one traced step into that evidence
+├── pipeline/              the ordered work that turns a captured step into a
+│   │                      plan, minus the framework: the phase clock, the
+│   │                      budgets, the report
+│   └── admission/         what a plan needs of a live runtime: its layout, the
+│                          budget it seals, what it selected
+├── profiling/             what a task cost, and whether it kept its allocation
+│                          promise: the profile store, the compiled-manifest
+│                          cache, the invariant, the metadata, the clock
+├── task/                  one task's shape and provenance, framework-free
+│   ├── storage.py         the storage contract: roots, output views, mutations
+│   ├── allocations.py     what a task promised about its allocations, and the
+│   │                      path the profiled run observed
+│   ├── profiles.py        one measurement and the key it is filed under
+│   ├── inputs.py          what a task argument is, and the value profiled for it
+│   ├── slots.py           where a task's objects sit in its contract
+│   ├── layout.py          the compiled task's layout, and what a transition costs
+│   └── manifest.py        what a compiled task promises, and the digest of the
+│                          compilation behind it
 ├── store/                 content-addressed artifacts, and the modes that gate
 │   │                      reading and writing them
 │   ├── artifacts.py       the store itself
@@ -73,12 +98,14 @@ src/shadowspill/
 ├── runtime/               one runtime in this process, framework-neutral:
 │   │                      bootstrap, core, configuration, plan, occupancy,
 │   │                      residue, calibration, teardown, the admission replay,
-│   │                      and the failures it reports
+│   │                      the trace and telemetry it exposes, the markers a
+│   │                      caller times with, and the failures it reports
 │   ├── abi/               the ctypes projection of the C API, one module per
 │   │                      record kind
 │   ├── objects/           runtime objects: the reference, and how one is made
-│   └── plan/              one plan on the runtime: the bridge, its objects, its
-│                          admission, what it reports, and its lifecycle
+│   ├── plan/              one plan on the runtime: the bridge, its objects, its
+│   │                      admission, what it reports, and its lifecycle
+│   └── timing.py          an instant recorded on a stream, and the time between two
 ├── search/                a step planned at every geometry, budget and walk:
 │                          the geometries, the rule one point is answered by,
 │                          the refusals it records, and the report

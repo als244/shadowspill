@@ -111,6 +111,41 @@ run. `build_step_programs()` returns one per ordering; `to_json()` and `from_jso
 through a file, and `digest` identifies what it would plan as. Its fields are
 documented in [reusable artifacts](artifacts.md#stepprogram).
 
+## `shadowspill.task`
+
+One task's shape and provenance, as a frontend captured, compiled and measured it.
+`shadowspill.step` is a step's; this is a task's. Every record here is neutral, and
+everything downstream -- planning, simulation, the runtime, the diagnostics --
+reads them rather than anything a framework produced.
+
+### `shadowspill.task.storage`
+
+What a task promised about its storages. `TaskStorageContract` is the promise;
+`StorageRoot` is one storage the task reads or writes, `OutputView` is a view on
+one of its outputs, and `MutationBinding` is a mutation it declares. A contract
+that does not match what the task did is a refusal, not a warning.
+
+### `shadowspill.task.allocations`
+
+What a task promised about its allocations, and what the profiled run observed.
+`TaskAllocationContract` is the promise, `TaskAllocationEvent` and
+`TaskAllocationOperation` are the timeline it implies, and
+`TaskAllocationPathObservation` is what the allocator actually saw.
+
+### `shadowspill.task.profiles`
+
+One measurement: what the task cost, filed under the key that identifies the code
+and the values it was measured with.
+
+### `shadowspill.task.inputs`
+
+`TaskInputRole` says what a task argument is -- an activation, a parameter, a
+buffer, a constant, a piece of optimizer state. `RepresentativeInputSummary` is
+the provenance of the value profiling materialized for one argument: its geometry,
+never its contents, so a profile artifact says what was measured and carries no
+data. `REPRESENTATIVE_VALUE_POLICY` is the policy it was generated under, and a
+profile recorded under an older one is not comparable.
+
 ## `shadowspill.store`
 
 Content-addressed storage for what each stage produced, and the modes that gate
