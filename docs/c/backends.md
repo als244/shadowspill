@@ -39,9 +39,9 @@ nonzero on failure unless noted.
 | group | entries |
 |---|---|
 | memory | `allocate_device(bytes, &address)`, `free_device(address, bytes)`, `register_host_memory(address, bytes)`, `unregister_host_memory(address, bytes)` |
-| streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `wrap_stream(framework_stream_handle)` returning a token |
+| streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `wrap_stream(stream_handle)` returning a token |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
-| events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
+| events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `synchronize_event(event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
 | facts | `capabilities(&out)`, `physical_memory(&out)`, and `statistics(&out)`, the one entry here that returns nothing |
 | profiler, optional | `name_thread(name)`, `name_stream(stream, name)`, `profiler_enable(enabled)`, `range_begin(name)` returning a range, `range_end(range)` |
 
@@ -62,7 +62,11 @@ query, and wait work with. A timing event carries a device timestamp when
 recorded, and `elapsed_nanoseconds` reads the device-clock interval between
 two of them: 0 with the interval, 1 while either is still pending, -1 when the
 pair cannot be measured. `record_event` and `wait_event` enqueue without
-blocking the host; `query_event` is a nonblocking poll.
+blocking the host -- `wait_event` orders one stream behind an event on
+another -- and `query_event` is a nonblocking poll. The two calls that do block
+the calling thread are `synchronize_event`, which returns once the device has
+reached one event, and `synchronize_stream`, which returns once it has finished
+a whole stream.
 
 Profiler entries are best-effort diagnostics and never change execution
 semantics; a NULL entry is a no-op.

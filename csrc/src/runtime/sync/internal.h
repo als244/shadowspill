@@ -202,4 +202,10 @@ void shadowspill_stream_interval_discard(
     ShadowSpillStreamInterval *interval
 );
 
+/* The backend event a timing marker records on: what trace_begin measures
+ * transfer intervals from. Library-private; a caller holds the marker. */
+ShadowSpillBackendEvent shadowspill_timing_marker_event(
+    const ShadowSpillTimingMarker *marker
+);
+
 #endif

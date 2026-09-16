@@ -36,6 +36,7 @@ from shadowspill.runtime.abi import (
     configure_adapter_library,
     configure_runtime_library,
 )
+from shadowspill.runtime.abi.signatures import _RUNTIME_SIGNATURES
 from shadowspill.runtime.bootstrap import (
     InstalledRuntime,
     PoolBootstrap,
@@ -98,8 +99,6 @@ class _Function:
 class _Library:
     shadowspill_pytorch_adapter_capabilities = _Function()
     shadowspill_pytorch_runtime_handle = _Function()
-    shadowspill_pytorch_profile_range_begin = _Function()
-    shadowspill_pytorch_profile_range_end = _Function()
     shadowspill_pytorch_physical_admission = _Function()
     shadowspill_pytorch_physical_memory = _Function()
     shadowspill_pytorch_seal_physical_budget = _Function()
@@ -108,8 +107,10 @@ class _Library:
     shadowspill_pytorch_allocator_close = _Function()
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
-    shadowspill_pytorch_recover_no_progress = _Function()
+    shadowspill_pytorch_profile_range_begin = _Function()
+    shadowspill_pytorch_profile_range_end = _Function()
     shadowspill_pytorch_profiler_annotations_set = _Function()
+    shadowspill_pytorch_recover_no_progress = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_allocation_scope_begin = _Function()
     shadowspill_pytorch_allocation_scope_end = _Function()
@@ -159,8 +160,6 @@ def test_adapter_signatures_are_configured_together() -> None:
     library = _Library()
     configure_adapter_library(library)
     assert library.shadowspill_pytorch_adapter_capabilities.restype is ctypes.c_uint32
-    assert library.shadowspill_pytorch_profile_range_begin.argtypes == [ctypes.c_char_p]
-    assert library.shadowspill_pytorch_profile_range_end.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_physical_admission.argtypes == [
         ctypes.POINTER(PhysicalAdmission)
     ]
@@ -209,6 +208,8 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.c_size_t,
     ]
+    assert library.shadowspill_pytorch_profile_range_begin.argtypes == [ctypes.c_char_p]
+    assert library.shadowspill_pytorch_profile_range_end.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_scope_abort.argtypes == []
     assert library.shadowspill_pytorch_abort_task_handle.argtypes == [
         ctypes.c_size_t,
@@ -216,48 +217,16 @@ def test_adapter_signatures_are_configured_together() -> None:
 
 
 class _RuntimeLibrary:
-    """Stands in for the neutral runtime the bridge calls plan admission on."""
+    """Stands in for the neutral runtime the bridge calls plan admission on.
 
-    shadowspill_failure_reason_string = _Function()
-    shadowspill_plan_bind_object = _Function()
-    shadowspill_plan_admit_task = _Function()
-    shadowspill_plan_publish_initial_allocation = _Function()
-    shadowspill_plan_admit_fixed_layout = _Function()
-    shadowspill_plan_admit_object_acquisition = _Function()
-    shadowspill_plan_admit_action_batch = _Function()
-    shadowspill_object_handle_release = _Function()
-    shadowspill_object_release_generation = _Function()
-    shadowspill_trace_prepare = _Function()
-    shadowspill_trace_begin = _Function()
-    shadowspill_trace_end = _Function()
-    shadowspill_trace_read = _Function()
-    shadowspill_allocation_telemetry_start = _Function()
-    shadowspill_allocation_telemetry_stop = _Function()
-    shadowspill_allocation_telemetry_read = _Function()
-    shadowspill_unregister_object = _Function()
-    shadowspill_rekey_object = _Function()
-    shadowspill_object_snapshot = _Function()
-    shadowspill_object_location_snapshot = _Function()
-    shadowspill_memory_pool_live_allocations = _Function()
-    shadowspill_memory_pool_statistics = _Function()
-    shadowspill_plan_id = _Function()
-    shadowspill_plan_reclaim_scoped_leases = _Function()
-    shadowspill_runtime_next_plan_id = _Function()
-    shadowspill_runtime_plan_state = _Function()
-    shadowspill_read_object = _Function()
-    shadowspill_write_object = _Function()
-    shadowspill_plan_create = _Function()
-    shadowspill_object_handle_acquire = _Function()
-    shadowspill_task_publish_allocation = _Function()
-    shadowspill_plan_close = _Function()
-    shadowspill_plan_destroy = _Function()
-    shadowspill_plan_wait_idle = _Function()
-    shadowspill_plan_clear_tasks = _Function()
-    shadowspill_plan_seal_fixed_layout = _Function()
-    shadowspill_runtime_wait_idle = _Function()
-    shadowspill_runtime_calibrate_transfer_capabilities = _Function()
-    shadowspill_runtime_transfer_profiles = _Function()
-    shadowspill_register_object = _Function()
+    Every name the signature table declares is present, so a signature added
+    to the runtime never has to be added here as well; what the test checks is
+    the argument and result types each one is given.
+    """
+
+    def __init__(self) -> None:
+        for name, _arguments, _result in _RUNTIME_SIGNATURES:
+            setattr(self, name, _Function())
 
 
 def test_runtime_signatures_are_configured_together() -> None:

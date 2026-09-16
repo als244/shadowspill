@@ -185,9 +185,7 @@ def _submit_actions(
     )
     _require_ok(
         int(
-            runtime_library().shadowspill_submit_action_batch_handle(
-                _runtime_handle(library), handle.value, stream
-            )
+            library.shadowspill_pytorch_submit_action_batch_handle(handle.value, stream)
         ),
         "action submission",
     )
@@ -259,11 +257,7 @@ def main() -> int:
     library = installed.library
     plan = _create_plan(library)
     _require_ok(
-        int(
-            runtime_library().shadowspill_profiler_annotations_set(
-                _runtime_handle(library), 1
-            )
-        ),
+        int(library.shadowspill_pytorch_profiler_annotations_set(1)),
         "enable profiler annotations",
     )
     first = torch.full((ELEMENTS,), 1.0, device="cuda")
@@ -422,11 +416,7 @@ def main() -> int:
         "final release drain",
     )
     _require_ok(
-        int(
-            runtime_library().shadowspill_profiler_annotations_set(
-                _runtime_handle(library), 0
-            )
-        ),
+        int(library.shadowspill_pytorch_profiler_annotations_set(0)),
         "disable profiler annotations",
     )
     _require_ok(int(runtime_library().shadowspill_plan_close(plan)), "plan close")

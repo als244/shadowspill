@@ -63,11 +63,11 @@ static void count(ShadowSpillCudaBackend *backend, uint64_t *counter, uint64_t b
 }
 
 static CUstream stream_value(ShadowSpillBackendStream stream) {
-    return (CUstream)stream.words[0];
+    return (CUstream)stream;
 }
 
 static CUevent event_value(ShadowSpillBackendEvent event) {
-    return (CUevent)event.words[0];
+    return (CUevent)event;
 }
 
 /* ---------------------------------------------------------------- memory */
@@ -143,7 +143,7 @@ static int create_stream(void *state, ShadowSpillBackendStream *stream) {
     if (record_result(backend, cuStreamCreate(&created, CU_STREAM_NON_BLOCKING)) != 0) {
         return -1;
     }
-    *stream = (ShadowSpillBackendStream){.words = {(uintptr_t)created, 0U}};
+    *stream = (ShadowSpillBackendStream)(uintptr_t)created;
     count(backend, &backend->statistics.streams_created, 1U);
     return 0;
 }
@@ -168,13 +168,12 @@ static int synchronize_stream(void *state, ShadowSpillBackendStream stream) {
     return 0;
 }
 
-static ShadowSpillBackendStream wrap_stream(
-    void *state, uint64_t framework_stream_handle
+static ShadowSpillBackendStream resolve_stream(
+    void *state, uint64_t stream_handle
 ) {
     (void)state;
-    return (ShadowSpillBackendStream){
-        .words = {(uintptr_t)framework_stream_handle, 0U},
-    };
+    /* A CUDA stream is already named by the value its owner holds. */
+    return (ShadowSpillBackendStream)stream_handle;
 }
 
 /* ---------------------------------------------------------------- copies */
@@ -263,7 +262,7 @@ static int create_event(void *state, ShadowSpillBackendEvent *event, uint8_t tim
         ) != 0) {
         return -1;
     }
-    *event = (ShadowSpillBackendEvent){.words = {(uintptr_t)created, 0U}};
+    *event = (ShadowSpillBackendEvent)(uintptr_t)created;
     count(backend, &backend->statistics.events_created, 1U);
     return 0;
 }
@@ -322,6 +321,19 @@ static int wait_event(
         return -1;
     }
     count(backend, &backend->statistics.stream_waits, 1U);
+    shadowspill_cuda_range_end(backend, range);
+    return 0;
+}
+
+static int synchronize_event(void *state, ShadowSpillBackendEvent event) {
+    ShadowSpillCudaBackend *backend = state;
+    const ShadowSpillProfilerRange range =
+        shadowspill_cuda_range_begin(backend, "shadowspill.runtime.synchronize_event");
+    if (activate_context(backend) != 0 ||
+        record_result(backend, cuEventSynchronize(event_value(event))) != 0) {
+        shadowspill_cuda_range_end(backend, range);
+        return -1;
+    }
     shadowspill_cuda_range_end(backend, range);
     return 0;
 }
@@ -498,7 +510,7 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .synchronize_stream = synchronize_stream,
-        .wrap_stream = wrap_stream,
+        .resolve_stream = resolve_stream,
         .copy_host_to_device = copy_host_to_device,
         .copy_device_to_host = copy_device_to_host,
         .copy_device_to_device = copy_device_to_device,
@@ -507,6 +519,7 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
         .record_event = record_event,
         .query_event = query_event,
         .wait_event = wait_event,
+        .synchronize_event = synchronize_event,
         .elapsed_nanoseconds = elapsed_nanoseconds,
         .capabilities = capabilities,
         .physical_memory = physical_memory,

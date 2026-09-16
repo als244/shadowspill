@@ -22,6 +22,7 @@ class _Executor:
     def __init__(self, error: BaseException | None = None) -> None:
         self.error = error
         self.optimizer_released = False
+        self.timing_released = False
 
     # A training callable passes its step number; a forward callable has none.
     def __call__(self, inputs: object, step_number: int | None = None) -> object:
@@ -32,6 +33,11 @@ class _Executor:
 
     def validate_invocation(self) -> None:
         pass
+
+    def release_timing(self) -> None:
+        """Closing gives the runtime back every marker the executor held."""
+
+        self.timing_released = True
 
     def prepare_invocation(self, inputs: object) -> object:
         return inputs
@@ -156,6 +162,7 @@ def test_training_failure_releases_optimizer_state_and_closes(
     # A failed step publishes no optimizer update, and cleanup releases the
     # state with the plan either way.
     assert executor.optimizer_released
+    assert executor.timing_released
     assert state.restored
     assert runtime.released
     assert runtime.prepared_error is original
@@ -171,6 +178,9 @@ def test_close_releases_optimizer_state_and_refuses_a_later_checkpoint(
     planned.close()
 
     assert executor.optimizer_released
+    # Markers grow the runtime's timing pool, so a closed callable gives its
+    # own back rather than leaving the pool larger than it found it.
+    assert executor.timing_released
     with pytest.raises(RuntimeError, match="take the checkpoint before close"):
         planned.state_dict()
     with pytest.raises(RuntimeError, match="take the checkpoint before close"):

@@ -106,7 +106,7 @@ typedef struct ShadowSpillBackend {
     int (*synchronize_stream)(void *state, ShadowSpillBackendStream stream);
     ShadowSpillBackendStream (*wrap_stream)(
         void *state,
-        uint64_t framework_stream_handle
+        uint64_t stream_handle
     );
 
     /* Copies: asynchronous, ordered on the stream, between memory the two
@@ -158,6 +158,13 @@ typedef struct ShadowSpillBackend {
     int (*wait_event)(
         void *state,
         ShadowSpillBackendStream stream,
+        ShadowSpillBackendEvent event
+    );
+    /* Blocks the calling thread until the device reaches the event. The
+     * stream wait above orders one stream behind another; this one is how a
+     * host thread waits for work it submitted. */
+    int (*synchronize_event)(
+        void *state,
         ShadowSpillBackendEvent event
     );
     int (*elapsed_nanoseconds)(

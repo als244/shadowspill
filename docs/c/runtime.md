@@ -330,9 +330,9 @@ fills stops recording and lets the step continue, and says so through
 `event_overflow` and `allocation_event_overflow` on the summary, so a caller
 can tell an incomplete record from a complete one.
 
-`shadowspill_trace_begin()` takes the caller's origin event: a timing event
-the caller has already recorded on its compute stream and keeps alive for
-the trace. While the trace is active the worker brackets every copy it
+`shadowspill_trace_begin()` takes the caller's origin marker (see Timing
+below): a marker the caller has already recorded on its compute stream and
+keeps alive for the trace, so the trace and the caller share one clock. While the trace is active the worker brackets every copy it
 dispatches with two timing events from the runtime's timing pool on the lane,
 and the transfer's
 `SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries the copy's interval
@@ -457,6 +457,34 @@ reader needs. Several reasons share one status on purpose - a lease that
 cannot be released and a process allocator that refuses a record are both
 internal failures a caller treats alike, but a reader must be able to tell
 them apart.
+
+## Timing
+
+`<shadowspill/runtime/timing.h>`. The runtime times its own transfers with
+backend events, and these calls offer the same events to a caller timing
+anything else on the same stream, so one step's timeline has one clock rather
+than two.
+
+One thing, a marker: where an instant on a stream is recorded. A caller takes a
+marker once and records it again every step, so a loop that times the same span
+each time allocates nothing per step.
+
+| Call | Does |
+|---|---|
+| `shadowspill_timing_marker_create(runtime, &marker)` | takes a marker, before anything is recorded on it; grows the timing pool rather than spend a prepared trace's reserve |
+| `shadowspill_timing_marker_record(marker, compute_stream)` | records this instant on the compute stream, named by the integer handle its owner has, replacing any instant before it; the runtime wraps the stream through the backend |
+| `shadowspill_timing_marker_query(marker, &reached)` | whether the device has reached it, without waiting |
+| `shadowspill_timing_marker_wait(marker)` | blocks the calling thread until the device reaches it |
+| `shadowspill_timing_elapsed(from, to, &reached, &nanoseconds)` | the time between two markers; `reached` is 0 while the later one is still ahead of the device, and the time is not written |
+| `shadowspill_timing_stream_wait(runtime, compute_stream)` | blocks the calling thread until the device has finished the whole stream |
+| `shadowspill_timing_marker_release(marker)` | returns the event lease |
+
+Markers take leases from the runtime's timing event pool, which records device
+timestamps; a caller that opens one always releases it, and one that does not
+leaves the pool permanently larger. A caller that must
+block waits for the marker, which is one instant, or for the stream, which is
+everything submitted to it; both go through the backend, so a frontend never
+needs its own framework event to wait on.
 
 ## Threading
 

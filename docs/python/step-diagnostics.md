@@ -12,10 +12,14 @@ diagnostics = result.diagnostics.result()
 ```
 
 `DiagnosticsHandle.result()` (also available as `wait()`) resolves once and
-may synchronize recorded events. Resolve a traced step before launching
-another traced step. `runtime_trace=False` is the default: the runtime
-appends nothing to its trace buffers and records no timing events, so none of
-the measurement below runs in an untraced step.
+may wait for the instants it measured between. Resolve a traced step before
+launching another traced step. `runtime_trace=False` is the default: the
+runtime appends nothing to its trace buffers and records no instants, so none
+of the measurement below runs in an untraced step.
+
+Every instant here is recorded by the runtime, on the same clock as the
+transfers it times on its own lanes -- so a step's compute intervals and its
+transfer intervals are comparable without correcting between two clocks.
 
 `profiler_annotations=True` is independent. It emits ranges for the backend's
 own profiler but does not create `StepDiagnostics`.

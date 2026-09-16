@@ -8,6 +8,10 @@ invocation's origin, which is what a repeated step costs and what throughput
 divides by; the architecture page [timelines](../../architecture/timelines.md#the-step-origin-to-origin)
 defines it. This page is the API that reads it.
 
+The instants are the runtime's own, on the same clock it times its transfers
+with, so a step's cycle and the transfers inside it are comparable without
+correcting between two clocks.
+
 ## `PlannedTrainStep.invocation_timings()`
 
 ```text

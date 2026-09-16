@@ -10,9 +10,9 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from shadowspill.diagnostics.timing import InvocationTiming
 from shadowspill.planner.diagnostics.plan import PlanReport
 from shadowspill.pytorch.diagnostics.step import DiagnosticsHandle, StepResult
-from shadowspill.pytorch.diagnostics.timing import InvocationTiming
 from shadowspill.pytorch.execution import ForwardExecutor, TrainingExecutor
 from shadowspill.pytorch.guards import InputSignature, validate_training_inputs
 from shadowspill.pytorch.invocation import InvocationResult
@@ -240,6 +240,7 @@ class PlannedForward:
     def _release_executor(self) -> None:
         wait_plan_idle(self._plan_handle)
         executor = self._executor
+        executor.release_timing()
         del self._executor
         del executor
 
@@ -656,6 +657,7 @@ class PlannedTrainStep:
     def _release_executor(self) -> None:
         wait_plan_idle(self._plan_handle)
         executor = self._executor
+        executor.release_timing()
         del self._executor
         del executor
 

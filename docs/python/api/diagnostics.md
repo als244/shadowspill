@@ -104,6 +104,9 @@ the runtime's counter deltas, terminal queue state, trace capacity and overflow
 flags, and the raw runtime event records. Both are reached through
 `StepDiagnostics` rather than imported from `shadowspill.pytorch`.
 
+Every record on this page lives in `shadowspill.diagnostics`, which names no
+framework: reading a stored step's diagnostics costs no framework import.
+
 All public diagnostic records are immutable. `PlanDiagnostics.as_dict()` and
 `StepDiagnostics.as_dict()` return JSON-friendly nested dictionaries for
 storage or analysis; the [StepResult diagnostics

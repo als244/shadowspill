@@ -35,7 +35,7 @@ from .statistics import (
     MemoryPoolStatistics,
     TransferProfile,
 )
-from .trace import AllocationEvent, BackendEvent, TraceEvent, TraceSummary
+from .trace import AllocationEvent, TraceEvent, TraceSummary
 
 
 def configure_adapter_library(library: Any) -> None:
@@ -59,6 +59,33 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     ("shadowspill_plan_close", [ctypes.c_size_t], ctypes.c_uint32),
     ("shadowspill_plan_destroy", [ctypes.c_size_t], None),
     ("shadowspill_plan_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),
+    (
+        "shadowspill_timing_marker_create",
+        [ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_timing_marker_record",
+        [ctypes.c_void_p, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_timing_marker_query",
+        [ctypes.c_void_p, ctypes.c_void_p],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_timing_elapsed",
+        [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p],
+        ctypes.c_uint32,
+    ),
+    ("shadowspill_timing_marker_wait", [ctypes.c_void_p], ctypes.c_uint32),
+    (
+        "shadowspill_timing_stream_wait",
+        [ctypes.c_size_t, ctypes.c_uint64],
+        ctypes.c_uint32,
+    ),
+    ("shadowspill_timing_marker_release", [ctypes.c_void_p], None),
     ("shadowspill_plan_clear_tasks", [ctypes.c_size_t], ctypes.c_uint32),
     ("shadowspill_plan_seal_fixed_layout", [ctypes.c_size_t], ctypes.c_uint32),
     (
@@ -125,7 +152,7 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     ),
     (
         "shadowspill_trace_begin",
-        [ctypes.c_size_t, ctypes.c_uint64, BackendEvent],
+        [ctypes.c_size_t, ctypes.c_uint64, ctypes.c_void_p],
         ctypes.c_uint32,
     ),
     (
