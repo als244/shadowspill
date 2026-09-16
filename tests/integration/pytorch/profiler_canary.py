@@ -10,12 +10,12 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from canary_phases import phase
-from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import capture_forward_stage_artifacts
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.pytorch.materialization import flat_runtime_arguments
 from shadowspill.pytorch.partition import partition_export
 from shadowspill.pytorch.profiling import (
@@ -45,7 +45,7 @@ def main() -> int:
     phase("bootstrap")
     installed = install_runtime(
         adapter_path,
-        frontend=PyTorchProcessAllocator(),
+        frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
