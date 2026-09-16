@@ -9,7 +9,7 @@ csrc/
 │   ├── runtime/           the runtime API by subsystem, included by the
 │   │                      umbrella `runtime.h`: vocabulary, descriptions,
 │   │                      diagnostics, lifecycle, pools, objects, plan,
-│   │                      tasks, telemetry
+│   │                      tasks, telemetry, timing
 │   └── pressurefit/       the shipped search's own header, beside the generic
 │                          planner header rather than inside it
 ├── src/
@@ -47,18 +47,21 @@ csrc/
 │       │                     handing an object to the caller
 │       ├── tasks/            the table, the record, admission, the handles,
 │       │                     the boundaries, and the scopes between them
-│       ├── transfers/
-│       ├── sync/
-│       ├── plan/
-│       ├── telemetry/
-│       └── worker/          one action handled, dispatched, completed
+│       ├── transfers/        the lanes, and what is in flight on each
+│       ├── sync/             event leases and their pools, completion tracking,
+│       │                     the quiescence wake-up, and the markers a caller
+│       │                     times its own work with
+│       ├── plan/             a plan's admission, its lifetime, its residue
+│       ├── telemetry/        the trace rings, the profiler, the statistics
+│       └── worker/           one action handled, dispatched, completed
 ├── backends/              dlopened device backends: mock and provider
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
     ├── include/shadowspill/  its one public header
     ├── lifecycle/         bootstrap, close, and the physical-memory ledger
     ├── allocator/         the callbacks PyTorch's pluggable allocator makes
     ├── failure/           what a failed call latches, and the report it makes
-    ├── tasks/             the task boundary: ranges, scopes, the action batch
+    ├── tasks/             the task boundary a planned task runs between,
+    │                      the thread's task range, and the scopes outside one
     └── storage/           PyTorch storages over runtime leases
 ```
 

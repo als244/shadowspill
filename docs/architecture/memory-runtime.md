@@ -254,5 +254,4 @@ See [Interpreting StepResult diagnostics](../python/step-diagnostics.md) for
 allocator/lease evidence, runtime counters, transfer frontiers, task-boundary
 timing, and overflow handling.
 
-Previous: [Shared objects](shared-objects.md). Next: [Task
-boundaries](task-boundaries.md).
+Previous: [Events](events.md). Next: [Task boundaries](task-boundaries.md).

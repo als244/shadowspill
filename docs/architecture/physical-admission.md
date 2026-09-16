@@ -93,7 +93,7 @@ Let:
 - $B_s$ be the public spill-memory budget.
 
 `AdmissionFacts` records both $P$ and $C$. The difference $P-C$ is capacity
-leeway (`pytorch.planning.common.capacity_leeway`). A search subtracts each
+leeway (`shadowspill.pipeline.common.capacity_leeway`). A search subtracts each
 selected task's actual workspace at that task's boundary; neither it nor the
 leeway is a monolithic workspace partition reserved at every boundary.
 
@@ -542,7 +542,7 @@ the supported contract.
 | `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
 | `shadowspill.planner.admission.layout.build` | Measure a layout, certify it, or both. |
 | `shadowspill.planner.admission.refinement` | Certify the fixed layout of the plan the search placed. |
-| `shadowspill.pytorch.planning.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |
+| `shadowspill.pipeline.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |
 | `csrc/src/planner/admission/` | Operations, lifetimes, placement, and the pool replay, over a `ShadowSpillScheduleContext`. |
 | `csrc/src/runtime/plan/fixed_layout.c` | Reserve the parent slice, seal identities, adopt subleases, and insert dependency waits. |
 | `csrc/src/runtime/memory/memory_pool/` | Own dynamic ranges outside the fixed slice and enforce physical accounting. |

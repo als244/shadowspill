@@ -1,8 +1,9 @@
 # Intermediate representation
 
-The ShadowSpill IR is framework-neutral. Its public Python values live in
-`shadowspill.ir`; the same concepts are flattened into C inputs at planner,
-simulator, and runtime boundaries.
+The ShadowSpill IR is framework-neutral. The program, the schedule and the
+plan are `shadowspill.ir`; the question asked about a program belongs to the
+planner and is `shadowspill.planner.program_inputs`. The same concepts are
+flattened into C inputs at planner, simulator, and runtime boundaries.
 
 Four types carry the whole story, and they are worth keeping straight
 because three of them are easy to confuse:

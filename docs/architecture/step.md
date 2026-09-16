@@ -9,7 +9,7 @@ a framework.
 
 `StepDataOrdering` and `StepProgram` speak the vocabulary of a training step --
 microbatches, passes, a recurrent role and an optional initial one. That is not
-planning vocabulary, so they do not belong to the [planner](planning.md), which
+planning vocabulary, so they do not belong to the [planner](planning-pipeline.md), which
 is handed a [problem](planning-problem.md) and has no opinion about what shape
 of step produced it.
 
@@ -81,7 +81,7 @@ capture → lowering → StepProgram → ShadowSpillPlanningProblem → search �
 ```
 
 `build_step_programs()` stops at the `StepProgram`, one per ordering;
-`plan_program()` takes one of a program's problems. The [planning orchestration](planning.md) page covers what happens
+`plan_program()` takes one of a program's problems. The [planning pipeline](planning-pipeline.md) page covers what happens
 after, and [reusable artifacts](../python/api/artifacts.md) documents the fields.
 
 Previous: [Graph-pair construction](graph-pair-construction.md). Next:

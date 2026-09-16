@@ -83,24 +83,25 @@ is priced before any of it is committed.
    for: tasks over objects, alternatives, phases and sinks, and identity.
 9. [The planning problem](architecture/planning-problem.md) — the question
    asked about a program: boundaries, machine, budget, and what it omits.
-10. [Plan search](architecture/search.md) — what the planner asks of a search
-    and promises in return, and what a search is free to decide.
-11. [Writing a search algorithm](architecture/search-algorithm.md) — the
-    methods to implement, every argument, the defaults, and a worked example.
-12. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
-    complete selections across occurrence-level graph-pair options.
-13. [PressureFit](architecture/pressurefit.md) — the search that ships:
-    formulation, bounded policy search, repair, and pseudocode.
-14. [Physical admission and offset handling](architecture/physical-admission.md)
-    — allocation lifetimes, fixed placement, dynamic scratch, and causal reuse.
-15. [From a resolved program to leases](architecture/admission-leases.md) —
-    what a schedule allocates and when each lease is live.
-16. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
-    given addresses and what the cost of doing so depends on.
-17. [Simulation](architecture/simulation.md) — the deterministic timeline a
+10. [Simulation](architecture/simulation.md) — the deterministic timeline a
     search prices its candidates against: compute, transfer, capacity, and
-    causal-dependency replay.
-18. [Planning orchestration](architecture/planning.md) — reusable artifacts,
+    causal-dependency replay. Read before the searches that price against it.
+11. [Plan search](architecture/search.md) — what the planner asks of a search
+    and promises in return, and what a search is free to decide.
+12. [Writing a search algorithm](architecture/search-algorithm.md) — the
+    methods to implement, every argument, the defaults, and a worked example.
+13. [Graph-pair selection](architecture/graph-pair-selection.md) — bounded
+    complete selections across occurrence-level graph-pair options.
+14. [PressureFit](architecture/pressurefit.md) — the search that ships:
+    formulation, bounded policy search, repair, and pseudocode.
+15. [Physical admission and offset
+    handling](architecture/physical-admission.md) — allocation lifetimes, fixed
+    placement, dynamic scratch, and causal reuse.
+16. [From a resolved program to leases](architecture/admission-leases.md) —
+    what a schedule allocates and when each lease is live.
+17. [Fixed-offset placement](architecture/fixed-placement.md) — how leases are
+    given addresses and what the cost of doing so depends on.
+18. [The planning pipeline](architecture/planning-pipeline.md) — reusable artifacts,
     transfer inputs, callable publication, and PlanReport.
 
 ### Execution
@@ -108,38 +109,38 @@ is priced before any of it is committed.
 How a plan is run and measured: the runtime and its boundaries, the backend
 underneath, and the clocks a step is read on.
 
-19. [Plan identity](architecture/plan-identity.md) — what names a plan, why
-    a task id cannot, what a lease records, and the registry that answers an
-    id after its plan is gone.
+19. [Plan identity](architecture/plan-identity.md) — what names a plan, why a
+    task id cannot, what a lease records, and the registry that answers an id
+    after its plan is gone.
 20. [Shared objects](architecture/shared-objects.md) — one value reached by
     several plans: the object, its per-pool locations, the leases those hold,
     and why binding an object allocates nothing.
-21. [Memory runtime](architecture/memory-runtime.md) — pools, leases, worker,
-    failure, and tracing.
-22. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+21. [Backends](architecture/backends.md) — the one component that knows a
+    platform, the driver-level table it implements, and how a new provider
+    plugs in. The three pages after it are built on that table.
+22. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
+    device and pinned host, as ShadowSpill objects built on the backend.
+23. [Transfers](architecture/transfers.md) — routes, the lane each owns,
+    dispatch order, and calibration on those lanes.
+24. [Events](architecture/events.md) — event leases and pools, sealing,
+    completion tracking, and the timing pool behind traced intervals.
+25. [Memory runtime](architecture/memory-runtime.md) — leases, causal reuse,
+    the worker, failure, and tracing, over the pools, lanes and events above.
+26. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-23. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
+27. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
     a failure is handled at each scope, and why a process that is exiting is
     abandoned rather than closed.
-24. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+28. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
-    between one step and the next, the first-use order of the opening
-    restore, and what step time means.
-25. [Backends](architecture/backends.md) — the one component that knows a
-    platform, the driver-level table it implements, and how a new provider
-    plugs in.
-26. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
-    device and pinned host, as ShadowSpill objects built on the backend.
-27. [Transfers](architecture/transfers.md) — routes, the lane each owns,
-    dispatch order, and calibration on those lanes.
-28. [Events](architecture/events.md) — event leases and pools, sealing,
-    completion tracking, and the timing pool behind traced intervals.
+    between one step and the next, the first-use order of the opening restore,
+    and what step time means.
 29. [PyTorch adapter](architecture/adapter.md) — what the adapter library is
     made of, how its source is laid out, what it requires of a backend, and
     what it exposes upward.
-30. [Timelines](architecture/timelines.md) — the two clocks a traced step
-    is measured on, the origin they share, and what an untraced step pays.
+30. [Timelines](architecture/timelines.md) — the two clocks a traced step is
+    measured on, the origin they share, and what an untraced step pays.
 
 ## Python
 

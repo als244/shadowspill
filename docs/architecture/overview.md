@@ -80,10 +80,10 @@ dependency, and a Python package above them:
 
 | Library | Holds | Knows about |
 |---|---|---|
-| `libshadowspill.so` | the neutral C library: IR digests, the simulator, physical admission, the search that ships, and the runtime with its [memory pools](memory-pools.md), [transfers](transfers.md), [events](events.md), task boundaries, and tracing. Its planner header names no search; the shipped one has a header of its own beside it | the backend contract only |
+| `libshadowspill.so` | the neutral C library: IR digests, the simulator, physical admission, the search that ships, and the runtime with its [memory pools](memory-pools.md), [transfers](transfers.md), [events](events.md), task boundaries, tracing, and the profiler ranges and timing markers a caller measures with. Its planner header names no search; the shipped one has a header of its own beside it | the backend contract only |
 | `libshadowspill_backend_<provider>.so` | one provider's implementation of the [backend contract](backends.md): device allocation, host registration, streams, copies, events, profiler | its driver and nothing of ShadowSpill's |
-| `libshadowspill_pytorch.so` | the [PyTorch adapter](adapter.md): the pluggable allocator, objects and storage views, task boundaries, tracing | PyTorch and the neutral runtime |
-| `shadowspill` (Python) | capture, lowering, profiling, planning orchestration, the planned callables, diagnostics | the adapter's C API and the neutral library |
+| `libshadowspill_pytorch.so` | the [PyTorch adapter](adapter.md): the pluggable allocator, objects and storage views, and the task boundary | PyTorch and the neutral runtime |
+| `shadowspill` (Python) | two halves along one line. `shadowspill.pytorch` captures, lowers, compiles and profiles a step, and holds the planned callables. Everything else -- the IR, the step, one task's shape, the store, profiling records, the planner, the search, the simulator, the pipeline, the runtime and the diagnostics -- names no framework and imports none | the frontend half knows PyTorch and the adapter's C API; the neutral half knows only the neutral library |
 
 The runtime is handed a backend table at create and never links a provider;
 the adapter opens the backend library by name at bootstrap. Every object with
@@ -200,7 +200,8 @@ services route submission, completion frontiers, and deferred releases without
 holding a general-purpose global runtime mutex.
 
 At the Python boundary, `submit()` returns one invocation-owned result handle.
-Its `result()` method synchronizes that invocation's public completion event.
+Its `result()` method waits for the instant the runtime recorded when that
+invocation's work finished -- the frontend holds no device event of its own.
 Different planned callables can therefore be host-dispatched together, while
 each callable retains a simple single-outstanding-invocation invariant. A
 later invocation waits only for the same plan's terminal actions and
@@ -219,7 +220,7 @@ retirements; unrelated plans continue independently.
 | Runtime | The registries and the work across them: which pools, routes and plan ids exist and what each names, objects, calibration, event and timing pools, task boundaries, failure state, and worker progress | Graph capture or model semantics, or anything a pool or a plan answers for itself |
 | Memory pool | One arena and its suballocation: the leases in it, its capacity, occupancy, largest free range and fragmentation, and its lease-record reserves | Its role in any plan, or what another pool holds |
 | Backend | The driver-level table: device allocation, host memory registration, streams, copies, events, the provider's capabilities, physical memory and statistics, and profiler names and ranges | Any object lifetime or policy: pools, routes, lanes, event pooling |
-| PyTorch adapter | The pluggable allocator, object and storage views, task-boundary and tracing entry points, loading the backend by name | Provider headers or planning |
+| PyTorch adapter | The pluggable allocator, object and storage views, the task boundary, loading the backend by name | Provider headers, planning, tracing, or profiler ranges -- those are the runtime's and are called there |
 
 The framework-neutral IR, planner, simulator, admission engine, and runtime do
 not import PyTorch, and a test asserts it rather than leaving it to
@@ -271,17 +272,50 @@ causal completion fence before a successor can reuse its bytes.
 
 ## Working vocabulary
 
+The terms divide the way the system does, and it is worth keeping the halves
+apart: the first set is what any program says, whatever produced it; the second
+is what the PyTorch frontend calls the things it lowers. Nothing below the
+frontend interprets a term from the second table.
+
+**Any program**
+
+| Term | Meaning |
+|---|---|
+| Task | One unit of work a program is made of: the objects it reads, writes and mutates, what it depends on, and the measurement of what it costs. A program is tasks over objects and nothing else. |
+| Program object | One logical alias bundle with size, role, persistence, and task dependencies: the values tasks read and write. |
+| Phase | A plain identifier string on a task, defaulting to `compute`. The IR never interprets it; a program uses whatever names describe its own structure. |
+| Action trigger | The task boundary at which a fetch, write-back, eviction, or release becomes ordered and destination capacity is reserved. |
+| Physical admission | Proof that task allocations, object generations, transfers, and causal reuse fit the selected pools. |
+| Memory lease | Ownership of one pool range for one residency generation. |
+| Scope | What an allocation belongs to. Every allocation belongs to exactly one, and a lease records the scope with the plan that owns it. [Task boundaries](task-boundaries.md#the-allocation-scope) has the two kinds. |
+
+**What the PyTorch frontend lowers**
+
 | Term | Meaning |
 |---|---|
 | Stage | One ordered partition of the captured model graph. |
 | Structural contract | Shape, dtype, role, alias, mutation, and executable-storage contract shared by equivalent task occurrences. |
-| Task graph pairs | Every configured forward/backward alternative for one differentiated structural contract. |
+| Task graph pairs | Every configured forward/backward alternative for one differentiated structural contract. The IR sees only alternatives with different resource profiles, and knows nothing of what they mean. |
 | Graph-pair selection | One complete choice of graph-pair option for every occurrence-level group. |
 | Storage root | One semantic allocation identity shared by all of its views. |
-| Program object | One logical alias bundle with size, role, persistence, and task dependencies. |
-| Action trigger | The task boundary at which a fetch, write-back, eviction, or release becomes ordered and destination capacity is reserved. |
-| Physical admission | Proof that task allocations, object generations, transfers, and causal reuse fit the selected pools. |
-| Memory lease | Ownership of one pool range for one residency generation. |
+
+A training program labels its tasks `forward`, `backward` and `optimizer`;
+those are values in the first table's `Phase`, not concepts the planner,
+simulator or runtime know.
+
+**Nothing in the second table is required.** Alternatives are the clearest
+case: a task group offers them only when a frontend has more than one way to
+run it, and a program that never does carries none. Lowering a `forward()` for
+inference is exactly that -- it produces tasks with no alternatives at all, and
+the planner has no choice to fix, so [graph-pair
+selection](graph-pair-selection.md) has nothing to select. The rest is
+unchanged: the same search decides what stays resident and what moves, the same
+admission proves it fits, and the same runtime executes it. Planning is worth
+doing wherever a step's objects do not all fit at once, which is a question
+about size rather than about gradients. A program that came from something
+other than a model reaches the same code the same way.
+
+[The ShadowSpillProgram](program.md) states the separation in full.
 
 ## Planning contract
 
@@ -327,23 +361,23 @@ index](../README.md) annotates the same order; this is the map.
 
 7. [The ShadowSpillProgram](program.md) -- what the system plans for.
 8. [The planning problem](planning-problem.md) -- the question asked about it.
-9. [Plan search](search.md) -- what the planner asks of a search, and
-   promises it.
-10. [Writing a search algorithm](search-algorithm.md) -- the methods to
-   implement, every argument, and a worked example.
-11. [Graph-pair selection](graph-pair-selection.md) -- bounded complete
+9. [Simulation](simulation.md) -- the deterministic timeline a search prices
+   its candidates against, read before the searches that do.
+10. [Plan search](search.md) -- what the planner asks of a search, and
+    promises it.
+11. [Writing a search algorithm](search-algorithm.md) -- the methods to
+    implement, every argument, and a worked example.
+12. [Graph-pair selection](graph-pair-selection.md) -- bounded complete
     assignments across those alternatives.
-12. [PressureFit](pressurefit.md) -- the search that ships: logical residency
+13. [PressureFit](pressurefit.md) -- the search that ships: logical residency
     and memory-action selection.
-13. [Physical admission and offset handling](physical-admission.md) -- the
+14. [Physical admission and offset handling](physical-admission.md) -- the
     selected plan proved against real pool geometry.
-14. [From a resolved program to leases](admission-leases.md) -- what a schedule
-    allocates, and when each lease is live.
-15. [Fixed-offset placement](fixed-placement.md) -- how leases are given
+15. [From a resolved program to leases](admission-leases.md) -- what a
+    schedule allocates, and when each lease is live.
+16. [Fixed-offset placement](fixed-placement.md) -- how leases are given
     addresses, and what that costs.
-16. [Simulation](simulation.md) -- the deterministic timeline a search prices
-    its candidates against.
-17. [Planning orchestration](planning.md) -- artifacts composed, callable and
+17. [The planning pipeline](planning-pipeline.md) -- artifacts composed, callable and
     report published.
 
 **Execution**
@@ -352,20 +386,24 @@ index](../README.md) annotates the same order; this is the map.
     records, and the registry that answers an id after its plan is gone.
 19. [Shared objects](shared-objects.md) -- one value reached by several plans:
     its per-pool locations, and why binding it allocates nothing.
-20. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
-    failure, and tracing.
-21. [Task boundaries](task-boundaries.md) -- what `before_task` and
+20. [Backends](backends.md) -- the driver-level table a provider implements,
+    which the three pages after it are built from.
+21. [Memory pools](memory-pools.md) -- the arenas each pool owns, and what one
+    hands out.
+22. [Transfers](transfers.md) -- routes, the lane each gets, and calibration.
+23. [Events](events.md) -- event leases and their pools, and the markers a
+    caller times its own work with.
+24. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
+    failure, and tracing, over those three.
+25. [Task boundaries](task-boundaries.md) -- what `before_task` and
     `after_task` do, and what is still in flight when the dispatcher returns.
-22. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
+26. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
     does with a failure, and why an exiting process is abandoned.
-23. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
+27. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
     and what step time means.
-24. [Backends](backends.md) -- the driver-level table a provider implements.
-25. [Memory pools](memory-pools.md), [transfers](transfers.md), and
-    [events](events.md) -- the runtime objects built on that table: arenas,
-    routes and lanes with calibration, and event pools.
-26. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the runtime.
-27. [Timelines](timelines.md) -- how a traced step is measured on the device
+28. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the
+    runtime.
+29. [Timelines](timelines.md) -- how a traced step is measured on the device
     clock.
 
 The [Python guide](../python/README.md) and [C guide](../c/README.md) document

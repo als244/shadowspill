@@ -43,11 +43,15 @@ Each has its own page: [memory pools](memory-pools.md), [transfers](transfers.md
   measures each route alone and against its reverse on those lanes.
 - **Event pools** keep backend events across leases. Reserving a pool creates
   its events up front and seals it, so a steady-state step makes no driver
-  calls; the runtime's statistics count creates after sealing. Timing events
-  for traced transfers come from a second pool reserved when a trace is
-  prepared.
-- **Profiling** goes through the optional profiler entries; a backend without
-  a profiler leaves them NULL and the runtime treats them as no-ops.
+  calls; the runtime's statistics count creates after sealing. Events that
+  carry a device timestamp come from a second pool, reserved when a trace is
+  prepared: the worker brackets traced copies with them, and a caller timing
+  its own work takes markers from the same pool, so a step and the transfers
+  inside it are measured on one clock.
+- **Profiling** goes through the optional profiler entries. The runtime owns
+  the ranges and the flag that turns them on, so a frontend opens a range on
+  the runtime rather than keeping a profiler of its own; a backend without one
+  leaves the entries NULL and every range is a no-op.
 
 ## Why the boundary is here
 
@@ -80,5 +84,5 @@ ones named in `SHADOWSPILL_BACKENDS`.
 4. Run the contract canary against the library, then the runtime canaries and
    the PyTorch canaries with `Runtime(backend="<provider>")`.
 
-Previous: [Step boundaries](step-boundaries.md). Next: [Memory
+Previous: [Shared objects](shared-objects.md). Next: [Memory
 pools](memory-pools.md).
