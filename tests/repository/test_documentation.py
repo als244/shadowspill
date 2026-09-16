@@ -346,7 +346,7 @@ def test_documentation_index_exposes_reading_paths() -> None:
         "architecture/pressurefit.md",
         "architecture/graph-pair-selection.md",
         "architecture/physical-admission.md",
-        "architecture/planning.md",
+        "architecture/planning-pipeline.md",
         "architecture/simulation.md",
         "architecture/memory-runtime.md",
         "python/README.md",

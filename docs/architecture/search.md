@@ -138,5 +138,5 @@ method to implement, every argument with its type and meaning, what the
 defaults are, and a complete example of a search defined outside this
 repository.
 
-Previous: [The planning problem](planning-problem.md). Next: [Writing a search
+Previous: [Simulation](simulation.md). Next: [Writing a search
 algorithm](search-algorithm.md).

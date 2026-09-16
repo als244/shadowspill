@@ -190,7 +190,7 @@ it reads a matrix.
 2. **Geometry search** — `plan_step_search` from the
    [frontend API](../docs/python/api/frontend.md). Every admitted split
    plans through capture, profiling, lowering, and the search
-   ([planning orchestration](../docs/architecture/planning.md),
+   ([the planning pipeline](../docs/architecture/planning-pipeline.md),
    [PressureFit](../docs/architecture/pressurefit.md)); each distinct
    microbatch shape compiles and profiles once, deduplicated by the
    build store. The table lists every split under every budget with

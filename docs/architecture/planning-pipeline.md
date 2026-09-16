@@ -1,9 +1,10 @@
-# Planning orchestration
+# The planning pipeline
 
-Planning is a sequence of reusable artifact transformations. The public
-orchestrators are intentionally small; each artifact can also be constructed
-or consumed independently. These transformations select and physically admit
-the [logical program](program.md); they do not recapture or execute the model.
+The ordered work that turns a captured step into a callable plan. It is a
+sequence of reusable artifact transformations: the public orchestrators are
+intentionally small, and each artifact can also be constructed or consumed
+independently. These transformations select and physically admit the [logical
+program](program.md); they do not recapture or execute the model.
 
 ```text
 capture/export and stage partitioning
@@ -50,6 +51,15 @@ summary of it beside the plan -- its makespan, what it promises, what each
 graph-pair selection cost -- which `summarize_plan()` reads without the plan,
 so a caller comparing many plans deserializes the one it will run and no
 other.
+
+**Where the two layers live.** `plan_program()` and the searches are
+`shadowspill.planner`. The ordered work around them -- the clock each phase is
+measured on, the budget and capacity arithmetic the search is configured from,
+the two refusals a plan can raise, what a plan needs of a live runtime, and the
+plan report -- is `shadowspill.pipeline`. Neither names a framework: a frontend
+captures a step, compiles its tasks and measures them, and everything after
+that is these two. The frontend's own planning package composes the phases and
+calls in; it contributes the capture and the measurement, not the ordering.
 
 **The search answers one question and is pluggable.** It receives a program
 with its alternatives still open, and everything about how to fix them and
@@ -181,4 +191,5 @@ diagnostics, and common investigations. The [JSON artifact
 guide](../python/planning-json.md) documents the portable program and admitted
 plan schemas separately from the callable's in-memory report.
 
-Previous: [Simulation](simulation.md). Next: [Plan identity](plan-identity.md).
+Previous: [Fixed-offset placement](fixed-placement.md). Next: [Plan
+identity](plan-identity.md).
