@@ -32,7 +32,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from shadowspill.plots import RunBudgetOutcome, plot_step_run, plot_step_search
-from shadowspill.pytorch.step_search import StepSearchReport
+from shadowspill.search import StepSearchReport
 
 _GIB = 1 << 30
 

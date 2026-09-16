@@ -7,7 +7,7 @@ from pathlib import Path
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, NullFormatter, NullLocator
 
-from shadowspill.pytorch.step_search import StepSearchReport
+from shadowspill.search import StepSearchReport
 
 from .axes import budget_ticks, circle_winners, log_scale
 from .series import GeometryPoint, Series, geometry_label, ordering_series

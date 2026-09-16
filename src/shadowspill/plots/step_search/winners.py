@@ -13,7 +13,7 @@ from pathlib import Path
 
 from matplotlib.figure import Figure
 
-from shadowspill.pytorch.step_search import StepSearchPoint, StepSearchReport
+from shadowspill.search import StepSearchPoint, StepSearchReport
 
 from .axes import line_figure
 from .layout import FigureTree
