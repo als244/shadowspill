@@ -21,13 +21,12 @@ extern "C" {
 #define SHADOWSPILL_BACKEND_PROVIDER_NAME_CAPACITY 16U
 
 /* Opaque provider tokens. The runtime stores and returns them unread. */
-typedef struct ShadowSpillBackendStream {
-    uintptr_t words[2];
-} ShadowSpillBackendStream;
-
-typedef struct ShadowSpillBackendEvent {
-    uintptr_t words[2];
-} ShadowSpillBackendEvent;
+/* A stream and an event are each one opaque word only the backend reads --
+   a driver handle, a pointer, an index, whatever it keeps them in -- exactly
+   as a profiler range is. Zero is "none": for a stream it is the backend's
+   default stream, and for an event it is no event. */
+typedef uint64_t ShadowSpillBackendStream;
+typedef uint64_t ShadowSpillBackendEvent;
 
 typedef uint64_t ShadowSpillProfilerRange;
 
@@ -99,12 +98,14 @@ typedef struct ShadowSpillBackend {
     int (*register_host_memory)(void *state, void *address, uint64_t bytes);
     int (*unregister_host_memory)(void *state, void *address, uint64_t bytes);
 
-    /* Streams: ordered queues of copies and events. wrap_stream turns the
-       integer handle the framework exposes for its own stream into a token. */
+    /* Streams: ordered queues of copies and events. A stream the backend made
+       comes from create_stream; a stream someone else owns is named by the
+       integer its owner knows it by, and resolve_stream answers with the word
+       this backend knows it by. A handle of 0 is the backend's default. */
     int (*create_stream)(void *state, ShadowSpillBackendStream *stream);
     int (*destroy_stream)(void *state, ShadowSpillBackendStream stream);
     int (*synchronize_stream)(void *state, ShadowSpillBackendStream stream);
-    ShadowSpillBackendStream (*wrap_stream)(
+    ShadowSpillBackendStream (*resolve_stream)(
         void *state,
         uint64_t stream_handle
     );

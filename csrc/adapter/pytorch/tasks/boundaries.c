@@ -33,30 +33,6 @@ static void format_task_range_name(
     }
 }
 
-ShadowSpillStatus shadowspill_pytorch_submit_action_batch_handle(
-    uintptr_t action_batch_handle,
-    uintptr_t trigger_stream_address
-) {
-    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    if (action_batch_handle == 0U) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    const ShadowSpillProfilerRange range =
-        shadowspill_pytorch_profile_range_begin(
-            "shadowspill.pytorch.initial_actions"
-        );
-    const ShadowSpillStatus status =
-        shadowspill_submit_action_batch_handle(
-            runtime,
-            (const ShadowSpillActionBatchHandle *)action_batch_handle,
-            shadowspill_pytorch_stream(trigger_stream_address)
-        );
-    shadowspill_pytorch_profile_range_end(range);
-    return status;
-}
 
 ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     uintptr_t task_handle,
@@ -74,9 +50,8 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
     /* Naming the range costs a format; skip it when nothing would show. */
     char range_name[384];
     const char *name = NULL;
-    if (atomic_load_explicit(
-            &adapter.profiler_annotations_enabled, memory_order_relaxed
-        ) != 0U) {
+    if (shadowspill_profiler_annotations_enabled(shadowspill_pytorch_runtime())
+        != 0U) {
         format_task_range_name(range_name, sizeof(range_name), "task", handle);
         name = range_name;
     }
@@ -89,7 +64,7 @@ ShadowSpillStatus shadowspill_pytorch_before_task_handle(
         : shadowspill_before_task_handle(
             runtime,
             handle,
-            shadowspill_pytorch_stream(compute_stream_address),
+            shadowspill_pytorch_resolve_stream(compute_stream_address),
             bindings,
             binding_count
         );
@@ -111,7 +86,7 @@ ShadowSpillStatus shadowspill_pytorch_wait_task_allocations(
         : shadowspill_wait_task_allocations_handle(
             runtime,
             handle,
-            shadowspill_pytorch_stream(compute_stream_address)
+            shadowspill_pytorch_resolve_stream(compute_stream_address)
         );
 }
 
@@ -128,7 +103,7 @@ ShadowSpillStatus shadowspill_pytorch_after_task_handle(
         : shadowspill_after_task_handle(
             runtime,
             handle,
-            shadowspill_pytorch_stream(compute_stream_address)
+            shadowspill_pytorch_resolve_stream(compute_stream_address)
         );
     shadowspill_pytorch_task_range_end();
     return status;

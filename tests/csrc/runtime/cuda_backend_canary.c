@@ -72,7 +72,7 @@ int main(void) {
             SHADOWSPILL_STATUS_OK) {
         FAIL("runtime creation or event reservation");
     }
-    ShadowSpillBackendStream compute = {0};
+    ShadowSpillBackendStream compute = 0U;
     if (backend.create_stream(backend.state, &compute) != 0) {
         FAIL("compute stream");
     }

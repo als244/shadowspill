@@ -40,7 +40,6 @@ typedef struct ShadowSpillPytorchAdapterState {
     uint64_t peak_process_physical_bytes;
     uint64_t observed_external_high_water_bytes;
     uint64_t physical_budget_sealed;
-    _Atomic uint8_t profiler_annotations_enabled;
     _Atomic uint8_t shutdown_started;
     _Atomic uint64_t active_allocator_callbacks;
     _Atomic(ShadowSpillRuntime *) published_runtime;
@@ -91,11 +90,11 @@ static inline uint32_t shadowspill_pytorch_allocator_pool_id(void) {
 /* The framework's stream handle as the token the backend's table accepts.
    The table is written once at bootstrap and cleared only after the runtime
    it served is gone, so reading it here needs no lock. */
-static inline ShadowSpillBackendStream shadowspill_pytorch_stream(
-    uint64_t framework_stream_handle
+static inline ShadowSpillBackendStream shadowspill_pytorch_resolve_stream(
+    uint64_t stream_handle
 ) {
-    return adapter.backend.table.wrap_stream(
-        adapter.backend.table.state, framework_stream_handle
+    return adapter.backend.table.resolve_stream(
+        adapter.backend.table.state, stream_handle
     );
 }
 

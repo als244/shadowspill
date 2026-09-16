@@ -107,7 +107,7 @@ ShadowSpillStatus shadowspill_after_task_handle(
 ShadowSpillStatus shadowspill_submit_action_batch_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillActionBatchHandle *handle,
-    ShadowSpillBackendStream trigger_stream
+    uint64_t trigger_stream_handle
 ) {
     const ShadowSpillTaskRecord *record = handle;
     if (runtime == NULL || record == NULL || record->plan_owner == NULL ||
@@ -118,6 +118,11 @@ ShadowSpillStatus shadowspill_submit_action_batch_handle(
     if (shadowspill_enter_task_scope(runtime, record) != 0) {
         return SHADOWSPILL_STATUS_INVALID_STATE;
     }
+    /* The caller names the stream the way it knows it; the backend says which
+       of its streams that is. A stream this runtime created is already such a
+       name, so both kinds of caller pass the same thing. */
+    const ShadowSpillBackendStream trigger_stream =
+        runtime->backend.resolve_stream(runtime->backend.state, trigger_stream_handle);
     return shadowspill_after_task_record(
         runtime, record, trigger_stream
     );

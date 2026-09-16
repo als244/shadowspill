@@ -175,17 +175,37 @@ static int ledger(void) {
     return 0;
 }
 
-/* The mock supplies no profiler; the adapter reports that as CLOSED today. */
-static int profiler(void) {
+/* Profiling is the runtime's, and best-effort: the mock supplies no profiler,
+   so turning annotations on succeeds and every range stays empty. */
+static int profiler(ShadowSpillRuntime *runtime) {
     REQUIRE(
-        shadowspill_pytorch_profile_range_begin("shadowspill.canary") == 0U,
+        shadowspill_profiler_range_begin(runtime, "shadowspill.canary") == 0U,
         "a range began while annotations were disabled"
     );
-    shadowspill_pytorch_profile_range_end(0U);
+    shadowspill_profiler_range_end(runtime, 0U);
     REQUIRE(
-        shadowspill_pytorch_profiler_annotations_set(1U) ==
-            SHADOWSPILL_STATUS_CLOSED,
-        "annotations on a backend without a profiler must be refused"
+        shadowspill_profiler_annotations_enabled(runtime) == 0U,
+        "annotations must start off"
+    );
+    REQUIRE(
+        shadowspill_profiler_annotations_set(runtime, 1U) ==
+            SHADOWSPILL_STATUS_OK,
+        "annotations on a backend without a profiler must be a no-op"
+    );
+    /* The task boundary asks this before it builds a range name, so a setter
+       that does not reach the query silently unnames every task range. */
+    REQUIRE(
+        shadowspill_profiler_annotations_enabled(runtime) == 1U,
+        "the annotations setter must reach the query the boundary reads"
+    );
+    REQUIRE(
+        shadowspill_profiler_range_begin(runtime, "shadowspill.canary") == 0U,
+        "a backend with no profiler must still open no range"
+    );
+    REQUIRE(
+        shadowspill_profiler_annotations_set(runtime, 0U) ==
+            SHADOWSPILL_STATUS_OK,
+        "annotations must turn back off"
     );
     return 0;
 }
@@ -463,12 +483,12 @@ static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
         "admitting the placement batch failed"
     );
     REQUIRE(
-        shadowspill_pytorch_submit_action_batch_handle(0U, 0U) ==
+        shadowspill_submit_action_batch_handle(runtime, NULL, 0U) ==
             SHADOWSPILL_STATUS_INVALID_ARGUMENT,
         "a null batch must be refused"
     );
     REQUIRE(
-        shadowspill_pytorch_submit_action_batch_handle((uintptr_t)batch, 0U) ==
+        shadowspill_submit_action_batch_handle(runtime, batch, 0U) ==
             SHADOWSPILL_STATUS_OK,
         "submitting the placement batch failed"
     );
@@ -487,8 +507,8 @@ static int placement_and_acquisition(ShadowSpillRuntime *runtime) {
     );
     ShadowSpillObjectBinding binding = {0};
     REQUIRE(
-        shadowspill_pytorch_acquire_objects_handle(
-            (uintptr_t)acquisition, 0U, &binding, 1U
+        shadowspill_acquire_objects_handle(
+            runtime, acquisition, 0U, &binding, 1U
         ) == SHADOWSPILL_STATUS_OK &&
             binding.object_id == OBJECT_ID && binding.pointer != NULL,
         "acquiring the object for the default stream failed"
@@ -688,7 +708,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     ShadowSpillRuntime *const runtime = (ShadowSpillRuntime *)handle;
-    if (ledger() != 0 || profiler() != 0 || allocator(runtime) != 0 ||
+    if (ledger() != 0 || profiler(runtime) != 0 || allocator(runtime) != 0 ||
         objects(runtime) != 0 || scopes(runtime) != 0 || tasks(runtime) != 0 ||
         placement_and_acquisition(runtime) != 0 || calibration(runtime) != 0 ||
         failure() != 0 ||

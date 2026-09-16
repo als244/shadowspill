@@ -21,12 +21,6 @@ class AllocationEvent(ctypes.Structure):
     ]
 
 
-class BackendEvent(ctypes.Structure):
-    """An opaque backend event token, passed by value across the ABI."""
-
-    _fields_ = [("words", ctypes.c_size_t * 2)]
-
-
 class TraceEvent(ctypes.Structure):
     _fields_ = [
         ("sequence", ctypes.c_uint64),

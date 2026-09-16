@@ -39,7 +39,7 @@ static int fixture_create(Fixture *fixture) {
 
 static void fixture_destroy(Fixture *fixture) {
     shadowspill_test_destroy_runtime(fixture->runtime);
-    if (fixture->compute.words[0] != 0U) {
+    if (fixture->compute != 0U) {
         (void)fixture->mock.destroy_stream(fixture->mock.state, fixture->compute
         );
     }
@@ -122,7 +122,7 @@ static int spill_object_rekey_preserves_authoritative_lease(void) {
 static int fetch_window_is_submitted_without_wire_blocking(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
@@ -224,7 +224,7 @@ static int fetch_window_is_submitted_without_wire_blocking(void) {
 static int inflight_fetch_transfers_to_caller(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
@@ -305,7 +305,7 @@ static int inflight_fetch_transfers_to_caller(void) {
 static int evict_window_is_enqueued_without_dispatch_serialization(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .evict_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
@@ -700,7 +700,7 @@ static int output_handoff_requires_admitted_release(void) {
 static int chained_output_allocation_handoff(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         /* Keep the first release pending while the dispatcher submits the
          * second zero-copy handoff on the same ordered compute stream. */
@@ -809,7 +809,7 @@ static int chained_output_allocation_handoff(void) {
         snapshots[2].allocation_id != allocation.allocation_id;
 
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -1813,7 +1813,7 @@ static int functional_mutation_replaces_lease_without_copy(void) {
 static int functional_mutation_supersedes_inflight_fetch(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 100000000U,
         .event_delay_nanoseconds = 50000000U,
@@ -1904,7 +1904,7 @@ static int functional_mutation_supersedes_inflight_fetch(void) {
         statistics.runtime.wait_events_inserted != 1U;
 
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -1914,7 +1914,7 @@ static int functional_mutation_supersedes_inflight_fetch(void) {
 static int queued_release_causally_precedes_fetch(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 50000000U,
@@ -2009,7 +2009,7 @@ static int queued_release_causally_precedes_fetch(void) {
     }
 
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -2019,7 +2019,7 @@ static int queued_release_causally_precedes_fetch(void) {
 static int nonretained_fetch_then_evict_reserves_fresh_spill(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 100000000U,
         .evict_delay_nanoseconds = 1000000U,
@@ -2125,7 +2125,7 @@ static int nonretained_fetch_then_evict_reserves_fresh_spill(void) {
         );
     }
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -2135,7 +2135,7 @@ static int nonretained_fetch_then_evict_reserves_fresh_spill(void) {
 static int completed_evict_preserves_later_submitted_fetch(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .evict_delay_nanoseconds = 1000000U,
         .event_delay_nanoseconds = 10000000U,
@@ -2210,7 +2210,7 @@ static int completed_evict_preserves_later_submitted_fetch(void) {
     }
 
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -2220,7 +2220,7 @@ static int completed_evict_preserves_later_submitted_fetch(void) {
 static int consumer_waits_for_latest_queued_fetch_generation(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 50000000U,
         .event_delay_nanoseconds = 1000000U,
@@ -2317,7 +2317,7 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
         );
     }
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -2343,7 +2343,7 @@ static int consumer_waits_for_latest_queued_fetch_generation(void) {
 static int write_back_keeps_execution_and_refreshes_spill(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig backend_config = {
         .fetch_delay_nanoseconds = 1000U,
         .evict_delay_nanoseconds = 50000000U,
@@ -2497,7 +2497,7 @@ static int write_back_keeps_execution_and_refreshes_spill(void) {
         );
     }
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);

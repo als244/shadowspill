@@ -14,7 +14,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 256U, 128U, 16U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -199,7 +199,7 @@ static int layout_lifecycle_preserves_dynamic_allocations(void) {
         shadowspill_unregister_object(runtime, object.object_id) !=
             SHADOWSPILL_STATUS_OK;
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         failed = failed ||
             mock.destroy_stream(mock.state, compute) != 0;
     }
@@ -256,7 +256,7 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 64U, 0U, 16U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -320,7 +320,7 @@ static int empty_fixed_slice_allows_dynamic_task(void) {
         statistics.execution.allocated_bytes != 0U ||
         statistics.execution.largest_free_range_bytes != 64U;
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         failed = failed ||
             mock.destroy_stream(mock.state, compute) != 0;
     }
@@ -335,7 +335,7 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 64U, 64U, 16U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -415,7 +415,7 @@ static int empty_fixed_slice_allows_dynamic_fetch(void) {
         shadowspill_test_clear_plan(runtime) !=
             SHADOWSPILL_STATUS_OK;
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         failed = failed ||
             mock.destroy_stream(mock.state, compute) != 0;
     }
@@ -432,7 +432,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 128U, 128U, 16U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -570,7 +570,7 @@ static int eviction_completion_orders_fixed_reuse(void) {
         shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK;
 
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         failed = failed ||
             mock.destroy_stream(mock.state, compute) != 0;
     }
@@ -588,7 +588,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 64U, 128U, 16U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -760,7 +760,7 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
         shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK;
 
     shadowspill_test_destroy_runtime(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         failed = failed ||
             mock.destroy_stream(mock.state, compute) != 0;
     }

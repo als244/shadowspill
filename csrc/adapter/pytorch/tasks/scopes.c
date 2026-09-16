@@ -47,7 +47,7 @@ ShadowSpillStatus shadowspill_pytorch_allocation_scope_end(
         : shadowspill_allocation_scope_end(
               runtime,
               scope_id,
-              shadowspill_pytorch_stream(compute_stream_address)
+              shadowspill_pytorch_resolve_stream(compute_stream_address)
           );
     shadowspill_pytorch_task_range_end();
     return status;
