@@ -5,30 +5,28 @@ import torch.nn as nn
 from shadowspill.ir import (
     ExecutionPlan,
 )
-from shadowspill.planner import (
-    ProgramPlanResult,
-)
-from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
-from shadowspill.runtime.plan import PlanMemory
-
-from ...diagnostics import PlanReport
-from ..admission import (
-    FixedLayoutSelection,
-    SelectedAdmission,
-)
-from ..artifacts import (
-    ForwardCaptureArtifacts,
-    ForwardProfileArtifacts,
-    ForwardProgramArtifacts,
-)
-from ..common import (
-    PlanningTimer,
-)
-from ..reporting import (
+from shadowspill.pipeline.common import PlanningTimer
+from shadowspill.pipeline.reporting import (
     build_forward_report,
     cache_artifacts,
     fixed_layout_diagnostic,
     publish_plan_report,
+)
+from shadowspill.planner import (
+    ProgramPlanResult,
+)
+from shadowspill.pytorch.diagnostics.builders import forward_stage_inventory
+from shadowspill.pytorch.planning.admission import (
+    FixedLayoutSelection,
+    SelectedAdmission,
+)
+from shadowspill.runtime.plan import PlanMemory
+
+from ...diagnostics import PlanReport
+from ..artifacts import (
+    ForwardCaptureArtifacts,
+    ForwardProfileArtifacts,
+    ForwardProgramArtifacts,
 )
 from ..stores import PlanningStores
 

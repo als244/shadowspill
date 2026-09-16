@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ctypes
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import torch
@@ -18,15 +19,22 @@ import torch
 from shadowspill.ir import MemoryAction
 from shadowspill.runtime.abi import ObjectBinding
 from shadowspill.runtime.failures import RuntimeExecutionError
-
-from .common import PublishedStorage, plan_local_id
+from shadowspill.runtime.plan.common import plan_local_id
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.materialization.replacement import (
         ReplacementStorageViews,
     )
+    from shadowspill.runtime.plan import RuntimeBridge
 
-    from . import RuntimeBridge
+
+@dataclass(frozen=True, slots=True)
+class PublishedStorage:
+    """One concrete task result matched to a predecoded publication."""
+
+    tensor: torch.Tensor
+    alias_id: str
+    publication_ordinal: int
 
 
 def publish_initial_tensor(
@@ -79,7 +87,8 @@ def acquire_for_caller(
     stream = torch.cuda.current_stream()
     bindings = (ObjectBinding * len(runtime_aliases))()
     bridge.require(
-        bridge.library.shadowspill_pytorch_acquire_objects_handle(
+        bridge.runtime_library.shadowspill_acquire_objects_handle(
+            bridge.runtime._runtime_handle,
             acquisition_handle,
             stream.cuda_stream,
             bindings if runtime_aliases else None,
@@ -120,8 +129,8 @@ def submit_initial_actions(
             f"task={task_number}, expected={expected}, observed={observed}"
         )
     bridge.require(
-        bridge.library.shadowspill_pytorch_submit_action_batch_handle(
-            handle, stream.cuda_stream
+        bridge.runtime_library.shadowspill_submit_action_batch_handle(
+            bridge.runtime._runtime_handle, handle, stream.cuda_stream
         ),
         "submit admitted initial actions",
     )
@@ -266,48 +275,3 @@ def after_task_and_update(
         task_handle,
         device_ordinal,
     )
-
-
-def wait_plan_idle(bridge: RuntimeBridge) -> None:
-    """Actively wait only for work owned by this admitted plan."""
-
-    bridge.require(
-        bridge.runtime_library.shadowspill_plan_wait_idle(bridge.plan_handle),
-        "wait for plan idle",
-    )
-
-
-def wait_idle(bridge: RuntimeBridge) -> None:
-    """Wait for runtime-global quiescence at lifecycle boundaries."""
-
-    bridge.require(
-        bridge.runtime_library.shadowspill_runtime_wait_idle(
-            bridge.runtime._runtime_handle
-        ),
-        "wait idle",
-    )
-
-
-def abort_task(bridge: RuntimeBridge, task_handle: int) -> None:
-    """Close the matching admitted task scope after frontend failure."""
-
-    bridge.require(
-        bridge.library.shadowspill_pytorch_abort_task_handle(task_handle),
-        "abort admitted task",
-    )
-
-
-__all__ = [
-    "abort_task",
-    "acquire_for_caller",
-    "after_task_and_update",
-    "before_task_and_acquire",
-    "publish_initial_tensor",
-    "rebind",
-    "rebind_many",
-    "submit_initial_actions",
-    "transfer_outputs_to_caller",
-    "wait_idle",
-    "wait_plan_idle",
-    "wait_task_allocations",
-]

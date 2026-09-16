@@ -1,5 +1,11 @@
-"""Physical-budget reconciliation and exact slab replay."""
+"""The framework half of admission: entrypoints, bindings, and the selection.
 
+A task entrypoint is a framework binding, so matching its output leaves to alias
+groups and certifying the layout that follows are the frontend's. What a plan
+needs of a live runtime is `shadowspill.pipeline.admission`.
+"""
+
+from shadowspill.pipeline.admission import SelectedAdmission
 from shadowspill.planner.admission.admission_replay import (
     AdmissionReplay,
     AdmissionReplayPurpose,
@@ -27,25 +33,18 @@ from shadowspill.planner.admission.refinement import (
 )
 from shadowspill.planner.admission.simulation import simulation_admission_from_replay
 
-from .bindings import TaskOutputBinding, build_admission_facts
-from .layout_runtime import (
-    DynamicTaskAllocationPolicy,
-    project_runtime_fixed_layout,
-)
-from .physical import physical_admission, reconcile_spill_pool, seal_physical_budget
-from .selection import (
-    SelectedAdmission,
-    build_fixed_selected_admission,
-    dynamic_scratch_reserve_bytes,
+from .bindings import (
+    TaskOutputBinding,
+    build_admission_facts,
     output_bindings_for_entrypoints,
 )
+from .selection import build_fixed_selected_admission
 
 __all__ = [
     "AdmissionReplay",
     "AdmissionReplayPurpose",
     "AdmissionReplayStep",
     "CausalAdmissionDependency",
-    "DynamicTaskAllocationPolicy",
     "FixedLayoutAdmission",
     "FixedLayoutAttempt",
     "FixedLayoutInfeasibleError",
@@ -62,14 +61,9 @@ __all__ = [
     "build_fixed_layout_admission",
     "build_fixed_selected_admission",
     "certify_fixed_layout",
-    "dynamic_scratch_reserve_bytes",
     "measure_fixed_layout",
     "output_bindings_for_entrypoints",
-    "physical_admission",
     "placement_facts",
-    "project_runtime_fixed_layout",
-    "reconcile_spill_pool",
     "resolve_fixed_layout_selection",
-    "seal_physical_budget",
     "simulation_admission_from_replay",
 ]

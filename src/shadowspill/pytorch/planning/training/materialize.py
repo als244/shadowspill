@@ -13,6 +13,7 @@ import torch.nn as nn
 from shadowspill.errors import (
     PlanningError,
 )
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.pytorch.materialization.training import (
     TrainingMaterializedState,
 )
@@ -20,7 +21,6 @@ from shadowspill.pytorch.optimizer import (
     capture_optimizer,
     training_parameter_stage_owners,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.pytorch.state.optimizer import (
     adopt_optimizer_state_for_plan,
     declare_varying_hyperparams,
@@ -28,15 +28,15 @@ from shadowspill.pytorch.state.optimizer import (
     release_optimizer_state_from_plan,
 )
 from shadowspill.runtime import Runtime
-from shadowspill.runtime.plan import PlanMemory
+from shadowspill.runtime.plan import (
+    PlanMemory,
+    RuntimeBridge,
+)
 from shadowspill.runtime.teardown import prepare_failure_cleanup
 
 from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingMaterializationArtifacts,
-)
-from ..common import (
-    PlanningTimer,
 )
 from ..stores import PlanningStores
 

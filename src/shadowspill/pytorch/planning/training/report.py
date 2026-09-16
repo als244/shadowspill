@@ -8,6 +8,13 @@ from typing import Literal
 import torch.nn as nn
 
 from shadowspill.ir import ExecutionPlan
+from shadowspill.pipeline.common import PlanningTimer
+from shadowspill.pipeline.reporting import (
+    build_training_report,
+    cache_artifacts,
+    fixed_layout_diagnostic,
+    publish_plan_report,
+)
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.diagnostics.builders import training_stage_inventory
 from shadowspill.runtime.plan import PlanMemory
@@ -20,15 +27,6 @@ from ..artifacts import (
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
     TrainingSelections,
-)
-from ..common import (
-    PlanningTimer,
-)
-from ..reporting import (
-    build_training_report,
-    cache_artifacts,
-    fixed_layout_diagnostic,
-    publish_plan_report,
 )
 from ..stores import PlanningStores
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 
 from shadowspill.ir import MemoryAction, MemoryActionKind
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.plan import (
     RuntimeBridge,
     admit_caller_acquisition,
     admit_fixed_layout,
@@ -13,7 +14,6 @@ from shadowspill.pytorch.runtime_adapter.bridge import (
     admit_task,
     seal_fixed_layout,
 )
-from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
 from shadowspill.runtime.transfer_labels import TransferLabelIndex
 
 from ..records import (

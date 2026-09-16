@@ -11,9 +11,7 @@ import torch
 from torch.fx import GraphModule
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.artifacts import (
-    GraphArtifact,
-)
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
 
 from .artifacts import (
     OpaqueOptimizerArtifact,

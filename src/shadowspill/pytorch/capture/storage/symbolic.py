@@ -19,8 +19,13 @@ from shadowspill.pytorch.capture.live_storage import (
     live_storage_identity,
 )
 from shadowspill.pytorch.capture.schema import operator_alias_contract
+from shadowspill.task.storage import (
+    MutationBinding,
+    OutputView,
+    StorageRoot,
+    TaskStorageContract,
+)
 
-from .records import MutationBinding, OutputView, StorageRoot, TaskStorageContract
 from .roots import _FreshRoot, _InputRoot, _SemanticRoot
 
 

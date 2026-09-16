@@ -26,7 +26,10 @@ import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import provider_version
-from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputProvenance
+from shadowspill.pytorch.capture.artifacts import (
+    GraphArtifact,
+    TaskInputProvenance,
+)
 from shadowspill.pytorch.graph_pairs.serialization import (
     CachedGraphArtifact,
 )

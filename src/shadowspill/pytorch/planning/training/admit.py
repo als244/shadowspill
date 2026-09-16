@@ -11,38 +11,43 @@ from shadowspill.errors import (
     CompilationError,
 )
 from shadowspill.ir import EntrypointSpec, ExecutionPlan, PhysicalAdmission
+from shadowspill.pipeline.admission import (
+    physical_admission,
+    project_runtime_fixed_layout,
+    reconcile_spill_pool,
+    seal_physical_budget,
+)
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.planner import (
     ProgramPlanResult,
 )
 from shadowspill.planner.search import SearchOptions
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
+    OptimizerTaskArtifact,
 )
-from shadowspill.pytorch.profiling import (
-    ResolvedTaskManifests,
+from shadowspill.pytorch.planning.admission import (
+    SelectedAdmission,
+    build_fixed_selected_admission,
+    output_bindings_for_entrypoints,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pytorch.profiling import ResolvedTaskManifests
 from shadowspill.runtime.abi import INITIAL_ACTIONS_TASK_ID
 from shadowspill.runtime.bootstrap import (
     InstalledRuntime,
 )
-from shadowspill.runtime.plan import PlanMemory
+from shadowspill.runtime.plan import (
+    PlanMemory,
+    RuntimeBridge,
+)
 from shadowspill.step import StepDataOrdering
 
 from ...callables import PlannedTrainStep
 from ...execution import TrainingExecutor
 from ...lowering.training import (
     LoweredTrainingProgram,
-)
-from ..admission import (
-    SelectedAdmission,
-    build_fixed_selected_admission,
-    output_bindings_for_entrypoints,
-    physical_admission,
-    project_runtime_fixed_layout,
-    reconcile_spill_pool,
-    seal_physical_budget,
 )
 from ..artifacts import (
     TrainingAdmissionArtifacts,
@@ -52,9 +57,6 @@ from ..artifacts import (
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
     TrainingSelections,
-)
-from ..common import (
-    PlanningTimer,
 )
 from ..stores import PlanningStores
 from .materialize import rollback_training_failure, rollback_training_materialization
@@ -96,6 +98,14 @@ def compile_selected_training_tasks(
         release_build_executables(profiled, installed)
     timer.attribute_compilation_and_profiling(profiled.profiler.wall_times)
     return TrainingExecutableArtifacts(compiled)
+
+
+def _entrypoint_contract(
+    artifact: GraphArtifact | OptimizerTaskArtifact | None,
+) -> str | None:
+    """The compiled contract behind one task, where there is one."""
+
+    return None if artifact is None else artifact.compatibility_digest
 
 
 def admit_training_plan(
@@ -355,11 +365,14 @@ def _selected_artifact_digests(
     selected_task_ids = {
         task.task_id for task in lowered.program.selected_tasks(selected.selections)
     }
-    return {
-        entrypoint.artifact.compatibility_digest
-        for entrypoint in lowered.entrypoints
-        if entrypoint.task_id in selected_task_ids and entrypoint.artifact is not None
-    }
+    digests = set()
+    for entrypoint in lowered.entrypoints:
+        if entrypoint.task_id not in selected_task_ids:
+            continue
+        artifact = lowered.executables.get(entrypoint.task_id)
+        if artifact is not None:
+            digests.add(artifact.compatibility_digest)
+    return digests
 
 
 def _verify_compiled_manifest_identity(
@@ -395,11 +408,10 @@ def _execution_plan(
                 item.task_id,
                 f"entrypoint_{index:06d}",
                 "pytorch_inductor"
-                if item.phase != "optimizer"
+                if item.options.phase != "optimizer"
                 else "pytorch_optimizer",
-                item.artifact.compatibility_digest
-                if item.artifact is not None
-                else optimizer_type,
+                _entrypoint_contract(lowered.executables.get(item.task_id))
+                or optimizer_type,
             )
             for index, item in enumerate(active_entrypoints)
         ),

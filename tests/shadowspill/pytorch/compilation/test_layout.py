@@ -6,14 +6,14 @@ from torch.fx.experimental.proxy_tensor import make_fx
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.storage import capture_task_storage_contract
-from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
-from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layout
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+from shadowspill.task.layout import reconcile_compiled_task_layout
+from shadowspill.task.manifest import ExecutableRootAllocation
 
 
 def _measurement(
@@ -105,7 +105,7 @@ def test_allocator_profile_cannot_redefine_compiler_output_extent() -> None:
 
     value = torch.randn(8)
     contract = capture_task_storage_contract(make_fx(function)(value), (value,))
-    with pytest.raises(CaptureError, match="disagrees with Inductor"):
+    with pytest.raises(CaptureError, match="disagrees with the compiler's"):
         reconcile_compiled_task_layout(
             contract,
             _measurement(
@@ -178,7 +178,7 @@ def test_fresh_executable_root_cannot_alias_a_compiled_input_allocation() -> Non
     value = torch.randn(8)
     contract = capture_task_storage_contract(make_fx(function)(value), (value,))
     assert contract.roots[0].kind.value == "fresh"
-    with pytest.raises(CaptureError, match="offline Inductor contract is incomplete"):
+    with pytest.raises(CaptureError, match="offline compiler contract is incomplete"):
         reconcile_compiled_task_layout(
             contract,
             _measurement(

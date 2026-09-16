@@ -10,9 +10,6 @@ from typing import Any
 from shadowspill.pytorch import (
     Runtime,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    wait_idle,
-)
 
 
 def _phase_seconds(report: Any) -> dict[str, float]:
@@ -34,7 +31,7 @@ def _profile_metadata(microbatches: tuple[tuple[object, ...], ...]) -> list[obje
 def _wait_idle(training: Any) -> None:
     """Drain terminal actions at a qualification measurement boundary."""
 
-    wait_idle(training._executor._bridge)
+    training._executor._bridge.wait_runtime_idle()
 
 
 def _runtime_delta(before: Any, after: Any) -> dict[str, int]:

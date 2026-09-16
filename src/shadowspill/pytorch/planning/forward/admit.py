@@ -5,10 +5,20 @@ from typing import NoReturn
 
 import torch.nn as nn
 
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
+from shadowspill.pipeline.admission import (
+    physical_admission,
+    project_runtime_fixed_layout,
+    reconcile_spill_pool,
+    seal_physical_budget,
+)
+from shadowspill.pipeline.common import PlanningTimer
+from shadowspill.pytorch.planning.admission import FixedLayoutSelection
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.abi import INITIAL_ACTIONS_TASK_ID
-from shadowspill.runtime.plan import PlanMemory
+from shadowspill.runtime.plan import (
+    PlanMemory,
+    RuntimeBridge,
+)
 from shadowspill.runtime.teardown import prepare_failure_cleanup
 
 from ...callables import PlannedForward
@@ -16,20 +26,10 @@ from ...execution import ForwardExecutor
 from ...materialization import (
     MaterializedForwardState,
 )
-from ..admission import (
-    FixedLayoutSelection,
-    physical_admission,
-    project_runtime_fixed_layout,
-    reconcile_spill_pool,
-    seal_physical_budget,
-)
 from ..artifacts import (
     ForwardCaptureArtifacts,
     ForwardProfileArtifacts,
     ForwardProgramArtifacts,
-)
-from ..common import (
-    PlanningTimer,
 )
 from ..stores import PlanningStores
 from .plan import _forward_execution_plan

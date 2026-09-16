@@ -17,7 +17,8 @@ from shadowspill.pytorch.capture.aot import (
     accumulate_gradient_outputs,
     capture_graph_pair,
 )
-from shadowspill.pytorch.capture.artifacts import GraphArtifact, TaskInputRole
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.task.inputs import TaskInputRole
 
 
 def _two_layer_backward(device: str) -> tuple[GraphArtifact, tuple[int, ...]]:

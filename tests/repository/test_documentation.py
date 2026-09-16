@@ -202,7 +202,7 @@ def _python_page_expectations() -> dict[Path, set[str]]:
             # A name the frontend re-exports from the neutral tree is documented
             # where it lives, on the neutral page.
             module = node.module or ""
-            if not module.startswith("shadowspill.runtime"):
+            if not module.startswith(("shadowspill.runtime", "shadowspill.search")):
                 continue
             page = PYTHON_API / "neutral.md"
         elif node.level == 1:
@@ -724,7 +724,7 @@ def test_every_step_diagnostics_field_is_described_in_its_guide() -> None:
     every field of every record, not only the timings.
     """
 
-    source = (ROOT / "src/shadowspill/pytorch/diagnostics/execution.py").read_text()
+    source = (ROOT / "src/shadowspill/diagnostics/step.py").read_text()
     guide = (ROOT / "docs/python/step-diagnostics.md").read_text()
     undocumented: dict[str, list[str]] = {}
     for node in ast.walk(ast.parse(source)):
@@ -751,7 +751,7 @@ def test_step_diagnostics_names_instants_and_durations_apart() -> None:
     finished, reached, queued -- has to carry the instant suffix.
     """
 
-    source = (ROOT / "src/shadowspill/pytorch/diagnostics/execution.py").read_text()
+    source = (ROOT / "src/shadowspill/diagnostics/step.py").read_text()
     moments = (
         "started",
         "finished",

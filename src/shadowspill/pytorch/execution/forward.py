@@ -17,29 +17,30 @@ from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntr
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
 from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
 from shadowspill.pytorch.partition import PartitionedExport
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.pytorch.runtime_adapter.boundaries import (
     PublishedStorage,
+    acquire_for_caller,
+    after_task_and_update,
+    before_task_and_acquire,
+    submit_initial_actions,
+    transfer_outputs_to_caller,
+)
+from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
+from shadowspill.runtime.failures import ExecutionTaskIdentity
+from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.plan import (
     RuntimeBridge,
     TaskMemoryEnvelope,
     TaskPublication,
     abort_task,
-    acquire_for_caller,
     actions_by_task,
     admit_caller_acquisition,
     admit_fixed_layout,
     admit_initial_actions,
     admit_task,
-    after_task_and_update,
-    before_task_and_acquire,
     clear_tasks,
     seal_fixed_layout,
-    submit_initial_actions,
-    transfer_outputs_to_caller,
-    wait_plan_idle,
 )
-from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
-from shadowspill.runtime.failures import ExecutionTaskIdentity
-from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
 from shadowspill.runtime.transfer_labels import TransferLabelIndex
 
 from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
@@ -373,7 +374,7 @@ class ForwardExecutor(AnnotatedExecutor):
         trace_labels = {
             entrypoint.task_id: (
                 f"execution_{execution_ordinal:06d}.forward."
-                f"stage_{execution_ordinal:04d}.{entrypoint.module_target}"
+                f"stage_{execution_ordinal:04d}.{entrypoint.options.target}"
             )
             for execution_ordinal, entrypoint in enumerate(lowered.entrypoints)
         }
@@ -396,7 +397,8 @@ class ForwardExecutor(AnnotatedExecutor):
                 trace_label=trace_labels[entrypoint.task_id],
                 publications=publications,
             )
-            function = functions[entrypoint.artifact.compatibility_digest]
+            artifact = lowered.executables[entrypoint.task_id]
+            function = functions[artifact.compatibility_digest]
             wrapper = _ExecutingStage(
                 entrypoint,
                 task,
@@ -408,7 +410,7 @@ class ForwardExecutor(AnnotatedExecutor):
                     execution_task_id=f"execution_{execution_ordinal:06d}",
                     semantic_name=(
                         f"forward.stage_{execution_ordinal:04d}."
-                        f"{entrypoint.module_target}"
+                        f"{entrypoint.options.target}"
                     ),
                     canonical_task_id=task.task_id,
                 ),
@@ -416,7 +418,9 @@ class ForwardExecutor(AnnotatedExecutor):
                 publications,
                 self._task_annotations,
             )
-            self._root.set_submodule(entrypoint.module_target, wrapper)
+            self._root.set_submodule(
+                entrypoint.options.target or entrypoint.task_id, wrapper
+            )
         seal_fixed_layout(bridge)
         self._public_output_aliases = tuple(
             bridge.objects.alias_for_object(object_id)
@@ -447,15 +451,22 @@ class ForwardExecutor(AnnotatedExecutor):
             bridge, self._caller_output_aliases
         )
         self._active_shared_outputs: dict[int, TensorRef] = {}
-        self._completion = ReusableCompletionEvent(state.device)
+        self._completion = ReusableCompletionEvent(
+            bridge.runtime._runtime_handle, state.device
+        )
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
+
+    def release_timing(self) -> None:
+        """Give the completion marker back to the runtime."""
+
+        self._completion.release()
 
     def __call__(self, arguments: Sequence[object]) -> object:
         if self._invocations:
             # Forward v1 is also non-cyclic: begin only after the preceding
             # invocation reaches its declared terminal residency.
-            wait_plan_idle(self._bridge)
+            self._bridge.wait_until_idle()
             self._release_closed_shared_output_generations()
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(

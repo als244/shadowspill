@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class PlanObjectFootprint:
-    """One logical tensor view and the allocator extent containing it."""
+    """One logical object view and the allocator extent containing it."""
 
     object_id: str
     alias_group_id: str
@@ -170,7 +170,7 @@ class PlanCompiledRoot:
 
 @dataclass(frozen=True, slots=True)
 class PlanCompiledOutputView:
-    """Observed physical binding for one returned tensor leaf."""
+    """Observed physical binding for one returned object leaf."""
 
     leaf_index: int
     root_id: int

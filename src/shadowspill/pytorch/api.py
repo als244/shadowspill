@@ -22,6 +22,7 @@ from shadowspill.pytorch.state.model import (
     require_model_state_for_plan,
 )
 from shadowspill.pytorch.state.storage import restore_persistent_object_ids
+from shadowspill.pytorch.store import FrameworkArtifacts
 from shadowspill.runtime.plan import (
     abort_plan,
     begin_plan,
@@ -212,7 +213,7 @@ def plan_forward(
             plan_store_mode=plan_store_mode,
             export_bypass_key=export_bypass_key,
         )
-        with cache.activate_pytorch():
+        with FrameworkArtifacts(cache).activate():
             return build_forward(
                 model,
                 example_inputs=example_inputs,
@@ -382,7 +383,7 @@ def plan_step(
             plan_store_mode=plan_store_mode,
             export_bypass_key=export_bypass_key,
         )
-        with cache.activate_pytorch():
+        with FrameworkArtifacts(cache).activate():
             return build_training(
                 model,
                 objective=objective,
@@ -499,7 +500,7 @@ def build_step_programs(
             build_store_mode=build_store_mode,
             export_bypass_key=export_bypass_key,
         )
-        with cache.activate_pytorch():
+        with FrameworkArtifacts(cache).activate():
             result = make_training_programs(
                 model,
                 objective=objective,

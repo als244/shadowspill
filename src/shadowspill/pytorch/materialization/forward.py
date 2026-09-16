@@ -25,24 +25,26 @@ from shadowspill.pytorch.materialization.replacement import (
     MaterializedState,
     ReplacementStorageViews,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    RuntimeBridge,
-    admit_initial_actions,
+from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     submit_initial_actions,
-    wait_idle,
 )
 from shadowspill.pytorch.sharing import (
     ResolvedSharedInput,
     SharedInput,
     TensorRef,
 )
+from shadowspill.pytorch.spill import register_spill_tensor, write_spill_tensor
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
     persistent_state,
     restore_persistent_state,
 )
 from shadowspill.runtime import Runtime
+from shadowspill.runtime.plan import (
+    RuntimeBridge,
+    admit_initial_actions,
+)
 
 
 def representative_cpu_inputs(values: Any) -> Any:
@@ -253,12 +255,12 @@ class MaterializedForwardState(MaterializedState):
                 )
             destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
-            self.bridge.objects.write_spill_tensor(alias_id, owner)
+            write_spill_tensor(self.bridge.objects, alias_id, owner)
 
     def refresh_inputs(self, inputs: Sequence[Any]) -> tuple[object, ...]:
         """Write guarded CPU payloads into persistent input-slot spill storage."""
 
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
         actual = flat_runtime_arguments(self.capture, self.model, inputs)
         written: set[str] = set()
         for position, alias_id in self._user_alias_by_position.items():
@@ -268,7 +270,7 @@ class MaterializedForwardState(MaterializedState):
             if is_accelerator(value.device):
                 value = value.detach().cpu()
             if alias_id not in written:
-                self.bridge.objects.write_spill_tensor(alias_id, value)
+                write_spill_tensor(self.bridge.objects, alias_id, value)
                 written.add(alias_id)
         for index, value in enumerate(actual):
             if not isinstance(value, torch.Tensor):
@@ -381,7 +383,7 @@ class MaterializedForwardState(MaterializedState):
 
         if self._closed:
             return
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
         registrations = self._registrations()
         restore_persistent_state(self.runtime, self._persistent_state)
         owners = self._read_model_aliases(
@@ -447,7 +449,7 @@ class MaterializedForwardState(MaterializedState):
                     retain_spill_copy=retain[group.alias_group_id],
                     ordinal=ordinal,
                 )
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
 
     def _collect_materialization_entries(
         self,
@@ -592,7 +594,8 @@ class MaterializedForwardState(MaterializedState):
             raise PlanningError(
                 f"registered model alias {alias_id!r} has no imported runtime storage"
             )
-        self.bridge.objects.register_spill_tensor(
+        register_spill_tensor(
+            self.bridge.objects,
             alias_id,
             source,
             retain_spill_copy=retain_spill_copy,

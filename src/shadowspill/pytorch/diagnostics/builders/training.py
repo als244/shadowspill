@@ -15,10 +15,6 @@ from shadowspill.planner.diagnostics.plan import (
     PlanUniqueStage,
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.compilation.layout import (
-    reconcile_compiled_task_layout,
-)
 from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairVariant,
@@ -28,11 +24,15 @@ from shadowspill.pytorch.graph_pairs import (
 from shadowspill.pytorch.lowering.profiles import ProfileMeasurementKey
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
-    TrainingTaskEntrypoint,
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.step import StepDataOrdering
+from shadowspill.task.entrypoints import TaskEntrypoint
+from shadowspill.task.layout import (
+    reconcile_compiled_task_layout,
+)
+from shadowspill.task.manifest import ExecutableTaskManifest
 
 from .graphs import _graph_profile
 from .keys import _entrypoint_key, _stage_key
@@ -43,7 +43,7 @@ class _TrainingInventoryIndex:
     program: ShadowSpillProgram
     task_by_id: Mapping[str, TaskSpec]
     profile_by_id: Mapping[str, TaskProfile]
-    entrypoint_by_key: Mapping[tuple[int, int, str, str], TrainingTaskEntrypoint]
+    entrypoint_by_key: Mapping[tuple[int, int, str, str], TaskEntrypoint]
     selected_ids: frozenset[str]
     execution_ordinal: Mapping[str, int]
     occurrence_keys: Mapping[tuple[int, int], str]
@@ -108,7 +108,8 @@ def _index_training_inventory(
         entrypoint_by_key={
             _entrypoint_key(entrypoint): entrypoint
             for entrypoint in lowered.entrypoints
-            if entrypoint.stage_index is not None and entrypoint.variant is not None
+            if entrypoint.options.stage_index is not None
+            and entrypoint.options.variant is not None
         },
         selected_ids=selected_ids,
         execution_ordinal={task.task_id: index for index, task in enumerate(selected)},
@@ -144,25 +145,28 @@ def _chosen_training_variants(
     chosen: dict[tuple[int, int], str] = {}
     for entrypoint in lowered.entrypoints:
         if (
-            entrypoint.microbatch is not None
-            and entrypoint.stage_index is not None
-            and entrypoint.variant is not None
-            and entrypoint.phase == "forward"
+            entrypoint.options.repetition is not None
+            and entrypoint.options.stage_index is not None
+            and entrypoint.options.variant is not None
+            and entrypoint.options.phase == "forward"
             and entrypoint.task_id in selected_ids
         ):
-            chosen[entrypoint.microbatch, entrypoint.stage_index] = entrypoint.variant
+            chosen[entrypoint.options.repetition, entrypoint.options.stage_index] = (
+                entrypoint.options.variant
+            )
     return chosen
 
 
 def _training_task_stage(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
+    lowered: LoweredTrainingProgram,
     index: _TrainingInventoryIndex,
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],
     metadata_digests: tuple[str, ...] | None,
     auxiliary_ordinal: int,
 ) -> PlanTaskStage:
-    artifact = entrypoint.artifact
+    artifact = lowered.executables.get(entrypoint.task_id)
     structural_contract = (
         artifact.compatibility_digest if artifact is not None else "opaque"
     )
@@ -184,15 +188,15 @@ def _training_task_stage(
         execution_ordinal=ordinal,
         execution_task_id=None if ordinal is None else f"execution_{ordinal:06d}",
         semantic_name=occurrence[0],
-        phase=entrypoint.phase,
-        microbatch=entrypoint.microbatch,
+        phase=entrypoint.options.phase,
+        microbatch=entrypoint.options.repetition,
         stage_occurrence_id=occurrence[1],
         unique_stage_id=occurrence[2],
         structural_contract_key=structural_contract,
         semantic_contract_digest=contract_digests[0],
         executable_contract_digest=contract_digests[1],
         compiled_layout_digest=contract_digests[2],
-        graph_pair_variant=entrypoint.variant,
+        graph_pair_variant=entrypoint.options.variant,
         chosen_graph_pair_variant=occurrence[3],
         selected=entrypoint.task_id in index.selected_ids,
         profile_compatibility_digest=profile.compatibility_digest,
@@ -201,25 +205,24 @@ def _training_task_stage(
 
 
 def _training_occurrence_identity(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     structural_contract: str,
     auxiliary_ordinal: int,
     index: _TrainingInventoryIndex,
 ) -> tuple[str, str | None, str, str | None]:
-    if entrypoint.microbatch is None or entrypoint.stage_index is None:
+    if entrypoint.options.repetition is None or entrypoint.options.stage_index is None:
         return (
-            f"{entrypoint.phase}.component_{auxiliary_ordinal:04d}",
+            f"{entrypoint.options.phase}.component_{auxiliary_ordinal:04d}",
             None,
             f"auxiliary_contract_{structural_contract[:16]}",
             None,
         )
-    occurrence = entrypoint.microbatch, entrypoint.stage_index
-    stage_id = (
-        f"microbatch_{entrypoint.microbatch:04d}.stage_{entrypoint.stage_index:04d}"
-    )
+    occurrence = entrypoint.options.repetition, entrypoint.options.stage_index
+    microbatch, stage_index = occurrence
+    stage_id = f"microbatch_{microbatch:04d}.stage_{stage_index:04d}"
     structural_key = index.occurrence_keys[occurrence]
     return (
-        f"{stage_id}.{entrypoint.phase}.{entrypoint.variant}",
+        f"{stage_id}.{entrypoint.options.phase}.{entrypoint.options.variant}",
         stage_id,
         index.unique_id_by_key[structural_key],
         index.chosen_by_occurrence.get(occurrence),
@@ -228,7 +231,7 @@ def _training_occurrence_identity(
 
 def _task_contract_digests(
     artifact: OptimizerTaskArtifact | None,
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     manifests: Mapping[str, ExecutableTaskManifest],
     metadata_digests: tuple[str, ...] | None,
@@ -351,7 +354,7 @@ def _training_graph_pair(
 
 def _training_measurement(
     artifact: GraphArtifact,
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     measurements: Mapping[ProfileMeasurementKey, TaskMeasurement],
     metadata_digests: tuple[str, ...] | None,
 ) -> TaskMeasurement:
@@ -374,12 +377,12 @@ def _training_measurement(
 
 
 def _metadata_for(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     metadata_digests: tuple[str, ...] | None,
 ) -> str | None:
-    if entrypoint.microbatch is None or metadata_digests is None:
+    if entrypoint.options.repetition is None or metadata_digests is None:
         return None
-    return metadata_digests[entrypoint.microbatch]
+    return metadata_digests[entrypoint.options.repetition]
 
 
 def _plan_task_stages(
@@ -392,10 +395,11 @@ def _plan_task_stages(
     auxiliary_ordinals: dict[str, int] = {}
     tasks: list[PlanTaskStage] = []
     for entrypoint in lowered.entrypoints:
-        auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.phase, 0)
+        auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.options.phase, 0)
         tasks.append(
             _training_task_stage(
                 entrypoint,
+                lowered,
                 index,
                 measurements,
                 manifests,
@@ -403,6 +407,9 @@ def _plan_task_stages(
                 auxiliary_ordinal,
             )
         )
-        if entrypoint.microbatch is None or entrypoint.stage_index is None:
-            auxiliary_ordinals[entrypoint.phase] = auxiliary_ordinal + 1
+        if (
+            entrypoint.options.repetition is None
+            or entrypoint.options.stage_index is None
+        ):
+            auxiliary_ordinals[entrypoint.options.phase] = auxiliary_ordinal + 1
     return tuple(tasks)

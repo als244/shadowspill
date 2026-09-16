@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from torch.utils._pytree import TreeSpec
@@ -9,24 +10,12 @@ from torch.utils._pytree import TreeSpec
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram, TaskSpec
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
+from shadowspill.task.entrypoints import TaskEntrypoint
+from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.slots import ObjectSlot
 
-from ..catalog import ObjectCatalog, RegistrationBinding, TensorSlot
+from ..catalog import ObjectCatalog, RegistrationBinding
 from ..profiles import TaskProfileCatalog
-from ..task_binding import TaskStorageHandoff
-
-
-@dataclass(frozen=True, slots=True)
-class TaskEntrypoint:
-    """Framework-only executable binding for one canonical task."""
-
-    task_id: str
-    module_target: str
-    artifact: GraphArtifact
-    input_slots: tuple[TensorSlot, ...]
-    output_slots: tuple[TensorSlot, ...]
-    replacement_output_leaves: tuple[int, ...] = ()
-    storage_handoffs: tuple[TaskStorageHandoff, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,8 +26,10 @@ class LoweredForwardProgram:
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     entrypoints: tuple[TaskEntrypoint, ...]
+    #: What to call for each task. The entrypoint is neutral; this is not.
+    executables: Mapping[str, GraphArtifact]
     registrations: tuple[RegistrationBinding, ...]
-    root_input_slots: tuple[TensorSlot, ...]
+    root_input_slots: tuple[ObjectSlot, ...]
     public_outputs: tuple[str, ...]
     output_tree_spec: TreeSpec
     output_leaf_count: int
@@ -48,7 +39,7 @@ class LoweredForwardProgram:
 class ForwardObjects:
     catalog: ObjectCatalog
     registrations: tuple[RegistrationBinding, ...]
-    root_input_slots: tuple[TensorSlot, ...]
+    root_input_slots: tuple[ObjectSlot, ...]
     root_objects: dict[int, str]
 
 
@@ -64,5 +55,7 @@ class ForwardPhysicalLayout:
 class ForwardTaskGraph:
     tasks: tuple[TaskSpec, ...]
     entrypoints: tuple[TaskEntrypoint, ...]
+    #: What to call for each task. The entrypoint is neutral; this is not.
+    executables: Mapping[str, GraphArtifact]
     produced_aliases: frozenset[str]
     public_outputs: tuple[str, ...]

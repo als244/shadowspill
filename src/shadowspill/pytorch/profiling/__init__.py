@@ -1,35 +1,24 @@
 """Task-local profiling, representative values, metadata, and cache APIs."""
 
-from .allocation_contract import (
-    TaskAllocationContract,
-    TaskAllocationContractStep,
-    TaskAllocationPathObservation,
-    compare_allocation_path,
-)
-from .allocation_invariant import (
+from shadowspill.profiling.invariant import (
     AllocationPathProbe,
     AmbiguousAllocationPathError,
     DerivedAllocationInvariant,
     derive_invariant_allocation_path,
 )
-from .environment import profile_environment
-from .inputs import (
-    REPRESENTATIVE_VALUE_POLICY,
-    RepresentativeInputSet,
-    RepresentativeInputSummary,
-    materialize_representative_inputs,
-)
-from .manifests import (
-    ResolvedTaskManifests,
-    resolve_task_manifests,
-    validate_compiled_profile,
-)
-from .metadata import (
+from shadowspill.profiling.metadata import (
     ProfilingMetadata,
     canonicalize_profiling_metadata,
-    training_profiling_metadata,
+    repeated_profiling_metadata,
 )
-from .records import (
+from shadowspill.profiling.store import ProfileStore
+from shadowspill.task.allocations import (
+    TaskAllocationContract,
+    TaskAllocationContractStep,
+    TaskAllocationPathObservation,
+    compare_allocation_path,
+)
+from shadowspill.task.profiles import (
     PROFILE_SCHEMA,
     ProfileEnvironment,
     ProfileKey,
@@ -39,12 +28,21 @@ from .records import (
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+
+from .environment import profile_environment
+from .inputs import (
+    RepresentativeInputSet,
+    materialize_representative_inputs,
+)
+from .manifests import (
+    ResolvedTaskManifests,
+    resolve_task_manifests,
+    validate_compiled_profile,
+)
 from .runner import ProfilableArtifact, profile_unique_artifacts
-from .store import ProfileStore
 
 __all__ = [
     "PROFILE_SCHEMA",
-    "REPRESENTATIVE_VALUE_POLICY",
     "AllocationPathProbe",
     "AmbiguousAllocationPathError",
     "DerivedAllocationInvariant",
@@ -55,7 +53,6 @@ __all__ = [
     "ProfilingMetadata",
     "ProfilingResult",
     "RepresentativeInputSet",
-    "RepresentativeInputSummary",
     "ResolvedTaskManifests",
     "TaskAllocationContract",
     "TaskAllocationContractStep",
@@ -70,7 +67,7 @@ __all__ = [
     "materialize_representative_inputs",
     "profile_environment",
     "profile_unique_artifacts",
+    "repeated_profiling_metadata",
     "resolve_task_manifests",
-    "training_profiling_metadata",
     "validate_compiled_profile",
 ]

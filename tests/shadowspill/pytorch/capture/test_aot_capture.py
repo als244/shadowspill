@@ -22,9 +22,9 @@ from shadowspill.pytorch.capture.aot import (
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
-    TaskInputRole,
 )
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.task.inputs import TaskInputRole
 
 
 class _Network(nn.Module):

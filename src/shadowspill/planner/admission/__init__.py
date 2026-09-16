@@ -3,7 +3,7 @@
 The logical :class:`~shadowspill.ir.ShadowSpillProgram` deliberately does not encode how
 a compiled task returns storage.  This module carries the small additional
 physical contract needed to evaluate dynamic slab admission without importing
-PyTorch or consulting runtime allocator telemetry in the candidate loop.
+the framework or consulting runtime allocator telemetry in the candidate loop.
 """
 
 from __future__ import annotations

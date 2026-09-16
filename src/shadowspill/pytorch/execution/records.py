@@ -10,23 +10,26 @@ from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
-    TrainingTaskEntrypoint,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
+from shadowspill.runtime.failures import ExecutionTaskIdentity
+from shadowspill.runtime.plan import (
     RuntimeBridge,
     TaskMemoryEnvelope,
     TaskPublication,
     actions_by_task,
 )
-from shadowspill.runtime.failures import ExecutionTaskIdentity
 from shadowspill.simulator import SimulationResult
+from shadowspill.task.entrypoints import TaskEntrypoint
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutionTaskRecord:
     """One selected task with all repeated-path relationships predecoded."""
 
-    entrypoint: TrainingTaskEntrypoint
+    entrypoint: TaskEntrypoint
+    #: What to call for this task. The entrypoint is neutral; this is not.
+    artifact: GraphArtifact | OptimizerTaskArtifact | None
     task: TaskSpec
     input_aliases: tuple[str, ...]
     input_storage_aliases: tuple[str, ...]
@@ -136,6 +139,7 @@ def build_plan_run(
             input_aliases=aliases[entrypoint.task_id],
             object_ids_by_alias=object_ids,
             ephemeral_aliases=ephemeral,
+            artifact=lowered.executables.get(entrypoint.task_id),
             optimizer_objects=optimizer_objects,
             identity=identities[entrypoint.task_id],
             bridge=bridge,
@@ -165,7 +169,7 @@ def build_plan_run(
 
 
 def _build_task_record(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     *,
     task: TaskSpec,
     actions: tuple[MemoryAction, ...],
@@ -177,8 +181,8 @@ def _build_task_record(
     bridge: RuntimeBridge,
     functions: Mapping[str, Callable[..., object]],
     memory_envelope: TaskMemoryEnvelope,
+    artifact: GraphArtifact | OptimizerTaskArtifact | None,
 ) -> ExecutionTaskRecord:
-    artifact = entrypoint.artifact
     function = (
         functions[artifact.compatibility_digest]
         if isinstance(artifact, GraphArtifact)
@@ -186,12 +190,13 @@ def _build_task_record(
     )
     argument_template = (
         tuple(artifact.example_arguments)
-        if isinstance(artifact, GraphArtifact) and entrypoint.phase != "optimizer"
+        if isinstance(artifact, GraphArtifact)
+        and entrypoint.options.phase != "optimizer"
         else None
     )
     outputs = (
         ()
-        if entrypoint.phase == "optimizer"
+        if entrypoint.options.phase == "optimizer"
         else _forward_outputs(entrypoint, input_aliases, bridge)
     )
     gradient_outputs = _gradient_outputs(entrypoint, bridge)
@@ -205,6 +210,7 @@ def _build_task_record(
     publications = _task_publications(outputs, gradient_outputs, optimizer_outputs)
     return ExecutionTaskRecord(
         entrypoint=entrypoint,
+        artifact=artifact,
         task=task,
         input_aliases=input_aliases,
         input_storage_aliases=tuple(
@@ -224,7 +230,7 @@ def _build_task_record(
         optimizer_outputs=optimizer_outputs,
         publications=publications,
         optimizer_argument_object_ids=tuple(
-            optimizer_objects.get(name) for name in entrypoint.optimizer_binding_names
+            optimizer_objects.get(name) for name in entrypoint.options.named_inputs
         ),
         handoff_source_aliases=handoff_aliases,
         dematerialize_aliases=tuple(
@@ -244,7 +250,7 @@ def _build_task_record(
 
 
 def _forward_outputs(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     input_aliases: tuple[str, ...],
     bridge: RuntimeBridge,
 ) -> tuple[ForwardOutputRecord, ...]:
@@ -276,11 +282,11 @@ def _forward_outputs(
 
 
 def _gradient_outputs(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     bridge: RuntimeBridge,
 ) -> tuple[GradientOutputRecord, ...]:
     grouped: dict[str, tuple[str, list[int]]] = {}
-    for slot in entrypoint.gradient_output_slots:
+    for slot in entrypoint.options.contribution_slots:
         alias_id = bridge.objects.alias_for_object(slot.object_id)
         grouped.setdefault(alias_id, (slot.object_id, []))[1].append(slot.leaf_index)
     result: list[GradientOutputRecord] = []
@@ -299,18 +305,18 @@ def _gradient_outputs(
 
 
 def _optimizer_outputs_for_entrypoint(
-    entrypoint: TrainingTaskEntrypoint,
+    entrypoint: TaskEntrypoint,
     bridge: RuntimeBridge,
 ) -> tuple[OptimizerOutputRecord, ...]:
-    if entrypoint.phase != "optimizer":
+    if entrypoint.options.phase != "optimizer":
         return ()
-    if len(entrypoint.optimizer_output_names) != len(entrypoint.output_slots):
+    if len(entrypoint.options.named_outputs) != len(entrypoint.output_slots):
         raise ValueError("optimizer output names and tensor slots must align")
     result: list[OptimizerOutputRecord] = []
     next_publication = 0
     seen: set[str] = set()
     for name, slot in zip(
-        entrypoint.optimizer_output_names,
+        entrypoint.options.named_outputs,
         entrypoint.output_slots,
         strict=True,
     ):
@@ -409,33 +415,39 @@ def _optimizer_objects(lowered: LoweredTrainingProgram) -> dict[str, str]:
 
 
 def _execution_identities(
-    entrypoints: tuple[TrainingTaskEntrypoint, ...],
+    entrypoints: tuple[TaskEntrypoint, ...],
 ) -> dict[str, tuple[int, str]]:
     result: dict[str, tuple[int, str]] = {}
     phase_ordinals: dict[str, int] = {}
     for execution_ordinal, entrypoint in enumerate(entrypoints):
-        if entrypoint.microbatch is not None and entrypoint.stage_index is not None:
+        if (
+            entrypoint.options.repetition is not None
+            and entrypoint.options.stage_index is not None
+        ):
             semantic_name = (
-                f"microbatch_{entrypoint.microbatch:04d}."
-                f"stage_{entrypoint.stage_index:04d}."
-                f"{entrypoint.phase}.{entrypoint.variant}"
+                f"microbatch_{entrypoint.options.repetition:04d}."
+                f"stage_{entrypoint.options.stage_index:04d}."
+                f"{entrypoint.options.phase}.{entrypoint.options.variant}"
             )
         else:
-            phase_ordinal = phase_ordinals.get(entrypoint.phase, 0)
-            phase_ordinals[entrypoint.phase] = phase_ordinal + 1
-            semantic_name = f"{entrypoint.phase}.component_{phase_ordinal:04d}"
+            phase_ordinal = phase_ordinals.get(entrypoint.options.phase, 0)
+            phase_ordinals[entrypoint.options.phase] = phase_ordinal + 1
+            semantic_name = f"{entrypoint.options.phase}.component_{phase_ordinal:04d}"
         result[entrypoint.task_id] = (execution_ordinal, semantic_name)
     return result
 
 
 def _public_outputs(
-    entrypoints: tuple[TrainingTaskEntrypoint, ...], bridge: RuntimeBridge
+    entrypoints: tuple[TaskEntrypoint, ...], bridge: RuntimeBridge
 ) -> tuple[tuple[str, ...], ...]:
     result: dict[int, tuple[str, ...]] = {}
     for entrypoint in entrypoints:
-        if entrypoint.phase != "forward" or entrypoint.microbatch is None:
+        if (
+            entrypoint.options.phase != "forward"
+            or entrypoint.options.repetition is None
+        ):
             continue
-        result[entrypoint.microbatch] = tuple(
+        result[entrypoint.options.repetition] = tuple(
             bridge.objects.alias_for_object(
                 next(
                     slot.object_id
@@ -443,7 +455,7 @@ def _public_outputs(
                     if slot.leaf_index == leaf_index
                 )
             )
-            for leaf_index in entrypoint.public_output_leaves
+            for leaf_index in entrypoint.options.public_output_leaves
         )
     return tuple(result[index] for index in range(len(result)))
 

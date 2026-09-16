@@ -13,12 +13,12 @@ from shadowspill.planner.diagnostics.plan import (
     PlanTaskStage,
     PlanUniqueStage,
 )
-from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.compilation.layout import (
-    reconcile_compiled_task_layout,
-)
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.task.layout import (
+    reconcile_compiled_task_layout,
+)
+from shadowspill.task.manifest import ExecutableTaskManifest
 
 from .graphs import _graph_profile
 
@@ -99,7 +99,7 @@ def _forward_task_stage(
     manifests: Mapping[str, ExecutableTaskManifest],
     metadata_digest: str | None,
 ) -> PlanTaskStage:
-    artifact_key = entrypoint.artifact.compatibility_digest
+    artifact_key = lowered.executables[entrypoint.task_id].compatibility_digest
     manifest = manifests[artifact_key]
     task = index.task_by_id[entrypoint.task_id]
     profile = index.profile_by_id[task.profile_id]
@@ -120,7 +120,9 @@ def _forward_task_stage(
         unique_stage_id=index.unique_id_by_key[profile.compatibility_digest],
         structural_contract_key=artifact_key,
         semantic_contract_digest=(
-            entrypoint.artifact.storage_contract.compatibility_digest
+            lowered.executables[
+                entrypoint.task_id
+            ].storage_contract.compatibility_digest
         ),
         executable_contract_digest=(manifest.storage_contract.compatibility_digest),
         compiled_layout_digest=layout.compatibility_digest,
@@ -150,18 +152,21 @@ def _forward_unique_stage(
     representative = occurrences[0]
     task = index.task_by_id[representative.task_id]
     profile = _graph_profile(
-        representative.artifact,
+        lowered.executables[representative.task_id],
         "forward",
         task,
         lowered.program,
         measurements[key],
-        manifests[representative.artifact.compatibility_digest],
+        manifests[lowered.executables[representative.task_id].compatibility_digest],
     )
     return PlanUniqueStage(
         unique_stage_id=index.unique_id_by_key[key],
         structural_key=key,
         module_targets=tuple(
-            dict.fromkeys(entrypoint.module_target for entrypoint in occurrences)
+            dict.fromkeys(
+                entrypoint.options.target or entrypoint.task_id
+                for entrypoint in occurrences
+            )
         ),
         occurrence_count=len(occurrences),
         graph_pairs=(

@@ -5,8 +5,7 @@ from __future__ import annotations
 import torch
 
 from shadowspill.pytorch.accelerator import provider_version
-
-from .records import ProfileEnvironment
+from shadowspill.task.profiles import ProfileEnvironment
 
 #: The provider a build's tasks are profiled under.
 DEVICE_POOL_PROVIDER_ID = "shadowspill.device_pool"

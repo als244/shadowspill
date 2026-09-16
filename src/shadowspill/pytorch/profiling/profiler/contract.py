@@ -7,20 +7,20 @@ from dataclasses import dataclass, replace
 
 import torch
 
-from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.runtime_adapter.telemetry import (
-    AllocationTelemetryError,
-    TaskWorkspaceProfile,
-)
-
-from ..allocation_contract import (
-    TaskAllocationContract,
-    TaskAllocationPathObservation,
-)
-from ..allocation_invariant import (
+from shadowspill.profiling.invariant import (
     AllocationPathProbe,
     derive_invariant_allocation_path,
 )
+from shadowspill.pytorch.capture.storage import TaskStorageContract
+from shadowspill.runtime.telemetry import (
+    AllocationTelemetryError,
+    TaskWorkspaceProfile,
+)
+from shadowspill.task.allocations import (
+    TaskAllocationContract,
+    TaskAllocationPathObservation,
+)
+
 from ..executables import ProfileExecutable, ProfileExecutableStore
 from .boundary import AllocatorBoundary
 from .workspace import WorkspaceObservation

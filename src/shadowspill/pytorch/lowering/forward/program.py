@@ -11,8 +11,8 @@ from shadowspill.errors import CaptureError
 from shadowspill.ir import MemoryLocation, SharedResidencyPolicy
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.task.manifest import ExecutableRootAllocation
 
 from ...partition import PartitionedExport
 from ..profiles import TaskProfileCatalog
@@ -79,6 +79,7 @@ def lower_partitioned_forward_program(
         initial_residency,
         final_residency,
         graph.entrypoints,
+        graph.executables,
         objects.registrations,
         objects.root_input_slots,
         graph.public_outputs,

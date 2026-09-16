@@ -32,7 +32,7 @@ extern "C" {
  * cannot skew apart and one number covers them all. A caller that mirrors a
  * struct checks this, not a per-component version.
  *
- * Backends and the PyTorch adapter keep their own versions: those are
+ * Backends and the framework adapter keep their own versions: those are
  * compiled separately against a contract, and can genuinely differ from the
  * library they load into.
  */

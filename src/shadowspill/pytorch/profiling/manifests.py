@@ -7,14 +7,15 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from shadowspill.errors import CaptureError, ProfilingError
+from shadowspill.profiling.manifest_store import CompiledManifestStore
+from shadowspill.profiling.store import ProfileStore
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.compilation.layout import reconcile_compiled_task_layout
+from shadowspill.pytorch.compilation.inductor.manifest import toolchain
+from shadowspill.task.layout import reconcile_compiled_task_layout
+from shadowspill.task.manifest import ExecutableTaskManifest
+from shadowspill.task.profiles import ProfileEnvironment, ProfileKey, TaskMeasurement
 
-from .manifest_store import CompiledManifestStore
-from .records import ProfileEnvironment, ProfileKey, TaskMeasurement
 from .runner import ProfilableArtifact, unique_graph_artifacts
-from .store import ProfileStore
 
 
 class ManifestCompiler(Protocol):
@@ -108,6 +109,7 @@ def _manifest_cache(
 ) -> CompiledManifestStore:
     return CompiledManifestStore(
         profile_cache.compiled_manifest_root,
+        toolchain=toolchain(),
         policy=profile_cache.policy,
         artifact_recorder=profile_cache.artifact_recorder,
     )

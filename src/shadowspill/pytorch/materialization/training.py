@@ -27,19 +27,21 @@ from shadowspill.pytorch.materialization.replacement import (
     ReplacementStorageViews,
 )
 from shadowspill.pytorch.optimizer import current_optimizer_bindings
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    RuntimeBridge,
-    admit_initial_actions,
+from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     submit_initial_actions,
-    wait_idle,
 )
+from shadowspill.pytorch.spill import register_spill_tensor, write_spill_tensor
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
     persistent_state,
     restore_persistent_state,
 )
 from shadowspill.runtime import Runtime
+from shadowspill.runtime.plan import (
+    RuntimeBridge,
+    admit_initial_actions,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,7 +145,7 @@ class TrainingMaterializedState(MaterializedState):
             self._release_placeholder(
                 alias_id, representative, binding.generation, ordinal
             )
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
         self._model_on_cpu = False
 
     def adopt_execution_plan(
@@ -176,8 +178,8 @@ class TrainingMaterializedState(MaterializedState):
                 device="cpu",
             )
             source.fill_(1)
-            bridge.objects.register_spill_tensor(
-                alias_id, source, retain_spill_copy=True
+            register_spill_tensor(
+                bridge.objects, alias_id, source, retain_spill_copy=True
             )
             owner = torch.empty(
                 source.untyped_storage().nbytes(),
@@ -195,7 +197,7 @@ class TrainingMaterializedState(MaterializedState):
                 (1 << 20) + ordinal,
             )
         self._materialize_optimizer_state(optimizer, lowered)
-        wait_idle(bridge)
+        bridge.wait_runtime_idle()
 
     def _materialize_optimizer_state(
         self,
@@ -263,7 +265,7 @@ class TrainingMaterializedState(MaterializedState):
     def refresh_inputs(self, values: Sequence[Sequence[Any]]) -> None:
         """Write every guarded microbatch into its persistent host slot."""
 
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
         for capture, microbatch, slots in zip(
             self.captures,
             values,
@@ -279,7 +281,7 @@ class TrainingMaterializedState(MaterializedState):
                 if is_accelerator(tensor.device):
                     tensor = tensor.detach().cpu()
                 if alias_id not in written:
-                    self.bridge.objects.write_spill_tensor(alias_id, tensor)
+                    write_spill_tensor(self.bridge.objects, alias_id, tensor)
                     written.add(alias_id)
 
     def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
@@ -339,12 +341,12 @@ class TrainingMaterializedState(MaterializedState):
                 )
             destination.copy_(source.detach().to(device="cpu"))
         for alias_id, owner in owners.items():
-            self.bridge.objects.write_spill_tensor(alias_id, owner)
+            write_spill_tensor(self.bridge.objects, alias_id, owner)
 
     def restore_cpu_and_unregister(self) -> None:
         if self._closed:
             return
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
         restore_persistent_state(self.runtime, self._persistent_state)
         owners = (
             self._planning_cpu_owners
@@ -390,7 +392,7 @@ class TrainingMaterializedState(MaterializedState):
                     retain_spill_copy=retain[alias_id],
                     ordinal=ordinal,
                 )
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
 
     def _initial_sources(
         self,
@@ -444,7 +446,8 @@ class TrainingMaterializedState(MaterializedState):
                     f"registered model alias {alias_id!r} has no imported "
                     "runtime storage"
                 )
-            self.bridge.objects.register_spill_tensor(
+            register_spill_tensor(
+                self.bridge.objects,
                 alias_id,
                 source,
                 retain_spill_copy=retain_spill_copy,

@@ -6,8 +6,7 @@ import io
 
 import torch
 
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
-from shadowspill.pytorch.diagnostics.execution import (
+from shadowspill.diagnostics.step import (
     AllocatorTrace,
     LaneSummary,
     RuntimeTrace,
@@ -17,6 +16,7 @@ from shadowspill.pytorch.diagnostics.execution import (
     TransferLane,
     TransferRecords,
 )
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.schema import artifact_schema
 
 
