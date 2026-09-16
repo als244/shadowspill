@@ -624,6 +624,25 @@ admission](../../architecture/physical-admission.md), and how a schedule
 becomes leases in [from a resolved program to
 leases](../../architecture/admission-leases.md).
 
+## `shadowspill.search`
+
+A step planned at every geometry, budget and walk, and the report that answers.
+Framework-neutral: enumerating the splits of a sequence total, planning each
+point, and reading the answers back need no framework. Building the programs a
+point is planned from does, so `shadowspill.pytorch.plan_step_search()` drives
+this package and is documented on [the frontend page](frontend.md#plan_step_search).
+
+| Name | Is |
+|---|---|
+| `search_geometries(total_sequences_per_step, *, sequence_length, min_tokens_per_microbatch=None, max_tokens_per_microbatch=None)` | Every admitted `(sequences_per_microbatch, accumulation)` pair, largest microbatch first, and the pairs the token bounds skipped with the reason for each. |
+| `default_orderings(accumulation)` | Every `depth x breadth` factor pair of the accumulation count, depth-first first. |
+| `StepSearchReport` | What a search answered: its points, its builds, and the winner at each budget. `load()` reads one back. |
+| `StepSearchPoint` | One geometry-ordering-budget point: what it planned, or the refusal it hit. |
+| `StepSearchGeometryBuild` | What one geometry cost to build, once, before any point was planned. |
+
+A refusal is recorded rather than raised, so a search answers with the points it
+could plan and the reasons for the rest.
+
 ## `shadowspill.simulator`
 
 `simulate()` replays one explicit schedule through the required compiled
