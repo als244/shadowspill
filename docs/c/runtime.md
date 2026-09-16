@@ -315,6 +315,23 @@ freed) against a `ShadowSpillAllocationCategory` (anonymous, planned object,
 caller owned). Passing a null buffer and zero capacity to the read queries the
 count.
 
+### Profiler annotations
+
+The backend's profiler shows named ranges around whatever a caller wants named.
+The runtime owns both the flag and the backend, so a frontend keeps no profiler
+of its own and neutral code never calls a frontend's library to open a range.
+
+| Call | Does |
+|---|---|
+| `shadowspill_profiler_annotations_set(runtime, enabled)` | turns the backend's profiler on or off; a backend with no profiler is a no-op rather than a failure, because annotations never change what a step does |
+| `shadowspill_profiler_annotations_enabled(runtime)` | whether they are on, for a caller deciding whether to build a name that would otherwise be thrown away; opening a range is safe either way |
+| `shadowspill_profiler_range_begin(runtime, name)` | opens a named range, answering 0 when annotations are off or the backend has no profiler |
+| `shadowspill_profiler_range_end(runtime, range)` | closes a range this runtime opened; a zero range is a no-op |
+
+Annotations off costs one relaxed atomic read per range, which is why the calls
+sit on the allocation and task-boundary paths without being conditional at
+every call site.
+
 Runtime tracing uses:
 
 - `shadowspill_trace_prepare()`, which allocates the two rings from a

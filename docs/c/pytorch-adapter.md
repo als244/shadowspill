@@ -15,8 +15,9 @@ header carries only what needs PyTorch.
 The header is ordered the way this page is, with a section banner at each
 heading below: vocabulary and descriptions; bootstrap, physical admission and
 close; the allocator callbacks; objects and storage; task boundaries and
-allocation scopes; profiling; failure and recovery. Every symbol is prefixed
-`shadowspill_pytorch_`.
+allocation scopes; failure and recovery. Every symbol is prefixed
+`shadowspill_pytorch_`. The one heading with no banner behind it is
+[Profiling](#profiling), which is here to say the adapter exposes none.
 
 ## What the adapter requires of a backend
 
@@ -118,11 +119,13 @@ the frontend calls those with the handle from
   address.
 - `shadowspill_write_object()` and `shadowspill_read_object()` move persistent
   state through an explicitly selected pool.
-- `shadowspill_pytorch_acquire_objects_handle()` acquires the objects an
-  admitted acquisition names for a consumer stream, and
+- `shadowspill_acquire_objects_handle()` acquires the objects an admitted
+  acquisition names for a consumer stream. It is the neutral runtime's: it
+  takes the integer its caller names the stream by and asks the backend which
+  stream that is, so no adapter entry point is needed to reach it.
   `shadowspill_pytorch_transfer_acquired_object_to_caller()` and
-  `shadowspill_pytorch_release_caller_allocation()` hand one to the caller
-  and take it back.
+  `shadowspill_pytorch_release_caller_allocation()` hand one to the caller and
+  take it back; they are the storage operators' own and have no ctypes caller.
 - `shadowspill_object_snapshot()` returns diagnostic state.
 - `shadowspill_object_location_snapshot()` returns one explicit
   pool-location view without assigning execution or spill meaning to it.
@@ -135,11 +138,11 @@ the frontend calls those with the handle from
 
 ## Task boundaries and allocation scopes
 
-`shadowspill_pytorch_submit_action_batch_handle()` triggers the neutral plan
-owner's pre-task action batch without introducing frontend object semantics. It
-is here because it wraps a provider stream, which is work only this library can
-do, and so are the two acquisition calls under [Objects and
-storage](#objects-and-storage).
+The pre-task action batch is `shadowspill_submit_action_batch_handle()`, the
+neutral runtime's. It used to be mirrored here, because a stream had to be
+turned into a backend token and only this library could do that; the runtime
+resolves the caller's stream itself now, so the mirror is gone. The same is true
+of object acquisition under [Objects and storage](#objects-and-storage).
 
 Everything else in plan admission needs nothing but handles the neutral runtime
 already owns, so the frontend calls those on the neutral library, passing the
@@ -202,11 +205,12 @@ and offset handling](../architecture/physical-admission.md).
 
 ## Profiling
 
-- `shadowspill_pytorch_profiler_annotations_set()` enables the profiler
-  backend.
-- `shadowspill_pytorch_profile_range_begin()` and
-  `shadowspill_pytorch_profile_range_end()` manage explicit ranges. They are
-  no-ops on a backend without a profiler.
+The adapter has none of its own. Ranges and the annotation flag are the
+runtime's -- `shadowspill_profiler_annotations_set()`,
+`shadowspill_profiler_range_begin()` and `shadowspill_profiler_range_end()` in
+[runtime.md](runtime.md#profiler-annotations) -- because the runtime owns the
+backend the ranges go to. The adapter opens ranges on the runtime it is bound
+to, like any other caller, and exports nothing for it.
 
 Structured runtime tracing (`shadowspill_trace_prepare()`,
 `shadowspill_trace_begin()`, `shadowspill_trace_end()`,

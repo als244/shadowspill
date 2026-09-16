@@ -32,7 +32,7 @@ static int impossible_oom(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation full = {0};
     ShadowSpillAllocation impossible = {0};
     int result = 0;
@@ -80,8 +80,8 @@ static int worker_failure(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
-    ShadowSpillBackendStream other_stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
+    ShadowSpillBackendStream other_stream = 0U;
     ShadowSpillAllocation allocation = {0};
     if (shadowspill_test_create_runtime(&mock, 128U, 1U, 1U, 10000U, &runtime
         ) != SHADOWSPILL_STATUS_OK ||
@@ -152,7 +152,7 @@ static int worker_submission_failure_reaches_dispatcher(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     const ShadowSpillObjectDescription object = {
         .object_id = 19U,
         .size_bytes = 32U,
@@ -197,7 +197,7 @@ static int worker_submission_failure_reaches_dispatcher(void) {
 
 done:
     shadowspill_test_destroy_runtime(runtime);
-    if (stream.words[0] != 0U) {
+    if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
     }
     shadowspill_backend_destroy(&mock);
@@ -211,7 +211,7 @@ static int fragmented_oom(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation blocks[4] = {{0}};
     int result = 0;
     if (shadowspill_test_create_runtime(&mock, 128U, 1U, 1U, 10000U, &runtime
@@ -257,7 +257,7 @@ static int fragmented_oom(void) {
 
 done:
     shadowspill_test_destroy_runtime(runtime);
-    if (stream.words[0] != 0U) {
+    if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
     }
     shadowspill_backend_destroy(&mock);
@@ -271,7 +271,7 @@ static int failed_task_retirement_recovery(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation live = {0};
     ShadowSpillAllocation impossible = {0};
     ShadowSpillAllocation recovered = {0};
@@ -326,7 +326,7 @@ static int failed_task_retirement_recovery(void) {
 
 done:
     shadowspill_test_destroy_runtime(runtime);
-    if (stream.words[0] != 0U) {
+    if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
     }
     shadowspill_backend_destroy(&mock);
@@ -340,7 +340,7 @@ static int failed_fetch_reports_trigger_reservation_oom(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation temporary = {0};
     const ShadowSpillObjectDescription object = {
         .object_id = 7U,
@@ -408,7 +408,7 @@ static int failed_fetch_reports_trigger_reservation_oom(void) {
 
 done:
     shadowspill_test_destroy_runtime(runtime);
-    if (stream.words[0] != 0U) {
+    if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
     }
     shadowspill_backend_destroy(&mock);
@@ -426,7 +426,7 @@ static int a_latched_failure_refuses_the_next_task(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation allocation = {0};
     const ShadowSpillTaskDescription task = {.task_id = 71U};
     int result = 0;
@@ -468,7 +468,7 @@ static int a_latched_failure_refuses_the_next_task(void) {
 
 done:
     shadowspill_test_destroy_runtime(runtime);
-    if (stream.words[0] != 0U) {
+    if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
     }
     shadowspill_backend_destroy(&mock);
@@ -487,7 +487,7 @@ static int after_task_reports_a_failure_latched_while_it_ran(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation allocation = {0};
     const ShadowSpillTaskDescription task = {.task_id = 72U};
     int result = 0;
@@ -517,7 +517,7 @@ static int after_task_reports_a_failure_latched_while_it_ran(void) {
 
 done:
     shadowspill_test_destroy_runtime(runtime);
-    if (stream.words[0] != 0U) {
+    if (stream != 0U) {
         (void)mock.destroy_stream(mock.state, stream);
     }
     shadowspill_backend_destroy(&mock);

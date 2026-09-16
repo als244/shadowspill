@@ -246,14 +246,6 @@ shadowspill_pytorch_validate_object_binding(
 );
 
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_acquire_objects_handle(
-    uintptr_t acquisition_handle,
-    uintptr_t consumer_stream_address,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-);
-
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_transfer_acquired_object_to_caller(
     uintptr_t acquisition_handle,
     uint32_t object_ordinal,
@@ -277,12 +269,6 @@ shadowspill_pytorch_release_caller_allocation(
  * The pre-task action batch, the two calls every planned task runs
  * between, the abort, and the scopes profiling opens outside a task.
  */
-
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_submit_action_batch_handle(
-    uintptr_t action_batch_handle,
-    uintptr_t trigger_stream_address
-);
 
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_before_task_handle(
@@ -324,27 +310,6 @@ shadowspill_pytorch_allocation_scope_end(
 
 SHADOWSPILL_PYTORCH_API void
 shadowspill_pytorch_allocation_scope_abort(void);
-
-/* ------------------------------------------------------------------------
- * Profiling
- *
- * Ranges on the backend's profiler, no-ops when it has none.
- */
-
-/*
- * Backend-neutral profiling ranges used by the Python task orchestrator.
- * These are no-ops when the configured runtime profiler has no provider.
- */
-SHADOWSPILL_PYTORCH_API ShadowSpillProfilerRange
-shadowspill_pytorch_profile_range_begin(const char *name);
-
-SHADOWSPILL_PYTORCH_API void shadowspill_pytorch_profile_range_end(
-    ShadowSpillProfilerRange range
-);
-
-/* Enable or disable provider annotations independently of runtime tracing. */
-SHADOWSPILL_PYTORCH_API ShadowSpillStatus
-shadowspill_pytorch_profiler_annotations_set(uint8_t enabled);
 
 /* ------------------------------------------------------------------------
  * Failure and recovery

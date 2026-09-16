@@ -20,7 +20,7 @@ static int best_fit_preserves_largest_range(void) {
     ShadowSpillMockRuntimeTopology topology;
     shadowspill_mock_runtime_topology(&mock, 256U, 0U, 1U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &compute) != 0;
@@ -56,7 +56,7 @@ static int best_fit_preserves_largest_range(void) {
         );
     }
     shadowspill_runtime_destroy(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -74,7 +74,7 @@ static int same_stream_split_retires_cleanly(void) {
     ShadowSpillMockRuntimeTopology topology;
     shadowspill_mock_runtime_topology(&mock, 128U, 0U, 1U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     ShadowSpillAllocation original = {0};
     ShadowSpillAllocation split = {0};
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
@@ -99,7 +99,7 @@ static int same_stream_split_retires_cleanly(void) {
         statistics.execution.free_prefix_bytes != 128U ||
         statistics.execution.largest_free_range_bytes != 128U;
     shadowspill_runtime_destroy(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -123,7 +123,7 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
     shadowspill_mock_runtime_topology(&mock, POOL_BYTES, 0U, 16U, 1000U, &topology
     );
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &compute) != 0;
@@ -169,7 +169,7 @@ static int repeated_nested_splits_reclaim_the_pool(void) {
             statistics.execution.largest_free_range_bytes != POOL_BYTES;
     }
     shadowspill_runtime_destroy(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -188,7 +188,7 @@ static int live_allocations_name_what_statistics_only_counts(void) {
     ShadowSpillMockRuntimeTopology topology;
     shadowspill_mock_runtime_topology(&mock, 256U, 0U, 1U, 1000U, &topology);
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &compute) != 0;
@@ -254,7 +254,7 @@ static int live_allocations_name_what_statistics_only_counts(void) {
         ) != SHADOWSPILL_STATUS_INVALID_ARGUMENT;
 
     shadowspill_runtime_destroy(runtime);
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_backend_destroy(&mock);
@@ -295,7 +295,7 @@ int main(void) {
         shadowspill_backend_destroy(&mock);
         return EXIT_FAILURE;
     }
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     if (mock.create_stream(mock.state, &compute) != 0) {
         shadowspill_runtime_destroy(runtime);
         shadowspill_backend_destroy(&mock);

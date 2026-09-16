@@ -21,7 +21,7 @@ void shadowspill_cuda_name_stream(
 ) {
     (void)state;
     if (name != NULL) {
-        nvtxNameCuStreamA((CUstream)stream.words[0], name);
+        nvtxNameCuStreamA((CUstream)stream, name);
     }
 }
 

@@ -82,9 +82,6 @@ static ShadowSpillStatus unpublish(
     *backend = adapter.backend;
     adapter.runtime = NULL;
     adapter.backend = (ShadowSpillPytorchLoadedBackend){0};
-    atomic_store_explicit(
-        &adapter.profiler_annotations_enabled, 0U, memory_order_release
-    );
     adapter.closed = 1U;
     pthread_mutex_unlock(&adapter.mutex);
     return SHADOWSPILL_STATUS_OK;

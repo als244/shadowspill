@@ -127,6 +127,9 @@ struct ShadowSpillRuntime {
     _Atomic uint8_t trace_event_overflow;
     /* The caller's timing event that transfer intervals are measured from;
      * meaningful only while a trace is active. */
+    /* Whether the backend's profiler is emitting ranges. One writer, the
+       annotations setter; read on every range a caller opens. */
+    atomic_uchar profiler_annotations_enabled;
     ShadowSpillBackendEvent trace_origin_event;
     uint8_t trace_origin_present;
     ShadowSpillRuntimeFailure failure;

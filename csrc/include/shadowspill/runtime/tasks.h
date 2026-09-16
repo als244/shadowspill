@@ -27,7 +27,7 @@ SHADOWSPILL_API ShadowSpillStatus
 shadowspill_submit_action_batch_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillActionBatchHandle *handle,
-    ShadowSpillBackendStream trigger_stream
+    uint64_t trigger_stream_handle
 );
 
 /*
@@ -38,7 +38,7 @@ SHADOWSPILL_API ShadowSpillStatus
 shadowspill_acquire_objects_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectAcquisitionHandle *handle,
-    ShadowSpillBackendStream consumer_stream,
+    uint64_t consumer_stream_handle,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 );

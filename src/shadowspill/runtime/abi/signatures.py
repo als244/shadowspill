@@ -42,7 +42,6 @@ def configure_adapter_library(library: Any) -> None:
     """Assign every non-callback adapter signature in one place."""
 
     _configure_capabilities(library)
-    _configure_profiler(library)
     _configure_physical_memory(library)
     _configure_allocator(library)
     _configure_objects(library)
@@ -77,6 +76,33 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     (
         "shadowspill_timing_elapsed",
         [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_profiler_range_begin",
+        [ctypes.c_size_t, ctypes.c_char_p],
+        ctypes.c_uint64,
+    ),
+    ("shadowspill_profiler_range_end", [ctypes.c_size_t, ctypes.c_uint64], None),
+    (
+        "shadowspill_profiler_annotations_set",
+        [ctypes.c_size_t, ctypes.c_uint8],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_acquire_objects_handle",
+        [
+            ctypes.c_size_t,
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.POINTER(ObjectBinding),
+            ctypes.c_uint32,
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_submit_action_batch_handle",
+        [ctypes.c_size_t, ctypes.c_size_t, ctypes.c_uint64],
         ctypes.c_uint32,
     ),
     ("shadowspill_timing_marker_wait", [ctypes.c_void_p], ctypes.c_uint32),
@@ -295,17 +321,6 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
         ctypes.c_uint32,
     ),
     (
-        "shadowspill_task_publish_allocation",
-        [
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.c_uint32,
-            ctypes.c_uint64,
-            ctypes.POINTER(ObjectBinding),
-        ],
-        ctypes.c_uint32,
-    ),
-    (
         "shadowspill_plan_create",
         [
             ctypes.c_size_t,
@@ -355,24 +370,6 @@ def _configure_capabilities(library: Any) -> None:
         library,
         "shadowspill_pytorch_runtime_handle",
         [ctypes.POINTER(ctypes.c_size_t)],
-        ctypes.c_uint32,
-    )
-
-
-def _configure_profiler(library: Any) -> None:
-    _signature(
-        library,
-        "shadowspill_pytorch_profile_range_begin",
-        [ctypes.c_char_p],
-        ctypes.c_uint64,
-    )
-    _signature(
-        library, "shadowspill_pytorch_profile_range_end", [ctypes.c_uint64], None
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_profiler_annotations_set",
-        [ctypes.c_uint8],
         ctypes.c_uint32,
     )
 
@@ -469,17 +466,6 @@ def _configure_task_boundaries(library: Any) -> None:
 def _configure_execution(library: Any) -> None:
     _signature(
         library,
-        "shadowspill_pytorch_acquire_objects_handle",
-        [
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.POINTER(ObjectBinding),
-            ctypes.c_uint32,
-        ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
         "shadowspill_pytorch_transfer_acquired_object_to_caller",
         [
             ctypes.c_size_t,
@@ -490,12 +476,6 @@ def _configure_execution(library: Any) -> None:
             ctypes.c_uint64,
             ctypes.POINTER(Allocation),
         ],
-        ctypes.c_uint32,
-    )
-    _signature(
-        library,
-        "shadowspill_pytorch_submit_action_batch_handle",
-        [ctypes.c_size_t, ctypes.c_size_t],
         ctypes.c_uint32,
     )
     _signature(

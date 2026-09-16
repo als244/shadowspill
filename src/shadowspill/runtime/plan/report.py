@@ -168,24 +168,30 @@ def input_failure_states(
 
 
 def profile_range_begin(bridge: RuntimeBridge, name: str) -> int:
-    """Open one optional provider-backed profiling range."""
+    """Open one optional backend-backed profiling range."""
 
     return int(
-        bridge.library.shadowspill_pytorch_profile_range_begin(name.encode("utf-8"))
+        bridge.runtime_library.shadowspill_profiler_range_begin(
+            bridge.runtime._runtime_handle, name.encode("utf-8")
+        )
     )
 
 
 def profile_range_end(bridge: RuntimeBridge, range_id: int) -> None:
     """Close a range returned by :meth:`profile_range_begin`."""
 
-    bridge.library.shadowspill_pytorch_profile_range_end(range_id)
+    bridge.runtime_library.shadowspill_profiler_range_end(
+        bridge.runtime._runtime_handle, range_id
+    )
 
 
 def set_profiler_annotations(bridge: RuntimeBridge, enabled: bool) -> None:
-    """Toggle provider annotations without changing runtime tracing."""
+    """Toggle backend annotations without changing runtime tracing."""
 
     bridge.require(
-        bridge.library.shadowspill_pytorch_profiler_annotations_set(enabled),
+        bridge.runtime_library.shadowspill_profiler_annotations_set(
+            bridge.runtime._runtime_handle, enabled
+        ),
         f"{'enable' if enabled else 'disable'} profiler annotations",
     )
 

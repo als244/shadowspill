@@ -67,7 +67,7 @@ void *shadowspill_pytorch_backend_malloc_impl(
     void *stream
 ) {
     const ShadowSpillProfilerRange range =
-        shadowspill_pytorch_profile_range_begin("shadowspill.runtime.allocate");
+        shadowspill_profiler_range_begin(shadowspill_pytorch_runtime(), "shadowspill.runtime.allocate");
     pthread_mutex_lock(&adapter.mutex);
     ++adapter.allocation_callbacks;
     if (bytes == 0) {
@@ -79,11 +79,11 @@ void *shadowspill_pytorch_backend_malloc_impl(
         &expected_device
     );
     if (bytes == 0 && runtime == NULL) {
-        shadowspill_pytorch_profile_range_end(range);
+        shadowspill_profiler_range_end(shadowspill_pytorch_runtime(), range);
         return NULL;
     }
     if (bytes == 0 && runtime != NULL && device_ordinal == expected_device) {
-        shadowspill_pytorch_profile_range_end(range);
+        shadowspill_profiler_range_end(shadowspill_pytorch_runtime(), range);
         release_allocator_callback_runtime();
         return NULL;
     }
@@ -95,7 +95,7 @@ void *shadowspill_pytorch_backend_malloc_impl(
             NULL,
             bytes < 0 ? 0U : (uint64_t)bytes
         );
-        shadowspill_pytorch_profile_range_end(range);
+        shadowspill_profiler_range_end(shadowspill_pytorch_runtime(), range);
         if (runtime != NULL) {
             release_allocator_callback_runtime();
         }
@@ -107,16 +107,16 @@ void *shadowspill_pytorch_backend_malloc_impl(
         shadowspill_pytorch_allocator_pool_id(),
         (uint64_t)bytes,
         256U,
-        shadowspill_pytorch_stream((uintptr_t)stream),
+        shadowspill_pytorch_resolve_stream((uintptr_t)stream),
         &allocation
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_latch_failure(status, device_ordinal, NULL, (uint64_t)bytes);
-        shadowspill_pytorch_profile_range_end(range);
+        shadowspill_profiler_range_end(shadowspill_pytorch_runtime(), range);
         release_allocator_callback_runtime();
         return NULL;
     }
-    shadowspill_pytorch_profile_range_end(range);
+    shadowspill_profiler_range_end(shadowspill_pytorch_runtime(), range);
     release_allocator_callback_runtime();
     return allocation.pointer;
 }
@@ -167,7 +167,7 @@ void shadowspill_pytorch_backend_free(
         runtime,
         shadowspill_pytorch_allocator_pool_id(),
         allocation.allocation_id,
-        shadowspill_pytorch_stream((uintptr_t)stream)
+        shadowspill_pytorch_resolve_stream((uintptr_t)stream)
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_latch_failure(status, device_ordinal, address, (uint64_t)bytes);
@@ -206,7 +206,7 @@ void shadowspill_pytorch_backend_record_stream(void *address, void *stream) {
         runtime,
         shadowspill_pytorch_allocator_pool_id(),
         allocation.allocation_id,
-        shadowspill_pytorch_stream((uintptr_t)stream)
+        shadowspill_pytorch_resolve_stream((uintptr_t)stream)
     );
     if (status != SHADOWSPILL_STATUS_OK) {
         shadowspill_pytorch_latch_failure(status, device_ordinal, address, 0U);
