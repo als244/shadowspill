@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 
 import torch
-from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 
+from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.runtime.abi import (
     AdapterFailure,
     AdapterStatistics,
@@ -90,7 +90,7 @@ def _admit_task(library: object, description: TaskDescription) -> tuple[int, int
 def main() -> int:
     installed = install_runtime(
         Path(sys.argv[1]).resolve(),
-        frontend=PyTorchProcessAllocator(),
+        frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,

@@ -6,8 +6,7 @@ import ctypes
 import sys
 from pathlib import Path
 
-from shadowspill.pytorch.allocator import PyTorchProcessAllocator
-
+from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.runtime.abi import AdapterFailure, AdapterStatistics
 from shadowspill.runtime.bootstrap import install_runtime
 from shadowspill.status import Status
@@ -20,7 +19,7 @@ PLAN_VIOLATION = Status.PLAN_VIOLATION
 def main() -> int:
     installed = install_runtime(
         Path(sys.argv[1]).resolve(),
-        frontend=PyTorchProcessAllocator(),
+        frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=256 * MIB,

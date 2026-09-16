@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 
 import torch
-from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 
+from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.runtime.abi import (
     AdapterCapabilities,
     AdapterStatistics,
@@ -156,7 +156,9 @@ def _submit_actions(
     if status != 0 or handle.value == 0:
         raise AssertionError(f"action admission failed with status {status}")
     status = int(
-        library.shadowspill_pytorch_submit_action_batch_handle(handle.value, stream)
+        runtime_library().shadowspill_submit_action_batch_handle(
+            _runtime_handle(library), handle.value, stream
+        )
     )
     if status != 0:
         raise AssertionError(f"action submission failed with status {status}")
@@ -199,7 +201,7 @@ def main() -> int:
         raise AssertionError("canary must start before PyTorch CUDA initialization")
     installed = install_runtime(
         adapter_path,
-        frontend=PyTorchProcessAllocator(),
+        frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
@@ -483,7 +485,8 @@ def main() -> int:
     caller_acquired = (ObjectBinding * 1)()
     if (
         int(
-            library.shadowspill_pytorch_acquire_objects_handle(
+            runtime_library().shadowspill_acquire_objects_handle(
+                _runtime_handle(library),
                 caller_handle.value,
                 torch.cuda.current_stream().cuda_stream,
                 caller_acquired,
