@@ -13,20 +13,20 @@ import ctypes
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .abi import PlanDescription, runtime_library
-from .bootstrap import InstalledRuntime
-from .calibration import read_transfer_capabilities
-from .configuration import (
+from ..abi import PlanDescription, runtime_library
+from ..bootstrap import InstalledRuntime
+from ..calibration import read_transfer_capabilities
+from ..configuration import (
     RuntimeConfigurationError,
     resolve_budget,
     resolve_dynamic_scratch_reserve,
     resolve_execution_budget,
     resolve_execution_device,
 )
-from .topology import MemoryPool, RuntimeRoute, TransferCapabilities
+from ..topology import MemoryPool, RuntimeRoute, TransferCapabilities
 
 if TYPE_CHECKING:
-    from .core import Runtime
+    from ..core import Runtime
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ def begin_plan(
             ) from exc
         if execution_pool.kind != "device":
             raise RuntimeConfigurationError(
-                "the current PyTorch frontend requires an accelerator execution pool"
+                "the frontend requires an accelerator execution pool"
             )
         resolved_device = resolve_execution_device(
             runtime.frontend, execution_device, execution_pool

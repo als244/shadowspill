@@ -73,8 +73,8 @@ class Runtime:
     """Own ShadowSpill's process-lifetime allocator, pools, routes, and worker.
 
     Accelerator allocator selection is process-global and irreversible after
-    PyTorch initializes the accelerator. Construct exactly one ``Runtime``
-    before any accelerator tensor allocation, then pass it to every
+    the framework initializes the accelerator. Construct exactly one ``Runtime``
+    before any device allocation the framework makes, then pass it to every
     ``plan_step`` or ``plan_forward`` call.
 
     The current backend supports one device pool plus any number of pinned-host
@@ -271,7 +271,7 @@ class Runtime:
     def close(self) -> None:
         """Close every runtime resource after verifying external ownership.
 
-        PyTorch's selected allocator shim remains installed because allocator
+        the framework's selected allocator shim remains installed because allocator
         selection is process-global. Its runtime is permanently closed: future
         nonzero device allocations raise a typed closed-runtime error.
         """
@@ -285,19 +285,19 @@ class Runtime:
                 )
             if self._persistent_state_count != 0:
                 raise RuntimeConfigurationError(
-                    "cannot close Runtime while persistent PyTorch state remains; "
+                    "cannot close Runtime while persistent frontend state remains; "
                     "export it with release_runtime=True first"
                 )
             if self._active_object_references != 0:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while public object references remain; "
-                    "close every TensorRef or StateRef first"
+                    "release every retained object reference first"
                 )
             status = int(self._installed.library.shadowspill_pytorch_allocator_close())
             if status == _RUNTIME_INVALID_STATE:
                 raise RuntimeConfigurationError(
                     "cannot close Runtime while caller-owned device outputs "
-                    "still reference its memory pools; release those tensors first"
+                    "still reference its memory pools; release those references first"
                 )
             self._closed = True
             if status != 0:

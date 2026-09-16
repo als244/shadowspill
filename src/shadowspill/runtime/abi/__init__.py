@@ -1,4 +1,4 @@
-"""Declarative ctypes projection of the private PyTorch adapter ABI.
+"""Declarative ctypes projection of the private framework adapter ABI.
 
 One module per kind: the ids the header defines (``constants``), what a
 caller hands the adapter to start (``configuration``), what it reports
@@ -56,7 +56,7 @@ from .statistics import (
     RuntimeStatistics,
     TransferProfile,
 )
-from .trace import AllocationEvent, BackendEvent, TraceEvent, TraceSummary
+from .trace import AllocationEvent, TraceEvent, TraceSummary
 
 __all__ = [
     "ADAPTER_ABI_VERSION",
@@ -69,7 +69,6 @@ __all__ = [
     "AdapterStatistics",
     "Allocation",
     "AllocationEvent",
-    "BackendEvent",
     "BackendStatistics",
     "FixedDependencyDescription",
     "FixedLayoutDescription",
