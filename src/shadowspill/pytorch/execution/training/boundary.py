@@ -13,18 +13,20 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    abort_task,
+from shadowspill.pytorch.runtime_adapter.boundaries import (
     before_task_and_acquire,
-    input_failure_states,
     wait_task_allocations,
+)
+from shadowspill.runtime.plan import (
+    abort_task,
+    input_failure_states,
 )
 
 from ..records import (
@@ -165,7 +167,7 @@ def _before_task_fast(
         # Assemble the selected callable and its predecoded arguments.
         call = (
             _assemble_optimizer_call(executor, record)
-            if record.entrypoint.phase == "optimizer"
+            if record.entrypoint.options.phase == "optimizer"
             else _assemble_graph_call(executor, record)
         )
         return PreparedTask(
@@ -245,7 +247,7 @@ def _assemble_task_call(
     timing: _ArmedTaskTiming | None,
 ) -> TaskCall:
     started_ns = time.perf_counter_ns() if timing is not None else 0
-    if record.entrypoint.phase == "optimizer":
+    if record.entrypoint.options.phase == "optimizer":
         result = _assemble_optimizer_call(executor, record)
     else:
         result = _assemble_graph_call(executor, record)
@@ -257,7 +259,7 @@ def _assemble_task_call(
 def _assemble_optimizer_call(
     executor: TrainingExecutor, record: _ExecutionTaskRecord
 ) -> TaskCall:
-    artifact = record.entrypoint.artifact
+    artifact = record.artifact
     eager = isinstance(artifact, OpaqueOptimizerArtifact) or (
         not executor.optimizer_state.available
     )
@@ -281,8 +283,7 @@ def _assemble_optimizer_call(
         current = executor.optimizer_state.current_bindings()
         try:
             arguments = tuple(
-                current[name].tensor
-                for name in record.entrypoint.optimizer_binding_names
+                current[name].tensor for name in record.entrypoint.options.named_inputs
             )
         except KeyError as error:
             raise RuntimeError(
@@ -294,7 +295,7 @@ def _assemble_optimizer_call(
 def _assemble_graph_call(
     executor: TrainingExecutor, record: _ExecutionTaskRecord
 ) -> TaskCall:
-    if not isinstance(record.entrypoint.artifact, GraphArtifact):
+    if not isinstance(record.artifact, GraphArtifact):
         raise RuntimeError("graph task has no captured artifact")
     if record.argument_template is None:
         raise AssertionError("graph argument template is absent")

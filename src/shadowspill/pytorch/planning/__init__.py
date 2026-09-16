@@ -1,5 +1,9 @@
 """Composable high-level PyTorch planning boundaries."""
 
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    planned_transfer_bandwidths,
+)
 from shadowspill.store import ArtifactStore
 
 from .artifacts import (
@@ -14,7 +18,6 @@ from .artifacts import (
     TrainingProgramArtifacts,
     TrainingSelections,
 )
-from .common import PlanningTimer, planned_transfer_bandwidths
 from .forward import (
     admit_forward_plan,
     build_forward_program,

@@ -8,11 +8,11 @@ import torch
 import torch.nn as nn
 
 from shadowspill.ir import ObjectRole, Persistence, SharedResidencyPolicy
+from shadowspill.task.slots import ObjectSlot
 
 from ...partition import PartitionedExport
 from ..catalog import (
     ObjectCatalog,
-    TensorSlot,
     register_model_state,
     tensor_value_role,
 )
@@ -30,7 +30,7 @@ def register_forward_objects(
     catalog = ObjectCatalog(device_id=device_id)
     registrations, _parameter_objects = register_model_state(model, catalog)
     shared = dict(shared_residency_by_root or {})
-    root_slots: list[TensorSlot] = []
+    root_slots: list[ObjectSlot] = []
     for position, value in enumerate(partitioned.root_inputs):
         if not isinstance(value, torch.Tensor):
             continue
@@ -47,7 +47,7 @@ def register_forward_objects(
                 policy[0],
                 retain_spill_copy=policy[1],
             )
-        root_slots.append(TensorSlot(position, object_id))
+        root_slots.append(ObjectSlot(position, object_id))
     return ForwardObjects(
         catalog,
         registrations,

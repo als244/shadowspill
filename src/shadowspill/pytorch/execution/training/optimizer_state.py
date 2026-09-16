@@ -21,12 +21,16 @@ from shadowspill.pytorch.optimizer import (
     opaque_optimizer_outputs,
     restore_optimizer_checkpoint_structure,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    PublishedStorage,
-    RuntimeBridge,
-    wait_plan_idle,
+from shadowspill.pytorch.runtime_adapter.boundaries import PublishedStorage
+from shadowspill.pytorch.spill import (
+    read_spill_tensor,
+    spill_window,
+    write_spill_tensor,
 )
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
+from shadowspill.runtime.plan import (
+    RuntimeBridge,
+)
 
 from ..records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,
@@ -192,7 +196,7 @@ class OptimizerState:
             alias_id = self._bridge.objects.alias_for_object(item.object_id)
             if alias_id in written:
                 continue
-            self._bridge.objects.write_spill_tensor(alias_id, actual.tensor)
+            write_spill_tensor(self._bridge.objects, alias_id, actual.tensor)
             written.add(alias_id)
 
     def release(self) -> None:
@@ -221,7 +225,7 @@ class OptimizerState:
         tuple[PublishedStorage, ...],
         tuple[tuple[str, torch.Tensor, str], ...],
     ]:
-        artifact = record.entrypoint.artifact
+        artifact = record.artifact
         if not isinstance(artifact, OpaqueOptimizerArtifact):
             raise RuntimeError("initial optimizer state requires an opaque artifact")
         outputs = {
@@ -269,13 +273,13 @@ class OptimizerState:
             dtype=torch.uint8,
             device="cpu",
         )
-        self._bridge.objects.read_spill_tensor(alias_id, owner)
+        read_spill_tensor(self._bridge.objects, alias_id, owner)
         return owner
 
     def _borrowed_alias_buffer(self, alias_id: str) -> torch.Tensor:
         """Return one alias's bytes in place, copying only if it must."""
 
-        window = self._bridge.objects.spill_window(alias_id)
+        window = spill_window(self._bridge.objects, alias_id)
         return self._copied_alias_buffer(alias_id) if window is None else window
 
     def expose_cpu(
@@ -291,7 +295,7 @@ class OptimizerState:
         """
 
         make_owner = self._copied_alias_buffer if owner_for is None else owner_for
-        wait_plan_idle(self._bridge)
+        self._bridge.wait_until_idle()
         current = self.current_bindings()
         exposed: list[ExposedOptimizerTensor] = []
         owners: dict[str, torch.Tensor] = {}

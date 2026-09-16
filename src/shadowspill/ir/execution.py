@@ -73,7 +73,7 @@ class PhysicalAdmission:
     workspace is charged per boundary during planning and placed inside
     the admitted fixed slice, so this value does not define the search's
     object capacity — see
-    ``shadowspill.pytorch.planning.common.simulation_capacity``
+    ``shadowspill.pipeline.common.simulation_capacity``
     for the capacity actually presented to the planner.
     """
 

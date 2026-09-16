@@ -12,6 +12,8 @@ through the step archive. Each phase's outputs are the artifacts in
 `planning/artifacts.py`.
 """
 
+from shadowspill.pytorch.planning.training.plan import plan_training_programs
+
 from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingExecutableArtifacts,
@@ -24,7 +26,6 @@ from .admit import admit_training_plan, compile_selected_training_tasks
 from .build import build_training
 from .capture import capture_training_graphs
 from .materialize import materialize_training_state, rollback_training_materialization
-from .plan import plan_training_programs
 from .profile import profile_training_tasks
 from .programs import build_training_programs
 from .steps import make_training_programs

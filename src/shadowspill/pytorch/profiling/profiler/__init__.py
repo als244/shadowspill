@@ -4,33 +4,28 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 import torch
 
 from shadowspill.errors import ProfilingError
-from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
+from shadowspill.profiling.wall_times import ProfilingWallTimes
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+)
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 from shadowspill.runtime.failures import raise_if_allocator_failed
+from shadowspill.task.profiles import TaskMeasurement
 
 from ..executables import ProfileExecutable, ProfileExecutableStore
-from ..records import TaskMeasurement
 from ..runner import ProfilableArtifact
 from .boundary import AllocatorBoundary
 from .measurement import MeasuredTask, measure_task
 from .opaque import measure_opaque_optimizer
 from .saved_controls import resolve_graph_pair_controls
-
-
-@dataclass(frozen=True, slots=True)
-class ProfilingWallTimes:
-    """Disjoint wall-clock classes a planning report attributes separately."""
-
-    compilation_ns: int
-    profiling_ns: int
-    cached_warmup_ns: int
 
 
 class TaskProfiler:

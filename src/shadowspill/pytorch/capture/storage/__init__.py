@@ -7,14 +7,15 @@ The records themselves live in ``records``, capturing one from a task that has r
 
 from __future__ import annotations
 
-from .capture import ExplicitMutation, capture_task_storage_contract
-from .records import (
+from shadowspill.task.storage import (
     MutationBinding,
     OutputView,
     StorageRoot,
     StorageRootKind,
     TaskStorageContract,
 )
+
+from .capture import ExplicitMutation, capture_task_storage_contract
 from .symbolic import make_storage_contract
 
 __all__ = [

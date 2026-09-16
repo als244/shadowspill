@@ -14,11 +14,10 @@ from shadowspill.errors import CaptureError, CompilationError, ProfilingError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation import compiler as compiler_module
 from shadowspill.pytorch.compilation.compiler import CompiledTask
-from shadowspill.pytorch.compilation.inductor import (
-    ExecutableRootAllocation,
-    ExecutableTaskManifest,
+from shadowspill.pytorch.profiling import (
+    TaskMeasurement,
+    profile_environment,
 )
-from shadowspill.pytorch.profiling import TaskMeasurement, profile_environment
 from shadowspill.pytorch.profiling import profiler as profiler_package
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.pytorch.profiling.profiler import measurement as measurement_module
@@ -31,9 +30,11 @@ from shadowspill.pytorch.profiling.profiler.workspace import (
     measure_workspace,
     output_allocation_views,
 )
-from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
 from shadowspill.runtime import failures as failures_module
 from shadowspill.runtime.abi import Allocation
+from shadowspill.runtime.telemetry import AllocationTelemetryError
+from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskManifest
+from tests.shadowspill.runtime._timing import TimingLibrary, install
 
 
 class _Add(nn.Module):
@@ -69,6 +70,13 @@ def _compiled_task(
         ),
     )
     return CompiledTask(artifact, function, arguments, manifest)
+
+
+@pytest.fixture(autouse=True)
+def _timing(monkeypatch: pytest.MonkeyPatch) -> TimingLibrary:
+    """Every profiler here times against the runtime, so stand in for it."""
+
+    return install(monkeypatch, TimingLibrary(tick_ms=1.0))
 
 
 def _profiler(library: Any = None, **options: int) -> TaskProfiler:

@@ -13,9 +13,7 @@ from shadowspill.planner import (
     TaskAdmissionSpec,
 )
 from shadowspill.planner.plan_store import PlanLookup
-from shadowspill.pytorch.planning.admission import (
-    resolve_fixed_layout_selection,
-)
+from shadowspill.pytorch.planning.admission import resolve_fixed_layout_selection
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE
 

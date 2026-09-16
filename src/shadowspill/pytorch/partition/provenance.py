@@ -13,9 +13,9 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.aot import ExportCapture
 from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
-    TaskInputRole,
     TensorGeometry,
 )
+from shadowspill.task.inputs import TaskInputRole
 
 from ..capture.storage import ExplicitMutation
 from .artifacts import Stage, StageExample, StageValueSource

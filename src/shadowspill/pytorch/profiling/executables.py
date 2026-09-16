@@ -12,13 +12,11 @@ from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation import compiler as compiler_api
 from shadowspill.pytorch.compilation.compiler import CompiledTask, CompiledTaskSet
-from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
+from shadowspill.task.inputs import RepresentativeInputSummary
+from shadowspill.task.manifest import ExecutableTaskManifest
 
-from .inputs import (
-    RepresentativeInputSummary,
-    materialize_representative_inputs,
-)
+from .inputs import materialize_representative_inputs
 from .runner import ProfilableArtifact, unique_graph_artifacts
 
 

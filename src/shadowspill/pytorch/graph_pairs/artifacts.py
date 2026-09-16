@@ -11,8 +11,8 @@ from shadowspill.pytorch.capture.aot import (
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
-    TaskInputRole,
 )
+from shadowspill.task.inputs import TaskInputRole
 
 from ..partition.artifacts import PartitionedExport, StageExample
 

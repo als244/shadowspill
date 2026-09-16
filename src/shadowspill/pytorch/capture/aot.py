@@ -23,12 +23,12 @@ from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     ObjectiveSchema,
     TaskInputProvenance,
-    TaskInputRole,
     capture_objective_schema,
     normalize_objective_result,
 )
 from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
 from shadowspill.pytorch.contracts import ObjectiveResult
+from shadowspill.task.inputs import TaskInputRole
 
 from .torch_deprecations import copy_graph_module, quiet_leaf_spec_deprecation
 

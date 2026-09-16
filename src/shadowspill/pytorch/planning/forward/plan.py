@@ -10,28 +10,28 @@ from shadowspill.ir import (
     ExecutionPlan,
     PhysicalAdmission,
 )
+from shadowspill.pipeline.admission import dynamic_scratch_reserve_bytes
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    public_infeasible_plan_error,
+    public_search_exhausted_error,
+)
 from shadowspill.planner import (
     ProgramPlanResult,
     validate_schedule_feasibility,
 )
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.search import SearchOptions
-
-from ...lowering.forward import LoweredForwardProgram
-from ..admission import (
+from shadowspill.pytorch.planning.admission import (
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
-    dynamic_scratch_reserve_bytes,
     placement_facts,
     resolve_fixed_layout_selection,
 )
+
+from ...lowering.forward import LoweredForwardProgram
 from ..artifacts import (
     ForwardProgramArtifacts,
-)
-from ..common import (
-    PlanningTimer,
-    public_infeasible_plan_error,
-    public_search_exhausted_error,
 )
 from ..stores import PlanningStores
 
@@ -107,7 +107,7 @@ def _forward_execution_plan(
             task_id=item.task_id,
             entrypoint_id=f"entrypoint_{index:06d}",
             executor_id="pytorch_inductor",
-            contract_digest=item.artifact.compatibility_digest,
+            contract_digest=lowered.executables[item.task_id].compatibility_digest,
         )
         for index, item in enumerate(lowered.entrypoints)
     )

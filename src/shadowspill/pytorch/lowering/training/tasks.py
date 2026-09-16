@@ -14,21 +14,23 @@ from shadowspill.ir import (
     TaskAlternativeOption,
     TaskSpec,
 )
+from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.optimizer import (
     OpaqueOptimizerArtifact,
     OptimizerCapture,
     OptimizerTask,
+    OptimizerTaskArtifact,
 )
 from shadowspill.step import StepDataOrdering
+from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
+from shadowspill.task.slots import ObjectSlot
 
-from ..catalog import TensorSlot
 from ..profiles import TaskProfileCatalog
 from .artifacts import (
     GradientBinding,
     OptimizerObjectBinding,
     PreparedStageVariant,
     TrainingObjects,
-    TrainingTaskEntrypoint,
     TrainingTaskGraph,
 )
 
@@ -76,7 +78,8 @@ class _TrainingTaskEmitter:
         self.device_id = device_id
 
         self.tasks: list[TaskSpec] = []
-        self.entrypoints: list[TrainingTaskEntrypoint] = []
+        self.entrypoints: list[TaskEntrypoint] = []
+        self.executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None] = {}
         self.forward_ids: dict[tuple[int, int, str], str] = {}
         self.backward_ids: dict[tuple[int, int, str], str] = {}
         self.all_backward_ids: list[str] = []
@@ -129,6 +132,7 @@ class _TrainingTaskEmitter:
         return TrainingTaskGraph(
             tuple(self.tasks),
             tuple(self.entrypoints),
+            dict(self.executables),
             groups,
             tuple(self.optimizer_task_ids),
         )
@@ -195,21 +199,23 @@ class _TrainingTaskEmitter:
             self.tasks.append(task)
             self._record_producers(task)
             self.entrypoints.append(
-                TrainingTaskEntrypoint(
+                TaskEntrypoint(
                     task_id,
-                    "forward",
-                    position,
-                    variant,
-                    item.pair.forward,
                     item.forward_inputs,
                     item.forward_outputs,
-                    public_output_count=len(item.public_output_leaves),
-                    public_output_leaves=item.public_output_leaves,
-                    stage_index=stage_index,
-                    replacement_output_leaves=(item.replacement_output_leaves),
-                    storage_handoffs=item.forward_storage_handoffs,
+                    item.replacement_output_leaves,
+                    item.forward_storage_handoffs,
+                    TaskOptions(
+                        phase="forward",
+                        repetition=position,
+                        variant=variant,
+                        stage_index=stage_index,
+                        public_output_count=len(item.public_output_leaves),
+                        public_output_leaves=item.public_output_leaves,
+                    ),
                 )
             )
+            self.executables[task_id] = item.pair.forward
 
     def _emit_backward(self, position: int, stage_index: int) -> None:
         """Emit every backward variant of one microbatch's stage.
@@ -285,19 +291,21 @@ class _TrainingTaskEmitter:
         self.tasks.append(task)
         self._record_producers(task)
         self.entrypoints.append(
-            TrainingTaskEntrypoint(
+            TaskEntrypoint(
                 task_id,
-                "backward",
-                position,
-                variant,
-                item.pair.backward,
                 item.backward_inputs,
                 (),
-                gradient_output_slots=item.contributions,
-                stage_index=stage_index,
                 storage_handoffs=item.backward_storage_handoffs,
+                options=TaskOptions(
+                    phase="backward",
+                    repetition=position,
+                    variant=variant,
+                    stage_index=stage_index,
+                    contribution_slots=item.contributions,
+                ),
             )
         )
+        self.executables[task_id] = item.pair.backward
         self.all_backward_ids.append(task_id)
 
     def _backward_dependencies(
@@ -429,6 +437,7 @@ class _TrainingTaskEmitter:
             _append_optimizer_tasks(
                 self.tasks,
                 self.entrypoints,
+                self.executables,
                 self.optimizer,
                 self.objects.optimizer_objects,
                 self.objects.gradients,
@@ -535,7 +544,8 @@ def emit_training_tasks(
 
 def _append_optimizer_tasks(
     tasks: list[TaskSpec],
-    entrypoints: list[TrainingTaskEntrypoint],
+    entrypoints: list[TaskEntrypoint],
+    executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None],
     optimizer: OptimizerCapture,
     optimizer_objects: tuple[OptimizerObjectBinding, ...],
     gradients: tuple[GradientBinding, ...],
@@ -552,6 +562,7 @@ def _append_optimizer_tasks(
     appender = _OptimizerTaskAppender(
         tasks,
         entrypoints,
+        executables,
         optimizer,
         optimizer_objects,
         gradients,
@@ -569,7 +580,8 @@ class _OptimizerTaskAppender:
     def __init__(
         self,
         tasks: list[TaskSpec],
-        entrypoints: list[TrainingTaskEntrypoint],
+        entrypoints: list[TaskEntrypoint],
+        executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None],
         optimizer: OptimizerCapture,
         optimizer_objects: tuple[OptimizerObjectBinding, ...],
         gradients: tuple[GradientBinding, ...],
@@ -585,6 +597,7 @@ class _OptimizerTaskAppender:
             raise CaptureError("optimizer has no recurrent artifact")
         self.tasks = tasks
         self.entrypoints = entrypoints
+        self.executables = executables
         self.optimizer = optimizer
         self.optimizer_objects = optimizer_objects
         self.optimizer_phase = optimizer_phase
@@ -606,6 +619,7 @@ class _OptimizerTaskAppender:
             task = self._task(component, preceding)
             self.tasks.append(task)
             self.entrypoints.append(self._entrypoint(component, task.task_id))
+            self.executables[task.task_id] = component.artifact
             task_ids.append(task.task_id)
             preceding = _unique((*self.dependencies, task.task_id))
         return tuple(task_ids)
@@ -689,7 +703,7 @@ class _OptimizerTaskAppender:
         self,
         component: OptimizerTask,
         task_id: str,
-    ) -> TrainingTaskEntrypoint:
+    ) -> TaskEntrypoint:
         artifact = component.artifact
         output_names = (
             artifact.profile_output_names
@@ -697,21 +711,20 @@ class _OptimizerTaskAppender:
             else ()
         )
         output_slots = tuple(
-            TensorSlot(leaf_index, self.object_by_name[name])
+            ObjectSlot(leaf_index, self.object_by_name[name])
             for leaf_index, name in enumerate(output_names)
             if name in self.object_by_name
         )
-        return TrainingTaskEntrypoint(
+        return TaskEntrypoint(
             task_id,
-            "optimizer",
-            None,
-            None,
-            artifact,
             (),
             output_slots,
-            optimizer_binding_names=component.binding_names,
-            optimizer_output_names=tuple(
-                name for name in output_names if name in self.object_by_name
+            options=TaskOptions(
+                phase="optimizer",
+                named_inputs=component.binding_names,
+                named_outputs=tuple(
+                    name for name in output_names if name in self.object_by_name
+                ),
             ),
         )
 

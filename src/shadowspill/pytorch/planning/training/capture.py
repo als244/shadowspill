@@ -10,6 +10,14 @@ import torch
 import torch.nn as nn
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    validate_budgets,
+)
+from shadowspill.profiling.metadata import (
+    ProfilingMetadata,
+    repeated_profiling_metadata,
+)
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     capture_training_objective,
@@ -19,9 +27,9 @@ from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_mod
 from shadowspill.pytorch.materialization.training import (
     representative_training_arguments,
 )
-from shadowspill.pytorch.profiling.metadata import (
-    ProfilingMetadata,
-    training_profiling_metadata,
+from shadowspill.pytorch.planning.common import (
+    estimate_spill_reservation,
+    validate_cpu_model,
 )
 from shadowspill.runtime.plan import PlanMemory
 
@@ -42,12 +50,6 @@ from ...partition import (
 )
 from ..artifacts import (
     TrainingCaptureArtifacts,
-)
-from ..common import (
-    PlanningTimer,
-    estimate_spill_reservation,
-    validate_budgets,
-    validate_cpu_model,
 )
 from ..stores import PlanningStores
 
@@ -141,9 +143,9 @@ def _prepare_training_inputs(
         tuple(representative_cpu_inputs(microbatch)) for microbatch in example_inputs
     )
     estimate_spill_reservation(model, cpu_inputs, memory.spill_budget)
-    workloads = training_profiling_metadata(
+    workloads = repeated_profiling_metadata(
         profiling_metadata,
-        microbatch_count=len(example_inputs),
+        repetitions=len(example_inputs),
     )
     return signatures, cpu_inputs, workloads
 

@@ -8,16 +8,25 @@ from typing import Literal
 from shadowspill.errors import (
     PlanningError,
 )
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    build_simulation_config,
+    fixed_execution_bytes,
+    workspace_reserve,
+)
 from shadowspill.planner import (
     AdmissionFacts,
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.pytorch.lowering.program import execution_device_id
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
 )
-from shadowspill.pytorch.profiling import (
-    TaskMeasurement,
+from shadowspill.pytorch.planning.admission import (
+    build_admission_facts,
+    output_bindings_for_entrypoints,
 )
+from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 
@@ -27,21 +36,11 @@ from ...lowering.training import (
     TrainingStorageLayout,
     lower_partitioned_training_program,
 )
-from ..admission import (
-    build_admission_facts,
-    output_bindings_for_entrypoints,
-)
 from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingMaterializationArtifacts,
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
-)
-from ..common import (
-    PlanningTimer,
-    build_simulation_config,
-    fixed_execution_bytes,
-    workspace_reserve,
 )
 
 
@@ -81,7 +80,11 @@ def build_training_programs(
     with timer.measure("admission_facts"):
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(
-            memory, reserve, profiled.profiles, transfer_bandwidths=transfer_bandwidths
+            memory,
+            reserve,
+            profiled.profiles,
+            execution_device_id=execution_device_id(memory.execution_device),
+            transfer_bandwidths=transfer_bandwidths,
         )
         execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
             memory, profiled.profiles

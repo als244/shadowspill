@@ -11,11 +11,11 @@ from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import live_view_key
 from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTensorRole
+from shadowspill.task.slots import ObjectSlot
 
 from ...graph_pairs import PartitionedTrainingCapture
 from ..catalog import (
     ObjectCatalog,
-    TensorSlot,
     register_model_state,
     tensor_value_role,
 )
@@ -85,11 +85,11 @@ def register_training_objects(
 
 def _register_microbatch_inputs(
     captures: tuple[TrainingObjectiveCapture, ...], inventory: ObjectCatalog
-) -> tuple[tuple[tuple[TensorSlot, ...], ...], set[str]]:
-    positions: list[tuple[TensorSlot, ...]] = []
+) -> tuple[tuple[tuple[ObjectSlot, ...], ...], set[str]]:
+    positions: list[tuple[ObjectSlot, ...]] = []
     initial: set[str] = set()
     for capture in captures:
-        slots: list[TensorSlot] = []
+        slots: list[ObjectSlot] = []
         for index, (spec, value) in enumerate(
             zip(
                 capture.exported.exported_program.graph_signature.input_specs,
@@ -107,7 +107,7 @@ def _register_microbatch_inputs(
                 persistence=Persistence.STEP,
                 retain_spill_copy=True,
             )
-            slots.append(TensorSlot(index, object_id))
+            slots.append(ObjectSlot(index, object_id))
             initial.add(object_id)
         positions.append(tuple(slots))
     return tuple(positions), initial

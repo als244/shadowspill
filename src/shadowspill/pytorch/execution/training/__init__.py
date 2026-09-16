@@ -17,23 +17,24 @@ from typing import Any, cast
 
 import torch
 
-from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     ArmedExecutionTiming as _ArmedExecutionTiming,
 )
+from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.training import LoweredTrainingProgram
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    RuntimeBridge,
-    TaskMemoryEnvelope,
+from shadowspill.pytorch.runtime_adapter.boundaries import (
     acquire_for_caller,
-    clear_tasks,
     submit_initial_actions,
     transfer_outputs_to_caller,
-    wait_plan_idle,
 )
 from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
+from shadowspill.runtime.plan import (
+    RuntimeBridge,
+    TaskMemoryEnvelope,
+    clear_tasks,
+)
 from shadowspill.simulator import SimulationResult
 
 from ..annotations import AnnotatedExecutor, TaskBoundaryAnnotations
@@ -142,7 +143,9 @@ class TrainingExecutor(AnnotatedExecutor):
             ),
         )
         self._task_annotations = TaskBoundaryAnnotations(self._bridge)
-        self._completion = ReusableCompletionEvent(state.device)
+        self._completion = ReusableCompletionEvent(
+            bridge.runtime._runtime_handle, state.device
+        )
 
     @property
     def run_in_force(self) -> _PlanRun:
@@ -157,6 +160,12 @@ class TrainingExecutor(AnnotatedExecutor):
         if run is None:
             raise AssertionError("initial optimizer plan is unavailable")
         return run
+
+    def release_timing(self) -> None:
+        """Give every marker this executor holds back to the runtime."""
+
+        self._completion.release()
+        self.timing.release()
 
     def __call__(
         self, inputs: Sequence[Sequence[Any]], step_number: int
@@ -181,7 +190,7 @@ class TrainingExecutor(AnnotatedExecutor):
         stream = torch.cuda.current_stream()
         if timing is not None:
             timing.dispatch_call_started_ns = time.perf_counter_ns()
-            timing.origin_event.record(stream)
+        self.timing.record_origin(stream)
         # The caller numbers the step, so the timings carry the count a
         # restored checkpoint resumed from. `_invocations` counts this
         # process's calls and only decides whether there is a prior plan to
@@ -199,7 +208,7 @@ class TrainingExecutor(AnnotatedExecutor):
             # first invocation has nothing to wait for, so a trace taken on a
             # warm first step is exactly the step that never pays this.
             started_ns = time.perf_counter_ns()
-            wait_plan_idle(self._bridge)
+            self._bridge.wait_until_idle()
             self.timing.prior_invocation_drain_ns = time.perf_counter_ns() - started_ns
             if timing is not None:
                 timing.prior_invocation_drain_ns = self.timing.prior_invocation_drain_ns
@@ -251,9 +260,12 @@ class TrainingExecutor(AnnotatedExecutor):
         for record in run.execution:
             entrypoint = record.entrypoint
             outputs = execute_task(self, run, record)
-            if entrypoint.phase == "forward" and entrypoint.microbatch is not None:
-                public_tensors[entrypoint.microbatch] = outputs[
-                    : entrypoint.public_output_count
+            if (
+                entrypoint.options.phase == "forward"
+                and entrypoint.options.repetition is not None
+            ):
+                public_tensors[entrypoint.options.repetition] = outputs[
+                    : entrypoint.options.public_output_count
                 ]
         return tuple(public_tensors[index] for index in range(len(public_tensors)))
 

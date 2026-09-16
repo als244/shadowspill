@@ -14,6 +14,10 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
+from shadowspill.pipeline.admission import (
+    DynamicTaskAllocationPolicy,
+    project_runtime_fixed_layout,
+)
 from shadowspill.planner import (
     AdmissionFacts,
     CandidateDiagnostic,
@@ -27,11 +31,7 @@ from shadowspill.planner import (
     TaskAllocationStepKind,
 )
 from shadowspill.planner.search import SearchOptions
-from shadowspill.pytorch.planning.admission import (
-    DynamicTaskAllocationPolicy,
-    build_fixed_layout_admission,
-    project_runtime_fixed_layout,
-)
+from shadowspill.pytorch.planning.admission import build_fixed_layout_admission
 from shadowspill.runtime.fixed_layout import RuntimePlacementKind
 from shadowspill.simulator import SimulationConfig, simulate
 from tests.shadowspill.planner._examples import COMPUTE, DEVICE

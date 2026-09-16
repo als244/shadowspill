@@ -7,14 +7,12 @@ from dataclasses import dataclass
 
 import torch
 
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    PublishedStorage,
-)
+from shadowspill.pytorch.runtime_adapter.boundaries import PublishedStorage
 
 from ..records import (
     ExecutionTaskRecord as _ExecutionTaskRecord,

@@ -12,7 +12,6 @@ from shadowspill.pytorch.capture.aot import capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
-    TaskInputRole,
     capture_forward_stage_artifacts,
 )
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
@@ -27,6 +26,7 @@ from shadowspill.pytorch.profiling import (
     TaskMeasurement,
     profile_unique_artifacts,
 )
+from shadowspill.task.inputs import TaskInputRole
 
 
 def test_allocation_probe_matrix_is_part_of_profile_identity() -> None:

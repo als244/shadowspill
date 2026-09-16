@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from shadowspill.planner.plan_store import PlanStore, open_plan_store
 from shadowspill.pytorch.capture.aot import ExportCapture, export_capture_digest
 from shadowspill.pytorch.profiling import ProfileStore
+from shadowspill.pytorch.store import FrameworkArtifacts
 from shadowspill.step import StepArchive
 from shadowspill.store import ArtifactStore
 
@@ -40,7 +41,7 @@ class PlanningStores:
 
         digest = export_capture_digest(capture)
         signature = capture.exported_program.graph_signature
-        self.store.archive_export(
+        FrameworkArtifacts(self.store).archive_export(
             capture.exported_program,
             digest=digest,
             metadata={

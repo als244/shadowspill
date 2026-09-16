@@ -18,7 +18,10 @@ from tools.qualification.runtime_evidence import (
 )
 from workloads.full_model import build_case
 
-from .manifest import _manifest_with_overrides, _planning_spill_budget
+from .manifest import (
+    _manifest_with_overrides,
+    _planning_spill_budget,
+)
 from .phases import (
     _announce_prediction,
     _calibrated_runtime,

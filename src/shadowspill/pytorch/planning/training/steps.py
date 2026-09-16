@@ -12,13 +12,19 @@ from typing import Any, Literal
 import torch
 import torch.nn as nn
 
+from shadowspill.pipeline.admission import dynamic_scratch_reserve_bytes
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    program_phase_timings,
+)
+from shadowspill.pipeline.reporting import (
+    cache_artifacts,
+)
 from shadowspill.planner import (
     AdmissionFacts,
 )
 from shadowspill.planner.program import ShadowSpillPlanningProblem
-from shadowspill.pytorch.profiling import (
-    profile_environment,
-)
+from shadowspill.pytorch.profiling import profile_environment
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.simulator import SimulationConfig
@@ -35,22 +41,12 @@ from ...lowering.training import (
 from ...partition import (
     PartitionSpec,
 )
-from ..admission import (
-    dynamic_scratch_reserve_bytes,
-)
 from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
 )
-from ..common import (
-    PlanningTimer,
-    program_phase_timings,
-)
 from ..identity import machine_identity, step_identity, step_key
-from ..reporting import (
-    cache_artifacts,
-)
 from ..stores import PlanningStores, open_planning_stores
 from .capture import capture_training_graphs
 from .materialize import (

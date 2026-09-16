@@ -6,10 +6,8 @@ from dataclasses import dataclass
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    RuntimeBridge,
-    wait_idle,
-)
+from shadowspill.pytorch.spill import read_spill_tensor
+from shadowspill.runtime.plan import RuntimeBridge
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,10 +50,10 @@ class MaterializedState:
         *,
         aliases: set[str] | None = None,
     ) -> dict[str, torch.Tensor]:
-        wait_idle(self.bridge)
+        self.bridge.wait_runtime_idle()
         owners = self._empty_model_aliases(aliases=aliases)
         for alias_id, owner in owners.items():
-            self.bridge.objects.read_spill_tensor(alias_id, owner)
+            read_spill_tensor(self.bridge.objects, alias_id, owner)
         return owners
 
     @staticmethod

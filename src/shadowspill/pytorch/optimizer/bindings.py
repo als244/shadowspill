@@ -9,10 +9,8 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensor
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.capture.artifacts import (
-    TaskInputProvenance,
-    TaskInputRole,
-)
+from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
+from shadowspill.task.inputs import TaskInputRole
 
 from .artifacts import (
     OptimizerTensorBinding,

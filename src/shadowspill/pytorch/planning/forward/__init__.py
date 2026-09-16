@@ -10,8 +10,10 @@ from typing import Any
 
 import torch.nn as nn
 
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
+from shadowspill.pytorch.planning.forward.plan import plan_forward_program
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.store import ArtifactStore
 
@@ -27,13 +29,9 @@ from ..artifacts import (
     ForwardProfileArtifacts,
     ForwardProgramArtifacts,
 )
-from ..common import (
-    PlanningTimer,
-)
 from ..stores import open_planning_stores
 from .admit import admit_forward_plan
 from .capture import capture_forward_graph
-from .plan import plan_forward_program
 from .profile import profile_forward_tasks
 from .programs import build_forward_program
 

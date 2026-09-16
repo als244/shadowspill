@@ -25,10 +25,10 @@ from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
 )
+from shadowspill.task.manifest import ExecutableTaskManifest
 
 from .cache import _fx_graph_cache_key, _load_cached_manifest
 from .compiler import _record_compilation_phase
-from .manifest import ExecutableTaskManifest
 
 
 def _prepare_explicit_inputs(

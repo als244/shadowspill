@@ -10,16 +10,16 @@ from unittest.mock import patch
 import pytest
 
 import shadowspill.pytorch.execution.annotations as annotations_module
-import shadowspill.pytorch.execution.training as training_package
 import shadowspill.pytorch.execution.training.boundary as boundary_module
 import shadowspill.pytorch.execution.training.publication as publication_module
 import shadowspill.pytorch.execution.training.timing as timing_module
-from shadowspill.pytorch.diagnostics.timing import InvocationTimelines
+from shadowspill.diagnostics.timing import InvocationTimelines
 from shadowspill.pytorch.execution.annotations import TaskBoundaryAnnotations
 from shadowspill.pytorch.execution.training import TrainingExecutor
 from shadowspill.pytorch.execution.training.boundary import execute_task
 from shadowspill.pytorch.execution.training.publication import after_task
 from shadowspill.pytorch.execution.training.timing import ExecutionTiming
+from tests.shadowspill.runtime._timing import TimingLibrary, install
 
 
 class _CallLog:
@@ -28,6 +28,11 @@ class _CallLog:
     def __init__(self) -> None:
         self.calls: list[object] = []
         self.statistics_value = object()
+        # Timing markers come from the runtime, so a bridge names one.
+        self.runtime = SimpleNamespace(_runtime_handle=0)
+
+    def wait_until_idle(self) -> None:
+        self.calls.append("wait_plan_idle")
 
 
 class _RawOutputs:
@@ -174,11 +179,6 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
 ) -> None:
     bridge = _CallLog()
     calls = bridge.calls
-    monkeypatch.setattr(
-        training_package,
-        "wait_plan_idle",
-        lambda bridge: calls.append("wait_plan_idle"),
-    )
 
     def statistics(bridge: _CallLog) -> object:
         calls.append("statistics")
@@ -188,7 +188,7 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
     monkeypatch.setattr(
         timing_module,
         "begin_runtime_trace",
-        lambda bridge, *, step_id, origin_event_handle=None: calls.append(
+        lambda bridge, *, step_id, origin=None: calls.append(
             ("begin_runtime_trace", step_id)
         ),
     )
@@ -196,12 +196,11 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
     harness = object.__new__(TrainingExecutor)
     harness._bridge = bridge  # type: ignore[assignment]
     harness._invocations = 3
+    install(monkeypatch, TimingLibrary())
     harness.timing = ExecutionTiming(cast(Any, bridge), ())
-    # Every invocation records its timeline; a silent event keeps the call log
-    # to the boundary's own steps.
-    harness.timing._timelines = InvocationTimelines(
-        lambda: SimpleNamespace(record=lambda _stream: None)
-    )
+    # Every invocation records its timeline against the fake library, which
+    # keeps the call log to the boundary's own steps.
+    harness.timing._timelines = InvocationTimelines(0)
     harness._initial = None
     harness.optimizer_state = cast(Any, SimpleNamespace(initialized=True))
     harness._recurrent = run  # type: ignore[assignment]
@@ -217,10 +216,13 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
         ),
         statistics_before=None,
     )
+    # The executor records the origin of whatever is armed, which is the
+    # record its caller passes down.
+    harness.timing.armed = cast(Any, timing)
 
     with patch(
         "shadowspill.pytorch.execution.training.torch.cuda.current_stream",
-        return_value=object(),
+        return_value=SimpleNamespace(cuda_stream=11),
     ):
         # The caller numbers the step; a restored checkpoint makes it differ
         # from this process's invocation count, and the trace follows the caller.

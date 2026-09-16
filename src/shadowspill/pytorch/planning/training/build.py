@@ -11,9 +11,11 @@ from typing import Any, Literal
 import torch
 import torch.nn as nn
 
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
+from shadowspill.pytorch.planning.training.plan import plan_training_programs
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 from shadowspill.store import ArtifactStore
@@ -25,9 +27,6 @@ from ...contracts import (
 from ...partition import (
     PartitionSpec,
 )
-from ..common import (
-    PlanningTimer,
-)
 from ..stores import open_planning_stores
 from .admit import admit_training_plan, compile_selected_training_tasks
 from .capture import capture_training_graphs
@@ -36,7 +35,6 @@ from .materialize import (
     rollback_training_failure,
     rollback_training_materialization,
 )
-from .plan import plan_training_programs
 from .profile import profile_training_tasks
 from .programs import build_training_programs
 

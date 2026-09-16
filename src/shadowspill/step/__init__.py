@@ -9,7 +9,7 @@ They live beside the planner rather than inside it because a step is not a
 planning concept -- the planner is handed a problem and does not care which
 step shape produced it -- and beside the frontend rather than inside it
 because nothing here needs a framework. That is load-bearing: a saved corpus of
-`StepProgram` values is read, validated and planned with no PyTorch installed,
+`StepProgram` values is read, validated and planned with no the framework installed,
 which is how a collection run and an evaluation run can be separate processes
 on separate machines.
 """

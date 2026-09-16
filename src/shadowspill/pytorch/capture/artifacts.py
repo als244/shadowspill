@@ -7,7 +7,6 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field, replace
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 import torch
@@ -24,6 +23,7 @@ from shadowspill.pytorch.capture.storage import (
     capture_task_storage_contract,
 )
 from shadowspill.pytorch.contracts import ObjectiveResult
+from shadowspill.task.inputs import TaskInputRole
 
 from .torch_deprecations import copy_graph_module
 
@@ -60,23 +60,6 @@ class TensorGeometry:
             "device_type": self.device_type,
             "requires_grad": self.requires_grad,
         }
-
-
-class TaskInputRole(StrEnum):
-    """Semantic source of one explicit compiled-task tensor argument."""
-
-    PARAMETER = "parameter"
-    BUFFER = "buffer"
-    CONSTANT = "constant"
-    USER_INPUT = "user_input"
-    CONTROL = "control"
-    ACTIVATION = "activation"
-    RESIDUAL = "residual"
-    TANGENT = "tangent"
-    GRADIENT = "gradient"
-    OPTIMIZER_STATE = "optimizer_state"
-    OPTIMIZER_HYPERPARAMETER = "optimizer_hyperparameter"
-    ANONYMOUS = "anonymous"
 
 
 @dataclass(frozen=True, slots=True)

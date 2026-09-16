@@ -1,5 +1,16 @@
 """Immutable planning and step-execution diagnostics."""
 
+from shadowspill.diagnostics.step import (
+    AllocatorTrace,
+    LaneSummary,
+    RuntimeTrace,
+    TaskRecord,
+    Timelines,
+    TransferLane,
+    TransferRecord,
+    TransferRecords,
+)
+from shadowspill.diagnostics.timing import InvocationTiming
 from shadowspill.planner.diagnostics.plan import (
     PlanAllocationABIStep,
     PlanAllocationEvent,
@@ -25,16 +36,6 @@ from shadowspill.planner.diagnostics.plan import (
     PlanUniqueStage,
 )
 
-from .execution import (
-    AllocatorTrace,
-    LaneSummary,
-    RuntimeTrace,
-    TaskRecord,
-    Timelines,
-    TransferLane,
-    TransferRecord,
-    TransferRecords,
-)
 from .step import (
     DiagnosticsHandle,
     PhaseTimingComparison,
@@ -42,7 +43,6 @@ from .step import (
     StepResult,
     StepTimingSummary,
 )
-from .timing import InvocationTiming
 
 __all__ = [
     "AllocatorTrace",

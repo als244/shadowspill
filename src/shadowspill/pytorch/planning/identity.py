@@ -18,6 +18,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from shadowspill.profiling.metadata import repeated_profiling_metadata
 from shadowspill.pytorch.guards import capture_training_signatures
 from shadowspill.pytorch.optimizer.artifacts import (
     code_identity,
@@ -26,7 +27,6 @@ from shadowspill.pytorch.optimizer.artifacts import (
     optimizer_value_identity,
 )
 from shadowspill.pytorch.partition import PartitionSpec
-from shadowspill.pytorch.profiling.metadata import training_profiling_metadata
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.schema import artifact_schema
 from shadowspill.step import StepDataOrdering
@@ -76,8 +76,8 @@ def step_identity(
     if not isinstance(optimizer, torch.optim.Optimizer):
         raise TypeError("optimizer must return a torch.optim.Optimizer")
     signatures = capture_training_signatures(example_inputs)
-    workloads = training_profiling_metadata(
-        profiling_metadata, microbatch_count=len(example_inputs)
+    workloads = repeated_profiling_metadata(
+        profiling_metadata, repetitions=len(example_inputs)
     )
     return {
         "schema": _SCHEMA,

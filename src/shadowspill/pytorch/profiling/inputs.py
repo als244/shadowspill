@@ -13,10 +13,12 @@ from shadowspill.pytorch.accelerator import DEVICE_TYPE, accelerator_device
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
+)
+from shadowspill.task.inputs import (
+    REPRESENTATIVE_VALUE_POLICY,
+    RepresentativeInputSummary,
     TaskInputRole,
 )
-
-REPRESENTATIVE_VALUE_POLICY = "shadowspill.task-values/v5"
 
 _REFERENCE_ROLES = frozenset(
     {
@@ -30,58 +32,6 @@ _REFERENCE_ROLES = frozenset(
 _REQUIRED_REFERENCE_ROLES = _REFERENCE_ROLES - {
     TaskInputRole.OPTIMIZER_STATE,
 }
-
-
-@dataclass(frozen=True, slots=True)
-class RepresentativeInputSummary:
-    """Content-free provenance for one materialized task argument."""
-
-    position: int
-    role: TaskInputRole
-    source: str | None
-    value_policy: str
-    dtype: str
-    shape: tuple[int, ...]
-    stride: tuple[int, ...]
-    storage_offset: int
-    alias_group: int
-    consumer_targets: tuple[str, ...]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "position": self.position,
-            "role": self.role.value,
-            "source": self.source,
-            "value_policy": self.value_policy,
-            "dtype": self.dtype,
-            "shape": list(self.shape),
-            "stride": list(self.stride),
-            "storage_offset": self.storage_offset,
-            "alias_group": self.alias_group,
-            "consumer_targets": list(self.consumer_targets),
-        }
-
-    @classmethod
-    def from_dict(cls, value: object) -> RepresentativeInputSummary:
-        if not isinstance(value, dict):
-            raise ValueError("representative input summary must be an object")
-        try:
-            return cls(
-                position=int(value["position"]),
-                role=TaskInputRole(str(value["role"])),
-                source=(None if value["source"] is None else str(value["source"])),
-                value_policy=str(value["value_policy"]),
-                dtype=str(value["dtype"]),
-                shape=tuple(int(item) for item in value["shape"]),
-                stride=tuple(int(item) for item in value["stride"]),
-                storage_offset=int(value["storage_offset"]),
-                alias_group=int(value["alias_group"]),
-                consumer_targets=tuple(str(item) for item in value["consumer_targets"]),
-            )
-        except (KeyError, TypeError) as exc:
-            raise ValueError(
-                "representative input summary has an invalid schema"
-            ) from exc
 
 
 @dataclass(frozen=True, slots=True)

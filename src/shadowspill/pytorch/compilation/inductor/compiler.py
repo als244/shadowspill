@@ -20,12 +20,15 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
     capture_task_storage_contract,
 )
+from shadowspill.task.manifest import (
+    ExecutableTaskManifest,
+    validate_value_contract,
+)
 
 from .aliases import _canonicalize_input_alias_outputs
 from .cache import _fx_graph_cache_key, _load_cached_manifest, _store_cached_manifest
 from .contract import _graph_lowering_contract, _project_callable_contract
-from .manifest import ExecutableTaskManifest, _make_manifest
-from .values import _validate_value_contract
+from .manifest import _make_manifest
 
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
 _COMPILATION_PHASE_ORDER = (
@@ -101,7 +104,7 @@ class _ManifestCompiler:
         started_ns = time.perf_counter_ns()
         inner = capture_task_storage_contract(graph, tuple(inputs))
         optimized = _project_callable_contract(graph, inner, self.semantic_contract)
-        _validate_value_contract(self.semantic_contract, optimized)
+        validate_value_contract(self.semantic_contract, optimized)
         _ensure_tracing_shape_environment()
         duration = self._record("shadowspill_optimized_contract", started_ns)
         return inner, optimized, duration
