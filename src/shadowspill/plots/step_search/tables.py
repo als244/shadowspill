@@ -7,7 +7,7 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from shadowspill.pytorch.step_search import StepSearchReport
+from shadowspill.search import StepSearchReport
 
 from .series import GIB, Series
 
