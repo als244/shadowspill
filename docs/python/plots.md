@@ -12,6 +12,10 @@ plot_step_search(report, "figures")
 plot_step_run(outcomes, "figures", tokens_per_step=65536)
 ```
 
+`StepSearchReport` is `shadowspill.search`'s, so drawing a figure from a saved
+report imports no framework: `benchmarking/replot.py` runs on the plots package
+and the search package alone.
+
 `plot_step_search()` takes a `StepSearchReport` and writes `sim/`, which needs
 only a plan. `plot_step_run()` takes one `RunBudgetOutcome` per executed budget,
 the prediction and the measurement side by side, and writes `real/`. Each also

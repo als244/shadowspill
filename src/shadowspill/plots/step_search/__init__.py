@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from shadowspill.pytorch.step_search import StepSearchReport
+from shadowspill.search import StepSearchReport
 
 from .layout import FigureTree
 from .series import geometry_colours, geometry_series, winning_geometry, winning_points

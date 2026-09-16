@@ -13,7 +13,7 @@ import matplotlib
 
 from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.planner.diagnostics.plan import PlanSummary
-from shadowspill.pytorch.step_search import StepSearchPoint, StepSearchReport
+from shadowspill.search import StepSearchPoint, StepSearchReport
 
 GIB = 1 << 30
 
