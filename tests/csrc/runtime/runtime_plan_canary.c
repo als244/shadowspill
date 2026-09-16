@@ -222,7 +222,7 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
         .fetch_route_id = 0U,
         .evict_route_id = 0U,
     };
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     ShadowSpillAllocation allocation = {0};
     failed = failed || shadowspill_runtime_create(&sparse, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
@@ -238,7 +238,7 @@ static int runtime_accepts_generic_and_sparse_topologies(void) {
         shadowspill_test_plan_create(runtime, &invalid_plan, &plan) !=
             SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
         plan != NULL;
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
@@ -357,7 +357,7 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *first = NULL;
     ShadowSpillPlan *second = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillPlanDescription roles = {
         .execution_pool_id = 0U,
         .spill_pool_id = 1U,
@@ -376,7 +376,7 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
     };
     const ShadowSpillTaskHandle *first_handle = NULL;
     const ShadowSpillTaskHandle *second_handle = NULL;
-    ShadowSpillBackendStream second_compute = {{0U, 0U}};
+    ShadowSpillBackendStream second_compute = 0U;
     int failed = shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_test_plan_create(runtime, &roles, &first) !=
@@ -429,10 +429,10 @@ static int shared_runtime_accepts_overlapping_plan_tasks(void) {
         failed = shadowspill_plan_close(second) != SHADOWSPILL_STATUS_OK || failed;
         shadowspill_plan_destroy(second);
     }
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
-    if (second_compute.words[0] != 0U) {
+    if (second_compute != 0U) {
         (void)mock.destroy_stream(mock.state, second_compute);
     }
     shadowspill_runtime_destroy(runtime);
@@ -454,7 +454,7 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
     ShadowSpillPlan *idle_plan = NULL;
     ShadowSpillPlan *busy_plan = NULL;
     ShadowSpillObjectHandle *object_handle = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillPlanDescription roles = {
         .execution_pool_id = 0U,
         .spill_pool_id = 1U,
@@ -512,7 +512,7 @@ static int plan_idle_wait_ignores_other_plan_actions(void) {
     if (runtime != NULL) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
@@ -597,7 +597,7 @@ static int plan_selects_nondefault_pool_pair(void) {
     ShadowSpillPlan *plan = NULL;
     ShadowSpillPlan *invalid = NULL;
     ShadowSpillObjectHandle *object_handle = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillObjectDescription object = {
         .object_id = 7007U,
         .size_bytes = 64U,
@@ -701,7 +701,7 @@ static int plan_selects_nondefault_pool_pair(void) {
     } else if (runtime != NULL) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
@@ -800,7 +800,7 @@ static int task_publications_resolve_plan_local_objects_once(void) {
     ShadowSpillPlan *second = NULL;
     ShadowSpillObjectHandle *first_object_handle = NULL;
     ShadowSpillObjectHandle *second_object_handle = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillPlanDescription roles = {
         .execution_pool_id = 0U,
         .spill_pool_id = 1U,
@@ -915,7 +915,7 @@ static int task_publications_resolve_plan_local_objects_once(void) {
         (void)shadowspill_unregister_object(runtime, first_object.object_id);
         (void)shadowspill_unregister_object(runtime, second_object.object_id);
     }
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);
@@ -1033,7 +1033,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     ShadowSpillRuntime *runtime = NULL;
     ShadowSpillPlan *plan = NULL;
     ShadowSpillObjectHandle *object_handle = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillPlanDescription roles = {
         .execution_pool_id = 0U,
         .spill_pool_id = 1U,
@@ -1131,7 +1131,7 @@ static int dedicated_action_and_acquisition_handles_are_not_tasks(void) {
     if (runtime != NULL) {
         (void)shadowspill_unregister_object(runtime, object.object_id);
     }
-    if (compute.words[0] != 0U) {
+    if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);
     }
     shadowspill_runtime_destroy(runtime);

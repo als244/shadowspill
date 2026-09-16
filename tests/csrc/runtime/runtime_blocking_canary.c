@@ -48,8 +48,8 @@ static int a_blocked_allocator_resumes_when_the_free_lands(void) {
         SHADOWSPILL_STATUS_OK) {
         return -1;
     }
-    ShadowSpillBackendStream first_stream = {{0U, 0U}};
-    ShadowSpillBackendStream second_stream = {{0U, 0U}};
+    ShadowSpillBackendStream first_stream = 0U;
+    ShadowSpillBackendStream second_stream = 0U;
     ShadowSpillAllocation first = {0};
     if (mock.create_stream(mock.state, &first_stream) != 0 ||
         mock.create_stream(mock.state, &second_stream) != 0 ||
@@ -166,7 +166,7 @@ static int a_wait_ends_when_its_release_source_drains(void) {
         SHADOWSPILL_STATUS_OK) {
         return -1;
     }
-    ShadowSpillBackendStream stream = {{0U, 0U}};
+    ShadowSpillBackendStream stream = 0U;
     ShadowSpillAllocation held = {0};
     if (mock.create_stream(mock.state, &stream) != 0 ||
         shadowspill_memory_pool_allocate(

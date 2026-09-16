@@ -46,9 +46,9 @@ whose return value is the answer itself - `shadowspill_abi_version`,
 `shadowspill_task_trace_label`, `shadowspill_pressurefit_best_placed_create`, and
 `shadowspill_planner_struct_size`. The two separately compiled contracts
 differ: a backend's table entries and its two exported symbols return `int`,
-and the adapter adds two more calls whose return is the answer,
-`shadowspill_pytorch_backend_malloc` (the address) and
-`shadowspill_pytorch_profile_range_begin` (the range).
+and two more calls return the answer itself rather than a status --
+`shadowspill_pytorch_backend_malloc` (the address), which PyTorch's allocator
+signature forces, and `shadowspill_profiler_range_begin` (the range).
 
 One vocabulary covers the whole library: the three codes every component agrees
 on sit at 0-2, and each component owns a band after that, so a status decodes to

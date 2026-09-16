@@ -29,26 +29,6 @@ ShadowSpillStatus shadowspill_pytorch_validate_object_binding(
         : SHADOWSPILL_STATUS_INVALID_STATE;
 }
 
-ShadowSpillStatus shadowspill_pytorch_acquire_objects_handle(
-    uintptr_t acquisition_handle,
-    uintptr_t consumer_stream_address,
-    ShadowSpillObjectBinding *bindings,
-    uint32_t binding_capacity
-) {
-    ShadowSpillRuntime *runtime = shadowspill_pytorch_runtime();
-    if (runtime == NULL) {
-        return SHADOWSPILL_STATUS_CLOSED;
-    }
-    return acquisition_handle == 0U
-        ? SHADOWSPILL_STATUS_INVALID_ARGUMENT
-        : shadowspill_acquire_objects_handle(
-            runtime,
-            (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
-            shadowspill_pytorch_stream(consumer_stream_address),
-            bindings,
-            binding_capacity
-        );
-}
 
 ShadowSpillStatus
 shadowspill_pytorch_transfer_acquired_object_to_caller(
@@ -67,7 +47,7 @@ shadowspill_pytorch_transfer_acquired_object_to_caller(
               runtime,
               (const ShadowSpillObjectAcquisitionHandle *)acquisition_handle,
               object_ordinal,
-              shadowspill_pytorch_stream(consumer_stream),
+              shadowspill_pytorch_resolve_stream(consumer_stream),
               (const void *)(uintptr_t)expected_address,
               expected_generation,
               expected_allocation_id,
@@ -86,6 +66,6 @@ ShadowSpillStatus shadowspill_pytorch_release_caller_allocation(
               runtime,
               shadowspill_pytorch_allocator_pool_id(),
               allocation_id,
-              shadowspill_pytorch_stream(stream)
+              shadowspill_pytorch_resolve_stream(stream)
           );
 }

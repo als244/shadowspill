@@ -38,7 +38,7 @@ int main(void) {
         10000U,
         &topology
     );
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     if (shadowspill_runtime_create(&topology.runtime, &runtime) !=
             SHADOWSPILL_STATUS_OK ||
         mock.create_stream(mock.state, &compute) != 0 ||

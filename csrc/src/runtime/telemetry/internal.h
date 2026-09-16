@@ -57,12 +57,5 @@ void shadowspill_profiler_name_stream(
     const char *name
 );
 
-ShadowSpillProfilerRange shadowspill_profiler_range_begin(
-    const ShadowSpillBackend *backend, const char *name
-);
-
-void shadowspill_profiler_range_end(
-    const ShadowSpillBackend *backend, ShadowSpillProfilerRange range
-);
 
 #endif

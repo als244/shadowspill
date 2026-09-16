@@ -32,14 +32,17 @@ reference.
 
 ## The table
 
-`ShadowSpillBackend` carries `abi_version`, the provider object `state` that
+`ShadowSpillBackend` carries `abi_version` -- still 1, because no backend
+outside this tree implements the contract yet, so it is settled rather than
+kept; the check exists so a library and a header from different builds cannot
+be paired -- the provider object `state` that
 every entry receives, and these entries. Each returns 0 on success and
 nonzero on failure unless noted.
 
 | group | entries |
 |---|---|
 | memory | `allocate_device(bytes, &address)`, `free_device(address, bytes)`, `register_host_memory(address, bytes)`, `unregister_host_memory(address, bytes)` |
-| streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `wrap_stream(stream_handle)` returning a token |
+| streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `resolve_stream(stream_handle)` returning the word this backend knows that stream by |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
 | events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `synchronize_event(event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
 | facts | `capabilities(&out)`, `physical_memory(&out)`, and `statistics(&out)`, the one entry here that returns nothing |
@@ -50,12 +53,24 @@ ShadowSpill's, mapped by the pinned-host pool and registered here so the
 provider can copy from it asynchronously. Frees and unregistrations carry the
 byte count so the backend keeps no size bookkeeping.
 
-Streams are ordered queues of copies and events. Copies are asynchronous and
-ordered on their stream. `wrap_stream` turns the integer handle the framework
-exposes for one of its own streams into a token. A handle of 0 is the default
-stream, the one a driver runs work on when the caller names no stream; the
-mock has one too, so a caller with no streams of its own can still drive the
-table.
+A stream and an event are each **one opaque word**, `uint64_t`, exactly as a
+profiler range is. Only the backend reads it. A backend over a driver keeps the driver's own
+stream there, which is typically a pointer; the mock keeps a pointer to a
+record of its own. Neither keeps a lookup table -- the word *is* the handle,
+cast back on use -- and a backend that names streams some other way, by index
+or by ticket, puts that in the same word instead. Nothing outside a backend may
+construct or inspect one.
+
+Zero means *none*: for an event, no event; for a stream, the backend's default
+stream -- the one a driver runs work on when the caller names none. The mock
+has one too, so a caller with no streams of its own can still drive the table.
+
+Streams are ordered queues of copies and events, and copies are asynchronous
+and ordered on their stream. `resolve_stream` answers with the word this
+backend knows a stream by, given the integer its owner knows it by. It is how a
+stream the backend did not create -- the framework's compute stream -- enters
+the runtime. Where the two name a stream the same way it is the identity; where they do
+not, as with the mock's default stream, the backend maps it.
 
 Events: a dependency event (`timing` clear) is the fast kind that record,
 query, and wait work with. A timing event carries a device timestamp when

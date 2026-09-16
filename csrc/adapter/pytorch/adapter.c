@@ -7,6 +7,12 @@ ShadowSpillPytorchAdapterState adapter = {
     .published_allocator_pool_id = UINT32_MAX,
 };
 
+/* The bound runtime, for the storage operators: they are C++ and cannot parse
+   the adapter struct, so they cannot use the inline accessor. */
+ShadowSpillRuntime *shadowspill_pytorch_bound_runtime(void) {
+    return shadowspill_pytorch_runtime();
+}
+
 ShadowSpillStatus shadowspill_pytorch_runtime_handle(
     uintptr_t *runtime_handle
 ) {

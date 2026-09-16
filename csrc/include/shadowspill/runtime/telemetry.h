@@ -53,6 +53,40 @@ shadowspill_allocation_telemetry_read(
     uint64_t *count
 );
 
+/* ------------------------------------------------------------------------
+ * Profiler annotations
+ *
+ * Ranges the backend's profiler shows, opened and closed around whatever a
+ * caller wants named. The runtime owns the flag and the backend, so a
+ * frontend does not keep its own: a range is one call, and it costs an
+ * atomic read when annotations are off.
+ * --------------------------------------------------------------------- */
+
+/* Turns the backend's profiler on or off. A backend with no profiler is a
+   no-op rather than a failure: annotations never change what a step does. */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_profiler_annotations_set(
+    ShadowSpillRuntime *runtime,
+    uint8_t enabled
+);
+
+/* Whether annotations are on, for a caller deciding whether to build a name
+   that would otherwise be thrown away. Ranges are safe to open regardless. */
+SHADOWSPILL_API uint8_t shadowspill_profiler_annotations_enabled(
+    ShadowSpillRuntime *runtime
+);
+
+/* Opens a named range; 0 when annotations are off or unsupported. */
+SHADOWSPILL_API ShadowSpillProfilerRange shadowspill_profiler_range_begin(
+    ShadowSpillRuntime *runtime,
+    const char *name
+);
+
+/* Closes a range this runtime opened; a zero range is a no-op. */
+SHADOWSPILL_API void shadowspill_profiler_range_end(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillProfilerRange range
+);
+
 /*
  * Planning-only allocation of reusable trace buffers. Calling this does not
  * enable tracing. Growth is rejected while a trace or allocation-profile

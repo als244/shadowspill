@@ -257,7 +257,7 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
 ShadowSpillStatus shadowspill_acquire_objects_handle(
     ShadowSpillRuntime *runtime,
     const ShadowSpillObjectAcquisitionHandle *handle,
-    ShadowSpillBackendStream consumer_stream,
+    uint64_t consumer_stream_handle,
     ShadowSpillObjectBinding *bindings,
     uint32_t binding_capacity
 ) {
@@ -266,6 +266,9 @@ ShadowSpillStatus shadowspill_acquire_objects_handle(
         record->plan_owner->runtime != runtime) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
+    /* As above: the caller's name for the stream, resolved by the backend. */
+    const ShadowSpillBackendStream consumer_stream =
+        runtime->backend.resolve_stream(runtime->backend.state, consumer_stream_handle);
     return shadowspill_acquire_object_bindings(
         runtime,
         record->plan_owner,

@@ -20,13 +20,13 @@ static int submit_transfer_copy(
         ? "shadowspill.runtime.transfer.fetch.unlabeled"
         : "shadowspill.runtime.transfer.evict.unlabeled";
     const ShadowSpillProfilerRange range = shadowspill_profiler_range_begin(
-        &runtime->backend,
+        runtime,
         action->trace_label == NULL ? fallback : action->trace_label
     );
     const int status = shadowspill_route_copy_async(
         runtime, route, destination, source, bytes, stream
     );
-    shadowspill_profiler_range_end(&runtime->backend, range);
+    shadowspill_profiler_range_end(runtime, range);
     return status;
 }
 

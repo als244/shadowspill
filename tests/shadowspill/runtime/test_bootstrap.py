@@ -107,17 +107,12 @@ class _Library:
     shadowspill_pytorch_allocator_close = _Function()
     shadowspill_pytorch_allocator_statistics = _Function()
     shadowspill_pytorch_allocator_failure = _Function()
-    shadowspill_pytorch_profile_range_begin = _Function()
-    shadowspill_pytorch_profile_range_end = _Function()
-    shadowspill_pytorch_profiler_annotations_set = _Function()
     shadowspill_pytorch_recover_no_progress = _Function()
     shadowspill_pytorch_allocation_for_pointer = _Function()
     shadowspill_pytorch_allocation_scope_begin = _Function()
     shadowspill_pytorch_allocation_scope_end = _Function()
     shadowspill_pytorch_allocation_scope_abort = _Function()
-    shadowspill_pytorch_acquire_objects_handle = _Function()
     shadowspill_pytorch_transfer_acquired_object_to_caller = _Function()
-    shadowspill_pytorch_submit_action_batch_handle = _Function()
     shadowspill_pytorch_before_task_handle = _Function()
     shadowspill_pytorch_after_task_handle = _Function()
     shadowspill_pytorch_validate_object_binding = _Function()
@@ -208,8 +203,6 @@ def test_adapter_signatures_are_configured_together() -> None:
         ctypes.c_uint64,
         ctypes.c_size_t,
     ]
-    assert library.shadowspill_pytorch_profile_range_begin.argtypes == [ctypes.c_char_p]
-    assert library.shadowspill_pytorch_profile_range_end.argtypes == [ctypes.c_uint64]
     assert library.shadowspill_pytorch_allocation_scope_abort.argtypes == []
     assert library.shadowspill_pytorch_abort_task_handle.argtypes == [
         ctypes.c_size_t,
@@ -239,6 +232,16 @@ def test_runtime_signatures_are_configured_together() -> None:
     library = _RuntimeLibrary()
     configure_runtime_library(library)
 
+    # Profiling is the runtime's: the adapter keeps no profiler of its own, so
+    # these are declared here and take the runtime handle.
+    assert library.shadowspill_profiler_range_begin.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+    ]
+    assert library.shadowspill_profiler_range_end.argtypes == [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+    ]
     assert library.shadowspill_plan_wait_idle.argtypes == [ctypes.c_size_t]
     assert library.shadowspill_plan_wait_idle.restype == ctypes.c_uint32
     assert library.shadowspill_runtime_wait_idle.argtypes == [ctypes.c_size_t]
