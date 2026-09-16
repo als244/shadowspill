@@ -254,5 +254,5 @@ device budget
     `-- scratch_reserve      unplanned allocator traffic
 ```
 
-Previous: [Physical admission and offset handling](physical-admission.md). Next:
-[Fixed-offset placement](fixed-placement.md).
+Previous: [Physical admission and offset handling](physical-admission.md).
+Next: [Fixed-offset placement](fixed-placement.md).

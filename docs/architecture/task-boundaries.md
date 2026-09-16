@@ -276,6 +276,30 @@ immediately. `after_task` attaches one completion event to all of them, so the
 worker can return every range the task freed against a single fence instead of
 one event per free.
 
+## The allocation scope
+
+Most allocations are made inside a task, and the task scope is what owns them.
+Profiling is the case that is not: to measure what one task costs, the profiler
+runs it on its own, outside any plan, and the bytes it allocates still have to
+belong to something the runtime can account for.
+
+An allocation scope is that something. It is opened around work that is not a
+task, and closed when the work ends, and everything allocated between is its
+own -- without inventing a fake task to hold it, which would put a task in the
+runtime's tables that no plan admitted.
+
+It is told which plan it belongs to, rather than reading one from a task,
+because when profiling runs **that plan does not exist yet**: profiling is what
+the plan will be built from. The caller names the plan id here and names it
+again in the description it later creates the plan from, so the bytes a probe
+measured and the plan built from that measurement carry one number. The id
+comes from `shadowspill_runtime_next_plan_id` before either exists, which is
+why it is taken rather than returned -- see [plan
+identity](plan-identity.md#the-id).
+
+A scope that fails partway is aborted rather than closed, which releases what
+it made without publishing anything.
+
 ## What a scope owes when it ends
 
 Every allocation belongs to exactly one scope: the task scope a thread is

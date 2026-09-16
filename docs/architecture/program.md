@@ -3,12 +3,20 @@
 What the system plans *for*: one step of work, stated as tasks over objects,
 with every measurement a planner needs and no policy at all.
 
-A program is produced by [PyTorch lowering](lowering.md) and consumed by
-[planning](planning.md), [simulation](simulation.md) and [runtime
+A program is produced by a frontend and consumed by
+[planning](planning-pipeline.md), [simulation](simulation.md) and [runtime
 materialization](memory-runtime.md). It says what the work *is*. It does not
 say where the work starts, what machine it runs on, or how much memory there
 is -- those turn a program into [a planning problem](planning-problem.md),
 which is the question a [search](search.md) answers.
+
+**Nothing in a program is specific to machine learning.** It is tasks over
+objects, with the measurements a planner needs: sizes, durations, and which
+task reads what. A neural network's step is one thing that lowers to that
+shape, and [PyTorch lowering](lowering.md) is the frontend that ships, but a
+program that came from somewhere else is planned, simulated and run by the same
+code with no case for it anywhere. Where this page shows a training example it
+says so, and says what the generic mechanism underneath is.
 
 The type is `ShadowSpillProgram` in `shadowspill.ir`; the same facts are
 flattened into C inputs at the planner, simulator and runtime boundaries.
@@ -125,7 +133,7 @@ lowering's choice; it is not written into the dependencies. So any
 topological order of a program's tasks is a legal schedule, and one lowering
 can emit the same tasks in more than one order for the planner to compare.
 The training lowering's orders are the microbatch walks of
-[planning](planning.md#the-walk-through-the-microbatches).
+[planning](planning-pipeline.md#the-walk-through-the-microbatches).
 
 ### Why a sink is pinned
 

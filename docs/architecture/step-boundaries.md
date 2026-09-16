@@ -183,4 +183,4 @@ partition is `opening_delay_seconds`, `selected_span_seconds` and
 `exposed_tail_seconds` ([timing](../python/api/timing.md)).
 
 Previous: [Failure, abort, and process exit](failure-and-exit.md). Next:
-[Backends](backends.md).
+[PyTorch adapter](adapter.md).

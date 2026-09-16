@@ -41,7 +41,8 @@ torch allocator hooks     objects and storage views     task boundaries
   a plan, and validate that PyTorch storage views match the objects they
   claim.
 - **Task boundaries** wrap each compiled task with the runtime's readiness and
-  completion protocol, profiler ranges, and the trace's timing markers.
+  completion protocol, and open the runtime's profiler ranges and timing
+  markers around it.
 
 ## How the source is laid out
 
@@ -54,16 +55,15 @@ directory saying what it holds, one file per concern.
   the C++ wrapper that turns a failed one into a typed exception.
 - `failure/` — what a failed call latches, and the report a person reads.
 - `tasks/` — the task boundary on the dispatching thread: the range a task
-  opens, allocation scopes, before, after, abort, and the action batch that
-  runs with no task of its own. What a scope owes the allocations it made, and
-  what actually releases one, is [what a scope owes when it
-  ends](task-boundaries.md#what-a-scope-owes-when-it-ends).
+  opens, allocation scopes, before, after and abort. What a scope owes the
+  allocations it made, and what actually releases one, is [what a scope owes
+  when it ends](task-boundaries.md#what-a-scope-owes-when-it-ends).
 - `storage/` — PyTorch storages over runtime leases: the C primitives, and
   the torch operators over them, one file per dispatch key.
-- `internal.h`, `adapter.c` and `profiler.c` at the top: the one
-  process-global instance PyTorch's callback signature forces, the calls
-  that describe the process, and the profiler every directory opens ranges
-  through.
+- `internal.h` and `adapter.c` at the top: the one process-global instance
+  PyTorch's callback signature forces, and the calls that describe the
+  process. Profiler ranges are not here — the runtime owns them, and every
+  directory opens one on the runtime it is bound to.
 
 ## What it requires of a backend
 
@@ -79,7 +79,8 @@ routes, and lanes; see [backends](backends.md).
 The C entry points in `<shadowspill/pytorch_adapter.h>`, grouped in the
 [adapter C API](../c/pytorch-adapter.md): bootstrap, physical admission and
 close; the allocator callbacks; objects and storage; task boundaries and
-allocation scopes; profiling; and failure and recovery. The Python layer wraps
+allocation scopes; and failure and recovery. Profiling is absent on purpose:
+the ranges are the runtime's. The Python layer wraps
 them in two places, along the same line this header draws. What needs the
 framework -- the allocator install, the storage bridge at a task boundary -- is
 wrapped in `shadowspill.pytorch`; everything reachable through the runtime handle
@@ -87,4 +88,5 @@ the adapter publishes is called from `shadowspill.runtime`, which imports no
 framework at all, rather than restated in the frontend. The rule is the same one
 stated for the header: a call the neutral runtime already owns is made there.
 
-Previous: [Events](events.md). Next: [Timelines](timelines.md).
+Previous: [Step boundaries](step-boundaries.md). Next: [Timelines: how a step
+is measured](timelines.md).

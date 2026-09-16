@@ -116,11 +116,10 @@ array with ids; *execution* and *spill* are **roles a plan assigns** in its
 `initial_pool_id`. A runtime object resident in the execution pool is a legal
 configuration the C layer supports today.
 
-The frontend nonetheless puts every registration in the spill pool --
-the bridge (`pytorch/runtime_adapter/bridge/objects.py`) registers host objects and
-placeholders with `pool_id=spill_pool_id`,
-and state adoption passes the spill pool -- and that is the right policy rather
-than a missing generalization. The execution pool is the scarce device arena a
+Every registration nonetheless goes to the spill pool --
+`runtime/objects/registration.py` registers host objects and placeholders with
+`pool_id=spill_pool_id`, and state adoption passes the spill pool -- and that is
+the right policy rather than a missing generalization. The execution pool is the scarce device arena a
 fixed layout reserves in one contiguous span. Storage resident there that the
 plan did not place occupies the arena outside the layout, which is precisely what
 costs the largest free range. Imported state belongs in the spill pool and is
@@ -154,5 +153,4 @@ bytes come from its range allocator, which every reservation updates. So
 list is empty. The fields publication feeds -- `live_allocations` and
 `requested_allocated_bytes` -- are the ones that read as zero there.
 
-Previous: [Plan identity](plan-identity.md). Next: [Memory
-runtime](memory-runtime.md).
+Previous: [Plan identity](plan-identity.md). Next: [Backends](backends.md).

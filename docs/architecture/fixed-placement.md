@@ -207,5 +207,5 @@ The first two are predictions the layout is built against; the last two are
 what the allocator, replayed or real, made of it. A replayed peak larger than
 the prediction means the lifetimes were wrong, not the assignment.
 
-Previous: [From a resolved program to leases](admission-leases.md). Next:
-[Simulation](simulation.md).
+Previous: [From a resolved program to leases](admission-leases.md). Next: [The
+planning pipeline](planning-pipeline.md).

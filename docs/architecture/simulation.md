@@ -108,5 +108,5 @@ The [StepResult diagnostics guide](../python/step-diagnostics.md) defines the
 real-versus-simulated task and transfer fields, clock domains, selected-span
 summary, trace-integrity checks, and investigation workflow.
 
-Previous: [Fixed-offset placement](fixed-placement.md). Next: [Planning
-orchestration](planning.md).
+Previous: [The planning problem](planning-problem.md). Next: [Plan
+search](search.md).
