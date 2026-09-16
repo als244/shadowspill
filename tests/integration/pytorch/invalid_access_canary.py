@@ -9,8 +9,8 @@ from pathlib import Path
 import torch
 import triton
 import triton.language as tl
-from shadowspill.pytorch.allocator import PyTorchProcessAllocator
 
+from shadowspill.pytorch.frontend import PyTorchFrontend
 from shadowspill.runtime.abi import AdapterFailure
 from shadowspill.runtime.bootstrap import install_runtime
 from shadowspill.runtime.failures import read_allocator_failure
@@ -27,7 +27,7 @@ def _invalid_store_kernel(value: tl.tensor, invalid_offset: tl.constexpr) -> Non
 def main() -> int:
     installed = install_runtime(
         Path(sys.argv[1]).resolve(),
-        frontend=PyTorchProcessAllocator(),
+        frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
         provider_headroom_bytes=512 << 20,
