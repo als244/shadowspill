@@ -12,10 +12,17 @@ SOURCE_ROOTS = (
     ROOT / "csrc",
 )
 NEUTRAL_ROOTS = (
+    ROOT / "src" / "shadowspill" / "diagnostics",
     ROOT / "src" / "shadowspill" / "ir",
+    ROOT / "src" / "shadowspill" / "pipeline",
     ROOT / "src" / "shadowspill" / "planner",
+    ROOT / "src" / "shadowspill" / "profiling",
     ROOT / "src" / "shadowspill" / "runtime",
+    ROOT / "src" / "shadowspill" / "search",
     ROOT / "src" / "shadowspill" / "simulator",
+    ROOT / "src" / "shadowspill" / "step",
+    ROOT / "src" / "shadowspill" / "store",
+    ROOT / "src" / "shadowspill" / "task",
     ROOT / "csrc" / "include",
     ROOT / "csrc" / "src" / "common",
     ROOT / "csrc" / "src" / "planner",
@@ -33,7 +40,27 @@ NEUTRAL_FORBIDDEN = {
     "provider name in neutral code": re.compile(
         r"\b(?:cuda|rocm|hip)\b", re.IGNORECASE
     ),
+    # The neutral tree deals in objects, leases and byte ranges. A tensor is
+    # what a framework makes of them, so the word belongs to a frontend --
+    # in a name, in a message, and in prose.
+    "framework value name in neutral code": re.compile(r"\btensor", re.IGNORECASE),
+    # Nor may neutral code name a framework or one of its parts. What it needs
+    # of a framework it asks for through `shadowspill.frontend`, which is the
+    # only place any of these names belongs.
+    "framework name in neutral code": re.compile(
+        r"\b(?:pytorch|torch|inductor|aotautograd|autograd|dynamo)\b",
+        re.IGNORECASE,
+    ),
 }
+#: Serialized keys and store paths that are frozen so an existing corpus stays
+#: readable. They carry a framework's name and cannot be renamed; nothing else
+#: may. See docs/internal/ for the deferred-rename list.
+FROZEN_LITERALS = (
+    "pytorch.export",
+    "pytorch.profile",
+    "build.inductor",
+    "build/inductor/",
+)
 PRODUCTION_FORBIDDEN = {
     "old secondary-pool role": re.compile(r"\bbacking(?:_[A-Za-z0-9_]+)?\b"),
     "physical transfer direction used as policy": re.compile(
@@ -64,6 +91,14 @@ def production_files() -> list[Path]:
     return sorted(files)
 
 
+def without_frozen(line: str) -> str:
+    """The line with every frozen literal removed, so a check cannot see them."""
+
+    for literal in FROZEN_LITERALS:
+        line = line.replace(literal, "")
+    return line
+
+
 def files_under(roots: tuple[Path, ...]) -> list[Path]:
     return sorted(
         path
@@ -79,7 +114,7 @@ def collect_matches(
 ) -> list[str]:
     failures: list[str] = []
     for path in paths:
-        source = path.read_text(encoding="utf-8")
+        source = without_frozen(path.read_text(encoding="utf-8"))
         for label, pattern in patterns.items():
             for match in pattern.finditer(source):
                 line = source.count("\n", 0, match.start()) + 1

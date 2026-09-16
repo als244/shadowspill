@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import os
 import re
-import shutil
 import tempfile
 import threading
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager, suppress
+from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, get_args
@@ -22,10 +20,7 @@ from shadowspill.schema import ARTIFACT_VERSION, artifact_schema
 
 from .policy import STORE_MODES, StoreMode, StorePolicy
 
-_PYTORCH_CACHE_ENVIRONMENT = "TORCHINDUCTOR_CACHE_DIR"
-_CACHE_ENVIRONMENT_LOCK = threading.RLock()
 _LAYOUT_SCHEMA = artifact_schema("artifact_store")
-_EXPORT_SCHEMA = artifact_schema("pytorch.export")
 _PLAN_MANIFEST_SCHEMA = artifact_schema("plan_manifest")
 #: How a run touched an artifact. "improved" is a write that replaced a
 #: stored plan the answer beat, kept distinct from a first write so the
@@ -104,7 +99,7 @@ class ArtifactStore:
     """Where one planning call reads and writes its artifacts.
 
     Two trees under one versioned root. ``build`` holds what a run pays for
-    and another run can reuse: exports, Inductor caches, graph pairs,
+    and another run can reuse: exports, the compiler caches, graph pairs,
     optimizer captures and profiles. ``planning`` holds what a run decided:
     the program it was given,
     the requests put to the planner, its results, and the plans callables run,
@@ -188,12 +183,6 @@ class ArtifactStore:
         return self.build / "exports"
 
     @property
-    def inductor(self) -> Path:
-        revision = self.export_bypass_key or "default"
-        identity = hashlib.sha256(revision.encode()).hexdigest()[:12]
-        return self.build / "inductor" / f"{_safe_label(revision)}-{identity}"
-
-    @property
     def graphpairs(self) -> Path:
         return self.build / "graphpairs"
 
@@ -269,57 +258,6 @@ class ArtifactStore:
 
         return self.build_policy.write_enabled
 
-    @contextmanager
-    def activate_pytorch(self) -> Iterator[None]:
-        """Route process-global Inductor cache lookups for one planning call."""
-
-        if self.build_writes_enabled or self.plan_policy.write_enabled:
-            self.initialize()
-        with _CACHE_ENVIRONMENT_LOCK:
-            previous = os.environ.get(_PYTORCH_CACHE_ENVIRONMENT)
-            previous_triton = os.environ.get("TRITON_CACHE_DIR")
-            isolated = not self.build_reads_enabled or not self.build_writes_enabled
-            with tempfile.TemporaryDirectory(
-                prefix="shadowspill-plan-",
-            ) as temporary:
-                active = Path(temporary) if isolated else self.inductor
-                clear_caches = _clear_pytorch_compiler_caches if isolated else None
-                if clear_caches is not None:
-                    clear_caches()
-                os.environ[_PYTORCH_CACHE_ENVIRONMENT] = str(active)
-                os.environ["TRITON_CACHE_DIR"] = str(active / "triton")
-                completed = False
-                try:
-                    yield
-                    completed = True
-                finally:
-                    if clear_caches is not None:
-                        clear_caches()
-                    if previous is None:
-                        os.environ.pop(_PYTORCH_CACHE_ENVIRONMENT, None)
-                    else:
-                        os.environ[_PYTORCH_CACHE_ENVIRONMENT] = previous
-                    if previous_triton is None:
-                        os.environ.pop("TRITON_CACHE_DIR", None)
-                    else:
-                        os.environ["TRITON_CACHE_DIR"] = previous_triton
-
-                if completed and self.build_writes_enabled and isolated:
-                    _publish_cache_tree(
-                        active,
-                        self.inductor,
-                        overwrite=self.build_policy.overwrite,
-                    )
-                if self.build_writes_enabled:
-                    self.record(
-                        category="pytorch",
-                        kind="inductor_cache",
-                        digest=None,
-                        path=self.inductor,
-                        access="managed",
-                        schema=None,
-                    )
-
     def initialize(self) -> None:
         """Create the stable top-level layout and its human guide."""
 
@@ -331,7 +269,7 @@ class ArtifactStore:
             False,
             {
                 "build": "what a run pays for and another can reuse: exports,"
-                " Inductor caches, graph pairs, optimizer captures, profiles",
+                " the compiler caches, graph pairs, optimizer captures, profiles",
                 "planning": "what a run decided: the programs it was given,"
                 " the requests put to the planner, its results, and the plans"
                 " callables run",
@@ -381,134 +319,11 @@ class ArtifactStore:
         return (
             ("root", str(self.root)),
             ("build", str(self.build)),
-            ("build.inductor", str(self.inductor)),
             ("planning", str(self.planning)),
             (
                 "plan_store",
                 str(self.root if self.plan_store is None else self.plan_store),
             ),
-        )
-
-    def archive_export(
-        self,
-        exported_program: Any,
-        *,
-        digest: str,
-        metadata: Mapping[str, object],
-    ) -> Path:
-        """Persist a freshly produced Export artifact and readable manifest.
-
-        An existing identical archive is *matched*, not loaded.  Skipping the
-        Export call requires a separately trusted pre-capture identity; this
-        archive alone never guesses Python objective semantics.
-        """
-
-        directory = digest_directory(self.exports, digest)
-        artifact_path = directory / "exported_program.pt2"
-        manifest_path = directory / "manifest.json"
-        if not self.build_writes_enabled:
-            return artifact_path
-        if self._match_export_archive(
-            directory,
-            artifact_path,
-            manifest_path,
-            digest,
-        ):
-            return artifact_path
-        self._write_export_archive(
-            exported_program,
-            artifact_path,
-            manifest_path,
-            digest,
-            metadata,
-        )
-        self._record_export_archive(artifact_path, manifest_path, digest, "write")
-        return artifact_path
-
-    def _match_export_archive(
-        self,
-        directory: Path,
-        artifact_path: Path,
-        manifest_path: Path,
-        digest: str,
-    ) -> bool:
-        if (
-            not artifact_path.exists()
-            or not manifest_path.exists()
-            or self.build_policy.overwrite
-        ):
-            return False
-        manifest = _read_json(manifest_path)
-        if manifest.get("schema") != _EXPORT_SCHEMA or manifest.get("digest") != digest:
-            raise ValueError(f"Export cache entry {directory} is invalid")
-        self._record_export_archive(artifact_path, manifest_path, digest, "matched")
-        return True
-
-    @staticmethod
-    def _write_export_archive(
-        exported_program: Any,
-        artifact_path: Path,
-        manifest_path: Path,
-        digest: str,
-        metadata: Mapping[str, object],
-    ) -> None:
-        import torch
-
-        directory = artifact_path.parent
-        directory.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=".exported_program.", suffix=".pt2", dir=directory
-        )
-        os.close(descriptor)
-        try:
-            torch.export.save(exported_program, temporary)
-            os.replace(temporary, artifact_path)
-        finally:
-            with suppress(FileNotFoundError):
-                os.unlink(temporary)
-        atomic_json(
-            manifest_path,
-            {
-                "schema": _EXPORT_SCHEMA,
-                "digest": digest,
-                "artifact": artifact_path.name,
-                "metadata": dict(metadata),
-            },
-        )
-
-    def _record_export_archive(
-        self,
-        artifact_path: Path,
-        manifest_path: Path,
-        digest: str,
-        artifact_access: str,
-    ) -> None:
-        if artifact_access == "matched":
-            self.record(
-                category="pytorch",
-                kind="export_manifest",
-                digest=digest,
-                path=manifest_path,
-                access="read",
-                schema=_EXPORT_SCHEMA,
-            )
-        self.record(
-            category="pytorch",
-            kind="exported_program",
-            digest=digest,
-            path=artifact_path,
-            access=artifact_access,
-            schema=_EXPORT_SCHEMA,
-        )
-        if artifact_access == "matched":
-            return
-        self.record(
-            category="pytorch",
-            kind="export_manifest",
-            digest=digest,
-            path=manifest_path,
-            access="write",
-            schema=_EXPORT_SCHEMA,
         )
 
     def archive_program(self, program: ShadowSpillProgram) -> Path:
@@ -587,7 +402,7 @@ class ArtifactStore:
 
         directory = (
             self.plans
-            / _safe_label(model_label)
+            / safe_label(model_label)
             / capture_identity[:16]
             / execution_plan.digest[:16]
         )
@@ -644,93 +459,6 @@ class ArtifactStore:
         return manifest_path
 
 
-def _clear_pytorch_compiler_caches() -> None:
-    """Clear process-local compiler state at an isolated cache boundary."""
-
-    # ShadowSpill's PyTorch frontend is version-pinned.  This private helper is
-    # deliberately confined here; it prevents an earlier plan in this process
-    # from reading entries a refresh was told to ignore.
-    from torch._inductor.utils import clear_caches
-
-    clear_caches()
-
-
-def _publish_cache_tree(source: Path, destination: Path, *, overwrite: bool) -> None:
-    """Publish a fresh, write-enabled Inductor cache without replaying old data."""
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        try:
-            os.replace(source, destination)
-        except OSError as error:
-            if error.errno != errno.EXDEV:
-                raise
-            _copy_cache_tree_atomically(source, destination)
-        return
-
-    for source_path in sorted(source.rglob("*")):
-        relative = source_path.relative_to(source)
-        destination_path = destination / relative
-        if source_path.is_dir():
-            destination_path.mkdir(parents=True, exist_ok=True)
-            continue
-        if source_path.name.endswith(".lock"):
-            continue
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
-        if destination_path.exists():
-            if _files_equal(source_path, destination_path):
-                continue
-            if not overwrite:
-                raise ValueError(
-                    "fresh PyTorch compiler artifact conflicts with an existing "
-                    "entry; use a 'refresh' store mode or a new "
-                    f"export_bypass_key: {destination_path}"
-                )
-        temporary = destination_path.with_name(
-            f".{destination_path.name}.{os.getpid()}.tmp"
-        )
-        with suppress(FileNotFoundError):
-            temporary.unlink()
-        try:
-            try:
-                os.link(source_path, temporary)
-            except OSError:
-                shutil.copy2(source_path, temporary)
-            os.replace(temporary, destination_path)
-        finally:
-            with suppress(FileNotFoundError):
-                temporary.unlink()
-
-
-def _copy_cache_tree_atomically(source: Path, destination: Path) -> None:
-    """Publish a cache tree across filesystems through a sibling staging path."""
-
-    staging = Path(
-        tempfile.mkdtemp(
-            prefix=f".{destination.name}.{os.getpid()}.",
-            dir=destination.parent,
-        )
-    )
-    try:
-        shutil.copytree(source, staging, dirs_exist_ok=True)
-        os.replace(staging, destination)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-
-
-def _files_equal(left: Path, right: Path) -> bool:
-    if left.stat().st_size != right.stat().st_size:
-        return False
-    with left.open("rb") as left_file, right.open("rb") as right_file:
-        while True:
-            left_chunk = left_file.read(1 << 20)
-            right_chunk = right_file.read(1 << 20)
-            if left_chunk != right_chunk:
-                return False
-            if not left_chunk:
-                return True
-
-
 def _write_guides(
     root: Path,
     replace: bool,
@@ -780,12 +508,12 @@ def digest_directory(root: Path, digest: str) -> Path:
     return root / digest[:2] / digest
 
 
-def _safe_label(value: str) -> str:
+def safe_label(value: str) -> str:
     result = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
     return result or "model"
 
 
-def _read_json(path: Path) -> dict[str, object]:
+def read_json(path: Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
@@ -826,10 +554,10 @@ this one and replans.
 `build/` is what a run pays for and another run can reuse:
 
 - `build/exports/`: normalized Export archives and manifests.
-- `build/inductor/`: files managed internally by PyTorch Inductor.
+- `build/inductor/`: files managed internally by the framework's compiler.
 - `build/graphpairs/`: structural AOT graph pairs.
 - `build/optimizers/`: traced recurrent optimizer updates, keyed by the
-  optimizer, the tensors it binds, its hyperparameters and its stage split.
+  optimizer, the objects it binds, its hyperparameters and its stage split.
 - `build/profiling/`: hardware/compiler-specific layouts and task measurements.
 
 `planning/` is what a run decided:
