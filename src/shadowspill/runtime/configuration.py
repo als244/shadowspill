@@ -54,7 +54,7 @@ def validate_topology(
             raise TypeError(f"unsupported pool configuration for {name!r}")
     if sum(isinstance(value, DevicePool) for value in normalized.values()) != 1:
         raise RuntimeConfigurationError(
-            "the current PyTorch allocator frontend requires exactly one device pool"
+            "the installed allocator requires exactly one device pool"
         )
     if not any(isinstance(value, PinnedHostPool) for value in normalized.values()):
         raise RuntimeConfigurationError(
@@ -329,7 +329,7 @@ def resolve_execution_device(
 
 
 def adapter_path(configured: str | Path | None) -> Path:
-    """The PyTorch adapter library to load: the configured one, else the one
+    """The framework adapter library to load: the configured one, else the one
     installed beside the package."""
 
     if configured is not None:
@@ -338,14 +338,14 @@ def adapter_path(configured: str | Path | None) -> Path:
         discovered = resolve_library("libshadowspill_pytorch.so")
         if discovered is None:
             raise RuntimeConfigurationError(
-                "ShadowSpill's PyTorch adapter was not found; install "
+                "ShadowSpill's framework adapter was not found; install "
                 "ShadowSpill or build the editable checkout at its configured "
                 "build location"
             )
         path = discovered
     if not path.is_file():
         raise RuntimeConfigurationError(
-            f"ShadowSpill's PyTorch adapter was not found: {path}"
+            f"ShadowSpill's framework adapter was not found: {path}"
         )
     return path
 

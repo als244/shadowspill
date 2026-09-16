@@ -1,4 +1,4 @@
-"""Structured runtime failures surfaced by the PyTorch frontend."""
+"""Structured runtime failures surfaced by a frontend."""
 
 from __future__ import annotations
 

@@ -17,9 +17,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )
-
-from ...lowering.forward import TaskEntrypoint
-from ...lowering.training import TrainingTaskEntrypoint
+from shadowspill.task.entrypoints import TaskEntrypoint
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,7 +40,7 @@ class TaskOutputBinding:
 
 def output_bindings_for_entrypoints(
     tasks: Sequence[TaskSpec],
-    entrypoints: Sequence[TaskEntrypoint | TrainingTaskEntrypoint],
+    entrypoints: Sequence[TaskEntrypoint | TaskEntrypoint],
     alias_by_object: Mapping[str, str],
 ) -> dict[str, tuple[TaskOutputBinding, ...]]:
     """Describe which returned tensor allocations become persistent outputs."""
@@ -53,12 +51,9 @@ def output_bindings_for_entrypoints(
         task = task_by_id.get(entrypoint.task_id)
         if task is None:
             continue
-        slots = (
-            entrypoint.gradient_output_slots
-            if isinstance(entrypoint, TrainingTaskEntrypoint)
-            and entrypoint.phase == "backward"
-            else entrypoint.output_slots
-        )
+        # A task that contributes to objects rather than producing them binds
+        # its contributions; every other task binds what it returned.
+        slots = entrypoint.options.contribution_slots or entrypoint.output_slots
         output_objects = set(task.outputs)
         replacement_leaves = set(entrypoint.replacement_output_leaves)
         handoff_by_leaf = {

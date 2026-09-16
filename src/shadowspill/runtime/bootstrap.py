@@ -39,7 +39,7 @@ from .failures import format_bytes, wait_allocator_idle
 
 
 class RuntimeInstallError(RuntimeError):
-    """Raised when the process-global PyTorch allocator cannot be installed."""
+    """Raised when the process-global framework allocator cannot be installed."""
 
 
 _MIB = 1 << 20
@@ -119,7 +119,7 @@ def install_runtime(
     background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
 ) -> InstalledRuntime:
-    """Install the process-global allocator before PyTorch initializes the accelerator.
+    """Install the process-global allocator before the device is initialized.
 
     ``backend`` selects the backend shared object the adapter loads: ``None``
     is the one accelerator backend installed beside the libraries, a name
@@ -151,7 +151,7 @@ def install_runtime(
     missing_operations = tuple(frontend.missing_operations())
     if missing_operations:
         raise RuntimeInstallError(
-            "PyTorch adapter is missing canonical storage operations: "
+            "framework adapter is missing canonical storage operations: "
             + ", ".join(missing_operations)
         )
     frontend.prepare_allocator(
@@ -434,7 +434,7 @@ def _backend_path(backend: str | None) -> Path:
 def _validated_adapter_path(library_path: str | Path) -> Path:
     path = Path(library_path).expanduser().resolve()
     if not path.is_file():
-        raise RuntimeInstallError(f"PyTorch adapter does not exist: {path}")
+        raise RuntimeInstallError(f"framework adapter does not exist: {path}")
     return path
 
 
@@ -452,7 +452,7 @@ def _load_adapter(path: Path) -> Any:
         or capabilities.abi_version != ADAPTER_ABI_VERSION
         or capabilities.runtime_abi_version != ABI_VERSION
     ):
-        raise RuntimeInstallError("PyTorch adapter capability/ABI validation failed")
+        raise RuntimeInstallError("framework adapter capability/ABI validation failed")
     return library
 
 

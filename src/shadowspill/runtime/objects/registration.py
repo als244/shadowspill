@@ -50,7 +50,7 @@ def reserve_runtime_object_ids(runtime: Runtime, count: int) -> tuple[int, ...]:
         limit = first + count
         if limit >= (1 << 63):
             raise RuntimeConfigurationError(
-                "persistent PyTorch object identity space is exhausted"
+                "persistent object identity space is exhausted"
             )
         runtime._next_persistent_object_id = limit
         return tuple(range(first, limit))

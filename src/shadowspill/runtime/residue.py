@@ -98,7 +98,7 @@ def force_release_plan_scope(runtime: Runtime, plan_handle: int) -> tuple[int, i
     the framework has released them. Two halves, because two layers own the two
     facts.
 
-    The frontend half detaches the storages. A tensor occupying one of these
+    The frontend half detaches the storages. An object occupying one of these
     ranges stops referencing those bytes, so the Python object no longer points
     at memory about to be reclaimed, and a later read raises on an empty
     storage rather than reading whatever now lives there.

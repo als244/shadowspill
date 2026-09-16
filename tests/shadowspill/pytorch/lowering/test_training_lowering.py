@@ -323,7 +323,7 @@ def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
     assert selected[3].mutations
     assert selected[-1].mutations
     for entrypoint in lowered.entrypoints:
-        if entrypoint.phase == "backward":
+        if entrypoint.options.phase == "backward":
             assert tuple(slot.leaf_index for slot in entrypoint.input_slots) == tuple(
                 range(len(entrypoint.input_slots))
             )
@@ -557,7 +557,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
     first_forward = next(
         item
         for item in lowered.entrypoints
-        if item.phase == "forward" and item.variant == "save"
+        if item.options.phase == "forward" and item.options.variant == "save"
     )
     boundary = first_forward.output_slots[0].object_id
     assert any(slot.object_id == boundary for slot in first_forward.output_slots[1:])
@@ -692,7 +692,7 @@ def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
     }
     handoffs = []
     for entrypoint in lowered.entrypoints:
-        if entrypoint.phase != "backward":
+        if entrypoint.options.phase != "backward":
             continue
         task = task_by_id[entrypoint.task_id]
         for handoff in entrypoint.storage_handoffs:
@@ -746,14 +746,18 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
     forward_entries = tuple(
         entrypoint
         for entrypoint in lowered.entrypoints
-        if entrypoint.phase == "forward"
+        if entrypoint.options.phase == "forward"
     )
     assert forward_entries
-    assert all(entrypoint.public_output_count == 1 for entrypoint in forward_entries)
-    assert all(entrypoint.public_output_leaves for entrypoint in forward_entries)
+    assert all(
+        entrypoint.options.public_output_count == 1 for entrypoint in forward_entries
+    )
+    assert all(
+        entrypoint.options.public_output_leaves for entrypoint in forward_entries
+    )
     assert any(entrypoint.replacement_output_leaves for entrypoint in forward_entries)
     assert all(
-        set(entrypoint.public_output_leaves).isdisjoint(
+        set(entrypoint.options.public_output_leaves).isdisjoint(
             entrypoint.replacement_output_leaves
         )
         for entrypoint in forward_entries
@@ -807,14 +811,14 @@ def _walk(lowered: LoweredTrainingProgram) -> list[tuple[str, int, int]]:
     """The emitted order as (phase, microbatch, stage), variants collapsed."""
     walk: list[tuple[str, int, int]] = []
     for entrypoint in lowered.entrypoints:
-        if entrypoint.phase not in ("forward", "backward"):
+        if entrypoint.options.phase not in ("forward", "backward"):
             continue
-        assert entrypoint.microbatch is not None
-        assert entrypoint.stage_index is not None
+        assert entrypoint.options.repetition is not None
+        assert entrypoint.options.stage_index is not None
         item = (
-            entrypoint.phase[0].upper(),
-            entrypoint.microbatch,
-            entrypoint.stage_index,
+            entrypoint.options.phase[0].upper(),
+            entrypoint.options.repetition,
+            entrypoint.options.stage_index,
         )
         if not walk or walk[-1] != item:
             walk.append(item)
@@ -888,9 +892,11 @@ def test_paired_loss_and_reversed_walk_place_stages_and_creators_as_told() -> No
     gradient_ids = {item.gradient_object_id for item in lowered.gradients}
     tasks = {task.task_id: task for task in lowered.program.tasks}
     backward = {
-        (entrypoint.microbatch, entrypoint.stage_index): tasks[entrypoint.task_id]
+        (entrypoint.options.repetition, entrypoint.options.stage_index): tasks[
+            entrypoint.task_id
+        ]
         for entrypoint in lowered.entrypoints
-        if entrypoint.phase == "backward"
+        if entrypoint.options.phase == "backward"
     }
 
     def creates(position: int, stage: int) -> bool:

@@ -2,7 +2,7 @@
 
 The neutral runtime owns byte ranges, generations, readiness, and residency.
 Framework frontends may layer shape or type information on an ``ObjectRef``,
-but this module deliberately has no tensor or device-backend dependency.
+but this module deliberately has no framework or device-backend dependency.
 """
 
 from __future__ import annotations
