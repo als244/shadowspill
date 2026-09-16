@@ -212,8 +212,8 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch.step_search import planner as planner_module
     from shadowspill.pytorch.step_search import sweep as module
+    from shadowspill.search import planner as planner_module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -257,8 +257,8 @@ def test_the_resolution_options_reach_every_point(
 ) -> None:
     from shadowspill.errors import PlanInfeasibleError
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch.step_search import planner as planner_module
     from shadowspill.pytorch.step_search import sweep as module
+    from shadowspill.search import planner as planner_module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -321,8 +321,8 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
 ) -> None:
     from shadowspill.errors import PlanInfeasibleError
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch.step_search import planner as planner_module
     from shadowspill.pytorch.step_search import sweep as module
+    from shadowspill.search import planner as planner_module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -435,8 +435,8 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     answer that was the handed-in plan by the budget it came from."""
 
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch.step_search import planner as planner_module
     from shadowspill.pytorch.step_search import sweep as module
+    from shadowspill.search import planner as planner_module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
@@ -592,8 +592,8 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
     from shadowspill.planner.diagnostics.plan import PlanSummary
     from shadowspill.planner.plan_store import PlanSummaryLookup
     from shadowspill.pytorch import plan_step_search
-    from shadowspill.pytorch.step_search import planner as planner_module
     from shadowspill.pytorch.step_search import sweep as module
+    from shadowspill.search import planner as planner_module
 
     class Recurrent:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")

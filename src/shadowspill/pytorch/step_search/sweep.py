@@ -15,20 +15,18 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 import torch
-from torch import nn
+from torch import OutOfMemoryError, nn
 
 from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.pytorch.api import build_step_programs
 from shadowspill.pytorch.runtime import Runtime
+from shadowspill.search.planner import _Best, _Carried, _Planner
+from shadowspill.search.refusals import _EXHAUSTED, _INFEASIBLE
+from shadowspill.search.report import StepSearchGeometryBuild, StepSearchPoint
 from shadowspill.step import StepProgram
 from shadowspill.store import StoreMode
-
-from .geometries import _device_exhausted
-from .planner import _Best, _Carried, _Planner
-from .refusals import _EXHAUSTED, _INFEASIBLE
-from .report import StepSearchGeometryBuild, StepSearchPoint
 
 #: A point the planner refuses, for whatever reason it gives, is recorded and
 #: the sweep goes on; ProblemPreparationError is one such RuntimeError.
@@ -302,3 +300,21 @@ class _Sweep:
                 )
             winners[budget] = plan
         return winners
+
+
+def _device_exhausted(error: BaseException) -> bool:
+    """Whether a build failed because the device ran out of memory.
+
+    Profiling runs a task's real kernels, so the largest geometries can
+    exhaust the device before any plan exists. The frontend wraps what a
+    phase raised, chaining the original, so the exhaustion is found by
+    walking the chain rather than by matching the outermost type.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OutOfMemoryError):
+            return True
+        current = current.__cause__ or current.__context__
+    return False

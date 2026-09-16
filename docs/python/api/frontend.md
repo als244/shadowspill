@@ -920,7 +920,11 @@ accumulation count with the flags at their defaults; the search never toggles
 
 The geometry enumeration `plan_step_search()` runs on its own: every divisor
 pair of the sequence total, largest microbatch first, with what the token bounds
-skipped and why.
+skipped and why. It is `shadowspill.search`'s, and re-exported here because it is
+usually reached alongside `plan_step_search()`; so are `StepSearchReport`,
+`StepSearchPoint`, `StepSearchGeometryBuild` and `default_orderings`, all
+documented on [the neutral page](neutral.md#shadowspillsearch). Reading a saved
+report needs none of this package.
 
 ```text
 search_geometries(

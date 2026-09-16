@@ -76,7 +76,12 @@ src/shadowspill/
 │   │                      and the failures it reports
 │   ├── abi/               the ctypes projection of the C API, one module per
 │   │                      record kind
-│   └── objects/           runtime objects: the reference, and how one is made
+│   ├── objects/           runtime objects: the reference, and how one is made
+│   └── plan/              one plan on the runtime: the bridge, its objects, its
+│                          admission, what it reports, and its lifecycle
+├── search/                a step planned at every geometry, budget and walk:
+│                          the geometries, the rule one point is answered by,
+│                          the refusals it records, and the report
 ├── plots/                 step-run and step-search figures
 │   └── step_search/       one module per figure family, over shared series and axes
 └── pytorch/
@@ -110,13 +115,13 @@ src/shadowspill/
     ├── bindings.py        who holds a range, in PyTorch's terms, and detaching them
     ├── frontend.py        PyTorch's answers to what the runtime cannot do itself
     ├── runtime.py         a runtime opened with that frontend
-    ├── runtime_adapter/   what still needs PyTorch: one plan on the runtime
-    │   └── bridge/        objects, admission, boundaries, report
+    ├── runtime_adapter/   PyTorch's half of the task boundary: the operators
+    │                      that rebind a plan's leases onto storages
+    ├── spill.py           a CPU tensor's bytes, as the runtime takes them
     ├── diagnostics/       PlanReport and StepDiagnostics
     │   └── builders/      each record built where its own consumer reads it
-    ├── step_search/       a step planned at every geometry, budget and walk:
-    │                      the geometries, the sweep, the rule one point is
-    │                      answered by, the report
+    ├── step_search/       the sweep that builds what shadowspill.search plans:
+    │                      it takes a model and an optimizer
     ├── sharing/           runtime-owned TensorRef handles
     └── state/             persistent model/optimizer import
 ```
