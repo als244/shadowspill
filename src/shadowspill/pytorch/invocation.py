@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from typing import Any
 
 import torch
 
 from shadowspill.pytorch.accelerator import is_accelerator
+from shadowspill.runtime.timing import Marker
 
 
 class InvocationResult[T]:
@@ -80,30 +80,31 @@ class InvocationResult[T]:
 
 
 class ReusableCompletionEvent:
-    """One cold-created, timing-disabled event for a single-outstanding caller."""
+    """One marker a single-outstanding caller records completion on.
 
-    __slots__ = ("_device", "_event")
+    The marker is the runtime's, taken once and recorded after each dispatch,
+    so a callable allocates nothing per invocation and the caller waits for the
+    instant its own work finished rather than for the whole stream.
+    """
 
-    def __init__(self, device: torch.device) -> None:
+    __slots__ = ("_device", "_marker")
+
+    def __init__(self, runtime_handle: int, device: torch.device) -> None:
         if not is_accelerator(device):
             raise ValueError("callable completion requires a CUDA execution device")
         self._device = device
-        event_factory: Any = torch.cuda.Event
-        self._event = event_factory(enable_timing=False, blocking=False)
-        self._event.record(torch.cuda.current_stream(device))
-        # Materialize the backend event during callable construction. Repeated
-        # dispatch records the same handle and performs no event allocation.
-        self._event.synchronize()
+        self._marker = Marker(runtime_handle)
 
     def record(self) -> Callable[[], None]:
         """Record completion after the caller's current compute-stream work."""
 
-        self._event.record(torch.cuda.current_stream(self._device))
+        self._marker.record(int(torch.cuda.current_stream(self._device).cuda_stream))
+        return self._marker.wait
 
-        def synchronize() -> None:
-            self._event.synchronize()
+    def release(self) -> None:
+        """Give the marker back; the callable that held it is closing."""
 
-        return synchronize
+        self._marker.release()
 
 
 __all__ = ["InvocationResult"]

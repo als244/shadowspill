@@ -27,6 +27,14 @@ given a record outside the pool that creates its own event. After sealing that
 path is gone: a request that finds no free lease is refused and counted, so no
 steady-state step ever pays a driver call the plan did not reserve.
 
+Taking a marker is the one thing that still grows a sealed pool, and it is the
+further reservation the paragraph above allows rather than an exception to it.
+A caller takes its markers once, before it times anything, so the growth is
+cold; and the reserve a prepared trace holds is for the lanes it measures, which
+a caller's markers must neither be refused for nor spend. A caller that takes
+its markers before preparing a trace pays no growth at all, because leases
+already held do not count toward the floor the reserve establishes.
+
 The runtime statistics expose the pool's capacity, current and peak use,
 `event_lease_sealed`, `event_lease_growth_rejections`, and
 `event_lease_driver_creates` -- every backend event the pool has created, which
@@ -51,10 +59,20 @@ device timestamp. They come from a second pool the runtime keeps apart from
 the dependency pool, reserved when a trace is prepared with a fixed number of
 events per lane, and sealed like the first. A stream interval takes two
 leases from it, records the first before a copy and the second after, and
-reads both against the step's origin event with `elapsed_nanoseconds`; a
+reads both against the step's origin marker with `elapsed_nanoseconds`; a
 pool that runs out leaves later intervals unmeasured, never a transfer
 failed. An untraced step never touches this pool. How the intervals become a
 timeline is in [timelines](timelines.md).
+
+The same pool answers a caller timing its own work. A marker is one lease,
+recorded on a stream the caller names and recorded again whenever the caller
+asks, so a loop timing the same span every step takes its markers once. A
+caller reads the span between two markers, asks whether the device has
+reached one, or blocks until it has -- and blocks for a whole stream when
+that is what it means. Because a frontend's step and the runtime's own
+transfers are measured from the same pool, the two are on one clock and are
+comparable without correcting between them; a frontend therefore needs no
+framework event of its own.
 
 ## Idle wake-up
 
@@ -62,4 +80,5 @@ A dedicated condition variable lets callers wait for the worker at explicit
 boundaries (`shadowspill_runtime_wait_idle()`) without polling; the worker
 signals it when it has nothing queued and nothing pending.
 
-Previous: [Transfers](transfers.md). Next: [PyTorch adapter](adapter.md).
+Previous: [Transfers](transfers.md). Next: [Memory
+runtime](memory-runtime.md).

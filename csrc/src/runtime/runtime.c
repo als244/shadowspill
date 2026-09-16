@@ -14,13 +14,14 @@ int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
         backend->free_device != NULL && backend->register_host_memory != NULL &&
         backend->unregister_host_memory != NULL &&
         backend->create_stream != NULL && backend->destroy_stream != NULL &&
-        backend->synchronize_stream != NULL && backend->wrap_stream != NULL &&
+        backend->synchronize_stream != NULL && backend->resolve_stream != NULL &&
         backend->copy_host_to_device != NULL &&
         backend->copy_device_to_host != NULL &&
         backend->copy_device_to_device != NULL &&
         backend->create_event != NULL && backend->destroy_event != NULL &&
         backend->record_event != NULL && backend->query_event != NULL &&
-        backend->wait_event != NULL && backend->elapsed_nanoseconds != NULL &&
+        backend->wait_event != NULL && backend->synchronize_event != NULL &&
+        backend->elapsed_nanoseconds != NULL &&
         backend->capabilities != NULL && backend->physical_memory != NULL &&
         backend->statistics != NULL;
 }

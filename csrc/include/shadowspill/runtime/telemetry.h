@@ -7,6 +7,7 @@
 
 #include <shadowspill/shadowspill.h>
 #include <shadowspill/backend.h>
+#include <shadowspill/runtime/timing.h>
 #include <shadowspill/runtime/vocabulary.h>
 #include <shadowspill/runtime/descriptions.h>
 #include <shadowspill/runtime/diagnostics.h>
@@ -65,15 +66,15 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_prepare(
 /*
  * Begins one prepared trace and its allocation-lifetime capture.
  *
- * ``origin_event`` is a caller-owned timing event already recorded on the
- * caller's compute stream; transfer intervals in the trace are measured from
- * it, so they share the caller's timeline. It must outlive the trace and is
- * never destroyed here. A zero token records no stream intervals.
+ * ``origin`` is a caller-held marker already recorded on the caller's compute
+ * stream (see runtime/timing.h); transfer intervals in the trace are measured
+ * from it, so they share the caller's timeline. It must outlive the trace and
+ * is never released here. A null marker records no stream intervals.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
     uint64_t step_id,
-    ShadowSpillBackendEvent origin_event
+    const ShadowSpillTimingMarker *origin
 );
 
 /*

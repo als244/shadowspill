@@ -48,11 +48,12 @@ int main(int argc, char **argv) {
         backend.allocate_device == NULL || backend.free_device == NULL ||
         backend.register_host_memory == NULL || backend.unregister_host_memory == NULL ||
         backend.create_stream == NULL || backend.destroy_stream == NULL ||
-        backend.synchronize_stream == NULL || backend.wrap_stream == NULL ||
+        backend.synchronize_stream == NULL || backend.resolve_stream == NULL ||
         backend.copy_host_to_device == NULL || backend.copy_device_to_host == NULL ||
         backend.copy_device_to_device == NULL || backend.create_event == NULL ||
         backend.destroy_event == NULL || backend.record_event == NULL ||
         backend.query_event == NULL || backend.wait_event == NULL ||
+        backend.synchronize_event == NULL ||
         backend.elapsed_nanoseconds == NULL || backend.capabilities == NULL ||
         backend.physical_memory == NULL || backend.statistics == NULL) {
         FAIL("the table is incomplete");
@@ -77,12 +78,12 @@ int main(int argc, char **argv) {
         backend.register_host_memory(backend.state, back, sizeof(back)) != 0) {
         FAIL("register_host_memory failed");
     }
-    ShadowSpillBackendStream stream = {0};
+    ShadowSpillBackendStream stream = 0U;
     if (backend.create_stream(backend.state, &stream) != 0) {
         FAIL("create_stream failed");
     }
-    ShadowSpillBackendEvent start = {0};
-    ShadowSpillBackendEvent end = {0};
+    ShadowSpillBackendEvent start = 0U;
+    ShadowSpillBackendEvent end = 0U;
     if (backend.create_event(backend.state, &start, 1U) != 0 ||
         backend.create_event(backend.state, &end, 1U) != 0 ||
         backend.record_event(backend.state, start, stream) != 0) {
@@ -93,6 +94,7 @@ int main(int argc, char **argv) {
         backend.copy_device_to_host(backend.state, back, device, sizeof(back), stream) != 0 ||
         backend.record_event(backend.state, end, stream) != 0 ||
         backend.wait_event(backend.state, stream, end) != 0 ||
+        backend.synchronize_event(backend.state, end) != 0 ||
         backend.synchronize_stream(backend.state, stream) != 0) {
         FAIL("copies or stream ordering failed");
     }
@@ -105,9 +107,9 @@ int main(int argc, char **argv) {
         backend.elapsed_nanoseconds(backend.state, start, end, &nanoseconds) != 0) {
         FAIL("event query or elapsed time failed");
     }
-    const ShadowSpillBackendStream wrapped = backend.wrap_stream(backend.state, 7U);
-    if (wrapped.words[0] != 7U) {
-        FAIL("wrap_stream does not carry the framework handle");
+    const ShadowSpillBackendStream resolved = backend.resolve_stream(backend.state, 7U);
+    if (resolved != 7U) {
+        FAIL("resolve_stream does not carry a handle the backend already knows");
     }
     if (backend.destroy_event(backend.state, start) != 0 ||
         backend.destroy_event(backend.state, end) != 0 ||

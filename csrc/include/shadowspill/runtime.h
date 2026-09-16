@@ -23,5 +23,6 @@
 #include <shadowspill/runtime/plan.h>
 #include <shadowspill/runtime/tasks.h>
 #include <shadowspill/runtime/telemetry.h>
+#include <shadowspill/runtime/timing.h>
 
 #endif

@@ -1,5 +1,6 @@
 
 #include "../internal.h"
+#include "../sync/internal.h"
 #include "../../common/platform.h"
 
 #include <stdint.h>
@@ -188,7 +189,7 @@ ShadowSpillStatus shadowspill_trace_prepare(
 ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
     uint64_t step_id,
-    ShadowSpillBackendEvent origin_event
+    const ShadowSpillTimingMarker *origin
 ) {
     if (runtime == NULL || step_id == SHADOWSPILL_RUNTIME_NO_ID) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
@@ -210,9 +211,8 @@ ShadowSpillStatus shadowspill_trace_begin(
         runtime->allocation_event_count = 0U;
         runtime->next_allocation_event_sequence = 0U;
         runtime->allocation_event_overflow = 0;
-        runtime->trace_origin_event = origin_event;
-        runtime->trace_origin_present =
-            origin_event.words[0] != 0U || origin_event.words[1] != 0U;
+        runtime->trace_origin_event = shadowspill_timing_marker_event(origin);
+        runtime->trace_origin_present = origin != NULL;
         runtime->allocation_telemetry_active = 1;
         runtime->trace_active = 1;
         shadowspill_append_trace_event_locked(

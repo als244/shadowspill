@@ -41,7 +41,7 @@ static void destroy_runtime(
 static int ordered_task_capture(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     if (create_runtime(&mock, &runtime, &compute) != 0) {
         return -1;
     }
@@ -156,7 +156,7 @@ static int ordered_task_capture(void) {
 static int same_stream_retirement_is_task_batched(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     if (create_runtime(&mock, &runtime, &compute) != 0) {
         return -1;
     }
@@ -223,7 +223,7 @@ static int queued_transfers_survive_retirement_only_task(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 256U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -303,7 +303,7 @@ static int all_completed_retirements_precede_action_admission(void) {
         return -1;
     }
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     int failed = shadowspill_test_create_runtime(&mock, 128U, 128U, 1U, 1000U, &runtime
         ) !=
             SHADOWSPILL_STATUS_OK ||
@@ -368,7 +368,7 @@ static int all_completed_retirements_precede_action_admission(void) {
 static int overflow_stops_recording_not_the_runtime(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     if (create_runtime(&mock, &runtime, &compute) != 0) {
         return -1;
     }
@@ -402,10 +402,33 @@ static int overflow_stops_recording_not_the_runtime(void) {
     return failed ? -1 : 0;
 }
 
+/* Take more markers than the sealed reserve holds, and give them back. */
+static int markers_outlast_the_sealed_reserve(
+    ShadowSpillRuntime *runtime, ShadowSpillBackendStream stream
+) {
+    enum { MARKERS = 300 };
+    ShadowSpillTimingMarker *taken[MARKERS] = {0};
+    int ok = 1;
+    for (int index = 0; index < MARKERS; ++index) {
+        if (shadowspill_timing_marker_create(runtime, &taken[index]) !=
+                SHADOWSPILL_STATUS_OK ||
+            shadowspill_timing_marker_record(taken[index], stream) !=
+                SHADOWSPILL_STATUS_OK) {
+            fprintf(stderr, "marker %d was refused after the pool sealed\n", index);
+            ok = 0;
+            break;
+        }
+    }
+    for (int index = 0; index < MARKERS; ++index) {
+        shadowspill_timing_marker_release(taken[index]);
+    }
+    return ok;
+}
+
 static int bounded_runtime_trace_is_opt_in(void) {
     ShadowSpillBackend mock = {0};
     ShadowSpillRuntime *runtime = NULL;
-    ShadowSpillBackendStream compute = {{0U, 0U}};
+    ShadowSpillBackendStream compute = 0U;
     const ShadowSpillMockBackendConfig mock_config = {0};
     if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
         return -1;
@@ -445,9 +468,9 @@ static int bounded_runtime_trace_is_opt_in(void) {
         .actions = &release,
         .action_count = 1U,
     };
-    /* Transfer intervals are measured from a caller-owned timing event on
-     * the compute stream, the way the frontend's step origin is. */
-    ShadowSpillBackendEvent origin = {0};
+    /* Transfer intervals are measured from a caller-held marker on the
+     * compute stream, the way the frontend's step origin is. */
+    ShadowSpillTimingMarker *origin = NULL;
     int failed = shadowspill_trace_prepare(runtime, &trace_config) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_trace_read(
@@ -456,8 +479,14 @@ static int bounded_runtime_trace_is_opt_in(void) {
         summary.event_count != 0U || summary.active != 0U ||
         shadowspill_register_object(runtime, &object) !=
             SHADOWSPILL_STATUS_OK ||
-        mock.create_event(mock.state, &origin, 1U) != 0 ||
-        mock.record_event(mock.state, origin, compute) != 0 ||
+        shadowspill_timing_marker_create(runtime, &origin) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_timing_marker_record(origin, compute) !=
+            SHADOWSPILL_STATUS_OK ||
+        /* Preparing the trace sealed the timing pool around a reserve for the
+         * lanes. A caller's markers must not be refused once that reserve is
+         * spent, and must not spend it: taking one grows the pool instead. */
+        !markers_outlast_the_sealed_reserve(runtime, compute) ||
         shadowspill_trace_begin(runtime, 7U, origin) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_submit_actions(
             runtime, 100U, compute, &fetch, 1U
@@ -530,7 +559,7 @@ static int bounded_runtime_trace_is_opt_in(void) {
         !saw_before || !saw_after ||
         shadowspill_unregister_object(runtime, object.object_id) !=
             SHADOWSPILL_STATUS_OK;
-    (void)mock.destroy_event(mock.state, origin);
+    shadowspill_timing_marker_release(origin);
     if (failed) {
         fprintf(
             stderr,

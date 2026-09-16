@@ -6,28 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from itertools import pairwise
 
-from shadowspill.ir.indexing import MEMORY_ACTION_CODE
-from shadowspill.ir.program import canonical_index
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
-from shadowspill.pytorch.diagnostics.timing import (
-    ArmedExecutionTiming,
-    ArmedTaskTiming,
-)
-from shadowspill.pytorch.runtime_adapter.bridge import (
-    RuntimeBridge,
-    end_and_read_runtime_trace,
-    statistics,
-    wait_idle,
-)
-from shadowspill.pytorch.runtime_adapter.trace import (
-    CapturedRuntimeTrace,
-    RuntimeTraceEvent,
-    RuntimeTraceEventKind,
-)
-from shadowspill.runtime.abi import AdapterStatistics
-from shadowspill.simulator import SimulationResult, TaskInterval, TransferInterval
-
-from .execution import (
+from shadowspill.diagnostics.step import (
     AllocatorTrace,
     LaneSummary,
     PhaseTimingComparison,
@@ -40,6 +19,26 @@ from .execution import (
     TransferRecord,
     TransferRecords,
 )
+from shadowspill.diagnostics.timing import (
+    ArmedExecutionTiming,
+    ArmedTaskTiming,
+)
+from shadowspill.ir.indexing import MEMORY_ACTION_CODE
+from shadowspill.ir.program import canonical_index
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
+from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.plan import (
+    RuntimeBridge,
+    end_and_read_runtime_trace,
+    statistics,
+)
+from shadowspill.runtime.timing import Marker, nanoseconds_between
+from shadowspill.runtime.trace import (
+    CapturedRuntimeTrace,
+    RuntimeTraceEvent,
+    RuntimeTraceEventKind,
+)
+from shadowspill.simulator import SimulationResult, TaskInterval, TransferInterval
 
 _DIRECTIONS = ("fetch", "evict")
 
@@ -145,12 +144,14 @@ def _resolve_trace_evidence(
 ) -> _TraceEvidence:
     """Drain the explicitly traced call before copying its evidence."""
 
-    timing.end_event.synchronize()
     if timing.stream is None:
         raise AssertionError("validated execution timing lost its compute stream")
-    timing.stream.synchronize()
+    # Everything measured was recorded on this device, so waiting for the
+    # device is waiting for all of it. Only a frontend can wait.
+    runtime = bridge.runtime
+    runtime.frontend.synchronize(int(runtime._installed.admission.device_ordinal))
     # Terminal transfers must be included in the same invocation trace.
-    wait_idle(bridge)
+    bridge.wait_runtime_idle()
     runtime_trace = end_and_read_runtime_trace(bridge)
     statistics_before = timing.statistics_before
     if statistics_before is None:
@@ -162,18 +163,23 @@ def _resolve_trace_evidence(
     )
 
 
+def _seconds_between(earlier: Marker, later: Marker) -> float:
+    """The seconds from one instant to another, both already reached."""
+
+    return nanoseconds_between(earlier, later) / 1e9
+
+
 def _stream_task(execution: ArmedExecutionTiming, task_id: str) -> _StreamTask:
     task = execution.tasks[task_id]
     origin = execution.origin_event
     return _StreamTask(
         task=task,
         task_id=task_id,
-        reached=float(origin.elapsed_time(task.readiness_event)) / 1e3,
-        started=float(origin.elapsed_time(task.start_event)) / 1e3,
-        finished=float(origin.elapsed_time(task.end_event)) / 1e3,
-        input_wait=float(task.readiness_event.elapsed_time(task.inputs_ready_event))
-        / 1e3,
-        reuse_wait=float(task.inputs_ready_event.elapsed_time(task.start_event)) / 1e3,
+        reached=_seconds_between(origin, task.readiness_event),
+        started=_seconds_between(origin, task.start_event),
+        finished=_seconds_between(origin, task.end_event),
+        input_wait=_seconds_between(task.readiness_event, task.inputs_ready_event),
+        reuse_wait=_seconds_between(task.inputs_ready_event, task.start_event),
     )
 
 
@@ -202,8 +208,8 @@ def _compute_record(
         task_id=item.task_id,
         execution_ordinal=task.execution_ordinal,
         semantic_name=task.semantic_name,
-        phase=task.entrypoint.phase,
-        microbatch=task.entrypoint.microbatch,
+        phase=task.entrypoint.options.phase,
+        microbatch=task.entrypoint.options.repetition,
         simulated_ready_at_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
         simulated_started_at_seconds=simulated_start,
         simulated_finished_at_seconds=simulated_end,
@@ -722,7 +728,7 @@ def _build_step_summary(
     simulated_start_ns = min(item.start_ns for item in selected)
     simulated_end_ns = max(item.end_ns for item in selected)
     simulated_span_seconds = (simulated_end_ns - simulated_start_ns) / 1e9
-    real_span_seconds = float(timing.start_event.elapsed_time(timing.end_event)) / 1e3
+    real_span_seconds = _seconds_between(timing.start_event, timing.end_event)
     phases = sorted({item.phase for item in tasks})
     phase_comparisons = tuple(
         PhaseTimingComparison(
@@ -751,16 +757,13 @@ def _build_step_summary(
     makespan_seconds = simulation.makespan_ns / 1e9
     cycle_seconds: float | None = None
     exposed_tail_seconds: float | None = None
-    opening_delay_seconds = (
-        float(timing.origin_event.elapsed_time(timing.start_event)) / 1e3
-    )
+    opening_delay_seconds = _seconds_between(timing.origin_event, timing.start_event)
     timeline = timing.timeline
     if timeline is not None and timeline.successor is not None:
-        timeline.successor.synchronize()
-        cycle_seconds = float(timeline.origin.elapsed_time(timeline.successor)) / 1e3
-        exposed_tail_seconds = (
-            float(timeline.span_end.elapsed_time(timeline.successor)) / 1e3
-        )
+        successor = timeline.successor
+        successor.wait()
+        cycle_seconds = _seconds_between(timeline.origin, successor)
+        exposed_tail_seconds = _seconds_between(timeline.span_end, successor)
     return StepTimingSummary(
         profiled_task_seconds=profiled_task_seconds,
         real_task_event_seconds=real_task_seconds,

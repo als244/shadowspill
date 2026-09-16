@@ -21,7 +21,7 @@ struct ShadowSpillMockBackend {
     ShadowSpillBackendStatistics statistics;
     uint64_t operation_count;
     uint64_t fail_operation;
-    /* The stream a framework handle of 0 names; see wrap_stream. */
+    /* The stream a framework handle of 0 names; see resolve_stream. */
     MockStream default_stream;
 };
 
@@ -49,11 +49,11 @@ static void count(ShadowSpillMockBackend *backend, uint64_t *counter, uint64_t b
 }
 
 static MockStream *stream_pointer(ShadowSpillBackendStream stream) {
-    return (MockStream *)stream.words[0];
+    return (MockStream *)stream;
 }
 
 static MockEvent *event_pointer(ShadowSpillBackendEvent event) {
-    return (MockEvent *)event.words[0];
+    return (MockEvent *)event;
 }
 
 /* ---------------------------------------------------------------- memory */
@@ -114,7 +114,7 @@ static int create_stream(void *state, ShadowSpillBackendStream *stream) {
     if (created == NULL) {
         return -1;
     }
-    *stream = (ShadowSpillBackendStream){.words = {(uintptr_t)created, 0U}};
+    *stream = (ShadowSpillBackendStream)(uintptr_t)created;
     count(backend, &backend->statistics.streams_created, 1U);
     return 0;
 }
@@ -156,18 +156,15 @@ static int synchronize_stream(void *state, ShadowSpillBackendStream stream) {
  * table, except 0, which is the default stream: the one a driver runs work
  * on when the caller names no stream. Without it a caller with no stream of
  * its own could not drive the table at all. */
-static ShadowSpillBackendStream wrap_stream(
-    void *state, uint64_t framework_stream_handle
+static ShadowSpillBackendStream resolve_stream(
+    void *state, uint64_t stream_handle
 ) {
     ShadowSpillMockBackend *backend = state;
-    return (ShadowSpillBackendStream){
-        .words = {
-            framework_stream_handle == 0U
-                ? (uintptr_t)&backend->default_stream
-                : (uintptr_t)framework_stream_handle,
-            0U,
-        },
-    };
+    /* The mock keeps its own stream objects, so 0 -- the default stream --
+       has to name one it owns. Every other handle is already one of ours. */
+    return stream_handle == 0U
+        ? (ShadowSpillBackendStream)(uintptr_t)&backend->default_stream
+        : (ShadowSpillBackendStream)stream_handle;
 }
 
 /* ---------------------------------------------------------------- copies */
@@ -255,7 +252,7 @@ static int create_event(void *state, ShadowSpillBackendEvent *event, uint8_t tim
     if (created == NULL) {
         return -1;
     }
-    *event = (ShadowSpillBackendEvent){.words = {(uintptr_t)created, 0U}};
+    *event = (ShadowSpillBackendEvent)(uintptr_t)created;
     count(backend, &backend->statistics.events_created, 1U);
     return 0;
 }
@@ -334,6 +331,30 @@ static int wait_event(
     }
     ++backend->statistics.stream_waits;
     pthread_mutex_unlock(&backend->mutex);
+    return 0;
+}
+
+static int synchronize_event(void *state, ShadowSpillBackendEvent event) {
+    ShadowSpillMockBackend *backend = state;
+    if (operation_fails(backend)) {
+        return -1;
+    }
+    MockEvent *target = event_pointer(event);
+    if (target == NULL) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    const int recorded = target->recorded;
+    const uint64_t ready = target->ready_nanoseconds;
+    pthread_mutex_unlock(&backend->mutex);
+    if (!recorded) {
+        return -1;
+    }
+    /* The mock's events complete on the host clock, so waiting for one is
+     * waiting for that instant to pass. */
+    while (now_nanoseconds() < ready) {
+        sched_yield();
+    }
     return 0;
 }
 
@@ -416,7 +437,7 @@ static ShadowSpillBackend interface_for(ShadowSpillMockBackend *backend) {
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .synchronize_stream = synchronize_stream,
-        .wrap_stream = wrap_stream,
+        .resolve_stream = resolve_stream,
         .copy_host_to_device = copy_host_to_device,
         .copy_device_to_host = copy_device_to_host,
         .copy_device_to_device = copy_device_to_device,
@@ -425,6 +446,7 @@ static ShadowSpillBackend interface_for(ShadowSpillMockBackend *backend) {
         .record_event = record_event,
         .query_event = query_event,
         .wait_event = wait_event,
+        .synchronize_event = synchronize_event,
         .elapsed_nanoseconds = elapsed_nanoseconds,
         .capabilities = capabilities,
         .physical_memory = physical_memory,

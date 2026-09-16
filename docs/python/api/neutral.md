@@ -760,6 +760,42 @@ tensor exists.
 `runtime.frontend` is the frontend it was opened with, and is the only route
 from a runtime to a framework.
 
+### `shadowspill.runtime.timing`
+
+The runtime times its own transfers with backend events. `Marker` offers the
+same events to a caller timing anything else on the same stream, so one step's
+timeline has one clock rather than two.
+
+A marker is where an instant on a stream is recorded. Take one, record it before
+and after whatever you want to measure, and ask the later one
+`nanoseconds_since(earlier)`; ask a single marker `reached()` to find out whether
+the device has got there yet, without waiting. An interval is two markers and a
+completion check is one, so there is nothing else to learn.
+
+Taking and recording are separate, so a loop timing the same span every step
+takes its markers once and records them again each time, allocating nothing per
+step.
+
+| Call | Answers |
+|---|---|
+| `Marker(runtime_handle)` | a marker, before anything is recorded on it |
+| `marker.record(stream)` | records this instant on the framework's own stream, named by the integer handle it already has, replacing any instant before it |
+| `marker.reached()` | whether the device has reached it, without waiting |
+| `marker.wait()` | blocks the calling thread until the device reaches it |
+| `marker.nanoseconds_since(earlier)` | the time between two markers, or `None` while the later one is still ahead of the device |
+| `marker.release()` | gives the event back to the runtime; also a context manager |
+| `nanoseconds_between(earlier, later)` | the same span for a caller that has already waited: raises rather than answering `None` |
+| `wait_for_stream(runtime_handle, stream)` | blocks until the device has finished everything on a stream |
+
+Measuring needs the device to have passed the marker, so every read says whether
+it has rather than blocking. A caller that must block waits for the marker, which
+is one instant, or for the stream, which is everything submitted to it.
+
+Markers come from the runtime's timing event pool. Taking one grows the pool
+rather than spending the reserve a prepared trace holds for its lanes, so a
+caller is never refused -- and a caller that never releases leaves the pool
+permanently larger.
+
 ### What a runtime publishes
 
 | Value | Is |

@@ -12,8 +12,8 @@ from dataclasses import fields
 
 import pytest
 
-from shadowspill.pytorch.diagnostics.collection import _idle_composition
-from shadowspill.pytorch.diagnostics.execution import TaskRecord
+from shadowspill.diagnostics.collection import _idle_composition
+from shadowspill.diagnostics.step import TaskRecord
 
 
 def _task(
