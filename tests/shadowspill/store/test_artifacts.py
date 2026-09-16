@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import errno
 import json
-import os
 from pathlib import Path
 
 import pytest
 
-from shadowspill.pytorch.profiling.metadata import (
+from shadowspill.profiling.metadata import (
     canonicalize_profiling_metadata,
-    training_profiling_metadata,
+    repeated_profiling_metadata,
 )
 from shadowspill.schema import ARTIFACT_VERSION
 from shadowspill.store import ArtifactStore
-from shadowspill.store import artifacts as store_module
 
 
 def test_profiling_metadata_is_canonical_and_position_aligned() -> None:
@@ -30,10 +27,10 @@ def test_profiling_metadata_is_canonical_and_position_aligned() -> None:
     assert first == reordered
     assert first.digest != different.digest
     assert json.loads(first.canonical_json)["value"]["sequence_count"] == 2
-    assert training_profiling_metadata([None, {"tokens": 8}], microbatch_count=2)
+    assert repeated_profiling_metadata([None, {"tokens": 8}], repetitions=2)
 
-    with pytest.raises(ValueError, match="one entry per example microbatch"):
-        training_profiling_metadata([None], microbatch_count=2)
+    with pytest.raises(ValueError, match="one entry per repetition"):
+        repeated_profiling_metadata([None], repetitions=2)
     with pytest.raises(ValueError, match="finite"):
         canonicalize_profiling_metadata({"value": float("nan")})
     with pytest.raises(TypeError, match="JSON-compatible"):
@@ -61,8 +58,6 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.plan_requests == root / "planning" / "requests"
     assert cache.plan_selections == root / "planning" / "results"
     assert cache.plans == root / "planning" / "plans"
-    assert "mlops-build-17" in cache.inductor.name
-    assert cache.inductor.parent == root / "build" / "inductor"
     assert (root / "layout.json").is_file()
     assert (root / "README.md").is_file()
     assert dict(cache.diagnostics())["build"] == str(root / "build")
@@ -127,22 +122,6 @@ def test_the_home_cache_is_the_default_store() -> None:
     assert cache.plan_store is None
 
 
-def test_planning_cache_policy_flags_fail_closed(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="non-empty"):
-        ArtifactStore.resolve(tmp_path, export_bypass_key=" ")
-
-    with pytest.raises(ValueError, match="must be one of"):
-        ArtifactStore.resolve(tmp_path, build_store_mode="readonly")  # type: ignore[arg-type]
-
-    # A run that contributes to neither tree leaves nothing behind at all.
-    transient_root = tmp_path / "transient"
-    transient = ArtifactStore.resolve(
-        transient_root, build_store_mode="reuse", plan_store_mode="reuse"
-    )
-    with transient.activate_pytorch():
-        assert not transient_root.exists()
-
-
 def test_the_two_trees_are_rooted_and_permitted_apart(tmp_path: Path) -> None:
     """A build store several runs share, and a plan store each keeps.
 
@@ -173,61 +152,3 @@ def test_the_two_trees_are_rooted_and_permitted_apart(tmp_path: Path) -> None:
     keeps_plans = ArtifactStore.resolve(tmp_path / "both", plan_store_mode="reuse")
     assert keeps_plans.build_policy.write_enabled
     assert not keeps_plans.plan_policy.write_enabled
-
-
-def test_a_refreshing_build_store_publishes_an_isolated_pytorch_cache(
-    tmp_path: Path,
-) -> None:
-    """A refresh ignores what is there, works apart, and publishes at the end.
-
-    The isolation is what makes `refresh` safe to run beside a store others
-    are reading: nothing lands in it until the run has finished and is ready
-    to replace what was there.
-    """
-
-    cache = ArtifactStore.resolve(
-        tmp_path,
-        build_store_mode="refresh",
-        export_bypass_key="fresh-cache-test",
-    )
-    previous = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
-
-    with cache.activate_pytorch():
-        active = Path(os.environ["TORCHINDUCTOR_CACHE_DIR"])
-        assert active != cache.inductor
-        assert not cache.inductor.exists()
-        marker = active / "fxgraph" / "test" / "artifact"
-        marker.parent.mkdir(parents=True)
-        marker.write_text("indexed")
-
-    assert (cache.inductor / "fxgraph" / "test" / "artifact").read_text() == ("indexed")
-    assert os.environ.get("TORCHINDUCTOR_CACHE_DIR") == previous
-    assert any(
-        artifact.kind == "inductor_cache" and artifact.path == cache.inductor
-        for artifact in cache.artifacts()
-    )
-
-
-def test_inductor_cache_publish_crosses_filesystems_atomically(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = tmp_path / "source"
-    destination = tmp_path / "published"
-    artifact = source / "triton" / "kernel"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_text("indexed")
-    replace = os.replace
-    calls = 0
-
-    def cross_device_once(left: object, right: object) -> None:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise OSError(errno.EXDEV, "cross-device link")
-        replace(left, right)
-
-    monkeypatch.setattr(store_module.os, "replace", cross_device_once)
-    store_module._publish_cache_tree(source, destination, overwrite=False)
-
-    assert (destination / "triton" / "kernel").read_text() == "indexed"
-    assert source.is_dir()
