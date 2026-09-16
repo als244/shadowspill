@@ -186,8 +186,9 @@ and the contract behind it.
 - [Diagnostics API](python/api/diagnostics.md) — the planning and step
   diagnostics classes and how they are requested.
 - [Framework-neutral Python API](python/api/neutral.md) — `shadowspill.ir`,
-  `shadowspill.planner`, `shadowspill.simulator`, and `shadowspill.runtime`,
-  for tooling and independent planning.
+  `shadowspill.planner`, `shadowspill.simulator`, `shadowspill.runtime`,
+  `shadowspill.search`, and the frontend interface, for tooling and independent
+  planning.
 - [Timing: the step on the device clock](python/api/timing.md) — the events
   every invocation records, the cycle they define, and the API that reads
   it.

@@ -1,7 +1,5 @@
 """Which geometries a step can be split into, and the walks over each."""
 
-from torch import OutOfMemoryError
-
 from shadowspill.planner import (
     StepDataOrdering,
 )
@@ -9,24 +7,6 @@ from shadowspill.planner import (
 # a point the planner refuses, for whatever reason it gives, is recorded and
 # the sweep goes on; ProblemPreparationError is one such RuntimeError
 _REJECTED = (RuntimeError,)
-
-
-def _device_exhausted(error: BaseException) -> bool:
-    """Whether a build failed because the device ran out of memory.
-
-    Profiling runs a task's real kernels, so the largest geometries can
-    exhaust the device before any plan exists. The frontend wraps what a
-    phase raised, chaining the original, so the exhaustion is found by
-    walking the chain rather than by matching the outermost type.
-    """
-    seen: set[int] = set()
-    current: BaseException | None = error
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if isinstance(current, OutOfMemoryError):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def search_geometries(

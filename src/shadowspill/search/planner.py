@@ -22,9 +22,8 @@ from shadowspill.planner.program_inputs import (
     ShadowSpillPlanningProblem,
     TransferBandwidths,
 )
+from shadowspill.search.refusals import _REFUSED
 from shadowspill.store import StoreMode
-
-from .refusals import _REFUSED
 
 # a point the planner refuses, for whatever reason it gives, is recorded and
 # the sweep goes on; ProblemPreparationError is one such RuntimeError
