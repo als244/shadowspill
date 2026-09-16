@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
 from torch.utils._pytree import tree_flatten
 
@@ -16,25 +14,11 @@ from shadowspill.pytorch.capture.storage import (
     StorageRootKind,
     TaskStorageContract,
 )
-from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
+from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.slots import ObjectSlot, TaskStorageHandoff
 
 from ..partition import StageExample
-from .catalog import ObjectCatalog, TensorSlot, _view_extent_bytes
-
-
-@dataclass(frozen=True, slots=True)
-class TaskStorageHandoff:
-    """Transfer one task-input lease to a distinct returned logical object.
-
-    Inductor may return an input allocation for a logically distinct output.
-    The relationship is local to this invocation: it must not merge the two
-    objects' alias groups globally.  A handoff is legal only when the selected
-    schedule releases ``source_object_id`` at the same task boundary.
-    """
-
-    leaf_index: int
-    source_object_id: str
-    destination_object_id: str
+from .catalog import ObjectCatalog, _view_extent_bytes
 
 
 class TaskBindingResolver:
@@ -44,7 +28,7 @@ class TaskBindingResolver:
         self,
         inventory: ObjectCatalog,
         artifact: GraphArtifact,
-        input_slots: tuple[TensorSlot, ...],
+        input_slots: tuple[ObjectSlot, ...],
         layout: CompiledTaskLayout,
         *,
         storage_contract: TaskStorageContract | None = None,
@@ -397,13 +381,13 @@ def resolve_stage_input_slots(
     root_objects: dict[int, str],
     stage_outputs: tuple[dict[int, str], ...],
     compact_leaf_indices: bool,
-) -> tuple[TensorSlot, ...]:
+) -> tuple[ObjectSlot, ...]:
     """Resolve stage inputs from split-root FX topology, never storage IDs."""
 
     input_leaves, _ = tree_flatten(stage.inputs)
     if len(stage.stage.input_sources) != len(input_leaves):
         raise CaptureError("stage input provenance arity changed")
-    slots: list[TensorSlot] = []
+    slots: list[ObjectSlot] = []
     for compact_index, stage_position in enumerate(artifact.tensor_argument_positions):
         if stage_position >= len(input_leaves) or not isinstance(
             input_leaves[stage_position], torch.Tensor
@@ -428,7 +412,7 @@ def resolve_stage_input_slots(
                     "stage references an unavailable producer output"
                 ) from exc
         slots.append(
-            TensorSlot(
+            ObjectSlot(
                 compact_index if compact_leaf_indices else stage_position,
                 object_id,
             )

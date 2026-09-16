@@ -7,19 +7,24 @@ import itertools
 import statistics
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, cast
+from typing import Any
 
 import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.accelerator import accelerator_device
-from shadowspill.pytorch.runtime_adapter.telemetry import AllocationTelemetryError
 from shadowspill.runtime.abi import (
     PROFILING_SCOPE_BASE,
     AdapterStatistics,
     Allocation,
 )
 from shadowspill.runtime.failures import wait_allocator_idle
+from shadowspill.runtime.telemetry import AllocationTelemetryError
+from shadowspill.runtime.timing import (
+    Marker,
+    nanoseconds_between,
+    wait_for_stream,
+)
 
 #: Profiling scope ids, minted once per process rather than once per profiler.
 #: A profiler is built per planning call, so a per-instance counter restarted at
@@ -55,7 +60,7 @@ class AllocatorBoundary:
         self.device_ordinal = device_ordinal
         self.telemetry_capacity = telemetry_capacity
         self.conditioned = False
-        self._timing_events: tuple[Any, Any] | None = None
+        self._timing_events: tuple[Marker, Marker] | None = None
 
     def stream(self) -> torch.cuda.Stream:
         """Select the profiled device and return its current stream."""
@@ -108,15 +113,15 @@ class AllocatorBoundary:
         """Run the task once between timing events; return its duration in ns."""
 
         start, finish = self._events()
+        handle = int(stream.cuda_stream)
         with self.scope(stream):
-            start.record(stream)
+            start.record(handle)
             output = task()
             del output
-            finish.record(stream)
-        finish.synchronize()
+            finish.record(handle)
+        finish.wait()
         self.require_idle(problem="task timing sample")
-        elapsed_ms = cast(float, start.elapsed_time(finish))
-        return max(0, round(elapsed_ms * 1_000_000))
+        return nanoseconds_between(start, finish)
 
     def condition_device(self, stream: torch.cuda.Stream) -> None:
         """Warm clocks and provider state once using bounded preallocated GEMM."""
@@ -128,12 +133,13 @@ class AllocatorBoundary:
         output = torch.empty(shape, dtype=torch.bfloat16, device=device)
         samples: list[int] = []
         start, finish = self._events()
+        handle = int(stream.cuda_stream)
         for _ in range(64):
-            start.record(stream)
+            start.record(handle)
             torch.mm(left, right, out=output)
-            finish.record(stream)
-            finish.synchronize()
-            samples.append(max(1, round(start.elapsed_time(finish) * 1_000_000)))
+            finish.record(handle)
+            finish.wait()
+            samples.append(max(1, nanoseconds_between(start, finish)))
             if len(samples) >= 3:
                 recent = samples[-3:]
                 median = float(statistics.median(recent))
@@ -148,7 +154,7 @@ class AllocatorBoundary:
     def drain(self, stream: torch.cuda.Stream, *, problem: str) -> None:
         """Wait for the stream, then for the allocator to retire what it freed."""
 
-        stream.synchronize()
+        wait_for_stream(self.runtime_handle, int(stream.cuda_stream))
         self.require_idle(problem=problem)
 
     def require_idle(self, *, problem: str) -> None:
@@ -199,11 +205,12 @@ class AllocatorBoundary:
             )
         return allocation
 
-    def _events(self) -> tuple[Any, Any]:
+    def _events(self) -> tuple[Marker, Marker]:
+        """The pair of markers every sample here is timed between."""
+
         if self._timing_events is None:
-            event_factory: Any = torch.cuda.Event
             self._timing_events = (
-                event_factory(enable_timing=True),
-                event_factory(enable_timing=True),
+                Marker(self.runtime_handle),
+                Marker(self.runtime_handle),
             )
         return self._timing_events

@@ -6,15 +6,14 @@ from collections.abc import Callable, Iterable, Sequence
 from typing import Protocol
 
 from shadowspill.errors import CaptureError, ProfilingError
+from shadowspill.profiling.store import ProfileStore
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
-
-from .records import (
+from shadowspill.task.profiles import (
     ProfileEnvironment,
     ProfileKey,
     ProfilingResult,
     TaskMeasurement,
 )
-from .store import ProfileStore
 
 
 class ProfilableArtifact(Protocol):

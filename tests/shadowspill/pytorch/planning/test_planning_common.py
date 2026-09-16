@@ -13,30 +13,32 @@ from shadowspill.errors import (
     PlanningError,
     PlanSearchExhaustedError,
 )
-from shadowspill.planner import (
-    CandidateDiagnostic,
-    PlanningRepairDiagnostics,
-)
-from shadowspill.planner.program_inputs import TransferBandwidths
-from shadowspill.pytorch import (
-    TensorSpec,
-)
-from shadowspill.pytorch.materialization import representative_cpu_inputs
-from shadowspill.pytorch.planning.admission.physical import physical_admission
-from shadowspill.pytorch.planning.common import (
+from shadowspill.pipeline.admission.physical import physical_admission
+from shadowspill.pipeline.common import (
     PlanningTimer,
     build_simulation_config,
-    estimate_spill_reservation,
     planned_transfer_bandwidths,
     public_infeasible_plan_error,
     public_search_exhausted_error,
     simulation_capacity,
     validate_budgets,
-    validate_cpu_model,
     workspace_reserve,
 )
+from shadowspill.planner import (
+    CandidateDiagnostic,
+    PlanningRepairDiagnostics,
+)
+from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.profiling.wall_times import ProfilingWallTimes
+from shadowspill.pytorch import (
+    TensorSpec,
+)
+from shadowspill.pytorch.materialization import representative_cpu_inputs
+from shadowspill.pytorch.planning.common import (
+    estimate_spill_reservation,
+    validate_cpu_model,
+)
 from shadowspill.pytorch.profiling import TaskMeasurement
-from shadowspill.pytorch.profiling.profiler import ProfilingWallTimes
 from shadowspill.runtime.configuration import adapter_path
 from shadowspill.runtime.topology import TransferProfile
 
@@ -306,11 +308,14 @@ def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> 
     )
     profiles = SimpleNamespace(measurements=(), fixed_slab_bytes=0)
 
-    calibrated = build_simulation_config(memory, 0, profiles).devices[0]
+    calibrated = build_simulation_config(
+        memory, 0, profiles, execution_device_id="cuda_0"
+    ).devices[0]
     pinned = build_simulation_config(
         memory,
         0,
         profiles,
+        execution_device_id="cuda_0",
         transfer_bandwidths=TransferBandwidths(24_000_000_000, 23_000_000_000),
     ).devices[0]
 
@@ -323,6 +328,7 @@ def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> 
         memory,
         0,
         profiles,
+        execution_device_id="cuda_0",
         transfer_bandwidths=TransferBandwidths(
             24_000_000_000,
             23_000_000_000,

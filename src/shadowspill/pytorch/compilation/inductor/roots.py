@@ -17,8 +17,9 @@ from shadowspill.pytorch.capture.storage import (
     StorageRootKind,
     TaskStorageContract,
 )
+from shadowspill.task.manifest import ExecutableRootAllocation
 
-from .manifest import ExecutableRootAllocation, _LoweredOutput
+from .manifest import _LoweredOutput
 from .values import _static_int
 
 

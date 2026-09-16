@@ -21,13 +21,13 @@ from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 from shadowspill.ir import ResidencySpec, ShadowSpillProgram
+from shadowspill.planner.admission import AdmissionFacts
 from shadowspill.simulator import (
     SimulationConfig,
     SimulationInfeasibleError,
     simulate,
 )
 
-from ..admission import AdmissionFacts
 from ..request import GenericPlanningOptions, OptionRecord
 from ..result import ProgramPlanResult
 

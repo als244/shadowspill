@@ -14,15 +14,23 @@ from shadowspill.errors import (
     CaptureError,
     PlanningError,
 )
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    validate_budgets,
+)
+from shadowspill.profiling.metadata import (
+    ProfilingMetadata,
+    canonicalize_profiling_metadata,
+)
 from shadowspill.pytorch.capture.aot import ExportCapture, capture_forward
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     capture_forward_stage_artifacts,
 )
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
-from shadowspill.pytorch.profiling.metadata import (
-    ProfilingMetadata,
-    canonicalize_profiling_metadata,
+from shadowspill.pytorch.planning.common import (
+    estimate_spill_reservation,
+    validate_cpu_model,
 )
 from shadowspill.runtime.plan import PlanMemory
 
@@ -45,12 +53,6 @@ from ...sharing import (
 )
 from ..artifacts import (
     ForwardCaptureArtifacts,
-)
-from ..common import (
-    PlanningTimer,
-    estimate_spill_reservation,
-    validate_budgets,
-    validate_cpu_model,
 )
 from ..stores import PlanningStores
 

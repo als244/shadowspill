@@ -17,20 +17,22 @@ from typing import TYPE_CHECKING, cast
 import torch
 from torch.utils._pytree import tree_flatten
 
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.pytorch.runtime_adapter.boundaries import (
     PublishedStorage,
-    abort_task,
     after_task_and_update,
-    describe_object_state,
 )
 from shadowspill.runtime.failures import (
     RuntimeFailureDiagnostics,
     allocator_oom_error,
     generic_runtime_error,
     read_allocator_failure,
+)
+from shadowspill.runtime.plan import (
+    abort_task,
+    describe_object_state,
 )
 
 from ..records import (
@@ -218,7 +220,7 @@ def _process_task_outputs(
     optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
     entrypoint = prepared.record.entrypoint
     timing = prepared.timing
-    if entrypoint.phase == "optimizer":
+    if entrypoint.options.phase == "optimizer":
         started_ns = time.perf_counter_ns() if timing is not None else 0
         if prepared.eager_optimizer and not executor.optimizer_state.available:
             adopted, optimizer_bindings = executor.optimizer_state.created_state(
@@ -237,7 +239,7 @@ def _process_task_outputs(
         if timing is not None:
             timing.dispatch_output_flatten_ns = time.perf_counter_ns() - started_ns
         started_ns = time.perf_counter_ns() if timing is not None else 0
-        if entrypoint.phase == "forward":
+        if entrypoint.options.phase == "forward":
             if not all(isinstance(value, torch.Tensor) for value in leaves):
                 raise RuntimeError("captured forward graph returned a static leaf")
             tensor_outputs = tuple(cast(torch.Tensor, value) for value in leaves)
@@ -247,9 +249,10 @@ def _process_task_outputs(
                 tensor_outputs,
                 timing,
             )
-            if entrypoint.public_output_leaves:
+            if entrypoint.options.public_output_leaves:
                 outputs = tuple(
-                    tensor_outputs[index] for index in entrypoint.public_output_leaves
+                    tensor_outputs[index]
+                    for index in entrypoint.options.public_output_leaves
                 )
         else:
             adopted = _accumulate_gradients(executor, prepared.record, leaves, timing)

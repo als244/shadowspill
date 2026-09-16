@@ -10,7 +10,7 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.runtime_adapter.telemetry import (
+from shadowspill.runtime.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
     read_allocation_telemetry,
@@ -18,9 +18,9 @@ from shadowspill.pytorch.runtime_adapter.telemetry import (
     stop_allocation_telemetry,
     summarize_task_workspace,
 )
+from shadowspill.task.profiles import TaskOutputInputBinding
 
 from ..executables import ProfileExecutable
-from ..records import TaskOutputInputBinding
 from .boundary import AllocatorBoundary
 
 

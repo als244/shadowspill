@@ -8,19 +8,23 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from shadowspill.pytorch.runtime_adapter.telemetry import (
+from shadowspill.profiling.timing import (
+    STABLE_VARIABILITY,
+    TimingObservation,
+    collect_timing_samples,
+)
+from shadowspill.runtime.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
 )
-
-from ..allocation_contract import (
+from shadowspill.task.allocations import (
     TaskAllocationContract,
     TaskAllocationPathObservation,
 )
+from shadowspill.task.profiles import TaskMeasurement
+
 from ..executables import ProfileExecutable
-from ..records import TaskMeasurement
 from .contract import ProbedPath, probe_allocation_paths, validate_allocation_contract
-from .timing import STABLE_VARIABILITY, TimingObservation, collect_timing_samples
 from .workspace import (
     WorkspaceObservation,
     audit_workspace_retention,

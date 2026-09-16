@@ -10,31 +10,30 @@ from typing import Any
 
 import torch
 
-from shadowspill.ir import MemoryAction, MemoryActionKind
-from shadowspill.pytorch.diagnostics.collection import collect_step_diagnostics
-from shadowspill.pytorch.diagnostics.execution import (
+from shadowspill.diagnostics.collection import collect_step_diagnostics
+from shadowspill.diagnostics.step import (
     StepDiagnostics,
 )
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     ArmedExecutionTiming as _ArmedExecutionTiming,
 )
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
-from shadowspill.pytorch.diagnostics.timing import (
+from shadowspill.diagnostics.timing import (
     InvocationTimelines,
     InvocationTiming,
 )
-from shadowspill.pytorch.lowering.training import (
-    TrainingTaskEntrypoint,
-)
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.ir import MemoryAction, MemoryActionKind
+from shadowspill.runtime.plan import (
     RuntimeBridge,
     begin_runtime_trace,
     end_and_read_runtime_trace,
     prepare_runtime_trace,
     statistics,
 )
+from shadowspill.runtime.timing import Marker, wait_for_stream
+from shadowspill.task.entrypoints import TaskEntrypoint
 
 from ..records import (
     PlanRun as _PlanRun,
@@ -46,9 +45,11 @@ class ExecutionTiming:
     """The timing and tracing state of one training executor.
 
     Every invocation records where it begins, where its first task starts and
-    where its last task ends on the compute stream; the events are created here
-    so no invocation creates one. The armed measurement is qualification-only
-    and default-off; the runtime trace behind it is allocated lazily.
+    where its last task ends on the compute stream. Every instant is a marker
+    the runtime holds, taken once here and recorded again each invocation, so
+    the executor and the runtime's own transfers share one clock. The armed
+    measurement is qualification-only and default-off; the runtime trace behind
+    it is allocated lazily.
     """
 
     def __init__(self, bridge: RuntimeBridge, task_ids: tuple[str, ...]) -> None:
@@ -56,10 +57,8 @@ class ExecutionTiming:
         self._task_ids = task_ids
         self.armed: _ArmedExecutionTiming | None = None
         self.prior_invocation_drain_ns = 0
-        timing_event_factory: Any = torch.cuda.Event
-        self._timelines = InvocationTimelines(
-            lambda: timing_event_factory(enable_timing=True)
-        )
+        self._runtime_handle = bridge.runtime._runtime_handle
+        self._timelines = InvocationTimelines(self._runtime_handle)
         # Detailed tracing is default-off and allocated lazily. Full-model
         # schedules emit several records per action plus readiness and
         # retirement records, so task count alone is not a safe bound. Keep a
@@ -67,18 +66,10 @@ class ExecutionTiming:
         # public reconciliation summary rather than truncating silently.
         self._trace_allocation_capacity = 1_000_000
         self._trace_event_capacity = 1_000_000
-        self._trace_start_event: torch.cuda.Event | None = None
-        self._trace_end_event: torch.cuda.Event | None = None
-        self._trace_origin_event: torch.cuda.Event | None = None
-        self._trace_task_events: dict[
-            str,
-            tuple[
-                torch.cuda.Event,
-                torch.cuda.Event,
-                torch.cuda.Event,
-                torch.cuda.Event,
-            ],
-        ] = {}
+        self._trace_start_event: Marker | None = None
+        self._trace_end_event: Marker | None = None
+        self._trace_origin_event: Marker | None = None
+        self._trace_task_events: dict[str, tuple[Marker, Marker, Marker, Marker]] = {}
 
     @property
     def span_pending(self) -> bool:
@@ -87,40 +78,60 @@ class ExecutionTiming:
     def begin_invocation(self, step_number: int, stream: torch.cuda.Stream) -> Any:
         """Open the invocation's timeline; the caller numbers the step."""
 
-        return self._timelines.begin(step_number, stream)
+        return self._timelines.begin(step_number, _handle(stream))
 
     def prepare(self) -> None:
-        """Lazily allocate reusable trace buffers and timing events."""
+        """Lazily allocate reusable trace buffers and timing markers.
 
+        The runtime's markers hold real backend events from the moment they are
+        taken, so nothing is warmed up here: the first instant each one records
+        is a measurement.
+        """
+
+        # The markers come first. Preparing a trace reserves the timing pool a
+        # floor of free leases for the lanes it measures, and leases already
+        # held do not count against it -- so taking the markers first leaves
+        # that floor intact, where taking them afterwards would spend it.
+        marker = self._marker
+        self._trace_origin_event = marker()
+        self._trace_start_event = marker()
+        self._trace_end_event = marker()
+        self._trace_task_events = {
+            task_id: (marker(), marker(), marker(), marker())
+            for task_id in self._task_ids
+        }
         prepare_runtime_trace(
             self._bridge,
             event_capacity=self._trace_event_capacity,
             allocation_event_capacity=self._trace_allocation_capacity,
         )
-        event_factory: Any = torch.cuda.Event
-        task_ids = self._task_ids
-        self._trace_origin_event = event_factory(enable_timing=True)
-        self._trace_start_event = event_factory(enable_timing=True)
-        self._trace_end_event = event_factory(enable_timing=True)
-        self._trace_task_events = {
-            task_id: (
-                event_factory(enable_timing=True),
-                event_factory(enable_timing=True),
-                event_factory(enable_timing=True),
-                event_factory(enable_timing=True),
-            )
-            for task_id in task_ids
-        }
-        # PyTorch creates CUDA event handles lazily on first record. Force that
-        # one-time setup before the real trace begins, then reuse every event.
-        stream = torch.cuda.current_stream()
-        self._trace_origin_event.record(stream)
-        self._trace_start_event.record(stream)
-        self._trace_end_event.record(stream)
-        for events in self._trace_task_events.values():
-            for event in events:
-                event.record(stream)
-        stream.synchronize()
+
+    def _marker(self) -> Marker:
+        return Marker(self._runtime_handle)
+
+    def release(self) -> None:
+        """Give every marker back to the runtime; this executor is done.
+
+        Markers grow the timing pool when its reserve is spent, so an executor
+        that is replaced rather than closed would leave the pool larger every
+        time. Released after the plan is idle, so nothing is still recording.
+        """
+
+        self._timelines.release()
+        for marker in (
+            self._trace_origin_event,
+            self._trace_start_event,
+            self._trace_end_event,
+        ):
+            if marker is not None:
+                marker.release()
+        self._trace_origin_event = None
+        self._trace_start_event = None
+        self._trace_end_event = None
+        for markers in self._trace_task_events.values():
+            for marker in markers:
+                marker.release()
+        self._trace_task_events = {}
 
     def arm(self, run: _PlanRun, *, trace_setup_ns: int = 0) -> None:
         """Bracket the next invocation's numerical compute stream only.
@@ -182,9 +193,7 @@ class ExecutionTiming:
         # Transfers are measured on their lanes from the same origin event
         # the compute-stream markers use, so every lane shares one timeline.
         begin_runtime_trace(
-            self._bridge,
-            step_id=step_number,
-            origin_event_handle=int(timing.origin_event.cuda_event),
+            self._bridge, step_id=step_number, origin=timing.origin_event
         )
 
     @property
@@ -202,7 +211,7 @@ class ExecutionTiming:
         after that step's call returns.
         """
 
-        self._timelines.mark_end(torch.cuda.current_stream())
+        self._timelines.mark_end(_handle(torch.cuda.current_stream()))
 
     def invocation_timings(self) -> tuple[InvocationTiming, ...]:
         """Every invocation whose cycle is complete, once each, oldest first.
@@ -231,34 +240,42 @@ class ExecutionTiming:
         timing = self.armed
         if timing is None:
             return
-        stream = timing.stream or torch.cuda.current_stream()
-        stream.synchronize()
+        stream = timing.stream or _handle(torch.cuda.current_stream())
+        wait_for_stream(self._runtime_handle, stream)
         with suppress(BaseException):
             end_and_read_runtime_trace(self._bridge)
         self.armed = None
 
+    def record_origin(self, stream: torch.cuda.Stream) -> None:
+        """Record where the armed invocation begins, if one is armed."""
+
+        timing = self.armed
+        if timing is not None:
+            timing.origin_event.record(_handle(stream))
+
     def record_compute_start(self, stream: torch.cuda.Stream | None) -> None:
         if stream is None:
             return
-        self._timelines.start_span(stream)
+        handle = _handle(stream)
+        self._timelines.start_span(handle)
         timing = self.armed
         if timing is None or timing.started:
             return
-        timing.start_event.record(stream)
+        timing.start_event.record(handle)
         timing.started = True
-        timing.stream = stream
+        timing.stream = handle
 
     def record_compute_end(self, stream: torch.cuda.Stream | None) -> None:
         if stream is None:
             return
-        self._timelines.end_span(stream)
+        self._timelines.end_span(_handle(stream))
         timing = self.armed
         if timing is None or timing.finished:
             return
-        timing.end_event.record(stream)
+        timing.end_event.record(_handle(stream))
         timing.finished = True
 
-    def begin_task(self, entrypoint: TrainingTaskEntrypoint) -> _ArmedTaskTiming | None:
+    def begin_task(self, entrypoint: TaskEntrypoint) -> _ArmedTaskTiming | None:
         timing = self.armed
         if timing is None:
             return None
@@ -278,8 +295,8 @@ class ExecutionTiming:
     ) -> None:
         if task is not None:
             if stream is None:
-                raise AssertionError("task timing omitted its CUDA stream")
-            task.readiness_event.record(stream)
+                raise AssertionError("task timing omitted its compute stream")
+            task.readiness_event.record(_handle(stream))
 
     @staticmethod
     def record_task_inputs_ready(
@@ -289,8 +306,8 @@ class ExecutionTiming:
 
         if task is not None:
             if stream is None:
-                raise AssertionError("task timing omitted its CUDA stream")
-            task.inputs_ready_event.record(stream)
+                raise AssertionError("task timing omitted its compute stream")
+            task.inputs_ready_event.record(_handle(stream))
 
     @staticmethod
     def record_task_start(
@@ -298,8 +315,8 @@ class ExecutionTiming:
     ) -> None:
         if task is not None:
             if stream is None:
-                raise AssertionError("task timing omitted its CUDA stream")
-            task.start_event.record(stream)
+                raise AssertionError("task timing omitted its compute stream")
+            task.start_event.record(_handle(stream))
 
     @staticmethod
     def record_task_end(
@@ -307,8 +324,14 @@ class ExecutionTiming:
     ) -> None:
         if task is not None:
             if stream is None:
-                raise AssertionError("task timing omitted its CUDA stream")
-            task.end_event.record(stream)
+                raise AssertionError("task timing omitted its compute stream")
+            task.end_event.record(_handle(stream))
+
+
+def _handle(stream: torch.cuda.Stream) -> int:
+    """The integer the runtime names this stream by."""
+
+    return int(stream.cuda_stream)
 
 
 __all__ = ["ExecutionTiming"]

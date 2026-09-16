@@ -6,12 +6,11 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.runtime.plan import (
     RuntimeBridge,
     profile_range_begin,
     profile_range_end,
     set_profiler_annotations,
-    wait_plan_idle,
 )
 
 
@@ -89,7 +88,7 @@ class AnnotatedExecutor:
 
         if not self._task_annotations.enabled:
             return
-        wait_plan_idle(self._bridge)
+        self._bridge.wait_until_idle()
         self.set_profiler_annotations(False)
 
     def record_invocation_completion(self) -> Callable[[], None]:

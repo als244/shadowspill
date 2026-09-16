@@ -15,16 +15,17 @@ from shadowspill.ir import (
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
+from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
+from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.slots import ObjectSlot
 
 from ...partition import PartitionedExport, StageExample
-from ..catalog import ObjectCatalog, TensorSlot, tensor_value_role
+from ..catalog import ObjectCatalog, tensor_value_role
 from ..task_binding import TaskBindingResolver, resolve_stage_input_slots
 from .artifacts import (
     ForwardObjects,
     ForwardPhysicalLayout,
     ForwardTaskGraph,
-    TaskEntrypoint,
 )
 
 
@@ -62,6 +63,7 @@ class _ForwardTaskEmitter:
         self.device_id = device_id
         self.tasks: list[TaskSpec] = []
         self.entrypoints: list[TaskEntrypoint] = []
+        self.executables: dict[str, GraphArtifact] = {}
         self.produced_aliases: set[str] = set()
         self.public_outputs: dict[int, str] = {}
         self.stage_outputs: list[dict[int, str]] = []
@@ -72,6 +74,7 @@ class _ForwardTaskEmitter:
         return ForwardTaskGraph(
             tuple(self.tasks),
             tuple(self.entrypoints),
+            dict(self.executables),
             frozenset(self.produced_aliases),
             tuple(
                 self.public_outputs[index] for index in range(len(self.public_outputs))
@@ -132,20 +135,20 @@ class _ForwardTaskEmitter:
         self.entrypoints.append(
             TaskEntrypoint(
                 task.task_id,
-                stage.stage.module_target,
-                artifact,
                 input_slots,
                 output_slots,
                 resolver.replacement_output_leaves,
                 resolver.storage_handoffs,
+                TaskOptions(target=stage.stage.module_target),
             )
         )
+        self.executables[task.task_id] = artifact
 
     def _stage_inputs(
         self,
         stage: StageExample,
         artifact: GraphArtifact,
-    ) -> tuple[TensorSlot, ...]:
+    ) -> tuple[ObjectSlot, ...]:
         return resolve_stage_input_slots(
             stage,
             artifact,
@@ -184,9 +187,9 @@ def _bind_forward_outputs(
     input_objects: tuple[str, ...],
     produced_aliases: set[str],
     public_outputs: dict[int, str],
-) -> tuple[tuple[TensorSlot, ...], tuple[str, ...]]:
+) -> tuple[tuple[ObjectSlot, ...], tuple[str, ...]]:
     input_aliases = {catalog.alias_id(value) for value in input_objects}
-    output_slots: list[TensorSlot] = []
+    output_slots: list[ObjectSlot] = []
     outputs: list[str] = []
     leaves, _ = tree_flatten(stage.output)
     for position, leaf in enumerate(leaves):
@@ -201,7 +204,7 @@ def _bind_forward_outputs(
             ),
             persistence=Persistence.STEP,
         )
-        output_slots.append(TensorSlot(position, object_id))
+        output_slots.append(ObjectSlot(position, object_id))
         alias_id = catalog.alias_id(object_id)
         if (
             object_id not in input_objects

@@ -48,8 +48,8 @@ class PlanCacheArtifact:
     """One persistent planning artifact touched by this planning call.
 
     ``access`` distinguishes bytes actually read or written from an existing
-    artifact that merely matched a freshly produced in-memory result.  PyTorch
-    Inductor's implementation-private directory is reported as ``managed``.
+    artifact that merely matched a freshly produced in-memory result.  the framework
+    the compiler's implementation-private directory is reported as ``managed``.
     """
 
     category: str

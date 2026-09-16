@@ -13,13 +13,15 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
 )
-from shadowspill.pytorch.runtime_adapter.bridge import (
+from shadowspill.pytorch.runtime_adapter.boundaries import (
+    publish_initial_tensor,
+    rebind_many,
+)
+from shadowspill.runtime.plan import (
     RuntimeBridge,
     TaskMemoryEnvelope,
     abort_task,
     encode_task,
-    publish_initial_tensor,
-    rebind_many,
 )
 from tests.shadowspill.ir._examples import representative_program
 

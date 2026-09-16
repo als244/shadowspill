@@ -8,32 +8,31 @@ from shadowspill.ir import (
     MemoryLocation,
     SharedResidencyPolicy,
 )
+from shadowspill.pipeline.common import (
+    PlanningTimer,
+    build_simulation_config,
+    fixed_execution_bytes,
+    workspace_reserve,
+)
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
-from shadowspill.pytorch.profiling import (
-    ResolvedTaskManifests,
-)
-from shadowspill.runtime import ObjectConsistency
-from shadowspill.runtime.plan import PlanMemory
-
-from ...lowering.forward import lower_partitioned_forward_program
-from ..admission import (
+from shadowspill.pytorch.lowering.program import execution_device_id
+from shadowspill.pytorch.planning.admission import (
     FixedLayoutSelection,
     SelectedAdmission,
     build_admission_facts,
     build_fixed_selected_admission,
     output_bindings_for_entrypoints,
 )
+from shadowspill.pytorch.profiling import ResolvedTaskManifests
+from shadowspill.runtime import ObjectConsistency
+from shadowspill.runtime.plan import PlanMemory
+
+from ...lowering.forward import lower_partitioned_forward_program
 from ..artifacts import (
     ForwardCaptureArtifacts,
     ForwardProfileArtifacts,
     ForwardProgramArtifacts,
-)
-from ..common import (
-    PlanningTimer,
-    build_simulation_config,
-    fixed_execution_bytes,
-    workspace_reserve,
 )
 
 
@@ -87,7 +86,11 @@ def build_forward_program(
         )
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(
-            memory, reserve, profiled.profiles, transfer_bandwidths=transfer_bandwidths
+            memory,
+            reserve,
+            profiled.profiles,
+            execution_device_id=execution_device_id(memory.execution_device),
+            transfer_bandwidths=transfer_bandwidths,
         )
         execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
             memory, profiled.profiles

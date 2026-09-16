@@ -19,6 +19,7 @@ import pytest
 #: Each must import without a framework appearing in `sys.modules`.
 NEUTRAL_MODULES = (
     "shadowspill",
+    "shadowspill.diagnostics",
     "shadowspill.errors",
     "shadowspill.ir",
     "shadowspill.planner",
@@ -26,14 +27,17 @@ NEUTRAL_MODULES = (
     "shadowspill.planner.plan_store",
     "shadowspill.planner.program",
     "shadowspill.planner.selection",
+    "shadowspill.profiling",
     "shadowspill.frontend",
     "shadowspill.runtime",
+    "shadowspill.search",
     "shadowspill.runtime.abi",
     "shadowspill.runtime.bootstrap",
     "shadowspill.runtime.failures",
     "shadowspill.simulator",
     "shadowspill.step",
     "shadowspill.store",
+    "shadowspill.task",
 )
 
 #: `mlops` is a workload package; the neutral tree must not reach for one.

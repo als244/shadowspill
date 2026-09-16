@@ -13,8 +13,8 @@ from shadowspill.pytorch.optimizer import (
     materialize_opaque_optimizer,
     opaque_optimizer_outputs,
 )
+from shadowspill.task.profiles import TaskMeasurement
 
-from ..records import TaskMeasurement
 from .measurement import MeasuredTask, measure_task
 
 if TYPE_CHECKING:

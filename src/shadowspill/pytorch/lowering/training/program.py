@@ -9,10 +9,10 @@ import torch.nn as nn
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.compilation.inductor import ExecutableRootAllocation
 from shadowspill.pytorch.optimizer import OptimizerCapture
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.step import StepDataOrdering
+from shadowspill.task.manifest import ExecutableRootAllocation
 
 from ...graph_pairs import PartitionedTrainingCapture
 from ..profiles import CompiledLayoutIndex, ProfileMeasurementKey, TaskProfileCatalog
@@ -122,6 +122,7 @@ def lower_partitioned_training_program(
         objects.registrations,
         objects.root_slots,
         graph.entrypoints,
+        graph.executables,
         objects.gradients,
         objects.optimizer_objects,
         tuple(boundaries.fixed_tensors.values()),

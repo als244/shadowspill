@@ -3,6 +3,7 @@
 from shadowspill.errors import (
     PlanningError,
 )
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.pytorch.profiling import (
     profile_environment,
     profile_unique_artifacts,
@@ -18,9 +19,6 @@ from shadowspill.runtime.failures import wait_allocator_idle
 from ..artifacts import (
     ForwardCaptureArtifacts,
     ForwardProfileArtifacts,
-)
-from ..common import (
-    PlanningTimer,
 )
 from ..stores import PlanningStores
 from .programs import _verify_manifest_identity

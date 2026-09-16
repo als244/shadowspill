@@ -11,6 +11,7 @@ from shadowspill.ir import (
     TaskProfile,
     TaskSpec,
 )
+from shadowspill.pipeline.admission.physical import _runtime_record_reserve
 from shadowspill.planner import (
     AdmissionFacts,
     GenericPlanningOptions,
@@ -26,9 +27,8 @@ from shadowspill.pytorch.planning.admission.bindings import (
     TaskOutputBinding,
     build_admission_facts,
 )
-from shadowspill.pytorch.planning.admission.physical import _runtime_record_reserve
 from shadowspill.pytorch.planning.admission.selection import (
-    _task_memory_envelope,
+    task_memory_envelope,
 )
 from shadowspill.pytorch.profiling import (
     TaskAllocationContract,
@@ -248,7 +248,7 @@ def test_task_envelope_counts_peak_live_bytes_not_allocation_volume() -> None:
         ),
     )
 
-    envelope = _task_memory_envelope(measurement)
+    envelope = task_memory_envelope(measurement)
 
     assert envelope.maximum_requested_allocation_bytes == 96
     assert envelope.maximum_charged_allocation_bytes == 96
@@ -298,7 +298,7 @@ def test_manual_scratch_reserve_expands_runtime_envelope() -> None:
         ),
     )
 
-    envelope = _task_memory_envelope(
+    envelope = task_memory_envelope(
         measurement,
         minimum_scratch_reserve_bytes=8 << 20,
     )
@@ -337,8 +337,8 @@ def test_task_envelope_specializes_persistent_output_ownership() -> None:
         allocation_contract=TaskAllocationContract.capture((output, terminal_free)),
     )
 
-    discarded = _task_memory_envelope(measurement)
-    retained = _task_memory_envelope(
+    discarded = task_memory_envelope(measurement)
+    retained = task_memory_envelope(
         measurement,
         retained_output_leaves=(3,),
     )

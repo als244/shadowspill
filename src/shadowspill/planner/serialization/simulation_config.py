@@ -7,7 +7,12 @@ from dataclasses import asdict
 from shadowspill.simulator import SimulationConfig
 from shadowspill.simulator.model import DeviceSimulationConfig
 
-from .common import _integer, _list, _mapping, _string
+from .common import (
+    _integer,
+    _list,
+    _mapping,
+    _string,
+)
 
 
 # The wire format spells the spill pool "host": every stored case is verified

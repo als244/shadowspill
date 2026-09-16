@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from .execution import (
+from shadowspill.diagnostics.step import (
     PhaseTimingComparison,
     StepDiagnostics,
     StepTimingSummary,

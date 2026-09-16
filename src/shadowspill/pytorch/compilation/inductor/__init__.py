@@ -27,6 +27,7 @@ from torch.fx import GraphModule
 from shadowspill.errors import CompilationError
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.capture.torch_deprecations import copy_graph_module
+from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskManifest
 
 from .cache import _fx_graph_cache_key, _load_cached_manifest, _store_cached_manifest
 from .compiler import (
@@ -42,11 +43,7 @@ from .explicit import (
     _prepare_explicit_inputs,
     _unbox_compiled_callable,
 )
-from .manifest import (
-    ExecutableRootAllocation,
-    ExecutableTaskManifest,
-    InductorCompilation,
-)
+from .manifest import InductorCompilation
 
 
 def compile_inductor_task(

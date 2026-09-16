@@ -13,16 +13,13 @@ from shadowspill.pytorch.compilation.compiler import (
     materialize_example_arguments,
 )
 from shadowspill.pytorch.compilation.inductor import (
-    ExecutableRootAllocation,
-    ExecutableTaskManifest,
     compile_explicit_inductor_task,
     compile_inductor_task,
 )
 from shadowspill.pytorch.compilation.inductor import compiler as inductor_compiler
 from shadowspill.pytorch.optimizer import capture_optimizer
-from shadowspill.pytorch.profiling.inputs import (
-    materialize_representative_inputs,
-)
+from shadowspill.pytorch.profiling.inputs import materialize_representative_inputs
+from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskManifest
 
 
 class _Add(nn.Module):

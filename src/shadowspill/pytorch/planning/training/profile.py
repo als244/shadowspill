@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from shadowspill.errors import (
     PlanningError,
 )
+from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
@@ -37,9 +38,6 @@ from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingMaterializationArtifacts,
     TrainingProfileArtifacts,
-)
-from ..common import (
-    PlanningTimer,
 )
 from ..stores import PlanningStores
 

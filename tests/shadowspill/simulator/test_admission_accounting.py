@@ -20,9 +20,7 @@ from shadowspill.ir import (
     TaskSpec,
 )
 from shadowspill.planner import AdmissionFacts, TaskAdmissionSpec
-from shadowspill.pytorch.planning.admission import (
-    simulation_admission_from_replay,
-)
+from shadowspill.pytorch.planning.admission import simulation_admission_from_replay
 from shadowspill.simulator import (
     ActionPhysicalDelta,
     MemoryReuseDependency,

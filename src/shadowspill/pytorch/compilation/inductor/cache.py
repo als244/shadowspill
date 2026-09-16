@@ -11,8 +11,9 @@ from shadowspill.pytorch.compilation.inductor_manifest import (
     load_task_manifest,
     store_task_manifest,
 )
+from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskManifest
 
-from .manifest import ExecutableRootAllocation, ExecutableTaskManifest, _make_manifest
+from .manifest import _make_manifest
 
 
 def _fx_graph_cache_key(compiled: object) -> str | None:

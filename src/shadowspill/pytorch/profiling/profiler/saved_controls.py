@@ -12,8 +12,8 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     TaskInputProvenance,
-    TaskInputRole,
 )
+from shadowspill.task.inputs import TaskInputRole
 
 if TYPE_CHECKING:
     from . import TaskProfiler

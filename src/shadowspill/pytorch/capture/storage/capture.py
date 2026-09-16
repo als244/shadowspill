@@ -13,14 +13,14 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
 )
-
-from .records import (
+from shadowspill.task.storage import (
     MutationBinding,
     OutputView,
     StorageRoot,
     StorageRootKind,
     TaskStorageContract,
 )
+
 from .roots import _InputRoot, _SemanticRoot
 from .symbolic import (
     _canonical_input_positions,

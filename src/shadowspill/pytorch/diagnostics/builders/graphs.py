@@ -28,13 +28,13 @@ from shadowspill.pytorch.capture.storage import (
     StorageRoot,
     TaskStorageContract,
 )
-from shadowspill.pytorch.compilation.inductor import ExecutableTaskManifest
-from shadowspill.pytorch.compilation.layout import (
+from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.task.layout import (
     CompiledTaskLayout,
     reconcile_compiled_task_layout,
     replacement_transition_bytes,
 )
-from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.task.manifest import ExecutableTaskManifest
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,6 @@ from typing import Any, cast
 
 import torch
 
-from shadowspill.pytorch.runtime_adapter.bridge import RuntimeBridge
 from shadowspill.runtime import (
     MemoryPool,
     Runtime,
@@ -25,6 +24,7 @@ from shadowspill.runtime.objects import (
     require_state_operation_allowed,
     reserve_persistent_object_ids,
 )
+from shadowspill.runtime.plan import RuntimeBridge
 
 from ..contracts import contiguous_stride
 from .records import PersistentState, PersistentStorage, TensorView

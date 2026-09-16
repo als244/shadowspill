@@ -8,11 +8,11 @@ from shadowspill.errors import CaptureError, PlanningError
 from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
     TaskInputProvenance,
-    TaskInputRole,
 )
 from shadowspill.pytorch.contracts import TensorSpec
 from shadowspill.pytorch.materialization import representative_cpu_inputs
 from shadowspill.pytorch.profiling.inputs import materialize_representative_inputs
+from shadowspill.task.inputs import TaskInputRole
 
 
 class _Add(nn.Module):

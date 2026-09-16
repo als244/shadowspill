@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
@@ -12,12 +13,16 @@ from shadowspill.ir import (
     TaskAlternativeGroup,
     TaskSpec,
 )
-from shadowspill.pytorch.capture.artifacts import AotGraphPair, GraphArtifact
+from shadowspill.pytorch.capture.artifacts import (
+    AotGraphPair,
+    GraphArtifact,
+)
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact, OptimizerTensorRole
+from shadowspill.task.entrypoints import TaskEntrypoint
+from shadowspill.task.slots import ObjectSlot, TaskStorageHandoff
 
 from ...graph_pairs import DifferentiatedStage
-from ..catalog import ObjectCatalog, RegistrationBinding, TensorSlot
-from ..task_binding import TaskStorageHandoff
+from ..catalog import ObjectCatalog, RegistrationBinding
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,32 +50,15 @@ class FixedTensorBinding:
 
 
 @dataclass(frozen=True, slots=True)
-class TrainingTaskEntrypoint:
-    task_id: str
-    phase: str
-    microbatch: int | None
-    variant: str | None
-    artifact: GraphArtifact | OptimizerTaskArtifact | None
-    input_slots: tuple[TensorSlot, ...]
-    output_slots: tuple[TensorSlot, ...]
-    gradient_output_slots: tuple[TensorSlot, ...] = ()
-    public_output_count: int = 0
-    public_output_leaves: tuple[int, ...] = ()
-    optimizer_binding_names: tuple[str, ...] = ()
-    optimizer_output_names: tuple[str, ...] = ()
-    stage_index: int | None = None
-    replacement_output_leaves: tuple[int, ...] = ()
-    storage_handoffs: tuple[TaskStorageHandoff, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
 class LoweredTrainingProgram:
     program: ShadowSpillProgram
     initial_residency: tuple[ResidencySpec, ...]
     final_residency: tuple[ResidencySpec, ...]
     registrations: tuple[RegistrationBinding, ...]
-    root_input_slots: tuple[tuple[TensorSlot, ...], ...]
-    entrypoints: tuple[TrainingTaskEntrypoint, ...]
+    root_input_slots: tuple[tuple[ObjectSlot, ...], ...]
+    entrypoints: tuple[TaskEntrypoint, ...]
+    #: What to call for each task. The entrypoint is neutral; this is not.
+    executables: Mapping[str, GraphArtifact | OptimizerTaskArtifact | None]
     gradients: tuple[GradientBinding, ...]
     optimizer_objects: tuple[OptimizerObjectBinding, ...]
     fixed_tensors: tuple[FixedTensorBinding, ...]
@@ -87,17 +75,17 @@ class TrainingStorageLayout:
 
     program: ShadowSpillProgram
     registrations: tuple[RegistrationBinding, ...]
-    root_input_slots: tuple[tuple[TensorSlot, ...], ...]
+    root_input_slots: tuple[tuple[ObjectSlot, ...], ...]
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedStageVariant:
     stage: DifferentiatedStage
     pair: AotGraphPair
-    forward_inputs: tuple[TensorSlot, ...]
-    forward_outputs: tuple[TensorSlot, ...]
-    backward_inputs: tuple[TensorSlot, ...]
-    contributions: tuple[TensorSlot, ...]
+    forward_inputs: tuple[ObjectSlot, ...]
+    forward_outputs: tuple[ObjectSlot, ...]
+    backward_inputs: tuple[ObjectSlot, ...]
+    contributions: tuple[ObjectSlot, ...]
     saved_internal_object_ids: tuple[str, ...]
     public_output_leaves: tuple[int, ...]
     mutation_object_ids: tuple[str, ...]
@@ -110,7 +98,7 @@ class PreparedStageVariant:
 class TrainingObjects:
     catalog: ObjectCatalog
     registrations: tuple[RegistrationBinding, ...]
-    root_slots: tuple[tuple[TensorSlot, ...], ...]
+    root_slots: tuple[tuple[ObjectSlot, ...], ...]
     parameter_objects: dict[tuple[int, int], str]
     gradients: tuple[GradientBinding, ...]
     gradient_by_parameter: dict[str, str]
@@ -129,6 +117,8 @@ class TrainingBoundaries:
 @dataclass(frozen=True, slots=True)
 class TrainingTaskGraph:
     tasks: tuple[TaskSpec, ...]
-    entrypoints: tuple[TrainingTaskEntrypoint, ...]
+    entrypoints: tuple[TaskEntrypoint, ...]
+    #: What to call for each task. The entrypoint is neutral; this is not.
+    executables: Mapping[str, GraphArtifact | OptimizerTaskArtifact | None]
     task_alternative_groups: tuple[TaskAlternativeGroup, ...]
     optimizer_task_ids: tuple[str, ...]

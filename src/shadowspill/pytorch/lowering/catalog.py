@@ -26,14 +26,6 @@ from shadowspill.pytorch.capture.storage import OutputView
 
 
 @dataclass(frozen=True, slots=True)
-class TensorSlot:
-    """Position of one tensor leaf in a framework task contract."""
-
-    leaf_index: int
-    object_id: str
-
-
-@dataclass(frozen=True, slots=True)
 class RegistrationBinding:
     """Original registered name associated with one logical tensor view."""
 
@@ -532,7 +524,6 @@ def register_model_state(
 __all__ = [
     "ObjectCatalog",
     "RegistrationBinding",
-    "TensorSlot",
     "register_model_state",
     "serialized_dtype_role",
     "tensor_value_role",

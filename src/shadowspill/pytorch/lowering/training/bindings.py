@@ -10,11 +10,12 @@ from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
-    TaskInputRole,
 )
 from shadowspill.pytorch.capture.storage import TaskStorageContract
-from shadowspill.pytorch.compilation.layout import CompiledTaskLayout
 from shadowspill.step import StepDataOrdering
+from shadowspill.task.inputs import TaskInputRole
+from shadowspill.task.layout import CompiledTaskLayout
+from shadowspill.task.slots import ObjectSlot
 
 from ...graph_pairs import (
     DifferentiatedStage,
@@ -25,7 +26,6 @@ from ...graph_pairs import (
 )
 from ..catalog import (
     ObjectCatalog,
-    TensorSlot,
     serialized_dtype_role,
     tensor_value_role,
 )
@@ -294,10 +294,10 @@ def _prior_gradient_positions(backward: GraphArtifact) -> tuple[int, ...]:
 
 def _prior_gradient_inputs(
     pair: AotGraphPair,
-    backward_inputs: tuple[TensorSlot, ...],
-    forward_inputs: tuple[TensorSlot, ...],
+    backward_inputs: tuple[ObjectSlot, ...],
+    forward_inputs: tuple[ObjectSlot, ...],
     gradient_by_parameter: dict[str, str],
-) -> tuple[TensorSlot, ...]:
+) -> tuple[ObjectSlot, ...]:
     """Bind the gradients an accumulating backward adds onto.
 
     The arguments were appended in the order of the outputs they accumulate
@@ -308,7 +308,7 @@ def _prior_gradient_inputs(
     """
 
     sources = {slot.leaf_index: slot.object_id for slot in forward_inputs}
-    priors: list[TensorSlot] = []
+    priors: list[ObjectSlot] = []
     for position, leaf in zip(
         _prior_gradient_positions(pair.backward),
         parameter_gradient_leaves(pair),
@@ -323,7 +323,7 @@ def _prior_gradient_inputs(
                 "accumulating backward expects a parameter gradient at leaf "
                 f"{leaf}, which is not one"
             )
-        priors.append(TensorSlot(position, destination))
+        priors.append(ObjectSlot(position, destination))
     return (*backward_inputs, *priors)
 
 
@@ -415,7 +415,7 @@ def _variant_forward_inputs(
     stage: DifferentiatedStage,
     pair: AotGraphPair,
     boundaries: TrainingBoundaries,
-) -> tuple[TensorSlot, ...]:
+) -> tuple[ObjectSlot, ...]:
     stage_outputs = tuple(
         {leaf_index: object_id for leaf_index, object_id in enumerate(ids)}
         for ids in boundaries.object_ids[position][:stage_index]
@@ -433,14 +433,14 @@ def _variant_backward_contributions(
     position: int,
     stage_index: int,
     option: GraphPairVariant,
-    forward_inputs: tuple[TensorSlot, ...],
-    backward_inputs: tuple[TensorSlot, ...],
+    forward_inputs: tuple[ObjectSlot, ...],
+    backward_inputs: tuple[ObjectSlot, ...],
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
     profiles: TaskProfileCatalog,
     metadata_digest: str | None,
     parameter_ids: set[str],
-) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
+) -> tuple[tuple[ObjectSlot, ...], tuple[TaskStorageHandoff, ...]]:
     pair = option.pair
     try:
         return _stage_backward_contributions(
@@ -466,7 +466,7 @@ def _variant_backward_contributions(
 
 def _stage_forward_outputs(
     pair: AotGraphPair,
-    forward_inputs: tuple[TensorSlot, ...],
+    forward_inputs: tuple[ObjectSlot, ...],
     canonical_outputs: tuple[str, ...],
     inventory: ObjectCatalog,
     compiled_layout: CompiledTaskLayout,
@@ -474,7 +474,7 @@ def _stage_forward_outputs(
     *,
     problem: str,
 ) -> tuple[
-    tuple[TensorSlot, ...],
+    tuple[ObjectSlot, ...],
     tuple[str, ...],
     tuple[str, ...],
     tuple[int, ...],
@@ -483,7 +483,7 @@ def _stage_forward_outputs(
     public_count = pair.forward.output_count - pair.saved_value_count
     if public_count != len(canonical_outputs):
         raise CaptureError("stage boundary output count changed across AOT capture")
-    slots: list[TensorSlot] = []
+    slots: list[ObjectSlot] = []
     saved_internal_object_ids: list[str] = []
     if compiled_layout.contract_digest != storage_contract.compatibility_digest:
         raise CaptureError(f"{problem}: compiled layout belongs to another contract")
@@ -524,7 +524,7 @@ def _stage_forward_outputs(
                 role=role,
                 persistence=Persistence.STEP,
             )
-        slots.append(TensorSlot(index, object_id))
+        slots.append(ObjectSlot(index, object_id))
         if index >= public_count and root_by_leaf.get(index) in internal_root_ids:
             saved_internal_object_ids.append(object_id)
     return (
@@ -540,17 +540,17 @@ def _stage_backward_inputs(
     position: int,
     stage: DifferentiatedStage,
     pair: AotGraphPair,
-    forward_outputs: tuple[TensorSlot, ...],
+    forward_outputs: tuple[ObjectSlot, ...],
     canonical_outputs: tuple[str, ...],
     cotangent_by_activation: dict[tuple[int, str], str],
     fixed_tensors: dict[str, FixedTensorBinding],
     inventory: ObjectCatalog,
     *,
     terminal: bool,
-) -> tuple[TensorSlot, ...]:
+) -> tuple[ObjectSlot, ...]:
     public_count = pair.forward.output_count - pair.saved_value_count
     residuals = tuple(
-        TensorSlot(index, slot.object_id)
+        ObjectSlot(index, slot.object_id)
         for index, slot in enumerate(forward_outputs[public_count:])
     )
     priors = len(_prior_gradient_positions(pair.backward))
@@ -561,7 +561,7 @@ def _stage_backward_inputs(
     ]
     if len(tangent_values) != len(explicit_indices):
         raise CaptureError("stage backward tangent arity changed")
-    tangents: list[TensorSlot] = []
+    tangents: list[ObjectSlot] = []
     for ordinal, (output_index, value) in enumerate(
         zip(explicit_indices, tangent_values, strict=True)
     ):
@@ -590,22 +590,22 @@ def _stage_backward_inputs(
             tangent_id = cotangent_by_activation[
                 (position, canonical_outputs[output_index])
             ]
-        tangents.append(TensorSlot(len(residuals) + ordinal, tangent_id))
+        tangents.append(ObjectSlot(len(residuals) + ordinal, tangent_id))
     return (*residuals, *tangents)
 
 
 def _stage_backward_contributions(
     position: int,
     pair: AotGraphPair,
-    forward_inputs: tuple[TensorSlot, ...],
-    backward_inputs: tuple[TensorSlot, ...],
+    forward_inputs: tuple[ObjectSlot, ...],
+    backward_inputs: tuple[ObjectSlot, ...],
     parameter_ids: set[str],
     gradient_by_parameter: dict[str, str],
     cotangent_by_activation: dict[tuple[int, str], str],
     inventory: ObjectCatalog,
     compiled_layout: CompiledTaskLayout,
     storage_contract: TaskStorageContract,
-) -> tuple[tuple[TensorSlot, ...], tuple[TaskStorageHandoff, ...]]:
+) -> tuple[tuple[ObjectSlot, ...], tuple[TaskStorageHandoff, ...]]:
     input_by_position = {slot.leaf_index: slot.object_id for slot in forward_inputs}
     resolver = TaskBindingResolver(
         inventory,
@@ -615,7 +615,7 @@ def _stage_backward_contributions(
         storage_contract=storage_contract,
     )
     output_leaves = {item.leaf_index for item in storage_contract.output_views}
-    results: list[TensorSlot] = []
+    results: list[ObjectSlot] = []
     for output_index in pair.forward.tensor_argument_positions:
         object_id = input_by_position.get(output_index)
         if object_id is None or output_index not in output_leaves:
@@ -633,15 +633,15 @@ def _stage_backward_contributions(
             persistence=Persistence.STEP,
             canonical_object_id=destination,
         )
-        results.append(TensorSlot(output_index, bound))
+        results.append(ObjectSlot(output_index, bound))
     return tuple(results), resolver.storage_handoffs
 
 
 def _tensor_slots(
     values: tuple[object, ...], inventory: ObjectCatalog
-) -> tuple[TensorSlot, ...]:
+) -> tuple[ObjectSlot, ...]:
     return tuple(
-        TensorSlot(
+        ObjectSlot(
             index,
             inventory.add(
                 value,
