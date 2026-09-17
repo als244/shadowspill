@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import ctypes
+from pathlib import Path
+
 import pytest
 
 from shadowspill.errors import AdmissionError
-from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.memory import (
+    PinnedHostPool,
+    SpillPool,
+    device,
+    pinned_host,
+    transfer_route,
+)
 from shadowspill.runtime import MemoryPool
 from shadowspill.runtime.configuration import (
     RuntimeConfigurationError,
+    Topology,
     resolve_dynamic_scratch_reserve,
     resolve_execution_budget,
     validate_topology,
@@ -53,8 +63,8 @@ def test_topology_rejects_unknown_and_duplicate_route_endpoints() -> None:
         )
 
 
-def test_topology_rejects_routes_without_a_supported_backend_pair() -> None:
-    with pytest.raises(RuntimeConfigurationError, match="only between"):
+def test_topology_rejects_a_route_with_no_device_endpoint() -> None:
+    with pytest.raises(RuntimeConfigurationError, match="exactly one endpoint"):
         validate_topology(
             {
                 "execution": device(physical_capacity=2 << 30),
@@ -93,3 +103,71 @@ def test_dynamic_scratch_reserve_is_an_optional_bounded_minimum() -> None:
         resolve_dynamic_scratch_reserve(-1, execution_budget=budget)
     with pytest.raises(AdmissionError, match="exceeds"):
         resolve_dynamic_scratch_reserve(budget + 1, execution_budget=budget)
+
+
+class _ThirdPartyPool(SpillPool):
+    """A spill pool kind neither this module nor the runtime knows about.
+
+    It stands in for a kind a loaded library registers, which is the point:
+    nothing in the neutral configuration may need to have heard of a kind in
+    order to carry it.
+    """
+
+    __slots__ = ()
+
+    #: One object, not a fresh one per call -- the runtime borrows a pointer to
+    #: it for the whole of bootstrap.
+    _storage = ctypes.c_uint64(0xC0FFEE)
+
+    @property
+    def library(self) -> Path:
+        return Path("/nowhere/libexample.so")
+
+    def configuration(self) -> ctypes.Structure:
+        return self._storage  # type: ignore[return-value]
+
+
+def test_topology_carries_a_kind_it_has_never_heard_of() -> None:
+    spill = _ThirdPartyPool(capacity=1 << 30, kind=7, kind_name="example")
+    topology = Topology(
+        *validate_topology(
+            {
+                "execution": device(physical_capacity=2 << 30),
+                "spill": spill,
+            },
+            {
+                "fetch": transfer_route(source="spill", destination="execution"),
+                "evict": transfer_route(source="execution", destination="spill"),
+            },
+        )
+    )
+
+    bootstrap = topology.pool_bootstrap
+    assert [item.kind for item in bootstrap] == [0, 7]
+    assert bootstrap[1].capacity_bytes == 1 << 30
+    assert bootstrap[1].library == Path("/nowhere/libexample.so")
+    assert bootstrap[1].configuration is spill.configuration()
+    # The device pool needs no kind configuration and names no library.
+    assert bootstrap[0].configuration is None
+    assert bootstrap[0].library is None
+
+    pools = topology.pools(1 << 29)
+    assert pools["spill"].kind == "example"
+    assert pools["execution"].kind == "device"
+
+
+def test_topology_admits_a_spill_pool_that_is_not_pinned_host() -> None:
+    """A topology whose only spill pool is a registered kind is accepted.
+
+    It used to be refused for want of a pinned-host pool specifically, which
+    made the one built-in spill kind a requirement rather than a default.
+    """
+
+    pools, _ = validate_topology(
+        {
+            "execution": device(physical_capacity=2 << 30),
+            "spill": _ThirdPartyPool(capacity=1 << 30, kind=7, kind_name="example"),
+        },
+        {"fetch": transfer_route(source="spill", destination="execution")},
+    )
+    assert not any(isinstance(value, PinnedHostPool) for value in pools.values())

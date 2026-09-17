@@ -109,9 +109,14 @@ def _run_ctest(*selectors: str) -> None:
 
 
 def test_c_canaries_pass() -> None:
-    """Every canary that does not need an accelerator."""
+    """Every canary that needs neither an accelerator nor a peer.
 
-    _run_ctest("--label-exclude", "cuda")
+    ``--label-exclude`` takes a regular expression, not a list: the two labels
+    are joined with ``|``, and writing them with a semicolon would exclude
+    nothing and silently run both sets here.
+    """
+
+    _run_ctest("--label-exclude", "cuda|network")
 
 
 @pytest.mark.cuda
@@ -119,3 +124,14 @@ def test_cuda_c_canaries_pass() -> None:
     """The canaries CMake labelled `cuda`, which need the qualified backend."""
 
     _run_ctest("--label-regex", "cuda")
+
+
+@pytest.mark.network
+def test_network_c_canaries_pass() -> None:
+    """The canaries CMake labelled `network`, which need a memory daemon.
+
+    They skip themselves when ``SHADOWSPILL_NETWORK_PEER`` names none, so this
+    passes on a box with no peer rather than failing for want of one.
+    """
+
+    _run_ctest("--label-regex", "network")

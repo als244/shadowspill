@@ -1,7 +1,8 @@
 # The C tree
 
 `csrc/` builds one library, `libshadowspill`, plus the pieces that are
-genuinely pluggable: the device backends and the PyTorch adapter.
+genuinely pluggable: the device backends, the network extension, the daemon
+that holds the far side of it, and the PyTorch adapter.
 
 ```text
 csrc/
@@ -40,14 +41,14 @@ csrc/
 │   └── runtime/           pools, leases, objects, transfers, and the worker,
 │       │                  split by subsystem; the runtime object itself is
 │       │                  opened, closed, grown and read in four files here
-│       ├── memory/          the arena and what it hands out
-│       │   ├── memory_pool/   arena, records, locks, leases, causal handoff
+│       ├── memory/          a pool's memory and what it hands out
+│       │   ├── memory_pool/   memory, records, locks, leases, causal handoff
 │       │   └── allocations/   one allocation: indexed, owned, made, freed
 │       ├── objects/          the table, its owners, its allocations, and
 │       │                     handing an object to the caller
 │       ├── tasks/            the table, the record, admission, the handles,
 │       │                     the boundaries, and the scopes between them
-│       ├── transfers/        the lanes, and what is in flight on each
+│       ├── transfers/        routes, their queues, the lanes, and calibration
 │       ├── sync/             event leases and their pools, completion tracking,
 │       │                     the quiescence wake-up, and the markers a caller
 │       │                     times its own work with
@@ -55,6 +56,10 @@ csrc/
 │       ├── telemetry/        the trace rings, the profiler, the statistics
 │       └── worker/           one action handled, dispatched, completed
 ├── backends/              dlopened device backends: mock and provider
+├── network/               pool kinds, and later lanes, whose memory is on
+│   └── src/               another machine; loaded the way a backend is
+├── daemon/                the far side: a process that holds registered
+│   └── src/               memory and answers two questions about it
 └── adapter/pytorch/       narrow allocator/storage bridge into PyTorch
     ├── include/shadowspill/  its one public header
     ├── lifecycle/         bootstrap, close, and the physical-memory ledger
@@ -76,6 +81,20 @@ toolchain the rest of the tree must not require. The PyTorch adapter is
 separate because it links libtorch, which planning-only callers must not be
 made to carry. Both keep their own ABI version, being genuinely compiled
 elsewhere.
+
+`network/` is separate for the first of those reasons and not the second. It
+implements contracts the runtime declares -- a pool's memory today, a lane
+later -- and exports one symbol, a descriptor read by whatever loads it.
+**`libshadowspill` does not link it and does not load it**: the dlopen happens
+one layer up, where a backend's already does, so the library that plans and
+executes a step still links libc and nothing else. Nothing in `src/runtime/`
+may include `network/internal.h`, and nothing does.
+
+`daemon/` links ibverbs and **not `libshadowspill`**, which is the point: the
+far side of a remote pool is not a second ShadowSpill but a process that owns a
+registered region. It is built only where verbs headers are found, while
+`network/` is built unconditionally -- the local side is a TCP client until
+there is a lane. See [its README](daemon/README.md) for the protocol.
 
 `src/common/platform.h` holds what the library asks of the operating system
 that POSIX and Windows spell differently: a monotonic clock, a thread yield, a

@@ -7,7 +7,8 @@ shadowspill/
 ├── src/
 │   ├── shadowspill/       installed Python package
 │   └── tools/             reusable source-tree diagnostics and qualification tools
-├── csrc/                  the C library, its backends, and public C headers
+├── csrc/                  the C library, its backends and public C headers,
+│                          the network extension, and the memory daemon
 ├── tests/                 fast tests mirroring product/tool boundaries
 ├── workloads/             model and data clients
 ├── reference/             executable reference implementations
@@ -93,6 +94,8 @@ src/shadowspill/
 ├── simulator/             the simulator and diagnostic timeline
 │   └── indexing/          the template, one schedule bound onto it, the result
 │                          decoded back, and the buffers all three hand to C
+├── network/               pool configurations whose memory is on another
+│                          machine, and the library that serves them
 ├── frontend.py            the twelve methods a framework frontend implements,
 │                          and nothing else
 ├── runtime/               one runtime in this process, framework-neutral:

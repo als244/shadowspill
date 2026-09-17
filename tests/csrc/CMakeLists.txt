@@ -29,6 +29,9 @@ add_test(
   NAME shadowspill_backend_contract_canary
   COMMAND shadowspill_backend_contract_canary $<TARGET_FILE:shadowspill_backend_mock>
 )
+# The value-wait sequence blocks until a word arrives, so a backend that stops
+# honouring it hangs here rather than failing. Bound it.
+set_tests_properties(shadowspill_backend_contract_canary PROPERTIES TIMEOUT 30)
 
 add_executable(shadowspill_simulator_canary simulator/simulator_canary.c)
 target_link_libraries(
@@ -74,7 +77,7 @@ add_test(NAME shadowspill_runtime_plan_canary COMMAND shadowspill_runtime_plan_c
 add_executable(
   shadowspill_memory_pool_canary
   runtime/memory_pool_canary.c
-  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/arena.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/memory.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/records.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/locks.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/leases.c
@@ -153,26 +156,44 @@ target_include_directories(
 )
 
 add_executable(
-  shadowspill_transfer_lane_canary
-  runtime/transfer_lane_canary.c
-  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/transfers/transfer_lane.c
+  shadowspill_transfer_queue_canary
+  runtime/transfer_queue_canary.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/transfers/transfer_queue.c
 )
 target_include_directories(
-  shadowspill_transfer_lane_canary
+  shadowspill_transfer_queue_canary
   PRIVATE
     ${PROJECT_SOURCE_DIR}/csrc/include
     ${PROJECT_SOURCE_DIR}/csrc/src/runtime
 )
-target_compile_definitions(shadowspill_transfer_lane_canary PRIVATE SHADOWSPILL_BUILDING)
+target_compile_definitions(shadowspill_transfer_queue_canary PRIVATE SHADOWSPILL_BUILDING)
 target_link_libraries(
-  shadowspill_transfer_lane_canary
+  shadowspill_transfer_queue_canary
   PRIVATE shadowspill_build_options Threads::Threads
 )
-add_test(NAME shadowspill_transfer_lane_canary COMMAND shadowspill_transfer_lane_canary)
+add_test(NAME shadowspill_transfer_queue_canary COMMAND shadowspill_transfer_queue_canary)
 set_tests_properties(
   shadowspill_runtime_completion_canary
   shadowspill_runtime_failure_canary
   PROPERTIES TIMEOUT 10
+)
+
+# A pool whose memory is on another machine. Labelled `network`, which at this
+# stage means "a daemon is reachable" -- the canary skips without one, and the
+# label is what keeps it out of the default suite.
+add_executable(shadowspill_remote_pool_canary network/remote_pool_canary.c)
+target_link_libraries(
+  shadowspill_remote_pool_canary
+  PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
+)
+add_test(NAME shadowspill_remote_pool_canary COMMAND shadowspill_remote_pool_canary)
+set_tests_properties(
+  shadowspill_remote_pool_canary
+  PROPERTIES
+    LABELS "network"
+    TIMEOUT 30
+    ENVIRONMENT
+      "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
 )
 
 if(TARGET shadowspill_backend_cuda)
@@ -216,6 +237,12 @@ if(TARGET shadowspill_pytorch)
       shadowspill_pytorch_adapter_canary $<TARGET_FILE:shadowspill_backend_mock>
   )
   set_tests_properties(
-    shadowspill_pytorch_adapter_canary PROPERTIES TIMEOUT 30
+    shadowspill_pytorch_adapter_canary
+    PROPERTIES
+      TIMEOUT 30
+      # The extension library the canary loads through the adapter. Not
+      # verbs-gated, so it is built wherever this canary is.
+      ENVIRONMENT
+        "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
   )
 endif()

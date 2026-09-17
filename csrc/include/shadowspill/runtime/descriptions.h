@@ -7,6 +7,8 @@
 
 #include <shadowspill/shadowspill.h>
 #include <shadowspill/backend.h>
+#include <shadowspill/runtime/lane.h>
+#include <shadowspill/runtime/pool_memory.h>
 #include <shadowspill/runtime/vocabulary.h>
 
 #ifdef __cplusplus
@@ -21,11 +23,20 @@ extern "C" {
  * borrowed for the call that reads it.
  */
 
-/* Where a pool's arena lives: device memory the backend allocates, or host
-   memory the pool allocates and the backend registers. */
+/*
+ * Where a pool's memory lives. These are the kinds shipped here -- device
+ * memory the backend allocates, host memory the pool allocates and the backend
+ * registers, and memory on another machine that a peer allocates and a NIC
+ * reaches.
+ *
+ * This is a list, not a bound. A pool's kind is looked up in `pool_memory`
+ * below, so a kind a loaded library registers works without appearing here,
+ * and nothing validates a kind by comparing it against the last value.
+ */
 typedef enum ShadowSpillPoolKind {
     SHADOWSPILL_POOL_DEVICE = 0,
-    SHADOWSPILL_POOL_PINNED_HOST = 1
+    SHADOWSPILL_POOL_PINNED_HOST = 1,
+    SHADOWSPILL_POOL_REMOTE = 2
 } ShadowSpillPoolKind;
 
 typedef struct ShadowSpillMemoryPoolDescription {
@@ -33,6 +44,10 @@ typedef struct ShadowSpillMemoryPoolDescription {
     uint8_t kind;
     uint64_t capacity_bytes;
     uint64_t minimum_alignment;
+    /* Passed to this kind's `acquire` untouched; NULL for a kind that needs
+       none. It is how a kind is told which machine, which device, which
+       anything -- so no description field ever has to name one. */
+    void *configuration;
 } ShadowSpillMemoryPoolDescription;
 
 /* A directed copy path between a pinned-host pool and the device pool. The
@@ -53,10 +68,21 @@ typedef struct ShadowSpillRuntimeConfig {
     uint32_t pool_count;
     const ShadowSpillTransferRouteDescription *routes;
     uint32_t route_count;
+    /* Which lane serves each directional pool-kind pair. A route resolves its
+       lane by looking up its two pools' kinds here, so a lane a loaded library
+       registers is found the same way a built-in one is. Two entries claiming
+       one pair is refused at create. */
+    const ShadowSpillLaneDescription *lanes;
+    uint32_t lane_count;
+    /* Where each pool kind's memory comes from. The runtime seeds this with
+       the kinds it implements and appends these, so one lookup by kind serves
+       both. Two entries claiming one kind is refused at create. */
+    const ShadowSpillPoolMemoryDescription *pool_memory;
+    uint32_t pool_memory_count;
     uint64_t worker_poll_nanoseconds;
-    /* How far a lane may run ahead with background transfers: copies the
-       plan did not schedule (an opening restore, a reconciliation) are
-       dispatched only while the lane holds fewer than this many of their
+    /* How far a route's queue may run ahead with background transfers: copies
+       the plan did not schedule (an opening restore, a reconciliation) are
+       dispatched only while the queue holds fewer than this many of their
        bytes in flight, so a transfer the plan did schedule never waits
        behind more than this. Zero removes the bound. A single background
        copy larger than the window runs alone. */
