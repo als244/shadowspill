@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 # Third-party kernels -- cuBLAS, cuDNN, and any custom kernel a model pulls in
 # (flash-attention, fla, and the like) -- allocate their workspaces outside the
@@ -92,6 +93,21 @@ class SpillPool:
 
     #: What the pool registry reports for it.
     kind_name: str = "pinned_host"
+
+    #: Whether this process can dereference a lease from this pool.
+    #:
+    #: Mirrors the one fact the runtime states by leaving ``write`` and
+    #: ``read`` NULL on a kind's ``pool_memory`` entry, and is declared here
+    #: for the same reason it is declared there: it is a property of the kind,
+    #: known by whoever implements it, and not something a caller should have
+    #: to guess. A ``ClassVar`` rather than a field because no instance may
+    #: claim otherwise -- a pool that said it was addressable when it is not
+    #: would fault rather than fail.
+    #:
+    #: False costs a host copy of any state the framework holds: the runtime
+    #: copies it in when a plan adopts it and back out when the plan is done,
+    #: through the kind's ``write`` and ``read``.
+    addressable: ClassVar[bool] = True
 
     def __post_init__(self) -> None:
         _positive_bytes(self.capacity, "capacity")

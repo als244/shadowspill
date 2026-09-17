@@ -195,6 +195,14 @@ class Topology:
                     device_ordinal=(
                         config.device if isinstance(config, DevicePool) else None
                     ),
+                    # The execution pool is device memory, which the framework
+                    # addresses through the backend rather than directly; every
+                    # other kind answers for itself.
+                    addressable=(
+                        True
+                        if isinstance(config, DevicePool)
+                        else config.addressable
+                    ),
                 )
                 for index, (name, config) in enumerate(self.pool_configs.items())
             }

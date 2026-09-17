@@ -42,15 +42,23 @@ read as it is rather than assumed to match.
 This costs nothing and asks nothing of the caller. ShadowSpill does it with
 the optimizer the caller already passes.
 
-### Allocated in the pool
+### Built, then imported into the pool
 
-Every declared entry is allocated in the spill pool, which is where it will
-live for the run. Nothing is allocated outside it, and there is no size below
-which an entry is treated differently: a step counter an optimizer keeps as a
-scalar tensor is allocated there like any other entry, and reads from the
-host as it would anywhere else. An entry an optimizer keeps as a plain Python
-number is not a tensor, so it is not declared and nothing is allocated for
-it.
+Every declared entry ends up in the spill pool, which is where it will live for
+the run, and gets there the way all state does: it is built in ordinary host
+memory, filled, and imported. There is no size below which an entry is treated
+differently -- a step counter an optimizer keeps as a scalar tensor is imported
+like any other entry, and reads from the host as it would anywhere else. An
+entry an optimizer keeps as a plain Python number is not a tensor, so it is not
+declared and nothing is built for it.
+
+The entries were once taken from the spill pool directly, so that the caller's
+initialiser wrote where the values would live and the host never held them.
+That is cheaper and it is available only to a pool this process can address; a
+pool on another machine cannot hand out memory for a caller to write. One path
+that always works was judged worth more than two that each work sometimes, so
+the host holds the state briefly while it is built. See [importing
+state](state-import.md).
 
 ### Filled by the caller
 
@@ -71,14 +79,14 @@ def zero_state(
         tensor.zero_()
 ```
 
-It is called once per declared entry, with the entry's name, the pool-backed
-tensor to fill, and the parameter the entry belongs to -- so an initialiser
+It is called once per declared entry, with the entry's name, the tensor to
+fill, and the parameter the entry belongs to -- so an initialiser
 that depends on the parameter can see it. Per entry rather than per state
 mapping, so an initialiser needing scratch gets it for one entry at a time and
 the transient stays bounded by construction.
 
 An optimizer that declares state with no initialiser to fill it is refused at
-planning, naming the entries it declared. Running on whatever the pool memory
+planning, naming the entries it declared. Running on whatever the memory
 held would be the same silent wrong answer that
 [a missing `reset_parameters`](state-import.md#what-is-refused) would be.
 

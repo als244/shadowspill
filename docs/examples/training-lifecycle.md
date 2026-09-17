@@ -82,9 +82,9 @@ learning rate is a value the caller supplies, and each call sets it. A value
 named this way is captured once, by geometry, so a schedule that changes it
 every step never recaptures the update. `optimizer_state_init` is required
 whenever the optimizer keeps state: the optimizer declares what state exists
-by running on meta parameters, ShadowSpill allocates it in the spill pool,
-and this fills it, because a default would be an assumption that fails
-silently.
+by running on meta parameters, ShadowSpill builds it, this fills it -- because
+a default would be an assumption that fails silently -- and the import that
+adopts the optimizer's state for the plan puts it in the spill pool.
 
 The scalar loss is `result.objectives[0]`. ShadowSpill validates and records
 this explicit objective return during capture; it does not guess which model
