@@ -77,6 +77,7 @@ typedef struct ShadowSpillBackendStatistics {
     uint64_t bytes_device_to_device;
     uint64_t event_queries;
     uint64_t stream_waits;
+    uint64_t stream_writes;
     uint64_t stream_synchronizations;
     uint64_t provider_activations;
 } ShadowSpillBackendStatistics;
@@ -183,7 +184,7 @@ typedef struct ShadowSpillBackend {
     );
     /*
      * Holds `stream` until the word at `index` of `signals` reaches
-     * `generation`, comparing greater-or-equal so a value already past it does
+     * `value`, comparing greater-or-equal so a value already past it does
      * not stall. `wait_event` orders a stream behind work the device will do;
      * this orders it behind work the device cannot see -- a transfer some other
      * hardware is performing, whose completion only the host learns about.
@@ -198,7 +199,31 @@ typedef struct ShadowSpillBackend {
         ShadowSpillBackendStream stream,
         ShadowSpillBackendSignals signals,
         uint32_t index,
-        uint64_t generation
+        uint64_t value
+    );
+    /*
+     * The mirror of `wait_value`: the *stream* stores `value`, and a host
+     * thread polling the word learns how far the stream has got.
+     *
+     * It exists for the same reason as the wait and answers the opposite
+     * question. A lane that stages through a host buffer must not hand the
+     * next piece of that buffer to hardware until the device has finished
+     * reading what is already there, and only the device can say when that is.
+     * An event cannot serve: a lane enqueues every piece of a transfer up
+     * front, so one event per buffer slot would be recorded several times
+     * before any query, and a query reports the most recent capture -- it
+     * would answer about work that cannot run yet. A value the stream writes
+     * as it passes is monotonic and has no such ambiguity.
+     *
+     * Enqueued on the stream like any other work, so it happens in order and
+     * says what it means: everything before it on this stream is done.
+     */
+    int (*write_value)(
+        void *state,
+        ShadowSpillBackendStream stream,
+        ShadowSpillBackendSignals signals,
+        uint32_t index,
+        uint64_t value
     );
     /* Blocks the calling thread until the device reaches the event. The
      * stream wait above orders one stream behind another; this one is how a
