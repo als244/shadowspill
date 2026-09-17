@@ -4,6 +4,7 @@
 #include <sched.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* Refuse new callbacks and wait for those in flight to leave the runtime.
    Hands back the runtime to close, or NULL with the status to return: OK
@@ -63,10 +64,13 @@ static ShadowSpillStatus caller_allocations_released(
 }
 
 /* Take the runtime out of every published field, under the lock, and hand
-   its backend to the caller to release once the runtime is gone. */
+   its backend and its extension libraries to the caller to release once the
+   runtime is gone. */
 static ShadowSpillStatus unpublish(
     ShadowSpillRuntime *runtime,
-    ShadowSpillPytorchLoadedBackend *backend
+    ShadowSpillPytorchLoadedBackend *backend,
+    ShadowSpillPytorchLoadedLibrary **libraries,
+    uint32_t *library_count
 ) {
     pthread_mutex_lock(&adapter.mutex);
     if (adapter.runtime != runtime) {
@@ -80,8 +84,12 @@ static ShadowSpillStatus unpublish(
         &adapter.published_allocator_pool_id, UINT32_MAX, memory_order_relaxed
     );
     *backend = adapter.backend;
+    *libraries = adapter.libraries;
+    *library_count = adapter.library_count;
     adapter.runtime = NULL;
     adapter.backend = (ShadowSpillPytorchLoadedBackend){0};
+    adapter.libraries = NULL;
+    adapter.library_count = 0U;
     adapter.closed = 1U;
     pthread_mutex_unlock(&adapter.mutex);
     return SHADOWSPILL_STATUS_OK;
@@ -90,11 +98,15 @@ static ShadowSpillStatus unpublish(
 /*
  * runtime_destroy stops and joins the worker before releasing anything it
  * can observe. Keep the backend alive until all lanes, events, pinned
- * registrations, and pool arenas have been explicitly closed.
+ * registrations, and pool memory has been explicitly released -- and keep the
+ * extension libraries alive for exactly as long, since a pool kind's `release`
+ * and a lane's `destroy` live in them and run during the same teardown.
  */
 static ShadowSpillStatus release(
     ShadowSpillRuntime *runtime,
     ShadowSpillPytorchLoadedBackend *backend,
+    ShadowSpillPytorchLoadedLibrary *libraries,
+    uint32_t library_count,
     int wait_for_outstanding_work,
     uint64_t *outstanding_actions,
     uint64_t *outstanding_retirements
@@ -106,6 +118,8 @@ static ShadowSpillStatus release(
                   runtime, outstanding_actions, outstanding_retirements
               );
     shadowspill_runtime_destroy(runtime);
+    shadowspill_pytorch_libraries_unload(libraries, library_count);
+    free(libraries);
     shadowspill_pytorch_backend_unload(backend);
     return status;
 }
@@ -129,7 +143,9 @@ static ShadowSpillStatus close_adapter_runtime(
         }
     }
     ShadowSpillPytorchLoadedBackend backend = {0};
-    status = unpublish(runtime, &backend);
+    ShadowSpillPytorchLoadedLibrary *libraries = NULL;
+    uint32_t library_count = 0U;
+    status = unpublish(runtime, &backend, &libraries, &library_count);
     if (status != SHADOWSPILL_STATUS_OK) {
         resume();
         return status;
@@ -137,6 +153,8 @@ static ShadowSpillStatus close_adapter_runtime(
     return release(
         runtime,
         &backend,
+        libraries,
+        library_count,
         wait_for_outstanding_work,
         outstanding_actions,
         outstanding_retirements

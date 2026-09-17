@@ -118,28 +118,32 @@ underneath, and the clocks a step is read on.
 21. [Backends](architecture/backends.md) — the one component that knows a
     platform, the driver-level table it implements, and how a new provider
     plugs in. The three pages after it are built on that table.
-22. [Memory pools](architecture/memory-pools.md) — pools and their arenas,
-    device and pinned host, as ShadowSpill objects built on the backend.
-23. [Transfers](architecture/transfers.md) — routes, the lane each owns,
-    dispatch order, and calibration on those lanes.
-24. [Events](architecture/events.md) — event leases and pools, sealing,
+22. [Memory pools](architecture/memory-pools.md) — pools, leases, and where a
+    pool's region comes from: a kind selects an acquire/release pair, so the
+    kinds are a list rather than a fixed set.
+23. [Lanes](architecture/lanes.md) — what moves bytes between two pools: the
+    contract a transport implements, how one is chosen from the pool kinds it
+    connects, and the stream ordering it must not disturb.
+24. [Transfers](architecture/transfers.md) — routes, the queue each owns,
+    dispatch order, and calibration through the lane.
+25. [Events](architecture/events.md) — event leases and pools, sealing,
     completion tracking, and the timing pool behind traced intervals.
-25. [Memory runtime](architecture/memory-runtime.md) — leases, causal reuse,
+26. [Memory runtime](architecture/memory-runtime.md) — leases, causal reuse,
     the worker, failure, and tracing, over the pools, lanes and events above.
-26. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
+27. [Task boundaries](architecture/task-boundaries.md) — what `before_task` and
     `after_task` each do, how allocations find their task, and what is still in
     flight when the dispatching thread returns.
-27. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
+28. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
     a failure is handled at each scope, and why a process that is exiting is
     abandoned rather than closed.
-28. [Step boundaries](architecture/step-boundaries.md) — the recurrent
+29. [Step boundaries](architecture/step-boundaries.md) — the recurrent
     invocation cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening restore,
     and what step time means.
-29. [PyTorch adapter](architecture/adapter.md) — what the adapter library is
+30. [PyTorch adapter](architecture/adapter.md) — what the adapter library is
     made of, how its source is laid out, what it requires of a backend, and
     what it exposes upward.
-30. [Timelines](architecture/timelines.md) — the two clocks a traced step is
+31. [Timelines](architecture/timelines.md) — the two clocks a traced step is
     measured on, the origin they share, and what an untraced step pays.
 
 ## Python
@@ -205,6 +209,10 @@ rules, and platforms.
   boundaries, telemetry, and admission replay.
 - [Backend contract](c/backends.md) — the driver-level table a provider
   implements, and what the runtime builds on top of it.
+- [Lane contract](c/lanes.md) — what moves bytes between two pools: the table a
+  transport implements, and how the runtime finds one.
+- [Pool memory contract](c/pool-memory.md) — where a pool's memory comes from:
+  the pair a kind of memory implements, and how the runtime finds it.
 - [Planner C API](c/planner.md) — the planning problem in indexed form and the
   certification a schedule passes whichever search found it, through to fixed
   placement. Names no search.

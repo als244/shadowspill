@@ -24,9 +24,23 @@ typedef struct ShadowSpillPytorchLoadedBackend {
     ShadowSpillBackendDestroy destroy;
 } ShadowSpillPytorchLoadedBackend;
 
+/* An extension library as loaded from its shared object. `description` points
+   into the library's static storage, so it is valid exactly as long as the
+   handle beside it -- which is why the two travel together and are closed
+   together. Unlike a backend there is nothing to destroy: nothing of the
+   library's ran. */
+typedef struct ShadowSpillPytorchLoadedLibrary {
+    void *library;
+    const ShadowSpillLibraryDescription *description;
+} ShadowSpillPytorchLoadedLibrary;
+
 typedef struct ShadowSpillPytorchAdapterState {
     pthread_mutex_t mutex;
     ShadowSpillPytorchLoadedBackend backend;
+    /* Held for the runtime's whole life: its pools and lanes call into these
+       at close, so they are unloaded after the runtime is destroyed. */
+    ShadowSpillPytorchLoadedLibrary *libraries;
+    uint32_t library_count;
     ShadowSpillRuntime *runtime;
     int32_t device_ordinal;
     uint32_t allocator_pool_id;

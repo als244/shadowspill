@@ -11,6 +11,7 @@ add_library(
   lifecycle/backend.c
   lifecycle/bootstrap.c
   lifecycle/close.c
+  lifecycle/library.c
   lifecycle/physical.c
   tasks/boundaries.c
   tasks/scopes.c

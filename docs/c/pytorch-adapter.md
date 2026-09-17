@@ -29,6 +29,33 @@ the table with `shadowspill_backend_is_valid()`, and keeps it for the life of
 the runtime. The adapter links no provider library and includes no provider
 header; see [backends](../architecture/backends.md).
 
+## Extension libraries
+
+`ShadowSpillPytorchAdapterConfig.libraries` and `library_count` name shared
+objects supplying [pool kinds](pool-memory.md), [lanes](lanes.md), or both.
+Each is opened with `dlopen()`, and one symbol is resolved:
+`shadowspill_library_describe()`, which returns a
+`ShadowSpillLibraryDescription` in the library's static storage. Its entries
+are copied into the runtime config's `pool_memory` and `lanes` lists, so a kind
+or a lane from a library is resolved by exactly the lookup a built-in one is.
+
+**Nothing of a library runs at load.** The symbol is a descriptor, not a
+create: a library has no way to report a failure at load, so everything that
+depends on what the hardware or the network can actually do happens later, in
+a pool's `acquire` or a lane's `create`, where a failure path and an unwind
+exist. A path that cannot be opened, or a descriptor that does not match this
+build's `SHADOWSPILL_ABI_VERSION`, fails bootstrap.
+
+**The runtime loads nothing** — it is handed a config whose lists are already
+filled in, which is what keeps `libshadowspill` linking libc alone. The
+libraries stay open for the runtime's whole life and are closed after it is
+destroyed, because a pool kind's `release` and a lane's `destroy` live in them
+and run during that teardown.
+
+`ShadowSpillPytorchPoolConfig.configuration` is forwarded to its pool's kind
+untouched and read by nothing in between. It is how a pool says which machine
+or which device it wants without this header learning any such word.
+
 ## Vocabulary and descriptions
 
 `ShadowSpillPytorchAdapterConfig` is what bootstrap takes: the pools and
