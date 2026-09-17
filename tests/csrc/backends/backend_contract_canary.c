@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
         backend.allocate_device == NULL || backend.free_device == NULL ||
         backend.register_host_memory == NULL || backend.unregister_host_memory == NULL ||
         backend.allocate_signals == NULL || backend.free_signals == NULL ||
-        backend.wait_value == NULL ||
+        backend.wait_value == NULL || backend.write_value == NULL ||
         backend.create_stream == NULL || backend.destroy_stream == NULL ||
         backend.synchronize_stream == NULL || backend.resolve_stream == NULL ||
         backend.copy_host_to_device == NULL || backend.copy_device_to_host == NULL ||
@@ -76,6 +76,16 @@ int main(int argc, char **argv) {
     if (backend.create_stream(backend.state, &signal_stream) != 0) {
         FAIL("could not create a stream to wait on a value");
     }
+    /* The mirror: the stream stores a word a host thread can read. The mock has
+       no device, so this only has to be observable -- which is the whole of
+       what a lane polling it needs. */
+    if (backend.write_value(backend.state, signal_stream, signals, 0U, 3U) != 0) {
+        FAIL("the stream refused to store a generation");
+    }
+    if (words[0] != 3U) {
+        FAIL("a generation the stream stored was not visible to the host");
+    }
+    words[0] = 0U;
     /* Already satisfied: generation 0 is what the word holds. */
     if (backend.wait_value(backend.state, signal_stream, signals, 0U, 0U) != 0) {
         FAIL("a wait on a generation already stored was refused");

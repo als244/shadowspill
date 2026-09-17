@@ -133,10 +133,13 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(MemoryPoolStatistics) == 8 + 19 * 8
     assert ctypes.sizeof(AllocationEvent) == 80
     assert ctypes.sizeof(Allocation) == 48
-    assert ctypes.sizeof(BackendStatistics) == 22 * 8
+    # 23 since `write_value` joined the contract and the mock counts its
+    # stream writes beside its stream waits.
+    assert ctypes.sizeof(BackendStatistics) == 23 * 8
     assert ctypes.sizeof(RuntimeFailure) == 192
     assert ctypes.sizeof(AdapterFailure) == 216
-    assert ctypes.sizeof(AdapterStatistics) == 664
+    # 672 rather than 664: it embeds BackendStatistics, which grew by one.
+    assert ctypes.sizeof(AdapterStatistics) == 672
     assert ctypes.sizeof(ObjectBinding) == 40
     assert ctypes.sizeof(ObjectDescription) == 32
     assert ctypes.sizeof(ObjectUpdate) == 16

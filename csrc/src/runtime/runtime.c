@@ -15,6 +15,7 @@ int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
         backend->unregister_host_memory != NULL &&
         backend->allocate_signals != NULL && backend->free_signals != NULL &&
         backend->wait_value != NULL &&
+        backend->write_value != NULL &&
         backend->create_stream != NULL && backend->destroy_stream != NULL &&
         backend->synchronize_stream != NULL && backend->resolve_stream != NULL &&
         backend->copy_host_to_device != NULL &&

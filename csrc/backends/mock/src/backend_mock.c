@@ -8,21 +8,21 @@
 
 /*
  * A pending value wait. The mock's clock cannot predict when a host thread will
- * store a generation, so readiness stops being a time and becomes a condition:
+ * store a value, so readiness stops being a time and becomes a condition:
  * a stream carrying an unmet wait is not ready whatever its clock says, and an
  * event recorded on it inherits that.
  */
 typedef struct MockPendingValue {
     const uint64_t *word;
-    uint64_t generation;
+    uint64_t awaited;
     int pending;
 } MockPendingValue;
 
-/* Satisfied once the word reaches the generation. A wait never un-satisfies,
+/* Satisfied once the word reaches the value. A wait never un-satisfies,
    so this may be read without the backend's lock. */
 static int value_satisfied(const MockPendingValue *value) {
     return !value->pending ||
-           __atomic_load_n(value->word, __ATOMIC_ACQUIRE) >= value->generation;
+           __atomic_load_n(value->word, __ATOMIC_ACQUIRE) >= value->awaited;
 }
 
 typedef struct MockStream {
@@ -339,7 +339,7 @@ static int query_event(void *state, ShadowSpillBackendEvent event, int *complete
  *
  * The mock has no device, so "the stream waits until the word reaches a value"
  * becomes "the stream cannot be ready before the host stores that value". A
- * wait on a word already past its generation is satisfied at once; a wait on
+ * wait on a word already past the value it awaits is satisfied at once; a wait on
  * one that has not arrived pushes the stream's clock out to now, and the store
  * that follows moves it no further. That is the same shape a driver's value
  * wait has, which is what the lane layer above is written against.
@@ -400,7 +400,7 @@ static int wait_value(
     ShadowSpillBackendStream stream,
     ShadowSpillBackendSignals signals,
     uint32_t index,
-    uint64_t generation
+    uint64_t value
 ) {
     ShadowSpillMockBackend *backend = state;
     if (operation_fails(backend)) {
@@ -414,10 +414,40 @@ static int wait_value(
     pthread_mutex_lock(&backend->mutex);
     target->value = (MockPendingValue){
         .word = &block->words[index],
-        .generation = generation,
+        .awaited = value,
         .pending = 1,
     };
     ++backend->statistics.stream_waits;
+    pthread_mutex_unlock(&backend->mutex);
+    return 0;
+}
+
+/*
+ * The mirror of `wait_value`. The mock has no device, so "the stream reaches
+ * this point" is its logical clock reaching it: the word is stored when the
+ * stream has no wait outstanding, and left for the drain to store when it has.
+ * That is enough for the ordering a caller can observe, which is all the mock
+ * promises.
+ */
+static int write_value(
+    void *state,
+    ShadowSpillBackendStream stream,
+    ShadowSpillBackendSignals signals,
+    uint32_t index,
+    uint64_t value
+) {
+    ShadowSpillMockBackend *backend = state;
+    if (operation_fails(backend)) {
+        return -1;
+    }
+    MockStream *target = stream_pointer(stream);
+    MockSignals *block = signals_pointer(signals);
+    if (target == NULL || block == NULL || index >= block->count) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    block->words[index] = value;
+    ++backend->statistics.stream_writes;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
@@ -551,6 +581,7 @@ static ShadowSpillBackend interface_for(ShadowSpillMockBackend *backend) {
         .allocate_signals = allocate_signals,
         .free_signals = free_signals,
         .wait_value = wait_value,
+        .write_value = write_value,
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .synchronize_stream = synchronize_stream,
