@@ -1,87 +1,9 @@
-/* Growing a pool, and reading what one holds. */
+/* Reading what a pool holds. */
 #include "internal.h"
 
 #include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-
-ShadowSpillStatus shadowspill_memory_pool_grow(
-    ShadowSpillRuntime *runtime,
-    uint32_t pool_id,
-    uint64_t capacity_bytes
-) {
-    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
-    if (pool == NULL || capacity_bytes > SIZE_MAX) {
-        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-    }
-    ShadowSpillStatus status = shadowspill_runtime_wait_idle(runtime);
-    if (status != SHADOWSPILL_STATUS_OK) {
-        return status;
-    }
-    pthread_mutex_lock(&runtime->mutex);
-    status = shadowspill_current_status_locked(runtime);
-    uint64_t current_bytes = pool->ranges.capacity;
-    if (status != SHADOWSPILL_STATUS_OK) {
-        goto done;
-    }
-    if (atomic_load_explicit(&runtime->closing, memory_order_acquire) != 0U ||
-        atomic_load_explicit(
-            &runtime->actions.count, memory_order_acquire
-        ) != 0U ||
-        runtime->pending_retirements != 0U) {
-        status = SHADOWSPILL_STATUS_INVALID_STATE;
-        goto done;
-    }
-    if (capacity_bytes < current_bytes) {
-        status = SHADOWSPILL_STATUS_INVALID_ARGUMENT;
-        goto done;
-    }
-    if (capacity_bytes == current_bytes) {
-        goto done;
-    }
-
-    void *replacement = NULL;
-    if (shadowspill_memory_pool_arena_allocate(
-            pool, capacity_bytes, &replacement
-        ) != 0) {
-        status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
-        goto done;
-    }
-    if (current_bytes != 0U) {
-        memcpy(replacement, pool->base, (size_t)current_bytes);
-    }
-    ShadowSpillRangeAllocator ranges = {0};
-    if (shadowspill_range_clone_extended(
-            &pool->ranges,
-            capacity_bytes,
-            &ranges
-        ) != 0) {
-        (void)shadowspill_memory_pool_arena_release(pool, replacement, capacity_bytes);
-        status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
-        goto done;
-    }
-    if (pool->base != NULL && shadowspill_memory_pool_arena_release(
-            pool, pool->base, pool->arena_bytes
-        ) != 0) {
-        shadowspill_range_destroy(&ranges);
-        (void)shadowspill_memory_pool_arena_release(pool, replacement, capacity_bytes);
-        status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
-        goto done;
-    }
-    shadowspill_memory_pool_rebase_locked(
-        pool, replacement
-    );
-    pool->arena_bytes = capacity_bytes;
-    shadowspill_range_destroy(&pool->ranges);
-    pool->ranges = ranges;
-    shadowspill_publish_pool_geometry_locked(pool);
-
-done:
-    pthread_mutex_unlock(&runtime->mutex);
-    return status;
-}
 
 ShadowSpillStatus shadowspill_memory_pool_live_allocations(
     ShadowSpillRuntime *runtime,
