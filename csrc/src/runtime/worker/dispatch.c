@@ -1,4 +1,4 @@
-/* A transfer onto its lane: the destination's dependency, the copy, and
+/* A transfer onto its stream: the destination's dependency, the copy, and
  * the events that order both against the compute stream. */
 #define _GNU_SOURCE
 
@@ -13,8 +13,7 @@ static int submit_transfer_copy(
     const ShadowSpillRouteState *route,
     void *destination,
     const void *source,
-    uint64_t bytes,
-    ShadowSpillBackendStream stream
+    uint64_t bytes
 ) {
     const char *fallback = action->kind == SHADOWSPILL_RUNTIME_FETCH
         ? "shadowspill.runtime.transfer.fetch.unlabeled"
@@ -23,15 +22,15 @@ static int submit_transfer_copy(
         runtime,
         action->trace_label == NULL ? fallback : action->trace_label
     );
-    const int status = shadowspill_route_copy_async(
-        runtime, route, destination, source, bytes, stream
+    const int status = route->operations->copy(
+        route->lane, destination, source, bytes
     );
     shadowspill_profiler_range_end(runtime, range);
     return status;
 }
 
 /*
- * A traced transfer is measured on its lane by the worker that dispatches
+ * A traced transfer is measured on its stream by the worker that dispatches
  * it: the interval opens just before the copy and closes just after it,
  * ahead of the completion event, so observing the completion guarantees the
  * interval is readable. An untraced step pays the acquire load and nothing
@@ -44,26 +43,28 @@ static int submit_traced_copy(
     const ShadowSpillRouteState *route,
     void *source,
     void *destination,
-    uint64_t bytes,
-    ShadowSpillBackendStream lane
+    uint64_t bytes
 ) {
+    /* A lane that cannot place an instant on the trace's clock leaves both
+       interval entries NULL, and its transfers are recorded untimed. */
     const int traced =
         atomic_load_explicit(&runtime->trace_active, memory_order_acquire) != 0U &&
-        runtime->trace_origin_present;
+        runtime->trace_origin_present &&
+        route->operations->interval_open != NULL;
     if (traced) {
-        (void)shadowspill_stream_interval_open(
-            runtime, &action->stream_interval, lane
+        (void)route->operations->interval_open(
+            route->lane, &action->stream_interval
         );
     }
     if (submit_transfer_copy(
-            runtime, action, route, source, destination, bytes, lane
+            runtime, action, route, source, destination, bytes
         ) != 0) {
         shadowspill_stream_interval_discard(runtime, &action->stream_interval);
         return -1;
     }
     if (traced) {
-        (void)shadowspill_stream_interval_close(
-            runtime, &action->stream_interval, lane
+        (void)route->operations->interval_close(
+            route->lane, &action->stream_interval
         );
     }
     return 0;
@@ -133,11 +134,16 @@ static int acquire_reserved_destination(
     }
     if (dependency_event != NULL) {
         ShadowSpillRouteState *route = route_for_action(action);
-        if (route == NULL || runtime->backend.wait_event(
-                runtime->backend.state,
-                route->lane,
-                dependency_event->event
-            ) != 0) {
+        /*
+         * The destination's dependency, ordered on the lane rather than on a
+         * stream. A retry here is treated as a failure on purpose: this runs
+         * while the reservation is being taken, before the action is claimed,
+         * so there is no claimed action to hand back and no pending head to
+         * return it to. A lane that needs retries for its dependency waits
+         * would have to move this call to where the trigger wait happens.
+         */
+        if (route == NULL ||
+            route->operations->wait(route->lane, dependency_event->event) != 0) {
             (void)shadowspill_event_lease_release(runtime, dependency_event);
             return -1;
         }
@@ -234,12 +240,36 @@ int shadowspill_action_dispatch_evict_locked(
         runtime, &completion_event
     );
     int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
-    if (!backend_failed && runtime->backend.wait_event(
-            runtime->backend.state,
-            route->lane,
-            trigger_event->event
-        ) != 0) {
-        backend_failed = 1;
+    int retry = 0;
+    if (!backend_failed) {
+        const int waited =
+            route->operations->wait(route->lane, trigger_event->event);
+        if (waited < 0) {
+            backend_failed = 1;
+        } else if (waited > 0) {
+            /* The lane cannot enqueue this dependency and wants the next poll.
+               Undo the events taken for this attempt and let the caller hand
+               the action back to its queue. */
+            retry = 1;
+        }
+    }
+    if (retry) {
+        /*
+         * Nothing has been issued, so this attempt simply unwinds: give back
+         * both leases and return with the object lock the caller expects held.
+         * The action goes back to its queue's head, not its tail, so the order
+         * the boundaries triggered survives the retry.
+         *
+         * No lane returns this yet -- the host-device lane's waits are
+         * device-side and always enqueue. It is here because the contract says
+         * a host-issued lane may ask for it, and Phase 4 brings one.
+         */
+        if (completion_event != NULL) {
+            (void)shadowspill_event_lease_release(runtime, completion_event);
+        }
+        (void)shadowspill_event_lease_release(runtime, trigger_event);
+        pthread_mutex_lock(&object->lock);
+        return SHADOWSPILL_DISPATCH_RETRY;
     }
     if (!backend_failed && (submit_traced_copy(
             runtime,
@@ -247,15 +277,12 @@ int shadowspill_action_dispatch_evict_locked(
             route,
             spill_lease->pointer,
             execution_pointer,
-            bytes,
-            route->lane
-        ) != 0 || runtime->backend.record_event(
-                runtime->backend.state,
-                completion_event->event,
-                route->lane
+            bytes
+        ) != 0 || route->operations->signal(
+                route->lane, completion_event->event
             ) != 0 || shadowspill_completion_submit(
                 runtime,
-                route->lane,
+                route->stream,
                 completion_event,
                 object_id,
                 allocation_id
@@ -284,7 +311,7 @@ int shadowspill_action_dispatch_evict_locked(
         /*
          * Once a causal destination has accepted a predecessor dependency,
          * it cannot safely re-enter the free list on submission failure.
-         * Failure latches the runtime; close drains the lane and tears down
+         * Failure latches the runtime; close drains the stream and tears down
          * the owning pool without exposing this range to another allocation.
          */
         (void)spill_lease_created;
@@ -394,12 +421,36 @@ int shadowspill_action_dispatch_fetch_locked(
         runtime, &completion_event
     );
     int backend_failed = event_status != SHADOWSPILL_STATUS_OK || route == NULL;
-    if (!backend_failed && runtime->backend.wait_event(
-            runtime->backend.state,
-            route->lane,
-            trigger_event->event
-        ) != 0) {
-        backend_failed = 1;
+    int retry = 0;
+    if (!backend_failed) {
+        const int waited =
+            route->operations->wait(route->lane, trigger_event->event);
+        if (waited < 0) {
+            backend_failed = 1;
+        } else if (waited > 0) {
+            /* The lane cannot enqueue this dependency and wants the next poll.
+               Undo the events taken for this attempt and let the caller hand
+               the action back to its queue. */
+            retry = 1;
+        }
+    }
+    if (retry) {
+        /*
+         * Nothing has been issued, so this attempt simply unwinds: give back
+         * both leases and return with the object lock the caller expects held.
+         * The action goes back to its queue's head, not its tail, so the order
+         * the boundaries triggered survives the retry.
+         *
+         * No lane returns this yet -- the host-device lane's waits are
+         * device-side and always enqueue. It is here because the contract says
+         * a host-issued lane may ask for it, and Phase 4 brings one.
+         */
+        if (completion_event != NULL) {
+            (void)shadowspill_event_lease_release(runtime, completion_event);
+        }
+        (void)shadowspill_event_lease_release(runtime, trigger_event);
+        pthread_mutex_lock(&object->lock);
+        return SHADOWSPILL_DISPATCH_RETRY;
     }
     if (!backend_failed && (submit_traced_copy(
             runtime,
@@ -407,15 +458,12 @@ int shadowspill_action_dispatch_fetch_locked(
             route,
             allocation->pointer,
             spill->lease->pointer,
-            bytes,
-            route->lane
-        ) != 0 || runtime->backend.record_event(
-                runtime->backend.state,
-                completion_event->event,
-                route->lane
+            bytes
+        ) != 0 || route->operations->signal(
+                route->lane, completion_event->event
             ) != 0 || shadowspill_completion_submit(
                 runtime,
-                route->lane,
+                route->stream,
                 completion_event,
                 object_id,
                 allocation->allocation_id

@@ -644,11 +644,11 @@ static void publish_action_batch_locked(
             queued->kind,
             published_count
         );
-        ShadowSpillTransferLane *lane = shadowspill_transfer_lane_for_action(
+        ShadowSpillTransferQueue *queue = shadowspill_transfer_queue_for_action(
             runtime, queued
         );
-        if (lane != NULL) {
-            shadowspill_transfer_lane_enqueue(lane, queued);
+        if (queue != NULL) {
+            shadowspill_transfer_queue_enqueue(queue, queued);
         }
         if (queued == batch->tail) {
             break;

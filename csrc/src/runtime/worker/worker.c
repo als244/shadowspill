@@ -158,15 +158,11 @@ void *shadowspill_worker_main(void *pointer) {
         /* Observe one dispatcher batch and publish every fetch readiness event. */
         const int submission_changed =
             handle_newly_published_submission(runtime);
-        uint64_t next_completion_poll = 0U;
         uint64_t failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
         uint64_t failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
         /* Advance the FIFO completion frontier without holding pool locks. */
         const int completion_status = shadowspill_completion_poll(
-            runtime,
-            &next_completion_poll,
-            &failure_object_id,
-            &failure_allocation_id
+            runtime, &failure_object_id, &failure_allocation_id
         );
         if (completion_status < 0) {
             shadowspill_latch_failure_locked(

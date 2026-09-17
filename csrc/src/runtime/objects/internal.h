@@ -18,7 +18,7 @@
 #include "../memory/internal.h"
 
 /* Objects and transfers refer to each other: a queued action names the route
- * that will carry it, and a lane holds the actions waiting on that route. */
+ * that will carry it, and a queue holds the actions waiting on that route. */
 typedef struct ShadowSpillTaskRecord ShadowSpillTaskRecord;
 
 typedef struct ShadowSpillTaskRecord ShadowSpillTaskRecord;
@@ -95,7 +95,8 @@ struct ShadowSpillQueuedAction {
     ShadowSpillEventLease *trigger_event;
     ShadowSpillEventLease *completion_event;
     ShadowSpillEventLease *dependency_event;
-    /* The copy's interval on its lane, open only while a trace measures it. */
+    /* The copy's interval on its lane, open only while a trace measures it.
+       This one really is the lane: it times what moved the bytes. */
     ShadowSpillStreamInterval stream_interval;
     const char *trace_label;
     uint8_t owns_trace_label;
@@ -126,15 +127,15 @@ struct ShadowSpillQueuedAction {
     struct ShadowSpillQueuedAction *next;
     struct ShadowSpillQueuedAction *object_previous;
     struct ShadowSpillQueuedAction *object_next;
-    struct ShadowSpillQueuedAction *lane_previous;
-    struct ShadowSpillQueuedAction *lane_next;
-    uint8_t lane_state;
+    struct ShadowSpillQueuedAction *queue_previous;
+    struct ShadowSpillQueuedAction *queue_next;
+    uint8_t queue_state;
     /* Set when the action came from an action-batch boundary rather than a
-       task boundary: a transfer the plan did not schedule, which the lane
+       task boundary: a transfer the plan did not schedule, which the queue
        serves in the background. */
     uint8_t background;
     /* A write-back scheduled while the spill copy was already current:
-       nothing to copy, so it never enters the lane. */
+       nothing to copy, so it never enters the queue. */
     uint8_t skips_copy;
     /* A release scheduled behind a pending write-back of its object: the
        copy still reads the source, so the worker retires it when it

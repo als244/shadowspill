@@ -17,7 +17,12 @@ consume real budget exactly once without acquiring plan-owned actions.
 The model includes:
 
 - ordered compute tasks on execution resources;
-- independent fetch and evict lanes;
+- independent fetch and evict **lanes** -- one serial byte-moving resource per
+  route. A simulated lane stands for the runtime's queue and
+  [lane](lanes.md) taken together: copies on one route are ordered and do not
+  overlap each other, and the two routes proceed independently. It is not the
+  runtime's lane *contract*, which the simulator has no model of and does not
+  need -- what it prices is occupancy, not transport;
 - route latency and calibrated directional bandwidth;
 - object residency and task input readiness;
 - physical allocation deltas and reuse dependencies.
@@ -33,7 +38,7 @@ peaks, and every capacity shortfall the plan waited on.
 The four action kinds of the [IR](ir.md#memory-schedule) have one simulated
 meaning each, and the runtime's executor keeps the same contract:
 
-| action | lane | requires | leaves |
+| action | route | requires | leaves |
 |---|---|---|---|
 | fetch | fetch | a current spill copy and no device copy | a current device copy; the spill copy is dropped unless the alias retains it |
 | write-back | evict | a current device copy with no copy of it in flight | the spill copy current; the device copy kept, allocated and authoritative |

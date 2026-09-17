@@ -237,7 +237,8 @@ higher precision simply reads the object that has it.
 
 Two dtypes are therefore always two objects. An alias holds the same bytes on
 both sides of a transfer -- which is what the residency model, the planner's
-transfer accounting and the runtime's lane arithmetic all assume -- so a
+transfer accounting and the byte count the runtime hands a lane to copy all
+assume -- so a
 conversion on the way to the device is not something a single alias can
 express.
 

@@ -43,16 +43,23 @@ boundaries, which is where the dispatch costs come from; see
 ## The transfer lanes
 
 Transfers are dispatched by the runtime's worker thread, so the worker is
-what measures them. For every copy it submits while a trace is active it
-opens a **stream interval** on the lane: one timing event recorded
-immediately before the copy, one immediately after it, both ahead of the
-completion event the copy already carries for dependencies. Because a
-stream executes in order, the first event marks the moment the lane
-finished everything ahead of the copy and began it, and the second the
-moment the copy finished. When the worker's nonblocking poll later sees the
-completion event, both stamps are guaranteed readable, and the worker reads
-them from the origin and writes the interval into the transfer's completion
-record.
+what measures them -- but it does not place the instants itself. For every
+copy it submits while a trace is active it asks the **lane** to bracket the
+copy with a **stream interval**: one timing event recorded immediately before
+the copy, one immediately after it, both ahead of the completion event the
+copy already carries for dependencies. Because a stream executes in order,
+the first event marks the moment the lane finished everything ahead of the
+copy and began it, and the second the moment the copy finished. When the
+worker's nonblocking poll later sees the completion event, both stamps are
+guaranteed readable, and the worker reads them from the origin and writes the
+interval into the transfer's completion record.
+
+Not every lane can be asked. One that completes on a clock the trace does not
+share **supplies no interval at all**, and its transfers are recorded untimed
+rather than timed wrongly -- which is why the two entries are optional as a
+pair; see [lanes](lanes.md#why-the-intervals-may-be-absent). The host stamps
+below are recorded either way, so a transfer with no device interval is still
+placed on the host timeline.
 
 The interval is a generic runtime type, `ShadowSpillStreamInterval` in the
 synchronization layer: open on a stream, close on the stream, read from an
