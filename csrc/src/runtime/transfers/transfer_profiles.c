@@ -758,3 +758,31 @@ ShadowSpillStatus shadowspill_runtime_transfer_profiles(
     pthread_rwlock_unlock(&runtime->transfer_profiles_lock);
     return SHADOWSPILL_STATUS_OK;
 }
+
+/*
+ * What the lane serving one route has moved.
+ *
+ * Nothing here knows which kind of lane answers: the route holds an operations
+ * table and this asks it, so a registered lane and a built-in are reached by
+ * the same call. A lane entitled to keep no count says so by leaving the entry
+ * NULL, and UNSUPPORTED carries that up rather than zeroes a caller would read
+ * as "moved nothing".
+ */
+ShadowSpillStatus shadowspill_route_lane_statistics(
+    ShadowSpillRuntime *runtime,
+    uint32_t route_id,
+    ShadowSpillLaneStatistics *statistics
+) {
+    if (runtime == NULL || statistics == NULL ||
+        route_id >= runtime->route_count) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    const ShadowSpillRouteState *const route = &runtime->routes[route_id];
+    if (route->operations == NULL || route->operations->statistics == NULL) {
+        return SHADOWSPILL_STATUS_UNSUPPORTED;
+    }
+    *statistics = (ShadowSpillLaneStatistics){0};
+    return route->operations->statistics(route->lane, statistics) == 0
+        ? SHADOWSPILL_STATUS_OK
+        : SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+}

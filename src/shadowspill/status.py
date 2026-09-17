@@ -59,6 +59,10 @@ class Status(IntEnum):
     CLOSED = 46
     TASK_ALLOCATION_ENVELOPE_EXCEEDED = 47
     TASK_ALLOCATION_CONTRACT_MISMATCH = 48
+    #: The thing asked for is optional and this implementation does not provide
+    #: it. Not a failure and not a bad argument: distinguishable from an answer
+    #: of zero, which is why it exists.
+    UNSUPPORTED = 49
 
     # Replaying a schedule's operations, 80-89.
     REPLAY_INFEASIBLE = 80
