@@ -19,6 +19,23 @@ typedef struct PinnedHostDeviceLane {
     const ShadowSpillBackend *backend;
     ShadowSpillBackendStream stream;
     uint8_t to_device;
+
+    /*
+     * What this lane has moved. Counted here rather than by the worker because
+     * the count belongs to the lane the transfer went through, and the worker
+     * does not know which that is once it dispatches against a contract.
+     *
+     * No timing: this lane hands the backend a copy and returns, so the moment
+     * a transfer *completes* is not something it observes -- an interval is,
+     * and that is what `interval_open`/`interval_close` are for. Reporting a
+     * zero duration would be a lie, so `timed` stays 0 and the fields stay
+     * zero, which is the difference the flag exists to record.
+     */
+    _Atomic uint64_t copies;
+    _Atomic uint64_t bytes;
+    _Atomic uint64_t signals;
+    _Atomic uint64_t waits;
+    _Atomic uint64_t failures;
 } PinnedHostDeviceLane;
 
 static int pinned_host_device_create(
@@ -45,6 +62,7 @@ static int pinned_host_device_create(
 
 static int pinned_host_device_wait(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
+    (void)atomic_fetch_add_explicit(&self->waits, 1U, memory_order_relaxed);
     /* A device-side wait always enqueues, so this never asks for a retry. */
     return self->backend->wait_event(self->backend->state, self->stream, event) == 0
         ? 0
@@ -56,17 +74,27 @@ static int pinned_host_device_copy(
 ) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
     const ShadowSpillBackend *backend = self->backend;
-    return self->to_device
+    const int failed = self->to_device
         ? backend->copy_host_to_device(
               backend->state, destination, source, bytes, self->stream
           )
         : backend->copy_device_to_host(
               backend->state, destination, source, bytes, self->stream
           );
+    if (failed != 0) {
+        (void)atomic_fetch_add_explicit(&self->failures, 1U, memory_order_relaxed);
+        return failed;
+    }
+    /* One chunk per copy: this lane hands the whole transfer to the backend
+       and never splits it, so `chunks` equals `copies` by construction. */
+    (void)atomic_fetch_add_explicit(&self->copies, 1U, memory_order_relaxed);
+    (void)atomic_fetch_add_explicit(&self->bytes, bytes, memory_order_relaxed);
+    return 0;
 }
 
 static int pinned_host_device_signal(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
+    (void)atomic_fetch_add_explicit(&self->signals, 1U, memory_order_relaxed);
     return self->backend->record_event(self->backend->state, event, self->stream);
 }
 
@@ -89,6 +117,29 @@ static int pinned_host_device_interval_close(
     return shadowspill_stream_interval_close(self->runtime, interval, self->stream);
 }
 
+static int pinned_host_device_statistics(
+    const ShadowSpillLane *lane, ShadowSpillLaneStatistics *statistics
+) {
+    if (lane == NULL || statistics == NULL) {
+        return -1;
+    }
+    PinnedHostDeviceLane *self =
+        (PinnedHostDeviceLane *)(uintptr_t)(const void *)lane;
+    const uint64_t copies =
+        atomic_load_explicit(&self->copies, memory_order_relaxed);
+    *statistics = (ShadowSpillLaneStatistics){
+        .copies = copies,
+        .chunks = copies,
+        .bytes = atomic_load_explicit(&self->bytes, memory_order_relaxed),
+        .signals = atomic_load_explicit(&self->signals, memory_order_relaxed),
+        .waits = atomic_load_explicit(&self->waits, memory_order_relaxed),
+        .retries = 0U,
+        .failures = atomic_load_explicit(&self->failures, memory_order_relaxed),
+        .timed = 0U,
+    };
+    return 0;
+}
+
 /* The stream is the runtime's to destroy, along with the route that owns it. */
 static void pinned_host_device_destroy(ShadowSpillLane *lane) {
     free(lane);
@@ -102,6 +153,7 @@ static const ShadowSpillLaneOperations pinned_host_device_operations = {
     .interval_open = pinned_host_device_interval_open,
     .interval_close = pinned_host_device_interval_close,
     .destroy = pinned_host_device_destroy,
+    .statistics = pinned_host_device_statistics,
 };
 
 /*

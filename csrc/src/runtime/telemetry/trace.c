@@ -186,6 +186,19 @@ ShadowSpillStatus shadowspill_trace_prepare(
     return status;
 }
 
+/* A lane is outside the runtime and cannot read `trace_active` itself. It asks
+   so it can record per-transfer detail only while something will read it; the
+   counters it keeps regardless. */
+int shadowspill_lane_trace_active(ShadowSpillRuntime *runtime) {
+    if (runtime == NULL) {
+        return 0;
+    }
+    return atomic_load_explicit(
+               &runtime->trace_active, memory_order_acquire
+           ) != 0U
+        ? 1 : 0;
+}
+
 ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
     uint64_t step_id,

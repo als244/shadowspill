@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from shadowspill.runtime.abi.statistics import LaneStatistics
 from shadowspill.runtime.telemetry import CapturedAllocationEvent
 from shadowspill.runtime.trace import RuntimeTraceEvent
 from shadowspill.schema import artifact_schema
@@ -264,6 +265,23 @@ class LaneSummary:
     #: `triggered_by` `init`, and lead the lane's order.
     opening_transfers: int
     opening_bytes: int
+    #: What the lane itself reports having moved, straight from the lane
+    #: contract's `statistics` entry -- the same call for a built-in lane and
+    #: for one a library registered, so nothing here knows which answered.
+    #: `None` when the lane keeps no count, which is not the same as a lane
+    #: reporting zero and is why this is not simply zeroed.
+    #:
+    #: **Cumulative, since the lane was created**, unlike every sibling field
+    #: above, which describes this step. The two are different questions and
+    #: neither substitutes for the other: the fields above say what this step
+    #: scheduled and what the simulation expected of it, this says what the
+    #: hardware has been asked for in total. Difference it across steps for a
+    #: per-step figure.
+    #:
+    #: The duration fields are `None` unless the lane timed them. A lane that
+    #: hands a transfer onward and returns never sees the moment it completed,
+    #: and reporting zero there would read as "instant".
+    lane_statistics: LaneStatistics | None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -280,7 +298,35 @@ class LaneSummary:
             "largest_start_delta_transfer_id": self.largest_start_delta_transfer_id,
             "opening_transfers": self.opening_transfers,
             "opening_bytes": self.opening_bytes,
+            "lane_statistics": _lane_statistics_as_dict(self.lane_statistics),
         }
+
+
+def _lane_statistics_as_dict(
+    statistics: LaneStatistics | None,
+) -> dict[str, object] | None:
+    """Serialize what a lane reported, or `None` if it reports nothing.
+
+    Reads the ABI structure's own field list rather than repeating it, so the
+    contract is written down once: adding a counter in C adds it here.
+    """
+
+    if statistics is None:
+        return None
+    timed = bool(statistics.timed)
+    result: dict[str, object] = {}
+    for field in LaneStatistics._fields_:
+        name = field[0]
+        if name == "timed":
+            result[name] = timed
+            continue
+        value = getattr(statistics, name)
+        result[name] = (
+            (float(value) if timed else None)
+            if name.endswith("_seconds")
+            else int(value)
+        )
+    return result
 
 
 @dataclass(frozen=True, slots=True)

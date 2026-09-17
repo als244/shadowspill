@@ -63,6 +63,8 @@ const char *shadowspill_status_string(ShadowSpillStatus status) {
             return "task allocation envelope exceeded";
         case SHADOWSPILL_STATUS_TASK_ALLOCATION_CONTRACT_MISMATCH:
             return "task allocation contract mismatch";
+        case SHADOWSPILL_STATUS_UNSUPPORTED:
+            return "not provided by this implementation";
 
         case SHADOWSPILL_STATUS_REPLAY_INFEASIBLE:
             return "replay is infeasible";

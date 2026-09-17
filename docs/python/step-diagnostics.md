@@ -68,6 +68,7 @@ StepDiagnostics
 │   └── fetch / evict                TransferQueue
 │       ├── order[]                  transfer ids, in lane order
 │       └── summary                  LaneSummary
+│           └── lane_statistics      what the lane itself reports, or None
 ├── allocator                        AllocatorTrace
 └── runtime                          RuntimeTrace
 ```
@@ -318,6 +319,41 @@ for lane, records in (
 | `effective_bandwidth_bytes_per_second` | Measured bytes over `lane_busy_seconds`; compare with the assumed bandwidth in the plan summary. `None` when nothing was measured. |
 | `largest_start_delta_seconds`, `largest_start_delta_transfer_id` | The signed start delta furthest from zero on the lane, and the transfer that reached it: where the lane had drifted furthest from the simulation. |
 | `opening_transfers`, `opening_bytes` | The opening placement batch on this lane: transfers the runtime issued before the first task to restore the step's initial objects. They precede the span, carry no simulation, and lead the lane's order with `triggered_by` `init`. |
+| `lane_statistics` | What the lane itself reports, or `None` when it keeps no count. Below. |
+
+### What the lane itself reports
+
+Every field above is the *trace's* account of this step: what the plan
+scheduled, what the simulator priced, and what the stream intervals measured.
+`lane_statistics` is the *lane's own* account, read through the
+[lane contract](../c/lanes.md#what-a-lane-has-moved) by one call that serves a
+built-in lane and a registered one alike -- nothing here knows which answered.
+
+Two things make it a different question rather than a second opinion:
+
+- It is **cumulative for the life of the lane**, not per step. Difference it
+  across steps for a per-step figure.
+- It counts what the *lane* was asked for, which is not always what the step
+  scheduled: a lane that splits a transfer reports the pieces in `chunks`.
+
+| Field | Meaning |
+|---|---|
+| `copies`, `chunks`, `bytes` | Transfers accepted, pieces the hardware was handed, and bytes accepted. `chunks` exceeds `copies` only for a lane that splits a transfer. |
+| `signals`, `waits`, `retries` | Completion signals issued, dependency waits enqueued, and waits that asked to be retried. A lane whose waits always enqueue never retries. |
+| `failures` | Transfers that did not land. Non-zero here with a step that completed means a transfer failed and was reported rather than silently lost. |
+| `timed` | Whether the two durations below mean anything. |
+| `posted_to_completion_seconds`, `longest_completion_seconds` | Summed and worst time from handing the hardware a piece of work to seeing its completion. `None` unless `timed`. |
+
+`timed` exists because zero is ambiguous. A lane that hands a transfer to
+something else and returns never observes the completion instant, so it reports
+no duration rather than a zero that reads as "instant"; a lane that can observe
+it may still record only while a trace is running, which is what
+`shadowspill_lane_trace_active()` lets it ask. **Read `timed` before reading a
+duration**, and read `None` as "not measured", never as "fast".
+
+The whole group is `None` when the lane supplies no `statistics` entry at all.
+That is deliberately distinct from a lane reporting zeroes: one means nobody
+counted, the other means nothing moved.
 
 ## Allocator
 

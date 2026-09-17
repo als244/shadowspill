@@ -27,6 +27,7 @@ def _lane(direction: str) -> TransferQueue:
             direction=direction,
             transfers=0,
             bytes=0,
+            lane_statistics=None,
             simulated_busy_seconds=0.0,
             measured_transfers=0,
             lane_busy_seconds=0.0,

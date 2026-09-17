@@ -124,6 +124,7 @@ class BackendStatistics(ctypes.Structure):
         ("bytes_device_to_device", ctypes.c_uint64),
         ("event_queries", ctypes.c_uint64),
         ("stream_waits", ctypes.c_uint64),
+        ("stream_writes", ctypes.c_uint64),
         ("stream_synchronizations", ctypes.c_uint64),
         ("provider_activations", ctypes.c_uint64),
     ]
@@ -179,4 +180,31 @@ class TransferProfile(ctypes.Structure):
         ("provenance", ctypes.c_uint8),
         ("calibration_mode", ctypes.c_uint8),
         ("concurrent_route_count", ctypes.c_uint8),
+    ]
+
+
+class LaneStatistics(ctypes.Structure):
+    """What one route's lane has moved, mirroring `ShadowSpillLaneStatistics`.
+
+    Per route and per direction, because a lane is one directional pair of pool
+    kinds. ``chunks`` differs from ``copies`` only for a lane that splits a
+    transfer into pieces; where it does not, the two are equal by construction.
+
+    ``timed`` says whether the duration fields mean anything. A lane that hands
+    a transfer to something else and returns never observes the moment it
+    completes, so it reports zero rather than inventing one -- without the flag
+    that zero reads as "instant".
+    """
+
+    _fields_ = [
+        ("copies", ctypes.c_uint64),
+        ("chunks", ctypes.c_uint64),
+        ("bytes", ctypes.c_uint64),
+        ("signals", ctypes.c_uint64),
+        ("waits", ctypes.c_uint64),
+        ("retries", ctypes.c_uint64),
+        ("failures", ctypes.c_uint64),
+        ("timed", ctypes.c_uint8),
+        ("posted_to_completion_seconds", ctypes.c_double),
+        ("longest_completion_seconds", ctypes.c_double),
     ]

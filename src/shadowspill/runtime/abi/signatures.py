@@ -31,6 +31,7 @@ from .plans import (
 from .statistics import (
     AdapterStatistics,
     Allocation,
+    LaneStatistics,
     LiveAllocation,
     MemoryPoolStatistics,
     TransferProfile,
@@ -219,6 +220,11 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     (
         "shadowspill_memory_pool_statistics",
         [ctypes.c_size_t, ctypes.c_uint32, ctypes.POINTER(MemoryPoolStatistics)],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_route_lane_statistics",
+        [ctypes.c_size_t, ctypes.c_uint32, ctypes.POINTER(LaneStatistics)],
         ctypes.c_uint32,
     ),
     (

@@ -137,7 +137,9 @@ def test_lane_summary_reports_measured_bandwidth_and_the_largest_drift() -> None
         1, simulated=(100_000_000, 110_000_000), stream=(130_000_000, 140_000_000)
     )  # ran 30 ms late
     unmeasured = _record(2, simulated=(200_000_000, 210_000_000), stream=None)
-    summary = _lane_summary("fetch", (measured, late, unmeasured), ())
+    # No lane statistics: this exercises the trace's account of the step, which
+    # is a separate question from what the lane itself reports.
+    summary = _lane_summary("fetch", (measured, late, unmeasured), (), None)
     assert summary.transfers == 3
     assert summary.measured_transfers == 2
     assert summary.bytes == 3 << 20
