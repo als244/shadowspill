@@ -177,3 +177,79 @@ int shadowspill_control_free(
     }
     return strcmp(reply, "ok") == 0 ? 0 : -1;
 }
+
+/* ------------------------------------------------------------ handshake */
+
+/*
+ * A GID travels as 32 hex characters -- the 16 bytes `ibv_query_gid` fills in,
+ * most significant first. Formatting and parsing it by hand keeps the wire
+ * format independent of any verbs type, which is what lets the daemon and this
+ * side be compiled against different headers on different machines.
+ */
+static void format_gid(const uint8_t bytes[16], char text[33]) {
+    static const char digits[] = "0123456789abcdef";
+    for (unsigned index = 0U; index < 16U; ++index) {
+        text[index * 2U] = digits[(bytes[index] >> 4) & 0x0FU];
+        text[index * 2U + 1U] = digits[bytes[index] & 0x0FU];
+    }
+    text[32] = '\0';
+}
+
+static int parse_gid(const char *text, uint8_t bytes[16]) {
+    if (strlen(text) != 32U) {
+        return -1;
+    }
+    for (unsigned index = 0U; index < 16U; ++index) {
+        unsigned value = 0U;
+        if (sscanf(text + index * 2U, "%2x", &value) != 1) {
+            return -1;
+        }
+        bytes[index] = (uint8_t)value;
+    }
+    return 0;
+}
+
+int shadowspill_control_connect_endpoint(
+    ShadowSpillControlChannel *channel,
+    const ShadowSpillEndpointIdentity *local,
+    ShadowSpillEndpointIdentity *remote
+) {
+    if (local == NULL || remote == NULL) {
+        return -1;
+    }
+    char gid_text[33];
+    format_gid(local->global_identifier, gid_text);
+    char request[SHADOWSPILL_NETWORK_LINE_BYTES];
+    const int written = snprintf(
+        request, sizeof(request), "connect %" PRIx32 " %" PRIx32 " %" PRIx16 " %s\n",
+        local->queue_pair_number, local->packet_sequence_number,
+        local->local_identifier, gid_text
+    );
+    if (written <= 0 || (size_t)written >= sizeof(request)) {
+        return -1;
+    }
+    char reply[SHADOWSPILL_NETWORK_LINE_BYTES];
+    if (exchange(channel, request, reply) != 0) {
+        return -1;
+    }
+    uint32_t queue_pair = 0U;
+    uint32_t sequence = 0U;
+    uint16_t identifier = 0U;
+    char remote_gid[64];
+    /*
+     * Anything that is not exactly "ok <qpn> <psn> <lid> <gid>" fails, an
+     * "error <reason>" line included. The reason is the daemon's to print and
+     * this side's not to invent.
+     */
+    if (sscanf(
+            reply, "ok %" SCNx32 " %" SCNx32 " %" SCNx16 " %63s", &queue_pair,
+            &sequence, &identifier, remote_gid
+        ) != 4 ||
+        parse_gid(remote_gid, remote->global_identifier) != 0) {
+        return -1;
+    }
+    remote->queue_pair_number = queue_pair;
+    remote->packet_sequence_number = sequence;
+    remote->local_identifier = identifier;
+    return 0;
+}
