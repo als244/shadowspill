@@ -156,20 +156,6 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_wait_idle(
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_runtime_recover_no_progress(ShadowSpillRuntime *runtime);
 
-/*
- * Planning-only growth of the pool `pool_id` names. The runtime must be idle
- * and hold no in-flight actions or pending retirements; existing object
- * offsets and payloads are preserved, and shrinkage is rejected. The old and
- * new arenas are both held while the payload is copied across, so a caller
- * must include that transient in its own budget.
- */
-SHADOWSPILL_API ShadowSpillStatus
-shadowspill_memory_pool_grow(
-    ShadowSpillRuntime *runtime,
-    uint32_t pool_id,
-    uint64_t capacity_bytes
-);
-
 /* Copies a lock-consistent telemetry snapshot into caller-owned storage. */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_statistics(
     ShadowSpillRuntime *runtime,
