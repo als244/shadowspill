@@ -73,30 +73,41 @@ routine that violated it -- pool growth, which copied the payload into a larger
 region -- was deleted rather than left to be the exception that would make a
 remote pool crash.
 
-Inside the runtime, a [lane](lanes.md) is the only thing that reads through a
-pool address, and only for the two pools it was made to connect. An address
-handed *out* is another matter: a plan's execution pool exists precisely so a
+Inside the runtime, two things read through a pool address, and each is narrow
+about it. A [lane](lanes.md) does, for the two pools it was made to connect.
+The object registry does when state is imported or exported -- but it asks the
+kind rather than dereferencing anything itself, through the `write` and `read`
+entries of the [pool-memory contract](../c/pool-memory.md); a kind whose region
+is not in this address space implements them, and one whose region is leaves
+them out and is copied through directly. An address handed *out* is another
+matter: a plan's execution pool exists precisely so a
 caller can read and write through what it is given. That is a difference
 between the two *roles* a plan assigns, not between kinds, and it is why a
 pool's kind constrains who may hold its addresses without changing anything
 about how the pool works.
 
-## Memory a plan will own comes from the pool that will own it
+## Memory a plan will own is imported into the pool that will own it
 
 Planning creates state the plan will keep, and the largest of it is an
-optimizer's: several times the model for an ordinary adaptive optimizer. That
-state is taken from the spill pool as it is created rather than built in
-ordinary host memory and copied in, so the host is never asked for the whole
-of it beside the pool that is about to hold it. A host allocation made while
-that state is being created, and large enough to be worth an object, is served
-from the pool; anything smaller, and anything a plan does not keep, is an
-ordinary host allocation and is given back.
+optimizer's: several times the model for an ordinary adaptive optimizer. It is
+built in ordinary host memory, filled by the caller, and imported -- which is
+how state built outside planning arrives, and the reason there is no second
+mechanism here to describe.
 
-The rest of what a plan owns obeys the same rule. Gradients, activations and
-workspaces are runtime objects created in a pool, and the tensors a program is
-lowered from are fake and cost nothing. Model and optimizer state reaches a
-pool without a second copy of itself by one of the paths in [importing
-state](state-import.md).
+That state was once taken from the spill pool as it was created, so the host
+was never asked for the whole of it beside the pool about to hold it. It is the
+cheaper arrangement and it rests on a pool being able to hand out memory for
+someone else to write, which a pool on another machine cannot do. The choice
+was between keeping both and keeping the one that always works; what it costs
+is a host copy of the state while it is being built, and what it buys is that
+every kind of pool is reached the same way.
+
+Everything else a plan owns is created in a pool and never leaves it.
+Gradients, activations and workspaces are runtime objects created in a pool,
+and the tensors a program is lowered from are fake and cost nothing. Model and
+optimizer state is the part that comes from outside, by one of the paths in
+[importing state](state-import.md), which is also where what each of them costs
+on the way in is set out.
 
 ## A pool answers for itself
 

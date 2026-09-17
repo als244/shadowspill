@@ -1,45 +1,63 @@
 # Importing state
 
 How a caller's model and optimizer state come to live in the runtime's pools,
-what the caller must guarantee for that to cost nothing, and how dtype is
+what the caller must guarantee for that to stay bounded, and how dtype is
 decided.
 
 ## The problem
 
 State that a plan will place has to live in a pool the runtime owns. The
 obvious way to arrange that — build the state the ordinary way and copy it in
-— means the state exists twice at once, so the host must hold a full copy of
-something that was only ever meant to live in the pool. For state that is
-large relative to host memory, that transient is what decides whether the
-model can be loaded at all, and it is paid on every run.
+— means the state exists twice at once, so ordinary memory must hold a full
+copy of something that was only ever meant to live in the pool. For state that
+is large relative to the memory available, that transient is what decides
+whether the model can be loaded at all, and it is paid on every run.
 
-The way out is not to copy less. It is to never allocate the state anywhere
-else: give it pool storage before it has values, and let it write its values
-there.
+Two answers are possible, and only one of them works everywhere.
+
+The first is to never allocate the state anywhere else: give it pool storage
+before it has values and let it write its values there. That costs no transient
+at all. It also requires the pool to hand out an address for someone else to
+write through, which a pool whose memory is not in this process cannot do.
+
+The second is to build the values, import them, and release what built them.
+That costs a transient the size of the state while the import runs, and it
+works for every kind of pool, because the only thing crossing the pool's edge
+is a call the kind implements.
+
+**The second is what happens.** Keeping both would mean two ways for state to
+enter a pool, differing by a property of the pool that the caller does not
+choose and cannot see; the cheaper one would be the one that silently stopped
+applying. Where the transient is what decides whether the state fits, import
+from a checkpoint instead — the row below that maps the file rather than
+reading it, and pays reclaimable page cache rather than anonymous memory.
 
 ## Three paths in
 
 All three end with the same thing — a `PersistentState` the runtime owns —
 and differ only in where the values come from.
 
-| path | values come from | host cost |
+| path | values come from | transient while importing |
 |---|---|---|
-| **construct into the pool** | the model initialising itself | none proportional to the state |
+| **construct, then import** | the model initialising itself | the state, until the import releases it |
 | **import a live model** | a model already built | a full copy while the import runs |
 | **import from a checkpoint** | a file, mapped rather than read | reclaimable page cache |
 
 The first is the one to use when the caller owns the model's definition. The
 second exists for state a caller already has and did not build for this
-purpose. The third orders itself deliberately: it makes the target
-pool-backed *first* and then writes the file's values through, so the values
-land in the pool rather than being copied into it, and the mapped file stays
-reclaimable rather than becoming anonymous memory.
+purpose. The third is the one that stays cheap at any size, and it orders
+itself deliberately: it imports the target *first* and then writes the file's
+values through, so for a pool this process can address the values land in the
+pool rather than being copied into it, and the mapped file stays reclaimable
+rather than becoming anonymous memory.
 
 A model built on `meta` is rebound in place and handed back as the same
 object, because it held no values to copy. A model that was already
-materialised is copied into a new module whose tensors point at the pool, so
-the caller keeps the return value rather than the model it passed. Filling from
-a checkpoint rebinds the model it was given, so there is nothing to reassign.
+materialised is copied into a new module, so the caller keeps the return value
+rather than the model it passed; that copy's tensors view the pool where the
+pool is one this process can address, and hold memory of their own where it is
+not. Filling from a checkpoint rebinds the model it was given, so there is
+nothing to reassign.
 
 The entry points are `import_model_state()` and
 `import_model_state_from_file()`, with optimizer counterparts; their arguments
@@ -106,12 +124,19 @@ class RotaryTables(nn.Module):
             self.sine.copy_(angles.sin())
 ```
 
-### What "no host transient" promises
+### What the contract still promises
 
-No transient **proportional to the state's size**. A module may use bounded
-scratch to compute a value it then copies in, as above; what is excluded is
-any allocation that scales with parameter count, because that is the term
-that decides whether the state fits at all.
+A module's own initialisation adds **no transient proportional to the state's
+size**. A module may use bounded scratch to compute a value it then copies in,
+as above; what is excluded is any allocation that scales with parameter count,
+because that is the term that decides whether the state fits at all.
+
+What it no longer promises is that constructing costs nothing at all: the
+values a module writes are in ordinary memory until the import moves them, so
+constructing a whole model holds a whole model, briefly. The contract is what
+keeps that from being *two* whole models, and it is what makes filling from a
+mapped checkpoint possible, which is the path that avoids the transient
+outright.
 
 ## What is refused
 

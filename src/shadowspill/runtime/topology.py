@@ -21,6 +21,12 @@ class MemoryPool:
     physical_capacity: int | None
     device_ordinal: int | None
 
+    #: Whether this process can dereference a lease from this pool. False for a
+    #: kind whose memory is not in this address space, which is what decides
+    #: whether the framework may be handed a pointer into it or must keep its
+    #: own storage and let the runtime copy across the edge.
+    addressable: bool = True
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeRoute:

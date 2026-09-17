@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from shadowspill.libraries import resolve_library
 from shadowspill.memory import SpillPool
@@ -49,8 +50,13 @@ class RemotePool(SpillPool):
 
     The whole capacity is taken once, at create. Leases are carved from it by
     the same suballocator that serves a local pool, because nothing in the
-    memory subsystem reads through a pool's address; only a lane does, and only
-    for the pools it was made to connect.
+    memory subsystem reads through a pool's address.
+
+    Two things outside it do, and both go through this kind rather than around
+    it: a lane, for the pools it was made to connect, and the object registry,
+    when state is imported or exported -- which is what ``write`` and ``read``
+    on the kind's ``pool_memory`` entry are for. The framework is told none of
+    this beyond :attr:`addressable`, and is never handed an address here.
     """
 
     host: str = ""
@@ -58,6 +64,11 @@ class RemotePool(SpillPool):
     selector: str = DEFAULT_SELECTOR
     kind: int = REMOTE_POOL_KIND
     kind_name: str = "remote"
+
+    #: The region is a local reservation standing in for memory on another
+    #: machine, so no address in it may be dereferenced here. The kind's
+    #: ``write`` and ``read`` are what move bytes across that edge.
+    addressable: ClassVar[bool] = False
 
     #: Built in ``__post_init__`` and held for this configuration's life: the
     #: runtime borrows a pointer to it for the whole of bootstrap, so it must
