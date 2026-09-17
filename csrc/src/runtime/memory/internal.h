@@ -4,7 +4,7 @@
 /*
  * Ranges, pools, leases and retirement.
  *
- * A pool owns one bounded arena and the leases suballocated from it. A lease
+ * A pool owns one bounded region and the leases suballocated from it. A lease
  * outlives its physical range: the range returns to the allocator once the
  * work that touched it completes, while the metadata record stays with the
  * pool for reuse.
@@ -63,8 +63,8 @@ typedef enum ShadowSpillMemoryPlacement {
 } ShadowSpillMemoryPlacement;
 
 /*
- * Owns one bounded arena and its suballocation geometry. A device pool's
- * arena is backend memory; a pinned-host pool's arena is host memory the pool
+ * Owns one bounded region and its suballocation geometry. A device pool's
+ * memory is backend memory; a pinned-host pool's is host memory the pool
  * allocates and the backend registers.
  */
 typedef struct ShadowSpillMemoryPool {
@@ -89,11 +89,14 @@ typedef struct ShadowSpillMemoryPool {
     /* Cold-reserved workspace for prospective causal-release queries. */
     struct ShadowSpillMemoryLease **release_frontier_workspace;
     ShadowSpillRange *release_range_workspace;
-    const ShadowSpillBackend *backend;
+    /* How this pool's memory was obtained, and whatever that kind needs kept
+       in order to give it back. The pool never looks inside the state. */
+    ShadowSpillPoolMemoryDescription memory;
+    void *memory_state;
     uint8_t kind;
     void *base;
-    /* The arena's mapping length, what its release must unmap. */
-    uint64_t arena_bytes;
+    /* The mapping's length, what its release must unmap. */
+    uint64_t memory_bytes;
     uint32_t pool_id;
     uint64_t minimum_alignment;
     uint64_t next_request_sequence;
@@ -278,12 +281,6 @@ int shadowspill_range_initialize_with_nodes(
     uint64_t node_capacity
 );
 
-int shadowspill_range_clone_extended(
-    const ShadowSpillRangeAllocator *source,
-    uint64_t capacity,
-    ShadowSpillRangeAllocator *destination
-);
-
 int shadowspill_range_clone_extended_with_nodes(
     const ShadowSpillRangeAllocator *source,
     uint64_t capacity,
@@ -347,25 +344,44 @@ uint64_t shadowspill_range_largest_free(
     const ShadowSpillRangeAllocator *allocator
 );
 
+/*
+ * Every kind this runtime can supply memory for: its own first, then whatever
+ * the config registered. One lookup serves both, which is the point -- nothing
+ * asks whether a pool is remote.
+ */
+typedef struct ShadowSpillPoolMemoryTable {
+    ShadowSpillPoolMemoryDescription *entries;
+    uint32_t count;
+} ShadowSpillPoolMemoryTable;
+
+int shadowspill_pool_memory_table_initialize(
+    ShadowSpillPoolMemoryTable *table,
+    const ShadowSpillBackend *backend,
+    const ShadowSpillPoolMemoryDescription *registered,
+    uint32_t registered_count
+);
+void shadowspill_pool_memory_table_destroy(ShadowSpillPoolMemoryTable *table);
+
+/* The entry for a kind, or NULL if none supplies it. */
+const ShadowSpillPoolMemoryDescription *shadowspill_pool_memory_for_kind(
+    const ShadowSpillPoolMemoryTable *table, uint8_t kind
+);
+
+void shadowspill_builtin_pool_memory_describe(
+    const ShadowSpillBackend *backend,
+    ShadowSpillPoolMemoryDescription descriptions[2]
+);
+
 int shadowspill_memory_pool_initialize(
     ShadowSpillMemoryPool *pool,
     uint32_t pool_id,
-    const ShadowSpillBackend *backend,
+    const ShadowSpillPoolMemoryDescription *memory,
     uint8_t kind,
     uint64_t capacity,
     uint64_t minimum_alignment
 );
 
 void shadowspill_memory_pool_close(ShadowSpillMemoryPool *pool);
-
-/* A fresh arena of the pool's kind, and the release of one; used when a pool
-   grows and replaces its arena. */
-int shadowspill_memory_pool_arena_allocate(
-    const ShadowSpillMemoryPool *pool, uint64_t bytes, void **base
-);
-int shadowspill_memory_pool_arena_release(
-    const ShadowSpillMemoryPool *pool, void *base, uint64_t capacity
-);
 
 ShadowSpillStatus shadowspill_memory_pool_reserve_lease_records(
     ShadowSpillMemoryPool *pool,
@@ -489,11 +505,6 @@ int shadowspill_memory_pool_adopt_borrowed_lease_locked(
     uint64_t bytes,
     uint64_t alignment,
     uint64_t offset
-);
-
-void shadowspill_memory_pool_rebase_locked(
-    ShadowSpillMemoryPool *pool,
-    void *new_base
 );
 
 uint64_t shadowspill_memory_pool_free_bytes_locked(

@@ -67,6 +67,10 @@ struct ShadowSpillRuntime {
     ShadowSpillBackend backend;
     ShadowSpillRouteState *routes;
     uint32_t route_count;
+    /* Every lane this runtime can resolve, built-ins and registered alike. */
+    ShadowSpillLaneTable lanes;
+    /* And every kind it can supply memory for. */
+    ShadowSpillPoolMemoryTable pool_memory;
 
     pthread_rwlock_t transfer_profiles_lock;
     ShadowSpillTransferProfile *transfer_profiles;

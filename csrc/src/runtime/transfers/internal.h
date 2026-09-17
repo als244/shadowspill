@@ -2,10 +2,14 @@
 #define SHADOWSPILL_RUNTIME_TRANSFERS_INTERNAL_H
 
 /*
- * Transfer lanes and routes.
+ * Transfer queues and routes.
  *
  * A route pairs a source and destination pool with the backend stream that
- * moves bytes between them; its lane orders the actions issued on it.
+ * moves bytes between them; its queue orders the actions issued on it.
+ *
+ * "Queue" and not "queue": the queue is the thing that moves the bytes, and a
+ * route names exactly one. What this directory owns is the ordering in front
+ * of it.
  */
 
 #include <pthread.h>
@@ -17,15 +21,23 @@ typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
 typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
 /*
- * One lane serves two queues. The plan's transfers are dispatched in the
+ * One queue serves two orders. The plan's transfers are dispatched in the
  * order their boundaries triggered them; background transfers (those the
  * plan did not schedule: an opening restore, a reconciliation) are dispatched
- * in their own order and only while the lane holds fewer than
+ * in their own order and only while the queue holds fewer than
  * `background_window_bytes` of them in flight, so a plan transfer never
- * waits behind more than the window. In flight, the lane is one FIFO in
+ * waits behind more than the window. In flight, it is one FIFO in
  * dispatch order, which is the stream's order and what completion follows.
  */
-typedef struct ShadowSpillTransferLane {
+/* Where an action sits in its queue. On the action as `queue_state`, declared
+   here because the queue owns the vocabulary and its canary asserts on it. */
+enum {
+    SHADOWSPILL_QUEUE_NONE = 0,
+    SHADOWSPILL_QUEUE_PENDING = 1,
+    SHADOWSPILL_QUEUE_INFLIGHT = 2,
+};
+
+typedef struct ShadowSpillTransferQueue {
     pthread_mutex_t lock;
     ShadowSpillQueuedAction *pending_head;
     ShadowSpillQueuedAction *pending_tail;
@@ -35,8 +47,12 @@ typedef struct ShadowSpillTransferLane {
     ShadowSpillQueuedAction *inflight_tail;
     uint64_t background_window_bytes;
     uint64_t background_inflight_bytes;
+    /* How many actions are in flight, read without the lock so the worker can
+       skip polling a lane that has nothing to report. The list above is the
+       truth; this is the same fact in a form a hot loop can afford. */
+    _Atomic uint32_t inflight_count;
     uint8_t lock_initialized;
-} ShadowSpillTransferLane;
+} ShadowSpillTransferQueue;
 
 enum {
     SHADOWSPILL_FETCH_ROUTE_ID = 0U,
@@ -48,58 +64,98 @@ enum {
 struct ShadowSpillRouteState {
     uint32_t source_pool_id;
     uint32_t destination_pool_id;
-    /* Copy direction, derived from the two pools' kinds at create. */
-    uint8_t to_device;
-    ShadowSpillTransferLane transfers;
-    ShadowSpillBackendStream lane;
-    uint8_t lane_created;
+    ShadowSpillTransferQueue queue;
+    ShadowSpillBackendStream stream;
+    /* What moves this route's bytes, resolved from its two pools' kinds at
+       create. The built-in lane copies on the stream above; a lane that works
+       on its own stream gets one of its own and leaves this one to the
+       runtime. */
+    ShadowSpillLane *lane;
+    const ShadowSpillLaneOperations *operations;
+    uint8_t stream_created;
 };
 
-/* One asynchronous copy along a route, on the backend's copy for its direction. */
-int shadowspill_route_copy_async(
+/*
+ * What a built-in lane entry's `configuration` points at: which way its copies
+ * go. Nothing else -- `create` receives the runtime, so there is nothing to
+ * carry here that the lane could not already reach.
+ */
+typedef struct ShadowSpillPinnedHostDeviceConfiguration {
+    uint8_t to_device;
+} ShadowSpillPinnedHostDeviceConfiguration;
+
+void shadowspill_pinned_host_device_lanes_describe(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillRouteState *route,
-    void *destination,
-    const void *source,
-    uint64_t bytes,
-    ShadowSpillBackendStream stream
+    ShadowSpillPinnedHostDeviceConfiguration storage[2],
+    ShadowSpillLaneDescription descriptions[2]
+);
+
+/*
+ * Every lane the runtime can resolve: the built-ins first, then whatever the
+ * config registered. One lookup serves both, which is the point -- there is no
+ * branch asking whether a route is local.
+ */
+typedef struct ShadowSpillLaneTable {
+    ShadowSpillLaneDescription *entries;
+    uint32_t count;
+    ShadowSpillPinnedHostDeviceConfiguration builtin[2];
+} ShadowSpillLaneTable;
+
+int shadowspill_lane_table_initialize(
+    ShadowSpillLaneTable *table,
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillLaneDescription *registered,
+    uint32_t registered_count
+);
+void shadowspill_lane_table_destroy(ShadowSpillLaneTable *table);
+
+/* The lane for a directional pool-kind pair, or NULL if none serves it. */
+const ShadowSpillLaneDescription *shadowspill_lane_for_kinds(
+    const ShadowSpillLaneTable *table, uint8_t from_kind, uint8_t to_kind
 );
 
 int shadowspill_transfer_profiles_initialize(ShadowSpillRuntime *runtime);
 
 void shadowspill_transfer_profiles_destroy(ShadowSpillRuntime *runtime);
 
-int shadowspill_transfer_lane_initialize(ShadowSpillTransferLane *lane);
+int shadowspill_transfer_queue_initialize(ShadowSpillTransferQueue *queue);
 
-void shadowspill_transfer_lane_destroy(ShadowSpillTransferLane *lane);
+void shadowspill_transfer_queue_destroy(ShadowSpillTransferQueue *queue);
 
-ShadowSpillTransferLane *shadowspill_transfer_lane_for_action(
+ShadowSpillTransferQueue *shadowspill_transfer_queue_for_action(
     ShadowSpillRuntime *runtime,
     const ShadowSpillQueuedAction *action
 );
 
-void shadowspill_transfer_lane_enqueue(
-    ShadowSpillTransferLane *lane,
+void shadowspill_transfer_queue_enqueue(
+    ShadowSpillTransferQueue *queue,
     ShadowSpillQueuedAction *action
 );
 
-int shadowspill_transfer_lane_claim(
-    ShadowSpillTransferLane *lane,
+int shadowspill_transfer_queue_claim(
+    ShadowSpillTransferQueue *queue,
     ShadowSpillQueuedAction *action
 );
 
-void shadowspill_transfer_lane_publish_inflight(
-    ShadowSpillTransferLane *lane,
+/* Put a claimed action back at its head, still pending, for a lane that asked
+   to be retried. */
+void shadowspill_transfer_queue_return(
+    ShadowSpillTransferQueue *queue,
     ShadowSpillQueuedAction *action
 );
 
-int shadowspill_transfer_lane_is_inflight_head(
-    ShadowSpillTransferLane *lane,
+void shadowspill_transfer_queue_publish_inflight(
+    ShadowSpillTransferQueue *queue,
+    ShadowSpillQueuedAction *action
+);
+
+int shadowspill_transfer_queue_is_inflight_head(
+    ShadowSpillTransferQueue *queue,
     const ShadowSpillQueuedAction *action
 );
 
-int shadowspill_transfer_lane_complete(
-    ShadowSpillTransferLane *lane,
+int shadowspill_transfer_queue_complete(
+    ShadowSpillTransferQueue *queue,
     ShadowSpillQueuedAction *action
 );
 
