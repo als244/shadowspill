@@ -14,6 +14,8 @@ the inventory and the reference index.
 | Runtime | [`runtime.h`](../../csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) | Creating a runtime and its pools and routes, reserving the records a hot path must never allocate, admitting a plan, the two task boundaries, allocation scopes, tracing, and the statistics and first-failure snapshots |
 | Admission replay | [`admission_replay.h`](../../csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) | Replaying a schedule's pool ownership transitions through the production allocator policy, with no backend and no device |
 | Backend | [`backend.h`](../../csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, and what a new provider directory has to build |
+| Lane | [`runtime/lane.h`](../../csrc/include/shadowspill/runtime/lane.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the obligation it is under, and how a route resolves one from its two pools' kinds |
+| Pool memory | [`runtime/pool_memory.h`](../../csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
 | Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
 | PressureFit | [`pressurefit/pressurefit.h`](../../csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: its options and the three policy axes, its result and per-candidate diagnostics, its preflight, and the shared placed-plan record |
 | Simulator | [`simulator.h`](../../csrc/include/shadowspill/simulator.h) | [Simulator API](simulator.md) | The one call that times an already selected schedule, and the intervals, peaks, stalls and capacity shortfalls it reports |
@@ -60,8 +62,9 @@ category; retain structured result fields for diagnostics.
 
 `runtime.h` is the large one, and it is an umbrella: it includes one header
 per subsystem from `include/shadowspill/runtime/`, in the order a program uses
-them. `vocabulary.h` is the statuses, reasons and enumerations; `descriptions.h`
-what a caller fills in; `diagnostics.h` the records the runtime fills in; then
+them. `vocabulary.h` is the statuses, reasons and enumerations; [`lane.h`](lanes.md) the contract
+for what moves bytes between two pools and [`pool_memory.h`](pool-memory.md) the
+one for where a pool's memory comes from; `descriptions.h` what a caller fills in; `diagnostics.h` the records the runtime fills in; then
 `lifecycle.h`, `pools.h`, `objects.h`, `plan.h`, `tasks.h` (task boundaries and
 the allocation scopes between them), and `telemetry.h` (tracing, waiting,
 recovery, and what a reader inspects afterwards). Open the part rather than the
@@ -90,7 +93,7 @@ finish.
 - Result buffers are caller-owned unless the header says the result allocates
   them and names a matching destroy function.
 - Runtime handles own their internal records, events, streams, worker, and
-  pool arenas until close/destroy.
+  pool memory until close/destroy.
 - Backend `state` pointers are borrowed and must outlive the runtime.
 - Distinct simulator results and admission-replay workspaces may be used by
   different threads; one workspace is not shared concurrently.

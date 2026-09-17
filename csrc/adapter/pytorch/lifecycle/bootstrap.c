@@ -81,6 +81,7 @@ static ShadowSpillStatus build_runtime_topology(
     const ShadowSpillPytorchAdapterConfig *config,
     const ShadowSpillBackend *backend,
     const ShadowSpillBackendCapabilities *capabilities,
+    const ShadowSpillPytorchLoadedLibrary *libraries,
     uint64_t allocator_pool_bytes,
     ShadowSpillRuntime **runtime
 ) {
@@ -104,6 +105,7 @@ static ShadowSpillStatus build_runtime_topology(
                 ? allocator_pool_bytes : source->capacity_bytes,
             .minimum_alignment = is_device
                 ? capabilities->minimum_alignment : 1U,
+            .configuration = source->configuration,
         };
     }
     for (uint32_t index = 0U; index < config->route_count; ++index) {
@@ -115,20 +117,36 @@ static ShadowSpillStatus build_runtime_topology(
             .destination_pool_id = source->destination_pool_id,
         };
     }
-    const ShadowSpillRuntimeConfig runtime_config = {
-        .abi_version = SHADOWSPILL_ABI_VERSION,
-        .backend = backend,
-        .pools = pools,
-        .pool_count = config->pool_count,
-        .routes = routes,
-        .route_count = config->route_count,
-        .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
-        .background_transfer_window_bytes =
-            config->background_transfer_window_bytes,
-    };
-    const ShadowSpillStatus status = shadowspill_runtime_create(
-        &runtime_config, runtime
+    ShadowSpillPoolMemoryDescription *pool_memory = NULL;
+    ShadowSpillLaneDescription *lanes = NULL;
+    uint32_t pool_memory_count = 0U;
+    uint32_t lane_count = 0U;
+    ShadowSpillStatus status = shadowspill_pytorch_library_entries(
+        libraries, config->library_count, &pool_memory, &pool_memory_count,
+        &lanes, &lane_count
     );
+    if (status == SHADOWSPILL_STATUS_OK) {
+        const ShadowSpillRuntimeConfig runtime_config = {
+            .abi_version = SHADOWSPILL_ABI_VERSION,
+            .backend = backend,
+            .pools = pools,
+            .pool_count = config->pool_count,
+            .routes = routes,
+            .route_count = config->route_count,
+            .lanes = lanes,
+            .lane_count = lane_count,
+            .pool_memory = pool_memory,
+            .pool_memory_count = pool_memory_count,
+            .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
+            .background_transfer_window_bytes =
+                config->background_transfer_window_bytes,
+        };
+        status = shadowspill_runtime_create(&runtime_config, runtime);
+    }
+    /* The runtime copied both lists; the libraries they point into stay open,
+       which is what a pool's release and a lane's destroy need at close. */
+    free(lanes);
+    free(pool_memory);
     free(routes);
     free(pools);
     return status;
@@ -139,6 +157,7 @@ static ShadowSpillStatus build_runtime_topology(
 static ShadowSpillStatus create_runtime(
     const ShadowSpillPytorchAdapterConfig *config,
     const ShadowSpillBackend *backend,
+    const ShadowSpillPytorchLoadedLibrary *libraries,
     ShadowSpillBackendPhysicalMemory *baseline,
     uint64_t *pool_bytes,
     ShadowSpillRuntime **runtime
@@ -153,7 +172,7 @@ static ShadowSpillStatus create_runtime(
         return SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     }
     return build_runtime_topology(
-        config, backend, &capabilities, *pool_bytes, runtime
+        config, backend, &capabilities, libraries, *pool_bytes, runtime
     );
 }
 
@@ -215,6 +234,7 @@ static ShadowSpillStatus confirm_budget(
 static ShadowSpillStatus publish(
     const ShadowSpillPytorchAdapterConfig *config,
     const ShadowSpillPytorchLoadedBackend *backend,
+    ShadowSpillPytorchLoadedLibrary *libraries,
     ShadowSpillRuntime *runtime,
     const ShadowSpillBackendPhysicalMemory *baseline,
     const ShadowSpillBackendPhysicalMemory *bootstrapped,
@@ -233,6 +253,8 @@ static ShadowSpillStatus publish(
         process_exit_registered = 1U;
     }
     adapter.backend = *backend;
+    adapter.libraries = libraries;
+    adapter.library_count = config->library_count;
     adapter.runtime = runtime;
     adapter.bootstrapped = 1U;
     adapter.closed = 0U;
@@ -295,25 +317,38 @@ ShadowSpillStatus shadowspill_pytorch_allocator_bootstrap(
     if (status != SHADOWSPILL_STATUS_OK) {
         return status;
     }
+    ShadowSpillPytorchLoadedLibrary *libraries = NULL;
+    status = shadowspill_pytorch_libraries_load(
+        config->libraries, config->library_count, &libraries
+    );
+    if (status != SHADOWSPILL_STATUS_OK) {
+        shadowspill_pytorch_backend_unload(&backend);
+        return status;
+    }
     ShadowSpillBackendPhysicalMemory baseline = {0};
     ShadowSpillBackendPhysicalMemory bootstrapped = {0};
     uint64_t pool_bytes = 0U;
     ShadowSpillRuntime *runtime = NULL;
     status = create_runtime(
-        config, &backend.table, &baseline, &pool_bytes, &runtime
+        config, &backend.table, libraries, &baseline, &pool_bytes, &runtime
     );
     if (status == SHADOWSPILL_STATUS_OK) {
         status = confirm_budget(config, &backend.table, &bootstrapped);
     }
     if (status == SHADOWSPILL_STATUS_OK) {
         status = publish(
-            config, &backend, runtime, &baseline, &bootstrapped, pool_bytes
+            config, &backend, libraries, runtime, &baseline, &bootstrapped,
+            pool_bytes
         );
     }
     if (status != SHADOWSPILL_STATUS_OK) {
+        /* Reverse of the order above: the runtime's pools and lanes call into
+           the libraries as they close, so those go last. */
         if (runtime != NULL) {
             shadowspill_runtime_destroy(runtime);
         }
+        shadowspill_pytorch_libraries_unload(libraries, config->library_count);
+        free(libraries);
         shadowspill_pytorch_backend_unload(&backend);
     }
     return status;

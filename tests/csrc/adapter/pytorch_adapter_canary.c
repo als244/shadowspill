@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MIB(count) ((uint64_t)(count) << 20U)
@@ -63,6 +64,16 @@ static int before_bootstrap(void) {
     return 0;
 }
 
+/*
+ * The extension library the bootstrap below loads. It registers a pool kind
+ * this topology never uses, which is the point: what is certified here is the
+ * loader, not the kind. Built unconditionally, so it is always present.
+ */
+static const char *network_library(void) {
+    const char *configured = getenv("SHADOWSPILL_NETWORK_LIBRARY");
+    return configured != NULL ? configured : "./libshadowspill_network.so";
+}
+
 static int bootstrap(const char *backend_library) {
     const ShadowSpillPytorchPoolConfig pools[2] = {
         {.pool_id = DEVICE_POOL, .kind = SHADOWSPILL_POOL_DEVICE},
@@ -105,6 +116,25 @@ static int bootstrap(const char *backend_library) {
         "a wrong contract version must be refused"
     );
     config.abi_version = SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION;
+
+    /* An extension library that cannot be opened fails bootstrap and leaves
+       nothing loaded -- which the successful bootstrap immediately after is
+       what proves, since a half-bootstrapped adapter would refuse it. */
+    const char *const missing[1] = {"/nonexistent/libshadowspill_absent.so"};
+    config.libraries = missing;
+    config.library_count = 1U;
+    REQUIRE(
+        shadowspill_pytorch_allocator_bootstrap(&config) ==
+            SHADOWSPILL_STATUS_INVALID_ARGUMENT,
+        "a library that cannot be opened must fail bootstrap"
+    );
+
+    /* A real one. Nothing of it runs here: its descriptor is read, its entries
+       are copied into the runtime config, and the library stays open until
+       after the runtime is destroyed. */
+    const char *const libraries[1] = {network_library()};
+    config.libraries = libraries;
+    config.library_count = 1U;
     REQUIRE(
         shadowspill_pytorch_allocator_bootstrap(&config) ==
             SHADOWSPILL_STATUS_OK,
