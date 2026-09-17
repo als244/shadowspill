@@ -90,7 +90,7 @@ def open_planning_stores(store: ArtifactStore) -> PlanningStores:
         ),
         plans=open_plan_store(store),
         graph_pairs=GraphPairStore(
-            store.graphpairs,
+            store.graph_pairs,
             policy=store.build_policy,
             artifact_recorder=store.record,
         ),

@@ -278,7 +278,7 @@ class GraphPairStore:
             ),
         )
         self._artifact_recorder(
-            category="graphpairs",
+            category="graph_pairs",
             kind=kind,
             digest=digest,
             path=path,
