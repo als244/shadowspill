@@ -155,7 +155,6 @@ ShadowSpillStatus shadowspill_completion_submit(
 );
 int shadowspill_completion_poll(
     ShadowSpillRuntime *runtime,
-    uint64_t *next_poll_nanoseconds,
     uint64_t *failure_object_id,
     uint64_t *failure_allocation_id
 );

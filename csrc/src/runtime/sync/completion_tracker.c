@@ -97,15 +97,13 @@ ShadowSpillStatus shadowspill_completion_submit(
 
 int shadowspill_completion_poll(
     ShadowSpillRuntime *runtime,
-    uint64_t *next_poll_nanoseconds,
     uint64_t *failure_object_id,
     uint64_t *failure_allocation_id
 ) {
-    if (runtime == NULL || next_poll_nanoseconds == NULL ||
+    if (runtime == NULL ||
         failure_object_id == NULL || failure_allocation_id == NULL) {
         return -1;
     }
-    *next_poll_nanoseconds = 0U;
     *failure_object_id = SHADOWSPILL_RUNTIME_NO_ID;
     *failure_allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
     int changed = 0;
@@ -128,11 +126,9 @@ int shadowspill_completion_poll(
                 break;
             }
             if (due != 0U && due > now) {
-                const uint64_t remaining = due - now;
-                if (*next_poll_nanoseconds == 0U ||
-                    remaining < *next_poll_nanoseconds) {
-                    *next_poll_nanoseconds = remaining;
-                }
+                /* Not due yet. The per-stream timestamp is the whole of the
+                   cadence: nothing needs to be told how long is left, because
+                   the caller does not sleep. */
                 break;
             }
 
@@ -154,12 +150,8 @@ int shadowspill_completion_poll(
                 return -1;
             }
             if (!complete) {
-                const uint64_t delay = runtime->worker_poll_nanoseconds;
-                stream->next_poll_timestamp_ns = now + delay;
-                if (*next_poll_nanoseconds == 0U ||
-                    delay < *next_poll_nanoseconds) {
-                    *next_poll_nanoseconds = delay;
-                }
+                stream->next_poll_timestamp_ns =
+                    now + runtime->worker_poll_nanoseconds;
                 pthread_mutex_unlock(&tracker->lock);
                 (void)shadowspill_event_lease_release(runtime, event);
                 break;
