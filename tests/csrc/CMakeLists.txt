@@ -187,11 +187,29 @@ target_link_libraries(
   PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
 )
 add_test(NAME shadowspill_remote_pool_canary COMMAND shadowspill_remote_pool_canary)
+
+# Bytes actually crossing the link. Needs the runtime's internals to reach a
+# route's lane, which is what it exists to drive.
+add_executable(shadowspill_remote_transfer_canary network/remote_transfer_canary.c)
+target_include_directories(
+  shadowspill_remote_transfer_canary
+  PRIVATE ${SHADOWSPILL_VERBS_INCLUDE_DIR}
+)
+target_link_libraries(
+  shadowspill_remote_transfer_canary
+  PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
+)
+add_test(
+  NAME shadowspill_remote_transfer_canary
+  COMMAND shadowspill_remote_transfer_canary
+)
+
 set_tests_properties(
   shadowspill_remote_pool_canary
+  shadowspill_remote_transfer_canary
   PROPERTIES
     LABELS "network"
-    TIMEOUT 30
+    TIMEOUT 60
     ENVIRONMENT
       "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
 )

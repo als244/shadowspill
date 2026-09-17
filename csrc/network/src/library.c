@@ -17,11 +17,9 @@ static const ShadowSpillLibraryDescription description = {
     .name = "network",
     .pool_memory = &shadowspill_remote_pool_memory,
     .pool_memory_count = 1U,
-    /* No lane yet. A Remote pool can be created, allocated from and released
-       over the control channel; moving bytes to it is the next contract this
-       library implements. */
-    .lanes = NULL,
-    .lane_count = 0U,
+    /* Both directions: a route is directed, and a spill topology has two. */
+    .lanes = shadowspill_remote_lanes,
+    .lane_count = 2U,
 };
 
 SHADOWSPILL_NETWORK_API const ShadowSpillLibraryDescription *

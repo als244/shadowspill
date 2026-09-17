@@ -115,6 +115,32 @@ void shadowspill_latch_failure_locked(
     );
 }
 
+/*
+ * The lane contract's way back in, declared in lane.h.
+ *
+ * It existed as a promise before it existed as a function: `lane.h` said a
+ * lane latches its own failures and `create` took a runtime so that it could,
+ * but nothing was exported to do it. The first lane with a thread of its own
+ * is what found that.
+ *
+ * No task and no pool, deliberately. Those come from thread-locals a lane's
+ * thread does not have, and reporting whatever the dispatching thread was
+ * doing would attribute the failure to unrelated work.
+ */
+void shadowspill_lane_latch_failure(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillStatus status,
+    ShadowSpillFailureReason reason
+) {
+    if (runtime == NULL) {
+        return;
+    }
+    shadowspill_latch_failure_locked(
+        runtime, status, reason, SHADOWSPILL_RUNTIME_NO_ID,
+        SHADOWSPILL_RUNTIME_NO_ID, 0U
+    );
+}
+
 void shadowspill_latch_pool_failure_locked(
     ShadowSpillRuntime *runtime,
     ShadowSpillMemoryPool *pool,
