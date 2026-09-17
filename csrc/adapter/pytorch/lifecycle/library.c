@@ -2,6 +2,7 @@
 #include "internal.h"
 
 #include <dlfcn.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 /*
@@ -24,6 +25,13 @@ static ShadowSpillStatus load_one(
 ) {
     void *const library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (library == NULL) {
+        /* dlerror() is the only account of why, and it is gone after the next
+           call. A bootstrap that fails here otherwise reports one status code
+           for a missing file, an unresolved symbol and a wrong architecture
+           alike. */
+        fprintf(
+            stderr, "ShadowSpill: could not load %s: %s\n", path, dlerror()
+        );
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     /* The handle is stored before anything can fail, so unload is
@@ -36,6 +44,10 @@ static ShadowSpillStatus load_one(
         .object = dlsym(library, SHADOWSPILL_LIBRARY_DESCRIBE_SYMBOL)
     };
     if (describe.object == NULL) {
+        fprintf(
+            stderr, "ShadowSpill: %s exports no %s\n", path,
+            SHADOWSPILL_LIBRARY_DESCRIBE_SYMBOL
+        );
         shadowspill_pytorch_libraries_unload(loaded, 1U);
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
@@ -46,6 +58,14 @@ static ShadowSpillStatus load_one(
          loaded->description->pool_memory_count != 0U) ||
         (loaded->description->lanes == NULL &&
          loaded->description->lane_count != 0U)) {
+        fprintf(
+            stderr,
+            "ShadowSpill: %s describes itself incompatibly (abi %u, this build "
+            "is %u)\n",
+            path,
+            loaded->description == NULL ? 0U : loaded->description->abi_version,
+            (unsigned)SHADOWSPILL_ABI_VERSION
+        );
         shadowspill_pytorch_libraries_unload(loaded, 1U);
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }

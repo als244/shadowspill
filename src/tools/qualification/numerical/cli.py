@@ -51,6 +51,25 @@ def main() -> int:
     return 0
 
 
+def _remote_spill(parser: argparse.ArgumentParser, value: str | None) -> Any:
+    """The pool named by ``--remote-spill``, or ``None`` for pinned host.
+
+    Parsed here rather than in the matrix so that a case run by hand behaves
+    exactly as one the matrix spawned -- which is the whole reason the option
+    travels as a string.
+    """
+
+    if value is None:
+        return None
+    host, _, rest = value.partition(":")
+    port, _, size = rest.partition(":")
+    if not host or not port.isdigit() or not size.isdigit():
+        parser.error(f"--remote-spill must read HOST:PORT:BYTES, not {value!r}")
+    from shadowspill.network import remote
+
+    return remote(capacity=int(size), host=host, port=int(port))
+
+
 def _parser() -> argparse.ArgumentParser:
     """Every option the three modes share, and the paths each one takes."""
 
@@ -154,6 +173,15 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         metavar="NAME=JSON",
         help="repeatable custom-factory option",
+    )
+    parser.add_argument(
+        "--remote-spill",
+        metavar="HOST:PORT:BYTES",
+        help=(
+            "spill to a memory daemon on another machine instead of to pinned "
+            "host memory. Everything else about the case is unchanged, which "
+            "is what makes the comparison mean something"
+        ),
     )
     return parser
 
@@ -285,5 +313,6 @@ def _dispatch(
                 plan_store_mode=arguments.plan_store_mode,
                 export_bypass_key=arguments.export_bypass_key,
                 detailed_artifacts=arguments.detailed_artifacts,
+                spill_pool=_remote_spill(parser, arguments.remote_spill),
             )
         )

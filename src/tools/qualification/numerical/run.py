@@ -82,12 +82,19 @@ class _Steps:
 
 
 def _open_runtime(request: PlannedRequest) -> Runtime:
-    """The two pools and the two routes every numerical case is planned on."""
+    """The two pools and the two routes every numerical case is planned on.
+
+    The spill pool is the case's if it named one and a pinned-host pool
+    otherwise. That single substitution is the whole of what the remote gate
+    changes: same programs, same references, same tolerances, same routes --
+    only the memory the spill pool is made of, which is exactly the variable
+    under test.
+    """
 
     return Runtime(
         pools={
             "execution": device(physical_capacity=request.device_budget),
-            "spill": pinned_host(capacity=SPILL_BUDGET),
+            "spill": request.spill_pool or pinned_host(capacity=SPILL_BUDGET),
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),
