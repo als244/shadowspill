@@ -49,7 +49,7 @@ def test_planning_cache_has_stable_human_readable_layout(tmp_path: Path) -> None
     assert cache.build == root / "build"
     assert cache.planning == root / "planning"
     assert cache.exports == root / "build" / "exports"
-    assert cache.graphpairs == root / "build" / "graphpairs"
+    assert cache.graph_pairs == root / "build" / "graph_pairs"
     assert cache.profile_measurements == root / "build" / "profiling" / "measurements"
     assert cache.compiled_manifests == (
         root / "build" / "profiling" / "compiled_manifests"

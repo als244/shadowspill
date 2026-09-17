@@ -174,7 +174,7 @@ in-memory result; Inductor's private directory is reported as `managed`.
 
 | Field | Meaning |
 |---|---|
-| `category` | Which part of the store it belongs to: `pytorch`, `graphpairs`, `optimizers` or `profiling` in the build tree, `search` or `plans` in the planning tree. |
+| `category` | Which part of the store it belongs to: `pytorch`, `graph_pairs`, `optimizers` or `profiling` in the build tree, `search` or `plans` in the planning tree. |
 | `kind` | What kind of document it is. |
 | `digest` | Its content digest, or `None` for a directory. |
 | `path` | Where it is on disk. |

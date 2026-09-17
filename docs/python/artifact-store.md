@@ -11,7 +11,7 @@ artifact_store/
     ├── build/            what a run pays for, and another run can reuse
     │   ├── exports/      normalized Export archives and manifests
     │   ├── inductor/     PyTorch Inductor and Triton caches
-    │   ├── graphpairs/   structural AOT graph pairs
+    │   ├── graph_pairs/  structural AOT graph pairs
     │   ├── optimizers/   traced recurrent optimizer updates
     │   └── profiling/
     │       ├── compiled_manifests/
@@ -126,7 +126,7 @@ path through the same helper, `digest_directory`.
 | Kind | Path under `v<N>/` |
 |---|---|
 | Export | `build/exports/<2>/<digest>/exported_program.pt2` |
-| Graph pair | `build/graphpairs/<2>/<digest>/graph_pairs.pt` |
+| Graph pair | `build/graph_pairs/<2>/<digest>/graph_pairs.pt` |
 | Optimizer capture | `build/optimizers/<2>/<digest>/optimizer_capture.pt` |
 | Compiled manifest | `build/profiling/compiled_manifests/<2>/<digest>/manifest.json` |
 | Profile measurement | `build/profiling/measurements/<2>/<digest>/measurement.json` |
