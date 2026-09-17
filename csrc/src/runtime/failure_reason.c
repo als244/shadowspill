@@ -44,6 +44,8 @@ const char *shadowspill_failure_reason_string(
         case SHADOWSPILL_FAILURE_REASON_TASK_ALLOCATION_REJECTED:
             return "a planned task allocation could not be placed at its "
                    "fixed offset";
+        case SHADOWSPILL_FAILURE_REASON_TRANSFER_REJECTED:
+            return "a lane could not move bytes it had accepted";
     }
     return "unknown reason";
 }

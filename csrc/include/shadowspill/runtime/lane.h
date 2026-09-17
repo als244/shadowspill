@@ -7,6 +7,8 @@
 
 #include <shadowspill/shadowspill.h>
 #include <shadowspill/backend.h>
+/* For the status and reason a lane latches with. */
+#include <shadowspill/runtime/vocabulary.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +40,32 @@ extern "C" {
 typedef struct ShadowSpillLane ShadowSpillLane;
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
 
+/*
+ * How a lane reports a failure it finds on a thread of its own.
+ *
+ * The runtime is not calling it, so there is no return value to fail through.
+ * This is the way back in, and the reason `create` receives a runtime at all.
+ *
+ * Safe from any thread and first-writer-wins, so the original cause survives
+ * whatever it goes on to cause. It records no task or pool: a lane's thread is
+ * inside neither, and attributing its failure to whatever the dispatching
+ * thread happened to be doing would be worse than leaving it blank.
+ *
+ * The worker already reads the latched status twice a turn, so this costs
+ * nothing in the loop and arrives by the path every other failure takes.
+ */
+/* Whether a trace is running, for a lane deciding whether to record the detail
+   a trace wants. A lane is outside the runtime and cannot read its state; this
+   is the one question it needs answered, and asking is cheaper than recording
+   what nothing will read. */
+SHADOWSPILL_API int shadowspill_lane_trace_active(ShadowSpillRuntime *runtime);
+
+SHADOWSPILL_API void shadowspill_lane_latch_failure(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillStatus status,
+    ShadowSpillFailureReason reason
+);
+
 /* Runtime-internal. A lane passes one through to the interval entries below
    and never looks inside, which is why those two entries are the only ones a
    lane outside this library cannot implement. */
@@ -56,6 +84,24 @@ typedef struct ShadowSpillStreamInterval ShadowSpillStreamInterval;
  * transport offers -- and then releases the event. Nothing downstream can tell
  * the difference, because everything downstream reads an event.
  *
+ * THE SECOND OBLIGATION, and the one that is easy to breach without noticing:
+ *
+ *     A lane's completion path must not depend on anything the lane has made
+ *     wait.
+ *
+ * Stated about cycles rather than threads, because a lane need not have one.
+ * The built-in satisfies it without trying: its completion path is the stream,
+ * the driver advances it, and it makes nothing wait.
+ *
+ * A lane that completes on its own schedule has to be deliberate. Its value
+ * wait is satisfied only by that completion path, so any device call on the
+ * path can be blocked by the very wait it exists to satisfy -- and an
+ * outstanding value wait blocks calls on *other* streams too, so a second
+ * stream is not an escape. The practical form: whatever watches for
+ * completions does that and nothing else, and any device work the transfer
+ * needs is issued by the thread that called into the lane, before the watcher
+ * ever sees it.
+ *
  * That is why there is no entry here for the runtime to poke a lane with. There
  * was one, and it cost 1.7 % of the shortest step in the qualification matrix
  * while doing nothing: the worker's loop gates every transfer, so work added
@@ -67,6 +113,36 @@ typedef struct ShadowSpillStreamInterval ShadowSpillStreamInterval;
  * nothing the runtime needs. A lane with no intervals moves bytes exactly as
  * well as one with them.
  */
+/*
+ * What a lane has moved, and what it cost.
+ *
+ * One lane is one directional pair of pool kinds, so these are per route and
+ * per direction. Bytes are what the runtime asked to move: a lane that splits
+ * a transfer into chunks counts the transfer once in `copies` and its pieces
+ * in `chunks`, which is the difference between "how many transfers" and "how
+ * many times the hardware was asked".
+ *
+ * `posted_to_completion_seconds` is summed rather than averaged so the mean is
+ * a division the reader does, and no sample is thrown away deciding what to
+ * keep. It measures the interval a lane can actually see -- from handing the
+ * hardware a chunk to observing its completion -- which is not the same as
+ * time on the wire, and separating the two is the point.
+ */
+typedef struct ShadowSpillLaneStatistics {
+    uint64_t copies;      /* transfers accepted */
+    uint64_t chunks;      /* pieces the hardware was handed */
+    uint64_t bytes;       /* bytes accepted, summed over copies */
+    uint64_t signals;     /* completion signals issued */
+    uint64_t waits;       /* dependency waits enqueued */
+    uint64_t retries;     /* waits that asked to be retried */
+    uint64_t failures;    /* transfers that did not land */
+
+    /* Zero unless `timed` is 1. */
+    uint8_t timed;
+    double posted_to_completion_seconds;
+    double longest_completion_seconds;
+} ShadowSpillLaneStatistics;
+
 typedef struct ShadowSpillLaneOperations {
     /*
      * Order this lane's work behind `event`. Returns 0 when the dependency is
@@ -116,6 +192,25 @@ typedef struct ShadowSpillLaneOperations {
     );
 
     void (*destroy)(ShadowSpillLane *lane);
+
+    /*
+     * What this lane has moved. **Optional**: NULL means the lane keeps no
+     * count, and the runtime reports nothing for it rather than reporting
+     * zeroes, which would be indistinguishable from a lane that moved nothing.
+     *
+     * Counters are maintained unconditionally, because a lane that only counts
+     * when asked cannot explain the run that went wrong. The timing fields are
+     * the exception and may be left zero by a lane for which reading a clock
+     * on the transfer path is not free; `timed` says which it is, so a reader
+     * never mistakes "not measured" for "instant".
+     *
+     * Called from the thread collecting diagnostics, never from the worker,
+     * and must be safe against a lane actively transferring.
+     */
+    int (*statistics)(
+        const ShadowSpillLane *lane,
+        ShadowSpillLaneStatistics *statistics
+    );
 } ShadowSpillLaneOperations;
 
 /*
@@ -138,9 +233,17 @@ typedef struct ShadowSpillLaneDescription {
      * and the worker already reads the latched status twice a turn: no new
      * mechanism and nothing added to the loop.
      *
-     * `stream` is created by the runtime for this lane and is not the route's
-     * stream. A lane may use `backend` through its own stream -- to copy, to
-     * record, to query -- but never on the route's, which has one writer.
+     * `stream` is **the route's stream** (`runtime.c` passes `route->stream`
+     * here), and a lane may use `backend` through it -- to copy, to record, to
+     * wait, to query.
+     *
+     * The rule it has to keep is single-writer ordering: one thread's worth of
+     * work, in one order. That is satisfied for free by every entry in this
+     * table, because each is called on the thread that called into the lane.
+     * It is *not* satisfied by a thread the lane runs itself, which is
+     * concurrent with the next call in -- so a lane's own thread writes no
+     * stream at all. See the second obligation above for why that is a
+     * deadlock and not merely a race.
      *
      * This is also where a lane probes. Nothing a loaded library holds runs at
      * load, so everything that depends on what the hardware can actually do

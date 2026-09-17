@@ -93,6 +93,12 @@ typedef enum ShadowSpillFailureReason {
     SHADOWSPILL_FAILURE_REASON_TASK_BOUNDARY_REJECTED = 13,
     /* A planned task allocation could not be placed at its fixed offset. */
     SHADOWSPILL_FAILURE_REASON_TASK_ALLOCATION_REJECTED = 14,
+
+    /* A lane could not move bytes it had accepted. Distinct from a backend
+       call being rejected because there may be no backend involved: a lane
+       whose transport is a network fails here, on a thread of its own, with
+       no call of the runtime's to fail out of. */
+    SHADOWSPILL_FAILURE_REASON_TRANSFER_REJECTED = 15,
 } ShadowSpillFailureReason;
 
 typedef enum ShadowSpillObjectResidency {
