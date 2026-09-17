@@ -9,12 +9,14 @@ and storage operations into this contract.
 
 `MemoryPool` is a generic range owner registered by identity with the runtime,
 and directed transfer routes are registered separately; how pools get their
-arenas and routes their lanes is in [memory pools](memory-pools.md), and why
+memory and routes their lanes is in [memory pools](memory-pools.md), and why
 runtime construction precedes workload-state construction is in [its
 construction order](memory-pools.md#construction-order). Each admitted plan
 selects its execution pool, spill pool, fetch route, and evict route, so the
 roles are the plan's rather than the runtime's. The PyTorch adapter registers
-one device pool and any number of pinned-host pools.
+one device pool and any number of spill pools; which kinds those are is
+whatever the configured `pool_memory` entries serve, and nothing between the
+configuration and the pool asks.
 
 A `DevicePool`'s `physical_capacity` is the complete process-attributable
 accelerator cap. Provider headroom and the driver's own baseline lie inside
@@ -112,8 +114,9 @@ free" state.
 ## Transfers
 
 What happens between an action's trigger and its completion -- routes and their
-lanes, destination reservation, the two queues a lane serves, and how a
-write-back differs from an eviction -- is in [transfers](transfers.md#dispatch).
+lanes, destination reservation, the two orders a route's queue serves, and how
+a write-back differs from an eviction -- is in
+[transfers](transfers.md#dispatch).
 
 One consequence belongs here, because it is about ranges rather than copies: a
 release scheduled behind a pending write-back of the same object does not
@@ -123,12 +126,15 @@ has landed, which is when the simulator frees it too.
 
 ## Worker
 
-One C-owned worker services completions, releases, and both transfer lanes.
+One C-owned worker services completions, releases, and both routes' queues.
+It does not drive the lanes themselves: a lane completes the event it was given
+when its bytes have landed, by whatever means suits it, and the worker reads
+events like any other.
 It names itself `shadowspill.wkr` to both the OS and the backend's profiler --
 one name, short enough that the OS thread-name limit keeps it whole. The hot
 loop visits each completion frontier, drains immediately completed FIFO
 successors, handles retirements, and dispatches queued actions. A queued
-transfer is dispatched when it is the head of its lane queue and its
+transfer is dispatched when it is the head of its route's queue and its
 preconditions hold. The default incomplete-head query cadence is
 `worker_poll_nanoseconds`, one microsecond; an already-complete head is
 followed immediately without an artificial delay.
@@ -229,8 +235,10 @@ backend failure remain distinguishable.
 Planned callables close their admitted execution state. Python
 `Runtime.close()` requires no active callable, persistent imported state,
 public object reference, or caller-owned device output. It then calls the C
-close/destroy path, which stops and joins the worker, closes every route and
-pool backend, unregisters pinned memory, and releases device memory. PyTorch
+close/destroy path, which stops and joins the worker, destroys every route's
+lane and stream, and gives each pool's memory back through its own kind's
+`release` -- unregistering and unmapping host memory, freeing device memory,
+or telling a peer to free a region, as the kind requires. PyTorch
 cannot uninstall its selected process allocator, so only the allocator shim
 remains; it rejects future allocations as closed.
 

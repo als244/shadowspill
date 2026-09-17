@@ -1,5 +1,5 @@
 /* One action handled: which stage it is in, and the two queued paths --
- * a release that gives capacity back, or a transfer onto a lane. */
+ * a release that gives capacity back, or a transfer onto a queue. */
 #define _GNU_SOURCE
 
 #include "internal.h"
@@ -10,7 +10,7 @@
 /*
  * A release gives capacity back: it waits for the task that last read the
  * object, then retires the execution lease. Nothing is copied, so the action
- * finishes here rather than on a transfer lane.
+ * finishes here rather than on a transfer queue.
  */
 static int handle_release_locked(
     ShadowSpillRuntime *runtime,
@@ -172,7 +172,7 @@ static int handle_release_locked(
 /*
  * A fetch, an eviction or a write-back: capacity is owned by the time the
  * action is queued, so what remains is waiting for its trigger, proving the
- * destination may be written, claiming the lane, and dispatching the copy.
+ * destination may be written, claiming the queue, and dispatching the copy.
  */
 static int handle_transfer_locked(
     ShadowSpillRuntime *runtime,
@@ -239,9 +239,9 @@ static int handle_transfer_locked(
     }
     /*
      * A causal destination owns capacity from the trigger, but it
-     * cannot enter a transfer lane until its predecessor has
+     * cannot enter a transfer queue until its predecessor has
      * published the event that makes address reuse safe.  Leave
-     * it queued so it cannot occupy and stall the lane head.
+     * it queued so it cannot occupy and stall the queue head.
      */
     pthread_mutex_unlock(&object->lock);
     const int dependency_ready =
@@ -261,7 +261,7 @@ static int handle_transfer_locked(
               action->task_id,
               action->action_ordinal,
               action->activation_generation,
-              action->route->lane
+              action->route->stream
           )
         : SHADOWSPILL_STATUS_OK;
     pthread_mutex_lock(&object->lock);
@@ -322,9 +322,9 @@ static int handle_transfer_locked(
             return -1;
         }
     }
-    ShadowSpillTransferLane *lane =
-        shadowspill_transfer_lane_for_action(runtime, action);
-    if (!shadowspill_transfer_lane_claim(lane, action)) {
+    ShadowSpillTransferQueue *queue =
+        shadowspill_transfer_queue_for_action(runtime, action);
+    if (!shadowspill_transfer_queue_claim(queue, action)) {
         pthread_mutex_unlock(&object->lock);
         return 0;
     }
@@ -335,8 +335,14 @@ static int handle_transfer_locked(
         pthread_mutex_unlock(&object->lock);
         return -1;
     }
+    if (dispatched == SHADOWSPILL_DISPATCH_RETRY) {
+        /* The lane wants the next poll. It was claimed, so it has to go back. */
+        shadowspill_transfer_queue_return(queue, action);
+        pthread_mutex_unlock(&object->lock);
+        return 0;
+    }
     if (dispatched != 0) {
-        shadowspill_transfer_lane_publish_inflight(lane, action);
+        shadowspill_transfer_queue_publish_inflight(queue, action);
     }
     pthread_mutex_unlock(&object->lock);
     return dispatched;
