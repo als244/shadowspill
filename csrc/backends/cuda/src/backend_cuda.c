@@ -277,6 +277,94 @@ static int destroy_event(void *state, ShadowSpillBackendEvent event) {
     return 0;
 }
 
+/*
+ * Signal words, and a stream that waits on one.
+ *
+ * `cuStreamWaitValue64` takes a device pointer, so a signal word needs two
+ * addresses for the same memory: the host one a caller stores to, and the
+ * device one the stream waits on. Page-locked device-mapped memory gives both.
+ * The device address never leaves this file, which is why the contract names a
+ * word by index rather than by pointer -- a caller that only has the host
+ * address could not supply the other one, and should not have to know it
+ * exists.
+ */
+typedef struct CudaSignals {
+    void *host;
+    CUdeviceptr device;
+} CudaSignals;
+
+static int allocate_signals(
+    void *state,
+    uint32_t count,
+    ShadowSpillBackendSignals *signals,
+    uint64_t **host
+) {
+    ShadowSpillCudaBackend *backend = state;
+    if (count == 0U || signals == NULL || host == NULL ||
+        activate_context(backend) != 0) {
+        return -1;
+    }
+    CudaSignals *created = calloc(1U, sizeof(*created));
+    if (created == NULL) {
+        return -1;
+    }
+    const size_t bytes = (size_t)count * sizeof(uint64_t);
+    if (record_result(
+            backend,
+            cuMemHostAlloc(&created->host, bytes, CU_MEMHOSTALLOC_DEVICEMAP)
+        ) != 0) {
+        free(created);
+        return -1;
+    }
+    if (record_result(
+            backend, cuMemHostGetDevicePointer(&created->device, created->host, 0U)
+        ) != 0) {
+        (void)cuMemFreeHost(created->host);
+        free(created);
+        return -1;
+    }
+    memset(created->host, 0, bytes);
+    *signals = (ShadowSpillBackendSignals)(uintptr_t)created;
+    *host = created->host;
+    return 0;
+}
+
+static int free_signals(void *state, ShadowSpillBackendSignals signals) {
+    ShadowSpillCudaBackend *backend = state;
+    CudaSignals *target = (CudaSignals *)(uintptr_t)signals;
+    if (target == NULL || activate_context(backend) != 0) {
+        return -1;
+    }
+    const int status = record_result(backend, cuMemFreeHost(target->host));
+    free(target);
+    return status;
+}
+
+static int wait_value(
+    void *state,
+    ShadowSpillBackendStream stream,
+    ShadowSpillBackendSignals signals,
+    uint32_t index,
+    uint64_t generation
+) {
+    ShadowSpillCudaBackend *backend = state;
+    CudaSignals *target = (CudaSignals *)(uintptr_t)signals;
+    if (target == NULL || activate_context(backend) != 0) {
+        return -1;
+    }
+    /* Greater-or-equal, so a generation the lane already stored does not stall
+       the stream waiting for a value that has been and gone. */
+    return record_result(
+        backend,
+        cuStreamWaitValue64(
+            stream_value(stream),
+            target->device + (CUdeviceptr)((size_t)index * sizeof(uint64_t)),
+            (cuuint64_t)generation,
+            CU_STREAM_WAIT_VALUE_GEQ
+        )
+    );
+}
+
 static int record_event(
     void *state, ShadowSpillBackendEvent event, ShadowSpillBackendStream stream
 ) {
@@ -507,6 +595,9 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
         .free_device = free_device,
         .register_host_memory = register_host_memory,
         .unregister_host_memory = unregister_host_memory,
+        .allocate_signals = allocate_signals,
+        .free_signals = free_signals,
+        .wait_value = wait_value,
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .synchronize_stream = synchronize_stream,

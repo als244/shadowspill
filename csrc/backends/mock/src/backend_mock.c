@@ -6,13 +6,34 @@
 #include <string.h>
 #include <time.h>
 
+/*
+ * A pending value wait. The mock's clock cannot predict when a host thread will
+ * store a generation, so readiness stops being a time and becomes a condition:
+ * a stream carrying an unmet wait is not ready whatever its clock says, and an
+ * event recorded on it inherits that.
+ */
+typedef struct MockPendingValue {
+    const uint64_t *word;
+    uint64_t generation;
+    int pending;
+} MockPendingValue;
+
+/* Satisfied once the word reaches the generation. A wait never un-satisfies,
+   so this may be read without the backend's lock. */
+static int value_satisfied(const MockPendingValue *value) {
+    return !value->pending ||
+           __atomic_load_n(value->word, __ATOMIC_ACQUIRE) >= value->generation;
+}
+
 typedef struct MockStream {
     uint64_t ready_nanoseconds;
+    MockPendingValue value;
 } MockStream;
 
 typedef struct MockEvent {
     uint64_t ready_nanoseconds;
     int recorded;
+    MockPendingValue value;
 } MockEvent;
 
 struct ShadowSpillMockBackend {
@@ -142,7 +163,7 @@ static int synchronize_stream(void *state, ShadowSpillBackendStream stream) {
         pthread_mutex_lock(&backend->mutex);
         const uint64_t ready = target->ready_nanoseconds;
         pthread_mutex_unlock(&backend->mutex);
-        if (now_nanoseconds() >= ready) {
+        if (now_nanoseconds() >= ready && value_satisfied(&target->value)) {
             break;
         }
         struct timespec delay = {.tv_nsec = 100000U};
@@ -284,6 +305,9 @@ static int record_event(
     const uint64_t ready =
         source->ready_nanoseconds > now ? source->ready_nanoseconds : now;
     target->ready_nanoseconds = ready + backend->config.event_delay_nanoseconds;
+    /* Whatever this stream is waiting on, the event is waiting on too: it
+       cannot complete before the work ahead of it on the stream. */
+    target->value = source->value;
     target->recorded = 1;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
@@ -304,7 +328,96 @@ static int query_event(void *state, ShadowSpillBackendEvent event, int *complete
         pthread_mutex_unlock(&backend->mutex);
         return -1;
     }
-    *complete = now_nanoseconds() >= target->ready_nanoseconds;
+    *complete = now_nanoseconds() >= target->ready_nanoseconds &&
+                value_satisfied(&target->value);
+    pthread_mutex_unlock(&backend->mutex);
+    return 0;
+}
+
+/*
+ * Signal words, and a stream that waits on one.
+ *
+ * The mock has no device, so "the stream waits until the word reaches a value"
+ * becomes "the stream cannot be ready before the host stores that value". A
+ * wait on a word already past its generation is satisfied at once; a wait on
+ * one that has not arrived pushes the stream's clock out to now, and the store
+ * that follows moves it no further. That is the same shape a driver's value
+ * wait has, which is what the lane layer above is written against.
+ */
+typedef struct MockSignals {
+    uint64_t *words;
+    uint32_t count;
+} MockSignals;
+
+static MockSignals *signals_pointer(ShadowSpillBackendSignals signals) {
+    return (MockSignals *)(uintptr_t)signals;
+}
+
+static int allocate_signals(
+    void *state,
+    uint32_t count,
+    ShadowSpillBackendSignals *signals,
+    uint64_t **host
+) {
+    ShadowSpillMockBackend *backend = state;
+    if (operation_fails(backend)) {
+        return -1;
+    }
+    if (count == 0U || signals == NULL || host == NULL) {
+        return -1;
+    }
+    MockSignals *created = calloc(1U, sizeof(*created));
+    if (created == NULL) {
+        return -1;
+    }
+    created->words = calloc(count, sizeof(*created->words));
+    if (created->words == NULL) {
+        free(created);
+        return -1;
+    }
+    created->count = count;
+    *signals = (ShadowSpillBackendSignals)(uintptr_t)created;
+    *host = created->words;
+    return 0;
+}
+
+static int free_signals(void *state, ShadowSpillBackendSignals signals) {
+    ShadowSpillMockBackend *backend = state;
+    if (operation_fails(backend)) {
+        return -1;
+    }
+    MockSignals *target = signals_pointer(signals);
+    if (target == NULL) {
+        return -1;
+    }
+    free(target->words);
+    free(target);
+    return 0;
+}
+
+static int wait_value(
+    void *state,
+    ShadowSpillBackendStream stream,
+    ShadowSpillBackendSignals signals,
+    uint32_t index,
+    uint64_t generation
+) {
+    ShadowSpillMockBackend *backend = state;
+    if (operation_fails(backend)) {
+        return -1;
+    }
+    MockStream *target = stream_pointer(stream);
+    MockSignals *block = signals_pointer(signals);
+    if (target == NULL || block == NULL || index >= block->count) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    target->value = (MockPendingValue){
+        .word = &block->words[index],
+        .generation = generation,
+        .pending = 1,
+    };
+    ++backend->statistics.stream_waits;
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
@@ -351,8 +464,9 @@ static int synchronize_event(void *state, ShadowSpillBackendEvent event) {
         return -1;
     }
     /* The mock's events complete on the host clock, so waiting for one is
-     * waiting for that instant to pass. */
-    while (now_nanoseconds() < ready) {
+     * waiting for that instant to pass -- and, if the stream it was recorded on
+     * was held by a value wait, for that word to arrive. */
+    while (now_nanoseconds() < ready || !value_satisfied(&target->value)) {
         sched_yield();
     }
     return 0;
@@ -434,6 +548,9 @@ static ShadowSpillBackend interface_for(ShadowSpillMockBackend *backend) {
         .free_device = free_device,
         .register_host_memory = register_host_memory,
         .unregister_host_memory = unregister_host_memory,
+        .allocate_signals = allocate_signals,
+        .free_signals = free_signals,
+        .wait_value = wait_value,
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .synchronize_stream = synchronize_stream,
