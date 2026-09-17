@@ -2,9 +2,9 @@
 #define SHADOWSPILL_MEMORY_POOL_INTERNAL_H
 
 /*
- * The pool itself: its arena, its records, and the leases it hands out.
+ * The pool itself: its memory, its records, and the leases it hands out.
  *
- * A pool is a bump arena with a release frontier. Arena holds the mapping
+ * A pool is a bump allocator with a release frontier. Memory holds the mapping
  * and the reservations over it; records holds the lease and use tables it
  * owns; locks holds the several locks and what each one covers; leases is
  * the frontier -- reserve, adopt, retire, release -- and causal is the part

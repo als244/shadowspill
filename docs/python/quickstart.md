@@ -9,7 +9,7 @@ Construct `Runtime` before constructing or loading model state and before
 PyTorch performs any accelerator allocation. The runtime installs the process
 allocator, creates and registers the execution and spill pools, starts its C
 worker, and calibrates transfers directly between those real pool addresses.
-Registering a large pinned spill arena after anonymous model state has claimed
+Registering a large pinned spill pool after anonymous model state has claimed
 host pages can change its physical DMA mapping and measured bandwidth.
 
 ```python

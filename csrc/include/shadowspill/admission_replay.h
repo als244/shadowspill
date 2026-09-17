@@ -53,7 +53,7 @@ typedef struct ShadowSpillAdmissionReplayProgram {
     /*
      * Zero preserves ordinary low-address best fit.  Otherwise requests at
      * least this large split the selected free range from its high end.  The
-     * policy keeps one globally coalescing arena; it does not partition or
+     * policy keeps one globally coalescing free space; it does not partition or
      * reserve capacity for either size class.
      */
     uint64_t large_request_threshold_bytes;
@@ -122,7 +122,7 @@ typedef struct ShadowSpillAdmissionReplayResult {
 
 /*
  * Opaque reusable scratch storage for repeated replay. A workspace owns no
- * backend arena and performs no I/O. It is not thread-safe: one caller may
+ * backend memory and performs no I/O. It is not thread-safe: one caller may
  * use a workspace at a time, while distinct workspaces are independent.
  */
 typedef struct ShadowSpillAdmissionReplayWorkspace

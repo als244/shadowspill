@@ -235,7 +235,7 @@ typedef struct ShadowSpillRuntimeStatistics {
  */
 typedef struct ShadowSpillLiveAllocation {
     uint64_t allocation_id;
-    /* Byte offset into the pool's arena. Position, not size, is what explains
+    /* Byte offset into the pool's memory. Position, not size, is what explains
      * a contiguous-range refusal, so this is the field to sort on. */
     uint64_t offset;
     uint64_t charged_bytes;
