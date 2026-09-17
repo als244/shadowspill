@@ -76,8 +76,8 @@ synchronization points:
    restore for every entry in the schedule's initial device residency.
    The submitting thread records a compute-stream event that triggers the
    batch, hands it to the worker, and returns once the worker has issued
-   every copy in the batch onto the fetch lane. The batch is not part of
-   the schedule's actions: it re-establishes the schedule's assumed
+   every copy in the batch onto the fetch route's queue. The batch is not
+   part of the schedule's actions: it re-establishes the schedule's assumed
    starting state rather than executing the schedule. A restore requires a
    current spill copy and no device copy — and for a parameter the step
    mutated, the spill copy only becomes current when its writeback
@@ -111,7 +111,7 @@ Reading it, in the back-to-back regime the figure depicts: the terminal
 writeback overlaps the final kernels and the caller's between-step work —
 the only things that hide it — and is still in flight when the next
 invocation begins, so the plan-idle wait extends exactly until the evict
-lane reads "drained". Staging and the restore submission follow on the
+route's queue reads "drained". Staging and the restore submission follow on the
 invoking thread; the restore then streams on the fetch lane while the
 compute stream waits only until its first task's own inputs have landed,
 partway through the restore under first-use order. A caller with enough

@@ -33,9 +33,10 @@ followed by the release. Explanatory documentation and runtime names use
 execution-to-spill movement that frees the execution copy.
 
 Every action names a trigger task, so an action's place in time is a task
-boundary rather than a position in a lane. Triggering a fetch reserves
-destination capacity immediately; reaching the fetch lane head later submits
-the copy. This distinction is part of both physical admission and simulation.
+boundary rather than a position in a queue. Triggering a fetch reserves
+destination capacity immediately; reaching the head of the fetch route's queue
+later submits the copy. This distinction is part of both physical admission
+and simulation.
 
 A memory action is a planning decision, not an allocator call. Executing one
 implies several *pool operations* - reserve, acquire, retire - which are a

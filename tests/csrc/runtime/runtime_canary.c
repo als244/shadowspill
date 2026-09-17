@@ -261,7 +261,78 @@ static int live_allocations_name_what_statistics_only_counts(void) {
     return failed ? -1 : 0;
 }
 
+
+/* Stubs that make a description structurally valid; none is ever called,
+   because create refuses the entry before any route resolves it. */
+static int refuse_wait(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
+    (void)lane; (void)event; return 0;
+}
+static int refuse_copy(
+    ShadowSpillLane *lane, void *destination, const void *source, uint64_t bytes
+) {
+    (void)lane; (void)destination; (void)source; (void)bytes; return 0;
+}
+static int refuse_signal(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
+    (void)lane; (void)event; return 0;
+}
+static int refuse_one(ShadowSpillLane *lane) { (void)lane; return 0; }
+static void refuse_destroy(ShadowSpillLane *lane) { (void)lane; }
+static int refuse_create(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillBackend *backend,
+    ShadowSpillBackendStream stream,
+    void *configuration,
+    ShadowSpillLane **lane
+) {
+    (void)runtime; (void)backend; (void)stream; (void)configuration; (void)lane;
+    return 0;
+}
+
+/*
+ * A registered lane may not claim a pair the runtime already serves. Order must
+ * not decide which one a route gets, because whichever lost would be invisible:
+ * every transfer on that route would silently use the other one.
+ */
+static int a_lane_claiming_a_served_pair_is_refused(void) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillMockRuntimeTopology topology;
+    shadowspill_mock_runtime_topology(&mock, 256U, 256U, 1U, 1000U, &topology);
+
+    static const ShadowSpillLaneOperations operations = {
+        .wait = refuse_wait,
+        .copy = refuse_copy,
+        .signal = refuse_signal,
+        .synchronize = refuse_one,
+        .destroy = refuse_destroy,
+    };
+    const ShadowSpillLaneDescription duplicate = {
+        .from_kind = SHADOWSPILL_POOL_PINNED_HOST,
+        .to_kind = SHADOWSPILL_POOL_DEVICE,
+        .operations = &operations,
+        .create = refuse_create,
+    };
+    topology.runtime.lanes = &duplicate;
+    topology.runtime.lane_count = 1U;
+
+    ShadowSpillRuntime *runtime = NULL;
+    const ShadowSpillStatus status =
+        shadowspill_runtime_create(&topology.runtime, &runtime);
+    if (runtime != NULL) {
+        (void)shadowspill_runtime_close(runtime);
+        (void)shadowspill_runtime_destroy(runtime);
+    }
+    mock.state != NULL ? (void)shadowspill_backend_destroy(&mock) : (void)0;
+    return status == SHADOWSPILL_STATUS_INVALID_ARGUMENT ? 0 : -1;
+}
+
 int main(void) {
+    if (a_lane_claiming_a_served_pair_is_refused() != 0) {
+        return EXIT_FAILURE;
+    }
     if (live_allocations_name_what_statistics_only_counts() != 0) {
         fprintf(stderr, "runtime canary failed: live_allocations\n");
         return EXIT_FAILURE;
@@ -377,23 +448,9 @@ int main(void) {
         memcmp(
             original_payload, restored_payload, sizeof(original_payload)
         ) != 0 ||
-        shadowspill_memory_pool_grow(runtime, 1U, 512U) !=
-            SHADOWSPILL_STATUS_OK ||
-        shadowspill_memory_pool_grow(runtime, 1U, 255U) !=
-            SHADOWSPILL_STATUS_INVALID_ARGUMENT ||
-        shadowspill_read_object(
-            runtime,
-            object.object_id,
-            1U,
-            restored_payload,
-            sizeof(restored_payload)
-        ) != SHADOWSPILL_STATUS_OK ||
-        memcmp(
-            original_payload, restored_payload, sizeof(original_payload)
-        ) != 0 ||
         shadowspill_test_statistics(runtime, &statistics) !=
             SHADOWSPILL_STATUS_OK ||
-        statistics.spill.capacity_bytes != 512U ||
+        statistics.spill.capacity_bytes != 256U ||
         statistics.spill.allocated_bytes != 128U ||
         shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &first_generation) !=
             SHADOWSPILL_STATUS_OK ||

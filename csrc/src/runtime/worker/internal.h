@@ -6,7 +6,7 @@
  *
  * One action moves through three stages, and this directory holds one file
  * per stage: it is handled (its object lock taken, its kind and state
- * decided), dispatched onto a transfer lane, and completed once the backend
+ * decided), dispatched onto a transfer queue, and completed once the backend
  * says the copy is done. Every function below is called with the action's
  * object lock held and returns with it released, because the stages hand an
  * action to one another mid-flight; the return is the same three-valued
@@ -43,8 +43,16 @@ void shadowspill_action_complete(
     ShadowSpillQueuedAction *action
 );
 
-/* Whether the destination a transfer writes into may enter its lane yet. */
+/* Whether the destination a transfer writes into may enter its queue yet. */
 int shadowspill_action_destination_ready(ShadowSpillQueuedAction *action);
+
+/*
+ * What a dispatch body returns beyond the usual <0 failed / 0 not dispatched /
+ * 1 dispatched: the lane could not enqueue a dependency and asked to be
+ * retried. Distinct from 0 so the caller knows the action was claimed and has
+ * to be handed back to its queue.
+ */
+#define SHADOWSPILL_DISPATCH_RETRY 2
 
 int shadowspill_action_dispatch_evict_locked(
     ShadowSpillRuntime *runtime,

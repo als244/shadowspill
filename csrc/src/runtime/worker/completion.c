@@ -190,15 +190,15 @@ int shadowspill_action_finish_locked(
     ShadowSpillQueuedAction *action
 ) {
     ShadowSpillObject *object = action->object;
-    ShadowSpillTransferLane *lane =
-        shadowspill_transfer_lane_for_action(runtime, action);
+    ShadowSpillTransferQueue *queue =
+        shadowspill_transfer_queue_for_action(runtime, action);
     /*
      * The backend may have completed a whole FIFO prefix while an earlier
      * action's object lock is briefly unavailable.  Commit that
-     * prefix strictly from the lane head: skipping a busy predecessor
+     * prefix strictly from the queue head: skipping a busy predecessor
      * must never let a later transfer publish residency first.
      */
-    if (!shadowspill_transfer_lane_is_inflight_head(lane, action)) {
+    if (!shadowspill_transfer_queue_is_inflight_head(queue, action)) {
         pthread_mutex_unlock(&object->lock);
         return 0;
     }
@@ -397,7 +397,7 @@ int shadowspill_action_finish_locked(
             );
             return -1;
         }
-        if (shadowspill_transfer_lane_complete(lane, action) != 0) {
+        if (shadowspill_transfer_queue_complete(queue, action) != 0) {
             shadowspill_action_latch_failure(
                 runtime,
                 action,

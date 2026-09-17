@@ -49,25 +49,7 @@ static ShadowSpillRouteState *route_between(
     return NULL;
 }
 
-int shadowspill_route_copy_async(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillRouteState *route,
-    void *destination,
-    const void *source,
-    uint64_t bytes,
-    ShadowSpillBackendStream stream
-) {
-    const ShadowSpillBackend *backend = &runtime->backend;
-    return route->to_device
-        ? backend->copy_host_to_device(
-              backend->state, destination, source, bytes, stream
-          )
-        : backend->copy_device_to_host(
-              backend->state, destination, source, bytes, stream
-          );
-}
-
-static ShadowSpillBackendStream *lane_of(
+static ShadowSpillBackendStream *stream_of(
     ShadowSpillRuntime *runtime,
     const ShadowSpillRouteState *route
 ) {
@@ -76,7 +58,7 @@ static ShadowSpillBackendStream *lane_of(
     }
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
         if (route == &runtime->routes[route_id]) {
-            return &runtime->routes[route_id].lane;
+            return &runtime->routes[route_id].stream;
         }
     }
     return NULL;
@@ -222,9 +204,7 @@ static void release_probe_ranges(
 }
 
 static int measure_copy(
-    ShadowSpillRuntime *runtime,
     const ShadowSpillRouteState *route,
-    ShadowSpillBackendStream lane,
     void *destination,
     const void *source,
     uint64_t bytes,
@@ -234,9 +214,9 @@ static int measure_copy(
     uint64_t total = 0U;
     for (uint32_t copy = 0U; copy < copies; ++copy) {
         const uint64_t begin = shadowspill_monotonic_ns();
-        if (begin == 0U || shadowspill_route_copy_async(
-                runtime, route, destination, source, bytes, lane
-            ) != 0 || runtime->backend.synchronize_stream(runtime->backend.state, lane) != 0) {
+        if (begin == 0U ||
+            route->operations->copy(route->lane, destination, source, bytes) != 0 ||
+            route->operations->synchronize(route->lane) != 0) {
             return -1;
         }
         const uint64_t end = shadowspill_monotonic_ns();
@@ -250,9 +230,7 @@ static int measure_copy(
 }
 
 static int measure_copy_batch(
-    ShadowSpillRuntime *runtime,
     const ShadowSpillRouteState *route,
-    ShadowSpillBackendStream lane,
     void *destination,
     const void *source,
     uint64_t bytes,
@@ -264,13 +242,13 @@ static int measure_copy_batch(
         return -1;
     }
     for (uint32_t copy = 0U; copy < copies; ++copy) {
-        if (shadowspill_route_copy_async(
-                runtime, route, destination, source, bytes, lane
+        if (route->operations->copy(
+                route->lane, destination, source, bytes
             ) != 0) {
             return -1;
         }
     }
-    if (runtime->backend.synchronize_stream(runtime->backend.state, lane) != 0) {
+    if (route->operations->synchronize(route->lane) != 0) {
         return -1;
     }
     const uint64_t end = shadowspill_monotonic_ns();
@@ -308,12 +286,12 @@ static int calibrate_route(
     ShadowSpillMemoryPool *destination = shadowspill_runtime_pool(
         runtime, route->destination_pool_id
     );
-    ShadowSpillBackendStream *lane = lane_of(
+    ShadowSpillBackendStream *stream = stream_of(
         runtime, route
     );
     uint64_t source_offset = 0U;
     uint64_t destination_offset = 0U;
-    if (source == NULL || destination == NULL || lane == NULL ||
+    if (source == NULL || destination == NULL || stream == NULL ||
         reserve_probe_ranges(
             source,
             destination,
@@ -331,9 +309,11 @@ static int calibrate_route(
     );
     int status = 0;
     for (uint32_t warmup = 0U; warmup < config->warmup_copies; ++warmup) {
-        if (shadowspill_route_copy_async(
-                runtime, route, destination_pointer, source_pointer, config->large_copy_bytes, *lane
-            ) != 0 || runtime->backend.synchronize_stream(runtime->backend.state, *lane) != 0) {
+        if (route->operations->copy(
+                route->lane, destination_pointer, source_pointer,
+                config->large_copy_bytes
+            ) != 0 ||
+            route->operations->synchronize(route->lane) != 0) {
             status = -1;
             break;
         }
@@ -341,9 +321,7 @@ static int calibrate_route(
     uint64_t small_nanoseconds = 0U;
     uint64_t large_measurements[SHADOWSPILL_CALIBRATION_BATCH_SAMPLES] = {0};
     if (status == 0 && measure_copy(
-            runtime,
             route,
-            *lane,
             destination_pointer,
             source_pointer,
             config->small_copy_bytes,
@@ -356,9 +334,7 @@ static int calibrate_route(
          status == 0 && sample < SHADOWSPILL_CALIBRATION_BATCH_SAMPLES;
          ++sample) {
         if (measure_copy_batch(
-                runtime,
                 route,
-                *lane,
                 destination_pointer,
                 source_pointer,
                 config->large_copy_bytes,
@@ -416,7 +392,7 @@ static int calibrate_route(
 
 typedef struct ShadowSpillCalibrationProbe {
     ShadowSpillRouteState *route;
-    ShadowSpillBackendStream lane;
+    ShadowSpillBackendStream stream;
     ShadowSpillMemoryPool *source_pool;
     ShadowSpillMemoryPool *destination_pool;
     uint64_t bytes;
@@ -438,10 +414,10 @@ static int prepare_probe(
     ShadowSpillMemoryPool *destination = shadowspill_runtime_pool(
         runtime, route->destination_pool_id
     );
-    ShadowSpillBackendStream *lane = lane_of(
+    ShadowSpillBackendStream *stream = stream_of(
         runtime, route
     );
-    if (source == NULL || destination == NULL || lane == NULL) {
+    if (source == NULL || destination == NULL || stream == NULL) {
         return -1;
     }
     uint64_t source_offset = 0U;
@@ -457,7 +433,7 @@ static int prepare_probe(
     }
     *probe = (ShadowSpillCalibrationProbe){
         .route = route,
-        .lane = *lane,
+        .stream = *stream,
         .source_pool = source,
         .destination_pool = destination,
         .bytes = bytes,
@@ -504,9 +480,7 @@ static void *run_calibration_job(void *state) {
         shadowspill_thread_yield();
     }
     job->status = measure_copy_batch(
-        job->runtime,
         job->probe->route,
-        job->probe->lane,
         job->probe->destination_pointer,
         job->probe->source_pointer,
         job->probe->bytes,

@@ -331,7 +331,8 @@ faster than simulation without making shared-address reuse unsafe.
 ## Causal reuse dependencies
 
 Most task-allocation reuse is already ordered by the single compute stream.
-Cross-lane reuse needs an explicit edge. The physical projection emits
+Reuse that crosses between the compute stream and a transfer needs an explicit
+edge. The physical projection emits
 `MemoryReuseDependency` values when an eviction-completion event protects a
 range later used by:
 
@@ -539,7 +540,7 @@ the supported contract.
 | `shadowspill.planner.admission.admission_replay` | Build the timing-free causal step script and ownership transitions. |
 | `shadowspill.planner.admission.layout.lifetimes` | Combine causal operations with selected task/transfer intervals. |
 | `shadowspill.planner.admission.placement` | Deterministic aligned interval placement. |
-| `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project cross-lane simulator edges. |
+| `shadowspill.planner.admission.layout.dependencies` | Prove shared-range reuse and project the simulator edges that cross between compute and transfer. |
 | `shadowspill.planner.admission.layout.build` | Measure a layout, certify it, or both. |
 | `shadowspill.planner.admission.refinement` | Certify the fixed layout of the plan the search placed. |
 | `shadowspill.pipeline.admission.layout_runtime` | Translate semantic placements to indexed runtime identities. |

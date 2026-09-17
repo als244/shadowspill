@@ -51,7 +51,7 @@ static void append_action_locked(
     object->action_tail = action;
 }
 
-/* A write-back of this object still to copy: queued or on the lane. */
+/* A write-back of this object still to copy: queued or in flight. */
 static int has_pending_copy_locked(const ShadowSpillObject *object) {
     for (const ShadowSpillQueuedAction *queued = object->action_head;
          queued != NULL;
@@ -168,9 +168,9 @@ int shadowspill_object_reset_admitted_action_locked(
     action->next = NULL;
     action->object_previous = NULL;
     action->object_next = NULL;
-    action->lane_previous = NULL;
-    action->lane_next = NULL;
-    action->lane_state = 0U;
+    action->queue_previous = NULL;
+    action->queue_next = NULL;
+    action->queue_state = 0U;
     return 0;
 }
 

@@ -168,9 +168,10 @@ predecessor's retirement *precedes* the successor's acquisition in the
 schedule itself.
 
 The runtime then enforces it. Every shared address produces a reuse
-dependency, and a successor is held out of its transfer lane until the
-predecessor has published the completion that frees the range. The wait is on
-an event, never on a predicted time.
+dependency, and the successor's transfer is ordered behind the predecessor's
+completion: the worker hands the dependency to the route's
+[lane](lanes.md), which does not begin the copy until that event completes.
+The wait is on an event, never on a predicted time.
 
 So the two roles are cleanly separated:
 
