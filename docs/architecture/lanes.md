@@ -109,19 +109,41 @@ and `destroy`.
 
 ## What a lane may do with the backend
 
-A lane is given a backend and **a stream of its own** at create. It may copy,
-record and query on that stream. It may not touch the route's stream, for the
-reason above.
+A lane is given a backend and the route's stream at create, and may copy,
+record and query on it. The constraint is **single-writer ordering**: one
+thread's worth of work, in one order, on that stream.
 
-For the built-in lane the granted stream *is* the route's stream, because its
-copies and its completion event belong in the same order — it is acting as the
-runtime's own copy mechanism, not as a second writer. A lane whose bytes move
-elsewhere takes a separate stream and leaves the route's alone, reaching it only
-through the value wait the runtime enqueues on its behalf.
+Both lanes use it, and neither is a second writer, because every call into the
+lane's table arrives on the thread that called it — the worker for a planned
+transfer, the caller for calibration. The built-in lane's copies and completion
+event go there because they belong in the same order; it is acting as the
+runtime's own copy mechanism. A lane whose bytes move elsewhere puts its
+ordering there — the value wait its `signal` enqueues and the event recorded
+behind it — and, if it stages through a host buffer, the device copies that
+staging needs.
 
 That is the narrow version of a rule that was once broader. The constraint worth
-keeping is single-writer ordering on one stream, not an embargo on the backend;
-stating it the wide way cost real machinery for no invariant.
+keeping is single-writer ordering, not an embargo on the backend; stating it the
+wide way cost real machinery for no invariant.
+
+### A lane's own thread must not wait on that stream
+
+The rule that matters is not about threads, because a lane need not have one:
+
+> **A lane's completion path must not depend on anything the lane has made
+> wait.**
+
+The built-in satisfies it without trying. Its completion path is the stream,
+the driver advances it, and it makes nothing wait.
+
+A lane that completes on its own schedule has to be deliberate. Its value wait
+is satisfied only by its own completion path, so any device call on that path
+can be blocked by the very wait it exists to satisfy — and an outstanding value
+wait blocks calls on *other* streams too, so giving staging a second stream does
+not help. The remote lane deadlocked exactly this way until its thread was
+reduced to what it is for: handling completions, and reporting them. The device
+half of a staged transfer is issued by whoever calls the lane, on the route
+stream, before the transfer reaches the thread at all.
 
 ## Create, probe, and teardown
 
