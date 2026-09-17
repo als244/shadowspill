@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -100,6 +101,11 @@ class _CaseOptions:
     empty_caches: bool
     cache_directory: Path | None
     detailed_artifacts: bool
+    #: ``host:port:bytes`` when the spill pool lives on another machine, and
+    #: ``None`` for the pinned-host pool every local case uses. It travels as a
+    #: string because a case runs in a subprocess: the matrix cannot hand it a
+    #: Python object, and the subprocess should be runnable by hand.
+    remote_spill: str | None = None
 
     def case_arguments(self) -> list[str]:
         """The options both arms of a case are given, in their fixed order."""
@@ -120,6 +126,9 @@ class _CaseOptions:
             arguments.extend(("--case-factory", self.case_factory))
         for value in self.case_options:
             arguments.extend(("--case-option", value))
+        # Only the planned arm spills. The reference arm is the unplanned run
+        # the planned one is compared against, so giving it a remote pool would
+        # change the thing being measured against.
         return arguments
 
 
@@ -148,19 +157,20 @@ def _case_commands(
                 *shared,
             ]
         )
-    commands.append(
-        [
-            *base,
-            "_planned",
-            family,
-            str(reference),
-            str(artifact),
-            str(device_budget),
-            "--model-implementation",
-            implementation,
-            *shared,
-        ]
-    )
+    planned = [
+        *base,
+        "_planned",
+        family,
+        str(reference),
+        str(artifact),
+        str(device_budget),
+        "--model-implementation",
+        implementation,
+        *shared,
+    ]
+    if options.remote_spill is not None:
+        planned.extend(("--remote-spill", options.remote_spill))
+    commands.append(planned)
     return commands
 
 
@@ -519,6 +529,23 @@ def _summary(
 
 
 def main() -> int:
+    """The numerical matrix as the gate runs it: spilling to pinned host."""
+
+    return main_with_spill(None)
+
+
+def main_with_spill(
+    spill: object | None, default_models: Sequence[str] | None = None
+) -> int:
+    """The matrix, spilling wherever `spill` says.
+
+    One entry point for both gates rather than two matrices. The remote gate
+    differs from the numerical one in exactly one argument, and writing it as
+    a second matrix would be two things to keep in step for no gain -- the
+    references, the tolerances, the comparison and the reporting are all the
+    same question.
+    """
+
     parser = _parser()
     arguments = parser.parse_args()
     overrides = _budgets(parser, arguments)
@@ -536,13 +563,27 @@ def main() -> int:
         empty_caches=arguments.empty_caches,
         cache_directory=arguments.cache_dir,
         detailed_artifacts=arguments.detailed_artifacts,
+        remote_spill=(
+            None
+            if spill is None
+            else f"{spill.host}:{spill.port}:{spill.capacity}"
+        ),
     )
     output_directory = arguments.output_dir.expanduser().resolve()
     output_directory.mkdir(parents=True, exist_ok=True)
     options.reference_directory.mkdir(parents=True, exist_ok=True)
+    # A gate may narrow the default set -- the remote one runs a single cell,
+    # because every cell moves its whole spill volume over a link 8x slower
+    # than local memory. An explicit --models on the command line still wins.
+    # `--models` carries a default, so its value cannot say whether anyone
+    # asked for it; the command line can.
+    named = any(
+        argument in ("--models", "--families") for argument in sys.argv[1:]
+    )
+    models = list(default_models) if default_models and not named else arguments.models
     selected_cases = [
         (family, implementation)
-        for family in arguments.models
+        for family in models
         for implementation in (
             arguments.implementations
             or _DEFAULT_IMPLEMENTATIONS.get(family, _IMPLEMENTATIONS)

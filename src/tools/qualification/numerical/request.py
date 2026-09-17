@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from shadowspill.memory import SpillPool
 from shadowspill.planner import StepDataOrdering
 from shadowspill.store import StoreMode
 from workloads.numerical import ModelImplementation, NumericalCase, build_case
@@ -105,6 +106,11 @@ class PlannedRequest:
     plan_store_mode: StoreMode = "contribute"
     export_bypass_key: str | None = None
     detailed_artifacts: bool = False
+    #: Where this case spills to. ``None`` means the pinned-host pool every
+    #: local case uses; the remote gate supplies a pool on another machine.
+    #: It is carried here rather than read from the environment because it is
+    #: a property of the case, and a case's evidence should say what it ran on.
+    spill_pool: SpillPool | None = None
 
 
 def workload_metadata_for(case: Any, supplied: list[object] | None) -> list[object]:

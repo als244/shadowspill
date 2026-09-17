@@ -30,7 +30,12 @@ from typing import Any
 
 #: Gate names in the order they run. The suite is first because it is the
 #: cheapest and catches what would make the measured gates meaningless.
+#:
+#: `remote` is not in the default run: it needs a memory daemon on another
+#: machine, named by ``SHADOWSPILL_NETWORK_PEER``, and skips cleanly without
+#: one. Ask for it by name.
 GATE_ORDER = ("suite", "numerical", "performance")
+ALL_GATES = ("suite", "numerical", "performance", "remote")
 
 _RESULTS = Path("qualification/results")
 
@@ -44,7 +49,7 @@ def gate_options(path: Path | None) -> dict[str, tuple[str, ...]]:
     this wrapper from having to mirror three other command lines.
     """
 
-    empty: dict[str, tuple[str, ...]] = {name: () for name in GATE_ORDER}
+    empty: dict[str, tuple[str, ...]] = {name: () for name in ALL_GATES}
     if path is None:
         return empty
     try:
@@ -56,10 +61,10 @@ def gate_options(path: Path | None) -> dict[str, tuple[str, ...]]:
             f"{path}: expected an object with a section per gate, "
             f"found {type(loaded).__name__}"
         )
-    unknown = sorted(set(loaded) - set(GATE_ORDER))
+    unknown = sorted(set(loaded) - set(ALL_GATES))
     if unknown:
         raise SystemExit(
-            f"{path}: unknown gate section {unknown}; sections are {list(GATE_ORDER)}"
+            f"{path}: unknown gate section {unknown}; sections are {list(ALL_GATES)}"
         )
     options = dict(empty)
     for name, values in loaded.items():
@@ -130,24 +135,26 @@ def _commands(
             "no:cacheprovider",
             *options,
         )
-    if name == "numerical":
-        command = [
-            sys.executable,
-            "-u",
-            "-m",
-            "qualification.numerical.matrix",
-            "--output-dir",
-            str(_RESULTS / f"numerical_{run}"),
-        ]
-    else:
-        command = [
-            sys.executable,
-            "-u",
-            "-m",
-            "qualification.performance.matrix",
-            "--output-directory",
-            str(_RESULTS / f"performance_{run}"),
-        ]
+    # Named explicitly, never by falling through. Performance used to be the
+    # `else`, so a gate name this function had never heard of ran the
+    # performance matrix and reported it under the other gate's name -- a
+    # wrong answer rather than an error, and one nobody would question.
+    matrices = {
+        "numerical": ("qualification.numerical.matrix", "--output-dir"),
+        "performance": ("qualification.performance.matrix", "--output-directory"),
+        "remote": ("qualification.remote.matrix", "--output-dir"),
+    }
+    if name not in matrices:
+        raise KeyError(f"no command is defined for the gate {name!r}")
+    module, output_flag = matrices[name]
+    command = [
+        sys.executable,
+        "-u",
+        "-m",
+        module,
+        output_flag,
+        str(_RESULTS / f"{name}_{run}"),
+    ]
     if keep_going:
         command.append("--keep-going")
     command += options
@@ -190,6 +197,32 @@ def _suite_report(log: Path) -> list[str]:
     rows.extend(f"      {line}" for line in named[:_NAMED_FAILURE_LIMIT])
     if len(named) > _NAMED_FAILURE_LIMIT:
         rows.append(f"      ... and {len(named) - _NAMED_FAILURE_LIMIT} more, in {log}")
+    return rows
+
+
+def _remote_report(directory: Path) -> list[str]:
+    """Which correctness cells agreed with their reference over the network.
+
+    The same shape as the numerical report, because it is the same question
+    asked of the same references -- only the spill pool differs. A run with no
+    peer configured skips rather than fails, and says so.
+    """
+
+    summary = directory / "summary.json"
+    try:
+        report = json.loads(summary.read_text())
+    except (OSError, json.JSONDecodeError):
+        return [f"    no readable summary at {summary}"]
+    if report.get("skipped"):
+        return [f"    skipped: {report.get('reason', 'no peer configured')}"]
+    cases = report.get("cases", [])
+    passed = [case for case in cases if case.get("passed")]
+    rows = [f"    {len(passed)}/{len(cases)} cells passed over the network"]
+    rows.extend(
+        f"      {case.get('implementation')}_{case.get('family')}: FAILED"
+        for case in cases
+        if not case.get("passed")
+    )
     return rows
 
 
@@ -387,12 +420,16 @@ def _summary(line: str, outcomes: Sequence[GateOutcome], run: str) -> str:
             f"  {outcome.name:<{width}}  {verdict:<10} "
             f"{outcome.seconds / 60:6.1f} min  {outcome.log}"
         )
+        # Explicit for the same reason as `_commands`: a gate with no report
+        # of its own should say nothing, not print another gate's.
         if outcome.name == "suite":
             rows.extend(_suite_report(outcome.log))
         elif outcome.name == "numerical":
             rows.extend(_numerical_report(_RESULTS / f"numerical_{run}"))
-        else:
+        elif outcome.name == "performance":
             rows.extend(_performance_report(_RESULTS / f"performance_{run}"))
+        elif outcome.name == "remote":
+            rows.extend(_remote_report(_RESULTS / f"remote_{run}"))
     return "\n".join(rows)
 
 
@@ -460,7 +497,9 @@ def run_gates(
 ) -> list[GateOutcome]:
     """Run each gate in `GATE_ORDER`, newest output under `qualification/results`."""
 
-    ordered = [name for name in GATE_ORDER if name in gates]
+    # Ordered by ALL_GATES so a gate outside the default run still runs in a
+    # sensible place when asked for alongside others.
+    ordered = [name for name in ALL_GATES if name in gates]
     logs = _RESULTS / f"gates_{run}"
     logs.mkdir(parents=True, exist_ok=True)
     outcomes: list[GateOutcome] = []
@@ -518,14 +557,16 @@ def main() -> int:
     parser.add_argument(
         "gates",
         nargs="*",
-        choices=GATE_ORDER,
+        choices=ALL_GATES,
         # Not a list default: argparse validates a default against `choices`
         # when nargs is "*" and nothing was given, and a list is not one of
         # them, so `qualification.gates` with no arguments would refuse to run.
         default=None,
         help=(
             "which gates to run, in any order on the command line; they always "
-            "run suite, numerical, performance. Default: all three"
+            "run suite, numerical, performance, remote. Default: the first "
+            "three. `remote` needs a memory daemon named by "
+            "SHADOWSPILL_NETWORK_PEER and skips cleanly without one"
         ),
     )
     parser.add_argument(

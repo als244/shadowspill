@@ -25,8 +25,19 @@ static int bootstrap_config_is_valid(
     uint32_t device_pool_count = 0U;
     for (uint32_t index = 0U; index < config->pool_count; ++index) {
         const ShadowSpillPytorchPoolConfig *pool = &config->pools[index];
-        if (pool->pool_id != index ||
-            pool->kind > SHADOWSPILL_POOL_PINNED_HOST) {
+        /*
+         * Nothing here judges the kind. Which kinds exist is what the loaded
+         * libraries say, and the runtime's lookup is the one place that knows
+         * -- a bound check here would have to be widened for every kind added,
+         * and until it was it would refuse a pool the runtime could serve
+         * perfectly.
+         *
+         * There was one, `kind > SHADOWSPILL_POOL_PINNED_HOST`, a twin of the
+         * check deleted from the runtime when the lookup arrived. Deleting one
+         * and leaving the other meant the first remote pool was refused here,
+         * before anything that could explain why.
+         */
+        if (pool->pool_id != index) {
             return 0;
         }
         if (pool->kind == SHADOWSPILL_POOL_DEVICE) {
