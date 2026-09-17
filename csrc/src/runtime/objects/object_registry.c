@@ -242,6 +242,20 @@ done:
     return status;
 }
 
+/* Where a lease sits in its pool.
+   Both directions across the pool's edge need this and neither may use the
+   lease pointer instead: for a kind whose region lives on another machine the
+   pointer is meaningful only to that kind, while the offset is meaningful to
+   everyone. */
+static uint64_t lease_offset(
+    const ShadowSpillMemoryPool *pool,
+    const ShadowSpillObjectLocation *location
+) {
+    return (uint64_t)(
+        (const char *)location->lease->pointer - (const char *)pool->base
+    );
+}
+
 ShadowSpillStatus shadowspill_write_object(
     ShadowSpillRuntime *runtime,
     uint64_t object_id,
@@ -270,11 +284,23 @@ ShadowSpillStatus shadowspill_write_object(
         ShadowSpillObjectLocation *location = shadowspill_object_location(
             object, pool_id
         );
-        memcpy(
-            location->lease->pointer,
-            source,
-            (size_t)bytes
-        );
+        ShadowSpillMemoryPool *const pool =
+            shadowspill_runtime_pool(runtime, pool_id);
+        if (pool->memory.write != NULL) {
+            /* A kind whose region this process cannot address writes it
+               itself; everyone else is an ordinary copy. */
+            if (pool->memory.write(
+                    pool->memory_state,
+                    lease_offset(pool, location),
+                    source,
+                    bytes
+                ) != 0) {
+                status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
+                goto done;
+            }
+        } else {
+            memcpy(location->lease->pointer, source, (size_t)bytes);
+        }
     }
     ShadowSpillObjectLocation *location = shadowspill_object_location(
         object, pool_id
@@ -320,11 +346,21 @@ ShadowSpillStatus shadowspill_read_object(
         goto read_done;
     }
     if (bytes != 0U) {
-        memcpy(
-            destination,
-            location->lease->pointer,
-            (size_t)bytes
-        );
+        ShadowSpillMemoryPool *const pool =
+            shadowspill_runtime_pool(runtime, pool_id);
+        if (pool->memory.read != NULL) {
+            if (pool->memory.read(
+                    pool->memory_state,
+                    lease_offset(pool, location),
+                    destination,
+                    bytes
+                ) != 0) {
+                status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
+                goto read_done;
+            }
+        } else {
+            memcpy(destination, location->lease->pointer, (size_t)bytes);
+        }
     }
 
 read_done:
