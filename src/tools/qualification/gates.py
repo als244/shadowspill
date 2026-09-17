@@ -396,6 +396,60 @@ def _summary(line: str, outcomes: Sequence[GateOutcome], run: str) -> str:
     return "\n".join(rows)
 
 
+
+def _newest(root: Path, suffixes: set[str] | None = None) -> float:
+    return max(
+        (
+            path.stat().st_mtime
+            for path in root.rglob("*")
+            if path.is_file() and (suffixes is None or path.suffix in suffixes)
+        ),
+        default=0.0,
+    )
+
+
+def _refuse_a_stale_library() -> str | None:
+    """Why the gates must not run, if the build is older than its sources.
+
+    Python resolves its library to the editable ``build/{wheel_tag}`` tree, never
+    to a build directory in the working tree. So a gate run after an unrefreshed
+    build measures whatever was there before, silently and for its full duration:
+    on 2026-09-16 two complete runs reported on a library predating the work they
+    were meant to verify. The gates fail in seconds instead.
+
+    The question is whether the **build tree** was built after the sources were
+    last edited, not whether one library file is newer than them. Asking it of
+    the library alone refuses a build that is perfectly current whenever the
+    edit landed in some other target -- and a refusal that rebuilding does not
+    clear leaves ``--allow-stale-library`` as the only way forward, which is
+    exactly the reflex this guard exists to prevent.
+    """
+
+    try:
+        from shadowspill.libraries import resolve_library
+    except Exception:  # pragma: no cover - the suite gate reports this better
+        return None
+    try:
+        library = resolve_library("libshadowspill.so")
+    except Exception:
+        return None
+    sources = Path("csrc")
+    if not sources.is_dir() or not library.is_file():
+        return None
+    # Only what the compiler and CMake read: a README cannot change a binary,
+    # and refusing over one teaches the reader to pass the override.
+    built_from = {".c", ".h", ".cpp", ".hpp", ".txt", ".cmake"}
+    if _newest(library.parent) >= _newest(sources, built_from):
+        return None
+    return (
+        f"the build the gates will load is older than csrc/:\n"
+        f"    {library.parent}\n"
+        f"Rebuild the tree the editable install reads, not build/dev:\n"
+        f"    cmake --build {library.parent} --parallel\n"
+        f"Pass --allow-stale-library to measure the build as it stands."
+    )
+
+
 def run_gates(
     gates: Sequence[str],
     *,
@@ -508,7 +562,21 @@ def main() -> int:
             "matrix's command line"
         ),
     )
+    parser.add_argument(
+        "--allow-stale-library",
+        action="store_true",
+        help=(
+            "run even when the library the gates will load is older than "
+            "csrc/. Only for deliberately measuring a build as it stands"
+        ),
+    )
     arguments = parser.parse_args()
+
+    if not arguments.allow_stale_library:
+        stale = _refuse_a_stale_library()
+        if stale is not None:
+            print(f"refusing to run the gates: {stale}", file=sys.stderr)
+            return 2
 
     run = arguments.run or _default_run()
     outcomes = run_gates(
