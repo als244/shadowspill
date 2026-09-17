@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from itertools import pairwise
@@ -27,6 +28,7 @@ from shadowspill.ir.indexing import MEMORY_ACTION_CODE
 from shadowspill.ir.program import canonical_index
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.abi.statistics import LaneStatistics
 from shadowspill.runtime.plan import (
     RuntimeBridge,
     end_and_read_runtime_trace,
@@ -359,7 +361,12 @@ def _transfer_lanes(
             )
         lanes[direction] = _LaneRecords(
             records=tuple(records),
-            summary=_lane_summary(direction, tuple(records), opening),
+            summary=_lane_summary(
+                direction,
+                tuple(records),
+                opening,
+                _lane_statistics(bridge, direction),
+            ),
         )
     return lanes
 
@@ -516,10 +523,52 @@ def _simulated_duration(record: TransferRecord) -> float | None:
     return record.simulated_finished_at_seconds - record.simulated_started_at_seconds
 
 
+def _lane_statistics(
+    bridge: RuntimeBridge, direction: str
+) -> LaneStatistics | None:
+    """What the lane carrying one direction reports, or None if it reports none.
+
+    The route is found by the pool pair it joins rather than by a name, because
+    which pools a plan uses is the plan's choice and the registry is keyed by
+    whatever the caller called them. A fetch runs spill to execution and an
+    evict the other way, which is the whole of the direction.
+
+    One call serves every kind of lane: the runtime resolves the route's lane
+    and asks it through the contract, so nothing here knows which implementation
+    answered. UNSUPPORTED is a lane declining to keep a count, and stays None
+    rather than becoming zeroes a reader would take for "moved nothing".
+    """
+
+    source, destination = (
+        (bridge.spill_pool_id, bridge.execution_pool_id)
+        if direction == "fetch"
+        else (bridge.execution_pool_id, bridge.spill_pool_id)
+    )
+    route_id = next(
+        (
+            route.route_id
+            for route in bridge.runtime.routes.values()
+            if route.source_pool_id == source
+            and route.destination_pool_id == destination
+        ),
+        None,
+    )
+    if route_id is None:
+        return None
+    statistics = LaneStatistics()
+    status = int(
+        bridge.runtime_library.shadowspill_route_lane_statistics(
+            bridge.runtime._runtime_handle, int(route_id), ctypes.byref(statistics)
+        )
+    )
+    return statistics if status == 0 else None
+
+
 def _lane_summary(
     direction: str,
     records: tuple[TransferRecord, ...],
     opening: tuple[TransferRecord, ...],
+    lane_statistics: LaneStatistics | None,
 ) -> LaneSummary:
     measured = tuple(item for item in records if _lane_duration(item) is not None)
     lane_busy = sum(_lane_duration(item) or 0.0 for item in measured)
@@ -547,6 +596,7 @@ def _lane_summary(
         largest_start_delta_transfer_id=None if drift is None else drift.transfer_id,
         opening_transfers=len(opening),
         opening_bytes=sum(item.bytes for item in opening),
+        lane_statistics=lane_statistics,
     )
 
 

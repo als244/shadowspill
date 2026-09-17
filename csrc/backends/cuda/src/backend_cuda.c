@@ -1,9 +1,15 @@
 /* The CUDA backend: the driver-level table over the CUDA driver API and NVML. */
+
+/* MAP_ANONYMOUS is not in the strict ISO C11 the tree compiles as; the same
+   line and the same reason as memory_pool/internal.h. */
+#define _DEFAULT_SOURCE
+
 #include "backend_cuda_internal.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 static _Thread_local ShadowSpillCudaBackend *attached_backend;
@@ -290,6 +296,7 @@ static int destroy_event(void *state, ShadowSpillBackendEvent event) {
  */
 typedef struct CudaSignals {
     void *host;
+    size_t bytes;
     CUdeviceptr device;
 } CudaSignals;
 
@@ -300,8 +307,7 @@ static int allocate_signals(
     uint64_t **host
 ) {
     ShadowSpillCudaBackend *backend = state;
-    if (count == 0U || signals == NULL || host == NULL ||
-        activate_context(backend) != 0) {
+    if (count == 0U || signals == NULL || host == NULL) {
         return -1;
     }
     CudaSignals *created = calloc(1U, sizeof(*created));
@@ -309,21 +315,41 @@ static int allocate_signals(
         return -1;
     }
     const size_t bytes = (size_t)count * sizeof(uint64_t);
-    if (record_result(
-            backend,
-            cuMemHostAlloc(&created->host, bytes, CU_MEMHOSTALLOC_DEVICEMAP)
-        ) != 0) {
+    /*
+     * ShadowSpill's memory, registered by the backend -- the same division of
+     * labour as every other host allocation a provider reads from, stated at
+     * the top of the Memory block. Allocating it through the driver instead
+     * was a second way to obtain host memory, and it carried a defect the
+     * division does not allow: `cuMemHostAlloc` was asked for DEVICEMAP and
+     * *not* PORTABLE, so the words were visible only in the context current at
+     * allocation. A stream in any other context then waited on an address it
+     * could not read, which does not fail -- it never passes.
+     * `register_host_memory` has always registered PORTABLE.
+     *
+     * mmap rather than malloc because registration takes whole pages.
+     */
+    created->host = mmap(
+        NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    if (created->host == MAP_FAILED) {
+        free(created);
+        return -1;
+    }
+    created->bytes = bytes;
+    memset(created->host, 0, bytes);
+    if (register_host_memory(state, created->host, bytes) != 0) {
+        (void)munmap(created->host, bytes);
         free(created);
         return -1;
     }
     if (record_result(
             backend, cuMemHostGetDevicePointer(&created->device, created->host, 0U)
         ) != 0) {
-        (void)cuMemFreeHost(created->host);
+        (void)unregister_host_memory(state, created->host, bytes);
+        (void)munmap(created->host, bytes);
         free(created);
         return -1;
     }
-    memset(created->host, 0, bytes);
     *signals = (ShadowSpillBackendSignals)(uintptr_t)created;
     *host = created->host;
     return 0;
@@ -335,7 +361,10 @@ static int free_signals(void *state, ShadowSpillBackendSignals signals) {
     if (target == NULL || activate_context(backend) != 0) {
         return -1;
     }
-    const int status = record_result(backend, cuMemFreeHost(target->host));
+    /* The reverse of acquire, and in reverse order: the registration before the
+       memory it names. */
+    const int status = unregister_host_memory(state, target->host, target->bytes);
+    (void)munmap(target->host, target->bytes);
     free(target);
     return status;
 }
@@ -345,21 +374,21 @@ static int wait_value(
     ShadowSpillBackendStream stream,
     ShadowSpillBackendSignals signals,
     uint32_t index,
-    uint64_t generation
+    uint64_t value
 ) {
     ShadowSpillCudaBackend *backend = state;
     CudaSignals *target = (CudaSignals *)(uintptr_t)signals;
     if (target == NULL || activate_context(backend) != 0) {
         return -1;
     }
-    /* Greater-or-equal, so a generation the lane already stored does not stall
+    /* Greater-or-equal, so a value the lane already stored does not stall
        the stream waiting for a value that has been and gone. */
     return record_result(
         backend,
         cuStreamWaitValue64(
             stream_value(stream),
             target->device + (CUdeviceptr)((size_t)index * sizeof(uint64_t)),
-            (cuuint64_t)generation,
+            (cuuint64_t)value,
             CU_STREAM_WAIT_VALUE_GEQ
         )
     );
@@ -374,6 +403,33 @@ static int record_event(
     }
     return record_result(
         backend, cuEventRecord(event_value(event), stream_value(stream))
+    );
+}
+
+/* The mirror of `wait_value`: the stream stores the word instead of waiting on
+   it, so a host thread polling it learns how far the stream has got. Same
+   device pointer, for the same reason -- registered host memory is reached
+   through `cuMemHostGetDevicePointer`, never through the host address. */
+static int write_value(
+    void *state,
+    ShadowSpillBackendStream stream,
+    ShadowSpillBackendSignals signals,
+    uint32_t index,
+    uint64_t value
+) {
+    ShadowSpillCudaBackend *backend = state;
+    CudaSignals *target = (CudaSignals *)(uintptr_t)signals;
+    if (target == NULL || activate_context(backend) != 0) {
+        return -1;
+    }
+    return record_result(
+        backend,
+        cuStreamWriteValue64(
+            stream_value(stream),
+            target->device + (CUdeviceptr)((size_t)index * sizeof(uint64_t)),
+            (cuuint64_t)value,
+            0U
+        )
     );
 }
 
@@ -598,6 +654,7 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
         .allocate_signals = allocate_signals,
         .free_signals = free_signals,
         .wait_value = wait_value,
+        .write_value = write_value,
         .create_stream = create_stream,
         .destroy_stream = destroy_stream,
         .synchronize_stream = synchronize_stream,

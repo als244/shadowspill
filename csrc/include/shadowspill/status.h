@@ -54,6 +54,11 @@ typedef enum ShadowSpillStatus {
     SHADOWSPILL_STATUS_CLOSED = 46,
     SHADOWSPILL_STATUS_TASK_ALLOCATION_ENVELOPE_EXCEEDED = 47,
     SHADOWSPILL_STATUS_TASK_ALLOCATION_CONTRACT_MISMATCH = 48,
+    /* The thing asked for is optional and this implementation does not provide
+     * it. Not a failure and not a bad argument: the caller asked a reasonable
+     * question of something entitled not to answer, and needs to tell that
+     * apart from an answer of zero. */
+    SHADOWSPILL_STATUS_UNSUPPORTED = 49,
 
     /* Replaying a schedule's operations, 80-89. */
     SHADOWSPILL_STATUS_REPLAY_INFEASIBLE = 80,

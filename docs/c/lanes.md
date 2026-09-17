@@ -19,6 +19,7 @@ For what a lane is and why the contract has the shape it does, see
 | `ShadowSpillLaneOperations` | the table below |
 | `ShadowSpillLaneDescription` | one entry in `ShadowSpillRuntimeConfig.lanes`: a kind pair, a table, a `create`, and a `configuration` |
 | `ShadowSpillStreamInterval` | runtime-internal; a lane passes one through the interval entries and never looks inside |
+| `ShadowSpillLaneStatistics` | what a lane has moved, filled by the optional `statistics` entry below |
 
 ## Operations
 
@@ -30,6 +31,8 @@ int  (*signal)(ShadowSpillLane *lane, ShadowSpillBackendEvent event);
 int  (*synchronize)(ShadowSpillLane *lane);
 int  (*interval_open)(ShadowSpillLane *lane, ShadowSpillStreamInterval *interval);
 int  (*interval_close)(ShadowSpillLane *lane, ShadowSpillStreamInterval *interval);
+int  (*statistics)(const ShadowSpillLane *lane,
+                   ShadowSpillLaneStatistics *statistics);
 void (*destroy)(ShadowSpillLane *lane);
 ```
 
@@ -96,9 +99,58 @@ It is also where a lane **probes**: nothing a loaded library holds runs at load,
 so anything that depends on what the hardware can do belongs here, where there
 is a failure path and an unwind.
 
+## What a lane has moved
+
+```c
+typedef struct ShadowSpillLaneStatistics {
+    uint64_t copies;      /* transfers accepted */
+    uint64_t chunks;      /* pieces the hardware was handed */
+    uint64_t bytes;       /* bytes accepted, summed over copies */
+    uint64_t signals;     /* completion signals issued */
+    uint64_t waits;       /* dependency waits enqueued */
+    uint64_t retries;     /* waits that asked to be retried */
+    uint64_t failures;    /* transfers that did not land */
+    uint8_t  timed;       /* whether the durations below mean anything */
+    double   posted_to_completion_seconds;
+    double   longest_completion_seconds;
+} ShadowSpillLaneStatistics;
+```
+
+**The `statistics` entry is optional**, on the same rule as the interval pair:
+required when the runtime cannot proceed without it, optional when its absence
+only costs observability. A lane that keeps no count leaves it NULL, and
+`shadowspill_route_lane_statistics()` answers `SHADOWSPILL_STATUS_UNSUPPORTED`
+rather than zeroes -- which a reader could not tell from a lane that moved
+nothing.
+
+Counters are maintained **unconditionally**. A lane that counts only when asked
+cannot explain the run that went wrong, and the cost is a few relaxed atomic
+adds against a transfer measured in milliseconds.
+
+The two durations are the exception and are governed by `timed`. They describe
+the interval a lane can actually observe -- from handing the hardware a piece of
+work to seeing its completion -- which is not time on the wire, and separating
+those is the point of reporting it. A lane that hands a transfer onward and
+returns never sees the completion instant at all; it reports `timed = 0` and
+leaves the durations zero, because a zero duration otherwise reads as "instant".
+A lane that can time cheaply may still do so only while a trace is running, and
+`shadowspill_lane_trace_active()` is how it asks, being outside the runtime and
+unable to read that state itself.
+
+`chunks` differs from `copies` only for a lane that splits a transfer; where it
+does not, the two are equal by construction. That is the difference between
+"how many transfers" and "how many times the hardware was asked".
+
+One lane serves one directional pair of pool kinds, so these are per route and
+per direction, and they accumulate for the life of the lane. The
+[step diagnostics](../python/step-diagnostics.md) report them beside the
+per-step view the trace gives, which is a different question and not a
+substitute.
+
 ## Validity
 
 `shadowspill_runtime_create()` refuses a config whose entry has a NULL
 `operations` or `create`, a NULL required entry, one interval entry without the
 other, or a kind pair another entry already claims. It also refuses a route
-whose two pools' kinds no entry serves.
+whose two pools' kinds no entry serves. `statistics` is optional and is never
+a reason to refuse.

@@ -112,8 +112,12 @@ structured no-progress status.
   and no queued action.
 - `shadowspill_rekey_object()` changes the public identity without changing
   the retained object record.
-- `shadowspill_write_object()` and `shadowspill_read_object()` copy
-  bytes through a declared pool route.
+- `shadowspill_write_object()` and `shadowspill_read_object()` move bytes
+  between a caller's memory and one pool copy of an object: an ordinary copy
+  where that pool is in this address space, and the kind's `write` or `read`
+  where it is not. They are how state enters and leaves a pool outside a plan,
+  and no route is involved -- a route carries a *planned* transfer between two
+  pools, which is a different question.
 - `shadowspill_object_snapshot()` returns a lock-consistent diagnostic view as
   a `ShadowSpillObjectSnapshot`, whose `residency` is a
   `ShadowSpillObjectResidency`: spill-only, execution-ready, fetching,
@@ -398,6 +402,16 @@ sealing is a driver call the plan did not reserve for.
 capacity, what is allocated and free in it, its largest free range and the
 fragmentation that follows, its live allocation count, and its memory-lease and
 lease-use record reserves.
+
+`shadowspill_route_lane_statistics()` reports what the lane serving one route
+has moved: transfers accepted, the pieces the hardware was handed, bytes,
+signals, waits, retries and failures, and -- where the lane can observe a
+completion -- how long its work took between being posted and being seen. The
+runtime resolves the route's lane and asks it through the
+[lane contract](lanes.md#what-a-lane-has-moved), so a built-in lane and one a
+library registered answer the same call. A lane that keeps no count returns
+`SHADOWSPILL_STATUS_UNSUPPORTED`, which is deliberately distinct from reporting
+zeroes: one means nobody counted, the other means nothing moved.
 
 The split follows ownership. A runtime may own any number of pools, and which of
 them a plan uses as its execution and spill pools is that plan's choice, so a
