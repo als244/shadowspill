@@ -10,7 +10,13 @@ from typing import Any
 
 import pytest
 
-from tools.qualification.gates import GATE_ORDER, _suite_report, run_gates
+from tools.qualification.gates import (
+    ALL_GATES,
+    GATE_ORDER,
+    _commands,
+    _suite_report,
+    run_gates,
+)
 
 
 class _FakeProcess:
@@ -56,10 +62,44 @@ def _record(
 
 
 def _gate_of(command: tuple[str, ...]) -> str:
+    """Which gate a recorded command belongs to.
+
+    Named explicitly rather than by falling through to performance, for the
+    same reason the dispatch it checks is: a helper whose default answer is a
+    real gate turns "this command is not what I expected" into a wrong label.
+    """
+
     joined = " ".join(command)
     if "pytest" in joined:
         return "suite"
-    return "numerical" if "numerical" in joined else "performance"
+    for name in ("numerical", "performance", "remote"):
+        if f"qualification.{name}.matrix" in joined:
+            return name
+    raise AssertionError(f"no gate owns the command {command!r}")
+
+
+def test_a_gate_with_no_command_is_refused_rather_than_run_as_performance() -> None:
+    """The dispatch names every gate; it never falls through to one.
+
+    Performance was the `else` branch, so a name `_commands` had never heard
+    of ran the performance matrix and reported it under the other gate's name.
+    That is a wrong answer rather than an error, and nobody would have
+    questioned it.
+    """
+
+    with pytest.raises(KeyError, match="invented"):
+        _commands("invented", "run", keep_going=False)
+
+    for name in ALL_GATES:
+        command = _commands(name, "run", keep_going=False)
+        assert _gate_of(command) == name
+
+
+def test_the_remote_gate_is_available_but_not_in_the_default_run() -> None:
+    """It needs a daemon on another machine, so asking is deliberate."""
+
+    assert "remote" in ALL_GATES
+    assert "remote" not in GATE_ORDER
 
 
 def test_gates_run_in_a_fixed_order_whatever_order_they_are_asked_for(
