@@ -113,8 +113,8 @@ static void destroy_actions(ShadowSpillRuntime *runtime) {
             action->next = NULL;
             action->object_previous = NULL;
             action->object_next = NULL;
-            action->lane_previous = NULL;
-            action->lane_next = NULL;
+            action->queue_previous = NULL;
+            action->queue_next = NULL;
         }
         if (plan_owner != NULL) {
             (void)atomic_fetch_sub_explicit(
@@ -181,15 +181,28 @@ void shadowspill_runtime_release_resources(ShadowSpillRuntime *runtime) {
     runtime->trace_event_capacity = 0U;
     for (uint32_t route_id = runtime->route_count; route_id != 0U;) {
         ShadowSpillRouteState *route = &runtime->routes[--route_id];
-        if (route->lane_created) {
-            (void)runtime->backend.destroy_stream(
-                runtime->backend.state, route->lane
-            );
-            route->lane_created = 0U;
+        if (route->lane != NULL) {
+            route->operations->destroy(route->lane);
+            route->lane = NULL;
+            route->operations = NULL;
         }
-        shadowspill_transfer_lane_destroy(&route->transfers);
+        if (route->stream_created) {
+            (void)runtime->backend.destroy_stream(
+                runtime->backend.state, route->stream
+            );
+            route->stream_created = 0U;
+        }
+        shadowspill_transfer_queue_destroy(&route->queue);
     }
     free(runtime->routes);
+    /*
+     * After the routes: a route's lane was made by an entry here. The two
+     * tables are not alike in this, which is why only one of them constrains
+     * the order -- a pool holds a *copy* of its pool_memory entry, so the pool
+     * close loop below is indifferent to this line.
+     */
+    shadowspill_lane_table_destroy(&runtime->lanes);
+    shadowspill_pool_memory_table_destroy(&runtime->pool_memory);
     runtime->routes = NULL;
     runtime->route_count = 0U;
     for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
@@ -240,8 +253,8 @@ static ShadowSpillStatus runtime_close_internal(
          wait_for_outstanding_work && route_id < runtime->route_count;
          ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
-        if (route->lane_created && runtime->backend.synchronize_stream(
-                runtime->backend.state, route->lane
+        if (route->stream_created && runtime->backend.synchronize_stream(
+                runtime->backend.state, route->stream
             ) != 0) {
             synchronization_failed = 1;
         }
