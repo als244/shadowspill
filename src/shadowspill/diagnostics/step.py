@@ -298,12 +298,12 @@ class TransferRecords:
 
 
 @dataclass(frozen=True, slots=True)
-class TransferLane:
-    """One direction's transfers in FIFO order, with the lane's summary.
+class TransferQueue:
+    """One direction's transfers in FIFO order, with its lane's summary.
 
-    `order` holds transfer ids into the lane's group of
-    `StepDiagnostics.transfers`; an id's position is the transfer's
-    `sequence` on the lane.
+    The queue is the ordering; the lane is what moves the bytes. `order` holds
+    transfer ids into this direction's group of `StepDiagnostics.transfers`,
+    and an id's position is the transfer's `sequence`.
     """
 
     order: tuple[str, ...]
@@ -315,11 +315,11 @@ class TransferLane:
 
 @dataclass(frozen=True, slots=True)
 class Timelines:
-    """The step on three lanes, each in its stream's order, sharing one zero.
+    """The step on three streams, each in its own order, sharing one zero.
 
-    The lanes hold references: `compute` is every selected task's execution
+    They hold references: `compute` is every selected task's execution
     task id in compute-stream order, keys into `StepDiagnostics.tasks`;
-    `fetch` and `evict` list transfer ids in each lane's FIFO order, keys
+    `fetch` and `evict` list transfer ids in each queue's FIFO order, keys
     into the same-named group of `StepDiagnostics.transfers`. Device times
     in those records count from the origin event; simulated times count from
     the first selected task's simulated start. `first_task_started_at_seconds` is
@@ -332,8 +332,8 @@ class Timelines:
 
     first_task_started_at_seconds: float
     compute: tuple[str, ...]
-    fetch: TransferLane
-    evict: TransferLane
+    fetch: TransferQueue
+    evict: TransferQueue
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -609,7 +609,7 @@ __all__ = [
     "StepTimingSummary",
     "TaskRecord",
     "Timelines",
-    "TransferLane",
+    "TransferQueue",
     "TransferRecord",
     "TransferRecords",
 ]
