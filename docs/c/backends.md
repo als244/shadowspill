@@ -42,6 +42,7 @@ nonzero on failure unless noted.
 | group | entries |
 |---|---|
 | memory | `allocate_device(bytes, &address)`, `free_device(address, bytes)`, `register_host_memory(address, bytes)`, `unregister_host_memory(address, bytes)` |
+| signals | `allocate_signals(count, &signals, &host)`, `free_signals(signals)`, `wait_value(stream, signals, index, generation)` |
 | streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `resolve_stream(stream_handle)` returning the word this backend knows that stream by |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
 | events | `create_event(&event, timing)`, `destroy_event(event)`, `record_event(event, stream)`, `query_event(event, &complete)`, `wait_event(stream, event)`, `synchronize_event(event)`, `elapsed_nanoseconds(from, to, &nanoseconds)` |
@@ -76,6 +77,28 @@ Events: a dependency event (`timing` clear) is the fast kind that record,
 query, and wait work with. A timing event carries a device timestamp when
 recorded, and `elapsed_nanoseconds` reads the device-clock interval between
 two of them: 0 with the interval, 1 while either is still pending, -1 when the
+## Signals, and waiting on one
+
+A signal block is words a stream can wait on and a host thread can store to.
+`allocate_signals` returns an opaque handle and the host address of the first
+word; `wait_value` holds a stream until the word at an index reaches a
+generation, comparing greater-or-equal so a value already past it does not
+stall.
+
+They exist for a lane whose bytes do not move on a stream. Such a lane cannot
+make a stream wait for it by recording an event, because the consumer's
+`wait_event` may be enqueued before the transfer finishes and a wait on an event
+not yet recorded does not wait. The runtime enqueues the value wait and the
+record together at dispatch; the lane stores the generation when the bytes have
+landed; everything downstream sees an ordinary event.
+
+**A word may need two addresses**, and only the backend should know it. A
+provider whose streams read host memory through a mapping requires the block to
+be allocated so that mapping exists, and then the caller stores through one
+address while the stream reads another. That is why `wait_value` names a word by
+index rather than by pointer: a caller holding only the address it stores to
+could not supply the other, and has no reason to know it exists.
+
 pair cannot be measured. `record_event` and `wait_event` enqueue without
 blocking the host -- `wait_event` orders one stream behind an event on
 another -- and `query_event` is a nonblocking poll. The two calls that do block
@@ -97,7 +120,7 @@ void shadowspill_backend_destroy(ShadowSpillBackend *backend);
 `shadowspill_backend_create()` fills the table and returns 0, or returns
 nonzero leaving nothing to destroy. `shadowspill_backend_destroy()` releases the
 provider object and zeroes the table; it runs after the runtime it served is
-gone, so every stream, event, mapping, and arena has already been returned
+gone, so every stream, event, mapping, and allocation has already been returned
 through the table. `SHADOWSPILL_BACKEND_CREATE_SYMBOL` and
 `SHADOWSPILL_BACKEND_DESTROY_SYMBOL` name them for `dlsym()`, and
 `ShadowSpillBackendCreate` and `ShadowSpillBackendDestroy` are the

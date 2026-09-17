@@ -30,17 +30,28 @@ provider header.
 
 ## What ShadowSpill builds from the table
 
-Each has its own page: [memory pools](memory-pools.md), [transfers](transfers.md),
-[events](events.md).
+Each has its own page: [memory pools](memory-pools.md), [lanes](lanes.md),
+[transfers](transfers.md), [events](events.md).
 
-- **Pools** own their arenas. A device pool's arena comes from
-  `allocate_device`; a pinned-host pool's arena is an anonymous mapping the
-  pool makes and hands to `register_host_memory`, so the C allocator never
-  touches it and the provider only pins it in place.
-- **Routes** are a source pool, a destination pool, and the copy direction
-  the two pools' kinds imply. The runtime creates one lane per route with
-  `create_stream`, the worker dispatches every copy onto it, and calibration
-  measures each route alone and against its reverse on those lanes.
+- **Pools** own their memory, and a pool's kind decides where it comes from.
+  Two kinds get theirs from here: a device pool's from `allocate_device`, and a
+  pinned-host pool's from an anonymous mapping the pool makes and hands to
+  `register_host_memory`, so the C allocator never touches it and the provider
+  only pins it in place. A kind served from somewhere else reaches the backend
+  not at all -- see [memory pools](memory-pools.md#a-pools-memory-is-found-by-kind).
+- **Routes** are a source pool and a destination pool. Their two kinds select
+  the route's **lane**, which is what actually moves the bytes; the built-in one
+  is a thin table over `copy_host_to_device` and `copy_device_to_host` on a
+  stream from `create_stream`. The worker dispatches every transfer through the
+  lane and makes no backend call of its own, and calibration goes the same way.
+- **Signal words** are memory a stream can wait on and a host thread can store
+  to, from `allocate_signals`; `wait_value` holds a stream until a word reaches a
+  generation. They exist for a lane whose bytes do not move on a stream, which
+  cannot make a stream wait by recording an event -- a consumer's wait may be
+  enqueued before the transfer finishes, and a wait on an unrecorded event does
+  not wait. A provider whose streams read host memory through a mapping needs the
+  block allocated so that mapping exists, which is why the entry names a word by
+  index rather than by pointer.
 - **Event pools** keep backend events across leases. Reserving a pool creates
   its events up front and seals it, so a steady-state step makes no driver
   calls; the runtime's statistics count creates after sealing. Events that

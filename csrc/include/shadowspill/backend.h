@@ -27,6 +27,9 @@ extern "C" {
    default stream, and for an event it is no event. */
 typedef uint64_t ShadowSpillBackendStream;
 typedef uint64_t ShadowSpillBackendEvent;
+/* A block of words a stream can wait on; one opaque word, as above. Zero is
+   "none". */
+typedef uint64_t ShadowSpillBackendSignals;
 
 typedef uint64_t ShadowSpillProfilerRange;
 
@@ -97,6 +100,23 @@ typedef struct ShadowSpillBackend {
     int (*free_device)(void *state, void *address, uint64_t bytes);
     int (*register_host_memory)(void *state, void *address, uint64_t bytes);
     int (*unregister_host_memory)(void *state, void *address, uint64_t bytes);
+    /*
+     * Words a stream can wait on and a host thread can store to. Separate from
+     * the pair above because a provider may require them mapped a particular
+     * way for a stream to read them at all, in which case one word has two
+     * addresses -- and only the backend should know that.
+     *
+     * `signals` names the block; `host` is where the caller stores a value, one
+     * word per index. The address a stream waits on never leaves the backend,
+     * which is why `wait_value` below takes an index and not a pointer.
+     */
+    int (*allocate_signals)(
+        void *state,
+        uint32_t count,
+        ShadowSpillBackendSignals *signals,
+        uint64_t **host
+    );
+    int (*free_signals)(void *state, ShadowSpillBackendSignals signals);
 
     /* Streams: ordered queues of copies and events. A stream the backend made
        comes from create_stream; a stream someone else owns is named by the
@@ -160,6 +180,25 @@ typedef struct ShadowSpillBackend {
         void *state,
         ShadowSpillBackendStream stream,
         ShadowSpillBackendEvent event
+    );
+    /*
+     * Holds `stream` until the word at `index` of `signals` reaches
+     * `generation`, comparing greater-or-equal so a value already past it does
+     * not stall. `wait_event` orders a stream behind work the device will do;
+     * this orders it behind work the device cannot see -- a transfer some other
+     * hardware is performing, whose completion only the host learns about.
+     *
+     * Without it a lane that does not move bytes on a stream has no way to make
+     * a stream wait for it: the consumer's `wait_event` can be enqueued before
+     * the transfer finishes, and a wait on an event not yet recorded does not
+     * wait at all.
+     */
+    int (*wait_value)(
+        void *state,
+        ShadowSpillBackendStream stream,
+        ShadowSpillBackendSignals signals,
+        uint32_t index,
+        uint64_t generation
     );
     /* Blocks the calling thread until the device reaches the event. The
      * stream wait above orders one stream behind another; this one is how a

@@ -47,6 +47,8 @@ int main(int argc, char **argv) {
     if (backend.abi_version != SHADOWSPILL_BACKEND_ABI_VERSION || backend.state == NULL ||
         backend.allocate_device == NULL || backend.free_device == NULL ||
         backend.register_host_memory == NULL || backend.unregister_host_memory == NULL ||
+        backend.allocate_signals == NULL || backend.free_signals == NULL ||
+        backend.wait_value == NULL ||
         backend.create_stream == NULL || backend.destroy_stream == NULL ||
         backend.synchronize_stream == NULL || backend.resolve_stream == NULL ||
         backend.copy_host_to_device == NULL || backend.copy_device_to_host == NULL ||
@@ -58,6 +60,42 @@ int main(int argc, char **argv) {
         backend.physical_memory == NULL || backend.statistics == NULL) {
         FAIL("the table is incomplete");
     }
+    /*
+     * The sequence a lane that does not move bytes on a stream depends on: the
+     * stream is held until the host stores the generation, and a wait on a
+     * generation already stored does not hold it at all. Proven here, on the
+     * mock, so the mechanism is not first exercised by a NIC.
+     */
+    ShadowSpillBackendSignals signals = 0U;
+    uint64_t *words = NULL;
+    if (backend.allocate_signals(backend.state, 2U, &signals, &words) != 0 ||
+        words == NULL || words[0] != 0U || words[1] != 0U) {
+        FAIL("signal words did not come back zeroed");
+    }
+    ShadowSpillBackendStream signal_stream = 0U;
+    if (backend.create_stream(backend.state, &signal_stream) != 0) {
+        FAIL("could not create a stream to wait on a value");
+    }
+    /* Already satisfied: generation 0 is what the word holds. */
+    if (backend.wait_value(backend.state, signal_stream, signals, 0U, 0U) != 0) {
+        FAIL("a wait on a generation already stored was refused");
+    }
+    /* Not yet: the host has not stored 7. Then it does, and the stream may go. */
+    if (backend.wait_value(backend.state, signal_stream, signals, 1U, 7U) != 0) {
+        FAIL("a wait on a generation not yet stored was refused");
+    }
+    words[1] = 7U;
+    if (backend.synchronize_stream(backend.state, signal_stream) != 0) {
+        FAIL("the stream did not pass once the generation was stored");
+    }
+    if (backend.wait_value(backend.state, signal_stream, signals, 2U, 1U) == 0) {
+        FAIL("an index past the end of the block was accepted");
+    }
+    if (backend.destroy_stream(backend.state, signal_stream) != 0 ||
+        backend.free_signals(backend.state, signals) != 0) {
+        FAIL("signal teardown failed");
+    }
+
     ShadowSpillBackendCapabilities capabilities = {0};
     if (backend.capabilities(backend.state, &capabilities) != 0 ||
         capabilities.minimum_alignment == 0U || capabilities.provider[0] == '\0') {
@@ -127,7 +165,9 @@ int main(int argc, char **argv) {
         statistics.pinned_host_registrations != 2U || statistics.bytes_pinned_host_registered != 128U ||
         statistics.bytes_pinned_host_unregistered != 128U || statistics.bytes_device_allocated != 64U ||
         statistics.bytes_device_freed != 64U || statistics.events_created != 2U ||
-        statistics.streams_created != 1U) {
+        /* Two streams now: the transfer stream, and the one the value-wait
+           sequence above waits on. */
+        statistics.streams_created != 2U) {
         FAIL("statistics do not count the calls made");
     }
     destroy.destroy(&backend);
