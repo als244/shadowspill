@@ -13,15 +13,15 @@ from shadowspill.diagnostics.step import (
     StepDiagnostics,
     StepTimingSummary,
     Timelines,
-    TransferLane,
+    TransferQueue,
     TransferRecords,
 )
 from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.schema import artifact_schema
 
 
-def _lane(direction: str) -> TransferLane:
-    return TransferLane(
+def _lane(direction: str) -> TransferQueue:
+    return TransferQueue(
         order=(),
         summary=LaneSummary(
             direction=direction,
