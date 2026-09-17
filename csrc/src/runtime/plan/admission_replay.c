@@ -110,7 +110,10 @@ static int reset_state(
         return -1;
     }
     state->pool.range_leases = NULL;
-    state->pool.backend = NULL;
+    /* A replay pool never acquires or releases memory: it is offsets only, to
+       run the range policy without touching a device. */
+    state->pool.memory = (ShadowSpillPoolMemoryDescription){0};
+    state->pool.memory_state = NULL;
     state->pool.kind = SHADOWSPILL_POOL_DEVICE;
     state->pool.base = NULL;
     state->pool.pool_id = 0U;

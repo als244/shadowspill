@@ -85,9 +85,9 @@ can block:
 
 **What it still does.** Abandoning stops the worker, joins it, and releases
 what the runtime owns: every route's lane and stream, both event pools, the
-transfer profiles, and every memory pool, which is what unregisters pinned
-host memory and frees device memory. Nothing is leaked that a running program
-would have kept. The distinction is not what gets released; it is that
+transfer profiles, and every memory pool -- each pool giving its region back
+through its own kind's `release`, whatever that kind requires. Nothing is
+leaked that a running program would have kept. The distinction is not what gets released; it is that
 nothing is waited for.
 
 **What it reports.** The handler writes one line to stderr naming the exit
