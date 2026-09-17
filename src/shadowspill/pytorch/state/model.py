@@ -22,7 +22,6 @@ from .storage import (
     import_tensors,
     own_persistent_state,
     persistent_state,
-    pool_backed_tensor,
     read_state,
     register_tensor_storages,
     release_persistent_tensors,
@@ -70,13 +69,16 @@ def import_model_state[ModelT: nn.Module](
                 "Construct the whole model under torch.device('meta')."
             )
         return _materialize_meta_model(model, runtime=runtime, pool=pool)
+    selected = _require_pool(runtime, pool)
     storages = register_tensor_storages(
         _model_tensors(model),
         runtime=runtime,
         pool=pool,
     )
     try:
-        imported, imported_storages = copy_model_with_runtime_storages(model, storages)
+        imported, imported_storages = copy_model_with_runtime_storages(
+            model, storages, addressable=selected.addressable
+        )
         own_persistent_state(
             imported,
             runtime=runtime,
@@ -121,12 +123,27 @@ def _materialize_meta_model[ModelT: nn.Module](
     runtime: Runtime,
     pool: str,
 ) -> ModelT:
-    """Give a meta model pool storage, then let it initialize itself.
+    """Let a meta model initialize itself, then import what it built.
 
     The model is rebound in place rather than copied: a meta model holds no
     values, so there is nothing to copy and nothing to release. Every tensor
-    is allocated in the pool and then written by ``reset_parameters``, so no
-    host memory proportional to the model is ever allocated.
+    is built in ordinary host memory, written by ``reset_parameters``, and
+    imported once all of them are -- which is the same way state arrives from
+    anywhere else, and the reason there is no second path to maintain.
+
+    The peak is the model in host memory, briefly, on top of the pool it is
+    imported into. An earlier version avoided that by allocating each tensor
+    in the pool and letting ``reset_parameters`` write there, so nothing was
+    ever copied; it was abandoned because it is only possible for a pool whose
+    memory this process can address, and one path that always works is worth
+    more than two paths that sometimes do. Where the peak matters, build the
+    values once and import from a checkpoint instead, which streams.
+
+    Initialization runs to completion before anything is imported. Doing it
+    module by module would hold the peak down, but ``reset_parameters`` on a
+    parent is allowed to touch the state of the modules it owns, and a module
+    imported before that happened would leave the pool holding values the
+    model no longer has.
     """
 
     offenders = _modules_without_reset(model)
@@ -137,27 +154,31 @@ def _materialize_meta_model[ModelT: nn.Module](
             f"{', '.join(offenders[:4])}"
             f"{' and more' if len(offenders) > 4 else ''}"
         )
-    selected = _require_pool(runtime, pool)
+    # Fails here rather than after a whole model has been built.
+    _require_pool(runtime, pool)
     for module in model.modules():
         for name, parameter in list(module._parameters.items()):
             if parameter is None or not parameter.is_meta:
                 continue
-            view, _ = pool_backed_tensor(
-                runtime,
-                selected,
-                shape=tuple(parameter.shape),
-                dtype=parameter.dtype,
-            )
             module._parameters[name] = nn.Parameter(
-                view, requires_grad=parameter.requires_grad
+                torch.empty(
+                    tuple(parameter.shape), dtype=parameter.dtype, device="cpu"
+                ),
+                requires_grad=parameter.requires_grad,
             )
         for name, buffer in list(module._buffers.items()):
             if buffer is None or not buffer.is_meta:
                 continue
-            view, _ = pool_backed_tensor(
-                runtime, selected, shape=tuple(buffer.shape), dtype=buffer.dtype
+            module._buffers[name] = torch.empty(
+                tuple(buffer.shape), dtype=buffer.dtype, device="cpu"
             )
-            module._buffers[name] = view
+    for module in model.modules():
+        reset = getattr(module, "reset_parameters", None)
+        if callable(reset):
+            reset()
+    # Tied weights are one storage under several names, and the import groups
+    # by storage, so a tie stays one object here exactly as it does for a model
+    # whose values came from anywhere else.
     import_tensors(
         model,
         _model_tensors(model),
@@ -165,10 +186,6 @@ def _materialize_meta_model[ModelT: nn.Module](
         pool=pool,
         release_source=True,
     )
-    for module in model.modules():
-        reset = getattr(module, "reset_parameters", None)
-        if callable(reset):
-            reset()
     return model
 
 

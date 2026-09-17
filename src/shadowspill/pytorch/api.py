@@ -285,12 +285,13 @@ def plan_step(
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
     retained in :attr:`PlannedTrainStep.plan_report` either way.
 
-    ``optimizer_state_init`` fills one declared optimizer-state entry in place,
-    given the entry's name, the pool-backed tensor, and the parameter the
-    entry belongs to. The optimizer declares what state exists by being run on
-    meta parameters, which costs nothing; ShadowSpill allocates that in the
-    spill pool; and this supplies the values, because a default would be an
-    assumption that fails silently. It is not needed when ``optimizer``
+    ``optimizer_state_init`` fills one declared optimizer-state entry, given
+    the entry's name, the tensor to fill, and the parameter the entry belongs
+    to. The optimizer declares what state exists by being run on meta
+    parameters, which costs nothing; ShadowSpill builds that in ordinary
+    memory; this supplies the values, because a default would be an assumption
+    that fails silently; and the import that adopts the optimizer's state for
+    the plan is what moves it into the spill pool. It is not needed when ``optimizer``
     returns an optimizer whose state the caller has already imported:
     planning adopts the state of the optimizer it is handed, and that object
     is the reference. State imported for some other optimizer is invisible to

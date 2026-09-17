@@ -330,9 +330,12 @@ optimizer object, rebound.
 returns follows from which.
 
 A model **on `meta`** has structure but no storage, so there is nothing to
-copy: every tensor is allocated in the pool, `reset_parameters()` writes the
-values there, and the same module is returned, rebound. No host memory
-proportional to the model is ever allocated. The model must satisfy the
+copy: every tensor is built in ordinary memory, `reset_parameters()` writes the
+values, the whole of it is imported once every module has initialized, and the
+same module is returned, rebound. The transient is the model, until the import
+releases it; where that is what decides whether the model fits, fill from a
+checkpoint instead, which maps the file rather than reading it. The model must
+satisfy the
 contract in [importing state](../../architecture/state-import.md) -- constructible
 on meta, dtype fixed at construction, and `reset_parameters()` on every module
 that owns state -- and is refused, naming the offenders, if it does not.
@@ -490,10 +493,11 @@ callable that could own the result.
 Everything else a plan owns is created in the pools rather than on the host:
 gradients, activations and workspaces are runtime objects the plan's actions
 move between pools, and the tensors the lowering builds them from are fake, so
-they cost nothing while a program is being built. Optimizer state is created
-there too: the optimizer declares what it keeps on meta, which allocates
-nothing, planning allocates that in the spill pool, and `optimizer_state_init`
-fills it in place.
+they cost nothing while a program is being built. Optimizer state reaches a pool
+differently, and by the ordinary route: the optimizer declares what it keeps on
+meta, which allocates nothing; planning builds those entries in host memory,
+`optimizer_state_init` fills them, and the import that would have adopted
+caller-built state moves them into the spill pool.
 
 The optimizer planning is given is the reference for whose state that is. If
 *its* state was already imported, planning adopts it as it stands and it
@@ -752,7 +756,7 @@ Beyond the shared and store arguments:
 |---|---|---|---|
 | `objective` | callable | required | `(model, *microbatch) -> Tensor \| ObjectiveResult`, returning the scalar the step differentiates. |
 | `optimizer` | callable | required | Given the model's parameters, returns a `torch.optim.Optimizer`. The class itself does (`torch.optim.AdamW`); so does any partial or lambda over one. |
-| `optimizer_state_init` | `(name, tensor, parameter) -> None` \| `None` | `None` | Fills one declared state entry in place, given the entry's name, the pool-backed tensor, and the parameter it belongs to. Required unless the optimizer handed back already holds imported state, because a default would be an assumption that fails silently. |
+| `optimizer_state_init` | `(name, tensor, parameter) -> None` \| `None` | `None` | Fills one declared state entry, given the entry's name, the host tensor to fill, and the parameter it belongs to. The filled entry is imported into the spill pool afterwards. Required unless the optimizer handed back already holds imported state, because a default would be an assumption that fails silently. |
 | `hyperparams` | `Sequence[str]` | `()` | Names of values a step may set later, e.g. `("lr",)` or `("lr", "betas")`. Each must name an entry in a parameter group or a model buffer holding a number, or a sequence of them. Named entries are held in host scalars before capture -- float64 for a float, int64 for an int -- and everything else is left as the optimizer made it. A bool is refused: it selects what the update does, which is what the capture is. |
 | `example_inputs` | `Sequence[Sequence[Any]]` | required | One fixed example sequence per microbatch; its length is the step's microbatch count. |
 | `optimizer_ordering` | `"stage_interleaved"` \| `"tail"` | `"stage_interleaved"` | Whether each stage updates as its gradients land, or all updates run at the end. |
@@ -1121,9 +1125,10 @@ for work owned by that plan, never for unrelated callables.
 
 ### Checkpoints and closing
 
-Closing copies nothing, and it moves no weights. `import_model_state()` gave
-the model's parameters storage in the spill pool, and that one storage holds
-the updated weights throughout: a step both begins and ends with parameters
+Closing copies nothing, and it moves no weights. `import_model_state()` put the
+model's parameters in the spill pool -- as the parameters' own storage, where
+the pool is one this process can address, and as the authoritative copy behind
+them where it is not -- and the pool holds the updated weights throughout: a step both begins and ends with parameters
 spill-resident, so each update is already there. Running a step points those
 same `Parameter` objects at device memory; closing points them back.
 `export_model_state()` is the separate call that copies the values into
@@ -1132,13 +1137,12 @@ left behind, as [above](#what-a-closing-plan-leaves-behind).
 
 Optimizer state has no equivalent home. `plan_step()` builds the
 optimizer from the callable it is given and creates its state in storage the
-plan owns, and planning refuses an optimizer whose state the caller already
-imported, so there is no caller-owned pool for it to be left in. That state is
-taken from the spill pool as it is created rather than built on the host and
-copied in: while the optimizer initializes, a host allocation large enough to
-be worth an object is served from the pool, so the values are written where
-they will live. State the caller imported is untouched by this, because nothing
-is created for it.
+plan owns, so unless the caller imported that state themselves there is no
+caller-owned pool for it to be left in. The state is built in ordinary host
+memory, filled by `optimizer_state_init`, and imported into the spill pool by
+the same call that adopts state a caller built -- so the host holds it while it
+is being built, beside the pool about to receive it. State the caller imported
+is untouched by this, because nothing is created for it.
 
 Releasing the plan therefore releases the state with it: a training callable's
 `state_dict()` and `load_state_dict()` answer only while it is open, and both

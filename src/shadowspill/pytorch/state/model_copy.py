@@ -15,13 +15,24 @@ from .records import PersistentStorage, TensorView
 def copy_model_with_runtime_storages(
     model: nn.Module,
     storages: Iterable[PersistentStorage],
+    *,
+    addressable: bool,
 ) -> tuple[nn.Module, tuple[PersistentStorage, ...]]:
-    """Copy a module hierarchy without copying registered tensor payloads."""
+    """Copy a module hierarchy without copying registered tensor payloads.
+
+    The copy's tensors view the pool the values were just imported into, so
+    the payload exists once. That is possible only where this process can
+    address the pool; where it cannot, the copy is given host memory of its
+    own and the storages stay separate, which means the runtime copies them in
+    when a plan adopts them and back out when it is done. Everything else --
+    which tensors view which storage, and the deep copy around them -- is the
+    same either way, so the two differ in one line.
+    """
 
     memo: dict[int, object] = {}
     imported: list[PersistentStorage] = []
     for storage in storages:
-        owner = _runtime_owner(storage)
+        owner = _runtime_owner(storage) if addressable else _separate_owner(storage)
         views: list[TensorView] = []
         for source_view in storage.views:
             source = source_view.tensor
@@ -38,12 +49,23 @@ def copy_model_with_runtime_storages(
             )
         storage.anchor = owner
         storage.views = tuple(views)
-        storage.frontend_storage_is_separate = False
+        storage.frontend_storage_is_separate = not addressable
         imported.append(storage)
     copied = copy.deepcopy(model, memo)
     if copied is model:
         raise RuntimeError("model copy unexpectedly retained source identity")
     return copied, tuple(imported)
+
+
+def _separate_owner(storage: PersistentStorage) -> torch.Tensor:
+    """Host memory of the copy's own, holding what was just imported.
+
+    The anchor still names the source model's storage here, and the bytes in
+    it are exactly what was written into the pool a moment ago, so a clone is
+    both the right values and the right size without reading the pool back.
+    """
+
+    return storage.anchor.clone()
 
 
 def _runtime_owner(storage: PersistentStorage) -> torch.Tensor:

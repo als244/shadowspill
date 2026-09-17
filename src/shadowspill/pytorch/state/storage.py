@@ -6,7 +6,7 @@ import ctypes
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import torch
 
@@ -26,7 +26,6 @@ from shadowspill.runtime.objects import (
 )
 from shadowspill.runtime.plan import RuntimeBridge
 
-from ..contracts import contiguous_stride
 from .records import PersistentState, PersistentStorage, TensorView
 from .registry import registry_for
 
@@ -55,7 +54,7 @@ def import_tensors(
     None for state the caller owns, which outlives every plan.
     """
 
-    _validate_pool(
+    selected_pool = _validate_pool(
         runtime,
         pool,
         allow_in_progress_plan=_allow_in_progress_plan,
@@ -77,7 +76,9 @@ def import_tensors(
         # Only a storage that still stands apart from its object is copied
         # into it; one adopted from the pool is already where it belongs.
         separate = [item for item in created if item.frontend_storage_is_separate]
-        if release_source and separate:
+        if release_source and separate and selected_pool.addressable:
+            # The bytes are in the pool now, so the frontend's own copy is
+            # redundant: point each storage at its lease and free what it held.
             torch.ops.shadowspill._import_cpu_storages(
                 [item.anchor for item in separate],
                 [item.pool_id for item in separate],
@@ -87,6 +88,15 @@ def import_tensors(
             )
             for item in separate:
                 item.frontend_storage_is_separate = False
+        # A pool this process cannot address keeps its storages separate, and
+        # `release_source` goes unhonoured: releasing the frontend's copy would
+        # leave the framework holding an address that faults on the first read.
+        # Nothing further is needed for that to be correct -- a separate
+        # storage is already copied into its object when a plan adopts it and
+        # back out when the plan is done, and both of those go through the
+        # kind's `write` and `read`. It costs a host copy of whatever state the
+        # framework holds, which is the price of the framework being able to
+        # see values that live on another machine.
         state = PersistentState(
             target=target,
             pool=pool,
@@ -135,18 +145,37 @@ def import_state_from_file(
         )
     named = tuple(tensors)
     _require_checkpoint_agrees(named, values, path)
-    state = import_tensors(
-        target,
-        named,
-        runtime=runtime,
-        pool=pool,
-        release_source=True,
-        owning_plan=owning_plan,
-    )
-    # The target's tensors are pool-backed now, so this writes into the pool.
-    with torch.no_grad():
-        for item in named:
-            item.tensor.copy_(values[item.name])
+
+    def fill() -> None:
+        with torch.no_grad():
+            for item in named:
+                item.tensor.copy_(values[item.name])
+
+    def adopt() -> PersistentState:
+        return import_tensors(
+            target,
+            named,
+            runtime=runtime,
+            pool=pool,
+            release_source=True,
+            owning_plan=owning_plan,
+        )
+
+    # Importing first is what makes this cheap: the target's storages become
+    # the pool, so the copy below writes the file's values straight into it and
+    # the only memory the values ever occupy is the mapping and the pool.
+    #
+    # That ordering depends on the import being able to hand the storages a
+    # pool address. Where it cannot, the storages stay the target's own and the
+    # copy would land in them rather than in the pool, leaving the pool holding
+    # what the target happened to contain at import. So the order is reversed:
+    # fill first, import after, which copies once and is correct either way.
+    if _validate_pool(runtime, pool).addressable:
+        state = adopt()
+        fill()
+    else:
+        fill()
+        state = adopt()
     return state
 
 
@@ -181,9 +210,11 @@ def register_tensor_storages(
 ) -> tuple[PersistentStorage, ...]:
     """Copy unique source storages into newly registered runtime objects.
 
-    A storage that already presents pool memory is adopted as it stands
-    rather than copied: the runtime knows which those are, so no caller has
-    to say so.
+    Every root is ordinary memory the caller owns, so every root is copied.
+    There used to be a second case -- a storage that already presented pool
+    memory, adopted rather than copied -- which existed because state could be
+    built in the pool and imported from there. Nothing builds state in a pool
+    any more, so the case cannot arise.
     """
 
     selected_pool = _validate_pool(
@@ -192,37 +223,15 @@ def register_tensor_storages(
         allow_in_progress_plan=_allow_in_progress_plan,
     )
     roots = _storage_roots(tensors)
-    # A root whose bytes are already a pool object is adopted where it is:
-    # it was taken from the pool to begin with, so importing it would copy
-    # the pool into itself under a second name.
-    registry = registry_for(runtime)
-    adopted = {
-        index: allocation
-        for index, (anchor, _views) in enumerate(roots)
-        if (
-            allocation := registry.pool_allocation(int(anchor.untyped_storage()._cdata))
-        )
-        is not None
-    }
     object_ids = reserve_persistent_object_ids(
         runtime,
-        len(roots) - len(adopted),
+        len(roots),
         allow_in_progress_plan=_allow_in_progress_plan,
     )
     created: list[PersistentStorage] = []
     try:
         pending = iter(object_ids)
-        for index, (anchor, views) in enumerate(roots):
-            taken = adopted.get(index)
-            if taken is not None:
-                # Planning took these bytes from this pool, so the object
-                # exists: the import only records which tensors view it.
-                # It now belongs to a state, so stop offering it.
-                registry.forget_pool_allocation(int(anchor.untyped_storage()._cdata))
-                taken.anchor = anchor
-                taken.views = views
-                created.append(taken)
-                continue
+        for anchor, views in roots:
             object_id = next(pending)
             size_bytes = int(anchor.untyped_storage().nbytes())
             _require_status(
@@ -576,91 +585,6 @@ def restore_persistent_object_ids(runtime: Runtime) -> None:
 PLANNING_MEMORY_MINIMUM_BYTES = 1 << 20
 
 
-def _take_pool_memory(
-    runtime: Runtime,
-    pool: MemoryPool,
-    *,
-    size_bytes: int,
-) -> PersistentStorage:
-    """Take ``size_bytes`` from ``pool`` as host memory the caller may write.
-
-    The object is registered without a source, so nothing is copied: the
-    caller writes the values it wants where they will stay. The result is an
-    ordinary persistent storage with no views yet, which is what an import
-    fills in when this memory becomes some object's state.
-    """
-
-    if size_bytes <= 0:
-        raise ValueError("planning memory needs a positive size")
-    object_id = reserve_persistent_object_ids(runtime, 1, allow_in_progress_plan=True)[
-        0
-    ]
-    _require_status(
-        register_object(
-            runtime,
-            object_id,
-            size_bytes,
-            pool_id=pool.pool_id,
-            retain_spill_copy=True,
-            initially_resident=True,
-        ),
-        f"take {size_bytes} bytes of planning memory from pool {pool.name!r}",
-    )
-    pointer = pool_object_pointer(runtime, object_id, pool.pool_id)
-    dispatch = torch.empty(0, dtype=torch.uint8, device="cpu")
-    anchor = cast(
-        torch.Tensor,
-        torch.ops.shadowspill._make_runtime_cpu_storage(
-            dispatch, pool.pool_id, pointer, object_id, size_bytes
-        ),
-    )
-    if int(anchor.untyped_storage().data_ptr()) != pointer:
-        raise RuntimeError("planning memory from the pool has the wrong address")
-    return PersistentStorage(
-        persistent_object_id=object_id,
-        current_object_id=object_id,
-        pool_id=pool.pool_id,
-        size_bytes=size_bytes,
-        pool_pointer=pointer,
-        anchor=anchor,
-        views=(),
-        frontend_storage_is_separate=False,
-    )
-
-
-def pool_backed_tensor(
-    runtime: Runtime,
-    pool: MemoryPool,
-    *,
-    shape: tuple[int, ...],
-    dtype: torch.dtype,
-) -> tuple[torch.Tensor, PersistentStorage]:
-    """Take memory from ``pool`` and present it as a host tensor.
-
-    The object is registered without a source, so nothing is copied: the
-    caller writes the values it wants where they will stay. The tensor and the
-    allocation are returned together, because the allocation is what an import
-    adopts and the tensor is what the caller binds into its module.
-    """
-
-    elements = 1
-    for size in shape:
-        if size < 0:
-            raise ValueError("a pool-backed tensor needs a concrete shape")
-        elements *= size
-    size_bytes = elements * torch.empty(0, dtype=dtype).element_size()
-    allocation = _take_pool_memory(runtime, pool, size_bytes=max(size_bytes, 1))
-    view = torch.empty(0, dtype=dtype, device="cpu")
-    view.set_(
-        allocation.anchor.untyped_storage(),
-        0,
-        torch.Size(shape),
-        contiguous_stride(shape),
-    )
-    registry_for(runtime).note_pool_allocation(allocation)
-    return view, allocation
-
-
 def _storage_roots(
     tensors: Iterable[NamedTensor],
 ) -> tuple[tuple[torch.Tensor, tuple[TensorView, ...]], ...]:
@@ -726,9 +650,13 @@ def _validate_pool(
         selected = runtime.pools[pool]
     except KeyError as exc:
         raise RuntimeConfigurationError(f"unknown runtime pool {pool!r}") from exc
-    if selected.kind != "pinned_host":
+    if selected.kind == "device":
+        # State is imported into a spill pool, never the execution pool: the
+        # execution pool is the scarce device memory a fixed layout reserves,
+        # and anything sitting in it that the plan did not place costs the
+        # largest free range.
         raise RuntimeConfigurationError(
-            "the current PyTorch state import path requires a pinned-host pool"
+            "state is imported into a spill pool, not the execution pool"
         )
     return selected
 

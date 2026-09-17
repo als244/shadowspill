@@ -85,17 +85,17 @@ def materialize_training_state(
             # than folding them in. Only the named ones are touched.
             declare_varying_hyperparams(model, optimizer, hyperparams)
             state.restore_model_cpu_for_optimizer_capture()
-            # State this plan creates is state the plan will keep, so it is
-            # taken from the pool it will live in. The optimizer declares what
-            # it keeps on meta, which allocates nothing; each entry is then
-            # allocated here and filled by the caller. Capture below finds the
-            # state already present and does not create any of its own.
+            # The optimizer declares what it keeps on meta, which allocates
+            # nothing; each entry is then built here and filled by the caller.
+            # It is built in ordinary host memory and put in the pool by the
+            # import below, which is the same import that adopts state the
+            # caller built. Capture finds the state already present and does
+            # not create any of its own.
             with timer.measure("optimizer_state_install"):
                 installed_entries = install_declared_optimizer_state(
                     model,
                     optimizer,
                     runtime=runtime,
-                    pool=memory.spill,
                     initialize=optimizer_state_init,
                 )
             optimizer_capture = capture_optimizer(
