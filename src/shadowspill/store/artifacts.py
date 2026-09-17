@@ -183,8 +183,8 @@ class ArtifactStore:
         return self.build / "exports"
 
     @property
-    def graphpairs(self) -> Path:
-        return self.build / "graphpairs"
+    def graph_pairs(self) -> Path:
+        return self.build / "graph_pairs"
 
     @property
     def optimizer_captures(self) -> Path:
@@ -555,7 +555,7 @@ this one and replans.
 
 - `build/exports/`: normalized Export archives and manifests.
 - `build/inductor/`: files managed internally by the framework's compiler.
-- `build/graphpairs/`: structural AOT graph pairs.
+- `build/graph_pairs/`: structural AOT graph pairs.
 - `build/optimizers/`: traced recurrent optimizer updates, keyed by the
   optimizer, the objects it binds, its hyperparameters and its stage split.
 - `build/profiling/`: hardware/compiler-specific layouts and task measurements.
