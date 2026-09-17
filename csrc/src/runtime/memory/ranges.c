@@ -197,18 +197,6 @@ static int clone_extended_contents(
     return 0;
 }
 
-int shadowspill_range_clone_extended(
-    const ShadowSpillRangeAllocator *source,
-    uint64_t capacity,
-    ShadowSpillRangeAllocator *destination
-) {
-    if (destination == NULL) {
-        return -1;
-    }
-    *destination = (ShadowSpillRangeAllocator){0};
-    return clone_extended_contents(source, capacity, destination);
-}
-
 int shadowspill_range_clone_extended_with_nodes(
     const ShadowSpillRangeAllocator *source,
     uint64_t capacity,
