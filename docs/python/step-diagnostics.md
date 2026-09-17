@@ -65,7 +65,7 @@ StepDiagnostics
 ├── transfers.fetch / .evict[id]     TransferRecord
 ├── timelines                        Timelines
 │   ├── compute[]                    execution task ids, in compute-stream order
-│   └── fetch / evict                TransferLane
+│   └── fetch / evict                TransferQueue
 │       ├── order[]                  transfer ids, in lane order
 │       └── summary                  LaneSummary
 ├── allocator                        AllocatorTrace
@@ -287,7 +287,7 @@ lane.
 
 `diagnostics.timelines` is the order of the step, as references. `compute`
 is the tuple of execution task ids in compute-stream order; `fetch` and
-`evict` are each a `TransferLane` whose `order` is the tuple of transfer ids
+`evict` are each a `TransferQueue` whose `order` is the tuple of transfer ids
 in the lane's FIFO order -- the opening batch first, then the plan's
 transfers by `sequence` -- and whose `summary` is a `LaneSummary`. `first_task_started_at_seconds` is where the
 first selected task's simulated start fell on the device timeline.

@@ -95,7 +95,7 @@ them keys into `tasks`.
 
 `Timelines` is the order on three lanes sharing one device-clock zero: the
 execution task ids in compute-stream order, and for `fetch` and `evict` a
-`TransferLane` holding the transfer ids in FIFO order and a `LaneSummary`.
+`TransferQueue` holding the transfer ids in FIFO order and a `LaneSummary`.
 
 `allocator` is an `AllocatorTrace`, the ordered allocation and free ledger with
 the allocator's own pool read before and after the step; `runtime` is a

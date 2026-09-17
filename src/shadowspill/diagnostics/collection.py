@@ -15,7 +15,7 @@ from shadowspill.diagnostics.step import (
     StepTimingSummary,
     TaskRecord,
     Timelines,
-    TransferLane,
+    TransferQueue,
     TransferRecord,
     TransferRecords,
 )
@@ -108,11 +108,11 @@ def collect_step_diagnostics(
     timelines = Timelines(
         first_task_started_at_seconds=alignment,
         compute=tuple(item.execution_task_id for item in compute),
-        fetch=TransferLane(
+        fetch=TransferQueue(
             order=tuple(item.transfer_id for item in lanes["fetch"].records),
             summary=lanes["fetch"].summary,
         ),
-        evict=TransferLane(
+        evict=TransferQueue(
             order=tuple(item.transfer_id for item in lanes["evict"].records),
             summary=lanes["evict"].summary,
         ),

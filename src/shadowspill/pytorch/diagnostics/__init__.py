@@ -6,7 +6,7 @@ from shadowspill.diagnostics.step import (
     RuntimeTrace,
     TaskRecord,
     Timelines,
-    TransferLane,
+    TransferQueue,
     TransferRecord,
     TransferRecords,
 )
@@ -78,7 +78,7 @@ __all__ = [
     "StepTimingSummary",
     "TaskRecord",
     "Timelines",
-    "TransferLane",
+    "TransferQueue",
     "TransferRecord",
     "TransferRecords",
 ]

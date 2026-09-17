@@ -45,7 +45,7 @@ from .diagnostics import (
     StepTimingSummary,
     TaskRecord,
     Timelines,
-    TransferLane,
+    TransferQueue,
     TransferRecord,
     TransferRecords,
 )
@@ -129,8 +129,8 @@ __all__ = [
     "TensorSpec",
     "Timelines",
     "TransferCapabilities",
-    "TransferLane",
     "TransferProfile",
+    "TransferQueue",
     "TransferRecord",
     "TransferRecords",
     "build_step_programs",
