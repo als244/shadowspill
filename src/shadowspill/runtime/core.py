@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import os
+import sys
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from enum import IntEnum
 from pathlib import Path
@@ -41,6 +44,25 @@ from .topology import (
     RuntimeRoute,
     TransferCapabilities,
 )
+
+
+def _announce(message: str) -> None:
+    """Say where construction has got to, when asked.
+
+    Runtime construction is silent and can take minutes: it registers pools,
+    which for a remote one means a peer pinning tens of gibibytes, and then
+    calibrates every route, which moves real bytes. A run that appears to hang
+    before the first planning phase is somewhere in here, and without this the
+    only way to find out is a debugger.
+
+    Off unless ``SHADOWSPILL_RUNTIME_PROGRESS`` is set, because a library that
+    prints during normal construction is a library that prints in someone
+    else's logs.
+    """
+
+    if os.environ.get("SHADOWSPILL_RUNTIME_PROGRESS"):
+        print(f"shadowspill runtime: {message}", file=sys.stderr, flush=True)
+
 
 _RUNTIME_INVALID_STATE = Status.INVALID_STATE
 
@@ -103,6 +125,7 @@ class Runtime:
                 raise RuntimeConfigurationError(
                     "a ShadowSpill Runtime is already initialized in this process"
                 )
+            _announce("installing the runtime and its pools")
             installed = install_runtime(
                 path,
                 frontend=frontend,
@@ -144,7 +167,17 @@ class Runtime:
             self._route_names = topology.route_names
             _active_runtime = self
         if calibrate:
+            # Announced because it is the one part of construction whose cost
+            # is a property of the hardware rather than of the code, and the
+            # only part that moves bytes. A run that appears to hang between
+            # "runtime created" and the first planning phase is almost always
+            # in here, and silence made that a guess.
+            _announce("calibrating transfer routes")
+            started = time.perf_counter()
             self._calibrate(routes=None, provenance=INITIALIZATION_PROVENANCE)
+            _announce(
+                f"calibrated in {time.perf_counter() - started:.1f}s"
+            )
 
     @property
     def frontend(self) -> RuntimeFrontend:

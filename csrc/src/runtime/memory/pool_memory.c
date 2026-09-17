@@ -12,7 +12,12 @@
  */
 
 static int entry_is_valid(const ShadowSpillPoolMemoryDescription *entry) {
-    return entry != NULL && entry->acquire != NULL && entry->release != NULL;
+    /* `write` and `read` are optional, but optional *together*. A kind that
+       could take state and not give it back would import a model and then fail
+       to export it -- at the point the values were wanted, long after the entry
+       that was wrong was registered. */
+    return entry != NULL && entry->acquire != NULL && entry->release != NULL &&
+           (entry->write == NULL) == (entry->read == NULL);
 }
 
 int shadowspill_pool_memory_table_initialize(
