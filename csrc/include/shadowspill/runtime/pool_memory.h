@@ -60,6 +60,52 @@ typedef struct ShadowSpillPoolMemoryDescription {
     /* Give the region back. Receives what `acquire` produced. */
     int (*release)(void *state, void *base, uint64_t capacity);
 
+    /*
+     * The way in and the way out. Both **optional**, and optional together:
+     * NULL means this process can dereference the region itself, so the
+     * runtime moves the bytes with an ordinary copy. That is what the two
+     * built-in kinds do. A kind whose region this process cannot address
+     * implements both -- and must, because the alternative is a fault at the
+     * first byte.
+     *
+     * `source` and `destination` are pointers **in the runtime process**, and
+     * that is the honest statement of the contract: not "host memory", which
+     * would promise something about the machine, but "an address this process
+     * can use". Whoever calls these already holds such a pointer, because
+     * every caller is inside this process. Serving a client that is not is a
+     * different problem, and would need a different entry than either of
+     * these; nothing here pretends to solve it.
+     *
+     * `offset` is measured from the pool's base, so neither entry needs to
+     * know what a pool address means -- which is the same property that lets
+     * `acquire` report a base this process cannot read.
+     *
+     * They exist because moving bytes across the pool's edge is a property of
+     * the memory rather than of a transfer. Importing a model's state and
+     * reading a checkpoint back are not scheduled transfers on any route: they
+     * happen outside a plan, against ordinary memory the caller owns. Routing
+     * either through a lane would need a lane for a pair of kinds that is not
+     * a route.
+     *
+     * Called from the thread importing or exporting state, never from the
+     * worker, and synchronous: when one returns 0 the bytes have landed.
+     */
+    int (*write)(
+        void *state,
+        uint64_t offset,
+        const void *source,
+        uint64_t bytes
+    );
+
+    /* Take `bytes` from this pool at `offset` and put them at `destination`.
+       The counterpart of `write`, under every rule above. */
+    int (*read)(
+        void *state,
+        uint64_t offset,
+        void *destination,
+        uint64_t bytes
+    );
+
     /* Passed to `acquire` untouched. Whoever registers the entry decides what
        it points at; for a kind that needs no configuration it is NULL. */
     void *configuration;
