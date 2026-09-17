@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass
+from pathlib import Path
 
 # Third-party kernels -- cuBLAS, cuDNN, and any custom kernel a model pulls in
 # (flash-attention, fla, and the like) -- allocate their workspaces outside the
@@ -69,16 +71,60 @@ class DevicePool:
 
 
 @dataclass(frozen=True, slots=True)
-class PinnedHostPool:
-    """Configuration for a bounded pinned-memory spill pool."""
+class SpillPool:
+    """What every pool that is not the execution pool answers.
+
+    A spill pool declares its own kind, and nothing here enumerates which kinds
+    exist. That mirrors the runtime, where a pool's kind selects an
+    acquire/release pair from a list the runtime seeds and a loaded library
+    appends to: there is no branch asking what kind of memory a pool has, and
+    adding one is an entry rather than an edit.
+
+    A kind implemented in a separately loaded library subclasses this, names
+    the library it needs, and returns whatever that library's ``acquire``
+    expects from :meth:`configuration`.
+    """
 
     capacity: int
+
+    #: The ``ShadowSpillPoolKind`` value this pool's memory is looked up by.
+    kind: int = 1
+
+    #: What the pool registry reports for it.
+    kind_name: str = "pinned_host"
 
     def __post_init__(self) -> None:
         _positive_bytes(self.capacity, "capacity")
 
+    @property
+    def library(self) -> Path | None:
+        """The shared object supplying this kind, or ``None`` for a built-in.
 
-MemoryPoolConfig = DevicePool | PinnedHostPool
+        Loading happens once per distinct path, before the runtime is created,
+        and the library stays open for as long as the runtime does.
+        """
+
+        return None
+
+    def configuration(self) -> ctypes.Structure | None:
+        """What this pool's kind is told about *this* pool.
+
+        Passed to the kind's ``acquire`` untouched and never read by anything
+        in between, which is how a pool says which machine or which device it
+        wants without the neutral configuration learning any such word. The
+        object returned must outlive the bootstrap call; a built-in kind needs
+        none and returns ``None``.
+        """
+
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class PinnedHostPool(SpillPool):
+    """Configuration for a bounded pinned-memory spill pool."""
+
+
+MemoryPoolConfig = DevicePool | SpillPool
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +181,7 @@ __all__ = [
     "DevicePool",
     "MemoryPoolConfig",
     "PinnedHostPool",
+    "SpillPool",
     "TransferRoute",
     "device",
     "pinned_host",

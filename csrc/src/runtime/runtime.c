@@ -13,6 +13,8 @@ int shadowspill_backend_is_valid(const ShadowSpillBackend *backend) {
         backend->state != NULL && backend->allocate_device != NULL &&
         backend->free_device != NULL && backend->register_host_memory != NULL &&
         backend->unregister_host_memory != NULL &&
+        backend->allocate_signals != NULL && backend->free_signals != NULL &&
+        backend->wait_value != NULL &&
         backend->create_stream != NULL && backend->destroy_stream != NULL &&
         backend->synchronize_stream != NULL && backend->resolve_stream != NULL &&
         backend->copy_host_to_device != NULL &&
@@ -36,10 +38,13 @@ static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
     }
     for (uint32_t pool_id = 0U; pool_id < config->pool_count; ++pool_id) {
         const ShadowSpillMemoryPoolDescription *pool = &config->pools[pool_id];
-        if (pool->pool_id != pool_id || pool->minimum_alignment == 0U ||
-            pool->kind > SHADOWSPILL_POOL_PINNED_HOST) {
+        if (pool->pool_id != pool_id || pool->minimum_alignment == 0U) {
             return 0;
         }
+        /* Nothing here judges the kind. Whether one is servable is whether an
+           entry claims it, which only the lookup knows, so create answers that
+           where the table exists rather than keeping a second opinion that
+           would have to be widened for every kind a library adds. */
     }
     for (uint32_t route_id = 0U; route_id < config->route_count; ++route_id) {
         const ShadowSpillTransferRouteDescription *route =
@@ -89,8 +94,6 @@ static void describe_runtime(
         const ShadowSpillTransferRouteDescription *route = &config->routes[route_id];
         runtime->routes[route_id].source_pool_id = route->source_pool_id;
         runtime->routes[route_id].destination_pool_id = route->destination_pool_id;
-        runtime->routes[route_id].to_device =
-            config->pools[route->source_pool_id].kind == SHADOWSPILL_POOL_PINNED_HOST;
     }
     runtime->worker_poll_nanoseconds = config->worker_poll_nanoseconds;
     runtime->background_transfer_window_bytes =
@@ -136,10 +139,21 @@ static ShadowSpillStatus open_pools_and_routes(
     ShadowSpillStatus status = SHADOWSPILL_STATUS_BACKEND_FAILURE;
     for (uint32_t pool_id = 0U; pool_id < runtime->pool_count; ++pool_id) {
         const ShadowSpillMemoryPoolDescription *pool = &config->pools[pool_id];
+        const ShadowSpillPoolMemoryDescription *memory =
+            shadowspill_pool_memory_for_kind(&runtime->pool_memory, pool->kind);
+        if (memory == NULL) {
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        }
+        /* The description's configuration is the pool's, not the kind's: two
+           Remote pools on different machines share an entry and differ here. */
+        ShadowSpillPoolMemoryDescription resolved = *memory;
+        if (pool->configuration != NULL) {
+            resolved.configuration = pool->configuration;
+        }
         if (shadowspill_memory_pool_initialize(
                 &runtime->pools[pool_id],
                 pool_id,
-                &runtime->backend,
+                &resolved,
                 pool->kind,
                 pool->capacity_bytes,
                 pool->minimum_alignment
@@ -153,21 +167,46 @@ static ShadowSpillStatus open_pools_and_routes(
     }
     for (uint32_t route_id = 0U; route_id < runtime->route_count; ++route_id) {
         ShadowSpillRouteState *route = &runtime->routes[route_id];
-        if (shadowspill_transfer_lane_initialize(&route->transfers) != 0) {
+        if (shadowspill_transfer_queue_initialize(&route->queue) != 0) {
             status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
             return status;
         }
-        route->transfers.background_window_bytes =
+        route->queue.background_window_bytes =
             runtime->background_transfer_window_bytes;
         if (runtime->backend.create_stream(
-                runtime->backend.state, &route->lane
+                runtime->backend.state, &route->stream
             ) != 0) {
             return SHADOWSPILL_STATUS_BACKEND_FAILURE;
         }
-        route->lane_created = 1U;
+        route->stream_created = 1U;
         shadowspill_profiler_name_stream(
-            &runtime->backend, route->lane, config->routes[route_id].name
+            &runtime->backend, route->stream, config->routes[route_id].name
         );
+        /*
+         * The lane comes from the two pools' kinds, the way the copy direction
+         * used to. The built-in lane is granted this route's stream, which is
+         * where its copies and its completion event both belong; a lane that
+         * works elsewhere takes a stream of its own at create and leaves this
+         * one to the runtime.
+         */
+        const ShadowSpillLaneDescription *description = shadowspill_lane_for_kinds(
+            &runtime->lanes,
+            runtime->pools[route->source_pool_id].kind,
+            runtime->pools[route->destination_pool_id].kind
+        );
+        if (description == NULL) {
+            return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+        }
+        if (description->create(
+                runtime,
+                &runtime->backend,
+                route->stream,
+                description->configuration,
+                &route->lane
+            ) != 0) {
+            return SHADOWSPILL_STATUS_BACKEND_FAILURE;
+        }
+        route->operations = description->operations;
     }
     return SHADOWSPILL_STATUS_OK;
 }
@@ -198,6 +237,19 @@ ShadowSpillStatus shadowspill_runtime_create(
     runtime->route_count = config->route_count;
     runtime->backend = *config->backend;
     describe_runtime(runtime, config);
+    /* Before any route resolves one. The built-ins are seeded here, so a
+       registered lane is found by the same lookup and a pair claimed twice
+       fails now rather than at the first transfer. */
+    if (shadowspill_lane_table_initialize(
+            &runtime->lanes, runtime, config->lanes, config->lane_count
+        ) != 0 || shadowspill_pool_memory_table_initialize(
+            &runtime->pool_memory,
+            &runtime->backend,
+            config->pool_memory,
+            config->pool_memory_count
+        ) != 0) {
+        return abandon_runtime(runtime, SHADOWSPILL_STATUS_INVALID_ARGUMENT);
+    }
     const uint64_t object_index_bucket_count = 16384U;
     if (pthread_mutex_init(&runtime->plans_lock, NULL) != 0) {
         return abandon_runtime(runtime, SHADOWSPILL_STATUS_INTERNAL_FAILURE);

@@ -10,6 +10,9 @@ class PoolConfig(ctypes.Structure):
         ("pool_id", ctypes.c_uint32),
         ("kind", ctypes.c_uint8),
         ("capacity_bytes", ctypes.c_uint64),
+        # Forwarded to this pool's kind untouched; nothing between here and
+        # there reads it. NULL for a kind that needs none.
+        ("configuration", ctypes.c_void_p),
     ]
 
 
@@ -36,6 +39,10 @@ class AdapterConfig(ctypes.Structure):
         ("worker_poll_nanoseconds", ctypes.c_uint64),
         ("background_transfer_window_bytes", ctypes.c_uint64),
         ("backend_library", ctypes.c_char_p),
+        # Extension libraries supplying pool kinds and lanes, loaded in order
+        # and kept open for the runtime's life.
+        ("libraries", ctypes.POINTER(ctypes.c_char_p)),
+        ("library_count", ctypes.c_uint32),
     ]
 
 

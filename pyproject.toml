@@ -33,6 +33,7 @@ addopts = "-q -m 'not fresh_process'"
 pythonpath = ["src", "."]
 markers = [
   "cuda: requires the qualified CUDA backend and accelerator",
+  "network: requires a reachable memory daemon named by SHADOWSPILL_NETWORK_PEER",
   "qualification: long-running numerical or performance gate",
   "fresh_process: needs a process where no test has touched the device yet; run one per process, which CTest does",
 ]
