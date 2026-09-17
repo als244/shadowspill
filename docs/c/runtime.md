@@ -12,17 +12,25 @@ buffers, and first-failure state.
   version and every required entry; the runtime applies it at create and the
   adapter after loading a backend library.
 - `shadowspill_runtime_create()` takes a `ShadowSpillRuntimeConfig`: the
-  backend table it copies, pools as `ShadowSpillMemoryPoolDescription`
-  (`pool_id`, a `ShadowSpillPoolKind` of device or pinned host, capacity,
-  alignment), and routes as
+  backend table it copies; pools as `ShadowSpillMemoryPoolDescription`
+  (`pool_id`, a `ShadowSpillPoolKind`, capacity, alignment, and a
+  `configuration` forwarded to that kind untouched); routes as
   `ShadowSpillTransferRouteDescription` (`route_id`, name, source and
-  destination pool ids, whose kinds must differ), the worker's poll interval,
-  and `background_transfer_window_bytes`, how far a lane may run ahead with
-  transfers the plan did not schedule (zero removes the bound). It validates
-  the table and the topology, allocates or maps each pool's arena, creates one
-  lane per route, and starts the worker; see
+  destination pool ids, whose kinds must differ); the two registered lists —
+  [`pool_memory`](pool-memory.md) with `pool_memory_count`, saying where each
+  kind's memory comes from, and [`lanes`](lanes.md) with `lane_count`, saying
+  which lane serves each directional kind pair; the worker's poll interval; and
+  `background_transfer_window_bytes`, how far a lane may run ahead with
+  transfers the plan did not schedule (zero removes the bound).
+
+  It validates the table and the topology, obtains each pool's memory through
+  its kind's `acquire`, creates one lane per route, and starts the worker. Both
+  lists are **seeded with the built-ins and then appended to**, so one lookup
+  resolves a built-in kind or lane and a registered one; a kind or pair claimed
+  twice, a pool whose kind no entry serves, and a route whose kind pair no lane
+  serves each fail create. See
   [memory pools](../architecture/memory-pools.md) and
-  [transfers](../architecture/transfers.md).
+  [lanes](../architecture/lanes.md).
 - `shadowspill_runtime_reserve_event_leases()` grows and seals the event-lease
   inventory at an idle cold-plan boundary, creating the backend events up
   front so a steady-state step makes no driver calls; see
@@ -54,12 +62,6 @@ buffers, and first-failure state.
 - `shadowspill_runtime_transfer_profiles()` copies the published immutable
   transfer matrix: the complete row-major N-by-N grid, so `capacity` must be
   at least N*N, with the generation and count it was consistent at.
-- `shadowspill_memory_pool_grow()` grows one explicitly selected pool's arena,
-  copying the old arena into the new one and rebasing every live lease, so
-  offsets and payloads survive. It waits for idle first and then refuses
-  unless the runtime is quiet -- not closing, no queued action, no pending
-  retirement -- and refuses a capacity below the current one. A capacity equal
-  to the current one is accepted and does nothing.
 
 `shadowspill_runtime_abandon()` closes without waiting for anything: no drain,
 no lane synchronization, and no cleanup that could block on a lock the worker
@@ -87,7 +89,7 @@ matrix; it does not benchmark routes itself.
 - `shadowspill_memory_pool_allocate()` leases a compatible range from an
   explicitly selected pool for the active allocation scope, filling a
   `ShadowSpillAllocation` with the pool, id, generation, requested and charged
-  bytes, and the address. It leases from the existing arena and never grows
+  bytes, and the address. It leases from the pool's existing memory and never grows
   it.
 - `shadowspill_memory_pool_allocation_for_pointer()` resolves the same record
   from an exact live address, which is what an allocator callback carrying an
@@ -409,7 +411,7 @@ cannot: not how many allocations a pool holds but *which*, and where.
 
 It covers the ranges the pool has *published*, and only the execution-lease paths
 publish. That makes it an execution-pool question in practice, which is what it
-exists for: a contiguous-range refusal is an execution-arena problem, and position
+exists for: a contiguous-range refusal is an execution-pool problem, and position
 is what explains one. Two things follow, and neither is an error to be reported.
 
 Storage the runtime holds for a registered object is reserved without being
@@ -422,7 +424,7 @@ copy -- an object's retained copy, or an eviction's destination -- is reserved
 rather than published. Spill-pool occupancy is a statistics question.
 
 It copies one `ShadowSpillLiveAllocation` per published live allocation into
-caller-owned storage: allocation id, byte offset into the arena, charged and
+caller-owned storage: allocation id, byte offset into the pool, charged and
 requested bytes, the plan whose scope made it and the scope itself with that
 scope's invocation and ordinal, the object it is bound to or
 `SHADOWSPILL_RUNTIME_NO_ID` when it is bound to none, its reference count, and

@@ -8,7 +8,7 @@
 /*
  * This canary links the generic MemoryPool implementation directly. These
  * two dependencies are intentionally tiny because the test does not create a
- * backend arena or submit an event; it exercises only pool-owned transitions.
+ * backend memory or submit an event; it exercises only pool-owned transitions.
  */
 void shadowspill_event_lease_retain(ShadowSpillEventLease *lease) {
     if (lease != NULL) {

@@ -383,8 +383,8 @@ cannot be detected.
 A stranded lease is rarely expensive in itself — it is usually scratch, and
 scratch is small. The cost is *where* it sits. A scope's allocations are placed
 by the allocator as the scope runs, which for a task executing inside a plan
-means immediately above whatever contiguous arena the plan reserved. When that
-arena is released and the stray is not, the freed space cannot merge with the
+means immediately above whatever contiguous range the plan reserved. When that
+reservation is released and the stray is not, the freed space cannot merge with the
 free range beyond it: the pool is left split in two, and a later request for a
 contiguous range larger than either half fails against a pool that is almost
 entirely free.
@@ -404,7 +404,7 @@ quantity a fixed layout actually needs.
 - A buffer a framework caches on first use and keeps for the process — a
   provider's retained handle state, say. Allocated before any scope is open, so
   it belongs to no scope and is not subject to this rule. **Legal, and
-  deliberately placed low in the pool so it cannot split a later arena.**
+  deliberately placed low in the pool so it cannot split a later reservation.**
 - A kernel's scratch buffer that its library caches and reuses on the next
   invocation, held by the framework rather than by any scope. **Legal and
   expected** — but it must be attributable, and its position matters, for the
@@ -429,7 +429,7 @@ available only as a loud escape hatch for teardown, where the alternative is
 abandoning the pool.
 
 Where an allocation is expected to outlive its scope, the mitigation is
-placement rather than lifetime: put it where it cannot split a later arena, as
+placement rather than lifetime: put it where it cannot split a later reservation, as
 the provider's retained state already is. Attribution is what makes that
 possible, because an allocation nobody can name cannot be placed deliberately.
 

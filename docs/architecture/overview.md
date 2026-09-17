@@ -75,21 +75,29 @@ on which it is.
 
 ## Libraries and responsibilities
 
-The shipped libraries are three kinds of shared object with one direction of
+The shipped libraries are four kinds of shared object with one direction of
 dependency, and a Python package above them:
 
 | Library | Holds | Knows about |
 |---|---|---|
-| `libshadowspill.so` | the neutral C library: IR digests, the simulator, physical admission, the search that ships, and the runtime with its [memory pools](memory-pools.md), [transfers](transfers.md), [events](events.md), task boundaries, tracing, and the profiler ranges and timing markers a caller measures with. Its planner header names no search; the shipped one has a header of its own beside it | the backend contract only |
+| `libshadowspill.so` | the neutral C library: IR digests, the simulator, physical admission, the search that ships, and the runtime with its [memory pools](memory-pools.md), [lanes](lanes.md), [transfers](transfers.md), [events](events.md), task boundaries, tracing, and the profiler ranges and timing markers a caller measures with. Its planner header names no search; the shipped one has a header of its own beside it | three contracts it declares and none of which it links: the backend, the lane, and a pool's memory |
 | `libshadowspill_backend_<provider>.so` | one provider's implementation of the [backend contract](backends.md): device allocation, host registration, streams, copies, events, profiler | its driver and nothing of ShadowSpill's |
-| `libshadowspill_pytorch.so` | the [PyTorch adapter](adapter.md): the pluggable allocator, objects and storage views, and the task boundary | PyTorch and the neutral runtime |
+| `libshadowspill_network.so` | an extension library: pool kinds, and later lanes, whose memory is not on this machine. It exports one symbol, a descriptor of what it offers, and the far side of a remote pool is a separate program, `shadowspill_memory_daemon`, that links no ShadowSpill library at all | the runtime's contracts, and nothing of the runtime's internals |
+| `libshadowspill_pytorch.so` | the [PyTorch adapter](adapter.md): the pluggable allocator, objects and storage views, the task boundary, and the dlopen of the backend and of any extension library | PyTorch and the neutral runtime |
 | `shadowspill` (Python) | two halves along one line. `shadowspill.pytorch` captures, lowers, compiles and profiles a step, and holds the planned callables. Everything else -- the IR, the step, one task's shape, the store, profiling records, the planner, the search, the simulator, the pipeline, the runtime and the diagnostics -- names no framework and imports none | the frontend half knows PyTorch and the adapter's C API; the neutral half knows only the neutral library |
 
-The runtime is handed a backend table at create and never links a provider;
-the adapter opens the backend library by name at bootstrap. Every object with
-a lifetime or a policy, pools and their arenas, routes and lanes, event pools,
-calibration, is the neutral library's, built from the table's driver-level
-calls, which is what lets a new provider plug in with no change above it.
+**The runtime loads nothing.** It is handed a backend table at create, and
+lists of pool kinds and lanes already filled in; the adapter is what opens
+those libraries by name at bootstrap, which is why `libshadowspill.so` links
+libc and nothing else.
+
+Every object with a lifetime or a policy -- pools, routes, event pools,
+calibration -- is the neutral library's. What it does *not* fix is where a
+pool's region comes from or what moves bytes between two pools: each is a
+contract the neutral library declares and something else implements, found by
+one lookup whether the implementation is built in or loaded. That is what lets
+a new provider, a new kind of memory, or a new transport arrive with no change
+above it.
 
 ## How planning responsibilities differ
 
@@ -218,9 +226,9 @@ retirements; unrelated plans continue independently.
 | Simulator | Deterministic compute, transfer, capacity, and dependency replay | Candidate generation or physical placement |
 | Physical admission | Allocation lifetimes, task-allocation contract, fixed placements, dynamic scratch, and causal reuse dependencies | Which search produced the schedule, or its logical policy |
 | Runtime | The registries and the work across them: which pools, routes and plan ids exist and what each names, objects, calibration, event and timing pools, task boundaries, failure state, and worker progress | Graph capture or model semantics, or anything a pool or a plan answers for itself |
-| Memory pool | One arena and its suballocation: the leases in it, its capacity, occupancy, largest free range and fragmentation, and its lease-record reserves | Its role in any plan, or what another pool holds |
+| Memory pool | One bounded region and its suballocation: the leases in it, its capacity, occupancy, largest free range and fragmentation, and its lease-record reserves | Its role in any plan, or what another pool holds |
 | Backend | The driver-level table: device allocation, host memory registration, streams, copies, events, the provider's capabilities, physical memory and statistics, and profiler names and ranges | Any object lifetime or policy: pools, routes, lanes, event pooling |
-| PyTorch adapter | The pluggable allocator, object and storage views, the task boundary, loading the backend by name | Provider headers, planning, tracing, or profiler ranges -- those are the runtime's and are called there |
+| PyTorch adapter | The pluggable allocator, object and storage views, the task boundary, and loading by name the backend and any extension library the runtime's two registered lists are filled from | Provider headers, planning, tracing, or profiler ranges -- those are the runtime's and are called there |
 
 The framework-neutral IR, planner, simulator, admission engine, and runtime do
 not import PyTorch, and a test asserts it rather than leaving it to
@@ -328,7 +336,7 @@ other than a model reaches the same code the same way.
 | Execution pools | Framework-accessible memory supplied by configured device backends |
 | Spill pools | Runtime-configured memory pools connected by directed transfer routes |
 | Runtime ownership | Runtime-owned pools, objects, leases, and callable registrations |
-| Transfer lanes | Backend-provided ordered lanes serviced by the runtime worker |
+| Transfer lanes | One lane per route, resolved from the two pools' kinds; it makes its event complete when the bytes land, and the runtime does not drive it |
 | Allocation variability | The admitted invariant allocation path plus bounded optional dynamic scratch |
 
 Unsupported behavior fails during capture, compilation, profiling, or
@@ -388,22 +396,24 @@ index](../README.md) annotates the same order; this is the map.
     its per-pool locations, and why binding it allocates nothing.
 20. [Backends](backends.md) -- the driver-level table a provider implements,
     which the three pages after it are built from.
-21. [Memory pools](memory-pools.md) -- the arenas each pool owns, and what one
-    hands out.
-22. [Transfers](transfers.md) -- routes, the lane each gets, and calibration.
-23. [Events](events.md) -- event leases and their pools, and the markers a
+21. [Memory pools](memory-pools.md) -- the memory each pool owns, where that
+    memory comes from, and what one hands out.
+22. [Lanes](lanes.md) -- what moves bytes between two pools, and how a route
+    finds one from the kinds it connects.
+23. [Transfers](transfers.md) -- routes, the queue each owns, and calibration.
+24. [Events](events.md) -- event leases and their pools, and the markers a
     caller times its own work with.
-24. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
+25. [Memory runtime](memory-runtime.md) -- leases, causal reuse, the worker,
     failure, and tracing, over those three.
-25. [Task boundaries](task-boundaries.md) -- what `before_task` and
+26. [Task boundaries](task-boundaries.md) -- what `before_task` and
     `after_task` do, and what is still in flight when the dispatcher returns.
-26. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
+27. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
     does with a failure, and why an exiting process is abandoned.
-27. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
+28. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
     and what step time means.
-28. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the
+29. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the
     runtime.
-29. [Timelines](timelines.md) -- how a traced step is measured on the device
+30. [Timelines](timelines.md) -- how a traced step is measured on the device
     clock.
 
 The [Python guide](../python/README.md) and [C guide](../c/README.md) document
