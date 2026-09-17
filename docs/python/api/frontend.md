@@ -10,7 +10,7 @@ points, and the callables planning returns.
 `shadowspill.memory` holds the values that describe a machine to ShadowSpill.
 They are frozen dataclasses; `device()`, `pinned_host()` and
 `transfer_route()` are keyword-only constructors for them, and
-`MemoryPoolConfig` is the union `DevicePool | PinnedHostPool`.
+`MemoryPoolConfig` is the union `DevicePool | SpillPool`.
 
 `DevicePool` is an execution-device pool, built by `device()`:
 
@@ -20,12 +20,41 @@ They are frozen dataclasses; `device()`, `pinned_host()` and
 | `device` | `int` | `0` | Accelerator ordinal the pool allocates on. |
 | `provider_headroom` | `int` | `1280 << 20` | Bytes inside `physical_capacity` left to the provider's own allocations. Non-negative and smaller than `physical_capacity`. |
 
+`SpillPool` is what every pool that is not the execution pool answers:
+
+| member | type | meaning |
+|---|---|---|
+| `capacity` | `int` | Bytes the pool takes at construction and holds for its life. |
+| `kind` | `int` | The pool-kind value the runtime looks its memory up by. |
+| `kind_name` | `str` | What the pool registry reports for it. |
+| `library` | `Path \| None` | The shared object supplying this kind, or `None` for one the runtime implements. Loaded once per distinct path, before the runtime is created, and kept open for its life. |
+| `configuration()` | `ctypes.Structure \| None` | What this pool's kind is told about *this* pool, forwarded untouched and read by nothing in between. |
+
+**Nothing enumerates which kinds exist**, here or in the runtime: a pool's kind
+selects an acquire/release pair from a list the runtime seeds and a loaded
+library appends to. A kind implemented elsewhere subclasses `SpillPool`, names
+its library, and is admitted by the same validation as a built-in one.
+
 `PinnedHostPool` is a registered pinned-host spill pool, built by
 `pinned_host()`:
 
 | argument | type | default | meaning |
 |---|---|---|---|
 | `capacity` | `int` | required | Pinned host bytes the pool registers. |
+
+`RemotePool`, in `shadowspill.network`, is a spill pool held by a daemon on
+another machine, built by `remote()`:
+
+| argument | type | default | meaning |
+|---|---|---|---|
+| `capacity` | `int` | required | Bytes the daemon is asked for. Declared, not discovered: construction fails if the daemon cannot serve them, so a plan stays reproducible from its configuration. |
+| `host` | `str` | required | Where the daemon is. |
+| `port` | `int` | required | Its TCP port. |
+| `selector` | `str` | `"host"` | Which memory the daemon should serve, in the daemon's own vocabulary. |
+
+It needs `libshadowspill_network.so`, which a build without it does not
+produce; asking for a remote pool without one raises where the pool is
+configured.
 
 `TransferRoute` is one directed relationship between two named pools, built
 by `transfer_route()`:
@@ -69,7 +98,7 @@ Runtime(
 
 | argument | type | default | meaning |
 |---|---|---|---|
-| `pools` | `Mapping[str, MemoryPoolConfig]` | required | Pool name to configuration. The PyTorch backend takes one `DevicePool` and any number of `PinnedHostPool` entries. |
+| `pools` | `Mapping[str, MemoryPoolConfig]` | required | Pool name to configuration. Exactly one `DevicePool`, and at least one `SpillPool` beside it. |
 | `routes` | `Mapping[str, TransferRoute]` | required | Route name to directed pool pair. A plan can only move bytes along a route registered here. |
 | `library_path` | `str` \| `Path` \| `None` | `None` | The PyTorch adapter library to load; `None` resolves the one installed beside the package. |
 | `calibrate` | `bool` | `True` | Measure every registered route at construction. With `False`, planning refuses a route that was never calibrated until `calibrate_transfer_capabilities()` has run. |
@@ -152,7 +181,7 @@ costs the largest free range and leaves the free total almost untouched.
 | field | meaning |
 |---|---|
 | `allocation_id` | The lease's identity. |
-| `offset`, `charged_bytes`, `requested_bytes` | Where it sits in the arena, and its size charged and asked for. Position is what explains a refusal. |
+| `offset`, `charged_bytes`, `requested_bytes` | Where it sits in the pool, and its size charged and asked for. Position is what explains a refusal. |
 | `origin_plan_id` | The plan whose scope made it, or `None` when no plan did. A pool outlives any one plan, so this is what separates a range an earlier plan left behind from one the current plan made; a task id cannot, being plan-local. |
 | `origin_task_id` | The scope that made it, or `None` when it was made outside any task or allocation scope -- a provider's retained state, say. |
 | `origin_task_invocation`, `origin_task_allocation_ordinal` | Which invocation of that scope, and which allocation within it. |
@@ -409,7 +438,7 @@ any CPU copy and returns `None`: the module's registered tensors become invalid
 the moment their leases go, so the module must be discarded afterward. It is
 the teardown operation for a caller that is done with the state, such as a
 qualification host that cannot hold an anonymous model copy beside the full
-pinned spill arena. A model the runtime does not own is left unchanged.
+pinned spill pool. A model the runtime does not own is left unchanged.
 
 ### Reading in place
 

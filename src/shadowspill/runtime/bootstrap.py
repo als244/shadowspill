@@ -70,6 +70,12 @@ class PoolBootstrap:
     pool_id: int
     kind: int
     capacity_bytes: int
+    #: What this pool's kind is told about this pool, or ``None``. Held by the
+    #: caller for the whole bootstrap call, since only a pointer is passed.
+    configuration: Any = None
+    #: The shared object supplying this pool's kind, or ``None`` for a built-in
+    #: one. Loaded once per distinct path, before the runtime is created.
+    library: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,16 +163,36 @@ def install_runtime(
     frontend.prepare_allocator(
         path, _function_pointer(library, "shadowspill_pytorch_backend_record_stream")
     )
+    # The configurations are held in a local until bootstrap returns: the
+    # adapter is handed pointers into them and reads them during create.
+    pool_configurations = tuple(item.configuration for item in pools)
     pool_values = (PoolConfig * len(pools))(
         *(
             PoolConfig(
                 pool_id=item.pool_id,
                 kind=item.kind,
                 capacity_bytes=item.capacity_bytes,
+                configuration=(
+                    None if configuration is None
+                    else ctypes.cast(
+                        ctypes.byref(configuration), ctypes.c_void_p
+                    )
+                ),
             )
-            for item in pools
+            for item, configuration in zip(pools, pool_configurations, strict=True)
         )
     )
+    # One entry per distinct library, in the order the pools that need them
+    # appear. A kind whose library is missing raises where it is asked for,
+    # which names the pool rather than a path.
+    library_paths: list[bytes] = []
+    for item in pools:
+        if item.library is None:
+            continue
+        encoded = str(item.library).encode("utf-8")
+        if encoded not in library_paths:
+            library_paths.append(encoded)
+    library_values = (ctypes.c_char_p * len(library_paths))(*library_paths)
     route_names = tuple(item.name.encode("utf-8") for item in routes)
     route_values = (RouteConfig * len(routes))(
         *(
@@ -192,6 +218,8 @@ def install_runtime(
         worker_poll_nanoseconds=worker_poll_nanoseconds,
         background_transfer_window_bytes=background_transfer_window_bytes,
         backend_library=str(backend_library).encode("utf-8"),
+        libraries=library_values,
+        library_count=len(library_paths),
     )
     _bootstrap_allocator(library, config)
     admission = _read_physical_admission(

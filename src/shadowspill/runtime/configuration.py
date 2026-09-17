@@ -20,7 +20,7 @@ from shadowspill.libraries import resolve_library
 from shadowspill.memory import (
     DevicePool,
     MemoryPoolConfig,
-    PinnedHostPool,
+    SpillPool,
 )
 from shadowspill.memory import (
     TransferRoute as TransferRouteConfig,
@@ -50,16 +50,16 @@ def validate_topology(
             raise RuntimeConfigurationError(
                 f"pool name {name!r} must be a non-empty identifier"
             )
-        if not isinstance(config, (DevicePool, PinnedHostPool)):
+        if not isinstance(config, (DevicePool, SpillPool)):
             raise TypeError(f"unsupported pool configuration for {name!r}")
     if sum(isinstance(value, DevicePool) for value in normalized.values()) != 1:
         raise RuntimeConfigurationError(
             "the installed allocator requires exactly one device pool"
         )
-    if not any(isinstance(value, PinnedHostPool) for value in normalized.values()):
-        raise RuntimeConfigurationError(
-            "the current runtime backend requires at least one pinned-host pool"
-        )
+    # Nothing asks which kind the spill pools are. Two pools, exactly one of
+    # them the device pool, and every pool one of the two kinds of thing above
+    # already means at least one spill pool -- and which kind of spill pool is
+    # the loaded libraries' business, not this function's.
 
     if not isinstance(routes, Mapping):
         raise TypeError("routes must be a mapping from names to route configurations")
@@ -92,8 +92,8 @@ def validate_topology(
         destination = normalized[route.destination]
         if isinstance(source, DevicePool) == isinstance(destination, DevicePool):
             raise RuntimeConfigurationError(
-                "the current backend supports routes only between a device pool "
-                "and a pinned-host pool"
+                "a transfer route runs between the device pool and a spill "
+                "pool; exactly one endpoint must be the device pool"
             )
     return normalized, normalized_routes
 
@@ -143,8 +143,15 @@ class Topology:
         return tuple(
             PoolBootstrap(
                 pool_id=index,
-                kind=0 if isinstance(config, DevicePool) else 1,
+                kind=0 if isinstance(config, DevicePool) else config.kind,
                 capacity_bytes=0 if isinstance(config, DevicePool) else config.capacity,
+                configuration=(
+                    None if isinstance(config, DevicePool)
+                    else config.configuration()
+                ),
+                library=(
+                    None if isinstance(config, DevicePool) else config.library
+                ),
             )
             for index, config in enumerate(self.pool_configs.values())
         )
@@ -171,7 +178,10 @@ class Topology:
                 name: MemoryPool(
                     name=name,
                     pool_id=index,
-                    kind="device" if isinstance(config, DevicePool) else "pinned_host",
+                    kind=(
+                        "device" if isinstance(config, DevicePool)
+                        else config.kind_name
+                    ),
                     capacity=(
                         allocator_pool_bytes
                         if isinstance(config, DevicePool)

@@ -78,11 +78,12 @@ add_library(
   src/runtime/memory/allocations/reuse.c
   src/runtime/memory/allocations/allocate.c
   src/runtime/memory/allocations/free.c
-  src/runtime/memory/memory_pool/arena.c
+  src/runtime/memory/memory_pool/memory.c
   src/runtime/memory/memory_pool/records.c
   src/runtime/memory/memory_pool/locks.c
   src/runtime/memory/memory_pool/leases.c
   src/runtime/memory/memory_pool/causal.c
+  src/runtime/memory/pool_memory.c
   src/runtime/memory/ranges.c
   src/runtime/memory/retirement_queue.c
   src/runtime/objects/object_acquisition.c
@@ -111,7 +112,9 @@ add_library(
   src/runtime/telemetry/allocation_events.c
   src/runtime/telemetry/profiler.c
   src/runtime/telemetry/trace.c
-  src/runtime/transfers/transfer_lane.c
+  src/runtime/transfers/pinned_host_device_lane.c
+  src/runtime/transfers/lanes.c
+  src/runtime/transfers/transfer_queue.c
   src/runtime/transfers/transfer_profiles.c
 )
 target_include_directories(
@@ -143,4 +146,5 @@ install(
 )
 
 add_subdirectory(backends)
+add_subdirectory(network)
 add_subdirectory(adapter/pytorch)
