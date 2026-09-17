@@ -4,7 +4,8 @@
 
 - Python modules and functions use `snake_case`; public types use `PascalCase`.
 - Public C symbols use the complete `shadowspill_` prefix.
-- `MemoryPool` owns a bounded arena; `MemoryLease` owns one range in a pool.
+- `MemoryPool` owns a bounded region of memory; `MemoryLease` owns one range
+  in a pool. "Arena" is not a word this codebase uses for it.
 - `execution` and `spill` name the two plan-selected pool roles.
 - `fetch` means spill to execution; `evict` means execution to spill.
 - `worker` names the C background thread; `handle_*` names its processing

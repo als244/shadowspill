@@ -119,13 +119,13 @@ configuration the C layer supports today.
 Every registration nonetheless goes to the spill pool --
 `runtime/objects/registration.py` registers host objects and placeholders with
 `pool_id=spill_pool_id`, and state adoption passes the spill pool -- and that is
-the right policy rather than a missing generalization. The execution pool is the scarce device arena a
+the right policy rather than a missing generalization. The execution pool is the scarce device memory a
 fixed layout reserves in one contiguous span. Storage resident there that the
-plan did not place occupies the arena outside the layout, which is precisely what
+plan did not place occupies memory outside the layout, which is precisely what
 costs the largest free range. Imported state belongs in the spill pool and is
 fetched in on the schedule the plan priced.
 
-So today no shared object's own lease sits in the execution arena, by choice.
+So today no shared object's own lease sits in the execution pool, by choice.
 
 ## One genuine asymmetry, and it is in the runtime
 
