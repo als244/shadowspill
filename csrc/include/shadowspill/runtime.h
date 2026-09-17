@@ -14,6 +14,9 @@
 
 #include <shadowspill/runtime/vocabulary.h>
 
+#include <shadowspill/runtime/lane.h>
+#include <shadowspill/runtime/pool_memory.h>
+#include <shadowspill/runtime/library.h>
 #include <shadowspill/runtime/descriptions.h>
 #include <shadowspill/runtime/diagnostics.h>
 

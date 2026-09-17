@@ -39,9 +39,21 @@ extern "C" {
 
 typedef struct ShadowSpillPytorchPoolConfig {
     uint32_t pool_id;
-    /* A ShadowSpillPoolKind value. */
+    /* A ShadowSpillPoolKind value. Not range-checked: which kinds exist is
+       what the loaded libraries say, and the runtime's lookup is the one
+       place that judges it. */
     uint8_t kind;
     uint64_t capacity_bytes;
+    /*
+     * This pool's configuration, forwarded to its kind's `acquire` untouched
+     * and never read here. What it points at is agreed between whoever
+     * registered the kind and whoever fills this in -- which is how a pool
+     * says which machine or which device it wants without this header
+     * learning any such word. NULL for a kind that needs none.
+     *
+     * Borrowed for the bootstrap call, like everything else in this config.
+     */
+    void *configuration;
 } ShadowSpillPytorchPoolConfig;
 
 typedef struct ShadowSpillPytorchRouteConfig {
@@ -67,6 +79,16 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     /* Path of the backend shared object to load: the library exporting
        shadowspill_backend_create() and shadowspill_backend_destroy(). */
     const char *backend_library;
+    /*
+     * Extension libraries to load: each exports shadowspill_library_describe()
+     * and offers pool kinds, lanes, or both. They are loaded in order, stay
+     * open for the runtime's whole life, and are closed after it.
+     *
+     * Nothing of a library runs at load. A path that cannot be opened, or
+     * whose descriptor does not match this build, fails bootstrap.
+     */
+    const char *const *libraries;
+    uint32_t library_count;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {
