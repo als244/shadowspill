@@ -42,37 +42,43 @@ boundaries, which is where the dispatch costs come from; see
 
 ## The transfer lanes
 
-Transfers are dispatched by the runtime's worker thread, so the worker is
-what measures them -- but it does not place the instants itself. For every
-copy it submits while a trace is active it asks the **lane** to bracket the
-copy with a **stream interval**: one timing event recorded immediately before
-the copy, one immediately after it, both ahead of the completion event the
-copy already carries for dependencies. Because a stream executes in order,
-the first event marks the moment the lane finished everything ahead of the
-copy and began it, and the second the moment the copy finished. When the
-worker's nonblocking poll later sees the completion event, both stamps are
-guaranteed readable, and the worker reads them from the origin and writes the
-interval into the transfer's completion record.
+Transfers are dispatched by the runtime's worker thread, but **the worker does
+not measure them** -- the lane does, and the worker only asks. While a trace is
+active `copy` hands back a handle naming the transfer, and when the worker's
+nonblocking poll later sees the completion event it asks the lane, once, what
+that transfer did. The answer goes into the transfer's completion record, and
+the question retires the handle.
 
-Not every lane can be asked. One that completes on a clock the trace does not
-share **supplies no interval at all**, and its transfers are recorded untimed
-rather than timed wrongly -- which is why the two entries are optional as a
-pair; see [lanes](lanes.md#why-the-intervals-may-be-absent). The host stamps
-below are recorded either way, so a transfer with no device interval is still
-placed on the host timeline.
+It is arranged that way because a lane is the only thing that knows how its
+bytes move. The built-in lane brackets its copy with a **stream interval**: one
+timing event recorded immediately before the copy, one immediately after it,
+both ahead of the completion event the copy already carries for dependencies.
+Because a stream executes in order, the first event marks the moment the lane
+finished everything ahead of the copy and began it, and the second the moment
+the copy finished; once the completion is observed, both stamps are guaranteed
+readable.
 
-The interval is a generic runtime type, `ShadowSpillStreamInterval` in the
-synchronization layer: open on a stream, close on the stream, read from an
-origin, discard. It goes through the backend's event calls -- timing events
-and `elapsed_nanoseconds` -- and knows nothing about transfers, so anything
-else the runtime wants placed on the device timeline can use it.
+A lane whose bytes do not move on a stream cannot be asked for that, and asking
+was what the worker used to do. It **reports no instants** -- there is no anchor
+from such a lane's own clock to this origin, the origin being a device event
+with no host stamp recorded beside it -- and its transfers are placed on the
+host timeline only. What it can report is how many bytes it moved and in how
+many pieces, which needs no clock; see
+[lanes](lanes.md#why-transfer-and-timing-may-be-absent).
+
+The interval the built-in lane uses is a generic runtime type,
+`ShadowSpillStreamInterval` in the synchronization layer: open on a stream,
+close on the stream, read from an origin, discard. It goes through the
+backend's event calls -- timing events and `elapsed_nanoseconds` -- and knows
+nothing about transfers, so anything else the runtime wants placed on the
+device timeline can use it.
 
 The host clock still records the worker's own observations of each
 transfer: when the action was queued, when its destination was reserved,
 when the copy was handed to the lane, and when the poll observed completion.
-Read against the stream interval, those say how long a copy waited behind
-its predecessors and how far the poll lagged the device -- neither of which
-is transfer time.
+Read against the instants the lane reported, those say how long a copy waited
+behind its predecessors and how far the poll lagged the device -- neither of
+which is transfer time.
 
 ## Simulated time, and alignment
 

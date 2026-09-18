@@ -97,7 +97,13 @@ struct ShadowSpillQueuedAction {
     ShadowSpillEventLease *dependency_event;
     /* The copy's interval on its lane, open only while a trace measures it.
        This one really is the lane: it times what moved the bytes. */
-    ShadowSpillStreamInterval stream_interval;
+    /*
+     * What the lane called this transfer, from `copy`, or 0 when the lane kept
+     * nothing about it. Read once at completion, which retires it -- so this
+     * is the whole of what the runtime holds for a lane's own measurements,
+     * where it used to hold the timing events itself.
+     */
+    uint64_t lane_handle;
     const char *trace_label;
     uint8_t owns_trace_label;
     uint8_t has_completion_event;

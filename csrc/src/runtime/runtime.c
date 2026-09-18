@@ -198,12 +198,21 @@ static ShadowSpillStatus open_pools_and_routes(
         if (description == NULL) {
             return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
         }
+        /*
+         * The common struct is built here and copied in by `create`, so a
+         * transport cannot fill it wrong and none of them repeat the field
+         * list. Every field is something the runtime already holds -- the pair
+         * of kinds included, which is where a lane reads its direction.
+         */
+        const ShadowSpillLane base = {
+            .runtime = runtime,
+            .backend = &runtime->backend,
+            .stream = route->stream,
+            .from_kind = description->from_kind,
+            .to_kind = description->to_kind,
+        };
         if (description->create(
-                runtime,
-                &runtime->backend,
-                route->stream,
-                description->configuration,
-                &route->lane
+                &base, description->configuration, &route->lane
             ) != 0) {
             return SHADOWSPILL_STATUS_BACKEND_FAILURE;
         }

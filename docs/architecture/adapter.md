@@ -19,6 +19,20 @@ policy: no planning, no pools, routes or lanes of its own, no provider code.
 Anything reachable with the runtime handle it publishes is called on the
 neutral library instead.
 
+**It is also the only C++ in the tree, and only barely.** ShadowSpill is C;
+libtorch's headers are C++, so a translation unit that includes them must be
+too. Three files in this directory do -- the allocator's exception wrapper and
+the two storage files -- and everything else here, including the bootstrap that
+builds the runtime's pools, routes and lanes, is C like the rest.
+
+That boundary is not free, because those three files include
+`shadowspill/runtime.h` and so compile every header the umbrella pulls in as
+C++. Anything in that set must therefore stay valid C++, which rules out
+`_Atomic`. Where a header's contents are of no use to a caller -- a layout only
+an implementation needs -- the answer is to keep it out of the umbrella rather
+than to write it twice: [`lane_base.h`](lanes.md) is the case that forced the
+question, and the rule it set.
+
 ## What it is made of
 
 ```text

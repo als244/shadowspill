@@ -9,7 +9,7 @@
 
 static int submit_transfer_copy(
     ShadowSpillRuntime *runtime,
-    const ShadowSpillQueuedAction *action,
+    ShadowSpillQueuedAction *action,
     const ShadowSpillRouteState *route,
     void *destination,
     const void *source,
@@ -23,52 +23,22 @@ static int submit_transfer_copy(
         action->trace_label == NULL ? fallback : action->trace_label
     );
     const int status = route->operations->copy(
-        route->lane, destination, source, bytes
+        route->lane, destination, source, bytes, &action->lane_handle
     );
     shadowspill_profiler_range_end(runtime, range);
     return status;
 }
 
 /*
- * A traced transfer is measured on its stream by the worker that dispatches
- * it: the interval opens just before the copy and closes just after it,
- * ahead of the completion event, so observing the completion guarantees the
- * interval is readable. An untraced step pays the acquire load and nothing
- * else. An interval that cannot be measured is a gap in the trace, never a
- * transfer failure.
+ * A traced transfer is measured by the lane that moves it, not here.
+ *
+ * `copy` hands back a handle naming the transfer, or 0 when the lane kept
+ * nothing -- which is what every lane answers when no trace is running. The
+ * handle rides the action to completion, where the one query that reads it
+ * also retires it. The worker brackets nothing and knows nothing about how a
+ * lane measures, which is what let a lane whose bytes never touch a stream
+ * report anything at all.
  */
-static int submit_traced_copy(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillQueuedAction *action,
-    const ShadowSpillRouteState *route,
-    void *source,
-    void *destination,
-    uint64_t bytes
-) {
-    /* A lane that cannot place an instant on the trace's clock leaves both
-       interval entries NULL, and its transfers are recorded untimed. */
-    const int traced =
-        atomic_load_explicit(&runtime->trace_active, memory_order_acquire) != 0U &&
-        runtime->trace_origin_present &&
-        route->operations->interval_open != NULL;
-    if (traced) {
-        (void)route->operations->interval_open(
-            route->lane, &action->stream_interval
-        );
-    }
-    if (submit_transfer_copy(
-            runtime, action, route, source, destination, bytes
-        ) != 0) {
-        shadowspill_stream_interval_discard(runtime, &action->stream_interval);
-        return -1;
-    }
-    if (traced) {
-        (void)route->operations->interval_close(
-            route->lane, &action->stream_interval
-        );
-    }
-    return 0;
-}
 
 static ShadowSpillRouteState *route_for_action(
     const ShadowSpillQueuedAction *action
@@ -271,7 +241,7 @@ int shadowspill_action_dispatch_evict_locked(
         pthread_mutex_lock(&object->lock);
         return SHADOWSPILL_DISPATCH_RETRY;
     }
-    if (!backend_failed && (submit_traced_copy(
+    if (!backend_failed && (submit_transfer_copy(
             runtime,
             action,
             route,
@@ -279,7 +249,7 @@ int shadowspill_action_dispatch_evict_locked(
             execution_pointer,
             bytes
         ) != 0 || route->operations->signal(
-                route->lane, completion_event->event
+                route->lane, action->lane_handle, completion_event->event
             ) != 0 || shadowspill_completion_submit(
                 runtime,
                 route->stream,
@@ -452,7 +422,7 @@ int shadowspill_action_dispatch_fetch_locked(
         pthread_mutex_lock(&object->lock);
         return SHADOWSPILL_DISPATCH_RETRY;
     }
-    if (!backend_failed && (submit_traced_copy(
+    if (!backend_failed && (submit_transfer_copy(
             runtime,
             action,
             route,
@@ -460,7 +430,7 @@ int shadowspill_action_dispatch_fetch_locked(
             spill->lease->pointer,
             bytes
         ) != 0 || route->operations->signal(
-                route->lane, completion_event->event
+                route->lane, action->lane_handle, completion_event->event
             ) != 0 || shadowspill_completion_submit(
                 runtime,
                 route->stream,

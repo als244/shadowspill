@@ -36,9 +36,47 @@ extern "C" {
  * of its own to work on and leaves the route's alone.
  */
 
-/* One lane, made per route at create. What it holds is its own business. */
-typedef struct ShadowSpillLane ShadowSpillLane;
 typedef struct ShadowSpillRuntime ShadowSpillRuntime;
+
+/*
+ * One lane, made per route at create.
+ *
+ * Opaque here. Every lane embeds a common struct as its first member, holding
+ * the five things they all hold and the seven they all count, so a transport
+ * writes neither -- but that layout is for code implementing a lane, and lives
+ * in <shadowspill/runtime/lane_base.h>. A caller that declares a runtime needs
+ * only the pointer.
+ */
+typedef struct ShadowSpillLane ShadowSpillLane;
+
+/*
+ * What one transfer did, for a trace that asked.
+ *
+ * `copy` hands back a handle naming the transfer and the runtime gives it back
+ * here once the transfer has completed, which is the only way a lane's own
+ * view reaches the trace: a lane is outside the runtime and cannot see one.
+ *
+ * Both instants are **nanoseconds from the trace's origin**, the same axis the
+ * rest of a step is placed on, and `SHADOWSPILL_LANE_NO_TIME` where a lane has
+ * nothing to report -- which `bytes` and `chunks` are still worth reporting
+ * beside, and are what a lane always knows.
+ *
+ * A lane whose bytes move on a stream reads the instants off timing events it
+ * recorded around the copy. A lane whose bytes move elsewhere has only its own
+ * clock, and **there is no anchor from that clock to this origin**: the origin
+ * is a device event, and nothing records a host instant beside it. Such a lane
+ * reports `SHADOWSPILL_LANE_NO_TIME` for both until there is one -- the same
+ * thing it reported when this was a pair of interval entries it had to leave
+ * NULL, so nothing is lost, and `bytes` and `chunks` are new.
+ */
+#define SHADOWSPILL_LANE_NO_TIME UINT64_MAX
+
+typedef struct ShadowSpillLaneTransfer {
+    uint64_t started_at_nanoseconds;
+    uint64_t finished_at_nanoseconds;
+    uint64_t bytes;
+    uint64_t chunks;
+} ShadowSpillLaneTransfer;
 
 /*
  * How a lane reports a failure it finds on a thread of its own.
@@ -65,11 +103,6 @@ SHADOWSPILL_API void shadowspill_lane_latch_failure(
     ShadowSpillStatus status,
     ShadowSpillFailureReason reason
 );
-
-/* Runtime-internal. A lane passes one through to the interval entries below
-   and never looks inside, which is why those two entries are the only ones a
-   lane outside this library cannot implement. */
-typedef struct ShadowSpillStreamInterval ShadowSpillStreamInterval;
 
 /*
  * An event here is a ShadowSpillBackendEvent -- one opaque word -- and never
@@ -107,11 +140,12 @@ typedef struct ShadowSpillStreamInterval ShadowSpillStreamInterval;
  * while doing nothing: the worker's loop gates every transfer, so work added
  * there is paid at whatever rate the loop happens to turn.
  *
- * The two intervals may be NULL; everything else is required. The rule is the
- * one the backend table already follows for its profiler entries: required when
- * the runtime cannot proceed without it, optional when its absence costs
- * nothing the runtime needs. A lane with no intervals moves bytes exactly as
- * well as one with them.
+ * `transfer` and `timing` may be NULL; everything else is required. The
+ * rule is the one the backend table already follows for its profiler entries:
+ * required when the runtime cannot proceed without it, optional when its
+ * absence costs nothing the runtime needs. A lane that reports neither moves
+ * bytes exactly as well as one that reports both, and a reader sees a transfer
+ * with no numbers rather than one with wrong ones.
  */
 /*
  * What a lane has moved, and what it cost.
@@ -122,11 +156,11 @@ typedef struct ShadowSpillStreamInterval ShadowSpillStreamInterval;
  * in `chunks`, which is the difference between "how many transfers" and "how
  * many times the hardware was asked".
  *
- * `posted_to_completion_seconds` is summed rather than averaged so the mean is
- * a division the reader does, and no sample is thrown away deciding what to
- * keep. It measures the interval a lane can actually see -- from handing the
- * hardware a chunk to observing its completion -- which is not the same as
- * time on the wire, and separating the two is the point.
+ * **The runtime fills the seven counters itself**, from the ones every lane
+ * keeps in its common struct. No transport copies them out, so a transport
+ * cannot report a count that disagrees with the one it kept -- which is what
+ * two hand-written copies of the same seven loads were free to do. The timing
+ * pair is all a transport is asked for, through `timing` below.
  */
 typedef struct ShadowSpillLaneStatistics {
     uint64_t copies;      /* transfers accepted */
@@ -142,6 +176,20 @@ typedef struct ShadowSpillLaneStatistics {
     double posted_to_completion_seconds;
     double longest_completion_seconds;
 } ShadowSpillLaneStatistics;
+
+/*
+ * What a lane's own transfers cost it, where it can say.
+ *
+ * `posted_to_completion_seconds` is summed rather than averaged so the mean is
+ * a division the reader does, and no sample is thrown away deciding what to
+ * keep. It measures the interval a lane can actually see -- from handing the
+ * hardware a chunk to observing its completion -- which is not the same as
+ * time on the wire, and separating the two is the point.
+ */
+typedef struct ShadowSpillLaneTiming {
+    double posted_to_completion_seconds;
+    double longest_completion_seconds;
+} ShadowSpillLaneTiming;
 
 typedef struct ShadowSpillLaneOperations {
     /*
@@ -159,13 +207,21 @@ typedef struct ShadowSpillLaneOperations {
      */
     int (*wait)(ShadowSpillLane *lane, ShadowSpillBackendEvent event);
 
-    /* Move `bytes` from `source` to `destination`, both addresses in the pools
-       this lane connects. Nothing but the lane dereferences either. */
+    /*
+     * Move `bytes` from `source` to `destination`, both addresses in the pools
+     * this lane connects. Nothing but the lane dereferences either.
+     *
+     * `handle` names the transfer, for the `signal` and `transfer` entries
+     * below. **Zero means the lane is keeping nothing about it**, which is what
+     * a lane answers when no trace is running -- `shadowspill_lane_trace_active`
+     * is the question to ask -- so nothing is recorded that nothing will read.
+     */
     int (*copy)(
         ShadowSpillLane *lane,
         void *destination,
         const void *source,
-        uint64_t bytes
+        uint64_t bytes,
+        uint64_t *handle
     );
 
     /*
@@ -176,40 +232,56 @@ typedef struct ShadowSpillLaneOperations {
      * ordinary backend event either way, which is what keeps the completion
      * tracker and retirement in one form.
      */
-    int (*signal)(ShadowSpillLane *lane, ShadowSpillBackendEvent event);
+    int (*signal)(
+        ShadowSpillLane *lane,
+        uint64_t handle,
+        ShadowSpillBackendEvent event
+    );
 
     /* Block until everything issued on this lane has landed. */
     int (*synchronize)(ShadowSpillLane *lane);
 
-    /* Optional, as a pair. Bracket the next copy so it can be timed. NULL when
-       this lane cannot place an instant on the trace's clock, and its transfers
-       are then recorded untimed rather than timed wrongly. */
-    int (*interval_open)(
-        ShadowSpillLane *lane, ShadowSpillStreamInterval *interval
-    );
-    int (*interval_close)(
-        ShadowSpillLane *lane, ShadowSpillStreamInterval *interval
+    /*
+     * What one transfer did. **Optional**: NULL means this lane reports
+     * nothing per transfer, and the trace records those transfers with no
+     * numbers rather than with wrong ones.
+     *
+     * Asked once, after the transfer's event has completed, and asked only for
+     * a handle `copy` returned nonzero. The query **retires the handle**: a
+     * lane may free whatever it kept the moment it answers, and the runtime
+     * will not ask again. That is the whole lifetime rule, and it is why there
+     * is no release entry beside it.
+     *
+     * This replaced a pair that bracketed the copy with timing events on a
+     * stream, which only a lane whose bytes move on one could implement. A
+     * lane that moves bytes some other way now reports what it actually
+     * observed instead of reporting nothing.
+     */
+    int (*transfer)(
+        ShadowSpillLane *lane,
+        uint64_t handle,
+        ShadowSpillLaneTransfer *transfer
     );
 
     void (*destroy)(ShadowSpillLane *lane);
 
     /*
-     * What this lane has moved. **Optional**: NULL means the lane keeps no
-     * count, and the runtime reports nothing for it rather than reporting
-     * zeroes, which would be indistinguishable from a lane that moved nothing.
+     * What this lane's transfers cost it. **Optional**: NULL means the lane
+     * reads no clock on the transfer path, and a reader sees `timed` 0 rather
+     * than a zero duration -- otherwise "not measured" and "instant" are the
+     * same number.
      *
-     * Counters are maintained unconditionally, because a lane that only counts
-     * when asked cannot explain the run that went wrong. The timing fields are
-     * the exception and may be left zero by a lane for which reading a clock
-     * on the transfer path is not free; `timed` says which it is, so a reader
-     * never mistakes "not measured" for "instant".
+     * The counters are not asked for here. They live in the lane's common
+     * struct, are maintained unconditionally -- a lane that counts only when
+     * asked cannot explain the run that went wrong -- and the runtime reads
+     * them straight out.
      *
      * Called from the thread collecting diagnostics, never from the worker,
      * and must be safe against a lane actively transferring.
      */
-    int (*statistics)(
+    int (*timing)(
         const ShadowSpillLane *lane,
-        ShadowSpillLaneStatistics *statistics
+        ShadowSpillLaneTiming *timing
     );
 } ShadowSpillLaneOperations;
 
@@ -226,6 +298,18 @@ typedef struct ShadowSpillLaneDescription {
     /*
      * Made once per route at create, released in reverse at close.
      *
+     * `base` is the common struct the runtime has already filled -- runtime,
+     * backend, the route's stream, this entry's two kinds, counters at zero.
+     * A transport allocates its own struct and copies it into the first
+     * member:
+     *
+     *     created->base = *base;
+     *
+     * and everything the base holds is then available for the rest of create,
+     * which is why it arrives this way rather than being filled afterwards.
+     * The runtime built it, so no transport can fill it wrong, and adding a
+     * field to the base changes no transport at all.
+     *
      * `runtime` is the lane's way back in. A lane that discovers a failure on a
      * thread of its own has no return value to fail through -- the runtime is
      * not calling it -- so it latches the failure itself. The latch is built for
@@ -233,9 +317,8 @@ typedef struct ShadowSpillLaneDescription {
      * and the worker already reads the latched status twice a turn: no new
      * mechanism and nothing added to the loop.
      *
-     * `stream` is **the route's stream** (`runtime.c` passes `route->stream`
-     * here), and a lane may use `backend` through it -- to copy, to record, to
-     * wait, to query.
+     * `stream` is **the route's stream**, and a lane may use `backend` through
+     * it -- to copy, to record, to wait, to query.
      *
      * The rule it has to keep is single-writer ordering: one thread's worth of
      * work, in one order. That is satisfied for free by every entry in this
@@ -250,9 +333,7 @@ typedef struct ShadowSpillLaneDescription {
      * happens here, where there is a failure path and an unwind.
      */
     int (*create)(
-        ShadowSpillRuntime *runtime,
-        const ShadowSpillBackend *backend,
-        ShadowSpillBackendStream stream,
+        const ShadowSpillLane *base,
         void *configuration,
         ShadowSpillLane **lane
     );
