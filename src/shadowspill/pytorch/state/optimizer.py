@@ -80,18 +80,15 @@ def read_optimizer_state(
     optimizer: torch.optim.Optimizer,
     *,
     runtime: Runtime,
-    copy: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Return the optimizer's current values without rebinding its tensors.
 
     Keyed by the same paths ``import_optimizer_state`` enumerates, so it is a
-    flat mapping rather than an optimizer ``state_dict`` shape. ``copy`` has
-    the meaning it has in :func:`read_state`.
+    flat mapping rather than an optimizer ``state_dict`` shape. The values are
+    copied out of the pool, as :func:`read_state` describes.
     """
 
-    return read_state(
-        optimizer, _optimizer_tensors(optimizer), runtime=runtime, copy=copy
-    )
+    return read_state(optimizer, _optimizer_tensors(optimizer), runtime=runtime)
 
 
 def _held_in_tensor(value: object) -> object:

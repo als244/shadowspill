@@ -3,7 +3,7 @@
 The runtime's spill objects are byte ranges. A frontend that keeps its state in
 tensors has to say which bytes, and PyTorch answers with a storage pointer and a
 length -- which is the whole of what `PlanObjects` ever used a tensor for. These
-four are that conversion, and the residency check that goes with it: the address
+three are that conversion, and the residency check that goes with it: the address
 handed over must be host memory, and only the framework can say whether it is.
 """
 
@@ -43,18 +43,8 @@ def read_spill_tensor(objects: object, alias_id: str, tensor: torch.Tensor) -> N
     objects.read_spill_bytes(alias_id, address=address, size=size)  # type: ignore[attr-defined]
 
 
-def spill_window(objects: object, alias_id: str) -> torch.Tensor | None:
-    """The object's spill bytes as a tensor view, or None if they are stale."""
-
-    window = objects.spill_window(alias_id)  # type: ignore[attr-defined]
-    if window is None:
-        return None
-    return torch.frombuffer(window, dtype=torch.uint8)
-
-
 __all__ = [
     "read_spill_tensor",
     "register_spill_tensor",
-    "spill_window",
     "write_spill_tensor",
 ]

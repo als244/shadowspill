@@ -414,7 +414,6 @@ def read_state(
     tensors: Iterable[NamedTensor],
     *,
     runtime: Runtime,
-    copy: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Return one target's current values, without rebinding anything.
 
@@ -424,15 +423,13 @@ def read_state(
     caller decides what its state is called and this stays indifferent to
     what kind of state it is.
 
-    ``copy`` decides where the values live. Copied, they are ordinary host
-    memory outside the runtime pools, one buffer per storage root with the
-    target's views laid over it, so entries that shared a root still share
-    one, and they keep the values they had when this returned. Uncopied, they
-    view the pool's own bytes: nothing is allocated, ordinary torch operations
-    work, and they must be treated as read-only, because writing through one
-    changes runtime state behind the runtime's back. They also stop being
-    current the next time the plan runs. A root whose pool copy is not the
-    authoritative one is copied either way.
+    The values come back as ordinary host memory outside the runtime pools,
+    one buffer per storage root with the target's views laid over it, so
+    entries that shared a root still share one, and they keep the values they
+    had when this returned. State crosses a pool's edge by copying, whichever
+    pool holds it: a copy is the one way that works for a pool whose memory is
+    not in this address space, and a second way available only sometimes would
+    be the one that silently stopped applying.
     """
 
     state = registry_for(runtime).get(target)
@@ -444,7 +441,7 @@ def read_state(
     )
     owners: dict[int, torch.Tensor] = {}
     for item in state.storages:
-        owners[id(item)] = _storage_bytes(item, runtime=runtime, copy=copy)
+        owners[id(item)] = _storage_bytes(item, runtime=runtime)
     located = {
         id(view.tensor): (item, view) for item in state.storages for view in item.views
     }
@@ -463,23 +460,9 @@ def read_state(
     return result
 
 
-def _storage_bytes(
-    item: PersistentStorage,
-    *,
-    runtime: Runtime,
-    copy: bool,
-) -> torch.Tensor:
-    """Return one root's bytes, copied out of the pool or viewed in it."""
+def _storage_bytes(item: PersistentStorage, *, runtime: Runtime) -> torch.Tensor:
+    """Return one root's bytes, copied out of the pool."""
 
-    if not copy:
-        snapshot = _object_location_snapshot(
-            runtime._runtime_handle, item.current_object_id, item.pool_id
-        )
-        if snapshot.current and snapshot.pointer:
-            window = (ctypes.c_uint8 * item.size_bytes).from_address(
-                int(snapshot.pointer)
-            )
-            return torch.frombuffer(window, dtype=torch.uint8)
     owner = torch.empty(item.size_bytes, dtype=torch.uint8, device="cpu")
     _require_status(
         runtime_library().shadowspill_read_object(
@@ -659,15 +642,6 @@ def _validate_pool(
             "state is imported into a spill pool, not the execution pool"
         )
     return selected
-
-
-def pool_object_pointer(runtime: Runtime, object_id: int, pool_id: int) -> int:
-    """Where one registered object's bytes live in its pool."""
-
-    snapshot = _object_location_snapshot(runtime._runtime_handle, object_id, pool_id)
-    if not snapshot.has_lease or not snapshot.current:
-        raise RuntimeError(f"persistent object {object_id} has no authoritative lease")
-    return int(snapshot.pointer or 0)
 
 
 def _object_location_snapshot(
