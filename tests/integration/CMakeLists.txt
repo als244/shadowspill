@@ -9,6 +9,8 @@ function(shadowspill_add_pytorch_canary name timeout)
     NAME shadowspill_pytorch_${name}_canary
     COMMAND
       ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/isolated_cache.py
+      ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/${name}_canary.py
       $<TARGET_FILE:shadowspill_pytorch>
   )
@@ -16,15 +18,32 @@ function(shadowspill_add_pytorch_canary name timeout)
     shadowspill_pytorch_${name}_canary
     PROPERTIES
       LABELS "cuda;pytorch"
-      # The canary arms a watchdog from the same number CTest kills on, so a
-      # wedged canary prints every thread's stack instead of dying silently.
-      # Which build these run against. Without it Python resolves
-      # libshadowspill.so by its own precedence and can find a *different*
-      # build than the adapter is linked against; the loader then maps both,
-      # and the process has two runtimes whose structures are not
-      # interchangeable. Naming this build's directory makes a ctest run
-      # self-contained, and `_refuse_a_second_runtime` catches whatever
-      # still gets past it.
+      # Three things this environment carries.
+      #
+      # SHADOWSPILL_CANARY_TIMEOUT arms the canary's watchdog from the same
+      # number CTest kills on, so a wedged canary prints every thread's stack
+      # instead of dying silently.
+      #
+      # SHADOWSPILL_LIBRARY_DIRECTORY says which build these run against.
+      # Without it Python resolves libshadowspill.so by its own precedence and
+      # can find a *different* build than the adapter is linked against; the
+      # loader then maps both, and the process has two runtimes whose
+      # structures are not interchangeable. Naming this build's directory makes
+      # a ctest run self-contained, and `_refuse_a_second_runtime` catches
+      # whatever still gets past it.
+      #
+      # PYTHONPATH is the source tree, so a canary runs what is checked out.
+      # A cache root of this test's own. ShadowSpill stores compiled task
+      # manifests under `cache_dir()`, which is **Inductor's** directory --
+      # process-global, shared by every concurrent test and persistent across
+      # runs, and nothing to do with the per-test `artifact_store`. Its key is
+      # the FX graph cache key and the semantic contract digest, both fixed
+      # before Inductor lowers, so two compiles that differ only in a decision
+      # Inductor makes *during* lowering collide on one entry.
+      #
+      # `isolated_cache.py` wraps every command here: it makes a fresh cache
+      # root, points Inductor and Triton at it, and deletes it afterwards, so
+      # whatever a test sees it put there itself during this run.
       ENVIRONMENT
         "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
@@ -33,7 +52,7 @@ endfunction()
 
 shadowspill_add_pytorch_canary(allocator 60)
 shadowspill_add_pytorch_canary(runtime_close 60)
-shadowspill_add_pytorch_canary(overlap 20)
+shadowspill_add_pytorch_canary(overlap 60)
 shadowspill_add_pytorch_canary(physical_failure 60)
 shadowspill_add_pytorch_canary(allocator_oom 60)
 shadowspill_add_pytorch_canary(allocation_contract_failure 20)
@@ -54,6 +73,8 @@ function(shadowspill_add_public_api_test file name timeout)
   add_test(
     NAME shadowspill_pytorch_public_${name}
     COMMAND
+      ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/isolated_cache.py
       ${Python3_EXECUTABLE} -m pytest
       ${PROJECT_SOURCE_DIR}/tests/shadowspill/pytorch/api/${file}
       -k ${name}
@@ -65,11 +86,19 @@ function(shadowspill_add_public_api_test file name timeout)
     shadowspill_pytorch_public_${name}
     PROPERTIES
       LABELS "cuda;pytorch"
+      # A cache root of this test's own. ShadowSpill stores compiled task
+      # manifests under `cache_dir()`, which is **Inductor's** directory --
+      # process-global, shared by every concurrent test and persistent across
+      # runs, and nothing to do with the per-test `artifact_store`. Its key is
+      # the FX graph cache key and the semantic contract digest, both fixed
+      # before Inductor lowers, so two compiles that differ only in a decision
+      # Inductor makes *during* lowering collide on one entry.
+      #
+      # `isolated_cache.py` wraps every command here: it makes a fresh cache
+      # root, points Inductor and Triton at it, and deletes it afterwards, so
+      # whatever a test sees it put there itself during this run.
       ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
-      # Each of these plans and runs a real model, so two at once contend for
-      # the device and one of them loses.
-      RESOURCE_LOCK shadowspill_device
   )
 endfunction()
 
