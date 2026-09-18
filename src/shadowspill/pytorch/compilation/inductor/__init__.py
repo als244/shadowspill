@@ -31,6 +31,7 @@ from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskMa
 
 from .cache import _fx_graph_cache_key, _load_cached_manifest, _store_cached_manifest
 from .compiler import (
+    _PINNED_OUTPUT_LAYOUT,
     _manifest_inner_compile,
     _ordered_compilation_timings,
 )
@@ -61,11 +62,12 @@ def compile_inductor_task(
 
     def invoke_compiler() -> Any:
         compiler: Any = compile_fx
-        return compiler(
-            copy_graph_module(source_graph),
-            list(example_inputs),
-            inner_compile=inner_compile,
-        )
+        with inductor_config.patch(_PINNED_OUTPUT_LAYOUT):
+            return compiler(
+                copy_graph_module(source_graph),
+                list(example_inputs),
+                inner_compile=inner_compile,
+            )
 
     try:
         compiled = invoke_compiler()
