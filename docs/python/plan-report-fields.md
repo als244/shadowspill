@@ -657,7 +657,7 @@ Measured performance for one directed pool-pair route.
 | `source_pool_id`, `destination_pool_id` | Their indices into `pool_names`. |
 | `generation` | The publication this profile belongs to. |
 | `latency_nanoseconds` | Fixed cost of a copy on this route. |
-| `bandwidth_bytes_per_second` | The rate the simulator plans against. |
+| `bandwidth_bytes_per_second` | The rate the simulator plans against. Where a reverse route exists this is the **concurrent** figure, so it is not comparable to a single-direction benchmark; `solo_` below is. |
 | `solo_bandwidth_bytes_per_second` | The rate measured with no other route running. |
 | `concurrent_bandwidth_bytes_per_second` | The rate measured with the opposite route running. |
 | `solo_measurement_nanoseconds`, `concurrent_measurement_nanoseconds` | How long each of those measurements took. |

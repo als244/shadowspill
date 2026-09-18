@@ -509,14 +509,35 @@ static int measure_concurrent_pair(
             break;
         }
     }
+    /*
+     * Issued a copy at a time, alternating, and both clocks started together.
+     *
+     * Draining one probe's whole batch before starting the other's cost the
+     * first probe its own dispatch: its window contained the second's, the two
+     * finished together because they contend for one link, and the first
+     * therefore reported about 25 % low. Which route that was fell out of pool
+     * registration order, which no caller would expect a measurement to depend
+     * on.
+     *
+     * The assumption that made draining look safe was that "issuing is
+     * enqueueing" -- true of a lane whose `copy` hands a stream one operation,
+     * false of one that enqueues device work per chunk. The remote lane issues
+     * 1024 operations for a 16-copy batch, about 0.5 s against a 1.4 s
+     * transfer. Alternating costs nothing where the assumption did hold.
+     *
+     * Dispatch time is still inside both windows, and that is deliberate: the
+     * worker pays it on the production path too, so a rate measured without it
+     * would flatter the system. What this removes is the asymmetry.
+     */
     for (unsigned index = 0U; status == 0 && index < 2U; ++index) {
-        const ShadowSpillRouteState *const route = probes[index]->route;
         begin[index] = shadowspill_monotonic_ns();
         if (begin[index] == 0U) {
             status = -1;
-            break;
         }
-        for (uint32_t copy = 0U; copy < copies; ++copy) {
+    }
+    for (uint32_t copy = 0U; status == 0 && copy < copies; ++copy) {
+        for (unsigned index = 0U; status == 0 && index < 2U; ++index) {
+            const ShadowSpillRouteState *const route = probes[index]->route;
             if (route->operations->copy(
                     route->lane,
                     probes[index]->destination_pointer,
@@ -525,10 +546,12 @@ static int measure_concurrent_pair(
                     &ignored
                 ) != 0) {
                 status = -1;
-                break;
             }
         }
-        if (status == 0 && route->operations->signal(
+    }
+    for (unsigned index = 0U; status == 0 && index < 2U; ++index) {
+        const ShadowSpillRouteState *const route = probes[index]->route;
+        if (route->operations->signal(
                 route->lane, 0U, leases[index]->event
             ) != 0) {
             status = -1;
