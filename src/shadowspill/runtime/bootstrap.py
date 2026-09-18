@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any, Final
 
 from shadowspill.frontend import RuntimeFrontend
-from shadowspill.libraries import library_candidates, resolve_library
+from shadowspill.libraries import (
+    LIBRARY_DIRECTORY_ENVIRONMENT,
+    library_candidates,
+    load_shadowspill_library,
+    resolve_library,
+    shadowspill_library_path,
+)
 from shadowspill.status import ABI_VERSION
 
 from .abi import (
@@ -481,7 +487,45 @@ def _load_adapter(path: Path) -> Any:
         or capabilities.runtime_abi_version != ABI_VERSION
     ):
         raise RuntimeInstallError("framework adapter capability/ABI validation failed")
+    _refuse_a_second_runtime(library, path)
     return library
+
+
+def _refuse_a_second_runtime(adapter: Any, path: Path) -> None:
+    """Refuse an adapter linked against a different build than Python loaded.
+
+    The adapter pulls in ``libshadowspill.so`` through its own RPATH, while
+    Python resolves one by :func:`resolve_library`. When those two find
+    different files the loader maps **both** -- they are different inodes, so
+    nothing dedupes them -- and the process then has two runtimes: Python's
+    calls land in one, and the pools, routes and lanes the adapter built live
+    in the other. Every structure they exchange is a pointer into the wrong
+    copy, so it survives exactly as long as the two builds happen to agree
+    about a layout, and segfaults in whichever function stopped agreeing.
+
+    The ABI version cannot see it: both copies report the same number, because
+    the number changes when the *contract* changes and not when a build does.
+    What distinguishes them is the address of a symbol they both export --
+    resolved through the adapter's dependency chain against resolved through
+    Python's handle. One copy, one address.
+    """
+
+    neutral = load_shadowspill_library()
+    through_adapter = ctypes.cast(
+        adapter.shadowspill_abi_version, ctypes.c_void_p
+    ).value
+    through_python = ctypes.cast(
+        neutral.shadowspill_abi_version, ctypes.c_void_p
+    ).value
+    if through_adapter == through_python:
+        return
+    raise RuntimeInstallError(
+        "two ShadowSpill runtimes are loaded in this process: the adapter "
+        f"{path} is linked against a different libshadowspill.so than Python "
+        f"loaded from {shadowspill_library_path()}. Point both at one build -- "
+        f"pass an adapter from beside that library, or set "
+        f"{LIBRARY_DIRECTORY_ENVIRONMENT} to the adapter's own directory."
+    )
 
 
 def _bootstrap_allocator(library: Any, config: AdapterConfig) -> None:
