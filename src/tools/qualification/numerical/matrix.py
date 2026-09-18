@@ -572,11 +572,15 @@ def main_with_spill(
     output_directory = arguments.output_dir.expanduser().resolve()
     output_directory.mkdir(parents=True, exist_ok=True)
     options.reference_directory.mkdir(parents=True, exist_ok=True)
-    # A gate may narrow the default set -- the remote one runs a single cell,
-    # because every cell moves its whole spill volume over a link 8x slower
-    # than local memory. An explicit --models on the command line still wins.
-    # `--models` carries a default, so its value cannot say whether anyone
-    # asked for it; the command line can.
+    # A gate may narrow the default set. The remote one no longer does: it runs
+    # this matrix's own cells, because the claim it makes is that nothing
+    # differs but where the spill pool lives, and a different cell list would
+    # be one more thing that differs. It costs about 40 % more wall clock than
+    # the local matrix rather than the multiple its link speed suggests, most
+    # of a cell being planning rather than transfers.
+    # An explicit --models on the command line still wins. `--models` carries a
+    # default, so its value cannot say whether anyone asked for it; the command
+    # line can.
     named = any(
         argument in ("--models", "--families") for argument in sys.argv[1:]
     )
