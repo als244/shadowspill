@@ -537,22 +537,37 @@ static int bounded_runtime_trace_is_opt_in(void) {
             events[index].kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED;
         saw_before |= events[index].kind == SHADOWSPILL_TRACE_BEFORE_TASK;
         saw_after |= events[index].kind == SHADOWSPILL_TRACE_AFTER_TASK;
-        /* Only a completed transfer carries a stream interval, and it must
-         * be a measured one: the trace was begun with an origin. */
+        /* Only a completed transfer carries lane instants, and they must be
+         * measured ones: the trace was begun with an origin.
+         *
+         * `issued` is asserted present but never ordered against `started`.
+         * On this lane they come from two clocks -- `issued` is a host instant
+         * converted through the trace's anchor, `started` comes off a timing
+         * event on the stream -- and an ordering between two clocks is the
+         * kind of assertion that fails once a month for no reason. The
+         * ordering that is checked is `finished` against `started`, which are
+         * both off the stream. */
         if (events[index].kind == SHADOWSPILL_TRACE_TRANSFER_COMPLETED) {
             failed = failed ||
+                events[index].lane_issued_at_ns ==
+                    SHADOWSPILL_TRACE_NO_STREAM_TIME ||
                 events[index].lane_started_at_ns ==
                     SHADOWSPILL_TRACE_NO_STREAM_TIME ||
                 events[index].lane_finished_at_ns <
                     events[index].lane_started_at_ns;
         } else {
             failed = failed ||
+                events[index].lane_issued_at_ns !=
+                    SHADOWSPILL_TRACE_NO_STREAM_TIME ||
                 events[index].lane_started_at_ns !=
                     SHADOWSPILL_TRACE_NO_STREAM_TIME ||
                 events[index].lane_finished_at_ns !=
                     SHADOWSPILL_TRACE_NO_STREAM_TIME;
         }
     }
+    /* The anchor a lane off the device clock converts through. The trace was
+       begun with an origin, so it is published. */
+    failed = failed || summary.origin_host_ns == 0U;
     failed = failed || events[0].kind != SHADOWSPILL_TRACE_SESSION_BEGIN ||
         events[summary.event_count - 1U].kind != SHADOWSPILL_TRACE_SESSION_END ||
         !saw_queued || !saw_reserved || !saw_dispatched || !saw_completed ||

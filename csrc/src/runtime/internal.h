@@ -137,6 +137,11 @@ struct ShadowSpillRuntime {
        annotations setter; read on every range a caller opens. */
     atomic_uchar profiler_annotations_enabled;
     ShadowSpillBackendEvent trace_origin_event;
+    /* The host clock where that event was recorded, which is what lets a lane
+       off the device clock reach the origin's axis. Meaningful only while
+       `trace_origin_present`; see `shadowspill_trace_begin` for what makes it
+       tight. */
+    uint64_t trace_origin_host_ns;
     uint8_t trace_origin_present;
     ShadowSpillRuntimeFailure failure;
 };
