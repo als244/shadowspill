@@ -122,6 +122,23 @@ typedef struct Work {
      * has been taken by a later one" without any lock.
      */
     _Atomic uint64_t handle;
+
+    /*
+     * What this transfer did, on the host clock, for a trace that asked.
+     * `issued` is when the runtime handed it over, `started` when its first
+     * chunk was posted, `finished` when its last chunk's completion was reaped
+     * -- so the gap between the first two is the dependency wait and the gap
+     * between the last two is bytes actually moving.
+     *
+     * Read by `transfer` without the lock, under the same handle check that
+     * guards every other field here. Only filled when `traced`: a lane asks the
+     * runtime once per transfer whether anything will read these, so an
+     * untraced run pays one question and no clock reads.
+     */
+    uint8_t traced;
+    uint64_t issued_host_ns;
+    uint64_t started_host_ns;
+    uint64_t finished_host_ns;
 } Work;
 
 /*
@@ -296,6 +313,15 @@ static double seconds_now(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
+}
+
+/* The clock a transfer's instants are read on, and the one the runtime stamps
+   its trace events with -- so `shadowspill_lane_origin_instant` can place them
+   on the origin's axis. */
+static uint64_t monotonic_ns(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000000U + (uint64_t)now.tv_nsec;
 }
 
 /* ------------------------------------------------------------ the ring */
@@ -651,6 +677,7 @@ static int post_what_it_can(
             lane->flight_region = work->region;
             lane->flight_claim = claim;
         }
+        const int first = lane->chunk_posted == work->first_chunk ? 1 : 0;
         const int sent = post_one_chunk(lane, work, lane->chunk_posted);
         if (sent < 0) {
             return -1;
@@ -658,6 +685,11 @@ static int post_what_it_can(
         if (sent == 0) {
             /* The device is behind. Retire, which is what moves it. */
             break;
+        }
+        if (first && work->traced) {
+            /* Bytes start moving here, not when the transfer was accepted:
+               everything before this was the dependency it was given. */
+            work->started_host_ns = monotonic_ns();
         }
         ++*posted;
         if (lane->chunk_posted == work->first_chunk + work->chunks) {
@@ -790,11 +822,17 @@ static void *lane_thread(void *argument) {
          * doing it.
          */
         while (lane->retired < lane->started) {
-            const Work *const oldest =
+            Work *const oldest =
                 &lane->work_ring[lane->retired % WORK_SLOTS];
             if (!failed &&
                 lane->chunk_retired < oldest->first_chunk + oldest->chunks) {
                 break;
+            }
+            if (oldest->traced) {
+                /* Its last chunk has landed, which is the moment its bytes are
+                   on the far side. A failed transfer is retired here too and
+                   keeps whatever it had, so a trace shows where it stopped. */
+                oldest->finished_host_ns = monotonic_ns();
             }
             ++lane->retired;
             if (lane->measuring) {
@@ -937,6 +975,11 @@ static int plan_transfer(
        ring gave the claim a lock to sit under. */
     work->first_chunk = lane->chunks_planned;
     lane->chunks_planned += work->chunks;
+    work->traced =
+        shadowspill_lane_trace_active(lane->base.runtime) != 0 ? 1U : 0U;
+    work->issued_host_ns = work->traced ? monotonic_ns() : 0U;
+    work->started_host_ns = 0U;
+    work->finished_host_ns = 0U;
     return 0;
 }
 
@@ -1082,6 +1125,15 @@ static int remote_copy(
  * number worth having here: the ratio of bytes to chunks is what says whether
  * a slow transfer was one long wait or many short ones.
  */
+/* An instant this lane observed, placed on the trace origin's axis. Zero is
+   "never reached this point" -- a transfer that failed before posting, or one
+   whose slot was filled while nothing was tracing. */
+static uint64_t instant_on_origin(ShadowSpillLane *lane, uint64_t monotonic_ns) {
+    return monotonic_ns == 0U
+        ? SHADOWSPILL_LANE_NO_TIME
+        : shadowspill_lane_origin_instant(lane->runtime, monotonic_ns);
+}
+
 static int remote_transfer(
     ShadowSpillLane *lane, uint64_t handle, ShadowSpillLaneTransfer *transfer
 ) {
@@ -1101,8 +1153,10 @@ static int remote_transfer(
         return -1;
     }
     const ShadowSpillLaneTransfer read = {
-        .started_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
-        .finished_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
+        .issued_at_nanoseconds = instant_on_origin(lane, work->issued_host_ns),
+        .started_at_nanoseconds = instant_on_origin(lane, work->started_host_ns),
+        .finished_at_nanoseconds =
+            instant_on_origin(lane, work->finished_host_ns),
         .bytes = work->bytes,
         .chunks = work->chunks,
     };

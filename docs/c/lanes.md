@@ -202,6 +202,7 @@ substitute.
 #define SHADOWSPILL_LANE_NO_TIME UINT64_MAX
 
 typedef struct ShadowSpillLaneTransfer {
+    uint64_t issued_at_nanoseconds;
     uint64_t started_at_nanoseconds;
     uint64_t finished_at_nanoseconds;
     uint64_t bytes;
@@ -209,16 +210,42 @@ typedef struct ShadowSpillLaneTransfer {
 } ShadowSpillLaneTransfer;
 ```
 
-Both instants are nanoseconds from the trace's origin, the axis the rest of a
-step is placed on, and `SHADOWSPILL_LANE_NO_TIME` where a lane has nothing to
+All three instants are nanoseconds from the trace's origin, the axis the rest of
+a step is placed on, and `SHADOWSPILL_LANE_NO_TIME` where a lane has nothing to
 report — beside which `bytes` and `chunks` are still worth having, and are what
 a lane always knows.
 
-A lane whose bytes move on a stream reads the instants off timing events it
-recorded around the copy. A lane whose bytes move elsewhere has only its own
-clock, and **there is no anchor from that clock to this origin**: the origin is
-a device event, and no host instant is recorded beside it. Such a lane reports
-`SHADOWSPILL_LANE_NO_TIME` for both until there is one.
+`issued_at` is when the runtime handed the transfer over, before any dependency
+the lane was given had cleared, and `started_at` is when its bytes began moving.
+**The gap between them is the wait.** Folded together, a transfer held behind an
+event reads as a slow one rather than a late one, which are different problems.
+
+Two clocks reach this axis. A lane whose bytes move on a stream reads instants
+off timing events it recorded around the copy, already on the origin's axis. A
+lane whose bytes move elsewhere reads a host clock and converts:
+
+```c
+SHADOWSPILL_API uint64_t shadowspill_lane_origin_instant(
+    ShadowSpillRuntime *runtime, uint64_t monotonic_nanoseconds);
+```
+
+`monotonic_nanoseconds` is read from `CLOCK_MONOTONIC`, the same clock the
+runtime stamps its own trace events with — so the two axes can be cross-checked
+rather than found to disagree. The anchor between it and the origin is sampled once, where
+the origin event is recorded, and `shadowspill_trace_begin()` states what a
+caller owes for it to mean anything: **the origin marker is recorded on an idle
+stream.** The result is `SHADOWSPILL_LANE_NO_TIME` when no trace is running,
+when the trace was begun with no origin, or for an instant before the origin.
+
+A lane may use both clocks, and the pinned-host lane does: its `issued_at` is a
+converted host instant and its other two come off the stream. That costs it a
+clock read per transfer where a third timing event would have cost more. The
+remote lane reads all three on the host clock — before posting the first chunk's
+verb, and when the last chunk's completion is reaped.
+
+`chunks` is a transport's own granularity, not a unit shared between lanes: one
+enqueued copy is one chunk on the pinned-host lane, while a remote transfer
+reports however many pieces the NIC was handed.
 
 
 ## Validity
