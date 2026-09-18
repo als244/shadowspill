@@ -271,6 +271,21 @@ int shadowspill_endpoint_open(
     }
     endpoint->link_layer = port_attributes.link_layer;
     endpoint->local_identifier = port_attributes.lid;
+    /* Discovered rather than configured, like the MTU above it: a caller
+       cannot know it and a wrong guess is a refused work request. */
+    endpoint->max_message_bytes = port_attributes.max_msg_sz;
+    if (endpoint->max_message_bytes == 0U) {
+        shadowspill_endpoint_close(endpoint);
+        return -1;
+    }
+    /* A knob may only lower it. Asking for more than the port carries is not a
+       preference the NIC will honour -- it refuses the work request -- so a
+       larger value is silently the port's, which is what it would have been. */
+    if (endpoint->tuning.message_bytes != 0U &&
+        endpoint->tuning.message_bytes < endpoint->max_message_bytes) {
+        endpoint->max_message_bytes =
+            (uint32_t)endpoint->tuning.message_bytes;
+    }
     endpoint->path_mtu = endpoint->tuning.path_mtu != 0U
         ? (enum ibv_mtu)endpoint->tuning.path_mtu
         : port_attributes.active_mtu;
