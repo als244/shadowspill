@@ -355,12 +355,13 @@ can tell an incomplete record from a complete one.
 
 `shadowspill_trace_begin()` takes the caller's origin marker (see Timing
 below): a marker the caller has already recorded on its compute stream and
-keeps alive for the trace, so the trace and the caller share one clock. While the trace is active the worker brackets every copy it
-dispatches with two timing events from the runtime's timing pool on the lane,
-and the transfer's
-`SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries the copy's interval
-from that origin in `lane_started_at_ns` and `lane_finished_at_ns`. Every other
-event kind, and a completion the backend could not measure, carries
+keeps alive for the trace, so the trace and the caller share one clock. While
+the trace is active a lane keeps a record of each transfer it is given -- the
+built-in lane brackets its copy with two timing events from the runtime's timing
+pool -- and the transfer's `SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries
+what that lane reports back, in `lane_started_at_ns` and `lane_finished_at_ns`.
+Every other event kind, a completion the backend could not measure, and a lane
+whose clock the trace does not share, carry
 `SHADOWSPILL_TRACE_NO_STREAM_TIME` in both. A zero origin token records no
 intervals. `timestamp_ns` on every event is the host clock; the two stream
 fields are the only device-clock values in the trace.
@@ -406,12 +407,16 @@ lease-use record reserves.
 `shadowspill_route_lane_statistics()` reports what the lane serving one route
 has moved: transfers accepted, the pieces the hardware was handed, bytes,
 signals, waits, retries and failures, and -- where the lane can observe a
-completion -- how long its work took between being posted and being seen. The
-runtime resolves the route's lane and asks it through the
-[lane contract](lanes.md#what-a-lane-has-moved), so a built-in lane and one a
-library registered answer the same call. A lane that keeps no count returns
-`SHADOWSPILL_STATUS_UNSUPPORTED`, which is deliberately distinct from reporting
-zeroes: one means nobody counted, the other means nothing moved.
+completion -- how long its work took between being posted and being seen.
+
+**The seven counters come out of the lane itself**, from the common struct every
+lane embeds, so they are always reported and a built-in lane and one a library
+registered are read the same way -- there is nothing for a transport to
+implement and nothing it can get wrong. Only the two durations are asked for,
+through the lane contract's optional
+[`timing`](lanes.md#what-a-lane-has-moved) entry, and a lane that reads no clock
+on the transfer path leaves `timed` at 0. `SHADOWSPILL_STATUS_UNSUPPORTED` is
+left for a route with no lane at all.
 
 The split follows ownership. A runtime may own any number of pools, and which of
 them a plan uses as its execution and spill pools is that plan's choice, so a

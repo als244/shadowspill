@@ -14,7 +14,7 @@ the inventory and the reference index.
 | Runtime | [`runtime.h`](../../csrc/include/shadowspill/runtime.h) | [Runtime API](runtime.md) | Creating a runtime and its pools and routes, reserving the records a hot path must never allocate, admitting a plan, the two task boundaries, allocation scopes, tracing, and the statistics and first-failure snapshots |
 | Admission replay | [`admission_replay.h`](../../csrc/include/shadowspill/admission_replay.h) | [Runtime API](runtime.md#admission-replay) | Replaying a schedule's pool ownership transitions through the production allocator policy, with no backend and no device |
 | Backend | [`backend.h`](../../csrc/include/shadowspill/backend.h) | [Backends](backends.md) | The driver-level call table a provider shared object implements, the two symbols it exports, and what a new provider directory has to build |
-| Lane | [`runtime/lane.h`](../../csrc/include/shadowspill/runtime/lane.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the obligation it is under, and how a route resolves one from its two pools' kinds |
+| Lane | [`runtime/lane.h`](../../csrc/include/shadowspill/runtime/lane.h), [`runtime/lane_base.h`](../../csrc/include/shadowspill/runtime/lane_base.h) | [Lane contract](lanes.md) | What moves bytes between two pools: the table a transport implements, the struct it embeds, the obligation it is under, and how a route resolves one from its two pools' kinds |
 | Pool memory | [`runtime/pool_memory.h`](../../csrc/include/shadowspill/runtime/pool_memory.h) | [Pool memory contract](pool-memory.md) | Where a pool's region comes from: the acquire/release pair a kind of memory implements, and why nothing reads through the address it returns |
 | Planner | [`planner.h`](../../csrc/include/shadowspill/planner.h) | [Planner API](planner.md) | The planning question in indexed form and the certification a schedule passes whichever search found it: exact schedule admission, the admission operations a schedule implies, the lease lifetimes those resolve to, and fixed-offset placement |
 | PressureFit | [`pressurefit/pressurefit.h`](../../csrc/include/shadowspill/pressurefit/pressurefit.h) | [PressureFit API](pressurefit.md) | The search that ships: its options and the three policy axes, its result and per-candidate diagnostics, its preflight, and the shared placed-plan record |
@@ -70,6 +70,13 @@ the allocation scopes between them), and `telemetry.h` (tracing, waiting,
 recovery, and what a reader inspects afterwards). Open the part rather than the
 whole if you know which one you want; each also compiles on its own, so a
 caller may include just the part it uses.
+
+[`lane_base.h`](lanes.md#the-struct-a-transport-embeds) is deliberately **not**
+in that umbrella. It defines the struct a lane implementation embeds, which is
+of no use to a caller that merely declares a runtime -- `lane.h` leaves
+`ShadowSpillLane` opaque for exactly that reason. Keeping it out also keeps its
+`_Atomic` members away from the C++ translation units the PyTorch adapter pulls
+the umbrella into.
 
 `pytorch_adapter.h` follows the same convention at a smaller scale, in the
 order its reference page describes.

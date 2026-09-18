@@ -4,8 +4,10 @@ A lane moves bytes between two pools and says when they have landed. It is the
 one thing in the runtime that knows how a transfer is actually performed, and
 the only contract a new kind of transport has to implement.
 
-`csrc/include/shadowspill/runtime/lane.h` declares it; the built-in
-implementation is `csrc/src/runtime/transfers/pinned_host_device_lane.c`, and
+`csrc/include/shadowspill/runtime/lane.h` declares it, and
+`csrc/include/shadowspill/runtime/lane_base.h` the struct an implementation
+embeds; the built-in implementation is
+`csrc/src/runtime/transfers/pinned_host_device_lane.c`, and
 `csrc/src/runtime/transfers/lanes.c` is how the runtime finds one.
 
 ## A lane, a queue, and a stream are three things
@@ -43,36 +45,89 @@ A lane is therefore **named for the kinds it connects**, never for an argument i
 takes. The built-in takes a stream; so would a lane between two device pools.
 The stream distinguishes nothing.
 
+## Every lane is the same struct, extended
+
+A lane holds the same five things and counts the same seven whatever it is, so
+those live in one struct that every implementation embeds as its **first
+member** and casts between:
+
+```c
+typedef struct { ShadowSpillLane base; /* ... */ } MyLane;
+```
+
+That is what makes `ShadowSpillLane *` mean one thing everywhere, in the runtime
+and in a library the runtime loaded alike. The runtime fills the base — runtime
+handle, backend, the route's stream, the two pool kinds, counters at zero — and
+hands it to `create` to copy in, so an implementation writes none of it and
+cannot write it wrong, and a field added to the base changes no implementation
+at all.
+
+**The counters are the runtime's to read.** They are maintained through
+`shadowspill_lane_counted()`, and the runtime reports them straight out of the
+base. Nothing copies them anywhere, so no implementation can report a count
+that disagrees with the one it kept.
+
+The split across two headers is deliberate: the base is a layout for code that
+*implements* a lane, and everyone else — anyone merely declaring a runtime —
+sees an opaque pointer. It also keeps that layout out of the umbrella header
+the framework adapter pulls into its C++ translation units, which is why the
+base is free to use `_Atomic` and the declaration header is not.
+
 ## The contract
 
 **The obligation, and the whole of it:** a lane makes the event it was given
 complete when the bytes have landed, and **the runtime does not drive it**. How
-it arranges that is its own business. The two intervals may be absent;
+it arranges that is its own business. `transfer` and `timing` may be absent;
 everything else is required.
 
 | entry | what it must do |
 |---|---|
 | `wait(lane, event)` | order this lane's work behind `event` |
-| `copy(lane, destination, source, bytes)` | move the bytes |
-| `signal(lane, event)` | make `event` complete once everything issued so far has landed |
+| `copy(lane, destination, source, bytes, handle)` | move the bytes, and name the transfer |
+| `signal(lane, handle, event)` | make `event` complete once everything issued so far has landed |
 | `synchronize(lane)` | block until everything issued has landed |
-| `interval_open` / `interval_close` | bracket the next copy so it can be timed; **optional, as a pair** |
+| `transfer(lane, handle, out)` | what one transfer did; **optional** |
 | `destroy(lane)` | release what `create` took |
+| `timing(lane, out)` | what transfers cost this lane; **optional** |
+
+### The handle, and what it is for
+
+`copy` hands back a handle naming the transfer, and **0 means the lane is
+keeping nothing about it** — which is what every lane answers when no trace is
+running, so nothing is recorded that nothing will read. The handle rides the
+action to completion, where the runtime asks `transfer` once. **That query
+retires the handle**: a lane may release whatever it kept the moment it answers,
+and the runtime will not ask again. That is the whole lifetime rule, and it is
+why there is no release entry beside it.
+
+This replaced a pair of entries that bracketed the copy with timing events on a
+stream, which only a lane whose bytes move on one could implement — every other
+lane left them NULL and reported nothing. A lane now reports what it actually
+observed, in whatever terms it has.
 
 An event here is a `ShadowSpillBackendEvent` — one opaque word — and never the
 runtime's event lease, which is reference counting and pool links a lane has no
 business seeing. That is what lets a lane in a separately loaded library
 implement this against the runtime's headers alone.
 
-### Why the intervals may be absent
+### Why `transfer` and `timing` may be absent
 
 The rule is the one the backend table already follows for its profiler entries:
 **required when the runtime cannot proceed without it, optional when its absence
-only costs observability.** A lane with no intervals moves bytes exactly as well
-as one with them; its transfers are recorded untimed, which the trace and every
-reader already handle. A lane that cannot place an instant on the trace's clock —
-because it completes on a clock the trace does not share — leaves both NULL
-rather than reporting a time that means nothing.
+only costs observability.** A lane that reports neither moves bytes exactly as
+well as one that reports both; its transfers are recorded untimed, which the
+trace and every reader already handle.
+
+A `ShadowSpillLaneTransfer` carries two instants, bytes and chunks. The instants
+are nanoseconds from the trace's origin, the axis the rest of a step is placed
+on, and `SHADOWSPILL_LANE_NO_TIME` where a lane has nothing to say — which is
+better than a time that means nothing. A lane whose bytes move on a stream reads
+them off timing events it recorded around the copy. A lane whose bytes move
+elsewhere has only its own clock, and **nothing anchors that clock to this
+origin**: the origin is a device event, and no host instant is recorded beside
+it. Such a lane reports the bytes and the chunks, which need no anchor, and the
+ratio between them is the number worth having anyway — it says whether a slow
+transfer was one long wait or many short ones.
 
 ### Why `wait` may ask to be retried
 
@@ -126,7 +181,7 @@ That is the narrow version of a rule that was once broader. The constraint worth
 keeping is single-writer ordering, not an embargo on the backend; stating it the
 wide way cost real machinery for no invariant.
 
-### A lane's own thread must not wait on that stream
+### A lane must not wait on itself
 
 The rule that matters is not about threads, because a lane need not have one:
 
@@ -145,11 +200,29 @@ reduced to what it is for: handling completions, and reporting them. The device
 half of a staged transfer is issued by whoever calls the lane, on the route
 stream, before the transfer reaches the thread at all.
 
+The same rule reaches inside such a lane, and is easy to miss there. A lane that
+keeps work in flight across transfers has two halves — issuing and retiring —
+and **issuing must never block on something only retiring can release.** The
+next transfer's device work sits behind the previous transfer's `signal` on the
+stream, so a thread waiting for the device to reach it is waiting for itself.
+Every readiness question on the issuing side is therefore asked, not waited on:
+if the answer is no, the thread goes and retires, which is what makes the answer
+become yes. Stated as a rule rather than as an account of one lane, because the
+deadlock it prevents does not look like a deadlock in the code that causes it.
+
 ## Create, probe, and teardown
 
 A lane is made once per route at `shadowspill_runtime_create()` and destroyed in
-reverse at close. `create` receives the runtime, the backend, its granted stream,
-and its own configuration.
+reverse at close. `create` receives **the base the runtime has already filled**
+and its own configuration; it allocates its own struct, copies the base into the
+first member, and everything the base holds is available for the rest of create
+— which is why it arrives this way rather than being filled afterwards, since a
+lane that fails halfway needs the backend to unwind through.
+
+Direction is not configured. A lane that copies one way for a fetch and the
+other for an evict reads `from_kind` and `to_kind` out of its base, so the pair
+of kinds a description is registered under is the only place that says which way
+a route goes.
 
 **The runtime handle is how a lane reports a failure it finds on its own
 thread.** With no entry for the runtime to call, a lane that fails has no return

@@ -75,19 +75,10 @@ struct ShadowSpillRouteState {
     uint8_t stream_created;
 };
 
-/*
- * What a built-in lane entry's `configuration` points at: which way its copies
- * go. Nothing else -- `create` receives the runtime, so there is nothing to
- * carry here that the lane could not already reach.
- */
-typedef struct ShadowSpillPinnedHostDeviceConfiguration {
-    uint8_t to_device;
-} ShadowSpillPinnedHostDeviceConfiguration;
-
+/* The built-in entries carry no configuration: a lane reads its direction from
+   the pair of kinds in its common struct, which the runtime fills. */
 void shadowspill_pinned_host_device_lanes_describe(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillPinnedHostDeviceConfiguration storage[2],
-    ShadowSpillLaneDescription descriptions[2]
+    ShadowSpillRuntime *runtime, ShadowSpillLaneDescription descriptions[2]
 );
 
 /*
@@ -98,7 +89,6 @@ void shadowspill_pinned_host_device_lanes_describe(
 typedef struct ShadowSpillLaneTable {
     ShadowSpillLaneDescription *entries;
     uint32_t count;
-    ShadowSpillPinnedHostDeviceConfiguration builtin[2];
 } ShadowSpillLaneTable;
 
 int shadowspill_lane_table_initialize(

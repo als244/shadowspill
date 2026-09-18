@@ -6,143 +6,206 @@
 /*
  * A thin table over the backend. Everything it does, the runtime did inline
  * before there was a lane contract: a wait is `wait_event` on this lane's
- * stream, a copy is whichever backend copy entry the direction calls for, a
- * signal is `record_event`, and an interval is the timing pool's.
+ * stream, a copy is whichever backend copy entry the direction calls for, and
+ * a signal is `record_event`.
  *
- * One instance per route. Direction is fixed at create rather than decided per
- * copy, because a route has one direction for its whole life: the built-in
- * registers two descriptions, one per kind pair, and each names the
- * configuration that says which way its copies go.
+ * One instance per route. Direction is not configured: it is `from_kind` and
+ * `to_kind` in the common struct, which the runtime fills from the description
+ * this lane was found through. A route has one direction for its whole life,
+ * and now only one place says which.
  */
+
+/*
+ * How many transfers this lane can have measured at once.
+ *
+ * A record exists only while a trace runs, from the copy that opens it to the
+ * runtime's one query after that transfer completes -- the same lifetime the
+ * runtime used to give the interval it kept on the action. So the ring only
+ * has to outlast the transfers in flight on one route, and this is well past
+ * that. A slot that is reused before it is read reports its transfer untimed
+ * rather than reporting another transfer's numbers, which is what the handle
+ * stored beside each interval is for.
+ */
+#define MEASURED_TRANSFERS 256U
+
+typedef struct MeasuredTransfer {
+    uint64_t handle;
+    uint64_t bytes;
+    ShadowSpillStreamInterval interval;
+} MeasuredTransfer;
+
 typedef struct PinnedHostDeviceLane {
-    ShadowSpillRuntime *runtime;
-    const ShadowSpillBackend *backend;
-    ShadowSpillBackendStream stream;
-    uint8_t to_device;
+    ShadowSpillLane base;
 
     /*
-     * What this lane has moved. Counted here rather than by the worker because
-     * the count belongs to the lane the transfer went through, and the worker
-     * does not know which that is once it dispatches against a contract.
-     *
-     * No timing: this lane hands the backend a copy and returns, so the moment
-     * a transfer *completes* is not something it observes -- an interval is,
-     * and that is what `interval_open`/`interval_close` are for. Reporting a
-     * zero duration would be a lie, so `timed` stays 0 and the fields stay
-     * zero, which is the difference the flag exists to record.
+     * Handles are numbered from 1 over the lane's life, and 1 is the first
+     * because 0 is how `copy` says it kept nothing. The counter is atomic
+     * because calibration calls a lane off the worker thread; it costs one
+     * relaxed add, and only on the traced path.
      */
-    _Atomic uint64_t copies;
-    _Atomic uint64_t bytes;
-    _Atomic uint64_t signals;
-    _Atomic uint64_t waits;
-    _Atomic uint64_t failures;
+    _Atomic uint64_t next_handle;
+    MeasuredTransfer measured[MEASURED_TRANSFERS];
 } PinnedHostDeviceLane;
 
+static MeasuredTransfer *slot_of(PinnedHostDeviceLane *self, uint64_t handle) {
+    return &self->measured[(handle - 1U) % MEASURED_TRANSFERS];
+}
+
 static int pinned_host_device_create(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillBackend *backend,
-    ShadowSpillBackendStream stream,
-    void *configuration,
-    ShadowSpillLane **lane
+    const ShadowSpillLane *base, void *configuration, ShadowSpillLane **lane
 ) {
-    if (backend == NULL || lane == NULL || configuration == NULL) {
+    (void)configuration;
+    if (base == NULL || lane == NULL) {
         return -1;
     }
     PinnedHostDeviceLane *created = calloc(1U, sizeof(*created));
     if (created == NULL) {
         return -1;
     }
-    created->backend = backend;
-    created->stream = stream;
-    created->runtime = runtime;
-    created->to_device = *(const uint8_t *)configuration;
-    *lane = (ShadowSpillLane *)created;
+    created->base = *base;
+    atomic_store_explicit(&created->next_handle, 1U, memory_order_relaxed);
+    *lane = &created->base;
     return 0;
 }
 
 static int pinned_host_device_wait(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
-    PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
-    (void)atomic_fetch_add_explicit(&self->waits, 1U, memory_order_relaxed);
+    shadowspill_lane_counted(&lane->waits, 1U);
     /* A device-side wait always enqueues, so this never asks for a retry. */
-    return self->backend->wait_event(self->backend->state, self->stream, event) == 0
+    return lane->backend->wait_event(lane->backend->state, lane->stream, event) == 0
         ? 0
         : -1;
 }
 
 static int pinned_host_device_copy(
-    ShadowSpillLane *lane, void *destination, const void *source, uint64_t bytes
+    ShadowSpillLane *lane,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    uint64_t *handle
 ) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
-    const ShadowSpillBackend *backend = self->backend;
-    const int failed = self->to_device
+    const ShadowSpillBackend *backend = lane->backend;
+    *handle = 0U;
+
+    /*
+     * A traced transfer is bracketed on this lane's stream: the interval opens
+     * just before the copy and closes just after it, ahead of whatever event
+     * `signal` records, so observing the completion guarantees the interval is
+     * readable. An untraced transfer pays the one question and nothing else,
+     * and an interval that cannot be opened is a gap in the trace rather than
+     * a failed transfer -- so nothing below branches on it.
+     */
+    MeasuredTransfer *record = NULL;
+    if (shadowspill_lane_trace_active(lane->runtime)) {
+        const uint64_t claimed = atomic_fetch_add_explicit(
+            &self->next_handle, 1U, memory_order_relaxed
+        );
+        record = slot_of(self, claimed);
+        /* Whatever was here was never queried. Its leases go back now. */
+        shadowspill_stream_interval_discard(lane->runtime, &record->interval);
+        record->handle = claimed;
+        record->bytes = bytes;
+        if (shadowspill_stream_interval_open(
+                lane->runtime, &record->interval, lane->stream
+            ) == 0) {
+            *handle = claimed;
+        } else {
+            record->handle = 0U;
+            record = NULL;
+        }
+    }
+
+    const int failed = lane->to_kind == SHADOWSPILL_POOL_DEVICE
         ? backend->copy_host_to_device(
-              backend->state, destination, source, bytes, self->stream
+              backend->state, destination, source, bytes, lane->stream
           )
         : backend->copy_device_to_host(
-              backend->state, destination, source, bytes, self->stream
+              backend->state, destination, source, bytes, lane->stream
           );
     if (failed != 0) {
-        (void)atomic_fetch_add_explicit(&self->failures, 1U, memory_order_relaxed);
+        if (record != NULL) {
+            shadowspill_stream_interval_discard(lane->runtime, &record->interval);
+            record->handle = 0U;
+            *handle = 0U;
+        }
+        shadowspill_lane_counted(&lane->failures, 1U);
         return failed;
+    }
+    if (record != NULL) {
+        (void)shadowspill_stream_interval_close(
+            lane->runtime, &record->interval, lane->stream
+        );
     }
     /* One chunk per copy: this lane hands the whole transfer to the backend
        and never splits it, so `chunks` equals `copies` by construction. */
-    (void)atomic_fetch_add_explicit(&self->copies, 1U, memory_order_relaxed);
-    (void)atomic_fetch_add_explicit(&self->bytes, bytes, memory_order_relaxed);
+    shadowspill_lane_counted(&lane->copies, 1U);
+    shadowspill_lane_counted(&lane->chunks, 1U);
+    shadowspill_lane_counted(&lane->bytes, bytes);
     return 0;
 }
 
-static int pinned_host_device_signal(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
-    PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
-    (void)atomic_fetch_add_explicit(&self->signals, 1U, memory_order_relaxed);
-    return self->backend->record_event(self->backend->state, event, self->stream);
+static int pinned_host_device_signal(
+    ShadowSpillLane *lane, uint64_t handle, ShadowSpillBackendEvent event
+) {
+    /* The stream orders the event behind the copies already on it, so this
+       lane needs nothing from the handle. */
+    (void)handle;
+    shadowspill_lane_counted(&lane->signals, 1U);
+    return lane->backend->record_event(lane->backend->state, event, lane->stream);
 }
 
 static int pinned_host_device_synchronize(ShadowSpillLane *lane) {
-    PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
-    return self->backend->synchronize_stream(self->backend->state, self->stream);
+    return lane->backend->synchronize_stream(lane->backend->state, lane->stream);
 }
 
-static int pinned_host_device_interval_open(
-    ShadowSpillLane *lane, ShadowSpillStreamInterval *interval
+static int pinned_host_device_transfer(
+    ShadowSpillLane *lane, uint64_t handle, ShadowSpillLaneTransfer *transfer
 ) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
-    return shadowspill_stream_interval_open(self->runtime, interval, self->stream);
-}
-
-static int pinned_host_device_interval_close(
-    ShadowSpillLane *lane, ShadowSpillStreamInterval *interval
-) {
-    PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
-    return shadowspill_stream_interval_close(self->runtime, interval, self->stream);
-}
-
-static int pinned_host_device_statistics(
-    const ShadowSpillLane *lane, ShadowSpillLaneStatistics *statistics
-) {
-    if (lane == NULL || statistics == NULL) {
+    if (handle == 0U) {
         return -1;
     }
-    PinnedHostDeviceLane *self =
-        (PinnedHostDeviceLane *)(uintptr_t)(const void *)lane;
-    const uint64_t copies =
-        atomic_load_explicit(&self->copies, memory_order_relaxed);
-    *statistics = (ShadowSpillLaneStatistics){
-        .copies = copies,
-        .chunks = copies,
-        .bytes = atomic_load_explicit(&self->bytes, memory_order_relaxed),
-        .signals = atomic_load_explicit(&self->signals, memory_order_relaxed),
-        .waits = atomic_load_explicit(&self->waits, memory_order_relaxed),
-        .retries = 0U,
-        .failures = atomic_load_explicit(&self->failures, memory_order_relaxed),
-        .timed = 0U,
+    MeasuredTransfer *record = slot_of(self, handle);
+    if (record->handle != handle) {
+        /* Overwritten before it was read. Nothing to report, and nothing to
+           release: whoever took the slot released these leases. */
+        return -1;
+    }
+    uint64_t started = SHADOWSPILL_LANE_NO_TIME;
+    uint64_t finished = SHADOWSPILL_LANE_NO_TIME;
+    const int read = shadowspill_stream_interval_read(
+        lane->runtime, &record->interval, lane->runtime->trace_origin_event,
+        &started, &finished
+    );
+    *transfer = (ShadowSpillLaneTransfer){
+        .started_at_nanoseconds = read == 0 ? started : SHADOWSPILL_LANE_NO_TIME,
+        .finished_at_nanoseconds = read == 0 ? finished : SHADOWSPILL_LANE_NO_TIME,
+        .bytes = record->bytes,
+        .chunks = 1U,
     };
+    /* The query retires the handle. */
+    shadowspill_stream_interval_discard(lane->runtime, &record->interval);
+    record->handle = 0U;
     return 0;
 }
 
+/*
+ * No `timing`. This lane hands the backend a copy and returns, so the moment a
+ * transfer *completes* is not something it observes -- an interval around the
+ * copy is, and that is what `transfer` reports per transfer. Reporting a zero
+ * duration here would be a lie, and a NULL entry is how the contract says so.
+ */
+
 /* The stream is the runtime's to destroy, along with the route that owns it. */
 static void pinned_host_device_destroy(ShadowSpillLane *lane) {
-    free(lane);
+    PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
+    /* Any record never queried still holds two timing leases. */
+    for (uint32_t index = 0U; index < MEASURED_TRANSFERS; ++index) {
+        shadowspill_stream_interval_discard(
+            lane->runtime, &self->measured[index].interval
+        );
+    }
+    free(self);
 }
 
 static const ShadowSpillLaneOperations pinned_host_device_operations = {
@@ -150,38 +213,34 @@ static const ShadowSpillLaneOperations pinned_host_device_operations = {
     .copy = pinned_host_device_copy,
     .signal = pinned_host_device_signal,
     .synchronize = pinned_host_device_synchronize,
-    .interval_open = pinned_host_device_interval_open,
-    .interval_close = pinned_host_device_interval_close,
+    .transfer = pinned_host_device_transfer,
     .destroy = pinned_host_device_destroy,
-    .statistics = pinned_host_device_statistics,
+    .timing = NULL,
 };
 
 /*
  * Two entries, one per direction. The runtime calls this while building its
  * lane table, so the storage lives as long as the runtime and the descriptions
- * point into it. `configuration` is only the direction: `create` receives the
- * runtime, so there is nothing to smuggle through it.
+ * point into it. There is no configuration: direction is the pair of kinds
+ * named right here, and `create` receives the runtime, so there is nothing
+ * left to smuggle through.
  */
 void shadowspill_pinned_host_device_lanes_describe(
-    ShadowSpillRuntime *runtime,
-    ShadowSpillPinnedHostDeviceConfiguration storage[2],
-    ShadowSpillLaneDescription descriptions[2]
+    ShadowSpillRuntime *runtime, ShadowSpillLaneDescription descriptions[2]
 ) {
     (void)runtime;
-    storage[0] = (ShadowSpillPinnedHostDeviceConfiguration){.to_device = 1U};
-    storage[1] = (ShadowSpillPinnedHostDeviceConfiguration){.to_device = 0U};
     descriptions[0] = (ShadowSpillLaneDescription){
         .from_kind = SHADOWSPILL_POOL_PINNED_HOST,
         .to_kind = SHADOWSPILL_POOL_DEVICE,
         .operations = &pinned_host_device_operations,
         .create = pinned_host_device_create,
-        .configuration = &storage[0],
+        .configuration = NULL,
     };
     descriptions[1] = (ShadowSpillLaneDescription){
         .from_kind = SHADOWSPILL_POOL_DEVICE,
         .to_kind = SHADOWSPILL_POOL_PINNED_HOST,
         .operations = &pinned_host_device_operations,
         .create = pinned_host_device_create,
-        .configuration = &storage[1],
+        .configuration = NULL,
     };
 }

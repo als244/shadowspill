@@ -268,23 +268,27 @@ static int refuse_wait(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
     (void)lane; (void)event; return 0;
 }
 static int refuse_copy(
-    ShadowSpillLane *lane, void *destination, const void *source, uint64_t bytes
+    ShadowSpillLane *lane,
+    void *destination,
+    const void *source,
+    uint64_t bytes,
+    uint64_t *handle
 ) {
-    (void)lane; (void)destination; (void)source; (void)bytes; return 0;
+    (void)lane; (void)destination; (void)source; (void)bytes;
+    *handle = 0U;
+    return 0;
 }
-static int refuse_signal(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
-    (void)lane; (void)event; return 0;
+static int refuse_signal(
+    ShadowSpillLane *lane, uint64_t handle, ShadowSpillBackendEvent event
+) {
+    (void)lane; (void)handle; (void)event; return 0;
 }
 static int refuse_one(ShadowSpillLane *lane) { (void)lane; return 0; }
 static void refuse_destroy(ShadowSpillLane *lane) { (void)lane; }
 static int refuse_create(
-    ShadowSpillRuntime *runtime,
-    const ShadowSpillBackend *backend,
-    ShadowSpillBackendStream stream,
-    void *configuration,
-    ShadowSpillLane **lane
+    const ShadowSpillLane *base, void *configuration, ShadowSpillLane **lane
 ) {
-    (void)runtime; (void)backend; (void)stream; (void)configuration; (void)lane;
+    (void)base; (void)configuration; (void)lane;
     return 0;
 }
 

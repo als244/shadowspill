@@ -68,7 +68,7 @@ StepDiagnostics
 │   └── fetch / evict                TransferQueue
 │       ├── order[]                  transfer ids, in lane order
 │       └── summary                  LaneSummary
-│           └── lane_statistics      what the lane itself reports, or None
+│           └── lane_statistics      what the lane itself counted
 ├── allocator                        AllocatorTrace
 └── runtime                          RuntimeTrace
 ```
@@ -270,7 +270,7 @@ is the task a fetch was made for.
 | Identity | `transfer_id`, `direction`, `sequence`, `triggered_by`, `alias_group_id`, `bytes` | Which transfer and what it moved. `triggered_by` is what released it: the execution task id of the task whose completion did, a key into `tasks`, or `init` for the opening placement batch the runtime issues before the first task. A scheduled transfer's id is `<direction>_<sequence>`; an opening one's is `<direction>_opening_<index>`. |
 | Relations | `previous_access`, `next_access`, `modified_by` | The object's place in the step, by execution task id: the last selected task up to and including the trigger that referenced the object, the first later one that does, and the last one up to the trigger that created or mutated it. `init` means no such task before the transfer, so the bytes are what the step was given; `persistent` means none after it within this call, so the object outlives the step. A fetch exists for its next access; an evict saves what its modifier produced. |
 | Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds` | When the transfer could start, when the lane started it, and when it ended, at the bandwidth the plan assumed, which the plan summary states. `None` for an opening transfer, which the simulator does not model. |
-| Lane | `lane_started_at_seconds`, `lane_finished_at_seconds` | The copy's interval on its transfer lane, bracketed by timing events the worker recorded immediately before and after the copy. `None` when there is no interval to report: either the lane completes on a clock the trace does not share and so supplies none at all, or the timing pool ran out. A lane supplies intervals for all of its transfers or for none, so a mix of the two on one lane is a fault rather than a lane that does not time. |
+| Lane | `lane_started_at_seconds`, `lane_finished_at_seconds` | The copy's interval on its transfer lane, as the lane itself reports it -- the built-in lane brackets its copy with timing events immediately before and after. `None` when there is nothing to report: either the lane completes on a clock the trace does not share and so reports no instants at all, or the timing pool ran out. A lane reports instants for all of its transfers or for none, so a mix of the two on one lane is a fault rather than a lane that does not time. |
 | Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated after alignment; `None` without a lane interval or without a simulation. |
 | Host | `queued_at_seconds`, `reserved_at_seconds`, `dispatched_at_seconds`, `completion_observed_at_seconds` | When the action was queued, when its destination was reserved, when the worker handed the copy to the lane, and when the worker's nonblocking poll saw it complete. |
 
@@ -319,15 +319,17 @@ for lane, records in (
 | `effective_bandwidth_bytes_per_second` | Measured bytes over `lane_busy_seconds`; compare with the assumed bandwidth in the plan summary. `None` when nothing was measured. |
 | `largest_start_delta_seconds`, `largest_start_delta_transfer_id` | The signed start delta furthest from zero on the lane, and the transfer that reached it: where the lane had drifted furthest from the simulation. |
 | `opening_transfers`, `opening_bytes` | The opening placement batch on this lane: transfers the runtime issued before the first task to restore the step's initial objects. They precede the span, carry no simulation, and lead the lane's order with `triggered_by` `init`. |
-| `lane_statistics` | What the lane itself reports, or `None` when it keeps no count. Below. |
+| `lane_statistics` | What the lane itself counted, over its whole life. Below. |
 
 ### What the lane itself reports
 
 Every field above is the *trace's* account of this step: what the plan
-scheduled, what the simulator priced, and what the stream intervals measured.
+scheduled, what the simulator priced, and what each lane reported for the one
+transfer it was asked about.
 `lane_statistics` is the *lane's own* account, read through the
 [lane contract](../c/lanes.md#what-a-lane-has-moved) by one call that serves a
-built-in lane and a registered one alike -- nothing here knows which answered.
+built-in lane and a registered one alike -- nothing here knows which answered,
+and the counters come straight out of the struct every lane embeds.
 
 Two things make it a different question rather than a second opinion:
 
@@ -351,9 +353,11 @@ it may still record only while a trace is running, which is what
 `shadowspill_lane_trace_active()` lets it ask. **Read `timed` before reading a
 duration**, and read `None` as "not measured", never as "fast".
 
-The whole group is `None` when the lane supplies no `statistics` entry at all.
-That is deliberately distinct from a lane reporting zeroes: one means nobody
-counted, the other means nothing moved.
+The counters above are always present, because every lane keeps them in the
+struct they all embed and the runtime reads them out of it rather than asking.
+`timed` and the two durations are the only part a lane supplies, so `timed` 0
+is the whole of "this lane does not measure" -- the counters beside it are still
+real, and a zero in one of them means nothing moved.
 
 ## Allocator
 

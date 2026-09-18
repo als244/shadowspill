@@ -7,6 +7,8 @@
 #include <stdint.h>
 
 #include <shadowspill/runtime.h>
+/* The layout a lane embeds: this tree implements one and reads its counters. */
+#include <shadowspill/runtime/lane_base.h>
 
 #include "failure_state.h"
 #include "sync/internal.h"

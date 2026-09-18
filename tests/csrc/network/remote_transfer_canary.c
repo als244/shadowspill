@@ -124,8 +124,9 @@ typedef struct ConcurrentArm {
 
 static void *run_arm(void *argument) {
     ConcurrentArm *arm = argument;
+    uint64_t handle = 0U;
     if (arm->route->operations->copy(
-            arm->route->lane, arm->destination, arm->source, arm->bytes
+            arm->route->lane, arm->destination, arm->source, arm->bytes, &handle
         ) != 0 ||
         arm->route->operations->synchronize(arm->route->lane) != 0) {
         arm->failed = 1;
@@ -169,6 +170,70 @@ static int both_directions_at_once(
     }
     if (failed) {
         fprintf(stderr, "remote transfer: a concurrent arm failed\n");
+    }
+    return failed ? -1 : 0;
+}
+
+/*
+ * Consecutive transfers on one lane, with nothing waited for between them.
+ *
+ * Every other case here issues a copy and synchronizes, so the lane's chunk
+ * ring drains at every transfer boundary and the pipeline that spans them is
+ * never entered. This is the case that enters it: `PIECES` transfers handed to
+ * the lane back to back, then one `synchronize`. The lane must post a later
+ * transfer's chunks into slots an earlier one has released, retire completions
+ * in order across the boundary, and store a NIC count that never goes
+ * backwards -- and if it gets any of that wrong the payload comes back wrong,
+ * because each piece carries its own index.
+ *
+ * It is also the only case where a transfer is in flight while the next one is
+ * being planned, which is what `chunks_planned` is read under a lock for.
+ */
+#define PIECES 8U
+
+static int consecutive_transfers_pipeline(
+    ShadowSpillRuntime *runtime,
+    const ShadowSpillAllocation *device,
+    const ShadowSpillAllocation *stored,
+    uint64_t bytes
+) {
+    const uint64_t piece = (bytes / PIECES) & ~(uint64_t)7U;
+    if (piece == 0U) {
+        return 0;
+    }
+    ShadowSpillRouteState *const evict = &runtime->routes[EVICT_ROUTE];
+    ShadowSpillRouteState *const fetch = &runtime->routes[FETCH_ROUTE];
+    uint64_t lane_handle = 0U;
+    int failed = 0;
+
+    fill(device->pointer, piece * PIECES, 0xC3C3C3C3U);
+    for (unsigned index = 0U; index < PIECES && !failed; ++index) {
+        const uint64_t offset = (uint64_t)index * piece;
+        failed = evict->operations->copy(
+            evict->lane, (char *)stored->pointer + offset,
+            (char *)device->pointer + offset, piece, &lane_handle
+        ) != 0;
+    }
+    failed = failed || evict->operations->synchronize(evict->lane) != 0;
+    if (!failed) {
+        memset(device->pointer, 0, piece * PIECES);
+    }
+    for (unsigned index = 0U; index < PIECES && !failed; ++index) {
+        const uint64_t offset = (uint64_t)index * piece;
+        failed = fetch->operations->copy(
+            fetch->lane, (char *)device->pointer + offset,
+            (char *)stored->pointer + offset, piece, &lane_handle
+        ) != 0;
+    }
+    failed = failed || fetch->operations->synchronize(fetch->lane) != 0;
+    failed = failed || check(device->pointer, piece * PIECES, 0xC3C3C3C3U) != 0;
+    if (failed) {
+        fprintf(
+            stderr,
+            "remote transfer: %u consecutive transfers did not survive the "
+            "pipeline\n",
+            PIECES
+        );
     }
     return failed ? -1 : 0;
 }
@@ -296,10 +361,12 @@ int main(void) {
     /* Evict: device -> remote. Timed on its own, because a rate that includes
        filling and checking the pattern is not the lane's rate. */
     ShadowSpillRouteState *const evict = &runtime->routes[EVICT_ROUTE];
+    /* No trace is running here, so every lane answers 0 and this is unread. */
+    uint64_t lane_handle = 0U;
     const double evict_started = seconds_now();
     for (uint64_t pass = 0U; pass < repeats && !failed; ++pass) {
         failed = failed || evict->operations->copy(
-            evict->lane, stored.pointer, device.pointer, payload_bytes
+            evict->lane, stored.pointer, device.pointer, payload_bytes, &lane_handle
         ) != 0;
         failed = failed || evict->operations->synchronize(evict->lane) != 0;
     }
@@ -316,7 +383,7 @@ int main(void) {
     const double fetch_started = seconds_now();
     for (uint64_t pass = 0U; pass < repeats && !failed; ++pass) {
         failed = failed || fetch->operations->copy(
-            fetch->lane, device.pointer, stored.pointer, payload_bytes
+            fetch->lane, device.pointer, stored.pointer, payload_bytes, &lane_handle
         ) != 0;
         failed = failed || fetch->operations->synchronize(fetch->lane) != 0;
     }
@@ -341,7 +408,7 @@ int main(void) {
         fill(second_device.pointer, payload_bytes, 0x5A5A5A5AU);
         failed = runtime->routes[EVICT_ROUTE].operations->copy(
             runtime->routes[EVICT_ROUTE].lane, second_stored.pointer,
-            second_device.pointer, payload_bytes
+            second_device.pointer, payload_bytes, &lane_handle
         ) != 0 ||
         runtime->routes[EVICT_ROUTE].operations->synchronize(
             runtime->routes[EVICT_ROUTE].lane
@@ -352,6 +419,10 @@ int main(void) {
         runtime, &device, &stored, &second_device, &second_stored, payload_bytes
     ) != 0;
     failed = failed || check(second_device.pointer, payload_bytes, 0x5A5A5A5AU) != 0;
+
+    failed = failed || consecutive_transfers_pipeline(
+        runtime, &device, &stored, payload_bytes
+    ) != 0;
 
     if (runtime != NULL) {
         shadowspill_runtime_destroy(runtime);
@@ -367,9 +438,10 @@ int main(void) {
         const double mib = (double)payload_bytes / (double)(1U << 20U);
         printf(
             "remote transfer canary passed: %llu KiB to %s:%s and back, "
-            "sequentially and both directions at once\n"
+            "sequentially, both directions at once, and %u consecutive "
+            "transfers pipelined\n"
             "  evict %.6f s (%.1f MiB/s), fetch %.6f s (%.1f MiB/s)\n",
-            (unsigned long long)(payload_bytes >> 10U), host, port,
+            (unsigned long long)(payload_bytes >> 10U), host, port, PIECES,
             evict_seconds, mib / evict_seconds,
             fetch_seconds, mib / fetch_seconds
         );
