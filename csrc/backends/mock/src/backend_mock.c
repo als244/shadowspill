@@ -7,43 +7,123 @@
 #include <time.h>
 
 /*
- * A pending value wait. The mock's clock cannot predict when a host thread will
- * store a value, so readiness stops being a time and becomes a condition:
- * a stream carrying an unmet wait is not ready whatever its clock says, and an
- * event recorded on it inherits that.
+ * A stream is an ordered queue, and something has to drain it.
+ *
+ * `backend.h` calls a stream "an ordered queue of copies and events", and until
+ * a lane needed to hold one on a word the mock could get away with not being
+ * one: every entry performed its side effect as it was called, and only the
+ * clock was deferred. That is wrong in exactly the way a lane whose bytes do
+ * not move on a stream depends on being right. A copy enqueued behind an
+ * unsatisfied wait ran anyway -- reading a staging buffer the hardware had not
+ * filled -- because the wait was consulted by whoever came to observe the
+ * stream and by nothing on the stream itself.
+ *
+ * So an entry appends a `MockOperation` and returns, and the caller then drains
+ * the stream as far as it will go. For a stream with nothing to wait for that
+ * is the whole queue before the call returns, which is what every caller that
+ * never waits already had.
+ *
+ * A queue stopped at a wait is resumed by the backend's drain thread, because
+ * nothing satisfies a wait through this table: the word a `wait_value` awaits
+ * is stored by a host thread writing memory this backend never sees. Looking
+ * again is the only mechanism there is.
+ *
+ * What the queue does *not* model is the stream's own clock: an entry runs as
+ * soon as it reaches the head and its wait is satisfied, rather than when the
+ * entry before it was projected to finish. The clock stays a projection that
+ * observers wait for, which is what it always was; the queue adds ordering,
+ * which is what was missing.
  */
-typedef struct MockPendingValue {
-    const uint64_t *word;
-    uint64_t awaited;
-    int pending;
-} MockPendingValue;
 
-/* Satisfied once the word reaches the value. A wait never un-satisfies,
-   so this may be read without the backend's lock. */
-static int value_satisfied(const MockPendingValue *value) {
-    return !value->pending ||
-           __atomic_load_n(value->word, __ATOMIC_ACQUIRE) >= value->awaited;
-}
+/* How long a drainer waits before looking again at a queue it cannot advance.
+   Short enough not to distort a measured transfer rate, long enough not to be
+   a spin. */
+#define DRAIN_POLL_NANOSECONDS 20000U
+
+typedef enum MockOperationKind {
+    MOCK_COPY = 0,
+    /* A span of work with no side effect but the clock: the test hook. */
+    MOCK_COMPUTE,
+    MOCK_WAIT_VALUE,
+    MOCK_WRITE_VALUE,
+    MOCK_WAIT_EVENT,
+    MOCK_RECORD_EVENT,
+} MockOperationKind;
+
+typedef struct MockEvent MockEvent;
+
+typedef struct MockOperation {
+    MockOperationKind kind;
+    struct MockOperation *next;
+
+    /* MOCK_COPY */
+    void *destination;
+    const void *source;
+    uint64_t bytes;
+
+    /* MOCK_COPY and MOCK_COMPUTE: what this entry adds to the stream's clock. */
+    uint64_t duration_nanoseconds;
+
+    /* MOCK_WAIT_VALUE and MOCK_WRITE_VALUE */
+    uint64_t *word;
+    uint64_t value;
+
+    /* MOCK_WAIT_EVENT and MOCK_RECORD_EVENT */
+    MockEvent *event;
+    /* Records only, and the reason a superseded record cannot stamp its event:
+       re-recording bumps the event's stamp, so an older entry still in a queue
+       finds the two disagree and does nothing. */
+    uint64_t stamp;
+} MockOperation;
+
+/*
+ * Three states rather than two flags, because "queued but never recorded" is
+ * not a thing an event can be.
+ */
+typedef enum MockEventState {
+    /* Never recorded. Query, wait and elapsed all refuse it. */
+    MOCK_EVENT_UNRECORDED = 0,
+    /* Recorded, and the record has not reached the head of its stream yet. */
+    MOCK_EVENT_QUEUED,
+    /* The record ran: `ready_nanoseconds` is the instant it stamped. */
+    MOCK_EVENT_STAMPED,
+} MockEventState;
+
+struct MockEvent {
+    uint64_t ready_nanoseconds;
+    uint64_t stamp;
+    MockEventState state;
+};
 
 typedef struct MockStream {
     uint64_t ready_nanoseconds;
-    MockPendingValue value;
+    MockOperation *head;
+    MockOperation *tail;
+    /*
+     * Set for as long as a drainer is inside this stream, including while it
+     * has released the backend's lock to perform an entry. It is what makes one
+     * drainer at a time true, and what keeps `destroy_stream` from freeing a
+     * stream another thread is working on.
+     */
+    int draining;
+    struct MockStream *next;
 } MockStream;
-
-typedef struct MockEvent {
-    uint64_t ready_nanoseconds;
-    int recorded;
-    MockPendingValue value;
-} MockEvent;
 
 struct ShadowSpillMockBackend {
     pthread_mutex_t mutex;
+    /* Raised when a stream gains work, so the drain thread sleeps rather than
+       polls while every queue is empty. */
+    pthread_cond_t queued;
     ShadowSpillMockBackendConfig config;
     ShadowSpillBackendStatistics statistics;
     uint64_t operation_count;
     uint64_t fail_operation;
     /* The stream a framework handle of 0 names; see resolve_stream. */
     MockStream default_stream;
+    /* Every live stream, the default one first. */
+    MockStream *streams;
+    pthread_t drain_thread;
+    int stopping;
 };
 
 static uint64_t now_nanoseconds(void) {
@@ -52,6 +132,11 @@ static uint64_t now_nanoseconds(void) {
         return 0U;
     }
     return (uint64_t)value.tv_sec * 1000000000U + (uint64_t)value.tv_nsec;
+}
+
+static void sleep_briefly(void) {
+    struct timespec delay = {.tv_nsec = DRAIN_POLL_NANOSECONDS};
+    (void)nanosleep(&delay, NULL);
 }
 
 static int operation_fails(ShadowSpillMockBackend *backend) {
@@ -124,6 +209,208 @@ static int unregister_host_memory(void *state, void *address, uint64_t bytes) {
     return 0;
 }
 
+/* ----------------------------------------------------------- the queue */
+
+/* Whether an event has completed: its record has run, its instant has passed.
+   The backend's lock is held. */
+static int event_complete_locked(const MockEvent *event) {
+    return event->state == MOCK_EVENT_STAMPED &&
+           now_nanoseconds() >= event->ready_nanoseconds;
+}
+
+/* Whether the entry at the head may run. The backend's lock is held.
+   Only the two waits can answer no, which is what makes them waits. */
+static int entry_may_run_locked(const MockOperation *entry) {
+    switch (entry->kind) {
+    case MOCK_WAIT_VALUE:
+        return __atomic_load_n(entry->word, __ATOMIC_ACQUIRE) >= entry->value;
+    case MOCK_WAIT_EVENT:
+        return event_complete_locked(entry->event);
+    default:
+        return 1;
+    }
+}
+
+/*
+ * The entry's side effect, performed with the backend's lock released.
+ *
+ * Nothing here touches stream or event state: the clock and the stamps are
+ * applied afterwards, under the lock, and the entry stays at the head until
+ * they are -- so an empty queue really does mean the bytes have landed.
+ */
+static void perform_entry(const MockOperation *entry) {
+    switch (entry->kind) {
+    case MOCK_COPY:
+        if (entry->bytes != 0U) {
+            memcpy(entry->destination, entry->source, (size_t)entry->bytes);
+        }
+        break;
+    case MOCK_WRITE_VALUE:
+        /* Released, so a host thread that sees the word sees the copies this
+           entry followed. That is the whole question the word answers. */
+        __atomic_store_n(entry->word, entry->value, __ATOMIC_RELEASE);
+        break;
+    default:
+        break;
+    }
+}
+
+/* What the entry did to the clock, applied with the backend's lock held. */
+static void apply_entry_locked(
+    ShadowSpillMockBackend *backend, MockStream *stream, const MockOperation *entry
+) {
+    const uint64_t now = now_nanoseconds();
+    switch (entry->kind) {
+    case MOCK_COPY:
+    case MOCK_COMPUTE:
+        if (stream->ready_nanoseconds < now) {
+            stream->ready_nanoseconds = now;
+        }
+        stream->ready_nanoseconds += entry->duration_nanoseconds;
+        break;
+    case MOCK_WAIT_EVENT:
+        if (entry->event->ready_nanoseconds > stream->ready_nanoseconds) {
+            stream->ready_nanoseconds = entry->event->ready_nanoseconds;
+        }
+        break;
+    case MOCK_RECORD_EVENT:
+        /* A later record has superseded this one, so it stamps nothing. */
+        if (entry->event->stamp != entry->stamp) {
+            break;
+        }
+        entry->event->ready_nanoseconds =
+            (stream->ready_nanoseconds > now ? stream->ready_nanoseconds : now) +
+            backend->config.event_delay_nanoseconds;
+        entry->event->state = MOCK_EVENT_STAMPED;
+        break;
+    default:
+        break;
+    }
+}
+
+/*
+ * Run the stream's entries in order until one may not run yet, or none is left.
+ *
+ * Called with the backend's lock held and returns with it held, having released
+ * it around each entry's side effect -- a memcpy of an arbitrary size is not
+ * something to hold a backend-wide lock across, and two streams have to be able
+ * to copy at once.
+ */
+static void drain_locked(ShadowSpillMockBackend *backend, MockStream *stream) {
+    if (stream->draining) {
+        return;
+    }
+    stream->draining = 1;
+    for (;;) {
+        MockOperation *const entry = stream->head;
+        if (entry == NULL || !entry_may_run_locked(entry)) {
+            break;
+        }
+        pthread_mutex_unlock(&backend->mutex);
+        perform_entry(entry);
+        pthread_mutex_lock(&backend->mutex);
+        apply_entry_locked(backend, stream, entry);
+        stream->head = entry->next;
+        if (stream->head == NULL) {
+            stream->tail = NULL;
+        }
+        free(entry);
+    }
+    stream->draining = 0;
+}
+
+/*
+ * Append an entry and run what can be run.
+ *
+ * `entry` is already filled in by the caller; this takes ownership of it and
+ * frees it whether or not the queue advances.
+ */
+static void submit(
+    ShadowSpillMockBackend *backend, MockStream *stream, MockOperation *entry
+) {
+    pthread_mutex_lock(&backend->mutex);
+    entry->next = NULL;
+    if (stream->tail != NULL) {
+        stream->tail->next = entry;
+    } else {
+        stream->head = entry;
+    }
+    stream->tail = entry;
+    drain_locked(backend, stream);
+    const int left = stream->head != NULL;
+    pthread_mutex_unlock(&backend->mutex);
+    if (left) {
+        /* Only a queue that stopped needs the thread, and only then is waking
+           it worth a system call. */
+        pthread_cond_signal(&backend->queued);
+    }
+}
+
+static MockOperation *entry_for(MockOperationKind kind) {
+    MockOperation *entry = calloc(1U, sizeof(*entry));
+    if (entry != NULL) {
+        entry->kind = kind;
+    }
+    return entry;
+}
+
+/*
+ * Throw away whatever a stream still holds.
+ *
+ * Destroying a stream with work on it abandons that work, which is what
+ * destroying a stream means. Records are the exception and are stamped on the
+ * way out: an event left queued would never complete, and a caller waiting on
+ * one would wait for a stream that no longer exists. The backend's lock is
+ * held, and the caller has established that no drainer is inside.
+ */
+static void discard_queue_locked(
+    ShadowSpillMockBackend *backend, MockStream *stream
+) {
+    while (stream->head != NULL) {
+        MockOperation *const entry = stream->head;
+        stream->head = entry->next;
+        if (entry->kind == MOCK_RECORD_EVENT) {
+            apply_entry_locked(backend, stream, entry);
+        }
+        free(entry);
+    }
+    stream->tail = NULL;
+}
+
+/*
+ * Resume the queues that stopped.
+ *
+ * Nothing reaches this backend when a value wait is satisfied -- the word is
+ * stored by a host thread writing memory -- so a stopped queue is found by
+ * looking, and this is what looks. The cursor advances while the lock is held
+ * and `drain_locked` holds `draining` across every window in which it is not,
+ * so a stream cannot be destroyed under it.
+ */
+static void *drain_streams(void *argument) {
+    ShadowSpillMockBackend *backend = argument;
+    pthread_mutex_lock(&backend->mutex);
+    for (;;) {
+        if (backend->stopping) {
+            break;
+        }
+        int waiting = 0;
+        for (MockStream *stream = backend->streams; stream != NULL;) {
+            drain_locked(backend, stream);
+            waiting = waiting || stream->head != NULL;
+            stream = stream->next;
+        }
+        if (waiting) {
+            pthread_mutex_unlock(&backend->mutex);
+            sleep_briefly();
+            pthread_mutex_lock(&backend->mutex);
+        } else {
+            pthread_cond_wait(&backend->queued, &backend->mutex);
+        }
+    }
+    pthread_mutex_unlock(&backend->mutex);
+    return NULL;
+}
+
 /* --------------------------------------------------------------- streams */
 
 static int create_stream(void *state, ShadowSpillBackendStream *stream) {
@@ -135,9 +422,25 @@ static int create_stream(void *state, ShadowSpillBackendStream *stream) {
     if (created == NULL) {
         return -1;
     }
+    pthread_mutex_lock(&backend->mutex);
+    created->next = backend->streams;
+    backend->streams = created;
+    pthread_mutex_unlock(&backend->mutex);
     *stream = (ShadowSpillBackendStream)(uintptr_t)created;
     count(backend, &backend->statistics.streams_created, 1U);
     return 0;
+}
+
+static void unlink_stream_locked(
+    ShadowSpillMockBackend *backend, MockStream *stream
+) {
+    MockStream **link = &backend->streams;
+    while (*link != NULL && *link != stream) {
+        link = &(*link)->next;
+    }
+    if (*link == stream) {
+        *link = stream->next;
+    }
 }
 
 static int destroy_stream(void *state, ShadowSpillBackendStream stream) {
@@ -145,7 +448,25 @@ static int destroy_stream(void *state, ShadowSpillBackendStream stream) {
     if (operation_fails(backend)) {
         return -1;
     }
-    free(stream_pointer(stream));
+    MockStream *target = stream_pointer(stream);
+    /* The default stream lives inside the backend and goes with it. Freeing it
+       here would be freeing the middle of the backend. */
+    if (target == NULL || target == &backend->default_stream) {
+        return -1;
+    }
+    for (;;) {
+        pthread_mutex_lock(&backend->mutex);
+        drain_locked(backend, target);
+        if (!target->draining) {
+            discard_queue_locked(backend, target);
+            unlink_stream_locked(backend, target);
+            pthread_mutex_unlock(&backend->mutex);
+            break;
+        }
+        pthread_mutex_unlock(&backend->mutex);
+        sleep_briefly();
+    }
+    free(target);
     count(backend, &backend->statistics.streams_destroyed, 1U);
     return 0;
 }
@@ -161,13 +482,14 @@ static int synchronize_stream(void *state, ShadowSpillBackendStream stream) {
     }
     for (;;) {
         pthread_mutex_lock(&backend->mutex);
+        drain_locked(backend, target);
+        const int idle = target->head == NULL && !target->draining;
         const uint64_t ready = target->ready_nanoseconds;
         pthread_mutex_unlock(&backend->mutex);
-        if (now_nanoseconds() >= ready && value_satisfied(&target->value)) {
+        if (idle && now_nanoseconds() >= ready) {
             break;
         }
-        struct timespec delay = {.tv_nsec = 100000U};
-        (void)nanosleep(&delay, NULL);
+        sleep_briefly();
     }
     count(backend, &backend->statistics.stream_synchronizations, 1U);
     return 0;
@@ -208,18 +530,21 @@ static int delayed_copy(
     if (target == NULL) {
         return -1;
     }
+    MockOperation *entry = entry_for(MOCK_COPY);
+    if (entry == NULL) {
+        return -1;
+    }
+    entry->destination = destination;
+    entry->source = source;
+    entry->bytes = bytes;
+    entry->duration_nanoseconds = delay_nanoseconds;
+    /* Counted where it was asked for rather than where it runs, so the numbers
+       a caller reads back describe the calls it made. */
     pthread_mutex_lock(&backend->mutex);
-    if (bytes != 0U) {
-        memcpy(destination, source, (size_t)bytes);
-    }
-    const uint64_t now = now_nanoseconds();
-    if (target->ready_nanoseconds < now) {
-        target->ready_nanoseconds = now;
-    }
-    target->ready_nanoseconds += delay_nanoseconds;
     ++*copies;
     *copied_bytes += bytes;
     pthread_mutex_unlock(&backend->mutex);
+    submit(backend, target, entry);
     return 0;
 }
 
@@ -288,6 +613,15 @@ static int destroy_event(void *state, ShadowSpillBackendEvent event) {
     return 0;
 }
 
+/*
+ * The event is recorded at once and complete later.
+ *
+ * Recording has to take effect immediately, because a caller may wait on or
+ * query the event the instant this returns and an unrecorded event is refused.
+ * What waits is completion: the event is stamped when the entry reaches the
+ * head of this stream, so an event recorded behind a wait cannot complete until
+ * that wait does.
+ */
 static int record_event(
     void *state, ShadowSpillBackendEvent event, ShadowSpillBackendStream stream
 ) {
@@ -300,16 +634,16 @@ static int record_event(
     if (target == NULL || source == NULL) {
         return -1;
     }
+    MockOperation *entry = entry_for(MOCK_RECORD_EVENT);
+    if (entry == NULL) {
+        return -1;
+    }
+    entry->event = target;
     pthread_mutex_lock(&backend->mutex);
-    const uint64_t now = now_nanoseconds();
-    const uint64_t ready =
-        source->ready_nanoseconds > now ? source->ready_nanoseconds : now;
-    target->ready_nanoseconds = ready + backend->config.event_delay_nanoseconds;
-    /* Whatever this stream is waiting on, the event is waiting on too: it
-       cannot complete before the work ahead of it on the stream. */
-    target->value = source->value;
-    target->recorded = 1;
+    entry->stamp = ++target->stamp;
+    target->state = MOCK_EVENT_QUEUED;
     pthread_mutex_unlock(&backend->mutex);
+    submit(backend, source, entry);
     return 0;
 }
 
@@ -324,12 +658,11 @@ static int query_event(void *state, ShadowSpillBackendEvent event, int *complete
     }
     pthread_mutex_lock(&backend->mutex);
     ++backend->statistics.event_queries;
-    if (!target->recorded) {
+    if (target->state == MOCK_EVENT_UNRECORDED) {
         pthread_mutex_unlock(&backend->mutex);
         return -1;
     }
-    *complete = now_nanoseconds() >= target->ready_nanoseconds &&
-                value_satisfied(&target->value);
+    *complete = event_complete_locked(target);
     pthread_mutex_unlock(&backend->mutex);
     return 0;
 }
@@ -338,11 +671,11 @@ static int query_event(void *state, ShadowSpillBackendEvent event, int *complete
  * Signal words, and a stream that waits on one.
  *
  * The mock has no device, so "the stream waits until the word reaches a value"
- * becomes "the stream cannot be ready before the host stores that value". A
- * wait on a word already past the value it awaits is satisfied at once; a wait on
- * one that has not arrived pushes the stream's clock out to now, and the store
- * that follows moves it no further. That is the same shape a driver's value
- * wait has, which is what the lane layer above is written against.
+ * becomes "the entries behind the wait do not run until the host stores that
+ * value". A wait on a word already past what it awaits runs at once; one on a
+ * word that has not arrived holds the queue, and the backend's drain thread is
+ * what notices when it does. That is the same shape a driver's value wait has,
+ * which is what the lane layer above is written against.
  */
 typedef struct MockSignals {
     uint64_t *words;
@@ -411,23 +744,22 @@ static int wait_value(
     if (target == NULL || block == NULL || index >= block->count) {
         return -1;
     }
-    pthread_mutex_lock(&backend->mutex);
-    target->value = (MockPendingValue){
-        .word = &block->words[index],
-        .awaited = value,
-        .pending = 1,
-    };
-    ++backend->statistics.stream_waits;
-    pthread_mutex_unlock(&backend->mutex);
+    MockOperation *entry = entry_for(MOCK_WAIT_VALUE);
+    if (entry == NULL) {
+        return -1;
+    }
+    entry->word = &block->words[index];
+    entry->value = value;
+    count(backend, &backend->statistics.stream_waits, 1U);
+    submit(backend, target, entry);
     return 0;
 }
 
 /*
- * The mirror of `wait_value`. The mock has no device, so "the stream reaches
- * this point" is its logical clock reaching it: the word is stored when the
- * stream has no wait outstanding, and left for the drain to store when it has.
- * That is enough for the ordering a caller can observe, which is all the mock
- * promises.
+ * The mirror of `wait_value`. The stream stores the word when it reaches this
+ * entry, which is after everything queued before it has run -- so a host thread
+ * that reads the word learns how far the stream has got, which is the whole
+ * question it answers.
  */
 static int write_value(
     void *state,
@@ -445,10 +777,14 @@ static int write_value(
     if (target == NULL || block == NULL || index >= block->count) {
         return -1;
     }
-    pthread_mutex_lock(&backend->mutex);
-    block->words[index] = value;
-    ++backend->statistics.stream_writes;
-    pthread_mutex_unlock(&backend->mutex);
+    MockOperation *entry = entry_for(MOCK_WRITE_VALUE);
+    if (entry == NULL) {
+        return -1;
+    }
+    entry->word = &block->words[index];
+    entry->value = value;
+    count(backend, &backend->statistics.stream_writes, 1U);
+    submit(backend, target, entry);
     return 0;
 }
 
@@ -465,15 +801,18 @@ static int wait_event(
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    if (!source->recorded) {
-        pthread_mutex_unlock(&backend->mutex);
+    const int recorded = source->state != MOCK_EVENT_UNRECORDED;
+    pthread_mutex_unlock(&backend->mutex);
+    if (!recorded) {
         return -1;
     }
-    if (source->ready_nanoseconds > target->ready_nanoseconds) {
-        target->ready_nanoseconds = source->ready_nanoseconds;
+    MockOperation *entry = entry_for(MOCK_WAIT_EVENT);
+    if (entry == NULL) {
+        return -1;
     }
-    ++backend->statistics.stream_waits;
-    pthread_mutex_unlock(&backend->mutex);
+    entry->event = source;
+    count(backend, &backend->statistics.stream_waits, 1U);
+    submit(backend, target, entry);
     return 0;
 }
 
@@ -486,20 +825,22 @@ static int synchronize_event(void *state, ShadowSpillBackendEvent event) {
     if (target == NULL) {
         return -1;
     }
-    pthread_mutex_lock(&backend->mutex);
-    const int recorded = target->recorded;
-    const uint64_t ready = target->ready_nanoseconds;
-    pthread_mutex_unlock(&backend->mutex);
-    if (!recorded) {
-        return -1;
-    }
     /* The mock's events complete on the host clock, so waiting for one is
-     * waiting for that instant to pass -- and, if the stream it was recorded on
-     * was held by a value wait, for that word to arrive. */
-    while (now_nanoseconds() < ready || !value_satisfied(&target->value)) {
-        sched_yield();
+     * waiting for the stream to reach its record and for that instant to pass.
+     * The drain thread is what advances a stream nobody is calling into. */
+    for (;;) {
+        pthread_mutex_lock(&backend->mutex);
+        const int recorded = target->state != MOCK_EVENT_UNRECORDED;
+        const int complete = event_complete_locked(target);
+        pthread_mutex_unlock(&backend->mutex);
+        if (!recorded) {
+            return -1;
+        }
+        if (complete) {
+            return 0;
+        }
+        sleep_briefly();
     }
-    return 0;
 }
 
 static int elapsed_nanoseconds(
@@ -516,12 +857,12 @@ static int elapsed_nanoseconds(
         return -1;
     }
     pthread_mutex_lock(&backend->mutex);
-    if (!origin->recorded || !target->recorded) {
+    if (origin->state == MOCK_EVENT_UNRECORDED ||
+        target->state == MOCK_EVENT_UNRECORDED) {
         pthread_mutex_unlock(&backend->mutex);
         return -1;
     }
-    const uint64_t now = now_nanoseconds();
-    if (now < origin->ready_nanoseconds || now < target->ready_nanoseconds) {
+    if (!event_complete_locked(origin) || !event_complete_locked(target)) {
         pthread_mutex_unlock(&backend->mutex);
         return 1;
     }
@@ -618,6 +959,18 @@ int shadowspill_mock_backend_create(
         free(mock);
         return -1;
     }
+    if (pthread_cond_init(&mock->queued, NULL) != 0) {
+        pthread_mutex_destroy(&mock->mutex);
+        free(mock);
+        return -1;
+    }
+    mock->streams = &mock->default_stream;
+    if (pthread_create(&mock->drain_thread, NULL, drain_streams, mock) != 0) {
+        pthread_cond_destroy(&mock->queued);
+        pthread_mutex_destroy(&mock->mutex);
+        free(mock);
+        return -1;
+    }
     *backend = interface_for(mock);
     return 0;
 }
@@ -641,6 +994,22 @@ SHADOWSPILL_BACKEND_MOCK_API void shadowspill_backend_destroy(
         return;
     }
     ShadowSpillMockBackend *mock = backend->state;
+    pthread_mutex_lock(&mock->mutex);
+    mock->stopping = 1;
+    pthread_cond_broadcast(&mock->queued);
+    pthread_mutex_unlock(&mock->mutex);
+    (void)pthread_join(mock->drain_thread, NULL);
+    /* Streams a caller did not destroy go with the backend, and so does
+       anything still queued on them: there is nothing left to observe it. */
+    while (mock->streams != NULL) {
+        MockStream *const stream = mock->streams;
+        mock->streams = stream->next;
+        discard_queue_locked(mock, stream);
+        if (stream != &mock->default_stream) {
+            free(stream);
+        }
+    }
+    pthread_cond_destroy(&mock->queued);
     pthread_mutex_destroy(&mock->mutex);
     free(mock);
     memset(backend, 0, sizeof(*backend));
@@ -711,13 +1080,12 @@ int shadowspill_mock_enqueue_compute(
     if (target == NULL) {
         return -1;
     }
-    pthread_mutex_lock(&mock->mutex);
-    const uint64_t now = now_nanoseconds();
-    if (target->ready_nanoseconds < now) {
-        target->ready_nanoseconds = now;
+    MockOperation *entry = entry_for(MOCK_COMPUTE);
+    if (entry == NULL) {
+        return -1;
     }
-    target->ready_nanoseconds += duration_nanoseconds;
-    pthread_mutex_unlock(&mock->mutex);
+    entry->duration_nanoseconds = duration_nanoseconds;
+    submit(mock, target, entry);
     return 0;
 }
 
