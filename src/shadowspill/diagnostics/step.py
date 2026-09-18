@@ -187,9 +187,14 @@ class TransferRecord:
     simulated_ready_at_seconds: float | None
     simulated_started_at_seconds: float | None
     simulated_finished_at_seconds: float | None
-    #: Device timeline: the copy's interval on its transfer lane, bracketed
-    #: by timing events the worker recorded around it. `None` when the trace
-    #: could not measure this transfer.
+    #: Lane timeline, on the trace origin's axis: when the worker handed the
+    #: copy to its lane, when the lane started moving bytes, and when they had
+    #: landed. **Issued to started is the dependency wait**, so a copy held
+    #: behind an event reads as late rather than slow. A lane whose bytes move
+    #: on a stream reads the last two off timing events bracketing the copy; one
+    #: whose bytes move elsewhere reads a host clock and converts through the
+    #: trace's anchor. `None` where the trace could not measure this transfer.
+    lane_issued_at_seconds: float | None
     lane_started_at_seconds: float | None
     lane_finished_at_seconds: float | None
     #: Device minus simulated, after alignment; `None` without a stream
@@ -223,6 +228,7 @@ class TransferRecord:
                 "simulated_finished_at_seconds": self.simulated_finished_at_seconds,
             },
             "lane": {
+                "lane_issued_at_seconds": self.lane_issued_at_seconds,
                 "lane_started_at_seconds": self.lane_started_at_seconds,
                 "lane_finished_at_seconds": self.lane_finished_at_seconds,
             },

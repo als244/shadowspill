@@ -400,6 +400,13 @@ def _opening_record(
     ):
         lane_started = completion.lane_started_at_ns / 1e9
         lane_finished = completion.lane_finished_at_ns / 1e9
+    # Reported on its own: a lane may know when it was handed a transfer and
+    # not when the bytes moved, and the wait is worth having either way.
+    lane_issued = (
+        None
+        if completion.lane_issued_at_ns is None
+        else completion.lane_issued_at_ns / 1e9
+    )
     return TransferRecord(
         transfer_id=f"{direction}_opening_{index:06d}",
         direction=direction,
@@ -417,6 +424,7 @@ def _opening_record(
         simulated_ready_at_seconds=None,
         simulated_started_at_seconds=None,
         simulated_finished_at_seconds=None,
+        lane_issued_at_seconds=lane_issued,
         lane_started_at_seconds=lane_started,
         lane_finished_at_seconds=lane_finished,
         start_delta_seconds=None,
@@ -477,6 +485,13 @@ def _transfer_record(
         lane_finished = completion.lane_finished_at_ns / 1e9
         start_delta = lane_started - (simulated_start + alignment)
         end_delta = lane_finished - (simulated_end + alignment)
+    # Reported on its own: a lane may know when it was handed a transfer and
+    # not when the bytes moved, and the wait is worth having either way.
+    lane_issued = (
+        None
+        if completion.lane_issued_at_ns is None
+        else completion.lane_issued_at_ns / 1e9
+    )
     return TransferRecord(
         transfer_id=f"{direction}_{interval.sequence:06d}",
         direction=direction,
@@ -490,6 +505,7 @@ def _transfer_record(
         simulated_ready_at_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
         simulated_started_at_seconds=simulated_start,
         simulated_finished_at_seconds=simulated_end,
+        lane_issued_at_seconds=lane_issued,
         lane_started_at_seconds=lane_started,
         lane_finished_at_seconds=lane_finished,
         start_delta_seconds=start_delta,
@@ -523,9 +539,7 @@ def _simulated_duration(record: TransferRecord) -> float | None:
     return record.simulated_finished_at_seconds - record.simulated_started_at_seconds
 
 
-def _lane_statistics(
-    bridge: RuntimeBridge, direction: str
-) -> LaneStatistics | None:
+def _lane_statistics(bridge: RuntimeBridge, direction: str) -> LaneStatistics | None:
     """What the lane carrying one direction reports, or None if it reports none.
 
     The route is found by the pool pair it joins rather than by a name, because
