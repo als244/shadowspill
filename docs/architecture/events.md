@@ -57,12 +57,16 @@ with its event.
 Traced transfers are measured with timing events, the kind that carries a
 device timestamp. They come from a second pool the runtime keeps apart from
 the dependency pool, reserved when a trace is prepared with a fixed number of
-events per lane, and sealed like the first. A stream interval takes two
-leases from it, records the first before a copy and the second after, and
-reads both against the step's origin marker with `elapsed_nanoseconds`; a
-pool that runs out leaves later intervals unmeasured, never a transfer
-failed. An untraced step never touches this pool. How the intervals become a
-timeline is in [timelines](timelines.md).
+events per lane, and sealed like the first. **A lane draws on it, not the
+worker**: a lane whose bytes move on a stream takes two leases per traced
+transfer, records the first before its copy and the second after, and reads
+both against the step's origin marker with `elapsed_nanoseconds` when the
+runtime asks what that transfer did. A pool that runs out leaves later
+transfers unmeasured, never a transfer failed. A lane whose bytes move
+elsewhere never touches this pool at all, because there is no anchor from its
+clock to that origin. An untraced step never touches it either -- a lane asks
+`shadowspill_lane_trace_active()` first, and keeps nothing when the answer is
+no. How the instants become a timeline is in [timelines](timelines.md).
 
 The same pool answers a caller timing its own work. A marker is one lease,
 recorded on a stream the caller names and recorded again whenever the caller

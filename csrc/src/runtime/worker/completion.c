@@ -82,7 +82,9 @@ void shadowspill_action_complete(
     action->completion_event = NULL;
     action->dependency_event = NULL;
     action->has_completion_event = 0U;
-    shadowspill_stream_interval_discard(runtime, &action->stream_interval);
+    /* Whatever the lane kept for this transfer is released by the one query
+       below; reaching here without having made it means nothing was kept. */
+    action->lane_handle = 0U;
     const uint64_t task_id = action->task_id;
     const uint64_t object_id = object->object_id;
     const uint64_t allocation_id = object->allocation_id;
@@ -350,19 +352,36 @@ int shadowspill_action_finish_locked(
                 spill->current = 0U;
             }
         }
+        /*
+         * What the lane says this transfer did. Asked once, after its event
+         * has completed, and only for a handle `copy` kept -- the query is
+         * what retires it, so there is nothing to release afterwards.
+         *
+         * A lane that reports no instants leaves them unset, and the trace
+         * records the transfer with no times rather than with wrong ones.
+         */
         uint64_t lane_started_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
         uint64_t lane_finished_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
-        if (shadowspill_stream_interval_read(
-                runtime, &action->stream_interval,
-                runtime->trace_origin_event,
-                &lane_started_at_ns, &lane_finished_at_ns
-            ) != 0) {
-            lane_started_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
-            lane_finished_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
+        ShadowSpillLaneTransfer moved = {
+            .started_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
+            .finished_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
+            .bytes = 0U,
+            .chunks = 0U,
+        };
+        const ShadowSpillRouteState *const lane_route = action->route;
+        if (action->lane_handle != 0U && lane_route != NULL &&
+            lane_route->operations->transfer != NULL &&
+            lane_route->operations->transfer(
+                lane_route->lane, action->lane_handle, &moved
+            ) == 0) {
+            if (moved.started_at_nanoseconds != SHADOWSPILL_LANE_NO_TIME) {
+                lane_started_at_ns = moved.started_at_nanoseconds;
+            }
+            if (moved.finished_at_nanoseconds != SHADOWSPILL_LANE_NO_TIME) {
+                lane_finished_at_ns = moved.finished_at_nanoseconds;
+            }
         }
-        shadowspill_stream_interval_discard(
-            runtime, &action->stream_interval
-        );
+        action->lane_handle = 0U;
         shadowspill_append_stamped_trace_event_locked(
             runtime,
             SHADOWSPILL_TRACE_TRANSFER_COMPLETED,

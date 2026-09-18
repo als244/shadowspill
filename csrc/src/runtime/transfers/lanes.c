@@ -23,13 +23,11 @@ static int entry_is_valid(const ShadowSpillLaneDescription *entry) {
         return 0;
     }
     const ShadowSpillLaneOperations *operations = entry->operations;
-    /* The intervals may be absent, but only together: one without the other
-       cannot produce a readable interval. */
+    /* `transfer` and `timing` are what a lane may leave out; the rest is what
+       the runtime cannot proceed without. */
     return operations->wait != NULL && operations->copy != NULL &&
            operations->signal != NULL && operations->synchronize != NULL &&
-           operations->destroy != NULL &&
-           (operations->interval_open == NULL) ==
-               (operations->interval_close == NULL);
+           operations->destroy != NULL;
 }
 
 int shadowspill_lane_table_initialize(
@@ -48,9 +46,7 @@ int shadowspill_lane_table_initialize(
     if (table->entries == NULL) {
         return -1;
     }
-    shadowspill_pinned_host_device_lanes_describe(
-        runtime, table->builtin, table->entries
-    );
+    shadowspill_pinned_host_device_lanes_describe(runtime, table->entries);
     table->count = builtin_count;
     for (uint32_t index = 0U; index < registered_count; ++index) {
         const ShadowSpillLaneDescription *entry = &registered[index];
