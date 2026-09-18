@@ -72,7 +72,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
             )
         else:
             warm = _warm_step(planned.training, case, arguments, physical_statuses)
-            _announce_prediction(manifest, planned.report)
+            _announce_prediction(manifest, planned.report, runtime)
             measured = _measure_groups(
                 planned.training, case, manifest, arguments, physical_statuses
             )

@@ -24,7 +24,11 @@ from workloads.common.training import LEARNING_RATE, optimizer_state_init
 
 from ..model_state import import_case_model, release_case_model
 from ..plan_record import write_plan_records
-from ..runtime_evidence import adapter_statistics, check_physical_budget
+from ..runtime_evidence import (
+    adapter_statistics,
+    check_physical_budget,
+    measured_rate_clause,
+)
 from .metrics import state_digest
 from .references import reference_artifact_exists, reference_inputs_path
 from .request import PlannedRequest, workload_metadata_for
@@ -127,6 +131,67 @@ def _checked_case(request: PlannedRequest) -> tuple[Any, str]:
     return case, requested_input_digest
 
 
+def _tokens_per_step(case: Any) -> int | None:
+    """Tokens one step consumes, read from the case's own microbatches.
+
+    The performance matrix takes this from a manifest; this path has none, so
+    it comes from the inputs: the first value in each microbatch is the token
+    block, and a step is every microbatch it accumulates over. `None` where a
+    case's inputs are not shaped that way, and the line below then reports
+    seconds without a rate rather than a rate that is wrong.
+    """
+
+    total = 0
+    for microbatch in getattr(case, "microbatches", None) or ():
+        block = next(
+            (item for item in microbatch if isinstance(item, torch.Tensor)), None
+        )
+        if block is None:
+            return None
+        total += int(block.numel())
+    return total or None
+
+
+def _announce_prediction(
+    case: Any, training: Any, runtime: Runtime, case_name: str
+) -> None:
+    """State the prediction, the rates it was made from, and the measured ones.
+
+    Said after planning and before the first step, so the steps below can be
+    read against it. The measured rates are what the runtime calibrated at
+    construction -- every runtime does, this matrix simply never said what it
+    found. On a remote run they are the link's, which is the only place a
+    degraded link would otherwise show up as nothing more than a slow step.
+    """
+
+    report = getattr(training, "plan_report", None)
+    planned = getattr(report, "summary", None)
+    if report is None or planned is None:
+        return
+    predicted_seconds = report.predicted_makespan_ns / 1e9
+    unconstrained_seconds = planned.unconstrained_step_seconds
+    tokens = _tokens_per_step(case)
+
+    def rate(seconds: float) -> str:
+        if tokens is None or seconds <= 0.0:
+            return ""
+        return f", {tokens / seconds:.2f} tokens/s"
+
+    measured = measured_rate_clause(runtime)
+
+    print(
+        f"simulator predicts {case_name}: "
+        f"{predicted_seconds:.4f} s/step{rate(predicted_seconds)} "
+        f"(planned with: fetch "
+        f"{planned.fetch_bandwidth_bytes_per_second / 1e9:.1f} GB/s, evict "
+        f"{planned.evict_bandwidth_bytes_per_second / 1e9:.1f} GB/s"
+        f"{measured})"
+        f"; unconstrained throughput "
+        f"{unconstrained_seconds:.4f} s/step{rate(unconstrained_seconds)}",
+        flush=True,
+    )
+
+
 def _plan_case(
     case: Any,
     request: PlannedRequest,
@@ -181,6 +246,7 @@ def _plan_case(
         f"{phases.get('search', 0.0):.3f}s",
         flush=True,
     )
+    _announce_prediction(case, training, runtime, case_name)
     return training, planning_seconds
 
 
