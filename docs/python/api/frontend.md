@@ -451,7 +451,6 @@ read_model_state(
     model,
     *,
     runtime,
-    copy=True,
 ) -> dict[str, torch.Tensor]
 ```
 
@@ -461,7 +460,6 @@ read_optimizer_state(
     optimizer,
     *,
     runtime,
-    copy=True,
 ) -> dict[str, torch.Tensor]
 ```
 
@@ -470,15 +468,12 @@ from the name the state is enumerated under to a host tensor. They answer what
 the state currently is without rebinding anything, which is what makes them usable while a plan holds the target --
 `export_*` cannot run then, and the runtime refuses it.
 
-`copy=True`, the default, gives ordinary host memory outside the runtime
-pools, one buffer per storage root with the target's views laid over it, so
-entries that shared a root still share one, and the values keep what they held
-when the call returned. `copy=False` allocates nothing and views the pool's
-own bytes instead: ordinary torch operations work on them, but treat them as
-read-only, because writing through one changes runtime state behind the
-runtime's back, and they stop being current the next time the plan runs. A
-storage root whose pool copy is not the authoritative one is copied either
-way.
+The values are ordinary host memory outside the runtime pools, one buffer per
+storage root with the target's views laid over it, so entries that shared a
+root still share one, and they keep what they held when the call returned.
+State crosses a pool's edge by copying, whichever pool holds it: a pool whose
+memory is not in this address space cannot be viewed at all, so one path that
+always works is worth more than a cheaper one that applies only sometimes.
 
 ### Who owns what
 

@@ -1,8 +1,8 @@
 # Importing state
 
 How a caller's model and optimizer state come to live in the runtime's pools,
-what the caller must guarantee for that to stay bounded, and how dtype is
-decided.
+what the caller must guarantee for that to stay bounded, how dtype is decided,
+and how the values come back out.
 
 ## The problem
 
@@ -266,6 +266,25 @@ transfer accounting and the byte count the runtime hands a lane to copy all
 assume -- so a
 conversion on the way to the device is not something a single alias can
 express.
+
+## And back out, the same way
+
+State leaves a pool by copying, exactly as it enters. `read_model_state()` and
+its optimizer counterpart answer with ordinary host memory -- one buffer per
+storage root, with the target's views laid over it, so entries that shared a
+root still share one. `export_model_state()` does the same and hands ownership
+back, rebinding the target's own tensors.
+
+Neither hands out a pool address, and there is deliberately no second path that
+reads the pool in place. A pool whose memory is not in this address space has
+no address to view, so an in-place read is available only sometimes -- and a
+cheaper path that silently stops applying is the one a caller comes to rely on.
+The same trade as the import side above, decided the same way.
+
+How the bytes actually cross the edge is the kind's business: a pool this
+process can address leaves the [pool-memory contract](../c/pool-memory.md)'s
+`read` entry out and the runtime copies directly, and one whose memory is
+elsewhere implements it. The caller makes the same call either way.
 
 ## See also
 
