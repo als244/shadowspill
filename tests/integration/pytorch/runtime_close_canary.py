@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import torch
 
-from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.memory import device, transfer_route
 from shadowspill.pytorch import Runtime
 from shadowspill.status import Status
+from tests.spill_pool import spill_pool
 
 
 def main() -> int:
@@ -16,7 +17,7 @@ def main() -> int:
                 physical_capacity=2 << 30,
                 provider_headroom=512 << 20,
             ),
-            "spill": pinned_host(capacity=256 << 20),
+            "spill": spill_pool(256 << 20),
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),

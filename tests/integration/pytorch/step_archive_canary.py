@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from canary_phases import phase
 
-from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.memory import device, transfer_route
 from shadowspill.pytorch import (
     ObjectiveResult,
     Runtime,
@@ -20,6 +20,7 @@ from shadowspill.pytorch import (
     import_model_state,
 )
 from shadowspill.step import StepDataOrdering
+from tests.spill_pool import spill_pool
 
 
 class _Model(nn.Module):
@@ -61,7 +62,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 "execution": device(
                     physical_capacity=2 << 30, provider_headroom=512 << 20
                 ),
-                "spill": pinned_host(capacity=1 << 30),
+                "spill": spill_pool(1 << 30),
             },
             routes={
                 "fetch": transfer_route(source="spill", destination="execution"),
