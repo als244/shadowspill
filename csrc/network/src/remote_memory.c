@@ -281,43 +281,85 @@ static int remote_transfer(
     }
     pthread_mutex_lock(&region->write_lock);
     const uint32_t index = write_queue_pair(region);
-    struct ibv_sge element = {
-        .addr = (uint64_t)(uintptr_t)local,
-        .length = (uint32_t)bytes,
-        .lkey = registration->lkey,
-    };
-    struct ibv_send_wr request = {
-        .wr_id = 0U,
-        .sg_list = &element,
-        .num_sge = 1,
-        .opcode = opcode,
-        .send_flags = IBV_SEND_SIGNALED,
-        .wr = {.rdma = {
-            .remote_addr = region->address + offset,
-            .rkey = region->key,
-        }},
-    };
-    struct ibv_send_wr *bad = NULL;
-    int failed = ibv_post_send(
-        region->endpoint.queue_pairs[index], &request, &bad
-    ) != 0;
-    while (!failed) {
-        struct ibv_wc completion;
-        const int taken = ibv_poll_cq(
-            region->endpoint.completion_queues[index], 1, &completion
-        );
-        if (taken < 0) {
+    /*
+     * In pieces the port will carry. A queue pair refuses a work request
+     * longer than `max_msg_sz`, and a scatter-gather element's length is 32
+     * bits besides -- so an object larger than either has to cross in more
+     * than one message. Sending it as one used to truncate the length to 32
+     * bits and move the wrong number of bytes without saying so.
+     *
+     * One piece at a time, because this is the state path rather than the
+     * transfer path: it already registers and unregisters per call, it runs
+     * while nothing else is moving, and pipelining it would be optimising the
+     * half of the system that was deliberately left unoptimised.
+     */
+    const uint64_t limit = region->endpoint.max_message_bytes;
+    uint64_t moved = 0U;
+    int failed = 0;
+    while (!failed && moved < bytes) {
+        const uint64_t piece = bytes - moved < limit ? bytes - moved : limit;
+        struct ibv_sge element = {
+            .addr = (uint64_t)(uintptr_t)local + moved,
+            .length = (uint32_t)piece,
+            .lkey = registration->lkey,
+        };
+        struct ibv_send_wr request = {
+            /* Names the piece, so a completion says which one it is for. */
+            .wr_id = moved,
+            .sg_list = &element,
+            .num_sge = 1,
+            .opcode = opcode,
+            .send_flags = IBV_SEND_SIGNALED,
+            .wr = {.rdma = {
+                .remote_addr = region->address + offset + moved,
+                .rkey = region->key,
+            }},
+        };
+        struct ibv_send_wr *bad = NULL;
+        if (ibv_post_send(
+                region->endpoint.queue_pairs[index], &request, &bad
+            ) != 0) {
             failed = 1;
-        } else if (taken > 0) {
+            break;
+        }
+        for (;;) {
+            struct ibv_wc completion;
+            const int taken = ibv_poll_cq(
+                region->endpoint.completion_queues[index], 1, &completion
+            );
+            if (taken < 0) {
+                failed = 1;
+                break;
+            }
+            if (taken == 0) {
+                continue;
+            }
             if (completion.status != IBV_WC_SUCCESS) {
                 fprintf(
                     stderr, "shadowspill network: state %s failed (%s)\n",
                     what, ibv_wc_status_str(completion.status)
                 );
                 failed = 1;
+                break;
+            }
+            if (completion.wr_id != request.wr_id) {
+                /* This queue pair is the region's own and is held under
+                   `write_lock`, so nothing else may be posting to it. A
+                   completion for another work request means that is no longer
+                   true, and taking it for this one would report a transfer
+                   that has not finished. */
+                fprintf(
+                    stderr,
+                    "shadowspill network: state %s took a completion for "
+                    "another request\n",
+                    what
+                );
+                failed = 1;
+                break;
             }
             break;
         }
+        moved += piece;
     }
     pthread_mutex_unlock(&region->write_lock);
     (void)ibv_dereg_mr(registration);

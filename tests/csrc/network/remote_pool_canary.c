@@ -24,6 +24,10 @@
 
 #include "../../../csrc/network/internal.h"
 
+/* 256 KiB against the 64 KiB limit `main` forces below, so the payload crosses
+   in four pieces rather than one. */
+#define EDGE_WORDS (32U << 10U)
+#define EDGE_MESSAGE_BYTES "65536"
 #define REMOTE_POOL_ID 2U
 #define REMOTE_CAPACITY (1U << 20U)
 
@@ -212,6 +216,61 @@ static int leases_behave_as_they_do_locally(
         }
     }
 
+    /*
+     * Bytes across the pool's edge, in more pieces than one.
+     *
+     * `write` and `read` are how state reaches a region this process cannot
+     * address, and the port will not carry a message longer than its own
+     * limit -- a gigabyte here -- so a large enough object crosses in pieces.
+     * `SHADOWSPILL_NETWORK_MESSAGE_BYTES` lowers that limit so the pieces are
+     * reachable with a payload measured in kilobytes.
+     *
+     * A loop that posted only the first piece, or computed the second piece's
+     * offset wrongly, or returned on a completion belonging to another work
+     * request, all fail here. Until now nothing exercised `write` or `read` at
+     * all: the gate was the first thing that ran them.
+     */
+    static uint64_t written[EDGE_WORDS];
+    static uint64_t restored[EDGE_WORDS];
+    for (uint64_t index = 0U; index < EDGE_WORDS; ++index) {
+        written[index] = index * 0x9E3779B97F4A7C15ULL;
+        restored[index] = 0U;
+    }
+    const ShadowSpillObjectDescription crossing = {
+        .object_id = 41U,
+        .size_bytes = sizeof(written),
+        .initial_version = 1U,
+        .retain_spill_copy = 1U,
+        .initial_pool_id = REMOTE_POOL_ID,
+        .initially_resident = 1U,
+    };
+    failed = failed ||
+        shadowspill_register_object(runtime, &crossing) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_write_object(
+            runtime, crossing.object_id, REMOTE_POOL_ID,
+            written, sizeof(written)
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_read_object(
+            runtime, crossing.object_id, REMOTE_POOL_ID,
+            restored, sizeof(restored)
+        ) != SHADOWSPILL_STATUS_OK;
+    if (failed) {
+        fprintf(stderr, "remote pool: state would not cross the edge\n");
+    }
+    for (uint64_t index = 0U; !failed && index < EDGE_WORDS; ++index) {
+        if (restored[index] != written[index]) {
+            fprintf(
+                stderr,
+                "remote pool: word %llu came back %llx, expected %llx\n",
+                (unsigned long long)index,
+                (unsigned long long)restored[index],
+                (unsigned long long)written[index]
+            );
+            failed = 1;
+        }
+    }
+
     ShadowSpillMemoryPoolStatistics statistics = {0};
     failed = failed || shadowspill_memory_pool_statistics(
         runtime, REMOTE_POOL_ID, &statistics
@@ -349,6 +408,21 @@ int main(void) {
             stderr,
             "remote pool: SHADOWSPILL_NETWORK_PEER must read host:port\n"
         );
+        return 1;
+    }
+    /*
+     * Lower the largest message the state path will post, so the round trip
+     * below crosses in four pieces rather than one.
+     *
+     * What this covers is the piece loop and the completion accounting: every
+     * piece posted at the right offset, and each one waited for by its own
+     * work request rather than by whichever completion arrived. A payload that
+     * would defeat the *length* arithmetic has to exceed four gigabytes, which
+     * is not something to allocate in a canary -- so that part is reasoned
+     * about rather than tested, and this covers the loop that carries it.
+     */
+    if (setenv("SHADOWSPILL_NETWORK_MESSAGE_BYTES", EDGE_MESSAGE_BYTES, 1) != 0) {
+        fprintf(stderr, "remote pool: could not set the message limit\n");
         return 1;
     }
     void *handle = NULL;
