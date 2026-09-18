@@ -35,7 +35,11 @@ lane operations a transfer uses, on the memory it owns. It reserves probe ranges
 route alone with warm-up and repeated copies, then measures a route against
 its reverse at the same time on their two lanes and publishes the concurrent
 per-direction rates as each route's effective bandwidth, keeping the solo
-figures beside them. Planning consumes that immutable profile and never
+figures beside them. The simultaneous pass issues the two directions' copies
+alternately rather than one direction's batch and then the other's, because a
+lane whose `copy` enqueues work per chunk makes issuing a batch cost real time:
+drained in turn, the first direction's measurement window would contain the
+second's dispatch and report a rate that low by however long that took. Planning consumes that immutable profile and never
 benchmarks a route itself; see the [runtime C API](../c/runtime.md).
 
 ## Dispatch
