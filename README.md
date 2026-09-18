@@ -80,7 +80,7 @@ script](benchmarking/quickstart.md) runs one model end to end, and the
 | `tests/` | Tests mirroring Python, C, integration, and tooling boundaries |
 | `workloads/` | Model and data clients used by benchmarks and qualification |
 | `benchmarking/` | The quickstart tour, program collection, and planning evaluation |
-| `qualification/` | Numerical and performance release gates |
+| `qualification/` | Release gates: suite, numerical, performance, and remote |
 | `src/tools/` | Source-tree diagnostics and acceptance tooling |
 | `reference/` | Readable reference implementations of the planner |
 | `scripts/` | One-command environment setup |

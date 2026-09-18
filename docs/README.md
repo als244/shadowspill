@@ -278,6 +278,8 @@ These pages live beside the code they describe, outside `docs/`.
   steps checked against PyTorch alone, compiled fullgraph without ShadowSpill.
 - [Full-model performance qualification](../qualification/performance/README.md)
   — throughput floors and simulator error on the large models.
+- [Remote qualification](../qualification/remote/README.md) — the numerical
+  matrix again, with the spill pool held by a daemon on another machine.
 - [Workloads](../workloads/README.md) — the model and data definitions the
   benchmarks and gates consume.
 

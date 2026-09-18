@@ -1,26 +1,29 @@
 # Qualification
 
 `qualification/` is ShadowSpill's thin release-acceptance surface. It owns the
-protocol descriptions and five launchers, but no alternate implementation of
+protocol descriptions and six launchers, but no alternate implementation of
 planning, execution, diagnostics, serialization, or model state.
 
 ```text
 qualification/
-├── gates.py         suite, numerical, and performance in one run
+├── gates.py         suite, numerical, performance and remote in one run
 ├── numerical/
 │   ├── README.md
 │   ├── run.py       one reference/planned correctness cell
 │   └── matrix.py    the five approximately-1B cells
-└── performance/
+├── performance/
+│   ├── README.md
+│   ├── run.py       one full-model throughput cell
+│   └── matrix.py    the retained full-model matrix
+└── remote/
     ├── README.md
-    ├── run.py       one full-model throughput cell
-    └── matrix.py    the retained full-model matrix
+    └── matrix.py    the numerical matrix, spilling to another machine
 ```
 
 ## Running the gates
 
-The three gates answer different questions and are usually wanted together,
-so one command runs them in order and reports what each found:
+The gates answer different questions and are usually wanted together, so one
+command runs them in order and reports what each found:
 
 ```bash
 python -m qualification.gates
@@ -29,7 +32,12 @@ python -m qualification.gates
 They always run unit suite, then numerical matrix, then performance matrix,
 whatever order the command line names them in; each finishes before the next
 begins, because the measured ones are timed and overlapping them would
-corrupt both. Name a subset to run only those:
+corrupt both.
+
+**`remote` is the fourth gate and is not in the default run**, because it needs
+a memory daemon reachable over RDMA. It is the numerical matrix with the spill
+pool on a peer, and it skips and succeeds when no peer is named; see
+[remote/README.md](remote/README.md). Name a subset to run only those:
 
 ```bash
 python -m qualification.gates suite numerical
@@ -69,8 +77,17 @@ in one config file with a section per gate:
 ```
 
 ```bash
-python -m qualification.gates --config qualification/gates.json
+python -m qualification.gates --config qualification/gates_h100.json
 ```
+
+**A config file is named for the machine its references were recorded on.**
+`gates_h100.json` points the numerical gate at `references/h100/`, and running
+it anywhere else fails the first cell on optimizer-state structure rather than
+on anything numerical -- the two machines' runs enumerate optimizer parameter
+groups differently, so every ordinal mismatches while the model tensors are
+exact and the replay is bitwise. That reads as a broken tree and is not one.
+Passing no config at all uses each gate's own defaults, which is what a run on
+the machine that recorded the default set wants.
 
 Each section is that gate's own command line, forwarded verbatim and
 unread by the wrapper. That is deliberate: an option the wrapper understood
