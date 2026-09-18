@@ -18,8 +18,15 @@ function(shadowspill_add_pytorch_canary name timeout)
       LABELS "cuda;pytorch"
       # The canary arms a watchdog from the same number CTest kills on, so a
       # wedged canary prints every thread's stack instead of dying silently.
+      # Which build these run against. Without it Python resolves
+      # libshadowspill.so by its own precedence and can find a *different*
+      # build than the adapter is linked against; the loader then maps both,
+      # and the process has two runtimes whose structures are not
+      # interchangeable. Naming this build's directory makes a ctest run
+      # self-contained, and `_refuse_a_second_runtime` catches whatever
+      # still gets past it.
       ENVIRONMENT
-        "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout}"
+        "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_CANARY_TIMEOUT=${timeout};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
   )
 endfunction()
@@ -58,7 +65,7 @@ function(shadowspill_add_public_api_test file name timeout)
     shadowspill_pytorch_public_${name}
     PROPERTIES
       LABELS "cuda;pytorch"
-      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR}"
+      ENVIRONMENT "PYTHONPATH=${PROJECT_SOURCE_DIR}/src:${PROJECT_SOURCE_DIR};SHADOWSPILL_LIBRARY_DIRECTORY=$<TARGET_FILE_DIR:shadowspill>"
       TIMEOUT ${timeout}
       # Each of these plans and runs a real model, so two at once contend for
       # the device and one of them loses.
