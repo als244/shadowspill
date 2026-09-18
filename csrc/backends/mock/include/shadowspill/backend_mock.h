@@ -23,7 +23,9 @@ extern "C" {
 /*
  * The accelerator-free backend: host memory stands in for the device, and
  * streams, events, and copies are simulated with delays on a monotonic clock.
- * A framework stream handle of 0 wraps its default stream.
+ * A stream is a real ordered queue -- an entry behind an unsatisfied wait has
+ * not happened yet, which is what a lane whose bytes do not move on a stream
+ * depends on. A framework stream handle of 0 wraps its default stream.
  * It implements the backend contract like any provider, and adds the test
  * hooks below for driving streams and injecting failures.
  */
