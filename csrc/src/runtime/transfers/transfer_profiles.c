@@ -212,10 +212,15 @@ static int measure_copy(
     uint64_t *average_nanoseconds
 ) {
     uint64_t total = 0U;
+    /* Calibration runs with no trace, so every lane keeps nothing and hands
+       back handle 0. Named once here rather than at four call sites. */
+    uint64_t ignored = 0U;
     for (uint32_t copy = 0U; copy < copies; ++copy) {
         const uint64_t begin = shadowspill_monotonic_ns();
         if (begin == 0U ||
-            route->operations->copy(route->lane, destination, source, bytes) != 0 ||
+            route->operations->copy(
+                route->lane, destination, source, bytes, &ignored
+            ) != 0 ||
             route->operations->synchronize(route->lane) != 0) {
             return -1;
         }
@@ -241,9 +246,10 @@ static int measure_copy_batch(
     if (begin == 0U) {
         return -1;
     }
+    uint64_t ignored = 0U;
     for (uint32_t copy = 0U; copy < copies; ++copy) {
         if (route->operations->copy(
-                route->lane, destination, source, bytes
+                route->lane, destination, source, bytes, &ignored
             ) != 0) {
             return -1;
         }
@@ -308,10 +314,11 @@ static int calibrate_route(
         destination, destination_offset
     );
     int status = 0;
+    uint64_t ignored = 0U;
     for (uint32_t warmup = 0U; warmup < config->warmup_copies; ++warmup) {
         if (route->operations->copy(
                 route->lane, destination_pointer, source_pointer,
-                config->large_copy_bytes
+                config->large_copy_bytes, &ignored
             ) != 0 ||
             route->operations->synchronize(route->lane) != 0) {
             status = -1;
@@ -459,37 +466,25 @@ static void release_probe(ShadowSpillCalibrationProbe *probe) {
     );
 }
 
-typedef struct ShadowSpillCalibrationGate {
-    _Atomic uint32_t ready;
-    _Atomic uint8_t start;
-} ShadowSpillCalibrationGate;
-
-typedef struct ShadowSpillCalibrationJob {
-    ShadowSpillRuntime *runtime;
-    ShadowSpillCalibrationProbe *probe;
-    ShadowSpillCalibrationGate *gate;
-    uint32_t copies;
-    uint64_t elapsed_nanoseconds;
-    int status;
-} ShadowSpillCalibrationJob;
-
-static void *run_calibration_job(void *state) {
-    ShadowSpillCalibrationJob *job = state;
-    atomic_fetch_add_explicit(&job->gate->ready, 1U, memory_order_release);
-    while (!atomic_load_explicit(&job->gate->start, memory_order_acquire)) {
-        shadowspill_thread_yield();
-    }
-    job->status = measure_copy_batch(
-        job->probe->route,
-        job->probe->destination_pointer,
-        job->probe->source_pointer,
-        job->probe->bytes,
-        job->copies,
-        &job->elapsed_nanoseconds
-    );
-    return NULL;
-}
-
+/*
+ * Both routes at once, measured from one thread.
+ *
+ * Each lane is asked to signal an event once everything issued on it has
+ * landed, and the two events are then polled -- so one thread records when
+ * each lane finished. Blocking in one lane's `synchronize` instead would
+ * inflate whichever finished first by however long the other still had to
+ * run, which is the direction that matters here: the number this produces is
+ * the concurrent rate, and the slower lane would otherwise decide both.
+ *
+ * It is also the path a real transfer takes. The worker issues copies and
+ * reads an event; calibration now measures what it measures the same way,
+ * rather than through a mechanism only it uses.
+ *
+ * The two probes start a fraction apart, because issuing the first batch
+ * precedes issuing the second. Issuing is enqueueing -- a lane's `copy`
+ * returns without waiting for anything -- so for a probe large enough to be
+ * worth timing, the two are in flight together for substantially all of it.
+ */
 static int measure_concurrent_pair(
     ShadowSpillRuntime *runtime,
     ShadowSpillCalibrationProbe *first,
@@ -498,32 +493,77 @@ static int measure_concurrent_pair(
     uint64_t *first_nanoseconds,
     uint64_t *second_nanoseconds
 ) {
-    ShadowSpillCalibrationGate gate = {0};
-    ShadowSpillCalibrationJob jobs[2] = {
-        {.runtime = runtime, .probe = first, .gate = &gate, .copies = copies, .status = -1},
-        {.runtime = runtime, .probe = second, .gate = &gate, .copies = copies, .status = -1},
-    };
-    pthread_t threads[2];
-    if (pthread_create(&threads[0], NULL, run_calibration_job, &jobs[0]) != 0) {
+    ShadowSpillCalibrationProbe *const probes[2] = {first, second};
+    ShadowSpillEventLease *leases[2] = {NULL, NULL};
+    uint64_t begin[2] = {0U, 0U};
+    uint64_t finished[2] = {0U, 0U};
+    int status = 0;
+    /* No trace while calibrating, so every lane keeps nothing and answers 0. */
+    uint64_t ignored = 0U;
+
+    for (unsigned index = 0U; index < 2U; ++index) {
+        if (shadowspill_event_lease_acquire(
+                runtime, &runtime->events, &leases[index]
+            ) != SHADOWSPILL_STATUS_OK) {
+            status = -1;
+            break;
+        }
+    }
+    for (unsigned index = 0U; status == 0 && index < 2U; ++index) {
+        const ShadowSpillRouteState *const route = probes[index]->route;
+        begin[index] = shadowspill_monotonic_ns();
+        if (begin[index] == 0U) {
+            status = -1;
+            break;
+        }
+        for (uint32_t copy = 0U; copy < copies; ++copy) {
+            if (route->operations->copy(
+                    route->lane,
+                    probes[index]->destination_pointer,
+                    probes[index]->source_pointer,
+                    probes[index]->bytes,
+                    &ignored
+                ) != 0) {
+                status = -1;
+                break;
+            }
+        }
+        if (status == 0 && route->operations->signal(
+                route->lane, 0U, leases[index]->event
+            ) != 0) {
+            status = -1;
+        }
+    }
+    while (status == 0 && (finished[0] == 0U || finished[1] == 0U)) {
+        for (unsigned index = 0U; index < 2U; ++index) {
+            int complete = 0;
+            if (finished[index] != 0U) {
+                continue;
+            }
+            if (shadowspill_event_lease_query(
+                    runtime, leases[index], &complete
+                ) != 0) {
+                status = -1;
+                break;
+            }
+            if (complete) {
+                finished[index] = shadowspill_monotonic_ns();
+            }
+        }
+        if (status == 0 && (finished[0] == 0U || finished[1] == 0U)) {
+            shadowspill_thread_yield();
+        }
+    }
+    for (unsigned index = 0U; index < 2U; ++index) {
+        if (leases[index] != NULL) {
+            (void)shadowspill_event_lease_release(runtime, leases[index]);
+        }
+    }
+    if (status != 0 || finished[0] <= begin[0] || finished[1] <= begin[1]) {
         return -1;
     }
-    if (pthread_create(&threads[1], NULL, run_calibration_job, &jobs[1]) != 0) {
-        atomic_store_explicit(&gate.start, 1U, memory_order_release);
-        (void)pthread_join(threads[0], NULL);
-        return -1;
-    }
-    while (atomic_load_explicit(&gate.ready, memory_order_acquire) != 2U) {
-        shadowspill_thread_yield();
-    }
-    atomic_store_explicit(&gate.start, 1U, memory_order_release);
-    const int first_join = pthread_join(threads[0], NULL);
-    const int second_join = pthread_join(threads[1], NULL);
-    if (first_join != 0 || second_join != 0 ||
-        jobs[0].status != 0 || jobs[1].status != 0) {
-        return -1;
-    }
-    *first_nanoseconds = jobs[0].elapsed_nanoseconds;
-    *second_nanoseconds = jobs[1].elapsed_nanoseconds;
+    *first_nanoseconds = finished[0] - begin[0];
+    *second_nanoseconds = finished[1] - begin[1];
     return 0;
 }
 
@@ -778,11 +818,30 @@ ShadowSpillStatus shadowspill_route_lane_statistics(
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
     const ShadowSpillRouteState *const route = &runtime->routes[route_id];
-    if (route->operations == NULL || route->operations->statistics == NULL) {
+    if (route->operations == NULL || route->lane == NULL) {
         return SHADOWSPILL_STATUS_UNSUPPORTED;
     }
-    *statistics = (ShadowSpillLaneStatistics){0};
-    return route->operations->statistics(route->lane, statistics) == 0
-        ? SHADOWSPILL_STATUS_OK
-        : SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    const ShadowSpillLane *const lane = route->lane;
+    /* The seven come from the lane's own struct, so they are the counts it
+       kept rather than a copy it made. Only the timing pair is asked for. */
+    *statistics = (ShadowSpillLaneStatistics){
+        .copies = shadowspill_lane_count(&lane->copies),
+        .chunks = shadowspill_lane_count(&lane->chunks),
+        .bytes = shadowspill_lane_count(&lane->bytes),
+        .signals = shadowspill_lane_count(&lane->signals),
+        .waits = shadowspill_lane_count(&lane->waits),
+        .retries = shadowspill_lane_count(&lane->retries),
+        .failures = shadowspill_lane_count(&lane->failures),
+        .timed = 0U,
+    };
+    ShadowSpillLaneTiming timing = {0};
+    if (route->operations->timing != NULL &&
+        route->operations->timing(lane, &timing) == 0) {
+        statistics->timed = 1U;
+        statistics->posted_to_completion_seconds =
+            timing.posted_to_completion_seconds;
+        statistics->longest_completion_seconds =
+            timing.longest_completion_seconds;
+    }
+    return SHADOWSPILL_STATUS_OK;
 }
