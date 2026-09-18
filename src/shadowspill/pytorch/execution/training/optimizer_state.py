@@ -5,7 +5,7 @@ go."""
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 import torch
@@ -24,7 +24,6 @@ from shadowspill.pytorch.optimizer import (
 from shadowspill.pytorch.runtime_adapter.boundaries import PublishedStorage
 from shadowspill.pytorch.spill import (
     read_spill_tensor,
-    spill_window,
     write_spill_tensor,
 )
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
@@ -86,12 +85,10 @@ class OptimizerState:
         The snapshot is independent: each tensor is its own compact host
         allocation, aliasing neither runtime storage nor the other entries,
         so a caller can serialize it while training continues. The pool keeps
-        the authoritative copy throughout, and this reads it in place, so the
-        snapshot is normally the only copy of the state outside the pool. An
-        alias whose pool copy is not the current one is read into a buffer
-        first, and that alias costs two until the snapshot is built. On a
-        large model even one copy is the biggest transient the frontend asks
-        for, so budget for it.
+        the authoritative copy throughout and every alias is read out of it
+        into a buffer, so an alias costs two until the snapshot is built. On a
+        large model that is the biggest transient the frontend asks for, so
+        budget for it.
         """
 
         if not self.initialized:
@@ -101,7 +98,7 @@ class OptimizerState:
                 "param_groups": copy.deepcopy(raw["param_groups"]),
             }
 
-        exposed = self.expose_cpu(self._borrowed_alias_buffer)
+        exposed = self.expose_cpu()
         try:
             raw = self.optimizer.state_dict()
             return cast(
@@ -276,25 +273,16 @@ class OptimizerState:
         read_spill_tensor(self._bridge.objects, alias_id, owner)
         return owner
 
-    def _borrowed_alias_buffer(self, alias_id: str) -> torch.Tensor:
-        """Return one alias's bytes in place, copying only if it must."""
+    def expose_cpu(self) -> tuple[ExposedOptimizerTensor, ...]:
+        """Point live optimizer state at host copies of its pool bytes.
 
-        window = spill_window(self._bridge.objects, alias_id)
-        return self._copied_alias_buffer(alias_id) if window is None else window
-
-    def expose_cpu(
-        self,
-        owner_for: Callable[[str], torch.Tensor] | None = None,
-    ) -> tuple[ExposedOptimizerTensor, ...]:
-        """Point live optimizer state at host bytes, however they are obtained.
-
-        ``owner_for`` supplies each alias group's bytes. The default copies
-        them out of the pool into a writable buffer, which a caller that
-        intends to write back must use; a read-only caller can pass
-        ``_borrowed_alias_buffer`` to read the pool in place instead.
+        Each alias group is read out of the pool into a writable buffer rather
+        than viewed in place. A pool's memory is not always in this address
+        space, so copying is the one way that works for every kind -- the same
+        reason state enters a pool by copying, and the reason there is no
+        second path here that would work only sometimes.
         """
 
-        make_owner = self._copied_alias_buffer if owner_for is None else owner_for
         self._bridge.wait_until_idle()
         current = self.current_bindings()
         exposed: list[ExposedOptimizerTensor] = []
@@ -307,7 +295,7 @@ class OptimizerState:
             alias_id = self._bridge.objects.alias_for_object(item.object_id)
             owner = owners.get(alias_id)
             if owner is None:
-                owner = make_owner(alias_id)
+                owner = self._copied_alias_buffer(alias_id)
                 owners[alias_id] = owner
             device_placeholder = tensor.data
             layout = TensorLayout(

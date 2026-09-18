@@ -303,17 +303,15 @@ def read_model_state(
     model: nn.Module,
     *,
     runtime: Runtime,
-    copy: bool = True,
 ) -> dict[str, torch.Tensor]:
     """Return the model's current values without rebinding its tensors.
 
     Answerable while a plan holds the model, which ``export_model_state`` is
-    not. ``copy`` has the meaning it has in :func:`read_state`: copied values
-    are yours and keep what they held, uncopied ones view the pool and are
-    read-only and only current until the plan runs again.
+    not. The values are copied out of the pool, as :func:`read_state`
+    describes, so they are yours and keep what they held.
     """
 
-    return read_state(model, _model_tensors(model), runtime=runtime, copy=copy)
+    return read_state(model, _model_tensors(model), runtime=runtime)
 
 
 def release_model_state(

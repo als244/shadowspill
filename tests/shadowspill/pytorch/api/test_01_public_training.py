@@ -430,8 +430,6 @@ def test_public_training_owns_the_model_state_it_imported(tmp_path: object) -> N
     # Reading answers while the plan holds the model, which exporting cannot.
     name = "first.weight"
     assert torch.equal(read_model_state(model, runtime=runtime)[name], weights)
-    viewed = read_model_state(model, runtime=runtime, copy=False)
-    assert torch.equal(viewed[name], weights)
     with pytest.raises(RuntimeConfigurationError):
         export_model_state(model, runtime=runtime)
 
