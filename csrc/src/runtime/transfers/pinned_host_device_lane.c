@@ -1,5 +1,6 @@
 /* The lane between a pinned-host pool and a device pool, either direction. */
 #include "../internal.h"
+#include "../../common/platform.h"
 
 #include <stdlib.h>
 
@@ -31,6 +32,11 @@
 typedef struct MeasuredTransfer {
     uint64_t handle;
     uint64_t bytes;
+    /* When the runtime handed this transfer over, on the host clock. The
+       interval below is on the device's, so this is the one instant the lane
+       reads a clock for -- a third timing event on the stream would cost the
+       copy path something per transfer, and this costs it a read. */
+    uint64_t issued_host_ns;
     ShadowSpillStreamInterval interval;
 } MeasuredTransfer;
 
@@ -105,6 +111,7 @@ static int pinned_host_device_copy(
         shadowspill_stream_interval_discard(lane->runtime, &record->interval);
         record->handle = claimed;
         record->bytes = bytes;
+        record->issued_host_ns = shadowspill_monotonic_ns();
         if (shadowspill_stream_interval_open(
                 lane->runtime, &record->interval, lane->stream
             ) == 0) {
@@ -178,9 +185,14 @@ static int pinned_host_device_transfer(
         &started, &finished
     );
     *transfer = (ShadowSpillLaneTransfer){
+        .issued_at_nanoseconds = shadowspill_lane_origin_instant(
+            lane->runtime, record->issued_host_ns
+        ),
         .started_at_nanoseconds = read == 0 ? started : SHADOWSPILL_LANE_NO_TIME,
         .finished_at_nanoseconds = read == 0 ? finished : SHADOWSPILL_LANE_NO_TIME,
         .bytes = record->bytes,
+        /* One enqueued copy is one chunk. The field is a transport's own
+           granularity, not a unit shared with a lane that splits. */
         .chunks = 1U,
     };
     /* The query retires the handle. */
