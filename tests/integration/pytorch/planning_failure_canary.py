@@ -21,13 +21,14 @@ from shadowspill.errors import (
     PlanInfeasibleError,
     ProfilingError,
 )
-from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.memory import device, transfer_route
 from shadowspill.pytorch import (
     Runtime,
     export_model_state,
     import_model_state,
     plan_forward,
 )
+from tests.spill_pool import spill_pool
 
 
 class _DataDependentModel(nn.Module):
@@ -227,7 +228,7 @@ def main() -> int:
                 physical_capacity=2 << 30,
                 provider_headroom=512 << 20,
             ),
-            "spill": pinned_host(capacity=1 << 30),
+            "spill": spill_pool(1 << 30),
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),
