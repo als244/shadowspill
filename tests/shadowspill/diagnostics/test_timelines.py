@@ -40,6 +40,7 @@ def _event(
         kind=kind,
         detail_0=0,
         detail_1=0,
+        lane_issued_at_ns=None,
         lane_started_at_ns=None if stream is None else stream[0],
         lane_finished_at_ns=None if stream is None else stream[1],
     )

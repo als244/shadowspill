@@ -31,6 +31,7 @@ void shadowspill_trace_append_stamped_enabled(
     uint64_t bytes,
     uint64_t detail_0,
     uint64_t detail_1,
+    uint64_t lane_issued_at_ns,
     uint64_t lane_started_at_ns,
     uint64_t lane_finished_at_ns
 );

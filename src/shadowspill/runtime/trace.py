@@ -52,10 +52,18 @@ class RuntimeTraceEvent:
     """One event emitted by framework-neutral runtime.
 
     ``timestamp_ns`` is the runtime's host clock. A TRANSFER_COMPLETED event
-    also carries the copy's interval on its lane, ``lane_started_at_ns`` and
-    ``lane_finished_at_ns``, measured on the device from the origin event the trace
-    was begun with; both are ``None`` when the trace had no origin or the
-    interval could not be measured, and on every other kind.
+    also carries what the copy did on its lane: ``lane_issued_at_ns`` when the
+    runtime handed it over, ``lane_started_at_ns`` when its bytes began moving,
+    and ``lane_finished_at_ns`` when they had landed, each measured from the
+    origin event the trace was begun with.
+
+    **The gap between issued and started is the dependency wait** -- without it
+    a copy held behind an event reads as a slow one. Each is ``None`` where the
+    trace had no origin, the lane does not report it, or it could not be
+    measured, and on every other event kind.
+
+    These sit on the origin's axis and ``timestamp_ns`` on the host clock;
+    ``CapturedRuntimeTrace.origin_host_ns`` is what relates the two.
     """
 
     sequence: int
@@ -68,6 +76,7 @@ class RuntimeTraceEvent:
     kind: RuntimeTraceEventKind
     detail_0: int
     detail_1: int
+    lane_issued_at_ns: int | None
     lane_started_at_ns: int | None
     lane_finished_at_ns: int | None
 
@@ -129,6 +138,7 @@ class RuntimeTraceEvent:
             "bytes": self.bytes,
             "kind": self.kind.name.lower(),
             "details": self.details(),
+            "lane_issued_at_ns": self.lane_issued_at_ns,
             "lane_started_at_ns": self.lane_started_at_ns,
             "lane_finished_at_ns": self.lane_finished_at_ns,
         }
@@ -136,11 +146,19 @@ class RuntimeTraceEvent:
 
 @dataclass(frozen=True, slots=True)
 class CapturedRuntimeTrace:
-    """Complete bounded runtime trace copied out after a step becomes idle."""
+    """Complete bounded runtime trace copied out after a step becomes idle.
+
+    ``origin_host_ns`` is the host clock where the origin event was recorded,
+    and is what puts an event's ``timestamp_ns`` and its ``lane_*_ns`` on one
+    axis: a lane instant plus this is the host instant it happened at. ``None``
+    when the trace was begun with no origin, and then no lane instant is
+    reported either.
+    """
 
     step_id: int
     began_at_ns: int
     ended_at_ns: int
+    origin_host_ns: int | None
     event_capacity: int
     allocation_event_capacity: int
     event_overflow: bool
@@ -246,6 +264,11 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
                 kind=kind,
                 detail_0=int(event.detail_0),
                 detail_1=int(event.detail_1),
+                lane_issued_at_ns=(
+                    None
+                    if int(event.lane_issued_at_ns) == NO_STREAM_TIME
+                    else int(event.lane_issued_at_ns)
+                ),
                 lane_started_at_ns=(
                     None
                     if int(event.lane_started_at_ns) == NO_STREAM_TIME
@@ -262,6 +285,9 @@ def read_runtime_trace(runtime_handle: int) -> CapturedRuntimeTrace:
         step_id=int(copied.step_id),
         began_at_ns=int(copied.began_at_ns),
         ended_at_ns=int(copied.ended_at_ns),
+        origin_host_ns=(
+            None if int(copied.origin_host_ns) == 0 else int(copied.origin_host_ns)
+        ),
         event_capacity=int(copied.event_capacity),
         allocation_event_capacity=int(copied.allocation_event_capacity),
         event_overflow=bool(copied.event_overflow),

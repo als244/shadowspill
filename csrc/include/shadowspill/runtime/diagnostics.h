@@ -107,13 +107,22 @@ typedef struct ShadowSpillTransferProfile {
  * ``detail_1`` have event-specific meanings documented in runtime.md. IDs use
  * SHADOWSPILL_RUNTIME_NO_ID when they do not apply.
  *
- * A TRANSFER_COMPLETED event also carries the transfer's interval on the
- * device: ``lane_started_at_ns`` and ``lane_finished_at_ns`` are measured on the
- * transfer lane from the origin event the trace was begun with, so they sit
- * on the same timeline as any other event measured from that origin. Both
- * hold SHADOWSPILL_TRACE_NO_STREAM_TIME when the trace has no origin or the
- * backend could not measure the interval; every other kind carries that
- * value always.
+ * A TRANSFER_COMPLETED event also carries what the transfer did on its lane.
+ * ``lane_issued_at_ns``, ``lane_started_at_ns`` and ``lane_finished_at_ns`` are
+ * measured from the origin event the trace was begun with, so they sit on the
+ * same timeline as any other event measured from that origin.
+ *
+ * ``lane_issued_at_ns`` is when the runtime handed the transfer to the lane,
+ * before any dependency it was given had cleared, and ``lane_started_at_ns`` is
+ * when its bytes began moving. **The gap between them is the wait** -- without
+ * it a transfer held behind an event reads as a slow one.
+ *
+ * Each holds SHADOWSPILL_TRACE_NO_STREAM_TIME where the trace has no origin,
+ * the lane does not report it, or the backend could not measure it; every other
+ * event kind carries that value in all three always.
+ *
+ * ``timestamp_ns`` is on the host clock and these are on the origin's, and
+ * ``ShadowSpillTraceSummary.origin_host_ns`` is what relates them.
  */
 typedef struct ShadowSpillTraceEvent {
     uint64_t sequence;
@@ -125,6 +134,7 @@ typedef struct ShadowSpillTraceEvent {
     uint64_t bytes;
     uint64_t detail_0;
     uint64_t detail_1;
+    uint64_t lane_issued_at_ns;
     uint64_t lane_started_at_ns;
     uint64_t lane_finished_at_ns;
     uint8_t kind;
@@ -139,6 +149,11 @@ typedef struct ShadowSpillTraceSummary {
     uint64_t allocation_event_capacity;
     uint64_t began_at_ns;
     uint64_t ended_at_ns;
+    /* The host clock where the origin event was recorded, which is what puts
+       an event's `timestamp_ns` and its `lane_*_ns` on one axis: a lane instant
+       plus this is the host instant it happened at. Zero when the trace was
+       begun with no origin, and then every lane instant is NO_STREAM_TIME. */
+    uint64_t origin_host_ns;
     uint8_t active;
     uint8_t event_overflow;
     uint8_t allocation_event_overflow;

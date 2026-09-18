@@ -105,6 +105,20 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_prepare(
  * stream (see runtime/timing.h); transfer intervals in the trace are measured
  * from it, so they share the caller's timeline. It must outlive the trace and
  * is never released here. A null marker records no stream intervals.
+ *
+ * **Record ``origin`` on an idle stream.** This call also samples the host
+ * clock and keeps it as the anchor between that clock and the origin's axis,
+ * which is the only way a lane whose bytes do not move on a stream can report
+ * an instant at all -- a remote lane reads its own clock and converts through
+ * it. The sample is taken here, so it is the instant the device reaches
+ * ``origin`` only if nothing was queued ahead of it.
+ *
+ * Draining first is what makes that true, and is what the caller owes. The
+ * training path already pays it: it waits for the previous invocation to go
+ * idle and begins the trace one call later. A caller that begins a trace with
+ * work in flight still gets correct stream intervals -- they are measured
+ * between two device events and never touch the anchor -- but every instant a
+ * lane converted is skewed by whatever was queued, and **nothing detects it**.
  */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,

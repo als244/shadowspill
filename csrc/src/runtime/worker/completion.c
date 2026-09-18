@@ -360,9 +360,11 @@ int shadowspill_action_finish_locked(
          * A lane that reports no instants leaves them unset, and the trace
          * records the transfer with no times rather than with wrong ones.
          */
+        uint64_t lane_issued_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
         uint64_t lane_started_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
         uint64_t lane_finished_at_ns = SHADOWSPILL_TRACE_NO_STREAM_TIME;
         ShadowSpillLaneTransfer moved = {
+            .issued_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
             .started_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
             .finished_at_nanoseconds = SHADOWSPILL_LANE_NO_TIME,
             .bytes = 0U,
@@ -374,6 +376,9 @@ int shadowspill_action_finish_locked(
             lane_route->operations->transfer(
                 lane_route->lane, action->lane_handle, &moved
             ) == 0) {
+            if (moved.issued_at_nanoseconds != SHADOWSPILL_LANE_NO_TIME) {
+                lane_issued_at_ns = moved.issued_at_nanoseconds;
+            }
             if (moved.started_at_nanoseconds != SHADOWSPILL_LANE_NO_TIME) {
                 lane_started_at_ns = moved.started_at_nanoseconds;
             }
@@ -397,6 +402,7 @@ int shadowspill_action_finish_locked(
             atomic_load_explicit(
                 &runtime->actions.count, memory_order_acquire
             ),
+            lane_issued_at_ns,
             lane_started_at_ns,
             lane_finished_at_ns
         );
