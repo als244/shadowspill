@@ -20,6 +20,7 @@ from tools.qualification.plan_record import write_plan_records
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
+    measured_rate_clause,
 )
 from workloads.common.training import LEARNING_RATE, optimizer_state_init
 from workloads.full_model import FullModelManifest
@@ -233,7 +234,9 @@ def _warm_step(
     )
 
 
-def _announce_prediction(manifest: FullModelManifest, report: Any) -> None:
+def _announce_prediction(
+    manifest: FullModelManifest, report: Any, runtime: Any
+) -> None:
     """State the plan's prediction, and the rates it was made against.
 
     It is said before the first group so the measured lines below can be read
@@ -249,7 +252,8 @@ def _announce_prediction(manifest: FullModelManifest, report: Any) -> None:
         f"{manifest.tokens_per_step / predicted_step_seconds:.2f} tokens/s "
         f"(planned with: fetch "
         f"{planned.fetch_bandwidth_bytes_per_second / 1e9:.1f} GB/s, evict "
-        f"{planned.evict_bandwidth_bytes_per_second / 1e9:.1f} GB/s)"
+        f"{planned.evict_bandwidth_bytes_per_second / 1e9:.1f} GB/s"
+        f"{measured_rate_clause(runtime)})"
         f"; unconstrained throughput "
         f"{planned.unconstrained_step_seconds:.4f} s/step, "
         f"{manifest.tokens_per_step / planned.unconstrained_step_seconds:.2f}"
