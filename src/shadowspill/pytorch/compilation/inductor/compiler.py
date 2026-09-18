@@ -30,6 +30,19 @@ from .cache import _fx_graph_cache_key, _load_cached_manifest, _store_cached_man
 from .contract import _graph_lowering_contract, _project_callable_contract
 from .manifest import _make_manifest
 
+# Geometry is an input to planning: it sizes objects and alias extents before a
+# task is ever compiled, so the compiler is not free to choose it. Shape padding
+# would -- it rewrites a matrix product into pad/product/slice, and a (10, 6)
+# gradient then comes back with stride (8, 1), needing 312 bytes and not 240.
+#
+# The compiler's own promise to keep an output's stride does not hold this back.
+# A task compiles through the forward entry point with inference set, and that
+# runs the joint-graph passes -- where the padding is introduced -- before the
+# outputs are marked visible and their strides recorded. The stride recorded as
+# the original one is therefore already padded, and the promise then preserves
+# the padding it exists to prevent.
+_PINNED_OUTPUT_LAYOUT: Mapping[str, Any] = {"shape_padding": False}
+
 _GRAPH_LOWERING_CAPTURE_LOCK = threading.Lock()
 _COMPILATION_PHASE_ORDER = (
     "shadowspill_compiler_input_setup",

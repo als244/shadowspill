@@ -28,7 +28,7 @@ from shadowspill.pytorch.capture.storage import (
 from shadowspill.task.manifest import ExecutableTaskManifest
 
 from .cache import _fx_graph_cache_key, _load_cached_manifest
-from .compiler import _record_compilation_phase
+from .compiler import _PINNED_OUTPUT_LAYOUT, _record_compilation_phase
 
 
 def _prepare_explicit_inputs(
@@ -114,7 +114,11 @@ def _invoke_explicit_compiler(
     nested_before = sum(timings.values())
     started_ns = time.perf_counter_ns()
     try:
-        with V.set_fake_mode(fake_mode), tracing(TracingContext(fake_mode)):
+        with (
+            V.set_fake_mode(fake_mode),
+            tracing(TracingContext(fake_mode)),
+            inductor_config.patch(_PINNED_OUTPUT_LAYOUT),
+        ):
             compiler = cast(Callable[..., object], compile_fx_forward)
             return compiler(
                 graph,
