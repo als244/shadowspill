@@ -76,7 +76,11 @@ be NULL, report what was still outstanding, so a caller can say so. See
 Calibration first measures each available directed route alone. When reverse
 routes exist, it then measures both directions simultaneously on independent
 lanes and publishes the concurrent per-direction rates as the effective
-`bandwidth_bytes_per_second`. Each `ShadowSpillTransferProfile` retains solo
+`bandwidth_bytes_per_second` -- so **that field is the concurrent figure, not
+the route's rate alone**, and `solo_bandwidth_bytes_per_second` beside it is
+what a single-direction benchmark is comparable to. The simultaneous pass
+issues the two directions' copies alternately, so neither direction's
+measurement window contains the other's dispatch. Each `ShadowSpillTransferProfile` retains solo
 and concurrent bandwidth, measurement duration, latency, copy geometry,
 generation, its `ShadowSpillTransferCalibrationMode`, timestamp, and its
 `ShadowSpillTransferProfileProvenance` -- whether the cell came from
@@ -359,12 +363,28 @@ keeps alive for the trace, so the trace and the caller share one clock. While
 the trace is active a lane keeps a record of each transfer it is given -- the
 built-in lane brackets its copy with two timing events from the runtime's timing
 pool -- and the transfer's `SHADOWSPILL_TRACE_TRANSFER_COMPLETED` event carries
-what that lane reports back, in `lane_started_at_ns` and `lane_finished_at_ns`.
-Every other event kind, a completion the backend could not measure, and a lane
-whose clock the trace does not share, carry
-`SHADOWSPILL_TRACE_NO_STREAM_TIME` in both. A zero origin token records no
-intervals. `timestamp_ns` on every event is the host clock; the two stream
-fields are the only device-clock values in the trace.
+what that lane reports back, in `lane_issued_at_ns`, `lane_started_at_ns` and
+`lane_finished_at_ns`.
+
+`lane_issued_at_ns` is when the runtime handed the transfer to its lane, before
+any dependency it was given had cleared; `lane_started_at_ns` is when its bytes
+began moving. **The gap between them is the wait**, and separating them is what
+keeps a transfer held behind an event from reading as a slow one. Every other
+event kind, a completion the backend could not measure, and a lane that does not
+report an instant, carry `SHADOWSPILL_TRACE_NO_STREAM_TIME` in all three. A zero
+origin token records no intervals.
+
+`timestamp_ns` on every event is the host clock and the three lane fields are on
+the origin's axis. `origin_host_ns` on the summary relates them: it is the host
+clock where the origin event was recorded, so a lane instant plus it is the host
+instant that lane observed. It is zero when the trace was begun with no origin.
+
+**The anchor is only as good as the drain before it.** It is sampled where the
+origin event is recorded, so it is the instant the device reaches that event
+only if nothing was queued ahead of it -- which is why `shadowspill_trace_begin()`
+asks for an origin marker recorded on an idle stream. Stream intervals are
+unaffected either way, being measured between two device events; a converted
+host instant is not, and nothing detects the skew.
 
 ### What a trace event carries
 

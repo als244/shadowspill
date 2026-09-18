@@ -56,22 +56,33 @@ typedef struct ShadowSpillLane ShadowSpillLane;
  * here once the transfer has completed, which is the only way a lane's own
  * view reaches the trace: a lane is outside the runtime and cannot see one.
  *
- * Both instants are **nanoseconds from the trace's origin**, the same axis the
- * rest of a step is placed on, and `SHADOWSPILL_LANE_NO_TIME` where a lane has
- * nothing to report -- which `bytes` and `chunks` are still worth reporting
+ * All three instants are **nanoseconds from the trace's origin**, the same axis
+ * the rest of a step is placed on, and `SHADOWSPILL_LANE_NO_TIME` where a lane
+ * has nothing to report -- which `bytes` and `chunks` are still worth reporting
  * beside, and are what a lane always knows.
  *
- * A lane whose bytes move on a stream reads the instants off timing events it
- * recorded around the copy. A lane whose bytes move elsewhere has only its own
- * clock, and **there is no anchor from that clock to this origin**: the origin
- * is a device event, and nothing records a host instant beside it. Such a lane
- * reports `SHADOWSPILL_LANE_NO_TIME` for both until there is one -- the same
- * thing it reported when this was a pair of interval entries it had to leave
- * NULL, so nothing is lost, and `bytes` and `chunks` are new.
+ * `issued_at` is when the runtime handed the transfer over, before any
+ * dependency the lane was given had cleared. `started_at` is when its bytes
+ * began moving. **The gap between them is the wait**, which is why they are
+ * separate: folded together, a transfer held behind an event reads as a slow
+ * one.
+ *
+ * Two clocks can reach this axis. A lane whose bytes move on a stream reads
+ * instants off timing events it recorded around the copy, already on the
+ * origin's axis. A lane whose bytes move elsewhere reads a host clock and
+ * converts through the anchor the runtime records beside the origin event --
+ * see `shadowspill_lane_origin_instant`. A lane may use both, and the
+ * pinned-host lane does: its `issued_at` is a converted host instant and its
+ * other two come off the stream. That costs it nothing per transfer, where a
+ * third timing event would have.
+ *
+ * Converting needs a trace with an origin. Without one there is no axis to be
+ * on, and every converted instant is `SHADOWSPILL_LANE_NO_TIME`.
  */
 #define SHADOWSPILL_LANE_NO_TIME UINT64_MAX
 
 typedef struct ShadowSpillLaneTransfer {
+    uint64_t issued_at_nanoseconds;
     uint64_t started_at_nanoseconds;
     uint64_t finished_at_nanoseconds;
     uint64_t bytes;
@@ -102,6 +113,23 @@ SHADOWSPILL_API void shadowspill_lane_latch_failure(
     ShadowSpillRuntime *runtime,
     ShadowSpillStatus status,
     ShadowSpillFailureReason reason
+);
+
+/* Places a host instant on the trace origin's axis, for a lane whose bytes do
+   not move on a stream and which therefore has only its own clock.
+
+   `monotonic_nanoseconds` is read from CLOCK_MONOTONIC, the same clock the
+   runtime stamps its own trace events with.
+   Returns `SHADOWSPILL_LANE_NO_TIME` when no trace is running, when the trace
+   was begun with no origin, or when the instant falls before the origin --
+   which a transfer issued before the trace began legitimately does.
+
+   The anchor is sampled once, where the origin event is recorded, and
+   `shadowspill_trace_begin` says what a caller owes for it to be worth
+   anything. */
+SHADOWSPILL_API uint64_t shadowspill_lane_origin_instant(
+    ShadowSpillRuntime *runtime,
+    uint64_t monotonic_nanoseconds
 );
 
 /*

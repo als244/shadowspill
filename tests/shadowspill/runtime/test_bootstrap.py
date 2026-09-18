@@ -152,8 +152,11 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(PhysicalAdmission) == 72
     assert ctypes.sizeof(PhysicalMemory) == 24
     assert ctypes.sizeof(TraceConfig) == 24
-    assert ctypes.sizeof(TraceEvent) == 96
-    assert ctypes.sizeof(TraceSummary) == 72
+    # Each grew by one uint64 when a transfer gained a third instant: the event
+    # carries `lane_issued_at_ns` beside the two it had, and the summary carries
+    # `origin_host_ns`, the anchor a lane off the device clock converts through.
+    assert ctypes.sizeof(TraceEvent) == 104
+    assert ctypes.sizeof(TraceSummary) == 80
     assert ctypes.sizeof(TransferCalibrationConfig) == 40
     assert ctypes.sizeof(TransferProfile) == 112
 

@@ -16,6 +16,7 @@ void shadowspill_trace_append_stamped_enabled(
     uint64_t bytes,
     uint64_t detail_0,
     uint64_t detail_1,
+    uint64_t lane_issued_at_ns,
     uint64_t lane_started_at_ns,
     uint64_t lane_finished_at_ns
 ) {
@@ -55,6 +56,7 @@ void shadowspill_trace_append_stamped_enabled(
             .bytes = bytes,
             .detail_0 = detail_0,
             .detail_1 = detail_1,
+            .lane_issued_at_ns = lane_issued_at_ns,
             .lane_started_at_ns = lane_started_at_ns,
             .lane_finished_at_ns = lane_finished_at_ns,
             .kind = (uint8_t)kind,
@@ -85,6 +87,7 @@ void shadowspill_trace_append_enabled(
         bytes,
         detail_0,
         detail_1,
+        SHADOWSPILL_TRACE_NO_STREAM_TIME,
         SHADOWSPILL_TRACE_NO_STREAM_TIME,
         SHADOWSPILL_TRACE_NO_STREAM_TIME
     );
@@ -199,6 +202,30 @@ int shadowspill_lane_trace_active(ShadowSpillRuntime *runtime) {
         ? 1 : 0;
 }
 
+/* Places a host instant on the origin's axis. A lane whose bytes do not move on
+   a stream has only its own clock; this is the one conversion it needs, and the
+   runtime owns the anchor because only it knows when the trace began.
+
+   Read without the lock. `trace_origin_present` is written once under the lock
+   before `trace_active` is published, and a lane only asks while transferring,
+   which is inside a trace it has already seen active. */
+uint64_t shadowspill_lane_origin_instant(
+    ShadowSpillRuntime *runtime, uint64_t monotonic_nanoseconds
+) {
+    if (runtime == NULL || !runtime->trace_origin_present ||
+        atomic_load_explicit(&runtime->trace_active, memory_order_acquire) ==
+            0U) {
+        return SHADOWSPILL_LANE_NO_TIME;
+    }
+    const uint64_t origin = runtime->trace_origin_host_ns;
+    if (origin == 0U || monotonic_nanoseconds < origin) {
+        /* Before the origin is not a negative instant, it is a transfer this
+           trace cannot place -- one issued before the trace began. */
+        return SHADOWSPILL_LANE_NO_TIME;
+    }
+    return monotonic_nanoseconds - origin;
+}
+
 ShadowSpillStatus shadowspill_trace_begin(
     ShadowSpillRuntime *runtime,
     uint64_t step_id,
@@ -225,6 +252,10 @@ ShadowSpillStatus shadowspill_trace_begin(
         runtime->next_allocation_event_sequence = 0U;
         runtime->allocation_event_overflow = 0;
         runtime->trace_origin_event = shadowspill_timing_marker_event(origin);
+        /* The anchor. Tight because the caller records `origin` on an idle
+           stream, so the device reaches it at once and this instant is the
+           same one -- see the precondition on this call in telemetry.h. */
+        runtime->trace_origin_host_ns = shadowspill_monotonic_ns();
         runtime->trace_origin_present = origin != NULL;
         runtime->allocation_telemetry_active = 1;
         runtime->trace_active = 1;
@@ -301,6 +332,8 @@ ShadowSpillStatus shadowspill_trace_read(
         .allocation_event_capacity = runtime->allocation_event_capacity,
         .began_at_ns = runtime->trace_began_at_ns,
         .ended_at_ns = runtime->trace_ended_at_ns,
+        .origin_host_ns =
+            runtime->trace_origin_present ? runtime->trace_origin_host_ns : 0U,
         .active = (uint8_t)(runtime->trace_active != 0),
         .event_overflow = (uint8_t)(runtime->trace_event_overflow != 0),
         .allocation_event_overflow =
