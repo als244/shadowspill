@@ -13,7 +13,7 @@ shadowspill/
 ├── workloads/             model and data clients
 ├── reference/             executable reference implementations
 ├── benchmarking/          the quickstart tour, StepProgram corpora, and planning evaluation
-├── qualification/         thin numerical and performance release gates
+├── qualification/         thin release gates: suite, numerical, performance, remote
 ├── docs/                  architecture, Python, C, and development
 ├── scripts/               one-command setup
 ├── CMakeLists.txt         build orchestrator for the C tree
