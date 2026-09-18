@@ -66,6 +66,9 @@ void shadowspill_network_tuning_read(ShadowSpillNetworkTuning *tuning) {
          * remaining 20 % is the host copy, which does not overlap.
          */
         .chunk_bytes = number("SHADOWSPILL_NETWORK_CHUNK_BYTES", 4U << 20U),
+        /* Zero is "ask the port", which is what anyone not testing the pieces
+           wants; the endpoint lowers it to the port's limit either way. */
+        .message_bytes = number("SHADOWSPILL_NETWORK_MESSAGE_BYTES", 0U),
         /* Two overlaps the host copy with the transfer, which is the whole
            point; a third stage would be needed for a third slot to help. */
         .ring_slots = (uint32_t)number("SHADOWSPILL_NETWORK_RING_SLOTS", 2U),
@@ -124,10 +127,11 @@ void shadowspill_network_tuning_report(
         stderr,
         "shadowspill network: queue pairs %u, send depth %u, outstanding reads "
         "%u, chunk %llu KiB x %u slots, signal every %u, traffic class %u, "
-        "service level %u, mtu %s, device %s, gid %s\n",
+        "service level %u, message %s, mtu %s, device %s, gid %s\n",
         tuning->queue_pairs, tuning->send_depth, tuning->outstanding_reads,
         (unsigned long long)(tuning->chunk_bytes >> 10U), tuning->ring_slots,
         tuning->signal_every, tuning->traffic_class, tuning->service_level,
+        tuning->message_bytes == 0U ? "from the port" : "overridden",
         tuning->path_mtu == 0U ? "from the port" : "overridden",
         tuning->device != NULL ? tuning->device : "detected",
         tuning->gid_index < 0 ? "detected" : "overridden"

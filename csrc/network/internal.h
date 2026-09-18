@@ -10,6 +10,8 @@
    internals is reachable. */
 #include <shadowspill/runtime/descriptions.h>
 #include <shadowspill/runtime/pool_memory.h>
+/* The remote lane embeds the common struct; this is where its layout lives. */
+#include <shadowspill/runtime/lane_base.h>
 
 /* This library links verbs from Phase 4 onward; libshadowspill still does
    not, and neither does anything that includes it. */
@@ -204,6 +206,12 @@ typedef struct ShadowSpillNetworkTuning {
     uint32_t receive_depth;
     uint32_t outstanding_reads;
     uint64_t chunk_bytes;
+    /* The largest single message state import and export will post. Zero means
+       whatever the port allows, which is the only sensible default; a value
+       only ever lowers it, because the NIC refuses a longer one. It exists so
+       the pieces are reachable with a small payload rather than only with an
+       object larger than a gigabyte. */
+    uint64_t message_bytes;
     uint32_t ring_slots;
     uint32_t signal_every;
     /* How long the lane's thread watches for more work before sleeping. */
@@ -289,6 +297,13 @@ typedef struct ShadowSpillEndpoint {
     uint8_t link_layer;
     uint16_t local_identifier;
     enum ibv_mtu path_mtu;
+    /*
+     * The largest single message this port will carry. A queue pair refuses a
+     * work request longer than it, so anything bigger than one object has to
+     * cross in pieces -- and the scatter-gather element's length is 32 bits,
+     * which is a second and lower ceiling nothing else states.
+     */
+    uint32_t max_message_bytes;
     char name[64];
     /* Resolved once at open, so everything downstream reads the same numbers
        and a run's log says which they were. */
