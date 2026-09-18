@@ -270,14 +270,24 @@ is the task a fetch was made for.
 | Identity | `transfer_id`, `direction`, `sequence`, `triggered_by`, `alias_group_id`, `bytes` | Which transfer and what it moved. `triggered_by` is what released it: the execution task id of the task whose completion did, a key into `tasks`, or `init` for the opening placement batch the runtime issues before the first task. A scheduled transfer's id is `<direction>_<sequence>`; an opening one's is `<direction>_opening_<index>`. |
 | Relations | `previous_access`, `next_access`, `modified_by` | The object's place in the step, by execution task id: the last selected task up to and including the trigger that referenced the object, the first later one that does, and the last one up to the trigger that created or mutated it. `init` means no such task before the transfer, so the bytes are what the step was given; `persistent` means none after it within this call, so the object outlives the step. A fetch exists for its next access; an evict saves what its modifier produced. |
 | Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds` | When the transfer could start, when the lane started it, and when it ended, at the bandwidth the plan assumed, which the plan summary states. `None` for an opening transfer, which the simulator does not model. |
-| Lane | `lane_started_at_seconds`, `lane_finished_at_seconds` | The copy's interval on its transfer lane, as the lane itself reports it -- the built-in lane brackets its copy with timing events immediately before and after. `None` when there is nothing to report: either the lane completes on a clock the trace does not share and so reports no instants at all, or the timing pool ran out. A lane reports instants for all of its transfers or for none, so a mix of the two on one lane is a fault rather than a lane that does not time. |
+| Lane | `lane_issued_at_seconds`, `lane_started_at_seconds`, `lane_finished_at_seconds` | What the copy did on its transfer lane, as the lane itself reports it: when the worker handed it over, when its bytes began moving, and when they had landed. **Issued to started is the dependency wait** -- a copy held behind an event is late, not slow, and folding the two together hides which. The pinned-host lane brackets the copy with timing events for the last two and reads a host clock for the first; a lane whose bytes do not move on a stream reads a host clock for all three and converts through the trace's anchor. `None` where there is nothing to report: the timing pool ran out, the lane does not report that instant, or the transfer was handed over before the trace began and so has no place on its axis. |
 | Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated after alignment; `None` without a lane interval or without a simulation. |
 | Host | `queued_at_seconds`, `reserved_at_seconds`, `dispatched_at_seconds`, `completion_observed_at_seconds` | When the action was queued, when its destination was reserved, when the worker handed the copy to the lane, and when the worker's nonblocking poll saw it complete. |
 
 Read `dispatched_at_seconds` against `lane_started_at_seconds` to see how long a
 copy sat behind its predecessors on the lane, and `completion_observed_at_seconds`
 against `lane_finished_at_seconds` to see the worker's polling lag. Neither gap is
-transfer time; the lane interval is.
+transfer time; `lane_started_at_seconds` to `lane_finished_at_seconds` is.
+
+`lane_issued_at_seconds` answers the first of those from the lane's own side
+rather than the worker's, on the same axis as the interval, so the wait and the
+movement can be compared without crossing clocks.
+
+**A mix of reported and unreported instants on one lane is not by itself a
+fault.** A transfer handed over before the trace began has no place on its axis
+and reports none, while its neighbours within the trace report all three. What
+would be a fault is a lane reporting a start without a finish for a transfer
+that completed inside the trace.
 
 Check action identity and byte totals before interpreting timing: the
 records are joined to the trace by lane sequence and validated against task,
