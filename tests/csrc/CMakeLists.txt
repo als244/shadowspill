@@ -33,6 +33,35 @@ add_test(
 # honouring it hangs here rather than failing. Bound it.
 set_tests_properties(shadowspill_backend_contract_canary PROPERTIES TIMEOUT 30)
 
+# A stream is an ordered queue and a value wait is a wait -- the two properties
+# a backend can pass every other check without having. Driven through the table
+# alone, so the same canary answers for the mock and for a real driver.
+add_executable(
+  shadowspill_stream_ordering_canary backends/stream_ordering_canary.c
+)
+target_include_directories(
+  shadowspill_stream_ordering_canary PRIVATE ${PROJECT_SOURCE_DIR}/csrc/include
+)
+target_link_libraries(
+  shadowspill_stream_ordering_canary
+  PRIVATE ${CMAKE_DL_LIBS} shadowspill_build_options
+)
+add_test(
+  NAME shadowspill_stream_ordering_canary
+  COMMAND shadowspill_stream_ordering_canary $<TARGET_FILE:shadowspill_backend_mock>
+)
+set_tests_properties(shadowspill_stream_ordering_canary PROPERTIES TIMEOUT 30)
+if(TARGET shadowspill_backend_cuda)
+  add_test(
+    NAME shadowspill_stream_ordering_canary_cuda
+    COMMAND
+      shadowspill_stream_ordering_canary $<TARGET_FILE:shadowspill_backend_cuda>
+  )
+  set_tests_properties(
+    shadowspill_stream_ordering_canary_cuda PROPERTIES LABELS "cuda" TIMEOUT 30
+  )
+endif()
+
 add_executable(shadowspill_simulator_canary simulator/simulator_canary.c)
 target_link_libraries(
   shadowspill_simulator_canary
