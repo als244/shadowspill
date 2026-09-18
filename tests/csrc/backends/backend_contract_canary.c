@@ -62,9 +62,13 @@ int main(int argc, char **argv) {
     }
     /*
      * The sequence a lane that does not move bytes on a stream depends on: the
-     * stream is held until the host stores the generation, and a wait on a
-     * generation already stored does not hold it at all. Proven here, on the
-     * mock, so the mechanism is not first exercised by a NIC.
+     * stream is held until the host stores the value, and a wait on a value
+     * already stored does not hold it at all. Proven here, on the mock, so the
+     * mechanism is not first exercised by a NIC.
+     *
+     * `value` is the contract's word for it (`backend.h`'s `wait_value` and
+     * `write_value` both take one). This canary called it a *generation* until
+     * 2026-09-18, which was a name the contract never used.
      */
     ShadowSpillBackendSignals signals = 0U;
     uint64_t *words = NULL;
@@ -80,23 +84,23 @@ int main(int argc, char **argv) {
        no device, so this only has to be observable -- which is the whole of
        what a lane polling it needs. */
     if (backend.write_value(backend.state, signal_stream, signals, 0U, 3U) != 0) {
-        FAIL("the stream refused to store a generation");
+        FAIL("the stream refused to store a value");
     }
     if (words[0] != 3U) {
-        FAIL("a generation the stream stored was not visible to the host");
+        FAIL("a value the stream stored was not visible to the host");
     }
     words[0] = 0U;
-    /* Already satisfied: generation 0 is what the word holds. */
+    /* Already satisfied: 0 is what the word holds. */
     if (backend.wait_value(backend.state, signal_stream, signals, 0U, 0U) != 0) {
-        FAIL("a wait on a generation already stored was refused");
+        FAIL("a wait on a value already stored was refused");
     }
     /* Not yet: the host has not stored 7. Then it does, and the stream may go. */
     if (backend.wait_value(backend.state, signal_stream, signals, 1U, 7U) != 0) {
-        FAIL("a wait on a generation not yet stored was refused");
+        FAIL("a wait on a value not yet stored was refused");
     }
     words[1] = 7U;
     if (backend.synchronize_stream(backend.state, signal_stream) != 0) {
-        FAIL("the stream did not pass once the generation was stored");
+        FAIL("the stream did not pass once the value was stored");
     }
     if (backend.wait_value(backend.state, signal_stream, signals, 2U, 1U) == 0) {
         FAIL("an index past the end of the block was accepted");
