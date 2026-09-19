@@ -23,11 +23,19 @@ GIBIBYTE: Final = 1 << 30
 GIGABYTE_PER_SECOND: Final = 1_000_000_000
 MICROSECOND_NS: Final = 1_000
 
-#: Bandwidth bands, coarsest first: a lane at or above half a gigabyte a
-#: second rounds to the half, and a slower one to a tenth, where half a
-#: gigabyte would be most of its measured rate.
+#: Bandwidth bands, coarsest first, as (the value this applies at or above,
+#: quantum). Three, because two left the quantum fixed at half a gigabyte for
+#: everything above half a gigabyte -- which is a fiftieth of a 25 GB/s lane to
+#: pinned host and **a fifth** of a 2.7 GB/s lane to a peer. A measured 2.72
+#: planned as 2.5, an 8 % error introduced by the coarsening itself.
+#:
+#: So a lane between half a gigabyte and five rounds to a quarter: 2.72 plans
+#: as 2.75, and the quantum stays a tenth of the value rather than a fifth of
+#: it. Nothing at or above five moves, so a local lane plans exactly as before
+#: and its stored plans still match.
 _BANDWIDTH_BANDS: Final = (
-    (GIGABYTE_PER_SECOND // 2, GIGABYTE_PER_SECOND // 2),
+    (5 * GIGABYTE_PER_SECOND, GIGABYTE_PER_SECOND // 2),
+    (GIGABYTE_PER_SECOND // 2, GIGABYTE_PER_SECOND // 4),
     (0, GIGABYTE_PER_SECOND // 10),
 )
 
