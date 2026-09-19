@@ -78,7 +78,8 @@ Budgets:
 |---|---|---|
 | `--search-budget-gib` | Comma-separated execution budgets to search and plot across, for example `10,12,16` | the run budgets, or the retained value |
 | `--run-budget-gib` | Comma-separated execution budgets to actually run; every one must appear among the search budgets | retained value when no budget flag is given; otherwise none |
-| `--spill-gib` | Pinned-host spill budget, shared by every point | retained value |
+| `--spill-gib` | Spill budget, shared by every point. Pinned host memory unless `--remote-spill` names a peer, and the same size either way | retained value |
+| `--remote-spill` | Spill to a memory daemon on another machine, `HOST:PORT`, instead of to pinned host memory. Everything else about the tour is unchanged -- `--spill-gib` still sets the size -- so the only thing that differs is where the pool lives, which is what makes a remote tour comparable with a local one. **The arena is then the peer's memory and is not counted in the host figures the closing report prints**, where a pinned one is; the report says which it is | pinned host |
 | `--steps` | Optimizer steps per run budget; the last is traced | 5 |
 | `--seed` | Model and data seed | 0 |
 
@@ -307,12 +308,16 @@ it reads a matrix.
    builds split by frontend phase, the searches, per-budget
    run planning, step execution, figures, and the unattributed rest — so
    the cost of what you just watched is never a mystery.
-6. **Where the host memory went.** The pinned spill arena, the peak and
-   exit resident bytes, and the cgroup ceiling in force with how much of
-   it went unused at the peak. The arena is one page-locked mapping and
-   counts in full from the moment the runtime registers it; everything
-   else the frontend holds on the host counts on top of it, and the
-   largest of those is one optimizer state per plan. The progress log
+6. **Where the host memory went.** The spill arena, the peak and exit
+   resident bytes, and the cgroup ceiling in force with how much of it
+   went unused at the peak. A **pinned** arena is one page-locked mapping
+   and counts in full from the moment the runtime registers it;
+   everything else the frontend holds on the host counts on top of it,
+   and the largest of those is one optimizer state per plan. A
+   **remote** arena counts for nothing here, because it is the peer's
+   memory — so the resident figures of a local tour and a remote one are
+   not the same measurement, and the line names which it is rather than
+   leaving them to be read side by side. The progress log
    carries the same reading stamped at each boundary — pools registered,
    model imported, search finished, each budget planned and closed —
    because a batch scheduler enforces its reservation as a cgroup limit
