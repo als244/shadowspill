@@ -1,13 +1,16 @@
 """Run the validation gates in order, in one command.
 
-The three gates answer different questions and are usually wanted together:
-the unit suite says the tree is coherent, the numerical matrix says a planned
-step still computes what the same step computes under PyTorch alone,
-compiled fullgraph without ShadowSpill, and the
-performance matrix says throughput has not regressed and the simulator still
-predicts it. Running
-them by hand means three commands, three output directories to name
-consistently, and remembering the order.
+The three default gates answer different questions and are usually wanted
+together: the unit suite says the tree is coherent, the numerical matrix says a
+planned step still computes what the same step computes under PyTorch alone,
+compiled fullgraph without ShadowSpill, and the performance matrix says
+throughput has not regressed and the simulator still predicts it. Running them
+by hand means three commands, three output directories to name consistently,
+and remembering the order.
+
+Two more run only when asked for, because both need a memory daemon on a peer:
+``remote`` asks the numerical question with the spill pool on another machine,
+and ``remote_perf`` asks the throughput one. Both skip cleanly without a peer.
 
 Each gate runs to completion before the next begins. The GPU ones are timed
 measurements, so overlapping them would corrupt both.
@@ -31,11 +34,15 @@ from typing import Any
 #: Gate names in the order they run. The suite is first because it is the
 #: cheapest and catches what would make the measured gates meaningless.
 #:
-#: `remote` is not in the default run: it needs a memory daemon on another
-#: machine, named by ``SHADOWSPILL_NETWORK_PEER``, and skips cleanly without
-#: one. Ask for it by name.
+#: `remote` and `remote_perf` are not in the default run: both need a memory
+#: daemon on another machine, named by ``SHADOWSPILL_NETWORK_PEER``, and skip
+#: cleanly without one. Ask for them by name.
+#:
+#: `remote_perf` runs last because it is the longest by a wide margin -- the
+#: same cells as `performance` over an interconnect about eight times slower
+#: than pinned host memory.
 GATE_ORDER = ("suite", "numerical", "performance")
-ALL_GATES = ("suite", "numerical", "performance", "remote")
+ALL_GATES = ("suite", "numerical", "performance", "remote", "remote_perf")
 
 _RESULTS = Path("qualification/results")
 
@@ -143,6 +150,10 @@ def _commands(
         "numerical": ("qualification.numerical.matrix", "--output-dir"),
         "performance": ("qualification.performance.matrix", "--output-directory"),
         "remote": ("qualification.remote.matrix", "--output-dir"),
+        "remote_perf": (
+            "qualification.remote_perf.matrix",
+            "--output-directory",
+        ),
     }
     if name not in matrices:
         raise KeyError(f"no command is defined for the gate {name!r}")
@@ -249,9 +260,14 @@ def _performance_report(directory: Path) -> list[str]:
 
     summary = directory / "summary.json"
     try:
-        cells = json.loads(summary.read_text()).get("cells", [])
+        report = json.loads(summary.read_text())
     except (OSError, json.JSONDecodeError):
         return [f"    no readable summary at {summary}"]
+    # A gate that ran without a peer skipped; saying "no artifacts" would read
+    # as a broken run rather than an absent machine.
+    if report.get("skipped"):
+        return [f"    skipped: {report.get('reason', 'no peer configured')}"]
+    cells = report.get("cells", [])
     results: list[tuple[str, dict[str, Any]]] = []
     for cell in cells:
         artifact = Path(str(cell.get("artifact", "")))
@@ -430,8 +446,9 @@ def _summary(line: str, outcomes: Sequence[GateOutcome], run: str) -> str:
             rows.extend(_performance_report(_RESULTS / f"performance_{run}"))
         elif outcome.name == "remote":
             rows.extend(_remote_report(_RESULTS / f"remote_{run}"))
+        elif outcome.name == "remote_perf":
+            rows.extend(_performance_report(_RESULTS / f"remote_perf_{run}"))
     return "\n".join(rows)
-
 
 
 def _newest(root: Path, suffixes: set[str] | None = None) -> float:

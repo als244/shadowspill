@@ -372,6 +372,9 @@ def _cell_command(
         )
     if arguments.export_bypass_key is not None:
         command.extend(("--export-bypass-key", arguments.export_bypass_key))
+    remote_spill = getattr(arguments, "remote_spill", None)
+    if remote_spill is not None:
+        command.extend(("--remote-spill", remote_spill))
     return command
 
 
@@ -458,9 +461,21 @@ def _run_cell(
     }
 
 
-def main() -> int:
+def main_with_spill(spill: object | None = None) -> int:
+    """The matrix, optionally spilling to a pool this caller supplies.
+
+    The remote performance gate reaches the matrix through here rather than
+    through a cell list of its own: naming cells there would be a second matrix
+    to keep in step, and the claim that gate makes is that nothing differs from
+    the local run but where the spill pool lives.
+    """
+
     parser = _parser()
     arguments = parser.parse_args()
+    if spill is not None:
+        # Travels to each cell as a string, so a cell run by hand is the same
+        # cell the matrix spawned.
+        arguments.remote_spill = f"{spill.host}:{spill.port}:{spill.capacity}"
     if arguments.checkpoint and arguments.plan_only:
         parser.error("--checkpoint has no effect with --plan-only")
     if arguments.measure_only and arguments.plan_only:
@@ -534,6 +549,12 @@ def main() -> int:
             ],
         )
     return 0 if summary["passed"] else 1
+
+
+def main() -> int:
+    """The local matrix: no pool supplied, so every cell spills to pinned host."""
+
+    return main_with_spill(None)
 
 
 if __name__ == "__main__":
