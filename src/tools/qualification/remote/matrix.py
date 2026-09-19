@@ -11,10 +11,17 @@ It is not in the default gate run. It needs a memory daemon reachable at
 writing a summary that says so rather than failing: a machine with no peer is
 not a machine with a broken runtime.
 
-There is deliberately **no performance cell**. The link is 25 Gb/s against
-25.5 GB/s locally, so a rate measured over it is not comparable with anything
-and is not a baseline. What this gate answers is whether the numbers come out
-the same, which is a question the hardware can answer honestly.
+This gate carries **no performance cell**, and that is a division of labour
+rather than a judgement: what it answers is whether the numbers come out the
+same, which is a question the hardware can answer honestly whatever the link
+costs. Throughput over that link is ``remote_perf``'s question.
+
+An earlier version of this note argued no such gate could exist, on the grounds
+that a rate measured over a 25 Gb/s link is not comparable with anything. That
+was half right. It is not comparable with the **local** matrix -- and it does
+not need to be. It is comparable with itself over time, which is what a
+baseline is, and without one nothing can say whether a change helped a run that
+spills across a network.
 """
 
 from __future__ import annotations

@@ -72,7 +72,10 @@ def _gate_of(command: tuple[str, ...]) -> str:
     joined = " ".join(command)
     if "pytest" in joined:
         return "suite"
-    for name in ("numerical", "performance", "remote"):
+    # `remote_perf` before `remote`: neither substring matches the other's
+    # command, but naming the longer one first keeps that true if either is
+    # ever renamed.
+    for name in ("numerical", "performance", "remote_perf", "remote"):
         if f"qualification.{name}.matrix" in joined:
             return name
     raise AssertionError(f"no gate owns the command {command!r}")
@@ -100,6 +103,13 @@ def test_the_remote_gate_is_available_but_not_in_the_default_run() -> None:
 
     assert "remote" in ALL_GATES
     assert "remote" not in GATE_ORDER
+
+
+def test_the_remote_throughput_gate_is_available_but_not_in_the_default_run() -> None:
+    """Same reason as the remote gate, and it is the longest of the five."""
+
+    assert "remote_perf" in ALL_GATES
+    assert "remote_perf" not in GATE_ORDER
 
 
 def test_gates_run_in_a_fixed_order_whatever_order_they_are_asked_for(
