@@ -208,10 +208,16 @@ def gb_s(value: float) -> str:
 def host_memory() -> tuple[int, int]:
     """Return this process's resident and peak-resident host bytes.
 
-    The pinned spill arena is one page-locked mapping, so it counts in full
+    A **pinned** spill arena is one page-locked mapping, so it counts in full
     from the moment the runtime registers it; everything the frontend holds
     on the host -- imported state, captured optimizer state, compiled
     artifacts -- counts on top of it.
+
+    A **remote** arena counts for nothing here, because it is the peer's
+    memory. So these figures are not comparable between a local tour and a
+    remote one without saying which: the local number carries the arena and the
+    remote number does not. The closing report says which it is rather than
+    leaving the two to be read side by side.
     """
 
     pages = int(Path("/proc/self/statm").read_text().split()[1])
@@ -729,6 +735,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--spill-gib", type=float)
     parser.add_argument(
+        "--remote-spill",
+        metavar="HOST:PORT",
+        help=(
+            "spill to a memory daemon on another machine instead of to pinned "
+            "host memory. The pool is the same size either way -- --spill-gib "
+            "still sets it -- so the only thing that differs is where it lives"
+        ),
+    )
+    parser.add_argument(
         "--orderings",
         choices=("factors", "depth-first"),
         default="factors",
@@ -902,6 +917,22 @@ class Request:
     sequences_per_step: int
     tokens_per_step: int
     manual: int | None
+    #: Where the spill pool lives, when it is not this machine's pinned host
+    #: memory. ``None`` is the local tour.
+    remote_spill: tuple[str, int] | None = None
+
+
+def _remote_peer(
+    parser: argparse.ArgumentParser, value: str | None
+) -> tuple[str, int] | None:
+    """The daemon named by ``--remote-spill``, or ``None`` for pinned host."""
+
+    if value is None:
+        return None
+    host, separator, port = value.rpartition(":")
+    if not separator or not host or not port.isdigit():
+        parser.error(f"--remote-spill must read HOST:PORT, not {value!r}")
+    return host, int(port)
 
 
 def resolve_request(
@@ -968,6 +999,7 @@ def resolve_request(
         sequences_per_step=sequences_per_step,
         tokens_per_step=tokens_per_step,
         manual=manual,
+        remote_spill=_remote_peer(parser, arguments.remote_spill),
     )
 
 
@@ -1101,10 +1133,23 @@ def open_runtime(request: Request, ledger: Ledger) -> Runtime:
     """The runtime, calibrated once here and reused by every geometry."""
 
     marker = time.perf_counter()
+    capacity = request.manifest.spill_budget_bytes
+    if request.remote_spill is None:
+        spill: Any = pinned_host(capacity=capacity)
+    else:
+        # Imported here: a local tour should not load the network library to
+        # decide it does not need it.
+        from shadowspill.network import remote
+
+        host, port = request.remote_spill
+        spill = remote(capacity=capacity, host=host, port=port)
+        print(f"spilling to {host}:{port}, {capacity >> 30} GiB")
     runtime = Runtime(
         pools={
             "execution": device(physical_capacity=request.physical_capacity),
-            "spill": pinned_host(capacity=request.manifest.spill_budget_bytes),
+            # The same size either way, so the only thing that differs is where
+            # it lives -- which is what makes the two tours comparable.
+            "spill": spill,
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),
@@ -1818,7 +1863,7 @@ class Tour:
         release_case_model(self.case, runtime=self.runtime)
 
 
-def print_closing(ledger: Ledger, manifest: Any) -> None:
+def print_closing(ledger: Ledger, request: Request) -> None:
     """Where the time and the host memory went."""
 
     total = time.perf_counter() - ledger.started
@@ -1831,8 +1876,19 @@ def print_closing(ledger: Ledger, manifest: Any) -> None:
     print()
     resident, peak = host_memory()
     ceiling = host_memory_ceiling()
+    capacity = request.manifest.spill_budget_bytes
     print(rule("Where the host memory went"))
-    print(f"  spill arena (pinned)  {gib(manifest.spill_budget_bytes):>12}")
+    # A remote arena is the peer's memory, not this host's, so it is named
+    # rather than counted here -- the heading above says where the host's
+    # memory went, and those gibibytes did not go there.
+    if request.remote_spill is None:
+        print(f"  spill arena (pinned)  {gib(capacity):>12}   counted below")
+    else:
+        host, port = request.remote_spill
+        print(
+            f"  spill arena (remote)  {gib(capacity):>12}   on {host}:{port},"
+            " not counted below"
+        )
     print(f"  peak resident         {gib(peak):>12}")
     print(f"  resident at exit      {gib(resident):>12}")
     if ceiling is not None:
@@ -1860,7 +1916,7 @@ def main() -> int:
         entries = tour.run()
         tour.close(entries)
     runtime.close()
-    print_closing(ledger, request.manifest)
+    print_closing(ledger, request)
     return 0
 
 
