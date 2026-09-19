@@ -32,6 +32,30 @@ def test_a_fast_lane_rounds_to_half_a_gigabyte_per_second() -> None:
     assert quantized_bandwidth(half) == half
 
 
+def test_a_lane_between_half_a_gigabyte_and_five_rounds_to_a_quarter() -> None:
+    """The band a link to a peer falls in, where half a gigabyte was too coarse.
+
+    A fixed half-gigabyte quantum is a fiftieth of a 25 GB/s lane and a fifth of
+    a 2.7 GB/s one, so the coarsening itself was worth 8 % on the slower lane.
+    """
+
+    quarter = GIGABYTE_PER_SECOND // 4
+    assert quantized_bandwidth(2_720_000_000) == 11 * quarter
+    assert quantized_bandwidth(2_660_000_000) == 11 * quarter
+    assert quantized_bandwidth(3_062_000_000) == 12 * quarter
+    # The band's own edges: at five it is the coarser quantum's business, and
+    # at half a gigabyte a quarter divides it exactly.
+    assert quantized_bandwidth(5 * GIGABYTE_PER_SECOND) == 5 * GIGABYTE_PER_SECOND
+    assert quantized_bandwidth(GIGABYTE_PER_SECOND // 2) == GIGABYTE_PER_SECOND // 2
+
+
+def test_a_fast_lane_is_unchanged_by_the_finer_band() -> None:
+    """A local lane plans exactly as it did, so its stored plans still match."""
+
+    assert quantized_bandwidth(25_918_000_000) == 26_000_000_000
+    assert quantized_bandwidth(39_356_000_000) == 39_500_000_000
+
+
 def test_a_slow_lane_rounds_to_a_tenth_of_a_gigabyte_per_second() -> None:
     tenth = GIGABYTE_PER_SECOND // 10
     assert quantized_bandwidth(260_000_000) == 3 * tenth
