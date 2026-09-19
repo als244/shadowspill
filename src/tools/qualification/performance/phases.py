@@ -77,6 +77,7 @@ class _Measurements:
 
 def _calibrated_runtime(
     manifest: FullModelManifest,
+    spill: Any = None,
 ) -> tuple[Runtime, dict[str, object], int]:
     """Open the runtime and calibrate it, retrying a bimodal measurement.
 
@@ -97,7 +98,12 @@ def _calibrated_runtime(
             "execution": device(
                 physical_capacity=manifest.device_physical_capacity_bytes
             ),
-            "spill": pinned_host(capacity=manifest.spill_budget_bytes),
+            # A peer's region when one was named, pinned host otherwise.
+            # Everything else about the cell is unchanged, which is what makes
+            # the two runs comparable.
+            "spill": spill
+            if spill is not None
+            else pinned_host(capacity=manifest.spill_budget_bytes),
         },
         routes={
             "fetch": transfer_route(source="spill", destination="execution"),

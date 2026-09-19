@@ -32,6 +32,27 @@ from .phases import (
 from .verdict import _measured_result, _plan_only_result
 
 
+def _remote_spill_pool(arguments: argparse.Namespace) -> object | None:
+    """The peer's pool named by ``--remote-spill``, or ``None`` for pinned host.
+
+    Parsed here rather than in the matrix so a cell run by hand behaves exactly
+    as one the matrix spawned, which is the whole reason the option travels as
+    a string. Imported lazily: a local run should not load the network library
+    to decide it does not need it.
+    """
+
+    value = getattr(arguments, "remote_spill", None)
+    if value is None:
+        return None
+    host, _, rest = value.partition(":")
+    port, _, size = rest.partition(":")
+    if not host or not port.isdigit() or not size.isdigit():
+        raise SystemExit(f"--remote-spill must read HOST:PORT:BYTES, not {value!r}")
+    from shadowspill.network import remote
+
+    return remote(capacity=int(size), host=host, port=int(port))
+
+
 def _run(arguments: argparse.Namespace) -> dict[str, object]:
     manifest = _manifest_with_overrides(
         arguments.family,
@@ -49,7 +70,9 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         if arguments.artifact_store is not None
         else output.parent / "artifact_store" / manifest.identity
     )
-    runtime, capabilities, calibration_attempts = _calibrated_runtime(manifest)
+    runtime, capabilities, calibration_attempts = _calibrated_runtime(
+        manifest, _remote_spill_pool(arguments)
+    )
     case = build_case(manifest, seed=arguments.seed, runtime=runtime)
     with case.implementations():
         planned = _plan_case(
@@ -149,6 +172,15 @@ def main() -> int:
         "--planning-spill-budget-gib",
         type=int,
         help="use a smaller planning budget within the runtime spill pool",
+    )
+    parser.add_argument(
+        "--remote-spill",
+        metavar="HOST:PORT:BYTES",
+        help=(
+            "spill to a memory daemon on another machine instead of to pinned "
+            "host memory. Everything else about the cell is unchanged, which "
+            "is what makes the comparison mean something"
+        ),
     )
     arguments = parser.parse_args()
     if arguments.groups <= 0 or arguments.steps_per_group <= 0:
