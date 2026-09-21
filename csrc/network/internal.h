@@ -215,6 +215,11 @@ typedef struct ShadowSpillNetworkTuning {
     uint32_t ring_slots;
     uint32_t signal_every;
     /* How long the lane's thread watches for more work before sleeping. */
+    /* How long a thread watches for work before blocking on a condition
+       variable. `SHADOWSPILL_NETWORK_SPIN_FOREVER` means it never blocks:
+       a core per lane, bought deliberately, because a condition variable
+       costs about twenty microseconds to wake from and the NIC answers a
+       small transfer in two. Zero means never spin. */
     uint64_t spin_nanoseconds;
     uint32_t traffic_class;
     uint32_t service_level;
@@ -230,6 +235,9 @@ typedef struct ShadowSpillNetworkTuning {
 
 /* Read every knob once and report what was resolved. Safe to call repeatedly;
    it recomputes rather than caching, and nothing here is hot. */
+/* `spin_nanoseconds` at this value: watch, never block. */
+#define SHADOWSPILL_NETWORK_SPIN_FOREVER UINT64_MAX
+
 void shadowspill_network_tuning_read(ShadowSpillNetworkTuning *tuning);
 
 /* One line per value, to stderr, so a run says what it used. */
