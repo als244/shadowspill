@@ -203,15 +203,43 @@ static void release_probe_ranges(
     pthread_mutex_unlock(&first->lock);
 }
 
+/* How many per-copy samples the typical is taken from. More than this and the
+   extra copies are still timed, they simply do not widen the window the median
+   is read out of. */
+#define SHADOWSPILL_CALIBRATION_LATENCY_SAMPLES 64U
+
+static int compare_nanoseconds(const void *first, const void *second) {
+    const uint64_t left = *(const uint64_t *)first;
+    const uint64_t right = *(const uint64_t *)second;
+    return left < right ? -1 : (left > right ? 1 : 0);
+}
+
+/*
+ * What one copy costs, start to finish, as the **typical** of its samples.
+ *
+ * The median rather than the mean, and no subtraction, because this is a
+ * latency measurement and that is how latency is measured: `ib_write_lat` and
+ * `ib_read_lat` ping-pong a two-byte message and report a typical, a minimum
+ * and percentiles, never a mean and never a figure derived from a second
+ * measurement.
+ *
+ * The mean was wrong twice over. One descheduled copy in sixteen moves it by
+ * more than the quantity being measured -- these samples routinely span
+ * threefold -- and what it fed was then *reduced by a payload term computed
+ * from the bandwidth probe*, coupling two measurements so that shrinking the
+ * bandwidth probe drove the reported latency to zero. It is what a small
+ * transfer costs; nothing is deducted from it.
+ */
 static int measure_copy(
     const ShadowSpillRouteState *route,
     void *destination,
     const void *source,
     uint64_t bytes,
     uint32_t copies,
-    uint64_t *average_nanoseconds
+    uint64_t *typical_nanoseconds
 ) {
-    uint64_t total = 0U;
+    uint64_t samples[SHADOWSPILL_CALIBRATION_LATENCY_SAMPLES];
+    uint32_t kept = 0U;
     /* Calibration runs with no trace, so every lane keeps nothing and hands
        back handle 0. Named once here rather than at four call sites. */
     uint64_t ignored = 0U;
@@ -225,12 +253,18 @@ static int measure_copy(
             return -1;
         }
         const uint64_t end = shadowspill_monotonic_ns();
-        if (end < begin || UINT64_MAX - total < end - begin) {
+        if (end < begin) {
             return -1;
         }
-        total += end - begin;
+        if (kept < SHADOWSPILL_CALIBRATION_LATENCY_SAMPLES) {
+            samples[kept++] = end - begin;
+        }
     }
-    *average_nanoseconds = total / copies;
+    if (kept == 0U) {
+        return -1;
+    }
+    qsort(samples, kept, sizeof(samples[0]), compare_nanoseconds);
+    *typical_nanoseconds = samples[kept / 2U];
     return 0;
 }
 
@@ -369,16 +403,9 @@ static int calibrate_route(
         config->measured_copies,
         large_nanoseconds
     );
-    uint64_t latency = small_nanoseconds;
-    if (bandwidth != 0U &&
-        config->small_copy_bytes <= UINT64_MAX / 1000000000U) {
-        const uint64_t payload =
-            config->small_copy_bytes * 1000000000U / bandwidth;
-        latency = small_nanoseconds > payload
-            ? small_nanoseconds - payload
-            : 0U;
-    }
-    profile->latency_nanoseconds = latency;
+    /* What the small copy cost, not what is left of it after a payload term
+       computed from a different measurement. See `measure_copy`. */
+    profile->latency_nanoseconds = small_nanoseconds;
     profile->bandwidth_bytes_per_second = bandwidth == 0U ? 1U : bandwidth;
     profile->solo_bandwidth_bytes_per_second =
         profile->bandwidth_bytes_per_second;
