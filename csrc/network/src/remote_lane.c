@@ -86,6 +86,49 @@ typedef struct RingRegistration {
 #define SIGNAL_WORDS 2U
 
 /*
+ * THE INSTANTS ONE TRANSFER PASSES THROUGH, on the two threads that carry it.
+ *
+ * Two chains rather than one, because after `publish_slot` the worker and the
+ * lane's thread run at the same time: the thread can have posted the transfer
+ * before the worker has finished enqueuing its device half. A single ordered
+ * list of stamps cannot partition that -- it read as negative intervals -- so
+ * each chain is ordered on its own, and a handoff between them is a difference
+ * of two absolute instants.
+ *
+ * Captured only while measuring, and only for a transfer that had the lane to
+ * itself: nothing accepted since the last `synchronize`, nothing in flight,
+ * one chunk. That is the transfer a latency figure describes, and the only
+ * one whose instants are not queueing behind a neighbour's.
+ */
+enum {
+    /* The worker's chain, in its order. */
+    TIMELINE_ENTERED,        /* `copy` called                                */
+    TIMELINE_PUBLISHED,      /* the slot is visible to the thread            */
+    TIMELINE_ENQUEUED,       /* its device work is on the stream; `copy` done */
+    TIMELINE_SYNC_ENTERED,   /* `synchronize` called                         */
+    TIMELINE_SYNC_DRAINED,   /* it observed the thread's retirement          */
+    TIMELINE_DEVICE_SEEN,    /* it observed the device's last store          */
+    TIMELINE_SYNC_RETURNED,  /* the stream is synchronized                   */
+    /* The thread's chain, in its order. */
+    TIMELINE_SEEN,           /* the thread first looked at it                */
+    TIMELINE_READY,          /* it observed the device's half done           */
+    TIMELINE_POSTED,         /* `ibv_post_send` returned                     */
+    TIMELINE_COMPLETED,      /* its completion was polled off the queue      */
+    TIMELINE_REPORTED,       /* the NIC's word stored for the stream         */
+    TIMELINE_RETIRED,        /* retired under the lock, waiters woken        */
+    TIMELINE_POINTS
+};
+
+#define TIMELINE_ROWS 64U
+
+/* One captured transfer: its instants on one clock, and its size. */
+typedef struct TimelineRow {
+    double at[TIMELINE_POINTS];
+    uint64_t bytes;
+    uint64_t first_chunk;
+} TimelineRow;
+
+/*
  * One transfer, as the lane's thread sees it: hardware work and nothing else.
  *
  * There is no signal kind any more. The completion event is ordered by the
@@ -139,6 +182,10 @@ typedef struct Work {
     uint64_t issued_host_ns;
     uint64_t started_host_ns;
     uint64_t finished_host_ns;
+
+    /* Which timeline row this transfer stamps, or -1 when it is not captured.
+       Set before the slot is published, so both threads read the same row. */
+    int32_t timeline_row;
 } Work;
 
 /*
@@ -220,25 +267,22 @@ typedef struct RemoteLane {
     uint64_t chunk_posted;
     uint64_t chunk_retired;
     uint8_t chunk_landed[SHADOWSPILL_NETWORK_MAX_RING_SLOTS];
+    /* When each in-flight chunk was posted, so the interval the lane can
+       actually see -- handing the hardware a chunk to observing its completion
+       -- can be reported through `timing`. Indexed like `chunk_landed`. */
+    double chunk_posted_at[SHADOWSPILL_NETWORK_MAX_RING_SLOTS];
     /* Which queue pair the next chunk goes to, when there is more than one. */
     uint64_t posted;
 
     /*
-     * Where a transfer's time goes, split between the host copy and the NIC.
-     * Accumulated only when asked for: the question "why is this not at line
-     * rate" is otherwise answered by guessing, and guessing was wrong once.
-     *
-     * **The split is only meaningful with one slot.** With more, a wait
-     * returns immediately for a chunk that landed while the host was copying,
-     * so the phases no longer partition the wall clock and the two figures
-     * sum to less than the elapsed time -- which is the overlap working, not
-     * an error. Read the end-to-end rate for the answer; read the split to
-     * find out which stage is the ceiling.
+     * Whether to read the clock on the transfer path: for the per-chunk
+     * interval `timing` reports, the completion-queue counts, and the
+     * timeline below. `SHADOWSPILL_NETWORK_MEASURE` sets it. A clock read per
+     * chunk is cheap and not free, and the question these answer -- where a
+     * transfer's time goes -- is otherwise answered by guessing, which was
+     * wrong more than once.
      */
     uint8_t measuring;
-    double staging_seconds;
-    double link_seconds;
-    uint64_t measured_bytes;
 
     /*
      * What a transfer cost this lane, reported through the contract's `timing`
@@ -261,26 +305,26 @@ typedef struct RemoteLane {
     _Atomic uint64_t stat_longest_micros;
     _Atomic uint64_t stat_timed;
 
-    /*
-     * Where a *small* transfer's fixed cost goes. Measured in stages because
-     * the total (12 us against a NIC that answers in 3.9) is mostly handoff,
-     * and which handoff matters for what to do about it.
-     */
-    double enqueue_seconds;      /* copy(): allocate, lock, signal            */
-    double wakeup_seconds;       /* signal -> the lane thread running         */
-    double work_seconds;         /* the thread doing the transfer             */
-    double handback_seconds;     /* the thread finishing -> synchronize waking */
-    double stream_seconds;       /* synchronize_stream after that             */
-    /* Inside the work stage, which is most of it. */
-    double lookup_seconds;       /* finding the ring's registration           */
-    double memcpy_seconds;       /* the backend's staging copy alone         */
-    double streamsync_seconds;   /* the stream sync after that copy           */
-    double post_seconds;         /* ibv_post_send                             */
-    double poll_seconds;         /* ibv_poll_cq until the completion          */
     uint64_t registrations_made;  /* should be one per region, ever            */
-    uint64_t transfers;
-    double queued_at;
-    double finished_at;
+    /* How many times the completion queue was asked, and how many of those
+       found nothing. Without these, a completion observed late cannot be told
+       apart from one nobody looked for: a thread polling hard against a queue
+       that is genuinely slow, and a thread that went away and came back, cost
+       the same on the clock and want opposite fixes. */
+    uint64_t polls;
+    uint64_t polls_empty;
+
+    /*
+     * The captured transfers -- see the enum -- and what decides whether the
+     * next one is captured. `synchronized_through` is how many transfers the
+     * last `synchronize` covered; a transfer claimed while `accepted` equals
+     * both it and `retired` has the lane to itself. Touched only by the thread
+     * that calls `copy` and `synchronize`.
+     */
+    TimelineRow timeline[TIMELINE_ROWS];
+    uint32_t timeline_rows;
+    uint64_t synchronized_through;
+    uint64_t device_watch_timeouts;
 
     /* Non-zero while work is queued, readable without the lock so the thread
        can watch for it while spinning. */
@@ -322,6 +366,41 @@ static uint64_t monotonic_ns(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * 1000000000U + (uint64_t)now.tv_nsec;
+}
+
+/*
+ * Stamp one instant of one transfer. A transfer that is not captured costs a
+ * comparison here and nothing else. The first stamp of a point stands: a
+ * thread that looks at a transfer more than once -- an evict, polled until
+ * the device has filled its slot -- records when it first did.
+ */
+static void stamp(RemoteLane *lane, const Work *work, unsigned point) {
+    if (work == NULL || work->timeline_row < 0) {
+        return;
+    }
+    double *const at = lane->timeline[work->timeline_row].at;
+    if (at[point] == 0.0) {
+        at[point] = seconds_now();
+    }
+}
+
+/*
+ * The transfer an outstanding chunk belongs to. Scanned from the oldest
+ * transfer not yet retired, which is where the owner of anything outstanding
+ * is; a slot being rebuilt has handle 0 and matches nothing.
+ */
+static const Work *work_of_chunk(const RemoteLane *lane, uint64_t chunk) {
+    for (uint32_t step = 0U; step < WORK_SLOTS; ++step) {
+        const Work *const candidate =
+            &lane->work_ring[(lane->retired + step) % WORK_SLOTS];
+        if (atomic_load_explicit(&candidate->handle, memory_order_acquire)
+                != 0U &&
+            chunk >= candidate->first_chunk &&
+            chunk < candidate->first_chunk + candidate->chunks) {
+            return candidate;
+        }
+    }
+    return NULL;
 }
 
 /* ------------------------------------------------------------ the ring */
@@ -458,6 +537,12 @@ static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
         /* This lane's own completion queue. Nothing else polls it, so a
            completion taken here is always this lane's. */
         const int taken = ibv_poll_cq(queue, 1, &completion);
+        if (lane->measuring) {
+            ++lane->polls;
+            if (taken == 0) {
+                ++lane->polls_empty;
+            }
+        }
         if (taken < 0) {
             return -1;
         }
@@ -472,6 +557,33 @@ static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
             return -1;
         }
         lane->chunk_landed[completion.wr_id % slots] = 1U;
+        if (lane->measuring) {
+            stamp(
+                lane, work_of_chunk(lane, completion.wr_id), TIMELINE_COMPLETED
+            );
+            /* Posted to observed, which is what this lane can see: not time on
+               the wire, and separating the two is the point. */
+            const double posted = lane->chunk_posted_at[completion.wr_id % slots];
+            if (posted != 0.0) {
+                const uint64_t micros =
+                    (uint64_t)((seconds_now() - posted) * 1e6);
+                (void)atomic_fetch_add_explicit(
+                    &lane->stat_completion_micros, micros, memory_order_relaxed
+                );
+                uint64_t longest = atomic_load_explicit(
+                    &lane->stat_longest_micros, memory_order_relaxed
+                );
+                while (micros > longest &&
+                       !atomic_compare_exchange_weak_explicit(
+                           &lane->stat_longest_micros, &longest, micros,
+                           memory_order_relaxed, memory_order_relaxed
+                       )) {
+                }
+                (void)atomic_fetch_add_explicit(
+                    &lane->stat_timed, 1U, memory_order_relaxed
+                );
+            }
+        }
     }
     while (lane->chunk_retired < lane->chunk_posted &&
            lane->chunk_landed[lane->chunk_retired % slots]) {
@@ -481,6 +593,12 @@ static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
     }
     if (*retired != 0U) {
         report_nic(lane, lane->chunk_retired);
+        if (lane->measuring) {
+            stamp(
+                lane, work_of_chunk(lane, lane->chunk_retired - 1U),
+                TIMELINE_REPORTED
+            );
+        }
     }
     return 0;
 }
@@ -515,20 +633,25 @@ static int device_reached(const RemoteLane *lane, uint64_t reached) {
  * already on its way when this one finishes. Watching for it briefly catches
  * that case without a context switch.
  *
- * **Bounded is the whole point.** A lane thread that spins without limit is a
- * core per lane, which is why the contract says a lane should block. This
- * spins for a few microseconds and then blocks properly, so an idle runtime
- * costs nothing.
+ * **It does not stop by default.** A thread that watches without limit is a
+ * core per lane, and that is the trade now taken: a condition variable costs
+ * about twenty microseconds to wake from, against a NIC that answers a small
+ * transfer in two, so blocking cost more than the transfer it was waiting for.
+ * `SHADOWSPILL_NETWORK_SPIN_NANOSECONDS` bounds it again for a host that would
+ * rather have the core back, and zero blocks immediately.
  */
 static void spin_briefly(RemoteLane *lane) {
     if (lane->tuning.spin_nanoseconds == 0U) {
         return;
     }
-    const double deadline =
-        seconds_now() + (double)lane->tuning.spin_nanoseconds * 1e-9;
+    const int forever =
+        lane->tuning.spin_nanoseconds == SHADOWSPILL_NETWORK_SPIN_FOREVER;
+    const double deadline = forever
+        ? 0.0
+        : seconds_now() + (double)lane->tuning.spin_nanoseconds * 1e-9;
     while (atomic_load_explicit(&lane->queued, memory_order_acquire) == 0ULL &&
            atomic_load_explicit(&lane->stopping, memory_order_acquire) == 0U) {
-        if (seconds_now() >= deadline) {
+        if (!forever && seconds_now() >= deadline) {
             return;
         }
 #if defined(__x86_64__) || defined(__i386__)
@@ -616,6 +739,7 @@ static int post_one_chunk(RemoteLane *lane, const Work *work, uint64_t chunk) {
     if (lane->stages && !stage_device_ready(lane, work, chunk)) {
         return 0;
     }
+    stamp(lane, work, TIMELINE_READY);
     const uint64_t chunk_bytes = lane->tuning.chunk_bytes;
     const uint64_t offset = (chunk - work->first_chunk) * chunk_bytes;
     const uint64_t bytes = lane->stages
@@ -631,6 +755,10 @@ static int post_one_chunk(RemoteLane *lane, const Work *work, uint64_t chunk) {
         return -1;
     }
     shadowspill_lane_counted(&lane->base.chunks, 1U);
+    if (lane->measuring) {
+        lane->chunk_posted_at[chunk % lane->tuning.ring_slots] = seconds_now();
+        stamp(lane, work, TIMELINE_POSTED);
+    }
     ++lane->chunk_posted;
     return 1;
 }
@@ -660,6 +788,7 @@ static int post_what_it_can(
 ) {
     while (*started < accepted) {
         Work *const work = &lane->work_ring[*started % WORK_SLOTS];
+        stamp(lane, work, TIMELINE_SEEN);
         if (lane->flight_region != NULL && lane->flight_region != work->region) {
             /* Another region means another queue pair, and order across two of
                them is not guaranteed. Drain before crossing. */
@@ -793,12 +922,8 @@ static void *lane_thread(void *argument) {
             pthread_mutex_unlock(&lane->lock);
             return NULL;
         }
-        if (lane->measuring && started < accepted) {
-            lane->wakeup_seconds += seconds_now() - lane->queued_at;
-        }
         pthread_mutex_unlock(&lane->lock);
 
-        const double work_started = lane->measuring ? seconds_now() : 0.0;
         const int failed = pump(lane, accepted, &started) != 0;
         if (failed) {
             fail_everything(lane);
@@ -806,9 +931,6 @@ static void *lane_thread(void *argument) {
 
         pthread_mutex_lock(&lane->lock);
         const uint64_t retired_before = lane->retired;
-        if (lane->measuring) {
-            lane->work_seconds += seconds_now() - work_started;
-        }
         if (started != lane->started) {
             (void)atomic_fetch_sub_explicit(
                 &lane->queued, started - lane->started, memory_order_acq_rel
@@ -828,6 +950,7 @@ static void *lane_thread(void *argument) {
                 lane->chunk_retired < oldest->first_chunk + oldest->chunks) {
                 break;
             }
+            stamp(lane, oldest, TIMELINE_RETIRED);
             if (oldest->traced) {
                 /* Its last chunk has landed, which is the moment its bytes are
                    on the far side. A failed transfer is retired here too and
@@ -835,17 +958,11 @@ static void *lane_thread(void *argument) {
                 oldest->finished_host_ns = monotonic_ns();
             }
             ++lane->retired;
-            if (lane->measuring) {
-                ++lane->transfers;
-            }
         }
         if (failed) {
             /* Nothing will retire these; let every waiter go. */
             lane->retired = lane->started = lane->accepted;
             lane->chunk_retired = lane->chunk_posted;
-        }
-        if (lane->retired == lane->accepted && lane->measuring) {
-            lane->finished_at = seconds_now();
         }
         /*
          * Broadcast when a *transfer* retired, which is both what `synchronize`
@@ -893,10 +1010,8 @@ static Work *claim_slot(RemoteLane *lane, uint64_t *handle) {
 
 /* Publish the slot the caller has filled, and wake the thread. */
 static void publish_slot(RemoteLane *lane, Work *work, uint64_t handle) {
+    stamp(lane, work, TIMELINE_PUBLISHED);
     atomic_store_explicit(&work->handle, handle, memory_order_release);
-    if (lane->measuring) {
-        lane->queued_at = seconds_now();
-    }
     (void)atomic_fetch_add_explicit(&lane->queued, 1ULL, memory_order_release);
     ++lane->accepted;
     pthread_mutex_unlock(&lane->lock);
@@ -1059,6 +1174,29 @@ static int stage_enqueue_device_work(RemoteLane *lane, const Work *work) {
     return 0;
 }
 
+/*
+ * Give this transfer a timeline row if it has the lane to itself: nothing
+ * accepted that the last `synchronize` did not cover, nothing in flight, and
+ * one chunk. Under the lane's lock and before the slot is published, so the
+ * thread reads the row it should stamp. `entered` is the instant `copy` was
+ * called, taken before the lock and belonging to this transfer now that it is
+ * known which that is.
+ */
+static void capture_timeline(RemoteLane *lane, Work *work, double entered) {
+    if (lane->timeline_rows >= TIMELINE_ROWS ||
+        lane->accepted != lane->retired ||
+        lane->accepted != lane->synchronized_through ||
+        work->chunks != 1U) {
+        return;
+    }
+    TimelineRow *const row = &lane->timeline[lane->timeline_rows];
+    memset(row, 0, sizeof(*row));
+    row->bytes = work->bytes;
+    row->first_chunk = work->first_chunk;
+    row->at[TIMELINE_ENTERED] = entered;
+    work->timeline_row = (int32_t)lane->timeline_rows++;
+}
+
 /* Plan it, give the device its half if there is one, hand the rest to the
    thread. Nothing is waited for here: this runs on the runtime's worker. */
 static int remote_copy(
@@ -1076,12 +1214,16 @@ static int remote_copy(
 
     uint64_t claimed = 0U;
     Work *work = claim_slot(self, &claimed);
+    work->timeline_row = -1;
     if (plan_transfer(self, work, destination, source, bytes) != 0) {
         /* Never published, so `accepted` did not move and the next claim takes
            this same slot; its handle is already 0. */
         pthread_mutex_unlock(&self->lock);
         shadowspill_lane_counted(&lane->failures, 1U);
         return -1;
+    }
+    if (self->measuring) {
+        capture_timeline(self, work, entered);
     }
     /*
      * The thread is given the transfer *before* the device side is enqueued,
@@ -1111,9 +1253,7 @@ static int remote_copy(
     if (self->stages && stage_enqueue_device_work(self, &plan) != 0) {
         return -1;
     }
-    if (self->measuring) {
-        self->enqueue_seconds += seconds_now() - entered;
-    }
+    stamp(self, &plan, TIMELINE_ENQUEUED);
     return 0;
 }
 
@@ -1210,26 +1350,134 @@ static int remote_signal(
  * `synchronize` was called in the window between the two. That the canary
  * passed anyway is luck about timing, not evidence.
  */
+/*
+ * The transfer whose instants this `synchronize` stamps: the one accepted
+ * since the last, when exactly one was and it was captured. Under the lock.
+ */
+static const Work *captured_transfer(const RemoteLane *lane) {
+    if (lane->accepted != lane->synchronized_through + 1U) {
+        return NULL;
+    }
+    const Work *const work =
+        &lane->work_ring[(lane->accepted - 1U) % WORK_SLOTS];
+    return work->timeline_row >= 0 ? work : NULL;
+}
+
+/*
+ * A batch's first transfer was claimed with the lane to itself and captured,
+ * and the rest of the batch was then accepted behind it -- so no `synchronize`
+ * will ever cover it alone and its row cannot be completed. Release the row.
+ * It is the last one claimed, since nothing accepted after it qualified.
+ * Under the lock and after the drain, so the thread has stamped its last.
+ */
+static void release_batch_row(RemoteLane *lane, uint64_t accepted) {
+    const uint64_t batch = accepted - lane->synchronized_through;
+    if (batch < 2U || batch > WORK_SLOTS) {
+        return;
+    }
+    Work *const first =
+        &lane->work_ring[lane->synchronized_through % WORK_SLOTS];
+    if (first->timeline_row >= 0 &&
+        first->timeline_row + 1 == (int32_t)lane->timeline_rows) {
+        memset(&lane->timeline[first->timeline_row], 0, sizeof(TimelineRow));
+        --lane->timeline_rows;
+        first->timeline_row = -1;
+    }
+}
+
+/*
+ * Watch, from the host, for the device's last store for this transfer, and
+ * stamp when it is seen.
+ *
+ * It is where a fetch's time after the NIC goes. The stream is waiting on the
+ * word the thread stored at `TIMELINE_REPORTED`; it then copies the chunk in
+ * and stores this word; and `synchronize_stream` returns only once all of it
+ * is done. Seen from here, the store separates the device finishing from the
+ * host noticing that it has. Bounded, because a stream that failed never
+ * stores it.
+ */
+static void watch_device(RemoteLane *lane, const Work *work) {
+    const uint64_t last = work->first_chunk + work->chunks;
+    const double deadline = seconds_now() + 1.0;
+    while (!device_reached(lane, last)) {
+        if (seconds_now() >= deadline) {
+            ++lane->device_watch_timeouts;
+            return;
+        }
+#if defined(__x86_64__) || defined(__i386__)
+        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+        __asm__ volatile("yield");
+#endif
+    }
+    stamp(lane, work, TIMELINE_DEVICE_SEEN);
+}
+
 static int remote_synchronize(ShadowSpillLane *base_lane) {
     RemoteLane *lane = (RemoteLane *)base_lane;
+    /* The transfer this call's instants belong to, when one was captured. */
+    const Work *captured = NULL;
+    if (lane->measuring) {
+        pthread_mutex_lock(&lane->lock);
+        captured = captured_transfer(lane);
+        pthread_mutex_unlock(&lane->lock);
+        stamp(lane, captured, TIMELINE_SYNC_ENTERED);
+    }
+    /*
+     * Watch for the drain before blocking on it, for the reason the lane
+     * thread already spins before sleeping: a condition variable costs about
+     * twenty microseconds to wake from, and a small transfer finishes in about
+     * thirteen. Measured, on one 4 KiB transfer in flight: the NIC answered in
+     * 13.55 us and this handoff cost 19.86 us -- more than the transfer.
+     *
+     * Bounded by the same `spin_nanoseconds` the thread uses, so one knob
+     * governs both handoffs and an idle runtime still costs nothing. The lock
+     * is taken and released each turn rather than the counters read unlocked:
+     * an uncontended mutex is tens of nanoseconds, and a data race to save
+     * that is not a trade worth making.
+     */
+    if (lane->tuning.spin_nanoseconds != 0U) {
+        const int forever =
+            lane->tuning.spin_nanoseconds == SHADOWSPILL_NETWORK_SPIN_FOREVER;
+        const double deadline = forever
+            ? 0.0
+            : seconds_now() + (double)lane->tuning.spin_nanoseconds * 1e-9;
+        for (;;) {
+            pthread_mutex_lock(&lane->lock);
+            const int drained = lane->retired == lane->accepted;
+            pthread_mutex_unlock(&lane->lock);
+            if (drained || (!forever && seconds_now() >= deadline)) {
+                break;
+            }
+#if defined(__x86_64__) || defined(__i386__)
+            __builtin_ia32_pause();
+#elif defined(__aarch64__)
+            __asm__ volatile("yield");
+#endif
+        }
+    }
     pthread_mutex_lock(&lane->lock);
     while (lane->retired != lane->accepted) {
         pthread_cond_wait(&lane->drained, &lane->lock);
     }
-    const double woken = lane->measuring ? seconds_now() : 0.0;
-    if (lane->measuring && lane->finished_at != 0.0) {
-        lane->handback_seconds += woken - lane->finished_at;
-        lane->finished_at = 0.0;
+    stamp(lane, captured, TIMELINE_SYNC_DRAINED);
+    const uint64_t accepted = lane->accepted;
+    if (lane->measuring) {
+        release_batch_row(lane, accepted);
     }
     pthread_mutex_unlock(&lane->lock);
     if (atomic_load_explicit(&lane->failed, memory_order_acquire) != 0U) {
         return -1;
     }
+    if (captured != NULL) {
+        watch_device(lane, captured);
+    }
     const int status = lane->base.backend->synchronize_stream(
         lane->base.backend->state, lane->base.stream
     );
+    stamp(lane, captured, TIMELINE_SYNC_RETURNED);
     if (lane->measuring) {
-        lane->stream_seconds += seconds_now() - woken;
+        lane->synchronized_through = accepted;
     }
     return status == 0 ? 0 : -1;
 }
@@ -1241,44 +1489,197 @@ static int remote_synchronize(ShadowSpillLane *base_lane) {
  * transfers are recorded untimed rather than timed wrongly.
  */
 
+/* A span between two instants, on one thread or across the two. */
+typedef struct TimelineSpan {
+    const char *name;
+    unsigned from;
+    unsigned to;
+} TimelineSpan;
+
+static int compare_doubles(const void *first, const void *second) {
+    const double left = *(const double *)first;
+    const double right = *(const double *)second;
+    return left < right ? -1 : (left > right ? 1 : 0);
+}
+
+/*
+ * The captured transfers, as medians: each instant after `copy` was entered,
+ * in the order they happen, and then the spans that say where the time went.
+ * Only a row with every instant counts. One without is a transfer captured at
+ * its claim and then not synchronized alone, or one whose device store was
+ * never seen; either is reported as a count rather than folded in.
+ */
+static void report_timeline(const RemoteLane *lane) {
+    static const char *const point_names[TIMELINE_POINTS] = {
+        "worker  copy entered",
+        "worker  slot published",
+        "worker  device work enqueued",
+        "worker  synchronize entered",
+        "worker  saw the thread retire",
+        "worker  saw the device's store",
+        "worker  stream synchronized",
+        "thread  saw the transfer",
+        "thread  saw the device's half done",
+        "thread  posted",
+        "thread  completion polled",
+        "thread  reported to the stream",
+        "thread  retired",
+    };
+    static const TimelineSpan spans[] = {
+        {"worker: claim and plan", TIMELINE_ENTERED, TIMELINE_PUBLISHED},
+        {"worker: enqueue device work", TIMELINE_PUBLISHED, TIMELINE_ENQUEUED},
+        {"worker: copy returns to sync", TIMELINE_ENQUEUED, TIMELINE_SYNC_ENTERED},
+        {"worker: waits for the thread", TIMELINE_SYNC_ENTERED, TIMELINE_SYNC_DRAINED},
+        {"worker: device finishes after", TIMELINE_SYNC_DRAINED, TIMELINE_DEVICE_SEEN},
+        {"worker: stream synchronize", TIMELINE_DEVICE_SEEN, TIMELINE_SYNC_RETURNED},
+        {"thread: picks it up", TIMELINE_PUBLISHED, TIMELINE_SEEN},
+        {"thread: waits for the device", TIMELINE_SEEN, TIMELINE_READY},
+        {"thread: ibv_post_send", TIMELINE_READY, TIMELINE_POSTED},
+        {"thread: NIC, posted to polled", TIMELINE_POSTED, TIMELINE_COMPLETED},
+        {"thread: report to the stream", TIMELINE_COMPLETED, TIMELINE_REPORTED},
+        {"thread: retire under the lock", TIMELINE_REPORTED, TIMELINE_RETIRED},
+        {"handoff: retired to sync sees", TIMELINE_RETIRED, TIMELINE_SYNC_DRAINED},
+        {"device: NIC word to its store", TIMELINE_REPORTED, TIMELINE_DEVICE_SEEN},
+        {"end to end", TIMELINE_ENTERED, TIMELINE_SYNC_RETURNED},
+    };
+    const TimelineRow *rows[TIMELINE_ROWS];
+    uint32_t complete = 0U;
+    for (uint32_t which = 0U; which < lane->timeline_rows; ++which) {
+        const TimelineRow *const row = &lane->timeline[which];
+        unsigned point = 0U;
+        while (point < TIMELINE_POINTS && row->at[point] != 0.0) {
+            ++point;
+        }
+        if (point == TIMELINE_POINTS) {
+            rows[complete++] = row;
+        }
+    }
+    if (complete == 0U) {
+        fprintf(
+            stderr,
+            "shadowspill network:   timeline -- no transfer had the lane to "
+            "itself (%u rows claimed, %llu device watches timed out)\n",
+            lane->timeline_rows,
+            (unsigned long long)lane->device_watch_timeouts
+        );
+        return;
+    }
+    fprintf(
+        stderr,
+        "shadowspill network:   timeline -- %u transfers of %llu bytes that had "
+        "the lane to themselves (%u rows incomplete); median us after copy() "
+        "was entered\n",
+        complete, (unsigned long long)rows[0]->bytes,
+        lane->timeline_rows - complete
+    );
+    double values[TIMELINE_ROWS];
+    double offsets[TIMELINE_POINTS];
+    unsigned order[TIMELINE_POINTS];
+    for (unsigned point = 0U; point < TIMELINE_POINTS; ++point) {
+        for (uint32_t which = 0U; which < complete; ++which) {
+            values[which] =
+                (rows[which]->at[point] - rows[which]->at[TIMELINE_ENTERED])
+                * 1e6;
+        }
+        qsort(values, complete, sizeof(values[0]), compare_doubles);
+        offsets[point] = values[complete / 2U];
+        order[point] = point;
+    }
+    /* In the order they happen, which interleaves the two chains. */
+    for (unsigned outer = 1U; outer < TIMELINE_POINTS; ++outer) {
+        for (unsigned inner = outer;
+             inner > 0U && offsets[order[inner]] < offsets[order[inner - 1U]];
+             --inner) {
+            const unsigned swap = order[inner];
+            order[inner] = order[inner - 1U];
+            order[inner - 1U] = swap;
+        }
+    }
+    for (unsigned rank = 0U; rank < TIMELINE_POINTS; ++rank) {
+        fprintf(
+            stderr, "shadowspill network:     %-36s %8.2f\n",
+            point_names[order[rank]], offsets[order[rank]]
+        );
+    }
+    fprintf(stderr, "shadowspill network:   spans -- median, min us\n");
+    for (size_t span = 0U; span < sizeof(spans) / sizeof(spans[0]); ++span) {
+        for (uint32_t which = 0U; which < complete; ++which) {
+            values[which] =
+                (rows[which]->at[spans[span].to]
+                 - rows[which]->at[spans[span].from]) * 1e6;
+        }
+        qsort(values, complete, sizeof(values[0]), compare_doubles);
+        fprintf(
+            stderr, "shadowspill network:     %-36s %8.2f  %8.2f\n",
+            spans[span].name, values[complete / 2U], values[0]
+        );
+    }
+    /* Every row, for a reader after the distribution rather than its middle:
+       each instant in the enum's order, us after entry, and which ring slot
+       the chunk used. */
+    for (uint32_t which = 0U; which < complete; ++which) {
+        fprintf(
+            stderr, "shadowspill network:     row %2u chunk %llu slot %llu:",
+            which, (unsigned long long)rows[which]->first_chunk,
+            (unsigned long long)(rows[which]->first_chunk
+                                 % lane->tuning.ring_slots)
+        );
+        for (unsigned point = 1U; point < TIMELINE_POINTS; ++point) {
+            fprintf(
+                stderr, " %.2f",
+                (rows[which]->at[point] - rows[which]->at[TIMELINE_ENTERED])
+                * 1e6
+            );
+        }
+        fputc('\n', stderr);
+    }
+    if (lane->device_watch_timeouts != 0U) {
+        fprintf(
+            stderr, "shadowspill network:   %llu device watches timed out\n",
+            (unsigned long long)lane->device_watch_timeouts
+        );
+    }
+}
+
 static void remote_destroy(ShadowSpillLane *base_lane) {
     RemoteLane *lane = (RemoteLane *)base_lane;
     if (lane == NULL) {
         return;
     }
-    if (lane->measuring && lane->measured_bytes != 0U) {
-        const double mib = (double)lane->measured_bytes / (double)(1U << 20U);
+    /* What measuring found, on stderr, because a lane has no other channel
+       out and the reader is the person who set the variable. */
+    if (lane->measuring) {
+        report_timeline(lane);
         fprintf(
             stderr,
-            "shadowspill network: %.0f MiB -- host copy %.4f s (%.0f MiB/s), "
-            "link %.4f s (%.0f MiB/s), serial total %.4f s (%.0f MiB/s)\n",
-            mib, lane->staging_seconds, mib / lane->staging_seconds,
-            lane->link_seconds, mib / lane->link_seconds,
-            lane->staging_seconds + lane->link_seconds,
-            mib / (lane->staging_seconds + lane->link_seconds)
+            "shadowspill network:   completion queue -- %llu polls, %llu empty,"
+            " %.1f polls per chunk (%llu registrations made, %u cached)\n",
+            (unsigned long long)lane->polls,
+            (unsigned long long)lane->polls_empty,
+            lane->base.chunks != 0U
+                ? (double)lane->polls
+                  / (double)atomic_load_explicit(
+                      &lane->base.chunks, memory_order_relaxed
+                  )
+                : 0.0,
+            (unsigned long long)lane->registrations_made,
+            lane->registration_count
         );
-        if (lane->transfers != 0U) {
-            const double each = 1e6 / (double)lane->transfers;
+        const uint64_t timed = atomic_load_explicit(
+            &lane->stat_timed, memory_order_relaxed
+        );
+        if (timed != 0U) {
             fprintf(
                 stderr,
-                "shadowspill network: %llu transfers, per transfer -- enqueue "
-                "%.2f us, wake %.2f us, work %.2f us, hand back %.2f us, "
-                "stream %.2f us\n",
-                (unsigned long long)lane->transfers,
-                lane->enqueue_seconds * each, lane->wakeup_seconds * each,
-                lane->work_seconds * each, lane->handback_seconds * each,
-                lane->stream_seconds * each
-            );
-            fprintf(
-                stderr,
-                "shadowspill network:   within work -- lookup %.2f us, staging copy "
-                "%.2f us, stream sync %.2f us, post %.2f us, poll %.2f us "
-                "(%llu registrations made, %u cached)\n",
-                lane->lookup_seconds * each, lane->memcpy_seconds * each,
-                lane->streamsync_seconds * each, lane->post_seconds * each,
-                lane->poll_seconds * each,
-                (unsigned long long)lane->registrations_made,
-                lane->registration_count
+                "shadowspill network:   posted to completion -- %llu chunks, "
+                "%.2f us mean, %.2f us longest\n",
+                (unsigned long long)timed,
+                (double)atomic_load_explicit(
+                    &lane->stat_completion_micros, memory_order_relaxed
+                ) / (double)timed,
+                (double)atomic_load_explicit(
+                    &lane->stat_longest_micros, memory_order_relaxed
+                )
             );
         }
     }
@@ -1365,6 +1766,10 @@ static int remote_create(
     const ShadowSpillBackend *const backend = base->backend;
     shadowspill_network_tuning_read(&lane->tuning);
     lane->measuring = getenv("SHADOWSPILL_NETWORK_MEASURE") != NULL;
+    for (uint32_t index = 0U; index < WORK_SLOTS; ++index) {
+        /* Not captured until `capture_timeline` says so; 0 would be a row. */
+        lane->work_ring[index].timeline_row = -1;
+    }
     atomic_init(&lane->stopping, 0U);
     atomic_init(&lane->failed, 0U);
     atomic_init(&lane->queued, 0ULL);
