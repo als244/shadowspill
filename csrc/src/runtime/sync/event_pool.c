@@ -184,6 +184,8 @@ ShadowSpillStatus shadowspill_event_lease_acquire(
     lease->completion_linked = 0U;
     atomic_init(&lease->references, 1U);
     atomic_init(&lease->backend_complete, 0U);
+    atomic_init(&lease->origin_route, NULL);
+    atomic_init(&lease->origin_handle, 0U);
     *output = lease;
     return SHADOWSPILL_STATUS_OK;
 }
@@ -235,6 +237,8 @@ int shadowspill_event_lease_release(
     lease->completion_next = NULL;
     lease->completion_linked = 0U;
     atomic_store_explicit(&lease->backend_complete, 0U, memory_order_relaxed);
+    atomic_store_explicit(&lease->origin_route, NULL, memory_order_relaxed);
+    atomic_store_explicit(&lease->origin_handle, 0U, memory_order_relaxed);
     release_event_record(pool, lease);
     return status;
 }
@@ -264,4 +268,97 @@ int shadowspill_event_lease_query(
         );
     }
     return 0;
+}
+
+void shadowspill_event_lease_issued_by(
+    ShadowSpillEventLease *lease,
+    const struct ShadowSpillRouteState *route,
+    uint64_t handle
+) {
+    if (lease == NULL) {
+        return;
+    }
+    /* The handle first, so a reader that sees the route sees its handle. */
+    atomic_store_explicit(&lease->origin_handle, handle, memory_order_relaxed);
+    atomic_store_explicit(&lease->origin_route, route, memory_order_release);
+}
+
+/* The lane to ask, or NULL when the event is the one to ask. */
+static const ShadowSpillRouteState *answering_route(
+    const ShadowSpillEventLease *lease, uint64_t *handle
+) {
+    const ShadowSpillRouteState *const route = atomic_load_explicit(
+        &lease->origin_route, memory_order_acquire
+    );
+    if (route == NULL) {
+        return NULL;
+    }
+    *handle = atomic_load_explicit(&lease->origin_handle, memory_order_relaxed);
+    return route;
+}
+
+int shadowspill_event_lease_landed(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease *lease,
+    int *complete
+) {
+    if (runtime == NULL || lease == NULL || complete == NULL) {
+        return -1;
+    }
+    if (atomic_load_explicit(
+            &lease->backend_complete, memory_order_acquire
+        ) != 0U) {
+        *complete = 1;
+        return 0;
+    }
+    uint64_t handle = 0U;
+    const ShadowSpillRouteState *const route = answering_route(lease, &handle);
+    if (route != NULL && route->operations->landed != NULL &&
+        route->operations->landed(route->lane, handle, complete) == 0) {
+        if (*complete) {
+            atomic_store_explicit(
+                &lease->backend_complete, 1U, memory_order_release
+            );
+        }
+        return 0;
+    }
+    /* No lane to ask, or one that no longer keeps the handle -- and a lane
+       drops a handle only once its event says the same thing. */
+    return shadowspill_event_lease_query(runtime, lease, complete);
+}
+
+int shadowspill_event_lease_order(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease *lease,
+    ShadowSpillBackendStream stream
+) {
+    if (runtime == NULL || lease == NULL) {
+        return -1;
+    }
+    uint64_t handle = 0U;
+    const ShadowSpillRouteState *const route = answering_route(lease, &handle);
+    if (route != NULL && route->operations->order != NULL &&
+        route->operations->order(route->lane, handle, stream) == 0) {
+        return 0;
+    }
+    return runtime->backend.wait_event(
+        runtime->backend.state, stream, lease->event
+    ) == 0 ? 0 : -1;
+}
+
+int shadowspill_event_lease_order_route(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease *lease,
+    const ShadowSpillRouteState *route
+) {
+    if (runtime == NULL || lease == NULL || route == NULL) {
+        return -1;
+    }
+    uint64_t handle = 0U;
+    const ShadowSpillRouteState *const origin = answering_route(lease, &handle);
+    if (origin != NULL && origin->operations->order != NULL &&
+        origin->operations->order(origin->lane, handle, route->stream) == 0) {
+        return 0;
+    }
+    return route->operations->wait(route->lane, lease->event);
 }
