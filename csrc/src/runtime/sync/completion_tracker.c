@@ -133,7 +133,7 @@ int shadowspill_completion_poll(
             }
 
             int complete = 0;
-            const int query_status = shadowspill_event_lease_query(
+            const int query_status = shadowspill_event_lease_landed(
                 runtime, event, &complete
             );
             pthread_mutex_lock(&tracker->lock);
@@ -162,6 +162,9 @@ int shadowspill_completion_poll(
             }
             event->completion_next = NULL;
             event->completion_linked = 0U;
+            /* Landed, so the event now says the same thing and nobody need
+               ask the lane again -- which lets the lane retire the handle. */
+            shadowspill_event_lease_issued_by(event, NULL, 0U);
             stream->next_poll_timestamp_ns = 0U;
             if (tracker->pending != 0U) {
                 --tracker->pending;

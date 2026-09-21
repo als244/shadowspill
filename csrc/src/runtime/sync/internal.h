@@ -18,6 +18,8 @@
 
 typedef struct ShadowSpillEventLease ShadowSpillEventLease;
 typedef struct ShadowSpillEventPool ShadowSpillEventPool;
+/* Declared by transfers/internal.h; named here only through a pointer. */
+struct ShadowSpillRouteState;
 
 struct ShadowSpillEventLease {
     ShadowSpillBackendEvent event;
@@ -31,6 +33,20 @@ struct ShadowSpillEventLease {
      * owning MemoryPool commits the matching lease transition under pool.lock.
      */
     _Atomic uint8_t backend_complete;
+    /*
+     * The lane that issued the transfer this lease stands for, and the handle
+     * it named the transfer by -- or NULL, for a lease that stands for no
+     * transfer or whose lane has nothing to say about it.
+     *
+     * A lane may answer the two questions asked of a completion lease itself
+     * (`landed`, `order` on its table) instead of through the event, and this
+     * is how the runtime knows to ask it. Set beside `signal`, before the lease
+     * reaches any reader; cleared by the completion tracker once the lane has
+     * said the transfer landed, from which moment the event is authoritative.
+     * Atomic because a consumer's thread reads it while the worker clears it.
+     */
+    _Atomic(const struct ShadowSpillRouteState *) origin_route;
+    _Atomic uint64_t origin_handle;
     struct ShadowSpillEventLease *completion_next;
     struct ShadowSpillEventLease *free_next;
     uint8_t pool_owned;
@@ -137,6 +153,40 @@ int shadowspill_event_lease_query(
     ShadowSpillRuntime *runtime,
     ShadowSpillEventLease *lease,
     int *complete
+);
+
+/*
+ * The two questions asked of a transfer's completion lease, put to whoever
+ * answers them: the lane that issued the transfer, when its table answers and
+ * it still keeps the handle, and otherwise the backend event. The lane
+ * contract's rule -- a lane answers `landed` yes only once it has recorded
+ * the event -- is what lets the two be asked interchangeably.
+ *
+ * `issued_by` is how the lease learns its lane, beside `signal`; NULL forgets
+ * it. `landed` is the host's question; `order` makes `stream` wait, and
+ * `order_route` is the same question asked for a route's own work, through
+ * that route's lane when the origin has nothing to say -- so the lane's
+ * retry return survives.
+ */
+void shadowspill_event_lease_issued_by(
+    ShadowSpillEventLease *lease,
+    const struct ShadowSpillRouteState *route,
+    uint64_t handle
+);
+int shadowspill_event_lease_landed(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease *lease,
+    int *complete
+);
+int shadowspill_event_lease_order(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease *lease,
+    ShadowSpillBackendStream stream
+);
+int shadowspill_event_lease_order_route(
+    ShadowSpillRuntime *runtime,
+    ShadowSpillEventLease *lease,
+    const struct ShadowSpillRouteState *route
 );
 
 int shadowspill_completion_tracker_initialize(

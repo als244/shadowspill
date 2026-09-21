@@ -129,7 +129,8 @@ has landed, which is when the simulator frees it too.
 One C-owned worker services completions, releases, and both routes' queues.
 It does not drive the lanes themselves: a lane completes the event it was given
 when its bytes have landed, by whatever means suits it, and the worker reads
-events like any other.
+events like any other -- or asks the lane, for one that answers for its own
+transfers, through the same paths it reads the event by.
 It names itself `shadowspill.wkr` to both the OS and the backend's profiler --
 one name, short enough that the OS thread-name limit keeps it whole. The hot
 loop visits each completion frontier, drains immediately completed FIFO
