@@ -93,6 +93,16 @@ struct MockEvent {
     uint64_t ready_nanoseconds;
     uint64_t stamp;
     MockEventState state;
+    /*
+     * Who still refers to this event: its creator until `destroy_event`, and
+     * every queued record or wait until the entry is consumed. It is freed
+     * when the last goes, because a caller may destroy an event a stream has
+     * yet to wait on -- legal, since the wait captured the record -- and a
+     * queue entry reading a freed event reads whatever the allocator left
+     * there. That once read as a timestamp thirty hours ahead of the clock,
+     * and a wait that never passed.
+     */
+    uint32_t references;
 };
 
 typedef struct MockStream {
@@ -211,6 +221,14 @@ static int unregister_host_memory(void *state, void *address, uint64_t bytes) {
 
 /* ----------------------------------------------------------- the queue */
 
+/* Drop one hold on an event, freeing it with the last. The backend's lock is
+   held. */
+static void release_event_locked(MockEvent *event) {
+    if (event != NULL && --event->references == 0U) {
+        free(event);
+    }
+}
+
 /* Whether an event has completed: its record has run, its instant has passed.
    The backend's lock is held. */
 static int event_complete_locked(const MockEvent *event) {
@@ -314,6 +332,7 @@ static void drain_locked(ShadowSpillMockBackend *backend, MockStream *stream) {
         if (stream->head == NULL) {
             stream->tail = NULL;
         }
+        release_event_locked(entry->event);
         free(entry);
     }
     stream->draining = 0;
@@ -372,6 +391,7 @@ static void discard_queue_locked(
         if (entry->kind == MOCK_RECORD_EVENT) {
             apply_entry_locked(backend, stream, entry);
         }
+        release_event_locked(entry->event);
         free(entry);
     }
     stream->tail = NULL;
@@ -598,6 +618,7 @@ static int create_event(void *state, ShadowSpillBackendEvent *event, uint8_t tim
     if (created == NULL) {
         return -1;
     }
+    created->references = 1U;
     *event = (ShadowSpillBackendEvent)(uintptr_t)created;
     count(backend, &backend->statistics.events_created, 1U);
     return 0;
@@ -608,7 +629,14 @@ static int destroy_event(void *state, ShadowSpillBackendEvent event) {
     if (operation_fails(backend)) {
         return -1;
     }
-    free(event_pointer(event));
+    MockEvent *target = event_pointer(event);
+    if (target != NULL) {
+        /* The creator's hold. A queue that still refers to the event keeps it
+           until that entry is consumed. */
+        pthread_mutex_lock(&backend->mutex);
+        release_event_locked(target);
+        pthread_mutex_unlock(&backend->mutex);
+    }
     count(backend, &backend->statistics.events_destroyed, 1U);
     return 0;
 }
@@ -642,6 +670,7 @@ static int record_event(
     pthread_mutex_lock(&backend->mutex);
     entry->stamp = ++target->stamp;
     target->state = MOCK_EVENT_QUEUED;
+    ++target->references;
     pthread_mutex_unlock(&backend->mutex);
     submit(backend, source, entry);
     return 0;
@@ -800,14 +829,20 @@ static int wait_event(
     if (target == NULL || source == NULL) {
         return -1;
     }
-    pthread_mutex_lock(&backend->mutex);
-    const int recorded = source->state != MOCK_EVENT_UNRECORDED;
-    pthread_mutex_unlock(&backend->mutex);
-    if (!recorded) {
-        return -1;
-    }
     MockOperation *entry = entry_for(MOCK_WAIT_EVENT);
     if (entry == NULL) {
+        return -1;
+    }
+    pthread_mutex_lock(&backend->mutex);
+    const int recorded = source->state != MOCK_EVENT_UNRECORDED;
+    if (recorded) {
+        /* The entry's hold, so the caller may destroy the event before this
+           stream reaches the wait. */
+        ++source->references;
+    }
+    pthread_mutex_unlock(&backend->mutex);
+    if (!recorded) {
+        free(entry);
         return -1;
     }
     entry->event = source;
