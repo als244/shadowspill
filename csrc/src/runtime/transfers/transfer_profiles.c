@@ -525,8 +525,10 @@ static int measure_concurrent_pair(
     uint64_t begin[2] = {0U, 0U};
     uint64_t finished[2] = {0U, 0U};
     int status = 0;
-    /* No trace while calibrating, so every lane keeps nothing and answers 0. */
-    uint64_t ignored = 0U;
+    /* The last handle each probe's lane handed back: 0 from a lane that keeps
+       nothing without a trace, and the transfer to ask about from one that
+       answers for its own. */
+    uint64_t last_handle[2] = {0U, 0U};
 
     for (unsigned index = 0U; index < 2U; ++index) {
         if (shadowspill_event_lease_acquire(
@@ -570,7 +572,7 @@ static int measure_concurrent_pair(
                     probes[index]->destination_pointer,
                     probes[index]->source_pointer,
                     probes[index]->bytes,
-                    &ignored
+                    &last_handle[index]
                 ) != 0) {
                 status = -1;
             }
@@ -578,8 +580,11 @@ static int measure_concurrent_pair(
     }
     for (unsigned index = 0U; status == 0 && index < 2U; ++index) {
         const ShadowSpillRouteState *const route = probes[index]->route;
+        shadowspill_event_lease_issued_by(
+            leases[index], route, last_handle[index]
+        );
         if (route->operations->signal(
-                route->lane, 0U, leases[index]->event
+                route->lane, last_handle[index], leases[index]->event
             ) != 0) {
             status = -1;
         }
@@ -590,7 +595,7 @@ static int measure_concurrent_pair(
             if (finished[index] != 0U) {
                 continue;
             }
-            if (shadowspill_event_lease_query(
+            if (shadowspill_event_lease_landed(
                     runtime, leases[index], &complete
                 ) != 0) {
                 status = -1;

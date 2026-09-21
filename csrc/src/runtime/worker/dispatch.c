@@ -113,7 +113,9 @@ static int acquire_reserved_destination(
          * would have to move this call to where the trigger wait happens.
          */
         if (route == NULL ||
-            route->operations->wait(route->lane, dependency_event->event) != 0) {
+            shadowspill_event_lease_order_route(
+                runtime, dependency_event, route
+            ) != 0) {
             (void)shadowspill_event_lease_release(runtime, dependency_event);
             return -1;
         }
@@ -241,14 +243,24 @@ int shadowspill_action_dispatch_evict_locked(
         pthread_mutex_lock(&object->lock);
         return SHADOWSPILL_DISPATCH_RETRY;
     }
-    if (!backend_failed && (submit_transfer_copy(
+    if (!backend_failed && submit_transfer_copy(
             runtime,
             action,
             route,
             spill_lease->pointer,
             execution_pointer,
             bytes
-        ) != 0 || route->operations->signal(
+        ) != 0) {
+        backend_failed = 1;
+    }
+    if (!backend_failed) {
+        /* The lease learns which lane issued the transfer before anything can
+           read it, so a lane that answers for its own transfers is asked
+           instead of the event. */
+        shadowspill_event_lease_issued_by(
+            completion_event, route, action->lane_handle
+        );
+        if (route->operations->signal(
                 route->lane, action->lane_handle, completion_event->event
             ) != 0 || shadowspill_completion_submit(
                 runtime,
@@ -256,8 +268,9 @@ int shadowspill_action_dispatch_evict_locked(
                 completion_event,
                 object_id,
                 allocation_id
-            ) != SHADOWSPILL_STATUS_OK)) {
-        backend_failed = 1;
+            ) != SHADOWSPILL_STATUS_OK) {
+            backend_failed = 1;
+        }
     }
     if (!backend_failed && action->kind == SHADOWSPILL_RUNTIME_EVICT) {
         pthread_mutex_lock(&allocation->pool->lock);
@@ -422,14 +435,22 @@ int shadowspill_action_dispatch_fetch_locked(
         pthread_mutex_lock(&object->lock);
         return SHADOWSPILL_DISPATCH_RETRY;
     }
-    if (!backend_failed && (submit_transfer_copy(
+    if (!backend_failed && submit_transfer_copy(
             runtime,
             action,
             route,
             allocation->pointer,
             spill->lease->pointer,
             bytes
-        ) != 0 || route->operations->signal(
+        ) != 0) {
+        backend_failed = 1;
+    }
+    if (!backend_failed) {
+        /* As for an evict: the lease learns its lane before any reader. */
+        shadowspill_event_lease_issued_by(
+            completion_event, route, action->lane_handle
+        );
+        if (route->operations->signal(
                 route->lane, action->lane_handle, completion_event->event
             ) != 0 || shadowspill_completion_submit(
                 runtime,
@@ -437,8 +458,9 @@ int shadowspill_action_dispatch_fetch_locked(
                 completion_event,
                 object_id,
                 allocation->allocation_id
-            ) != SHADOWSPILL_STATUS_OK)) {
-        backend_failed = 1;
+            ) != SHADOWSPILL_STATUS_OK) {
+            backend_failed = 1;
+        }
     }
     if (!backend_failed && !object->retain_spill_copy) {
         pthread_mutex_lock(&spill->lease->pool->lock);

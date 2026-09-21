@@ -77,8 +77,8 @@ base is free to use `_Atomic` and the declaration header is not.
 
 **The obligation, and the whole of it:** a lane makes the event it was given
 complete when the bytes have landed, and **the runtime does not drive it**. How
-it arranges that is its own business. `transfer` and `timing` may be absent;
-everything else is required.
+it arranges that is its own business. `transfer`, `timing`, `landed` and
+`order` may be absent; everything else is required.
 
 | entry | what it must do |
 |---|---|
@@ -89,6 +89,8 @@ everything else is required.
 | `transfer(lane, handle, out)` | what one transfer did; **optional** |
 | `destroy(lane)` | release what `create` took |
 | `timing(lane, out)` | what transfers cost this lane; **optional** |
+| `landed(lane, handle, out)` | has this transfer landed? **optional**; the event answers when absent |
+| `order(lane, handle, stream)` | make `stream` wait until this transfer has landed; **optional**; the event answers when absent |
 
 ### The handle, and what it is for
 
@@ -129,6 +131,39 @@ it. Such a lane reports the bytes and the chunks, which need no anchor, and the
 ratio between them is the number worth having anyway — it says whether a slow
 transfer was one long wait or many short ones.
 
+### Two questions about a transfer, and the event as their default answer
+
+The runtime asks about a transfer's completion in exactly two ways. From the
+host: *has it landed?* — what publishes residency, releases leases, retires
+the transfer and records the trace. From a stream: *make this stream wait for
+it* — what lets a consumer be issued before the transfer is done. Both are
+answered through the event `signal` was given: the completion tracker queries
+it, and consumer streams — and a waiting lane's `wait` — are given it.
+
+For a lane whose bytes move on a stream that is exact, because the event *is*
+the completion: recorded behind the copy, it answers both questions and costs
+nothing. For a lane whose bytes land some other way it is not. Such a lane can
+make an event true early only by making a stream wait on something it will
+store when the bytes arrive, and a stream that waits is resumed by the device
+on the device's own schedule, not the instant the store lands. The event then
+carries a cost that has nothing to do with moving the bytes.
+
+So the event is the default answer, and **a lane may answer either question
+itself**: `landed` for the host's, `order` for a stream's. A lane that
+provides either keeps a record of every transfer, so its handle is nonzero
+whether or not a trace runs; it answers `landed` yes only once it has recorded
+the event, so that from then on the event says the same thing; and it answers
+-1 for a handle it no longer keeps, on which the runtime uses the event. It
+may then record the event when the bytes have landed rather than before —
+which is what lets it issue a transfer's device work only once there is
+something to copy.
+
+Nothing in either entry names a transport. A lane whose completion is a
+stream leaves both NULL and the runtime's behaviour for it does not change by
+a single call; a lane whose completion is a thread, a storage engine or a
+fabric's queue answers them, and the runtime reaches it through the same two
+paths it reaches the event.
+
 ### Why `wait` may ask to be retried
 
 `wait` returns 0 when the dependency is enqueued or already satisfied, **1 when
@@ -148,7 +183,8 @@ the device order the event behind them — the built-in does exactly that, and
 needs nothing else. A lane that completes on its own schedule watches for that
 however suits it: a thread of its own, blocking on whatever its transport
 offers, and then releasing the event. Nothing downstream can tell which, because
-everything downstream reads an event.
+everything downstream reads an event — or asks the lane, for one that answers
+`landed` and `order`, through the same two paths.
 
 **There is no entry for the runtime to poke a lane with, and there was.** The
 0902 design gave the table a `poll` the worker called once per active route per
@@ -158,9 +194,11 @@ because the worker's loop gates every transfer and work added there is paid at
 whatever rate the loop happens to turn. The obligation above replaces it: the
 lane watches, the runtime does not ask.
 
-A lane that runs a thread should **block rather than spin** — otherwise a thread
-per lane becomes a core per lane — and its thread's life is bounded by `create`
-and `destroy`.
+A lane that runs a thread chooses between blocking — no core while idle, but a
+wake-up in front of every transfer — and watching, which is the reverse. The
+remote lane watches by default, and `SHADOWSPILL_NETWORK_SPIN_NANOSECONDS`
+bounds that or turns it off. Either way its thread's life is bounded by
+`create` and `destroy`.
 
 ## What a lane may do with the backend
 
@@ -242,9 +280,11 @@ with a route that cannot move a byte.
 
 Deliberately, because it is what makes the contract affordable: event leases stay
 one form, the event pools are unchanged, the completion tracker keys its FIFOs by
-stream and makes no backend call, retirement is unchanged, and nothing in
-`memory/` learns that a transport exists. A lane produces an ordinary backend
-event, whatever it did to get there, and everything downstream reads it as one.
+stream and asks either the backend or the lane and never both, retirement is
+unchanged, and nothing in `memory/` learns that a transport exists. A lane
+produces an ordinary backend event, whatever it did to get there, and
+everything downstream reads it as one — or asks the lane, through the same two
+paths, when the lane answers for its own transfers.
 
 See [transfers](transfers.md) for routes, queues and calibration, and the
 [lane contract](../c/lanes.md) for the C declarations.
