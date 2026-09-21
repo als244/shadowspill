@@ -143,7 +143,9 @@ SHADOWSPILL_API uint64_t shadowspill_lane_origin_instant(
  * the event behind them, and a lane that completes on its own schedule watches
  * for that however it likes -- a thread of its own, blocking on whatever its
  * transport offers -- and then releases the event. Nothing downstream can tell
- * the difference, because everything downstream reads an event.
+ * the difference, because everything downstream reads an event -- or asks the
+ * lane, for one that answers `landed` and `order` below, which reach
+ * downstream by the same two paths the event does.
  *
  * THE SECOND OBLIGATION, and the one that is easy to breach without noticing:
  *
@@ -168,12 +170,15 @@ SHADOWSPILL_API uint64_t shadowspill_lane_origin_instant(
  * while doing nothing: the worker's loop gates every transfer, so work added
  * there is paid at whatever rate the loop happens to turn.
  *
- * `transfer` and `timing` may be NULL; everything else is required. The
- * rule is the one the backend table already follows for its profiler entries:
- * required when the runtime cannot proceed without it, optional when its
- * absence costs nothing the runtime needs. A lane that reports neither moves
- * bytes exactly as well as one that reports both, and a reader sees a transfer
- * with no numbers rather than one with wrong ones.
+ * `transfer`, `timing`, `landed` and `order` may be NULL; everything else is
+ * required. The first two follow the rule the backend table already follows
+ * for its profiler entries: required when the runtime cannot proceed without
+ * it, optional when its absence costs nothing the runtime needs. A lane that
+ * reports neither moves bytes exactly as well as one that reports both, and a
+ * reader sees a transfer with no numbers rather than one with wrong ones. The
+ * last two are optional for a different reason: the event `signal` was given
+ * answers for them, and only a lane whose bytes do not move on a stream has
+ * anything better to say.
  */
 /*
  * What a lane has moved, and what it cost.
@@ -239,10 +244,13 @@ typedef struct ShadowSpillLaneOperations {
      * Move `bytes` from `source` to `destination`, both addresses in the pools
      * this lane connects. Nothing but the lane dereferences either.
      *
-     * `handle` names the transfer, for the `signal` and `transfer` entries
-     * below. **Zero means the lane is keeping nothing about it**, which is what
-     * a lane answers when no trace is running -- `shadowspill_lane_trace_active`
-     * is the question to ask -- so nothing is recorded that nothing will read.
+     * `handle` names the transfer, for the `signal`, `transfer`, `landed` and
+     * `order` entries below. **Zero means the lane is keeping nothing about
+     * it**, which is what a lane answers when no trace is running --
+     * `shadowspill_lane_trace_active` is the question to ask -- so nothing is
+     * recorded that nothing will read. A lane that provides `landed` or
+     * `order` keeps a record of every transfer, and its handle is nonzero
+     * whether or not a trace runs.
      */
     int (*copy)(
         ShadowSpillLane *lane,
@@ -310,6 +318,53 @@ typedef struct ShadowSpillLaneOperations {
     int (*timing)(
         const ShadowSpillLane *lane,
         ShadowSpillLaneTiming *timing
+    );
+
+    /*
+     * The two questions the runtime asks about a transfer's completion, and
+     * the event is the default answer to both.
+     *
+     * From the host: *has it landed?* -- what publishes residency, releases
+     * leases, retires the transfer and records the trace. From a stream: *make
+     * this stream wait for it* -- what lets a consumer be issued before the
+     * transfer is done. The runtime answers both through the event `signal`
+     * was given: it queries that event, and enqueues waits on it. That is exact
+     * for a lane whose bytes move on a stream, because the event, recorded
+     * behind the copy, *is* the completion.
+     *
+     * A lane whose bytes land some other way -- a thread reaping a NIC's
+     * completions, a storage engine, a fabric with its own queue -- can make
+     * such an event true early only by making a stream wait on something it
+     * will store later, and a stream that waits is resumed on the device's own
+     * schedule. So it may answer the two questions itself, and record the
+     * event when the bytes have landed rather than before:
+     *
+     *     landed   answers the host's question for one transfer;
+     *     order    makes `stream` wait until that transfer has landed.
+     *
+     * **Both optional, singly or as a pair; NULL means the event is
+     * authoritative**, and the runtime's behaviour for that lane does not
+     * change by a single call. A lane that provides either keeps a record of
+     * every transfer -- its `copy` hands back a nonzero handle whether or not a
+     * trace runs -- and answers -1 for a handle it no longer keeps, on which
+     * the runtime uses the event, authoritative by then.
+     *
+     * The rule such a lane keeps: **it answers `landed` yes only after it has
+     * recorded the event**, so that from that moment the event says the same
+     * thing. Retirement of the handle is unchanged: the `transfer` query, or,
+     * for a lane with no `transfer`, the first `landed` that answered yes.
+     *
+     * `order` writes `stream`, which is the caller's -- a consumer's stream,
+     * or another route's -- on the thread that called; a lane's own stream is
+     * never handed to another lane. Both are called from the worker, and
+     * `order` also from a frontend thread acquiring an object, so both must be
+     * safe against the lane's own thread.
+     */
+    int (*landed)(ShadowSpillLane *lane, uint64_t handle, int *landed);
+    int (*order)(
+        ShadowSpillLane *lane,
+        uint64_t handle,
+        ShadowSpillBackendStream stream
     );
 } ShadowSpillLaneOperations;
 
