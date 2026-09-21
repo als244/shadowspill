@@ -74,8 +74,15 @@ void shadowspill_network_tuning_read(ShadowSpillNetworkTuning *tuning) {
         .ring_slots = (uint32_t)number("SHADOWSPILL_NETWORK_RING_SLOTS", 2U),
         .signal_every =
             (uint32_t)number("SHADOWSPILL_NETWORK_SIGNAL_EVERY", 8U),
-        .spin_nanoseconds =
-            number("SHADOWSPILL_NETWORK_SPIN_NANOSECONDS", 20000U),
+        /* Watch, do not sleep. Twenty microseconds of spinning used to be the
+           default and a small transfer still paid a full wake on both
+           handoffs -- measured 26.71 us to wake the lane thread and 19.86 us
+           to hand back, against a NIC that answers in 2.05. Set the variable
+           to bound it again, or to zero to block immediately. */
+        .spin_nanoseconds = number(
+            "SHADOWSPILL_NETWORK_SPIN_NANOSECONDS",
+            SHADOWSPILL_NETWORK_SPIN_FOREVER
+        ),
         .traffic_class =
             (uint32_t)number("SHADOWSPILL_NETWORK_TRAFFIC_CLASS", 0U),
         .service_level =
