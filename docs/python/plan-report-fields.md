@@ -116,6 +116,7 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `recomputing_group_count` | Groups whose chosen option costs strictly more compute than that group's cheapest. |
 | `task_alternative_group_count` | Task-alternative groups in the program, forced ones included. |
 | `flexible_group_count` | Groups that are a real decision, which is what a resolution share is taken of and so the denominator `recomputing_group_fraction` uses. A group is forced instead when structure leaves one option -- a sink of the forward phase has to keep its value -- or when its options retain the same bytes, which is one plan spelled twice. |
+| `spill_peak_bytes` | The most the spill pool ever holds while the step runs, as this plan's simulation reached it. Beside the spill budget it says whether the budget shaped the plan or merely bounded it. |
 | `transfer_bytes_fetched`, `transfer_bytes_evicted` | Traffic the simulation ran, summed from its transfer intervals. |
 | `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The per-direction bandwidth the simulator planned against, already coarsened, so it is not the rate the runtime measured. Measured calibration lives on the report's transfer profiles. |
 | `fetch_latency_ns`, `evict_latency_ns` | The per-transfer latency each lane was priced with, coarsened the same way. Recorded beside the bandwidths because a plan read back from the store was priced against the calibration of whatever process searched it, which coarsening a profile today would not reproduce. |
