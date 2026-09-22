@@ -58,6 +58,12 @@ class CandidateDiagnostic:
     #: those asks no cut could meet and were taken back.
     pressure_escalations: int = 0
     escalations_taken_back: int = 0
+    #: The fastest plan it simulated whose layout did not fit the pool, and
+    #: how many such plans it measured; ``None`` and 0 when none. Beside
+    #: ``makespan_ns`` they say what placing cost: an answer far above the
+    #: first was reached by cutting residency for a layout that missed.
+    best_unplaced_makespan_ns: int | None = None
+    unplaced_plans: int = 0
     #: When this candidate ran, in nanoseconds from the start of the call that
     #: evaluated it. ``work.sections`` is work done; these are wall clock, so
     #: two candidates ran at the same time exactly when their spans overlap.
@@ -101,6 +107,8 @@ class CandidateDiagnostic:
                 "repairs_at_best": self.repairs_at_best,
                 "pressure_escalations": self.pressure_escalations,
                 "escalations_taken_back": self.escalations_taken_back,
+                "best_unplaced_makespan_ns": self.best_unplaced_makespan_ns,
+                "unplaced_plans": self.unplaced_plans,
                 "schedule_digest": self.schedule_digest,
                 "failure_kind": self.failure_kind,
                 "failure_detail": self.failure_detail,
@@ -167,6 +175,15 @@ class CandidateDiagnostic:
             escalations_taken_back=_optional_integer(
                 outcome.get("escalations_taken_back"),
                 f"{path}.outcome.escalations_taken_back",
+            )
+            or 0,
+            best_unplaced_makespan_ns=_optional_integer(
+                outcome.get("best_unplaced_makespan_ns"),
+                f"{path}.outcome.best_unplaced_makespan_ns",
+            ),
+            unplaced_plans=_optional_integer(
+                outcome.get("unplaced_plans"),
+                f"{path}.outcome.unplaced_plans",
             )
             or 0,
             schedule_digest=_optional_string(

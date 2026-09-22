@@ -55,6 +55,8 @@ def _diagnostics() -> PlanningDiagnostics:
         status="valid",
         makespan_ns=1_000,
         schedule_digest="a" * 64,
+        best_unplaced_makespan_ns=900,
+        unplaced_plans=2,
         repairs=repairs,
         work=candidate_work,
         steps=(step,),
