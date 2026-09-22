@@ -22,6 +22,7 @@ from pathlib import Path
 
 from shadowspill.search import StepSearchReport
 
+from .frontiers import FrontierLine, MeasuredPoints, plot_bandwidth_frontier
 from .layout import FigureTree
 from .series import geometry_colours, geometry_series, winning_geometry, winning_points
 from .step_time import geometry_floor_ratio, geometry_step_time, ordering_step_time
@@ -117,4 +118,9 @@ def plot_step_search(
     return written
 
 
-__all__ = ["plot_step_search"]
+__all__ = [
+    "FrontierLine",
+    "MeasuredPoints",
+    "plot_bandwidth_frontier",
+    "plot_step_search",
+]
