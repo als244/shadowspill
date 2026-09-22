@@ -209,8 +209,10 @@ ShadowSpillStatus shadowspill_acquire_object_bindings(
         pthread_mutex_unlock(&object->lock);
 
         if (readiness_event != NULL) {
-            if (shadowspill_event_lease_order(
-                    runtime, readiness_event, consumer_stream
+            if (runtime->backend.wait_event(
+                    runtime->backend.state,
+                    consumer_stream,
+                    readiness_event->event
                 ) != 0) {
                 (void)shadowspill_event_lease_release(
                     runtime, readiness_event

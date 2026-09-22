@@ -32,16 +32,14 @@ reference.
 
 ## The table
 
-`ShadowSpillBackend` carries `abi_version` -- still 1, because no backend
-outside this tree implements the contract yet, so it is settled rather than
-kept; the check exists so a library and a header from different builds cannot
-be paired -- the provider object `state` that
-every entry receives, and these entries. Each returns 0 on success and
+`ShadowSpillBackend` carries `abi_version` -- 1; the check exists so a library
+and a header from different builds cannot be paired -- the provider object
+`state` that every entry receives, and these entries. Each returns 0 on success and
 nonzero on failure unless noted.
 
 | group | entries |
 |---|---|
-| memory | `allocate_device(bytes, &address)`, `free_device(address, bytes)`, `register_host_memory(address, bytes)`, `unregister_host_memory(address, bytes)` |
+| memory | `allocate_device(bytes, &address)`, `free_device(address, bytes)`, `register_host_memory(address, bytes)`, `unregister_host_memory(address, bytes)`; and, **optional**, `export_dma_buf(address, bytes, &fd)` |
 | signals | `allocate_signals(count, &signals, &host)`, `free_signals(signals)`, `wait_value(stream, signals, index, value)`, `write_value(stream, signals, index, value)` |
 | streams | `create_stream(&stream)`, `destroy_stream(stream)`, `synchronize_stream(stream)`, `resolve_stream(stream_handle)` returning the word this backend knows that stream by |
 | copies | `copy_host_to_device(device, host, bytes, stream)`, `copy_device_to_host(host, device, bytes, stream)`, `copy_device_to_device(destination, source, bytes, stream)` |
@@ -53,6 +51,18 @@ Memory: device memory is the backend's to allocate; host memory is
 ShadowSpill's, mapped by the pinned-host pool and registered here so the
 provider can copy from it asynchronously. Frees and unregistrations carry the
 byte count so the backend keeps no size bookkeeping.
+
+`export_dma_buf` is the one memory entry that may be NULL. It exports a range
+of the provider's memory as a dma-buf, for hardware outside the provider that
+has to address it directly -- a NIC reaching device memory without a copy
+through the host. A backend with no such mechanism leaves it NULL; one with
+the mechanism may still refuse a range the device cannot export, which is a
+fact about the hardware rather than a failure and is not recorded as one. The
+caller owns the descriptor and closes it once it has used it, and has
+somewhere else to go on a refusal: registering the memory some other way, or
+staging through memory it can reach. A backend whose provider exports
+dma-bufs answers where the device reports that it can; the mock leaves the
+entry NULL.
 
 A stream and an event are each **one opaque word**, `uint64_t`, exactly as a
 profiler range is. Only the backend reads it. A backend over a driver keeps the driver's own
@@ -91,20 +101,24 @@ word. The two entries over it are mirrors:
   The stream stores; the host reads.
 
 The wait exists for a lane whose bytes do not move on a stream. Such a lane
-cannot make a stream wait for it by recording an event, because the consumer's
-`wait_event` may be enqueued before the transfer finishes and a wait on an
-event not yet recorded does not wait. The runtime enqueues the value wait and
-the record together at dispatch; the lane stores the value when the bytes have
-landed; everything downstream sees an ordinary event.
+cannot make a stream wait for it by recording an event alone, because the
+consumer's `wait_event` may be enqueued before the transfer finishes and a
+wait on an event not yet recorded does not wait. So the lane enqueues the
+value wait and the record together at dispatch, on its route stream, and its
+thread stores the value when the bytes have landed; everything downstream
+sees an ordinary event.
 
 The write exists for the opposite question, which such a lane also has. A lane
 staging through a host buffer must not hand the next piece of it to hardware
 until the device has finished reading what is there, and only the device knows
-when. An event cannot answer: a lane enqueues every piece of a transfer up
-front, so one event per buffer slot is recorded several times before any is
-queried, and a query reports the most recent capture -- it would answer about
-work that cannot run yet. A value the stream writes as it passes is monotonic
-and has no such ambiguity.
+when. An event cannot answer: pieces are enqueued ahead of the device, so one
+event per buffer slot would be recorded several times before any is queried,
+and a query reports the most recent capture -- it would answer about work that
+cannot run yet. A value the stream writes as it passes is monotonic and has no
+such ambiguity. The same write is how a lane whose hardware touches the pool
+with no stream in between learns that the route stream has passed the waits
+the runtime enqueued ahead of a transfer: the stream stores the transfer's
+number, and the lane's thread posts nothing before it reads it.
 
 Both are **required**. A backend that implements one and not the other would
 serve a lane that could take work and never say it had finished with it.
