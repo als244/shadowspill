@@ -49,15 +49,31 @@ def test_records_written_before_layout_moves_read_as_none() -> None:
     value = PlanningRepairDiagnostics(simulation_fetch_delay_attempts=1).to_dict()
     del value["layout_miss"]
     value["total_attempts"] = 1
-    assert PlanningRepairDiagnostics.from_value(value, "r").layout_fetch_delay_attempts == 0
+    assert (
+        PlanningRepairDiagnostics.from_value(value, "r").layout_fetch_delay_attempts
+        == 0
+    )
     step = ReductionStep(
-        makespan_ns=1, required_bytes=0, capacity_bytes=1, cut_aliases=(),
-        repairs=0, simulation_status=0, capacity_violations=0, simulated=True,
-        measured=False, placed=False, refined=False, best=False, answer=False,
+        makespan_ns=1,
+        required_bytes=0,
+        capacity_bytes=1,
+        cut_aliases=(),
+        repairs=0,
+        simulation_status=0,
+        capacity_violations=0,
+        simulated=True,
+        measured=False,
+        placed=False,
+        refined=False,
+        best=False,
+        answer=False,
     ).to_dict()
     del step["outcome"]["moved"]
     assert ReductionStep.from_value(step, "s").moved is False
     candidate = CandidateDiagnostic(
-        candidate_id="tight-stall/packed-fit", selection_id="none", status="valid", makespan_ns=1
+        candidate_id="tight-stall/packed-fit",
+        selection_id="none",
+        status="valid",
+        makespan_ns=1,
     )
     assert candidate.repairs.layout_fetch_delay_attempts == 0
