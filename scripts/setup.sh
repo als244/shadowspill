@@ -142,9 +142,7 @@ import torch
 from shadowspill.libraries import resolve_library
 from shadowspill.libraries import shadowspill_library_path
 from shadowspill.planner.capi import planner_api
-from shadowspill.pytorch.runtime_adapter.allocator import (
-    _REQUIRED_STORAGE_OPERATIONS,
-)
+from shadowspill.pytorch.frontend import REQUIRED_STORAGE_OPERATIONS
 from shadowspill.simulator.capi import simulator_api
 
 libraries = (
@@ -171,7 +169,7 @@ assert adapter is not None
 ctypes.CDLL(str(adapter), mode=ctypes.RTLD_GLOBAL)
 missing_operations = [
     name
-    for name in _REQUIRED_STORAGE_OPERATIONS
+    for name in REQUIRED_STORAGE_OPERATIONS
     if not hasattr(torch.ops.shadowspill, name)
 ]
 if missing_operations:
