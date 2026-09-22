@@ -19,6 +19,7 @@ For what a lane is and why the contract has the shape it does, see
 | type | |
 |---|---|
 | `ShadowSpillLane` | one lane, made per route at create. Opaque in `lane.h`; defined in `lane_base.h`, which an implementation embeds as its first member |
+| `ShadowSpillLaneRange` | where one of a lane's two pools lives: `address` and `bytes`, filled by the runtime |
 | `ShadowSpillLaneOperations` | the table below |
 | `ShadowSpillLaneDescription` | one entry in `ShadowSpillRuntimeConfig.lanes`: a kind pair, a table, a `create`, and a `configuration` |
 | `ShadowSpillLaneTransfer` | what one transfer did, filled by the optional `transfer` entry below |
@@ -34,6 +35,7 @@ struct ShadowSpillLane {
     ShadowSpillBackendStream stream;
     uint8_t from_kind;
     uint8_t to_kind;
+    ShadowSpillLaneRange from_range, to_range;
     _Atomic uint64_t copies, chunks, bytes, signals, waits, retries, failures;
 };
 
@@ -47,10 +49,13 @@ A transport embeds it first and casts between the two:
 typedef struct { ShadowSpillLane base; /* ... */ } MyLane;
 ```
 
-**The runtime fills every field**, including the pair of kinds, and hands it to
-`create` to copy in — so a transport writes none of it and a field added here
-changes no transport. `from_kind` and `to_kind` are where a transport reads its
-direction; there is no direction to configure.
+**The runtime fills every field**, including the pair of kinds and the two
+pools' ranges, and hands it to `create` to copy in — so a transport writes none
+of it and a field added here changes no transport. `from_kind` and `to_kind`
+are where a transport reads its direction; there is no direction to configure.
+`from_range` and `to_range` are where a transport whose hardware must be made
+able to reach a pool — a NIC registering it — finds the pool, at create and
+once, rather than learning it from the addresses transfers hand it.
 
 The counters are maintained through `shadowspill_lane_counted()`, which is
 relaxed in one place so no transport picks an ordering by accident, and the
@@ -69,9 +74,6 @@ int  (*transfer)(ShadowSpillLane *lane, uint64_t handle,
                  ShadowSpillLaneTransfer *transfer);
 void (*destroy)(ShadowSpillLane *lane);
 int  (*timing)(const ShadowSpillLane *lane, ShadowSpillLaneTiming *timing);
-int  (*landed)(ShadowSpillLane *lane, uint64_t handle, int *landed);
-int  (*order)(ShadowSpillLane *lane, uint64_t handle,
-              ShadowSpillBackendStream stream);
 ```
 
 - **`wait`** orders this lane's work behind `event`. Returns 0 enqueued or
@@ -84,31 +86,16 @@ int  (*order)(ShadowSpillLane *lane, uint64_t handle,
   transfer for the two entries below; **0 means the lane kept nothing about
   it**, which is what a lane answers when no trace is running.
   `shadowspill_lane_trace_active()` is how it asks, being outside the runtime
-  and unable to read that state itself. A lane that provides `landed` or
-  `order` keeps a record of every transfer, and its handle is nonzero whether
-  or not a trace runs.
+  and unable to read that state itself.
 - **`signal`** makes `event` complete once everything issued on this lane so far
-  has landed. Downstream sees an ordinary backend event whatever the lane did
-  — or, for a lane that answers `landed` and `order`, the lane's own answer,
-  through the same two paths — which is what keeps completion tracking and
-  retirement in one form. A lane whose ordering already covers everything
-  issued needs nothing from `handle`.
+  has landed. Downstream sees an ordinary backend event whatever the lane did,
+  which is what keeps completion tracking and retirement in one form. A lane
+  whose ordering already covers everything issued needs nothing from `handle`.
 - **`transfer`** is NULL-able, and reports what one transfer did. It is asked
   **once**, after that transfer's event has completed, and only for a handle
   `copy` returned nonzero. **The query retires the handle**: a lane may release
   whatever it kept the moment it answers, and the runtime will not ask again —
   which is why there is no release entry beside it.
-- **`landed`** and **`order`** are NULL-able, singly or as a pair, and answer
-  the two questions the runtime asks about a transfer's completion — *has it
-  landed?* from the host, and *make this stream wait for it* from a stream —
-  which the event `signal` was given answers by default. A lane whose bytes
-  move on a stream leaves both NULL and nothing changes for it. A lane whose
-  bytes land some other way may answer them itself and record its event when
-  the bytes have landed rather than before. It then keeps a record of every
-  transfer, answers `landed` yes only once the event is recorded, and answers
-  -1 for a handle it no longer keeps, on which the runtime uses the event.
-  `order` writes the caller's stream, on the caller's thread; a lane's own
-  stream is never handed to another lane.
 
 `synchronize` and `destroy` are what they say. `timing` is with the statistics
 it fills, under [what a lane has moved](#what-a-lane-has-moved).
@@ -119,8 +106,8 @@ runtime's event lease.
 **There is no entry for the runtime to drive a lane with.** A lane makes the
 event given to `signal` complete when the bytes have landed, by whatever means
 suits it — the device ordering it behind a stream, or a thread of the lane's own
-watching its transport. See [lanes](../architecture/lanes.md) for why the table
-once had a `poll` and no longer does.
+watching its transport. See [lanes](../architecture/lanes.md) for why there is
+no `poll`.
 
 ## Registering one
 
@@ -155,10 +142,9 @@ message, so which pair collided is not reported.
     writer wins**, so the original cause survives; the worker already reads the
     latched status twice a turn, so nothing is added to its loop.
   - `backend` — usable, but only through the stream below.
-  - `stream` — the route's stream. A lane whose bytes move elsewhere takes a
-    stream of its own here and leaves this one to the runtime; for the built-in
-    lane the two are the same, because it is acting as the runtime's own copy
-    mechanism.
+  - `stream` — the route's stream. The runtime writes it, and a lane writes it
+    only from the thread that called into the lane: the built-in lane's copies
+    go there, and a lane whose bytes move elsewhere puts its ordering there.
   - `from_kind`, `to_kind` — the pair this entry was registered under, and
     where a transport reads its direction.
 - `configuration` — passed through untouched. Whoever registers the entry
@@ -271,5 +257,4 @@ reports however many pieces the NIC was handed.
 `shadowspill_runtime_create()` refuses a config whose entry has a NULL
 `operations` or `create`, a NULL required entry, or a kind pair another entry
 already claims. It also refuses a route whose two pools' kinds no entry serves.
-`transfer`, `timing`, `landed` and `order` are optional and are never a reason
-to refuse.
+`transfer` and `timing` are optional and are never a reason to refuse.

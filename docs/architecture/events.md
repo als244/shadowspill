@@ -45,13 +45,10 @@ it reserved.
 ## Completion tracking
 
 Each stream the runtime records completions on has a FIFO of leases. The
-worker queries only the head of each FIFO -- the backend's event, or, for a
-transfer whose lane answers for its own completions, that lane -- follows an
+worker queries only the head of each FIFO with `query_event`, follows an
 already-complete head immediately, and drains immediately completed
-successors, so the number of queries stays close to the number of
-completions. A lease knows which lane issued the transfer it stands for; the
-[lane contract](lanes.md#two-questions-about-a-transfer-and-the-event-as-their-default-answer)
-is what lets the lane and the event be asked interchangeably. A completed lease lets whatever it protects move on -- an object
+successors, so the number of driver queries stays close to the number of
+completions. A completed lease lets whatever it protects move on -- an object
 residency, a task allocation, or a retiring range -- and returns to the pool
 with its event.
 

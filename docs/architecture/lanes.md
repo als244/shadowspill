@@ -12,8 +12,7 @@ embeds; the built-in implementation is
 
 ## A lane, a queue, and a stream are three things
 
-They were once two, and the confusion is worth naming so it is not
-reintroduced.
+The three are easy to conflate:
 
 | | what it is | what it never does |
 |---|---|---|
@@ -47,7 +46,7 @@ The stream distinguishes nothing.
 
 ## Every lane is the same struct, extended
 
-A lane holds the same five things and counts the same seven whatever it is, so
+A lane holds the same fields and counts the same seven whatever it is, so
 those live in one struct that every implementation embeds as its **first
 member** and casts between:
 
@@ -57,10 +56,12 @@ typedef struct { ShadowSpillLane base; /* ... */ } MyLane;
 
 That is what makes `ShadowSpillLane *` mean one thing everywhere, in the runtime
 and in a library the runtime loaded alike. The runtime fills the base — runtime
-handle, backend, the route's stream, the two pool kinds, counters at zero — and
-hands it to `create` to copy in, so an implementation writes none of it and
-cannot write it wrong, and a field added to the base changes no implementation
-at all.
+handle, backend, the route's stream, the two pool kinds, where each pool's
+memory lives, counters at zero — and hands it to `create` to copy in, so an
+implementation writes none of it and cannot write it wrong, and a field added
+to the base changes no implementation at all. The two ranges are for a lane
+whose hardware has to be made able to reach a pool before it can move a byte
+of it: it does that at create, once, from what the runtime already holds.
 
 **The counters are the runtime's to read.** They are maintained through
 `shadowspill_lane_counted()`, and the runtime reports them straight out of the
@@ -77,8 +78,8 @@ base is free to use `_Atomic` and the declaration header is not.
 
 **The obligation, and the whole of it:** a lane makes the event it was given
 complete when the bytes have landed, and **the runtime does not drive it**. How
-it arranges that is its own business. `transfer`, `timing`, `landed` and
-`order` may be absent; everything else is required.
+it arranges that is its own business. `transfer` and `timing` may be absent;
+everything else is required.
 
 | entry | what it must do |
 |---|---|
@@ -89,8 +90,6 @@ it arranges that is its own business. `transfer`, `timing`, `landed` and
 | `transfer(lane, handle, out)` | what one transfer did; **optional** |
 | `destroy(lane)` | release what `create` took |
 | `timing(lane, out)` | what transfers cost this lane; **optional** |
-| `landed(lane, handle, out)` | has this transfer landed? **optional**; the event answers when absent |
-| `order(lane, handle, stream)` | make `stream` wait until this transfer has landed; **optional**; the event answers when absent |
 
 ### The handle, and what it is for
 
@@ -102,10 +101,7 @@ retires the handle**: a lane may release whatever it kept the moment it answers,
 and the runtime will not ask again. That is the whole lifetime rule, and it is
 why there is no release entry beside it.
 
-This replaced a pair of entries that bracketed the copy with timing events on a
-stream, which only a lane whose bytes move on one could implement — every other
-lane left them NULL and reported nothing. A lane now reports what it actually
-observed, in whatever terms it has.
+A lane reports what it actually observed, in whatever terms it has.
 
 An event here is a `ShadowSpillBackendEvent` — one opaque word — and never the
 runtime's event lease, which is reference counting and pool links a lane has no
@@ -131,39 +127,6 @@ it. Such a lane reports the bytes and the chunks, which need no anchor, and the
 ratio between them is the number worth having anyway — it says whether a slow
 transfer was one long wait or many short ones.
 
-### Two questions about a transfer, and the event as their default answer
-
-The runtime asks about a transfer's completion in exactly two ways. From the
-host: *has it landed?* — what publishes residency, releases leases, retires
-the transfer and records the trace. From a stream: *make this stream wait for
-it* — what lets a consumer be issued before the transfer is done. Both are
-answered through the event `signal` was given: the completion tracker queries
-it, and consumer streams — and a waiting lane's `wait` — are given it.
-
-For a lane whose bytes move on a stream that is exact, because the event *is*
-the completion: recorded behind the copy, it answers both questions and costs
-nothing. For a lane whose bytes land some other way it is not. Such a lane can
-make an event true early only by making a stream wait on something it will
-store when the bytes arrive, and a stream that waits is resumed by the device
-on the device's own schedule, not the instant the store lands. The event then
-carries a cost that has nothing to do with moving the bytes.
-
-So the event is the default answer, and **a lane may answer either question
-itself**: `landed` for the host's, `order` for a stream's. A lane that
-provides either keeps a record of every transfer, so its handle is nonzero
-whether or not a trace runs; it answers `landed` yes only once it has recorded
-the event, so that from then on the event says the same thing; and it answers
--1 for a handle it no longer keeps, on which the runtime uses the event. It
-may then record the event when the bytes have landed rather than before —
-which is what lets it issue a transfer's device work only once there is
-something to copy.
-
-Nothing in either entry names a transport. A lane whose completion is a
-stream leaves both NULL and the runtime's behaviour for it does not change by
-a single call; a lane whose completion is a thread, a storage engine or a
-fabric's queue answers them, and the runtime reaches it through the same two
-paths it reaches the event.
-
 ### Why `wait` may ask to be retried
 
 `wait` returns 0 when the dependency is enqueued or already satisfied, **1 when
@@ -183,15 +146,12 @@ the device order the event behind them — the built-in does exactly that, and
 needs nothing else. A lane that completes on its own schedule watches for that
 however suits it: a thread of its own, blocking on whatever its transport
 offers, and then releasing the event. Nothing downstream can tell which, because
-everything downstream reads an event — or asks the lane, for one that answers
-`landed` and `order`, through the same two paths.
+everything downstream reads an event.
 
-**There is no entry for the runtime to poke a lane with, and there was.** The
-0902 design gave the table a `poll` the worker called once per active route per
-turn, on the assumption that a lane could not watch for itself. It cost **1.7 %
-of the shortest step in the qualification matrix** while doing nothing at all,
-because the worker's loop gates every transfer and work added there is paid at
-whatever rate the loop happens to turn. The obligation above replaces it: the
+**There is no entry for the runtime to poke a lane with.** The worker's loop
+gates every transfer, so work added there is paid at whatever rate the loop
+happens to turn, and a poll per active route would be paid on every turn while
+doing nothing on most. The obligation above is what makes it unnecessary: the
 lane watches, the runtime does not ask.
 
 A lane that runs a thread chooses between blocking — no core while idle, but a
@@ -211,13 +171,9 @@ lane's table arrives on the thread that called it — the worker for a planned
 transfer, the caller for calibration. The built-in lane's copies and completion
 event go there because they belong in the same order; it is acting as the
 runtime's own copy mechanism. A lane whose bytes move elsewhere puts its
-ordering there — the value wait its `signal` enqueues and the event recorded
-behind it — and, if it stages through a host buffer, the device copies that
-staging needs.
-
-That is the narrow version of a rule that was once broader. The constraint worth
-keeping is single-writer ordering, not an embargo on the backend; stating it the
-wide way cost real machinery for no invariant.
+ordering there too — the value waits its `signal` enqueues and the event
+recorded behind them, and the copies staging needs — all of it from the thread
+that called it, none of it from the thread that watches its hardware.
 
 ### A lane must not wait on itself
 
@@ -229,14 +185,18 @@ The rule that matters is not about threads, because a lane need not have one:
 The built-in satisfies it without trying. Its completion path is the stream,
 the driver advances it, and it makes nothing wait.
 
-A lane that completes on its own schedule has to be deliberate. Its value wait
-is satisfied only by its own completion path, so any device call on that path
-can be blocked by the very wait it exists to satisfy — and an outstanding value
-wait blocks calls on *other* streams too, so giving staging a second stream does
-not help. The remote lane deadlocked exactly this way until its thread was
-reduced to what it is for: handling completions, and reporting them. The device
-half of a staged transfer is issued by whoever calls the lane, on the route
-stream, before the transfer reaches the thread at all.
+A lane that completes on its own schedule has to be deliberate. A value wait
+it enqueues is satisfied only by its own completion path, so a device call on
+that path can be blocked by the very wait it exists to satisfy — and the driver
+couples threads that share nothing else: a launch that finds its stream's queue
+full holds the context lock until the device makes progress, so a watcher that
+needed the driver in order to make that progress waits for the lock the launch
+holds. The remote lane's thread therefore makes no device call: the device's
+side of every transfer is enqueued at dispatch on the route stream, behind
+value waits the thread satisfies with plain stores, and on the direct path,
+where the NIC touches the pool with no stream in between, the route stream
+stores a word behind the runtime's waits and the thread posts nothing before it
+reads it.
 
 The same rule reaches inside such a lane, and is easy to miss there. A lane that
 keeps work in flight across transfers has two halves — issuing and retiring —
@@ -276,15 +236,14 @@ actually do belongs here, where there is a failure path and an unwind. A lane
 that cannot come up fails create, and the runtime unwinds rather than starting
 with a route that cannot move a byte.
 
-## What this leaves untouched
+## What the contract does not reach
 
-Deliberately, because it is what makes the contract affordable: event leases stay
-one form, the event pools are unchanged, the completion tracker keys its FIFOs by
-stream and asks either the backend or the lane and never both, retirement is
-unchanged, and nothing in `memory/` learns that a transport exists. A lane
-produces an ordinary backend event, whatever it did to get there, and
-everything downstream reads it as one — or asks the lane, through the same two
-paths, when the lane answers for its own transfers.
+Event leases are one form, the event pools know no transport, the completion
+tracker keys its FIFOs by stream and queries the event like any other,
+retirement is the same for every lane, and nothing in `memory/` learns that a
+transport exists. A lane produces an ordinary backend event, whatever it did to
+get there, and everything downstream reads it as one; that is what keeps the
+contract affordable.
 
 See [transfers](transfers.md) for routes, queues and calibration, and the
 [lane contract](../c/lanes.md) for the C declarations.
