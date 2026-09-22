@@ -88,6 +88,10 @@ class CCandidateDiagnostic:
     error_used_bytes: int
     error_requested_bytes: int
     error_required_bytes: int
+    #: The fastest plan that simulated but whose layout did not fit the
+    #: pool, and how many such plans were measured; ``None`` and 0 when none.
+    best_unplaced_makespan_ns: int | None
+    unplaced_plans: int
 
     @property
     def candidate_id(self) -> str:

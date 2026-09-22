@@ -450,6 +450,15 @@ def print_breakdown(report: Any, tokens: int) -> None:
             if repairs is not None
             else ""
         )
+        unplaced = chosen.get("best_unplaced_makespan_ns")
+        if unplaced:
+            # what placing cost this candidate: its answer over the fastest
+            # plan it simulated but could not place
+            print(
+                f"  placement gap      {chosen['placement_gap']:.3f}x over"
+                f" {unplaced / 1e9:.3f} s, the fastest of"
+                f" {chosen['unplaced_plans']} plans whose layout missed"
+            )
     print()
     print(
         f"  traffic per step   fetch {gib(report.transfer_bytes_fetched)}"
