@@ -23,7 +23,7 @@
 /*
  * One lane, made per route at create.
  *
- * Every lane holds the same five things and counts the same seven, so they are
+ * Every lane holds the same fields and counts the same seven, so they are
  * here rather than written once per transport. A transport embeds this as its
  * **first member** and casts between the two:
  *
@@ -36,6 +36,15 @@
  * does not set them and cannot set them wrong. What a transport adds after the
  * base is its own.
  */
+
+/* Where one of a lane's pools lives: its memory from `address` for `bytes`.
+   A transport whose hardware must be made able to reach a pool -- a NIC
+   registering it -- does that at create, once, from these. */
+typedef struct ShadowSpillLaneRange {
+    void *address;
+    uint64_t bytes;
+} ShadowSpillLaneRange;
+
 struct ShadowSpillLane {
     ShadowSpillRuntime *runtime;
     const ShadowSpillBackend *backend;
@@ -46,6 +55,9 @@ struct ShadowSpillLane {
        reads its direction from these rather than keeping a flag of its own. */
     uint8_t from_kind;
     uint8_t to_kind;
+    /* Where the two pools live, in the order of the kinds above. */
+    ShadowSpillLaneRange from_range;
+    ShadowSpillLaneRange to_range;
 
     _Atomic uint64_t copies;      /* transfers accepted */
     _Atomic uint64_t chunks;      /* pieces the hardware was handed */
