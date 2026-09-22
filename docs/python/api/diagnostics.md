@@ -114,12 +114,15 @@ guide](../step-diagnostics.md) defines every field.
 
 ## Figures
 
-`shadowspill.plots` draws figures from artifacts that already exist. Both
-functions return the paths they wrote.
+`shadowspill.plots` draws figures from artifacts that already exist. Every
+function returns the paths it wrote.
 
 ```text
 plot_step_search(report, directory) -> tuple[Path, ...]
 plot_step_run(entries, directory, *, tokens_per_step) -> tuple[Path, ...]
+plot_bandwidth_frontier(path, budgets_gib, lines, *, title, subtitle=None,
+                        measured=(), unconstrained_tokens_per_second=None,
+                        faded_lines=False) -> Path
 ```
 
 | argument | type | default | meaning |
@@ -152,6 +155,24 @@ record stays current: figures are worth rendering once at the end, but the
 tables behind them are worth having after every budget, because a run that stops
 early should still leave what it measured and the figures can be redrawn from
 the tables.
+
+`plot_bandwidth_frontier()` draws one figure rather than a tree: throughput
+against execution budget with a line per transfer calibration, for comparing
+searches of one program under interconnects a machine does not have. A
+`FrontierLine` is one calibration's answer -- its legend label, the two
+bandwidths, and the tokens per second it reached at each budget, holding
+`None` where no plan existed, so a line keeps its place on the axis. The axis
+begins at the first budget any line could answer, because below that no
+residency fits at any bandwidth.
+
+`unconstrained_tokens_per_second` draws the compute ceiling, the step with
+every task-alternative group charged its cheapest option and nothing waiting,
+annotated on the line rather than listed in the legend. `measured` is a
+sequence of `MeasuredPoints`, each a label, the budgets a machine actually
+reached, and the `line` whose colour they take, so a measurement sits on the
+calibration it ran under. `faded_lines` puts the simulated lines into the
+background and joins the measured points instead, for the figure whose
+subject is what a machine did.
 
 The [figures guide](../plots.md) describes the tree, what each figure
 represents, and the conventions they share.
