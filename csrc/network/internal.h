@@ -161,8 +161,9 @@ int shadowspill_control_connect_endpoint(
  *
  * The defaults are what this hardware wanted. What each one is *for*:
  *
- *   QUEUE_PAIRS        One saturates 25 Gb/s; a faster card may need several,
- *                      because a queue pair is served by one send engine.
+ *   QUEUE_PAIRS        How many a lane may claim: each lane takes a queue pair
+ *                      and its completion queue for itself at create, and the
+ *                      endpoint makes one more for state import and export.
  *   SEND_DEPTH         Work requests outstanding per queue pair. Too few and
  *                      the pipe drains between completions.
  *   RECEIVE_DEPTH      Nearly irrelevant here -- one-sided reads and writes
@@ -174,21 +175,16 @@ int shadowspill_control_connect_endpoint(
  *                      than it allows fails the transition.
  *   CHUNK_BYTES        How large one piece of a transfer is, and so how much
  *                      one ring slot holds.
- *   RING_SLOTS         How many chunks may be in flight. Two is enough to
- *                      overlap the host copy with the transfer, which is what
- *                      matters: measured with one slot, the link ran at
- *                      2857 MiB/s -- 98 % of what `ib_read_bw` gets -- while
- *                      the whole transfer ran at 2406, and that serialisation
- *                      was the entire gap. More than two buys little, since
- *                      one stage is six times faster than the other.
+ *   RING_SLOTS         How many staged pieces may be in flight. Two overlaps
+ *                      the host copy with the transfer, which is what matters;
+ *                      with one the two serialise, and more than two buys
+ *                      little, since one stage is much faster than the other.
  *   SIGNAL_EVERY       Completions are expensive; only every Nth work request
  *                      need be signalled, with the last always signalled.
- *   SPIN_NANOSECONDS   How long the lane's thread watches for the next
- *                      transfer before sleeping. Waking it costs ~1.8 us of a
- *                      small transfer's ~12, and transfers arrive in batches,
- *                      so a brief watch often catches the next one without a
- *                      context switch. Zero disables it; it is bounded so that
- *                      an idle lane still costs no CPU.
+ *   SPIN_NANOSECONDS   How long a lane's thread watches for the next transfer
+ *                      before blocking on a condition variable. The default,
+ *                      `SHADOWSPILL_NETWORK_SPIN_FOREVER`, never blocks: a
+ *                      core per lane. Zero never watches.
  *   TRAFFIC_CLASS      RoCE congestion control reads this. Zero is right on a
  *                      quiet lab subnet and is exactly what you would change
  *                      first on a fabric with PFC or DCQCN.
@@ -214,12 +210,11 @@ typedef struct ShadowSpillNetworkTuning {
     uint64_t message_bytes;
     uint32_t ring_slots;
     uint32_t signal_every;
-    /* How long the lane's thread watches for more work before sleeping. */
     /* How long a thread watches for work before blocking on a condition
        variable. `SHADOWSPILL_NETWORK_SPIN_FOREVER` means it never blocks:
-       a core per lane, bought deliberately, because a condition variable
-       costs about twenty microseconds to wake from and the NIC answers a
-       small transfer in two. Zero means never spin. */
+       a core per lane, because a condition variable costs about twenty
+       microseconds to wake from, more than the NIC takes for a small
+       transfer. Zero means never spin. */
     uint64_t spin_nanoseconds;
     uint32_t traffic_class;
     uint32_t service_level;
@@ -259,24 +254,15 @@ void shadowspill_network_tuning_report(const ShadowSpillNetworkTuning *tuning);
  */
 
 /*
- * WHY THERE ARE SEVERAL QUEUE PAIRS, WHEN ONE IS ENOUGH HERE.
+ * WHY THERE ARE SEVERAL QUEUE PAIRS.
  *
- * One queue pair reaches line rate on a 25 Gb/s link -- measured, 2921 MiB/s
- * against `ib_read_bw`'s 2921 MiB/s. It stops being enough on a faster one: a
- * single queue pair is served by one of the NIC's send engines, and past some
- * rate the way to use the rest is to post across several. Which rate that is
- * depends on the card, so it is a number to configure rather than a fact to
- * hard-code.
- *
- * Making this an array now costs a loop; retrofitting it later would touch the
- * handshake, the protocol and the posting path at once. The count is
- * `SHADOWSPILL_NETWORK_QUEUE_PAIRS`, default 1 -- an environment variable
- * rather than a pool configuration field, because it is a property of this
- * machine's NIC and not of the plan.
- *
- * Transfers are spread across them round-robin. They share one completion
- * queue, so the lane's thread still blocks in one place however many there
- * are.
+ * Each lane claims one, with its completion queue, for its exclusive use at
+ * create -- two lanes serve a remote pool, one per direction, and run at the
+ * same time -- and the endpoint makes one more, which no lane may claim, for
+ * state import and export. `SHADOWSPILL_NETWORK_QUEUE_PAIRS` is how many a
+ * lane may claim, default 2: an environment variable rather than a pool
+ * configuration field, because it is a property of this machine and not of
+ * the plan. A lane that finds none left fails create.
  */
 #define SHADOWSPILL_NETWORK_MAX_QUEUE_PAIRS 16U
 #define SHADOWSPILL_NETWORK_MAX_RING_SLOTS 8U
@@ -290,9 +276,6 @@ void shadowspill_network_tuning_report(const ShadowSpillNetworkTuning *tuning);
  * and each records what it took in its own state, where the other can never
  * find it. Both then wait for something that already arrived.
  *
- * It survived every sequential test. Calibration is the first thing to drive a
- * fetch and an evict at the same time, which is precisely what it exists to
- * measure, and it deadlocked on the first attempt.
  */
 typedef struct ShadowSpillEndpoint {
     struct ibv_context *device;
@@ -405,6 +388,31 @@ typedef struct ShadowSpillRemoteRegion {
 const ShadowSpillRemoteRegion *shadowspill_remote_region_for(const void *address);
 
 /*
+ * Make local memory reachable by the NIC that serves `region`, once.
+ *
+ * A registration belongs to a protection domain, and the protection domain is
+ * the region's -- so the region keeps them, keyed by range, and every lane
+ * that reaches the region shares them: two lanes serve a pool in opposite
+ * directions and register it once between them, at create. Asked again for a
+ * range it holds, this answers with the same registration.
+ *
+ * Device memory is reached through the backend's dma-buf export when the
+ * backend has one and the device allows it, and through a plain registration
+ * otherwise -- which is how host memory is reached, and how device memory is
+ * on a system with peer memory in the kernel. NULL means the NIC cannot
+ * address this memory at all, and the caller stages through memory it can.
+ * `backend` may be NULL for memory that is not a provider's.
+ *
+ * Registrations live as long as the region; nothing releases one.
+ */
+struct ibv_mr *shadowspill_remote_region_register_local(
+    const ShadowSpillRemoteRegion *region,
+    const ShadowSpillBackend *backend,
+    void *address,
+    uint64_t bytes
+);
+
+/*
  * Claim a queue pair, and its completion queue, for one lane's exclusive use.
  *
  * Returns the index claimed, or -1 when the region has none left. Two lanes
@@ -416,8 +424,9 @@ int shadowspill_remote_region_claim_queue_pair(
     const ShadowSpillRemoteRegion *region
 );
 
-/* The lane that moves bytes to and from a remote pool, one entry per
-   direction, appended to `ShadowSpillRuntimeConfig.lanes`. */
-extern const ShadowSpillLaneDescription shadowspill_remote_lanes[2];
+/* The lane that moves bytes to and from a remote pool: four entries, both
+   directions for a device pool and for a pinned-host one, appended to
+   `ShadowSpillRuntimeConfig.lanes`. */
+extern const ShadowSpillLaneDescription shadowspill_remote_lanes[4];
 
 #endif /* SHADOWSPILL_NETWORK_INTERNAL_H */
