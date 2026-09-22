@@ -233,11 +233,15 @@ class ShadowSpillPlanningProblem:
                 f"requested={execution_budget}, "
                 f"maximum={self.maximum_execution_budget_bytes}"
             )
-        if spill_budget > self.maximum_spill_budget_bytes:
-            raise ValueError(
-                "spill budget exceeds the runtime pool used for profiling: "
-                f"requested={spill_budget}, maximum={self.maximum_spill_budget_bytes}"
-            )
+        # No ceiling on the spill budget. Nothing measured depends on how
+        # large the spill pool was: it holds what was evicted, and a task's
+        # profile, a transfer's calibration and the layout are all unmoved by
+        # its size. The budget reaches one place, the simulator's spill
+        # capacity below, so asking this problem about a larger spill pool is
+        # a question it can answer honestly. What a *run* needs is a different
+        # matter, and the runtime checks it against the pool it actually has
+        # when a plan is made through one. `maximum_spill_budget_bytes` stays
+        # as the record of the pool this problem was profiled against.
         shared = shared_residency_footprint(self.program)
         shared_execution = shared.for_device(self.admission_facts.device_id)
         pool_capacity = execution_budget - self.fixed_execution_bytes - shared_execution

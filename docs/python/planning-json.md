@@ -199,7 +199,7 @@ The capacity contract keys are:
 |---|---|
 | `source_execution_budget_bytes` | Budget used when constructing this artifact. |
 | `maximum_execution_budget_bytes` | Largest execution budget allowed without recompilation/reprofiling. |
-| `maximum_spill_budget_bytes` | Largest spill budget allowed by the source runtime. |
+| `maximum_spill_budget_bytes` | The spill pool the source runtime held. A record, not a ceiling: a problem may be planned at any spill budget, because nothing measured depends on the pool's size. |
 | `fixed_execution_bytes` | Problem/provider/fixed-service bytes outside the callable pool. |
 | `object_reserve_bytes` | Capacity leeway: pool bytes withheld from the search's object capacity so a fixed layout whose extent exceeds the planner's instantaneous bound can still be admitted without capacity refinement. Not a workspace partition — task workspace is charged per boundary and placed inside the fixed slice. |
 | `dynamic_scratch_reserve_bytes` | Measured or user-raised optional dynamic scratch requirement. |
