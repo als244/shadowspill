@@ -21,7 +21,7 @@ run together and they have different lifetimes.
 | `admission_facts` | The pool a layout must fit into |
 | `source_execution_budget_bytes` | The budget the problem was captured under |
 | `maximum_execution_budget_bytes` | The largest budget it may be re-asked at |
-| `maximum_spill_budget_bytes` | The same ceiling for spill |
+| `maximum_spill_budget_bytes` | The spill pool it was profiled against, as a record rather than a ceiling |
 | `fixed_execution_bytes` | Device bytes the pool never sees |
 | `object_reserve_bytes` | Bytes held back for planned objects |
 | `dynamic_scratch_reserve_bytes` | Bytes held back for allocations the plan does not own |
@@ -46,10 +46,23 @@ the *same* problem, with no capture, compilation or profiling repeated. That
 is the whole reason a frontier sweep is cheap: it is one problem asked many
 times.
 
-The ceilings exist because a budget larger than the machine that was
-measured is not a question this problem can answer honestly — the profiles
-were taken under a particular configuration, and stretching them past it
-would report predictions nothing measured.
+The execution ceiling exists because a budget larger than the device that
+was measured is not a question this problem can answer honestly — the
+profiles were taken in a pool of that size, the layout is built against it,
+and stretching them past it would report predictions nothing measured.
+
+**Spill has no such ceiling.** Nothing measured depends on how large the
+spill pool was: it holds what was evicted, and a task's profile, a
+transfer's calibration and the layout are unmoved by its size. The spill
+budget reaches exactly one place, the simulator's spill capacity, so a
+problem profiled against a small spill pool answers honestly about a large
+one — which is what a sweep over spill budgets, or over machines that do not
+exist yet, is asking. `maximum_spill_budget_bytes` therefore records the pool
+the problem was profiled against and bounds nothing.
+
+Whether a plan can be *run* is a different question, and it is asked where
+it can be answered: a plan made through a runtime is checked against the
+pool that runtime actually has.
 
 ## What it still does not carry
 
