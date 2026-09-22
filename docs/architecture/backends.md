@@ -39,6 +39,10 @@ Each has its own page: [memory pools](memory-pools.md), [lanes](lanes.md),
   `register_host_memory`, so the C allocator never touches it and the provider
   only pins it in place. A kind served from somewhere else reaches the backend
   not at all -- see [memory pools](memory-pools.md#a-pools-memory-is-found-by-kind).
+  A lane whose hardware must reach a pool directly -- a NIC addressing device
+  memory -- asks the backend to export the pool as a dma-buf, the one memory
+  entry a backend may leave out, and falls back to staging where the device
+  cannot.
 - **Routes** are a source pool and a destination pool. Their two kinds select
   the route's **lane**, which is what actually moves the bytes; the built-in one
   is a thin table over `copy_host_to_device` and `copy_device_to_host` on a
