@@ -52,10 +52,14 @@ def test_the_script_imports_something() -> None:
 
 
 @pytest.mark.parametrize("module, names", _imports())
-def test_every_name_the_script_imports_exists(module: str, names: tuple[str, ...]) -> None:
+def test_every_name_the_script_imports_exists(
+    module: str, names: tuple[str, ...]
+) -> None:
     imported = importlib.import_module(module)
     missing = [name for name in names if not hasattr(imported, name)]
-    assert not missing, f"{SETUP.name} imports {missing} from {module}, which no longer has them"
+    assert not missing, (
+        f"{SETUP.name} imports {missing} from {module}, which no longer has them"
+    )
 
 
 def test_the_python_the_script_runs_parses() -> None:
@@ -64,5 +68,5 @@ def test_the_python_the_script_runs_parses() -> None:
     text = SETUP.read_text()
     blocks = re.findall(r"<<'PY'\n(.*?)\nPY\n", text, flags=re.S)
     assert blocks, "no Python heredocs found in the setup script"
-    for index, block in enumerate(blocks):
+    for block in blocks:
         ast.parse(block)
