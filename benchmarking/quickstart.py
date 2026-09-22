@@ -463,6 +463,11 @@ def print_breakdown(report: Any, tokens: int) -> None:
     print(
         f"  traffic per step   fetch {gib(report.transfer_bytes_fetched)}"
         f"   evict {gib(report.transfer_bytes_evicted)}"
+        + (
+            f"   spill peak {gib(summary.spill_peak_bytes)}"
+            if summary.spill_peak_bytes
+            else ""
+        )
     )
     print(
         f"  planning capacity  execution {gib(report.execution_budget_bytes)}"
