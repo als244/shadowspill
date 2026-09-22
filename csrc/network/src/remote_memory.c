@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 /*
  * The `pool_memory` entry for SHADOWSPILL_POOL_REMOTE. It is reached by the
@@ -65,8 +66,88 @@ typedef struct RemoteRegion {
     atomic_uint claimed_queue_pairs;
     /* Serialises `write`, which uses the queue pair no lane may claim. */
     pthread_mutex_t write_lock;
+    /* Local memory registered with this region's protection domain, keyed by
+       range and shared by every lane that reaches the region; see
+       `shadowspill_remote_region_register_local`. */
+    struct LocalRegistration *registrations;
+    pthread_mutex_t registrations_lock;
     struct RemoteRegion *next;
 } RemoteRegion;
+
+typedef struct LocalRegistration {
+    void *address;
+    uint64_t bytes;
+    struct ibv_mr *registration;
+    struct LocalRegistration *next;
+} LocalRegistration;
+
+/* The registration itself: a dma-buf where the backend exports one and the
+   NIC's library can take it, and a plain registration otherwise. */
+static struct ibv_mr *register_range(
+    const RemoteRegion *region,
+    const ShadowSpillBackend *backend,
+    void *address,
+    uint64_t bytes
+) {
+    struct ibv_pd *const domain = region->endpoint.protection_domain;
+#if defined(SHADOWSPILL_HAVE_DMABUF_MR)
+    if (backend != NULL && backend->export_dma_buf != NULL) {
+        int fd = -1;
+        if (backend->export_dma_buf(backend->state, address, bytes, &fd) == 0) {
+            /* The NIC takes its own hold on the buffer; the descriptor was
+               ours to close once it has been handed over. */
+            struct ibv_mr *const registration = ibv_reg_dmabuf_mr(
+                domain, 0U, (size_t)bytes, (uint64_t)(uintptr_t)address, fd,
+                IBV_ACCESS_LOCAL_WRITE
+            );
+            (void)close(fd);
+            if (registration != NULL) {
+                return registration;
+            }
+        }
+    }
+#else
+    (void)backend;
+#endif
+    return ibv_reg_mr(domain, address, (size_t)bytes, IBV_ACCESS_LOCAL_WRITE);
+}
+
+struct ibv_mr *shadowspill_remote_region_register_local(
+    const ShadowSpillRemoteRegion *region,
+    const ShadowSpillBackend *backend,
+    void *address,
+    uint64_t bytes
+) {
+    RemoteRegion *const owned = (RemoteRegion *)(uintptr_t)region;
+    if (owned == NULL || address == NULL || bytes == 0U) {
+        return NULL;
+    }
+    pthread_mutex_lock(&owned->registrations_lock);
+    for (LocalRegistration *held = owned->registrations; held != NULL;
+         held = held->next) {
+        if (held->address == address && held->bytes == bytes) {
+            pthread_mutex_unlock(&owned->registrations_lock);
+            return held->registration;
+        }
+    }
+    struct ibv_mr *registration = NULL;
+    LocalRegistration *const record = calloc(1U, sizeof(*record));
+    if (record != NULL) {
+        registration = register_range(owned, backend, address, bytes);
+    }
+    if (registration == NULL) {
+        free(record);
+        pthread_mutex_unlock(&owned->registrations_lock);
+        return NULL;
+    }
+    record->address = address;
+    record->bytes = bytes;
+    record->registration = registration;
+    record->next = owned->registrations;
+    owned->registrations = record;
+    pthread_mutex_unlock(&owned->registrations_lock);
+    return registration;
+}
 
 /*
  * The last queue pair is the region's own, for putting state into the pool
@@ -145,6 +226,11 @@ static int remote_acquire(
     region->channel.socket = -1;
     region->capacity = capacity;
     if (pthread_mutex_init(&region->write_lock, NULL) != 0) {
+        free(region);
+        return -1;
+    }
+    if (pthread_mutex_init(&region->registrations_lock, NULL) != 0) {
+        pthread_mutex_destroy(&region->write_lock);
         free(region);
         return -1;
     }
@@ -285,13 +371,11 @@ static int remote_transfer(
      * In pieces the port will carry. A queue pair refuses a work request
      * longer than `max_msg_sz`, and a scatter-gather element's length is 32
      * bits besides -- so an object larger than either has to cross in more
-     * than one message. Sending it as one used to truncate the length to 32
-     * bits and move the wrong number of bytes without saying so.
+     * than one message.
      *
      * One piece at a time, because this is the state path rather than the
-     * transfer path: it already registers and unregisters per call, it runs
-     * while nothing else is moving, and pipelining it would be optimising the
-     * half of the system that was deliberately left unoptimised.
+     * transfer path: it registers and unregisters per call, and it runs
+     * while nothing else is moving.
      */
     const uint64_t limit = region->endpoint.max_message_bytes;
     uint64_t moved = 0U;
@@ -406,9 +490,17 @@ static int remote_release(void *state, void *base, uint64_t capacity) {
         }
     }
     pthread_mutex_unlock(&regions_lock);
-    /* Reverse of acquire: the queue pairs before the region they reach, and
+    /* Reverse of acquire: what was registered with the protection domain
+       before the domain, the queue pairs before the region they reach, and
        the connection last -- closing it is what frees everything on the far
        side if any step above failed to. */
+    while (region->registrations != NULL) {
+        LocalRegistration *const held = region->registrations;
+        region->registrations = held->next;
+        (void)ibv_dereg_mr(held->registration);
+        free(held);
+    }
+    pthread_mutex_destroy(&region->registrations_lock);
     pthread_mutex_destroy(&region->write_lock);
     shadowspill_endpoint_close(&region->endpoint);
     const int status = shadowspill_control_free(
