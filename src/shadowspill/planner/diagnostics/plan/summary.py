@@ -49,6 +49,12 @@ class PlanSummary:
     #: whenever a plan came from the store.
     transfer_bytes_fetched: int = 0
     transfer_bytes_evicted: int = 0
+    #: The most the spill pool ever holds while the step runs, as the
+    #: simulation of this plan reached it. Beside the spill budget it says
+    #: whether that budget bound the plan or merely bounded it: a peak well
+    #: under the budget means a larger pool would have changed nothing, and a
+    #: peak against it means the plan was shaped by the pool's size.
+    spill_peak_bytes: int = 0
     fetch_bandwidth_bytes_per_second: int = 0
     evict_bandwidth_bytes_per_second: int = 0
     fetch_latency_ns: int = 0
@@ -87,6 +93,7 @@ class PlanSummary:
             "recomputing_group_fraction": self.recomputing_group_fraction,
             "transfer_bytes_fetched": self.transfer_bytes_fetched,
             "transfer_bytes_evicted": self.transfer_bytes_evicted,
+            "spill_peak_bytes": self.spill_peak_bytes,
             "fetch_bandwidth_bytes_per_second": (self.fetch_bandwidth_bytes_per_second),
             "evict_bandwidth_bytes_per_second": (self.evict_bandwidth_bytes_per_second),
             "fetch_latency_ns": self.fetch_latency_ns,
@@ -134,6 +141,10 @@ class PlanSummary:
             flexible_group_count=count("flexible_group_count"),
             transfer_bytes_fetched=count("transfer_bytes_fetched"),
             transfer_bytes_evicted=count("transfer_bytes_evicted"),
+            # Absent from anything written before the peak was recorded, and
+            # zero reads as "not known" the same way it reads as "nothing
+            # spilled", which no real step does.
+            spill_peak_bytes=count("spill_peak_bytes"),
             fetch_bandwidth_bytes_per_second=count("fetch_bandwidth_bytes_per_second"),
             evict_bandwidth_bytes_per_second=count("evict_bandwidth_bytes_per_second"),
             fetch_latency_ns=count("fetch_latency_ns"),
@@ -206,6 +217,7 @@ def summarize_selected_plan(
         flexible_group_count=CostedAlternatives.from_program(program).flexible_count,
         transfer_bytes_fetched=fetched,
         transfer_bytes_evicted=evicted,
+        spill_peak_bytes=result.simulation.spill_peak_bytes,
         fetch_bandwidth_bytes_per_second=device.fetch_bandwidth_bytes_per_second,
         evict_bandwidth_bytes_per_second=device.evict_bandwidth_bytes_per_second,
         fetch_latency_ns=device.fetch_latency_ns,

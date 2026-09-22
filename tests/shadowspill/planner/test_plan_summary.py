@@ -28,6 +28,7 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
         for item in result.simulation.transfer_intervals
         if item.direction.value != "fetch"
     )
+    assert summary.spill_peak_bytes == result.simulation.spill_peak_bytes
     assert summary.transfer_bytes_fetched == fetched
     assert summary.transfer_bytes_evicted == evicted
     assert summary.fetch_bandwidth_bytes_per_second == 1 << 30
@@ -79,7 +80,6 @@ def test_selected_candidate_is_read_from_the_selected_program() -> None:
     from dataclasses import replace
 
     from shadowspill.planner.diagnostics import (
-        CandidateDiagnostic,
         ResolvedProgramDiagnostics,
     )
 
@@ -100,8 +100,13 @@ def test_selected_candidate_is_read_from_the_selected_program() -> None:
         selected_candidate_id=None,
         selected_makespan_ns=None,
         candidate_evaluations=(
-            replace(candidate, selection_id="other", status="infeasible",
-                    failure_kind="unplaceable", makespan_ns=None),
+            replace(
+                candidate,
+                selection_id="other",
+                status="infeasible",
+                failure_kind="unplaceable",
+                makespan_ns=None,
+            ),
         ),
     )
     diagnostics = replace(
