@@ -68,6 +68,7 @@ class CPressureFitRepairDiagnostics(ctypes.Structure):
         ("admission_pressure_boundary_attempts", ctypes.c_uint64),
         ("simulation_fetch_delay_attempts", ctypes.c_uint64),
         ("simulation_pressure_boundary_attempts", ctypes.c_uint64),
+        ("layout_fetch_delay_attempts", ctypes.c_uint64),
     ]
 
 
@@ -150,6 +151,8 @@ class CPressureFitCandidateDiagnostic(ctypes.Structure):
         ("error_used_bytes", ctypes.c_uint64),
         ("error_requested_bytes", ctypes.c_uint64),
         ("error_required_bytes", ctypes.c_uint64),
+        ("best_unplaced_makespan_ns", ctypes.c_uint64),
+        ("unplaced_plans", ctypes.c_uint32),
     ]
 
 

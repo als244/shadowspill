@@ -324,6 +324,8 @@ did, alongside its makespan:
 | `repairs_at_best` | Repairs spent when the plan the candidate answers with was placed; `null` when it placed none. |
 | `pressure_escalations` | Pressure repairs that asked for more than the shortfall because the same failure had repeated at the same task and moment. |
 | `escalations_taken_back` | Escalated asks no cut could meet, taken back for a plain ask. |
+| `best_unplaced_makespan_ns` | The fastest plan it simulated whose layout did not fit the pool; `null` when every measured layout fit. Beside `makespan_ns` it says what placing cost. |
+| `unplaced_plans` | How many measured layouts did not fit. |
 
 A candidate whose status is `infeasible` with failure kind `unplaceable`
 reached no plan that fit, so it has no answer regardless of what it
@@ -379,7 +381,7 @@ entry is one plan the candidate held, in order:
 | `repairs` | Repairs spent by the time it was reached. |
 | `capacity_violations` | Places it came up short and waited. |
 | `simulation_status` | What the simulator returned for it. |
-| `outcome` | Six flags -- `simulated`, `measured`, `placed`, `refined`, `best`, `answer` -- saying what became of it. |
+| `outcome` | Seven flags -- `simulated`, `measured`, `placed`, `refined`, `best`, `answer`, `moved` -- saying what became of it; `moved` marks a plan whose layout overran and had a fetch delayed after it. |
 
 See [Interpreting a PlanReport](plan-report.md#search-diagnostics) for the
 meaning of a problem versus a policy.

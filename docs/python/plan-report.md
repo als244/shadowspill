@@ -46,8 +46,12 @@ Beside them it carries how many task-alternative groups recompute out of how
 many, the traffic the simulation ran in each direction, the per-direction
 bandwidths it planned against, per-phase planning wall time, and
 `selected_candidate` — the winning candidate's residency strategy, fetch rule,
-coalescing, and the repairs it had spent when it placed the plan it answers
-with. The [field reference](plan-report-fields.md#plansummary) defines each.
+coalescing, the repairs it had spent when it placed the plan it answers with,
+and what placing cost: the fastest plan it simulated whose layout did not fit,
+how many such plans it measured, and the answer over that plan. One means
+placing cost nothing; well above one means the search gave up plans it liked
+because no layout of them fit. The
+[field reference](plan-report-fields.md#plansummary) defines each.
 
 The bandwidths are worth one note: they are the calibrated transfer
 capabilities coarsened by their own magnitude, so two slightly different
@@ -281,8 +285,8 @@ then inspect:
   `resolved_program_count`, `candidate_policy_count`,
   `candidate_evaluation_count`, `valid_candidate_evaluation_count`, and
   `candidate_status_counts`;
-- `repairs` to see whether admission or simulation repeatedly moved fetches or
-  pressure boundaries;
+- `repairs` to see whether admission, simulation or a layout that overran
+  repeatedly moved fetches or pressure boundaries;
 - `evict_ineligible_aliases` and `evict_ineligible_bytes` for what
   `minimum_object_bytes_evict_eligible` held resident in this problem;
 - `work.simulation_calls`, `work.simulation_cache_hits`, and

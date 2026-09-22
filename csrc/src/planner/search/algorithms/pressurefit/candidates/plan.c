@@ -173,6 +173,19 @@ int shadowspill_candidate_place_plan(
     if (place_status != SHADOWSPILL_STATUS_OK) {
         return -1;
     }
+    /* The lease whose end is the extent: the placer's span is the largest
+     * offset plus size over the leases it placed, so one of them ends there. */
+    place->placed_count = lifetime_result.fixed_count;
+    place->extent_bytes = placement_result.required_bytes;
+    place->extent_lease = SHADOWSPILL_ADMISSION_NO_LEASE;
+    for (uint64_t lease = 0U; lease < lifetime_result.fixed_count; ++lease) {
+        if (place->excluded[lease] == 0U &&
+            place->offsets[lease] + place->lifetimes[lease].bytes ==
+                placement_result.required_bytes) {
+            place->extent_lease = lease;
+            break;
+        }
+    }
     /* The resident slice follows the main assignment: each lease left out
      * takes the next aligned home, in lease order, and the fixed range ends
      * past the last of them. */

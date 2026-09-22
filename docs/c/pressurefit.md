@@ -164,7 +164,14 @@ candidate diagnostic, as is `repairs_at_best`, the repairs spent when the plan
 the candidate answers with was placed, and `pressure_escalations` /
 `escalations_taken_back`, the pressure repairs that asked for more than the
 shortfall because a failure had repeated, and how many of those asks no cut
-could meet.
+could meet. Among the repair categories, `layout_fetch_delay_attempts`
+counts the fetches moved later so a layout that overran the pool could fit,
+and `SHADOWSPILL_STEP_MOVED` marks the trajectory step such a move
+followed. `best_unplaced_makespan_ns` and `unplaced_plans` record the
+fastest plan the candidate simulated whose layout did not fit the pool and
+how many such plans it measured, both zero when none: beside the answer they
+say what placing cost, since a candidate whose answer is far above that plan
+reached it by cutting residency for a layout it could not make fit.
 
 Time is reported separately, as `ShadowSpillPressureFitSectionTiming`. Its
 fields are **disjoint sections** rather than overlapping totals: each names

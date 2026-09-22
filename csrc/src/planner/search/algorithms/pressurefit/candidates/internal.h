@@ -141,6 +141,12 @@ typedef struct PlacementWorkspace {
      * reducer may not cut takes a static home in the resident slice instead. */
     uint8_t *excluded;
     uint32_t *dynamic_aliases;
+    /* What the last measurement placed: how many leases, the extent they
+     * span, and the lease whose end is that extent -- what a layout that
+     * overran the pool is answered around. */
+    uint64_t placed_count;
+    uint64_t extent_bytes;
+    uint64_t extent_lease;
     uint64_t operation_capacity;
     uint64_t lease_capacity;
     uint32_t alias_capacity;
@@ -275,6 +281,11 @@ typedef struct CandidateSearch {
     uint32_t last_error_task;
     uint64_t last_error_time_ns;
     uint32_t failure_repeats;
+    /* The layout move in flight: whether the plan being measured followed a
+     * fetch delay, and the extent the plan before it needed. A delay that
+     * did not make the extent fall is the last one at this capacity. */
+    int layout_moved;
+    uint64_t layout_required_before_move;
 
     /* The round in hand: what the last simulation produced. */
     ShadowSpillSimulationResult simulation;
@@ -362,6 +373,26 @@ void shadowspill_candidate_candidate_workspace_destroy(CandidateWorkspace *works
 int shadowspill_candidate_simulate_schedule( const ShadowSpillPressureFitProblem *problem, const ShadowSpillIndexedSchedule *schedule, SimulationWorkspace *workspace, ShadowSpillCandidateAdmissionWorkspace *admission_workspace, ShadowSpillCapacityViolation *first_violation, ShadowSpillSimulationResult *result, ShadowSpillStatus *admission_status, ShadowSpillAdmissionReplayResult *admission_result );
 int shadowspill_candidate_place_plan( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillSimulationResult *simulation, uint64_t *required_bytes );
 int shadowspill_candidate_record_fetch_constraint( CandidateWorkspace *workspace, ShadowSpillFetchTriggerConstraint incoming );
+
+/* A layout that overran the pool, answered where the miss is: one fetch
+ * whose destination overlaps the lease that set the extent is delayed a
+ * task, recorded as a trigger constraint. Returns 1 when a delay was
+ * recorded, 0 when no delay frees at least `shortfall_bytes` of overlap or
+ * the delay is one the schedule already carries, -1 on failure. */
+void shadowspill_candidate_trace_measurement(
+    const CandidateWorkspace *workspace,
+    const ShadowSpillSimulationResult *simulation,
+    uint64_t required_bytes,
+    uint64_t pool_bytes,
+    uint32_t cuts
+);
+
+int shadowspill_candidate_move_for_layout(
+    const ShadowSpillScheduleFacts *facts,
+    CandidateWorkspace *workspace,
+    const ShadowSpillSimulationResult *simulation,
+    uint64_t shortfall_bytes
+);
 void shadowspill_candidate_residency_options( CandidateWorkspace *workspace, uint8_t strategy, ShadowSpillPressureFitResidencyOptions *options );
 ShadowSpillStatus shadowspill_candidate_reduce_residency( const ShadowSpillPressureFitProblem *problem, CandidateWorkspace *workspace, const ShadowSpillPressureFitResidencyOptions *options, uint8_t strategy, uint8_t *resident, uint8_t *breaks, ShadowSpillPressureFitResidencyResult *result );
 void shadowspill_candidate_copy_simulation_error( ShadowSpillPressureFitCandidateDiagnostic *diagnostic, const ShadowSpillSimulationResult *simulation );
