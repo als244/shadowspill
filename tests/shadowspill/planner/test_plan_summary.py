@@ -37,6 +37,9 @@ def test_summary_parts_identify_to_the_simulated_step() -> None:
         "fetch_rule": summary.selected_candidate["fetch_rule"],
         "coalesced": summary.selected_candidate["coalesced"],
         "repairs_at_best": None,
+        "best_unplaced_makespan_ns": None,
+        "unplaced_plans": 0,
+        "placement_gap": None,
     }
     assert summary.as_dict()["selected_candidate"] == dict(summary.selected_candidate)
     assert list(summary.planning_phase_seconds) == ["capture_lowering", "selection"]
@@ -67,3 +70,54 @@ def test_recompute_fraction_is_guarded_against_empty_selections() -> None:
     )
     assert empty.recomputing_group_fraction == 0.0
     assert dict(empty.planning_phase_seconds) == {}
+
+
+def test_selected_candidate_is_read_from_the_selected_program() -> None:
+    """A policy is evaluated once per resolved program; the summary describes
+    the evaluation in the program the search selected, not the last one."""
+
+    from dataclasses import replace
+
+    from shadowspill.planner.diagnostics import (
+        CandidateDiagnostic,
+        ResolvedProgramDiagnostics,
+    )
+
+    result = representative_result()
+    diagnostics = result.diagnostics
+    (selected_program,) = diagnostics.resolved_programs
+    (candidate,) = selected_program.candidate_evaluations
+    chosen = replace(
+        candidate,
+        repairs_at_best=2,
+        best_unplaced_makespan_ns=candidate.makespan_ns - 1,
+        unplaced_plans=3,
+    )
+    # the same policy, evaluated in another resolved program, never placed
+    other = ResolvedProgramDiagnostics(
+        selection_id="other",
+        choices=(),
+        selected_candidate_id=None,
+        selected_makespan_ns=None,
+        candidate_evaluations=(
+            replace(candidate, selection_id="other", status="infeasible",
+                    failure_kind="unplaceable", makespan_ns=None),
+        ),
+    )
+    diagnostics = replace(
+        diagnostics,
+        resolved_programs=(
+            replace(selected_program, candidate_evaluations=(chosen,)),
+            other,
+        ),
+    )
+    summary = summarize_selected_plan(
+        replace(result, diagnostics=diagnostics), phase_timings_ns=()
+    )
+    selected = dict(summary.selected_candidate)
+    assert selected["repairs_at_best"] == 2
+    assert selected["unplaced_plans"] == 3
+    assert selected["best_unplaced_makespan_ns"] == candidate.makespan_ns - 1
+    assert selected["placement_gap"] == round(
+        candidate.makespan_ns / (candidate.makespan_ns - 1), 4
+    )

@@ -60,8 +60,10 @@ class PlanSummary:
         default_factory=lambda: MappingProxyType({})
     )
     #: The candidate whose plan was selected: its residency strategy,
-    #: fetch rule, coalescing, and the repairs it had spent when it
-    #: placed that plan (``repairs_at_best``).
+    #: fetch rule, coalescing, the repairs it had spent when it placed that
+    #: plan (``repairs_at_best``), the fastest plan it could not place
+    #: (``best_unplaced_makespan_ns``, ``unplaced_plans``) and
+    #: ``placement_gap``, the answer over that plan.
     selected_candidate: Mapping[str, object] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -167,13 +169,14 @@ def summarize_selected_plan(
     device = result.simulation_config.devices[0]
     selected: dict[str, object] = {}
     for problem in result.diagnostics.resolved_programs:
+        # A policy is evaluated once per resolved program, so the selected
+        # candidate is the one in the selected program: the same policy in
+        # another program is a different evaluation with its own record.
+        if problem.selection_id != result.diagnostics.selected_selection_id:
+            continue
         # The plan to beat won: the answer is the plan the search was handed,
         # described by where it came from rather than by a candidate policy.
-        if (
-            problem.selection_id == result.diagnostics.selected_selection_id
-            and problem.incumbent is not None
-            and problem.incumbent.selected
-        ):
+        if problem.incumbent is not None and problem.incumbent.selected:
             selected = {"incumbent": problem.incumbent.to_dict()}
         for candidate in problem.candidate_evaluations:
             if candidate.candidate_id == result.diagnostics.selected_candidate_id:
@@ -182,6 +185,15 @@ def summarize_selected_plan(
                     "fetch_rule": candidate.fetch_rule,
                     "coalesced": candidate.coalesced,
                     "repairs_at_best": candidate.repairs_at_best,
+                    "best_unplaced_makespan_ns": candidate.best_unplaced_makespan_ns,
+                    "unplaced_plans": candidate.unplaced_plans,
+                    # The answer over the fastest plan that failed only
+                    # placement: 1.0 means placing cost nothing.
+                    "placement_gap": (
+                        round(makespan_ns / candidate.best_unplaced_makespan_ns, 4)
+                        if candidate.best_unplaced_makespan_ns
+                        else None
+                    ),
                 }
     return PlanSummary(
         simulated_step_seconds=makespan_ns / 1e9,
