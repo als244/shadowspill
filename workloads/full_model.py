@@ -54,6 +54,25 @@ _REGRESSION_TOKENS_PER_SECOND = {
     "mlops_olmoe": 13_907.1,
 }
 
+#: The same floors for the same cells with the spill pool on a peer, in
+#: tokens per second: what the `remote_perf` gate judges against, at the same
+#: 0.95 margin. A peer's pool is reached over a 25 Gb/s link against about
+#: 25 GB/s to pinned host memory, so these sit far below the local floors and
+#: the local floors say nothing about a remote run.
+#:
+#: Each is the median of one matrix run on 2026-09-21 at af39235b with the
+#: remote lane rewritten around the direct path, on an idle RTX 5090 with the
+#: pool on tubingen (112 GiB) under the standard probe (no checkpoint, warm
+#: step, three groups of four steps). The run three days earlier read within
+#: 0.25 % of these in every cell, so the margin is twenty times the spread.
+#: Re-measure and update these deliberately when a change is meant to move
+#: remote throughput.
+_REMOTE_REGRESSION_TOKENS_PER_SECOND = {
+    "mlops_llama3": 584.4,
+    "mlops_qwen35": 777.0,
+    "mlops_olmoe": 1_934.2,
+}
+
 #: What the predecessor `dataflow` system measured on the same geometry, in
 #: tokens per second. ShadowSpill replaces that system, so these are a parity
 #: target rather than a regression floor: the harness reports the ratio and
@@ -88,6 +107,7 @@ class FullModelManifest:
     device_physical_capacity_bytes: int
     spill_budget_bytes: int
     regression_tokens_per_second: float | None
+    remote_regression_tokens_per_second: float | None
     predecessor_tokens_per_second: float | None
     model_config: Any
     head_scratch_bytes: int = _RETAINED_HEAD_SCRATCH_BYTES
@@ -210,6 +230,9 @@ def _manifest(
         device_physical_capacity_bytes=16 * _GIB,
         spill_budget_bytes=112 * _GIB,
         regression_tokens_per_second=_REGRESSION_TOKENS_PER_SECOND.get(
+            f"{implementation}_{family}"
+        ),
+        remote_regression_tokens_per_second=_REMOTE_REGRESSION_TOKENS_PER_SECOND.get(
             f"{implementation}_{family}"
         ),
         predecessor_tokens_per_second=_PREDECESSOR_TOKENS_PER_SECOND.get(
