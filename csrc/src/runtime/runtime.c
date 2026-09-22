@@ -204,12 +204,18 @@ static ShadowSpillStatus open_pools_and_routes(
          * list. Every field is something the runtime already holds -- the pair
          * of kinds included, which is where a lane reads its direction.
          */
+        const ShadowSpillMemoryPool *const source =
+            &runtime->pools[route->source_pool_id];
+        const ShadowSpillMemoryPool *const destination =
+            &runtime->pools[route->destination_pool_id];
         const ShadowSpillLane base = {
             .runtime = runtime,
             .backend = &runtime->backend,
             .stream = route->stream,
             .from_kind = description->from_kind,
             .to_kind = description->to_kind,
+            .from_range = {source->base, source->memory_bytes},
+            .to_range = {destination->base, destination->memory_bytes},
         };
         if (description->create(
                 &base, description->configuration, &route->lane
