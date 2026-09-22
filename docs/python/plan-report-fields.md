@@ -120,7 +120,7 @@ plus `recomputation_overhead_seconds` plus `idle_seconds` plus
 | `fetch_bandwidth_bytes_per_second`, `evict_bandwidth_bytes_per_second` | The per-direction bandwidth the simulator planned against, already coarsened, so it is not the rate the runtime measured. Measured calibration lives on the report's transfer profiles. |
 | `fetch_latency_ns`, `evict_latency_ns` | The per-transfer latency each lane was priced with, coarsened the same way. Recorded beside the bandwidths because a plan read back from the store was priced against the calibration of whatever process searched it, which coarsening a profile today would not reproduce. |
 | `planning_phase_seconds` | Each planning phase's wall time in phase order, ending with `total`. A view over the report's `phase_timings_ns`, which stays the stored record. |
-| `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, and repairs at best. When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
+| `selected_candidate` | The candidate whose plan was selected: residency strategy, fetch rule, coalescing, repairs at best, the fastest plan it could not place (`best_unplaced_makespan_ns`, `unplaced_plans`) and `placement_gap`, the answer over that plan (`None` when every measured plan fit). When the search answered with the plan it was handed, `incumbent` with that plan's outcome instead. |
 
 `recomputing_group_fraction` is derived from the two counts.
 
@@ -520,6 +520,7 @@ the reusable policy: residency strategy, fetch rule, and coalescing mode.
 | `capacity_refinements` | How many times a plan gave back what it overran and was rebuilt. |
 | `repairs_at_best` | Repairs spent when the plan it answers with was placed; `None` when it placed none. |
 | `pressure_escalations`, `escalations_taken_back` | Pressure repairs that asked for more than the shortfall because the same failure had repeated at the same task and moment, and how many of those asks no cut could meet and were taken back. |
+| `best_unplaced_makespan_ns`, `unplaced_plans` | The fastest plan it simulated whose layout did not fit the pool, and how many such plans it measured; `None` and 0 when none. Beside `makespan_ns` they say what placing cost. |
 | `started_ns`, `finished_ns` | When this candidate ran, from the start of the call. Two candidates ran at the same time exactly when their spans overlap. |
 | `schedule_digest` | Identity of the schedule it produced. |
 | `failure_kind`, `failure_detail` | Why it failed, when it did. |
@@ -584,6 +585,7 @@ category names what refused the plan and what the repair did about it.
 | `admission_pressure_boundary_attempts` | Admission refused it; room was made at a pressure boundary. |
 | `simulation_fetch_delay_attempts` | Simulation refused it; a fetch was moved later. |
 | `simulation_pressure_boundary_attempts` | Simulation refused it; room was made at a pressure boundary. |
+| `layout_fetch_delay_attempts` | Its layout overran the pool; a fetch was moved later so it could fit. |
 
 `total_attempts` and `pressure_boundary_attempts` are sums over these.
 
@@ -602,7 +604,7 @@ search itself. Recorded only when the caller asks for a trajectory.
 | `repairs` | Repairs the candidate had made when it reached this plan. |
 | `simulation_status` | What the simulator returned for it. |
 | `capacity_violations` | Places it came up short of capacity and waited. |
-| `simulated`, `measured`, `placed`, `refined`, `best`, `answer` | What became of it, in flag order: simulated at all, measured for a layout, placed, refined, best so far, and the one the candidate answered with. |
+| `simulated`, `measured`, `placed`, `refined`, `best`, `answer`, `moved` | What became of it, in flag order: simulated at all, measured for a layout, placed, refined, best so far, the one the candidate answered with, and a fetch moved later after it so its layout could fit. |
 
 ## ProgramPlanResult
 

@@ -526,6 +526,10 @@ whole repair budget without moving. An ask that no cut can meet is taken back
 for a plain ask, so a candidate is only ever slower for having asked for more.
 A new capacity round starts its count of repeats afresh.
 
+A layout that overruns the pool is answered under
+[place](#place-measuring-whether-the-layout-fits): a fetch delayed before any
+capacity is given back.
+
 Every change is monotonic and counts against `max_repair_attempts`. A
 non-capacity contradiction is rejected directly. A move the schedule already
 carries is not repeated, because repeating it would loop. A candidate that
@@ -557,10 +561,34 @@ though — skipping on any other ground can leave a candidate with no placed
 plan, and such a candidate has no answer to give.
 
 A plan whose layout fits is offered to the shared record and kept as this
-candidate's answer if it beats what the candidate already placed. A plan whose
-layout overruns the pool gives back what it overran, bounded by
-`capacity_refinement_bytes`, expresses that smaller capacity to the reducer as
-uniform pressure, and plans again from the base residency. Capacity is a
+candidate's answer if it beats what the candidate already placed.
+
+A plan whose layout overruns the pool is answered where the miss is before
+anything is given up. The placement leaves behind which lease set the
+extent, and the leases live at the same time are what held it up, so the
+candidate delays one fetch by a task: the fetch whose destination *is* the
+extent-setting lease, past the leases that end by where it would then
+begin, or a fetch whose destination the extent-setting lease overlaps, past
+that lease's end — whichever frees the most bytes. A fetch destination is
+dated from its trigger task's end, so one task later shortens the lease from
+the front and nothing else moves. The delay is recorded as a trigger
+constraint, so it is never repeated and never reaches the consumer, and it
+counts against `max_repair_attempts` like every other change; the candidate
+then emits, simulates and measures again, and the trajectory marks the step
+the move followed.
+
+Two conditions keep this to the misses it can answer. A delay is taken only
+when what it frees is at least the overrun: a lease can drop by at most the
+bytes it stops overlapping, so a smaller move cannot close the miss. And a
+delay is taken after another only when the last one made the extent fall;
+a move that did not is the sign the packing has other reasons, and the
+plan gives capacity back instead.
+
+Only when no such delay exists does the plan give back what it overran,
+bounded by `capacity_refinement_bytes`, express that smaller capacity to the
+reducer as uniform pressure, and plan again from the base residency — the
+answer in the wrong currency, since a layout miss is fragmentation between a
+few leases and the reducer pays for capacity in cuts. Capacity is a
 property of the plan, so it travels with the plan and never changes what the
 simulator or the caller's budget is. [Capacity
 refinement](physical-admission.md#capacity-refinement) is where that trade is
@@ -603,8 +631,8 @@ With `record_reduction_steps` set, each candidate records the cycle rather
 than only its outcome: one `ReductionStep` per plan it held, carrying that
 plan's makespan, the bytes its layout needed, the capacity it was built
 against, the objects the reducer cut to reach it, the repair count, and what
-became of it — simulated, measured, placed, refined, best so far, or the
-answer. The steps in order are the search itself, which is what "why is this
+became of it — simulated, measured, placed, refined, best so far, the
+answer, or a plan a fetch was moved after. The steps in order are the search itself, which is what "why is this
 plan slower than the one at a larger budget" is really asking about.
 
 ## Pseudocode
@@ -644,6 +672,10 @@ PressureFit(program, initial, final, machine, options, admission):
                           if extent fits the pool:
                               best_placed.offer(name, schedule)
                               placed = better_of(placed, result)
+                          else if a fetch overlapping the extent can move,
+                               frees at least the overrun, and the last
+                               move made the extent fall:
+                              record its delay; continue     # emit again
                           else:
                               capacity -= min(overrun, refinement)
                               residency = reduce(seed, strategy, given_back)

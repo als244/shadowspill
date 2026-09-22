@@ -29,6 +29,7 @@ STEP_OUTCOMES = (
     "refined",
     "best",
     "answer",
+    "moved",
 )
 
 
@@ -47,6 +48,8 @@ class PlanningRepairDiagnostics:
     admission_pressure_boundary_attempts: int = 0
     simulation_fetch_delay_attempts: int = 0
     simulation_pressure_boundary_attempts: int = 0
+    #: A layout overran the pool and a fetch was moved later so it could fit.
+    layout_fetch_delay_attempts: int = 0
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
@@ -91,6 +94,9 @@ class PlanningRepairDiagnostics:
                     self.simulation_pressure_boundary_attempts
                 ),
             },
+            "layout_miss": {
+                "fetch_delay_attempts": self.layout_fetch_delay_attempts,
+            },
         }
 
     @classmethod
@@ -102,6 +108,7 @@ class PlanningRepairDiagnostics:
         simulation = _mapping(
             data.get("simulation_failure"), f"{path}.simulation_failure"
         )
+        layout = _mapping(data.get("layout_miss", {}), f"{path}.layout_miss")
         result = cls(
             unclassified_attempts=_integer(
                 data.get("unclassified_attempts", 0),
@@ -126,6 +133,10 @@ class PlanningRepairDiagnostics:
             simulation_pressure_boundary_attempts=_integer(
                 simulation.get("pressure_boundary_attempts", 0),
                 f"{path}.simulation_failure.pressure_boundary_attempts",
+            ),
+            layout_fetch_delay_attempts=_integer(
+                layout.get("fetch_delay_attempts", 0),
+                f"{path}.layout_miss.fetch_delay_attempts",
             ),
         )
         declared = data.get("total_attempts")
@@ -345,6 +356,8 @@ class ReductionStep:
     refined: bool
     best: bool
     answer: bool
+    #: Its layout overran the pool and a fetch was moved later after it.
+    moved: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {

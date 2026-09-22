@@ -587,8 +587,50 @@ static StageOutcome search_place(CandidateSearch *search) {
     if (placed != 0) {
         return STAGE_NEXT;
     }
+    shadowspill_candidate_trace_measurement(
+        search->workspace,
+        &search->simulation,
+        required_bytes,
+        pool_bytes,
+        search->diagnostic->cut_count
+    );
     if (required_bytes <= pool_bytes) {
         return search_keep_placed(search);
+    }
+    ++search->diagnostic->unplaced_plans;
+    if (search->diagnostic->best_unplaced_makespan_ns == 0U ||
+        search->simulation.makespan_ns <
+            search->diagnostic->best_unplaced_makespan_ns) {
+        search->diagnostic->best_unplaced_makespan_ns =
+            search->simulation.makespan_ns;
+    }
+    /* A miss is a few leases overlapping. Move one of them first -- a delay
+     * costs that fetch's slack, where capacity given back costs cuts --
+     * while a delay can free at least the overrun and the last delay made
+     * the extent fall; a delay that did not is the sign the packing has
+     * other reasons. */
+    const int progressed = !search->layout_moved ||
+        required_bytes < search->layout_required_before_move;
+    search->layout_moved = 0;
+    if (progressed &&
+        shadowspill_candidate_may_repair_again(search->options, search->diagnostic)) {
+        const int moved = shadowspill_candidate_move_for_layout(
+            &search->facts,
+            search->workspace,
+            &search->simulation,
+            required_bytes - pool_bytes
+        );
+        if (moved < 0) {
+            return search_done(search, -1);
+        }
+        if (moved > 0) {
+            ++search->diagnostic->repairs.layout_fetch_delay_attempts;
+            mark_search_step(search, SHADOWSPILL_STEP_MOVED, 0U);
+            search->layout_moved = 1;
+            search->layout_required_before_move = required_bytes;
+            search->need_emit = 1;
+            return STAGE_REPEAT;
+        }
     }
     return search_refine_capacity(search, required_bytes, pool_bytes);
 }

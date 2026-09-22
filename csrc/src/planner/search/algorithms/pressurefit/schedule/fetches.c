@@ -41,7 +41,7 @@ static int sort_storage_actions(ShadowSpillScheduleStorage *storage) {
     return 0;
 }
 
-static uint32_t next_input_consumer(
+uint32_t shadowspill_schedule_next_input_consumer(
     const ShadowSpillScheduleFacts *facts,
     uint32_t alias,
     uint32_t trigger
@@ -172,7 +172,7 @@ int shadowspill_delay_indexed_fetch(
             trigger >= failure->error_task) {
             continue;
         }
-        uint32_t next_consumer = next_input_consumer(facts, alias, trigger);
+        uint32_t next_consumer = shadowspill_schedule_next_input_consumer(facts, alias, trigger);
         uint32_t latest = next_consumer == UINT32_MAX
             ? facts->task_count - 1U
             : next_consumer - 1U;
@@ -200,7 +200,7 @@ int shadowspill_delay_indexed_fetch(
         return 0;
     }
     const uint32_t alias = storage->value.action_aliases[selected];
-    const uint32_t consumer = next_input_consumer(
+    const uint32_t consumer = shadowspill_schedule_next_input_consumer(
         facts, alias, storage->value.action_trigger_tasks[selected]
     );
     if (consumer == UINT32_MAX) {
@@ -239,7 +239,7 @@ int shadowspill_advance_indexed_fetch_to_release(
         return 0;
     }
 
-    const uint32_t consumer = next_input_consumer(
+    const uint32_t consumer = shadowspill_schedule_next_input_consumer(
         facts, alias, current_trigger
     );
     if (consumer == UINT32_MAX) {
@@ -354,7 +354,7 @@ int shadowspill_apply_fetch_trigger_constraints(
         }
         const uint32_t alias = storage->value.action_aliases[action];
         uint32_t trigger = storage->value.action_trigger_tasks[action];
-        const uint32_t consumer = next_input_consumer(facts, alias, trigger);
+        const uint32_t consumer = shadowspill_schedule_next_input_consumer(facts, alias, trigger);
         if (consumer == UINT32_MAX) {
             continue;
         }
