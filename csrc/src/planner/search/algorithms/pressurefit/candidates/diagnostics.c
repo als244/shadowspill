@@ -111,7 +111,8 @@ uint64_t shadowspill_candidate_repair_total(
         repairs->admission_fetch_delay_attempts +
         repairs->admission_pressure_boundary_attempts +
         repairs->simulation_fetch_delay_attempts +
-        repairs->simulation_pressure_boundary_attempts;
+        repairs->simulation_pressure_boundary_attempts +
+        repairs->layout_fetch_delay_attempts;
 }
 
 ShadowSpillPressureFitWorkDiagnostics shadowspill_candidate_workspace_work(
@@ -204,6 +205,7 @@ void shadowspill_candidate_add_repairs(
         source->simulation_fetch_delay_attempts;
     destination->simulation_pressure_boundary_attempts +=
         source->simulation_pressure_boundary_attempts;
+    destination->layout_fetch_delay_attempts += source->layout_fetch_delay_attempts;
 }
 
 /* FNV-1a over `data`, eight bytes per step and a byte-wise tail. Two

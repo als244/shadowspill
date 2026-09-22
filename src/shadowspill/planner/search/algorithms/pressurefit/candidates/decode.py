@@ -121,6 +121,8 @@ def _decode_candidate_status(
             repairs_at_best=value.repairs_at_best,
             pressure_escalations=value.pressure_escalations,
             escalations_taken_back=value.escalations_taken_back,
+            best_unplaced_makespan_ns=value.best_unplaced_makespan_ns,
+            unplaced_plans=value.unplaced_plans,
             schedule_digest=value.schedule_digest,
             repairs=value.repairs,
             work=value.work,
@@ -144,6 +146,8 @@ def _decode_candidate_status(
             capacity_refinements=value.capacity_refinements,
             pressure_escalations=value.pressure_escalations,
             escalations_taken_back=value.escalations_taken_back,
+            best_unplaced_makespan_ns=value.best_unplaced_makespan_ns,
+            unplaced_plans=value.unplaced_plans,
             repairs=value.repairs,
             work=value.work,
             steps=value.steps,
@@ -217,6 +221,8 @@ def _decode_candidate_status(
                 f"{value.repair_attempts} monotonic repairs; last result: "
                 f"{last_result}"
             ),
+            best_unplaced_makespan_ns=value.best_unplaced_makespan_ns,
+            unplaced_plans=value.unplaced_plans,
             repairs=value.repairs,
             work=value.work,
             steps=value.steps,
@@ -261,6 +267,7 @@ def _decode_repairs(
         simulation_pressure_boundary_attempts=int(
             value.simulation_pressure_boundary_attempts
         ),
+        layout_fetch_delay_attempts=int(value.layout_fetch_delay_attempts),
     )
 
 
@@ -380,6 +387,12 @@ def _decode_problem_result(
                     error_capacity_bytes=int(value.error_capacity_bytes),
                     error_used_bytes=int(value.error_used_bytes),
                     error_requested_bytes=int(value.error_requested_bytes),
+                    best_unplaced_makespan_ns=(
+                        None
+                        if value.best_unplaced_makespan_ns == 0
+                        else int(value.best_unplaced_makespan_ns)
+                    ),
+                    unplaced_plans=int(value.unplaced_plans),
                     error_required_bytes=int(value.error_required_bytes),
                 )
             )

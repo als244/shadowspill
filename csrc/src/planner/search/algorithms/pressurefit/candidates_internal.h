@@ -137,6 +137,13 @@ int shadowspill_emit_indexed_schedule(
     ShadowSpillScheduleStorage *storage
 );
 
+/* The first task after `trigger` that reads `alias`, or UINT32_MAX. */
+uint32_t shadowspill_schedule_next_input_consumer(
+    const ShadowSpillScheduleFacts *facts,
+    uint32_t alias,
+    uint32_t trigger
+);
+
 int shadowspill_delay_indexed_fetch(
     const ShadowSpillScheduleFacts *facts,
     const ShadowSpillSimulationResult *failure,

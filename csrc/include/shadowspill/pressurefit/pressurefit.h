@@ -124,6 +124,8 @@ typedef struct ShadowSpillPressureFitRepairDiagnostics {
     uint64_t admission_pressure_boundary_attempts;
     uint64_t simulation_fetch_delay_attempts;
     uint64_t simulation_pressure_boundary_attempts;
+    /* A layout overran the pool; a fetch was moved later so it could fit. */
+    uint64_t layout_fetch_delay_attempts;
 } ShadowSpillPressureFitRepairDiagnostics;
 /*
  * Where a candidate's, or a problem's, time went.
@@ -220,6 +222,9 @@ enum ShadowSpillPressureFitReductionStepFlags {
     SHADOWSPILL_STEP_BEST = 1U << 4U,
     /* This step is the plan the candidate answered with. */
     SHADOWSPILL_STEP_ANSWER = 1U << 5U,
+    /* Its layout overran the pool and a fetch was moved later after this
+       step, so the next plan is this one with that fetch delayed. */
+    SHADOWSPILL_STEP_MOVED = 1U << 6U,
 };
 typedef struct ShadowSpillPressureFitWorkDiagnostics {
     uint64_t schedule_emissions;
@@ -287,6 +292,13 @@ typedef struct ShadowSpillPressureFitCandidateDiagnostic {
     uint64_t error_used_bytes;
     uint64_t error_requested_bytes;
     uint64_t error_required_bytes;
+    /* The fastest plan this candidate simulated whose layout did not fit
+       the pool, and how many such plans it measured; both zero when none.
+       A candidate whose answer is far above the first was made to cut
+       residency for a layout it could not make fit, so the two beside the
+       answer say what placing cost. */
+    uint64_t best_unplaced_makespan_ns;
+    uint32_t unplaced_plans;
 } ShadowSpillPressureFitCandidateDiagnostic;
 typedef struct ShadowSpillPressureFitResult {
     uint32_t status;

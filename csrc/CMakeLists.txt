@@ -36,6 +36,7 @@ add_library(
   src/planner/search/algorithms/pressurefit/candidates/workers.c
   src/planner/search/algorithms/pressurefit/candidates/plan.c
   src/planner/search/algorithms/pressurefit/candidates/repair.c
+  src/planner/search/algorithms/pressurefit/candidates/layout.c
   src/planner/search/algorithms/pressurefit/candidates/memo.c
   src/planner/search/algorithms/pressurefit/candidates/workspace.c
   src/planner/search/algorithms/pressurefit/candidates/diagnostics.c
