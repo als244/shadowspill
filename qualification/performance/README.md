@@ -118,8 +118,10 @@ that group's span and cannot be averaged away by the steps around it.
 
 ## Measuring on another machine
 
-The floors in `workloads.full_model` are throughput measured on one machine.
-On any other machine a pass says nothing and a failure says only that the
+The floors in `workloads.full_model` are throughput measured on one machine:
+one table with the spill pool in pinned host memory, which this matrix judges
+against, and one with the pool on a peer, which the remote performance matrix
+judges against. On any other machine a pass says nothing and a failure says only that the
 hardware differs, so `--measure-only` runs the same protocol and reports the
 measurement instead of judging it:
 

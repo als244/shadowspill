@@ -23,6 +23,22 @@ from .readings import _artifact_identity, _runtime_delta, _wait_idle
 
 _MINIMUM_REGRESSION_RATIO = 0.95
 
+
+def regression_authority(
+    manifest: FullModelManifest, arguments: argparse.Namespace
+) -> float | None:
+    """The throughput floor this cell is judged against, or ``None``.
+
+    A cell spilling to a peer (``--remote-spill``) is judged against the
+    manifest's remote floor, measured with the pool on a peer; a cell spilling
+    to pinned host memory against the local one. The two differ by the link's
+    ratio, so neither says anything about the other's run.
+    """
+
+    if getattr(arguments, "remote_spill", None) is not None:
+        return manifest.remote_regression_tokens_per_second
+    return manifest.regression_tokens_per_second
+
 #: The simulator prices the selected span and the terminal tail; the opening
 #: restore is unmodeled but, since first-use ordering of the initial
 #: placement batch (shadowspill.ir.schedule.first_use_initial_order), bounded
@@ -84,6 +100,7 @@ def _gate_verdicts(
     # own view of a group is reported beside it and decides nothing.
     median_step_seconds = float(statistics.median(measured.cycle_seconds))
     median_throughput = manifest.tokens_per_step / median_step_seconds
+    authority = regression_authority(manifest, arguments)
     predicted_seconds = planned.report.predicted_makespan_ns / 1e9
     simulator_relative_error = (
         (median_step_seconds - predicted_seconds) / predicted_seconds
@@ -98,9 +115,7 @@ def _gate_verdicts(
         median_throughput=median_throughput,
         simulator_relative_error=simulator_relative_error,
         regression_ratio=(
-            None
-            if manifest.regression_tokens_per_second is None
-            else median_throughput / manifest.regression_tokens_per_second
+            None if authority is None else median_throughput / authority
         ),
         predecessor_ratio=(
             None
@@ -139,9 +154,8 @@ def _gate_verdicts(
         ),
         simulator_passed=abs(simulator_relative_error) <= _MAXIMUM_SIMULATOR_ERROR,
         regression_passed=bool(
-            manifest.regression_tokens_per_second is None
-            or median_throughput / manifest.regression_tokens_per_second
-            >= _MINIMUM_REGRESSION_RATIO
+            authority is None
+            or median_throughput / authority >= _MINIMUM_REGRESSION_RATIO
         ),
     )
 

@@ -1,12 +1,12 @@
 # Qualification
 
 `qualification/` is ShadowSpill's thin release-acceptance surface. It owns the
-protocol descriptions and six launchers, but no alternate implementation of
+protocol descriptions and seven launchers, but no alternate implementation of
 planning, execution, diagnostics, serialization, or model state.
 
 ```text
 qualification/
-├── gates.py         suite, numerical, performance and remote in one run
+├── gates.py         the five gates in one run
 ├── numerical/
 │   ├── README.md
 │   ├── run.py       one reference/planned correctness cell
@@ -15,9 +15,12 @@ qualification/
 │   ├── README.md
 │   ├── run.py       one full-model throughput cell
 │   └── matrix.py    the retained full-model matrix
-└── remote/
+├── remote/
+│   ├── README.md
+│   └── matrix.py    the numerical matrix, spilling to another machine
+└── remote_perf/
     ├── README.md
-    └── matrix.py    the numerical matrix, spilling to another machine
+    └── matrix.py    the performance matrix, spilling to another machine
 ```
 
 ## Running the gates
@@ -34,10 +37,13 @@ whatever order the command line names them in; each finishes before the next
 begins, because the measured ones are timed and overlapping them would
 corrupt both.
 
-**`remote` is the fourth gate and is not in the default run**, because it needs
-a memory daemon reachable over RDMA. It is the numerical matrix with the spill
-pool on a peer, and it skips and succeeds when no peer is named; see
-[remote/README.md](remote/README.md). Name a subset to run only those:
+**`remote` and `remote_perf` are not in the default run**, because each needs
+a memory daemon reachable over RDMA. `remote` is the numerical matrix with the
+spill pool on a peer, and `remote_perf` the performance matrix the same way,
+judged against floors measured with the pool on a peer; both skip and succeed
+when no peer is named. See [remote/README.md](remote/README.md) and
+[remote_perf/README.md](remote_perf/README.md). Name a subset to run only
+those:
 
 ```bash
 python -m qualification.gates suite numerical
@@ -204,7 +210,9 @@ every measured step ([timing](../docs/python/api/timing.md)). The host's own
 wall clock for the group is reported beside it and decides nothing.
 
 The performance matrix judges throughput against floors measured on one
-machine. Its `--measure-only` reports the measurement without those floors,
+machine, and the remote performance matrix against a second table measured
+there with the spill pool on a peer. `--measure-only` reports the measurement
+without those floors,
 closing cells as MEASURED rather than PASS, which is the mode to run on a
 machine the floors did not come from.
 

@@ -10,12 +10,12 @@ It is not in the default gate run. It needs a memory daemon reachable at
 ``SHADOWSPILL_NETWORK_PEER`` (``host:port``) and **skips cleanly without one**,
 writing a summary that says so rather than failing.
 
-**Expect it to miss the local floors, and do not read that as a regression.**
-The interconnect is about 3 GB/s against 25 GB/s to pinned host memory, so a
-transfer-bound cell has nowhere to hide. What this gate is for is a number to
-compare against *itself* over time: the local matrix cannot tell whether a
-change helped or hurt a run that spills across a network, and until this exists
-nothing can.
+Its cells are judged against floors of their own,
+``remote_regression_tokens_per_second`` on the manifests, measured with the pool
+on a peer; the local floors do not apply, because the interconnect is about
+3 GB/s against 25 GB/s to pinned host memory and a transfer-bound cell runs
+several times slower. The local matrix cannot tell whether a change helped or
+hurt a run that spills across a network; this one can.
 
 The peer's pool defaults to the manifests' own spill budget and can be made
 smaller with ``--remote-spill-gib``, which matters because that budget is
@@ -112,11 +112,10 @@ def main() -> int:
     # the frontend and a framework, and a skip should not pay for that.
     from tools.qualification import performance_matrix
 
-    # Every cell runs, even after one misses. This gate exists to record
-    # numbers for cells that are *expected* to miss the local floors, and
-    # stopping at the first miss would record one cell out of three -- which is
-    # not a baseline. `--keep-going` is the matrix's own flag; naming it here
-    # rather than requiring it of the caller is what makes the gate usable.
+    # Every cell runs, even after one misses, so a run records all three
+    # numbers rather than one. `--keep-going` is the matrix's own flag; naming
+    # it here rather than requiring it of the caller is what makes the gate
+    # usable.
     if "--keep-going" not in arguments:
         arguments = [*arguments, "--keep-going"]
         sys.argv = [sys.argv[0], *arguments]

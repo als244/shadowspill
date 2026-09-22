@@ -35,9 +35,8 @@ so: a machine with no peer is not a machine with a broken runtime.
 
 ## What it does not measure
 
-There is deliberately no performance cell. The link is an order of magnitude
-slower than local memory, so a rate measured over it is not comparable with
-anything and is not a baseline. What this gate answers is whether the numbers
-come out the same, which is a question the hardware can answer honestly. A step
-here is several times a local one, and that is the link rather than a
-regression.
+Throughput. A step here is several times a local one, and that is the link
+rather than a regression; the rate over the link is the `remote_perf` gate's
+question ([remote_perf/README.md](../remote_perf/README.md)), judged against
+floors measured that way. What this gate answers is whether the numbers come
+out the same, which is a question the hardware can answer honestly.
