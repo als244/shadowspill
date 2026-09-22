@@ -29,7 +29,20 @@ def test_only_mlops_cells_have_throughput_authorities() -> None:
     for item in manifests():
         expected = item.implementation == "mlops"
         assert (item.regression_tokens_per_second is not None) == expected
+        assert (item.remote_regression_tokens_per_second is not None) == expected
         assert (item.predecessor_tokens_per_second is not None) == expected
+
+
+def test_remote_floor_is_below_the_local_floor() -> None:
+    """A peer's pool is reached over a link many times slower than pinned host
+    memory, so a remote floor above the local one would be a mistake in the
+    table rather than a measurement."""
+
+    for item in manifests():
+        if item.regression_tokens_per_second is None:
+            continue
+        assert item.remote_regression_tokens_per_second is not None
+        assert item.remote_regression_tokens_per_second < item.regression_tokens_per_second
 
 
 def test_predecessor_parity_is_not_silently_declared_reached() -> None:

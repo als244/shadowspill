@@ -280,6 +280,9 @@ These pages live beside the code they describe, outside `docs/`.
   — throughput floors and simulator error on the large models.
 - [Remote qualification](../qualification/remote/README.md) — the numerical
   matrix again, with the spill pool held by a daemon on another machine.
+- [Remote performance qualification](../qualification/remote_perf/README.md) —
+  the performance matrix again, with the spill pool on another machine, judged
+  against floors measured that way.
 - [Workloads](../workloads/README.md) — the model and data definitions the
   benchmarks and gates consume.
 
