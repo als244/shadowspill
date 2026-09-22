@@ -1,397 +1,60 @@
-/* What moves bytes between a device pool and a pool on another machine. */
+/* What moves bytes between a pool on this machine and a pool on another. */
 
-/* MAP_ANONYMOUS is not in the strict ISO C11 the tree compiles as. */
-#define _DEFAULT_SOURCE
+/* pthread_setname_np is a GNU extension; the define has to precede the first
+   system header. */
+#define _GNU_SOURCE
 
-#include "../internal.h"
+#include "remote_lane_internal.h"
 
-#include <pthread.h>
-#include <stdatomic.h>
-#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 
 /*
- * THE OBLIGATION, AND HOW THIS LANE MEETS IT.
+ * THE DIRECT PATH, WHICH IS THE NORM.
  *
- * A lane makes the event it was given complete when the bytes have landed, and
- * the runtime does not drive it. This one cannot let a stream order that event
- * behind a copy, because its bytes do not move on a stream: the NIC completes
- * on its own schedule.
+ * A transfer is one end in the pool this lane connects and the other end in a
+ * pool on the peer. The NIC reads or writes the peer's memory itself, and it
+ * reads or writes ours the same way: the pool is registered with the NIC once,
+ * at create, and every transfer is posted straight from the pool's memory in
+ * as few pieces as the port will carry. No byte passes through the host on
+ * the way, and no device copy is involved at all. Where the NIC cannot
+ * address the pool -- device memory on a platform that exports neither a
+ * dma-buf nor peer memory -- the lane stages through a host ring instead,
+ * which is the fallback in remote_lane_staging.c and changes nothing here but
+ * where a piece is posted from and what must be true before it is.
  *
- * So it uses the backend's value wait, on **its own** stream:
+ * WHO DOES WHAT. Everything device-side is enqueued at dispatch, on the
+ * route's stream, by the thread that called `copy` -- the runtime's worker --
+ * behind the waits the runtime put there: under staging the copies across the
+ * ring, on the direct path a single store of the transfer's number into the
+ * gate word, which is how the thread learns that the route stream has passed
+ * the transfer's dependencies without the thread ever asking the driver. The
+ * lane's own thread does the rest, and its whole part is memory: it posts to
+ * the NIC when the words say it may, reaps completions, retires pieces in
+ * order, and stores the NIC's word. It makes no device call, for the reason
+ * the header gives.
  *
- *   signal(event)  ->  wait_value(lane stream, signals, 0, chunks so far)
- *                      record_event(event, lane stream)
- *   its thread     ->  stores that count once everything queued before
- *                      the signal has landed, which releases the wait and
- *                      completes the event
- *
- * The route's stream is never written. The runtime waits on the *event*, an
- * ordinary backend event that happens to have been recorded on another stream
- * -- legal, and indistinguishable downstream from the built-in lane's. That is
- * why this needed no new entry in the lane table.
+ * THE OBLIGATION, AND HOW THIS LANE MEETS IT. A lane makes the event it was
+ * given complete when the bytes have landed. `signal` enqueues, on the route
+ * stream, a value wait on the NIC's word for everything planned so far and
+ * records the event behind it; the thread's store is what lets it pass, and
+ * everything downstream sees an ordinary event.
  *
  * WHY A QUEUE AND A THREAD. `copy` must return promptly, or there is no
- * overlap and the whole exercise is pointless. So `copy` and `signal` both
- * append to one FIFO and return, and one thread drains it in order. Order is
- * the reason it is a FIFO rather than a counter: a signal must store its
- * count after the copies queued before it and not before, and a list
- * preserves that without anyone reasoning about it.
- *
- * STAGING, AND WHY BOTH DIRECTIONS NEED IT. There is no `nvidia_peermem` here,
- * so the NIC cannot reach device memory and every byte passes through a host
- * ring the lane owns, registered with the NIC *and* with the backend -- the
- * second registration is what makes the device copy a real asynchronous DMA
- * rather than a bounce through the driver's own staging buffer.
- *
- *   fetch   NIC reads remote -> ring -> copy_host_to_device -> device
- *   evict   device -> copy_device_to_host -> ring -> NIC writes remote
- *
- * They are mirror images, and which side fills a slot inverts between them.
- * This path is deliberately not optimised: it exists because this hardware has
- * no GPUDirect, and a deployment that reaches the device directly never enters
- * it.
+ * overlap and the whole exercise is pointless. So `copy` appends to one FIFO
+ * and returns, and one thread drains it in order: posts what the queue pair
+ * has room for, reaps completions, retires pieces in order, and reports. It
+ * watches rather than sleeps, by default: a condition variable costs about
+ * twenty microseconds to wake from and the NIC answers a small transfer in a
+ * few.
  */
 
-#define RING_REGISTRATION_CACHE 4U
+/* ------------------------------------------------------------ transfers */
 
-typedef struct RingRegistration {
-    const ShadowSpillRemoteRegion *region;
-    struct ibv_mr *registration;
-    /*
-     * The queue pair this lane took from that region, and its completion
-     * queue. **Exclusive to this lane**: a fetch and an evict on one pool run
-     * at the same time, and two lanes polling one completion queue take each
-     * other's completions -- each recording what it took where the other
-     * cannot find it, so both wait for something that already arrived.
-     */
-    int queue_pair;
-} RingRegistration;
-
-/*
- * Two words, and what each answers.
- *
- * `SIGNAL_NIC` is stored by this lane's thread and waited on by the stream:
- * "the NIC has finished chunk k". `SIGNAL_DEVICE` is stored by the *stream*
- * and polled by the thread: "the device has finished chunk k". Between them
- * they express the only cross-domain dependencies staging has, and they are
- * monotonic counters rather than per-chunk objects -- which is why two words
- * serve any number of transfers and no pool is needed anywhere.
- */
-#define SIGNAL_NIC 0U
-#define SIGNAL_DEVICE 1U
-#define SIGNAL_WORDS 2U
-
-/*
- * THE INSTANTS ONE TRANSFER PASSES THROUGH, on the two threads that carry it.
- *
- * Two chains rather than one, because after `publish_slot` the worker and the
- * lane's thread run at the same time: the thread can have posted the transfer
- * before the worker has finished enqueuing its device half. A single ordered
- * list of stamps cannot partition that -- it read as negative intervals -- so
- * each chain is ordered on its own, and a handoff between them is a difference
- * of two absolute instants.
- *
- * Captured only while measuring, and only for a transfer that had the lane to
- * itself: nothing accepted since the last `synchronize`, nothing in flight,
- * one chunk. That is the transfer a latency figure describes, and the only
- * one whose instants are not queueing behind a neighbour's.
- */
-enum {
-    /* The worker's chain, in its order. */
-    TIMELINE_ENTERED,        /* `copy` called                                */
-    TIMELINE_PUBLISHED,      /* the slot is visible to the thread            */
-    TIMELINE_ENQUEUED,       /* its device work is on the stream; `copy` done */
-    TIMELINE_SYNC_ENTERED,   /* `synchronize` called                         */
-    TIMELINE_SYNC_DRAINED,   /* it observed the thread's retirement          */
-    TIMELINE_DEVICE_SEEN,    /* it observed the device's last store          */
-    TIMELINE_SYNC_RETURNED,  /* the stream is synchronized                   */
-    /* The thread's chain, in its order. */
-    TIMELINE_SEEN,           /* the thread first looked at it                */
-    TIMELINE_READY,          /* it observed the device's half done           */
-    TIMELINE_POSTED,         /* `ibv_post_send` returned                     */
-    TIMELINE_COMPLETED,      /* its completion was polled off the queue      */
-    TIMELINE_REPORTED,       /* the NIC's word stored for the stream         */
-    TIMELINE_RETIRED,        /* retired under the lock, waiters woken        */
-    TIMELINE_POINTS
-};
-
-#define TIMELINE_ROWS 64U
-
-/* One captured transfer: its instants on one clock, and its size. */
-typedef struct TimelineRow {
-    double at[TIMELINE_POINTS];
-    uint64_t bytes;
-    uint64_t first_chunk;
-} TimelineRow;
-
-/*
- * One transfer, as the lane's thread sees it: hardware work and nothing else.
- *
- * There is no signal kind any more. The completion event is ordered by the
- * stream, where the device work already is, so nothing has to be queued behind
- * the copies to store a word at the right moment.
- */
-typedef struct Work {
-    const ShadowSpillRemoteRegion *region;
-    /* The end that is not remote: device memory the NIC reaches directly on
-       the core path, and the device side of the staged copies otherwise. */
-    void *local;
-    uint64_t remote_offset;
-    uint64_t bytes;
-    uint8_t to_remote;
-    /* Chunking is decided when the device side is enqueued, so the thread and
-       the stream agree on it without recomputing. */
-    uint32_t chunks;
-    /*
-      * This transfer's first chunk, numbered over the lane's whole life rather
-      * than from zero each time -- which is what lets the ring hold one
-      * transfer's chunks while the next is already posting into it.
-      *
-      * Both words count the same thing on this scale: chunk k of this transfer
-      * is chunk `first_chunk + k`, and a side reports it finished by storing
-      * `first_chunk + k + 1`. One numbering, so a reader never has to ask
-      * which of the two a number belongs to.
-      */
-    uint64_t first_chunk;
-
-    /*
-     * Which transfer owns this slot, counted from 1 over the lane's life, and
-     * 0 when nothing does. It is the handle `copy` hands back, and it is what
-     * lets `transfer` tell "the slot still holds my transfer" from "the slot
-     * has been taken by a later one" without any lock.
-     */
-    _Atomic uint64_t handle;
-
-    /*
-     * What this transfer did, on the host clock, for a trace that asked.
-     * `issued` is when the runtime handed it over, `started` when its first
-     * chunk was posted, `finished` when its last chunk's completion was reaped
-     * -- so the gap between the first two is the dependency wait and the gap
-     * between the last two is bytes actually moving.
-     *
-     * Read by `transfer` without the lock, under the same handle check that
-     * guards every other field here. Only filled when `traced`: a lane asks the
-     * runtime once per transfer whether anything will read these, so an
-     * untraced run pays one question and no clock reads.
-     */
-    uint8_t traced;
-    uint64_t issued_host_ns;
-    uint64_t started_host_ns;
-    uint64_t finished_host_ns;
-
-    /* Which timeline row this transfer stamps, or -1 when it is not captured.
-       Set before the slot is published, so both threads read the same row. */
-    int32_t timeline_row;
-} Work;
-
-/*
- * How many transfers the lane can hold.
- *
- * The queue used to be a linked list of `calloc`ed nodes, which put a host
- * allocation on the transfer path and freed it on the lane thread. A ring
- * removes both and gives every transfer a record that outlives it just long
- * enough for the runtime to read -- so the work queue and the per-transfer
- * report are one structure rather than two.
- *
- * Far larger than a route can have in flight. `copy` waits rather than fails
- * if it ever fills; see `claim_slot`.
- */
-#define WORK_SLOTS 256U
-
-typedef struct RemoteLane {
-    /* Runtime, backend, the route's stream, this lane's two kinds, and the
-       seven counters every lane keeps. Filled by the runtime and copied in by
-       `create`; see <shadowspill/runtime/lane_base.h>. */
-    ShadowSpillLane base;
-    ShadowSpillNetworkTuning tuning;
-
-    /* Host memory every byte passes through: registered with the backend once,
-       and with a protection domain per region that uses it. */
-    void *ring;
-    uint64_t ring_bytes;
-    RingRegistration registrations[RING_REGISTRATION_CACHE];
-    uint32_t registration_count;
-
-    /*
-     * Whether this lane has to stage. Decided once, at create, and never asked
-     * again on a transfer: it is a property of what the NIC can reach, not of
-     * what is being moved.
-     *
-     * It is 1 on every box without peer memory, which is this one. The probe
-     * that would find device memory registrable belongs at create beside the
-     * endpoint, and when it lands this is the only line that changes -- the
-     * core path is already written and already what `post_one_chunk` and
-     * `outstanding_limit` select when this is 0.
-     */
-    uint8_t stages;
-
-    /* One word the thread stores and the lane's stream waits on. */
-    ShadowSpillBackendSignals signals;
-    uint64_t *signal_host;
-    /*
-     * Chunks planned over this lane's life. Both words are counts on this
-     * scale, so they keep rising across transfers and a reader never has to
-     * know which transfer a number came from. Written and read by whoever
-     * calls the lane, never by its thread, under the lane's lock.
-     */
-    uint64_t chunks_planned;
-
-    /*
-     * THE CHUNK RING, and it belongs to the lane rather than to a call.
-     *
-     * Chunk numbers already run across the lane's whole life -- a transfer owns
-     * `[first_chunk, first_chunk + chunks)` -- so a slot is `chunk % ring_slots`
-     * and the pipeline never has to be drained between transfers. It used to be
-     * drained all the same, because `posted`, `completed` and `landed[]` were
-     * locals in `run_copy` and it did not return until its own last completion
-     * arrived. Consecutive transfers therefore overlapped not at all.
-     *
-     * Here instead: `chunk_posted` and `chunk_retired` keep rising, retirement
-     * is in order, and the thread posts the next transfer's chunks into slots
-     * the previous one has released. Touched only by the lane's thread.
-     *
-     * `flight_region` is which region's queue pair the outstanding chunks are
-     * on, or NULL when none are. A lane may reach more than one remote pool and
-     * each gets its own queue pair, and order across two queue pairs is not
-     * guaranteed -- so the pipeline spans transfers to **one** region, and a
-     * transfer to a different one waits for the ring to drain first. One route
-     * reaches one remote pool, so that wait is a correctness fallback rather
-     * than something the spill path meets.
-     */
-    const ShadowSpillRemoteRegion *flight_region;
-    const RingRegistration *flight_claim;
-    uint64_t chunk_posted;
-    uint64_t chunk_retired;
-    uint8_t chunk_landed[SHADOWSPILL_NETWORK_MAX_RING_SLOTS];
-    /* When each in-flight chunk was posted, so the interval the lane can
-       actually see -- handing the hardware a chunk to observing its completion
-       -- can be reported through `timing`. Indexed like `chunk_landed`. */
-    double chunk_posted_at[SHADOWSPILL_NETWORK_MAX_RING_SLOTS];
-    /* Which queue pair the next chunk goes to, when there is more than one. */
-    uint64_t posted;
-
-    /*
-     * Whether to read the clock on the transfer path: for the per-chunk
-     * interval `timing` reports, the completion-queue counts, and the
-     * timeline below. `SHADOWSPILL_NETWORK_MEASURE` sets it. A clock read per
-     * chunk is cheap and not free, and the question these answer -- where a
-     * transfer's time goes -- is otherwise answered by guessing, which was
-     * wrong more than once.
-     */
-    uint8_t measuring;
-
-    /*
-     * What a transfer cost this lane, reported through the contract's `timing`
-     * entry. The seven counters are not here: they are in the base, kept
-     * through `shadowspill_lane_counted`, and the runtime reads them straight
-     * out -- so this lane no longer copies them anywhere.
-     *
-     * A clock read per chunk is cheap but not free, so it is taken only while
-     * a trace is running, and `timed` says which case a reader is looking at
-     * -- otherwise "not measured" and "instant" are the same zero.
-     *
-     * Written by the lane thread and the dispatching thread, read by whoever
-     * collects diagnostics, so each is atomic rather than locked: this must
-     * never make a transfer wait on a reader.
-     *
-     * Microseconds, as integers, so the accumulation is atomic without a lock
-     * and a reader divides once rather than every producer rounding.
-     */
-    _Atomic uint64_t stat_completion_micros;
-    _Atomic uint64_t stat_longest_micros;
-    _Atomic uint64_t stat_timed;
-
-    uint64_t registrations_made;  /* should be one per region, ever            */
-    /* How many times the completion queue was asked, and how many of those
-       found nothing. Without these, a completion observed late cannot be told
-       apart from one nobody looked for: a thread polling hard against a queue
-       that is genuinely slow, and a thread that went away and came back, cost
-       the same on the clock and want opposite fixes. */
-    uint64_t polls;
-    uint64_t polls_empty;
-
-    /*
-     * The captured transfers -- see the enum -- and what decides whether the
-     * next one is captured. `synchronized_through` is how many transfers the
-     * last `synchronize` covered; a transfer claimed while `accepted` equals
-     * both it and `retired` has the lane to itself. Touched only by the thread
-     * that calls `copy` and `synchronize`.
-     */
-    TimelineRow timeline[TIMELINE_ROWS];
-    uint32_t timeline_rows;
-    uint64_t synchronized_through;
-    uint64_t device_watch_timeouts;
-
-    /* Non-zero while work is queued, readable without the lock so the thread
-       can watch for it while spinning. */
-    atomic_ullong queued;
-    /*
-     * The ring, and three counts that never wrap: transfers accepted, taken by
-     * the thread, and finished by it. Slot k of a count is `count % WORK_SLOTS`.
-     *
-     * `accepted - retired` is work accepted and not yet finished, which is
-     * **not** the same as work still waiting. The thread takes an item before
-     * doing it, so `started == accepted` means "nothing waiting to start", not
-     * "nothing in flight". `synchronize` must wait for `retired`, or it can
-     * return while the transfer it was told to wait for is still on the wire.
-     */
-    Work work_ring[WORK_SLOTS];
-    uint64_t accepted;
-    uint64_t started;
-    uint64_t retired;
-
-    pthread_t thread;
-    pthread_mutex_t lock;
-    pthread_cond_t work_ready;
-    pthread_cond_t drained;
-    atomic_uint stopping;
-    atomic_uint failed;
-    uint8_t thread_started;
-} RemoteLane;
-
-static double seconds_now(void) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (double)now.tv_sec + (double)now.tv_nsec * 1e-9;
-}
-
-/* The clock a transfer's instants are read on, and the one the runtime stamps
-   its trace events with -- so `shadowspill_lane_origin_instant` can place them
-   on the origin's axis. */
-static uint64_t monotonic_ns(void) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (uint64_t)now.tv_sec * 1000000000U + (uint64_t)now.tv_nsec;
-}
-
-/*
- * Stamp one instant of one transfer. A transfer that is not captured costs a
- * comparison here and nothing else. The first stamp of a point stands: a
- * thread that looks at a transfer more than once -- an evict, polled until
- * the device has filled its slot -- records when it first did.
- */
-static void stamp(RemoteLane *lane, const Work *work, unsigned point) {
-    if (work == NULL || work->timeline_row < 0) {
-        return;
-    }
-    double *const at = lane->timeline[work->timeline_row].at;
-    if (at[point] == 0.0) {
-        at[point] = seconds_now();
-    }
-}
-
-/*
- * The transfer an outstanding chunk belongs to. Scanned from the oldest
- * transfer not yet retired, which is where the owner of anything outstanding
- * is; a slot being rebuilt has handle 0 and matches nothing.
- */
-static const Work *work_of_chunk(const RemoteLane *lane, uint64_t chunk) {
+Work *remote_lane_owner_of_chunk(RemoteLane *lane, uint64_t chunk) {
     for (uint32_t step = 0U; step < WORK_SLOTS; ++step) {
-        const Work *const candidate =
+        Work *const candidate =
             &lane->work_ring[(lane->retired + step) % WORK_SLOTS];
         if (atomic_load_explicit(&candidate->handle, memory_order_acquire)
                 != 0U &&
@@ -403,139 +66,111 @@ static const Work *work_of_chunk(const RemoteLane *lane, uint64_t chunk) {
     return NULL;
 }
 
-/* ------------------------------------------------------------ the ring */
-
-/* Register the ring with the protection domain serving `region`, once each. A
-   lane may reach more than one remote pool, and a registration belongs to one
-   protection domain. */
-static const RingRegistration *ring_registration_for(
-    RemoteLane *lane, const ShadowSpillRemoteRegion *region
-) {
-    for (uint32_t index = 0U; index < lane->registration_count; ++index) {
-        if (lane->registrations[index].region == region) {
-            return &lane->registrations[index];
-        }
+/* How many pieces may be on the wire at once: as many as the queue pair was
+   built to hold on the direct path, and one slot's worth each when staging. */
+static uint32_t outstanding_limit(const RemoteLane *lane) {
+    if (lane->stages) {
+        return lane->tuning.ring_slots;
     }
-    if (lane->registration_count >= RING_REGISTRATION_CACHE) {
-        return NULL;
-    }
-    const int claimed = shadowspill_remote_region_claim_queue_pair(region);
-    if (claimed < 0) {
-        fprintf(
-            stderr,
-            "shadowspill network: no queue pair left for this lane; raise "
-            "SHADOWSPILL_NETWORK_QUEUE_PAIRS above %u\n",
-            region->endpoint.queue_pair_count
-        );
-        return NULL;
-    }
-    struct ibv_mr *registration = ibv_reg_mr(
-        region->endpoint.protection_domain, lane->ring,
-        (size_t)lane->ring_bytes, IBV_ACCESS_LOCAL_WRITE
-    );
-    if (registration == NULL) {
-        return NULL;
-    }
-    lane->registrations[lane->registration_count++] = (RingRegistration){
-        .region = region, .registration = registration, .queue_pair = claimed
-    };
-    ++lane->registrations_made;
-    return &lane->registrations[lane->registration_count - 1U];
+    return lane->tuning.send_depth < PIECES_IN_FLIGHT
+        ? lane->tuning.send_depth : PIECES_IN_FLIGHT;
 }
 
-/* --------------------------------------------------------- one transfer */
-
-/* Post one chunk. Does not wait: waiting is separate so that a chunk's host
-   copy can run while an earlier chunk is still on the wire. */
-static int post_chunk(
-    const ShadowSpillRemoteRegion *region,
-    const RingRegistration *claim,
-    void *slot,
-    uint64_t chunk_number,
-    uint64_t remote_offset,
-    uint64_t bytes,
-    int to_remote
-) {
-    struct ibv_sge element = {
-        .addr = (uint64_t)(uintptr_t)slot,
-        .length = (uint32_t)bytes,
-        .lkey = claim->registration->lkey,
-    };
-    struct ibv_send_wr request = {
-        /*
-         * **The chunk's lane-global number**, which names the transfer it
-         * belongs to as well as its place in the ring: a transfer owns a
-         * contiguous run of these, and the slot is the number modulo
-         * `ring_slots`. It used to be the slot index alone, which was enough
-         * while a call drained its own chunks before returning and is not
-         * enough now that retirement crosses transfers -- a completion has to
-         * say which transfer it finished.
-         */
-        .wr_id = chunk_number,
-        .sg_list = &element,
-        .num_sge = 1,
-        .opcode = to_remote ? IBV_WR_RDMA_WRITE : IBV_WR_RDMA_READ,
-        .send_flags = IBV_SEND_SIGNALED,
-        .wr = {.rdma = {
-            .remote_addr = region->address + remote_offset,
-            .rkey = region->key,
-        }},
-    };
-    struct ibv_send_wr *bad = NULL;
-    /* This lane's own queue pair, never another's. */
-    return ibv_post_send(
-        region->endpoint.queue_pairs[claim->queue_pair], &request, &bad
-    ) == 0 ? 0 : -1;
-}
-
-/*
- * Wait until slot `wanted` has completed, remembering any other slot that
- * completes first.
- *
- * It matches by work-request id rather than counting arrivals. A single queue
- * pair completes in the order it was posted, so counting would work -- but
- * several do not complete in order with respect to each other, and this lane
- * spreads chunks across them. Counting would then reclaim a slot whose bytes
- * were still on the wire.
- *
- * Blocking here costs nothing the runtime is waiting for: this is the lane's
- * own thread, and the worker is already dispatching the next action.
- */
-/* The NIC has finished every chunk below `reached`. Releases whatever the
-   stream is waiting on for them -- a fetch's copy out of the slot, an evict's
-   reuse of the slot, and a transfer's own completion event. Monotonic, because
-   chunks retire in order. */
+/* The NIC has finished every piece below `reached`. Releases whatever waits
+   on it: the route stream's next staged copy, and the event behind `signal`'s
+   wait. Monotonic, because pieces retire in order. */
 static void report_nic(RemoteLane *lane, uint64_t reached) {
     atomic_store_explicit(
-        (_Atomic uint64_t *)&lane->signal_host[SIGNAL_NIC],
-        reached,
+        (_Atomic uint64_t *)&lane->signal_host[SIGNAL_NIC], reached,
         memory_order_release
     );
 }
 
 /*
- * Take whatever completions have arrived and retire what that makes retirable,
- * in order. **Never waits**, which is the point: the thread alternates between
- * posting and retiring, and whichever is ready first is what it does. Blocking
- * here for a completion would give up the chance to post the moment the device
- * catches up, and with two ring slots there is no slack to absorb that -- it
- * measured about 1.5 % of a large transfer's rate.
+ * May piece `chunk` of `work` go to the NIC? Staged: when the device has
+ * done its part for the slot. Direct: when the route stream has stored this
+ * transfer's number into the gate, which it does only after the waits the
+ * runtime enqueued for the transfer -- the one ordering obligation a post
+ * that touches the pool directly has. Reads of words, never device calls.
+ */
+static int may_post(const RemoteLane *lane, const Work *work, uint64_t chunk) {
+    if (lane->stages) {
+        return remote_lane_stage_ready(lane, work, chunk);
+    }
+    return remote_lane_word(lane, SIGNAL_GATE)
+        >= atomic_load_explicit(&work->handle, memory_order_relaxed);
+}
+
+/*
+ * Post one piece of one transfer, whose lane-global number is `chunk`.
  *
- * In order, which is what lets the ring span transfers: a slot is free once the
- * chunk that occupied it retires, whichever transfer that chunk belonged to.
- * Completions may arrive out of order even on one queue pair's completion
- * queue, so `chunk_landed` records what has arrived and the oldest is retired
- * only when it is among them.
+ * Direct: from the pool's memory, at the piece's offset, with the pool's
+ * key. Staged: from the piece's ring slot. Returns 1 when the piece went to
+ * the NIC, 0 when it may not go yet -- the caller retires and asks again --
+ * and -1 when the post failed.
+ */
+static int post_one_piece(RemoteLane *lane, Work *work, uint64_t chunk) {
+    if (!may_post(lane, work, chunk)) {
+        return 0;
+    }
+    remote_lane_stamp(lane, work, TIMELINE_READY);
+    const uint64_t offset = (chunk - work->first_chunk) * lane->piece_bytes;
+    const uint64_t bytes = work->bytes - offset < lane->piece_bytes
+        ? work->bytes - offset : lane->piece_bytes;
+    void *const address = lane->stages
+        ? remote_lane_stage_slot(lane, chunk)
+        : (char *)work->local + offset;
+    const struct ibv_mr *const registration = lane->stages
+        ? lane->ring_registration : lane->pool_registration;
+    struct ibv_sge element = {
+        .addr = (uint64_t)(uintptr_t)address,
+        .length = (uint32_t)bytes,
+        .lkey = registration->lkey,
+    };
+    struct ibv_send_wr request = {
+        /* The piece's lane-global number, which names the transfer it belongs
+           to as well as its place in the pipeline: a completion has to say
+           which transfer it finished. */
+        .wr_id = chunk,
+        .sg_list = &element,
+        .num_sge = 1,
+        .opcode = work->to_remote ? IBV_WR_RDMA_WRITE : IBV_WR_RDMA_READ,
+        .send_flags = IBV_SEND_SIGNALED,
+        .wr = {.rdma = {
+            .remote_addr = lane->region->address + work->remote_offset + offset,
+            .rkey = lane->region->key,
+        }},
+    };
+    struct ibv_send_wr *bad = NULL;
+    /* This lane's own queue pair, never another's: two lanes polling one
+       completion queue take each other's completions. */
+    if (ibv_post_send(
+            lane->region->endpoint.queue_pairs[lane->queue_pair], &request, &bad
+        ) != 0) {
+        return -1;
+    }
+    shadowspill_lane_counted(&lane->base.chunks, 1U);
+    if (lane->measuring) {
+        lane->chunk_posted_at[chunk % PIECES_IN_FLIGHT] =
+            remote_lane_seconds_now();
+        remote_lane_stamp(lane, work, TIMELINE_POSTED);
+    }
+    ++lane->chunk_posted;
+    return 1;
+}
+
+/*
+ * Take whatever completions have arrived and retire what that makes retirable,
+ * in order. **Never waits**: the thread alternates between posting and
+ * retiring, and whichever is ready first is what it does. Completions may
+ * arrive out of order, so `chunk_landed` records what has arrived and the
+ * oldest piece is retired only when it is among them.
  */
 static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
-    const uint64_t slots = lane->tuning.ring_slots;
     struct ibv_cq *const queue =
-        lane->flight_region->endpoint.completion_queues[
-            lane->flight_claim->queue_pair];
+        lane->region->endpoint.completion_queues[lane->queue_pair];
     for (;;) {
         struct ibv_wc completion;
-        /* This lane's own completion queue. Nothing else polls it, so a
-           completion taken here is always this lane's. */
         const int taken = ibv_poll_cq(queue, 1, &completion);
         if (lane->measuring) {
             ++lane->polls;
@@ -556,17 +191,20 @@ static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
             );
             return -1;
         }
-        lane->chunk_landed[completion.wr_id % slots] = 1U;
+        lane->chunk_landed[completion.wr_id % PIECES_IN_FLIGHT] = 1U;
         if (lane->measuring) {
-            stamp(
-                lane, work_of_chunk(lane, completion.wr_id), TIMELINE_COMPLETED
+            remote_lane_stamp(
+                lane, remote_lane_owner_of_chunk(lane, completion.wr_id),
+                TIMELINE_COMPLETED
             );
             /* Posted to observed, which is what this lane can see: not time on
                the wire, and separating the two is the point. */
-            const double posted = lane->chunk_posted_at[completion.wr_id % slots];
+            const double posted =
+                lane->chunk_posted_at[completion.wr_id % PIECES_IN_FLIGHT];
             if (posted != 0.0) {
-                const uint64_t micros =
-                    (uint64_t)((seconds_now() - posted) * 1e6);
+                const uint64_t micros = (uint64_t)(
+                    (remote_lane_seconds_now() - posted) * 1e6
+                );
                 (void)atomic_fetch_add_explicit(
                     &lane->stat_completion_micros, micros, memory_order_relaxed
                 );
@@ -586,16 +224,16 @@ static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
         }
     }
     while (lane->chunk_retired < lane->chunk_posted &&
-           lane->chunk_landed[lane->chunk_retired % slots]) {
-        lane->chunk_landed[lane->chunk_retired % slots] = 0U;
+           lane->chunk_landed[lane->chunk_retired % PIECES_IN_FLIGHT]) {
+        lane->chunk_landed[lane->chunk_retired % PIECES_IN_FLIGHT] = 0U;
         ++lane->chunk_retired;
         ++*retired;
     }
     if (*retired != 0U) {
         report_nic(lane, lane->chunk_retired);
         if (lane->measuring) {
-            stamp(
-                lane, work_of_chunk(lane, lane->chunk_retired - 1U),
+            remote_lane_stamp(
+                lane, remote_lane_owner_of_chunk(lane, lane->chunk_retired - 1U),
                 TIMELINE_REPORTED
             );
         }
@@ -604,221 +242,34 @@ static int collect_and_retire(RemoteLane *lane, uint64_t *retired) {
 }
 
 /*
- * Has the stream finished with chunks up to `reached`?
- *
- * A read of a word the stream stores, never a device call: this runs on the
- * lane's thread, and the thread must be able to make progress while the stream
- * is waiting on something only this thread will store. A device call here --
- * even an asynchronous one -- can block on a stalled stream, and that is a
- * cycle, because the thread is what unstalls it.
- *
- * **It asks rather than waits**, and that is load-bearing now that the ring
- * spans transfers. The next transfer's device work sits behind the previous
- * transfer's `signal` on the route stream, so the device cannot reach it until
- * this thread has retired every chunk of the previous one. A thread spinning
- * here for that would be waiting on itself. Asking lets the caller stop posting
- * and go retire, which is what releases the stream.
- */
-static int device_reached(const RemoteLane *lane, uint64_t reached) {
-    const _Atomic uint64_t *const word =
-        (const _Atomic uint64_t *)&lane->signal_host[SIGNAL_DEVICE];
-    return atomic_load_explicit(word, memory_order_acquire) >= reached ? 1 : 0;
-}
-
-/*
- * A bounded spin before sleeping.
- *
- * Waking this thread costs ~1.8 us of the ~12 us a small transfer takes, and
- * transfers arrive in batches at a task boundary -- so the next one is often
- * already on its way when this one finishes. Watching for it briefly catches
- * that case without a context switch.
- *
- * **It does not stop by default.** A thread that watches without limit is a
- * core per lane, and that is the trade now taken: a condition variable costs
- * about twenty microseconds to wake from, against a NIC that answers a small
- * transfer in two, so blocking cost more than the transfer it was waiting for.
- * `SHADOWSPILL_NETWORK_SPIN_NANOSECONDS` bounds it again for a host that would
- * rather have the core back, and zero blocks immediately.
- */
-static void spin_briefly(RemoteLane *lane) {
-    if (lane->tuning.spin_nanoseconds == 0U) {
-        return;
-    }
-    const int forever =
-        lane->tuning.spin_nanoseconds == SHADOWSPILL_NETWORK_SPIN_FOREVER;
-    const double deadline = forever
-        ? 0.0
-        : seconds_now() + (double)lane->tuning.spin_nanoseconds * 1e-9;
-    while (atomic_load_explicit(&lane->queued, memory_order_acquire) == 0ULL &&
-           atomic_load_explicit(&lane->stopping, memory_order_acquire) == 0U) {
-        if (!forever && seconds_now() >= deadline) {
-            return;
-        }
-#if defined(__x86_64__) || defined(__i386__)
-        __builtin_ia32_pause();
-#elif defined(__aarch64__)
-        __asm__ volatile("yield");
-#endif
-    }
-}
-
-/*
- * Where chunk `index` lives in the ring. Staging only: without it the bytes
- * are already where the NIC wants them.
- */
-static char *stage_slot(
-    const RemoteLane *lane, uint64_t chunk) {
-    const uint64_t slot = chunk % lane->tuning.ring_slots;
-    return (char *)lane->ring + slot * lane->tuning.chunk_bytes;
-}
-
-/*
- * Has the device done its part for chunk `chunk`?
- *
- * An evict needs the device to have *filled* this chunk's slot; a fetch needs
- * it to have *drained* the slot this chunk is about to reuse, which for the
- * first `ring_slots` chunks has never been used. Both read a word the stream
- * stores, never a device call -- see `device_reached`, and see there for why
- * this asks rather than waits.
- */
-static int stage_device_ready(
-    const RemoteLane *lane, const Work *work, uint64_t chunk
-) {
-    const uint64_t slots = lane->tuning.ring_slots;
-    /*
-     * Chunks are numbered across the lane's whole life, not within a transfer,
-     * and the difference is a correctness one rather than a tidiness one.
-     *
-     * A fetch's slot is drained by the device, and the copy that drains it is
-     * queued on the route stream -- so when a transfer's last completion
-     * arrives its slots may still hold bytes nobody has copied out. Counting
-     * from zero each transfer would let the next one's first `ring_slots`
-     * chunks skip this wait and post over them. Counting globally makes the
-     * ring one continuous pipeline instead, which is also why it never has to
-     * be drained between transfers.
-     *
-     * An evict is safe either way, because the device fills its slots from the
-     * route stream and the stream orders one transfer's copies after the
-     * previous one's. It waits here all the same: the condition is the same
-     * question asked of the other side.
-     */
-    if (work->to_remote) {
-        return device_reached(lane, chunk + 1U);
-    }
-    return chunk < slots ? 1 : device_reached(lane, chunk - slots + 1U);
-}
-
-/*
- * One transfer's hardware, and nothing else.
- *
- * This is the core path, and it is written for the case where the NIC reaches
- * device memory: post the bytes where they already are, watch for the
- * completion, say so. The report is what releases the stream -- the transfer's
- * completion event on every path, and additionally the device copies when
- * there are any.
- *
- * Staging enters through three `if`s and nothing else: it decides how many
- * pieces there are, where each piece lives, and whether the device has to be
- * waited for first. Everything around them is the same work in both cases,
- * which is the point -- a box with peer memory runs this function with the
- * branches not taken, not a different function.
- *
- * Up to `ring_slots` posts are outstanding while staging, so a chunk's wire
- * time overlaps its neighbour's device copy. Completions on one queue pair
- * arrive in the order they were posted, so reporting them in order keeps the
- * counter monotonic, which is all the stream's waits require.
- */
-/*
- * Post one chunk, whose lane-global number is `chunk`.
- *
- * Returns 1 when it went to the NIC, 0 when the device has not done its half
- * yet -- the caller must then retire rather than wait, see
- * `stage_device_ready` -- and -1 when the post failed.
- */
-static int post_one_chunk(RemoteLane *lane, const Work *work, uint64_t chunk) {
-    if (lane->stages && !stage_device_ready(lane, work, chunk)) {
-        return 0;
-    }
-    stamp(lane, work, TIMELINE_READY);
-    const uint64_t chunk_bytes = lane->tuning.chunk_bytes;
-    const uint64_t offset = (chunk - work->first_chunk) * chunk_bytes;
-    const uint64_t bytes = lane->stages
-        ? (work->bytes - offset < chunk_bytes ? work->bytes - offset : chunk_bytes)
-        : work->bytes;
-    char *const address = lane->stages
-        ? stage_slot(lane, chunk)
-        : (char *)work->local + offset;
-    if (post_chunk(
-            work->region, lane->flight_claim, address, chunk,
-            work->remote_offset + offset, bytes, work->to_remote
-        ) != 0) {
-        return -1;
-    }
-    shadowspill_lane_counted(&lane->base.chunks, 1U);
-    if (lane->measuring) {
-        lane->chunk_posted_at[chunk % lane->tuning.ring_slots] = seconds_now();
-        stamp(lane, work, TIMELINE_POSTED);
-    }
-    ++lane->chunk_posted;
-    return 1;
-}
-
-/* How many chunks may be outstanding at once. One slot's worth when the NIC
-   reaches device memory directly, because then there is no ring to fill. */
-static uint32_t outstanding_limit(const RemoteLane *lane) {
-    return lane->stages ? lane->tuning.ring_slots : 1U;
-}
-
-/*
- * Everything the lane's thread does, once.
- *
- * Post whatever the ring, the device and the queue pair allow, then retire the
- * oldest outstanding chunk. Both halves are bounded and neither blocks on the
- * other, which is what makes the loop able to unstall the stream it is waiting
- * on -- posting stops when the device is behind, and retiring is what lets the
- * device catch up.
- *
- * `started` and `retired` are transfer counts and `chunk_posted`/`chunk_retired`
- * chunk counts; a transfer is started when its last chunk is posted and retired
- * when its last chunk retires. They advance independently, which is the whole
- * of what "the pipeline spans transfers" means.
+ * Post whatever the queue pair, and under staging the ring and the device,
+ * allow. A transfer is started when its last piece is posted; the counts of
+ * transfers and of pieces advance independently, which is the whole of what
+ * "the pipeline spans transfers" means.
  */
 static int post_what_it_can(
     RemoteLane *lane, uint64_t accepted, uint64_t *started, uint64_t *posted
 ) {
     while (*started < accepted) {
         Work *const work = &lane->work_ring[*started % WORK_SLOTS];
-        stamp(lane, work, TIMELINE_SEEN);
-        if (lane->flight_region != NULL && lane->flight_region != work->region) {
-            /* Another region means another queue pair, and order across two of
-               them is not guaranteed. Drain before crossing. */
-            break;
-        }
+        remote_lane_stamp(lane, work, TIMELINE_SEEN);
         if (lane->chunk_posted - lane->chunk_retired >= outstanding_limit(lane)) {
             break;
         }
-        if (lane->flight_region == NULL) {
-            const RingRegistration *const claim =
-                ring_registration_for(lane, work->region);
-            if (claim == NULL) {
-                return -1;
-            }
-            lane->flight_region = work->region;
-            lane->flight_claim = claim;
-        }
         const int first = lane->chunk_posted == work->first_chunk ? 1 : 0;
-        const int sent = post_one_chunk(lane, work, lane->chunk_posted);
+        const int sent = post_one_piece(lane, work, lane->chunk_posted);
         if (sent < 0) {
             return -1;
         }
         if (sent == 0) {
-            /* The device is behind. Retire, which is what moves it. */
+            /* The device, or the route stream, is behind. Retire, which is
+               what moves them. */
             break;
         }
         if (first && work->traced) {
             /* Bytes start moving here, not when the transfer was accepted:
                everything before this was the dependency it was given. */
-            work->started_host_ns = monotonic_ns();
+            work->started_host_ns = remote_lane_monotonic_ns();
         }
         ++*posted;
         if (lane->chunk_posted == work->first_chunk + work->chunks) {
@@ -829,23 +280,12 @@ static int post_what_it_can(
 }
 
 /*
- * Everything the lane's thread does between two looks at its queue.
- *
- * Post whatever the ring, the device and the queue pair allow; take whatever
- * completions have arrived. Neither half waits on the other, which is what
- * makes the loop able to unstall the stream it depends on -- posting stops when
- * the device is behind, and retiring is what lets the device catch up. A round
- * that does neither pauses and tries again, because both are questions whose
- * answer arrives from hardware.
- *
- * Returns once it has made progress and then found nothing more to do, so the
- * caller can notice newly accepted work; the lock is therefore off the
- * per-chunk path.
- *
- * `started` and `retired` are transfer counts and `chunk_posted`/`chunk_retired`
- * chunk counts; a transfer is started when its last chunk is posted and retired
- * when its last chunk retires. They advance independently, which is the whole
- * of what "the pipeline spans transfers" means.
+ * Everything the thread does between two looks at its queue: post what it
+ * can, reap what has arrived, and again while either made progress. Returns
+ * once it has made progress and then found nothing more to do, so the caller
+ * can notice newly accepted work; the lock is therefore off the per-piece
+ * path. A round that does neither pauses and tries again, because both are
+ * questions whose answer arrives from hardware.
  */
 static int pump(RemoteLane *lane, uint64_t accepted, uint64_t *started) {
     int progressed = 0;
@@ -866,7 +306,6 @@ static int pump(RemoteLane *lane, uint64_t accepted, uint64_t *started) {
         if (progressed || lane->chunk_posted == lane->chunk_retired) {
             return 0;
         }
-        /* Chunks are outstanding and neither side is ready. */
 #if defined(__x86_64__) || defined(__i386__)
         __builtin_ia32_pause();
 #elif defined(__aarch64__)
@@ -876,21 +315,27 @@ static int pump(RemoteLane *lane, uint64_t accepted, uint64_t *started) {
 }
 
 /*
- * A failure anywhere in the pipeline reports **every chunk planned**, not just
- * the failed transfer's.
- *
- * The stream is waiting on these words -- for a staged transfer's device
- * copies, and for the completion event on every transfer -- and a failure that
- * left them unstored would be a step that never ends rather than one that
- * fails. The latch is what makes it fail. Planned rather than posted, because
- * a transfer that never reached the NIC is waited on exactly the same way.
+ * A failure anywhere reports **every piece planned**, in all three words: the
+ * route stream's staged copies and `signal`'s event wait on the NIC's, the
+ * thread reads the other two, and a failure that left any unstored would be
+ * a step that never ends rather than one that fails. The latch is what makes
+ * it fail.
  */
 static void fail_everything(RemoteLane *lane) {
     shadowspill_lane_counted(&lane->base.failures, 1U);
     pthread_mutex_lock(&lane->lock);
     const uint64_t planned = lane->chunks_planned;
+    const uint64_t accepted = lane->accepted;
     pthread_mutex_unlock(&lane->lock);
     report_nic(lane, planned);
+    atomic_store_explicit(
+        (_Atomic uint64_t *)&lane->signal_host[SIGNAL_DEVICE], planned,
+        memory_order_release
+    );
+    atomic_store_explicit(
+        (_Atomic uint64_t *)&lane->signal_host[SIGNAL_GATE], accepted,
+        memory_order_release
+    );
     atomic_store_explicit(&lane->failed, 1U, memory_order_release);
     shadowspill_lane_latch_failure(
         lane->base.runtime, SHADOWSPILL_STATUS_BACKEND_FAILURE,
@@ -898,15 +343,53 @@ static void fail_everything(RemoteLane *lane) {
     );
 }
 
+/* Watch for work before blocking for it. Forever by default -- a core per
+   lane while the runtime is open, taken deliberately; bounded again by
+   `SHADOWSPILL_NETWORK_SPIN_NANOSECONDS`, and zero blocks at once. */
+static void spin_briefly(RemoteLane *lane) {
+    if (lane->tuning.spin_nanoseconds == 0U) {
+        return;
+    }
+    const int forever =
+        lane->tuning.spin_nanoseconds == SHADOWSPILL_NETWORK_SPIN_FOREVER;
+    const double deadline = forever
+        ? 0.0
+        : remote_lane_seconds_now()
+          + (double)lane->tuning.spin_nanoseconds * 1e-9;
+    while (atomic_load_explicit(&lane->queued, memory_order_acquire) == 0ULL &&
+           atomic_load_explicit(&lane->stopping, memory_order_acquire) == 0U) {
+        if (!forever && remote_lane_seconds_now() >= deadline) {
+            return;
+        }
+#if defined(__x86_64__) || defined(__i386__)
+        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+        __asm__ volatile("yield");
+#endif
+    }
+}
+
+/* Named like the worker's thread, so `ps -T` and a profiler say which lane a
+   core belongs to: the OS name, and the backend's profiler name where it has
+   one. Three letters after the prefix is what the 16-byte cap leaves; a
+   pinned-host pair shares the names of the device pair, since a process
+   rarely runs both. */
+static void name_lane_thread(const RemoteLane *lane) {
+    const char *const name = lane->base.to_kind == SHADOWSPILL_POOL_REMOTE
+        ? "shadowspill.evc" : "shadowspill.fch";
+    (void)pthread_setname_np(pthread_self(), name);
+    const ShadowSpillBackend *const backend = lane->base.backend;
+    if (backend->name_thread != NULL) {
+        backend->name_thread(backend->state, name);
+    }
+}
+
 static void *lane_thread(void *argument) {
     RemoteLane *lane = argument;
+    name_lane_thread(lane);
     for (;;) {
-        /*
-         * Only when the pipeline is empty. `spin_briefly` waits for work to
-         * *arrive*, and with chunks outstanding the thread already has work --
-         * spinning a full window before every retire costs more than the wakeup
-         * it saves, and measured about 1.5 % of a large transfer's rate.
-         */
+        /* Only when the pipeline is empty: with pieces outstanding the thread
+           already has work. */
         if (lane->chunk_posted == lane->chunk_retired) {
             spin_briefly(lane);
         }
@@ -937,25 +420,19 @@ static void *lane_thread(void *argument) {
             );
             lane->started = started;
         }
-        /*
-         * A transfer is retired when its last chunk is, which is the moment its
-         * bytes are on the far side. `synchronize` waits for this and not for
-         * the list being empty, because the thread takes a transfer before
-         * doing it.
-         */
+        /* A transfer is retired when its last piece is, which is the moment
+           its bytes are where the NIC put them. */
         while (lane->retired < lane->started) {
-            Work *const oldest =
-                &lane->work_ring[lane->retired % WORK_SLOTS];
+            Work *const oldest = &lane->work_ring[lane->retired % WORK_SLOTS];
             if (!failed &&
                 lane->chunk_retired < oldest->first_chunk + oldest->chunks) {
                 break;
             }
-            stamp(lane, oldest, TIMELINE_RETIRED);
+            remote_lane_stamp(lane, oldest, TIMELINE_RETIRED);
             if (oldest->traced) {
-                /* Its last chunk has landed, which is the moment its bytes are
-                   on the far side. A failed transfer is retired here too and
-                   keeps whatever it had, so a trace shows where it stopped. */
-                oldest->finished_host_ns = monotonic_ns();
+                /* A failed transfer is retired here too and keeps whatever it
+                   had, so a trace shows where it stopped. */
+                oldest->finished_host_ns = remote_lane_monotonic_ns();
             }
             ++lane->retired;
         }
@@ -964,12 +441,8 @@ static void *lane_thread(void *argument) {
             lane->retired = lane->started = lane->accepted;
             lane->chunk_retired = lane->chunk_posted;
         }
-        /*
-         * Broadcast when a *transfer* retired, which is both what `synchronize`
-         * waits for and what frees a work-ring slot for `claim_slot`. Not on
-         * every chunk: a chunk frees nothing either of them is waiting on, and
-         * at a chunk apiece this is on the transfer path.
-         */
+        /* Broadcast when a transfer retired -- what `synchronize` waits for
+           and what frees a slot for `claim_slot` -- and not per piece. */
         if (lane->retired != retired_before) {
             pthread_cond_broadcast(&lane->drained);
         }
@@ -977,64 +450,41 @@ static void *lane_thread(void *argument) {
     }
 }
 
-/*
- * Take the next slot, waiting if every one is still in flight.
- *
- * The wait terminates, and the reason is worth stating because a lane blocking
- * in `copy` is otherwise exactly the deadlock this design avoids: the thread
- * never waits on the caller. Its only wait is for device work the *same* call
- * to `copy` already enqueued -- transfer N's device half is issued during
- * copy N, before copy N+1 can be reached -- so it always drains and a slot
- * always comes free. In practice it never runs: a route cannot get 256
- * transfers ahead of a lane that is draining them.
- *
- * Returns the claimed slot with the lock held, so the caller fills it before
- * anything can see it.
- */
+/* -------------------------------------------------------- the operations */
+
+/* Take the next slot, waiting if every one is still in flight. The thread
+   never waits on the caller, so the wait terminates; in practice a route
+   cannot get 256 transfers ahead of a lane that is draining them. Returns
+   with the lock held, so the caller fills the slot before anything sees it. */
 static Work *claim_slot(RemoteLane *lane, uint64_t *handle) {
     pthread_mutex_lock(&lane->lock);
     while (lane->accepted - lane->retired == WORK_SLOTS) {
         pthread_cond_wait(&lane->drained, &lane->lock);
     }
     Work *work = &lane->work_ring[lane->accepted % WORK_SLOTS];
-    /*
-     * Invalidated before a single field is overwritten, so a `transfer` still
-     * holding the previous occupant's handle fails its check rather than
-     * reading a half-built record. The new handle is stored by `publish_slot`,
-     * after every field is filled -- the two stores bracket construction.
-     */
+    /* Invalidated before a field is overwritten, so a reader still holding
+       the previous occupant's handle fails its check rather than reading a
+       half-built record. `publish_slot` stores the new handle last. */
     atomic_store_explicit(&work->handle, 0U, memory_order_release);
     *handle = lane->accepted + 1U;
     return work;
 }
 
-/* Publish the slot the caller has filled, and wake the thread. */
+/* Publish the slot the caller has filled, and wake the thread. Signalled
+   after unlocking, so the thread does not wake only to block on the mutex. */
 static void publish_slot(RemoteLane *lane, Work *work, uint64_t handle) {
-    stamp(lane, work, TIMELINE_PUBLISHED);
+    remote_lane_stamp(lane, work, TIMELINE_PUBLISHED);
     atomic_store_explicit(&work->handle, handle, memory_order_release);
     (void)atomic_fetch_add_explicit(&lane->queued, 1ULL, memory_order_release);
     ++lane->accepted;
     pthread_mutex_unlock(&lane->lock);
-    /*
-     * Signalled *after* unlocking. Signalling while holding the lock wakes the
-     * thread only for it to block immediately on the mutex the signaller still
-     * holds -- a handoff through the scheduler that buys nothing. With the
-     * spin above, the thread has usually seen the atomic and is already
-     * heading for the lock before this runs at all.
-     */
     pthread_cond_signal(&lane->work_ready);
 }
 
-/* ------------------------------------------------------- the operations */
-
 /*
- * Order this lane's work behind `event`, on **its own** stream. An evict's
- * `copy_device_to_host` reads device memory the trigger event protects, and
- * that copy runs here -- so the wait has to be here too, not only on the
- * route's stream.
- *
- * Never returns 1: this lane can always enqueue a device-side wait, because it
- * has a stream to enqueue it on.
+ * Order this lane's next transfer behind `event`, on the route's stream:
+ * everything `copy` enqueues for the transfer goes behind it there. Never
+ * returns 1: this lane can always enqueue a device-side wait.
  */
 static int remote_wait(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
     shadowspill_lane_counted(&lane->waits, 1U);
@@ -1043,13 +493,11 @@ static int remote_wait(ShadowSpillLane *lane, ShadowSpillBackendEvent event) {
 }
 
 /*
- * What this transfer is, before anything is issued.
- *
- * Exactly one end is remote -- a route joins a device pool and a remote one --
- * and which end says the direction. The chunk count is decided here, once, so
- * the thread and the stream agree on it without either recomputing it: one
- * piece when the NIC reaches device memory, and as many as the ring holds
- * when it does not.
+ * What this transfer is, before anything is issued. Direction is the lane's,
+ * from its kinds; the remote end is an address in the region's reservation,
+ * turned back into an offset; the piece count is decided here, once, so the
+ * thread never recomputes it. Under the lane's lock, because the piece
+ * numbering is shared with the thread.
  */
 static int plan_transfer(
     RemoteLane *lane,
@@ -1058,147 +506,45 @@ static int plan_transfer(
     const void *source,
     uint64_t bytes
 ) {
-    const ShadowSpillRemoteRegion *const from =
-        shadowspill_remote_region_for(source);
-    const ShadowSpillRemoteRegion *const to =
-        shadowspill_remote_region_for(destination);
-    if ((from == NULL) == (to == NULL)) {
-        /* Both or neither: this lane was asked for a copy it does not serve,
-           which means the route resolved to the wrong lane. */
+    const int to_remote = lane->base.to_kind == SHADOWSPILL_POOL_REMOTE;
+    const char *const remote = to_remote ? (const char *)destination : (const char *)source;
+    const char *const reservation = lane->region->reservation;
+    if (remote < reservation ||
+        (uint64_t)(remote - reservation) + bytes > lane->region->capacity) {
+        /* Not an address in the pool this lane reaches: the route resolved to
+           the wrong lane, or the caller handed over a foreign pointer. */
         return -1;
     }
+    work->to_remote = (uint8_t)to_remote;
+    work->local = to_remote ? (void *)(uintptr_t)source : destination;
+    work->remote_offset = (uint64_t)(remote - reservation);
     work->bytes = bytes;
-    if (to != NULL) {
-        work->region = to;
-        work->to_remote = 1U;
-        work->local = (void *)(uintptr_t)source;
-        work->remote_offset =
-            (uint64_t)((const char *)destination - (const char *)to->reservation);
-    } else {
-        work->region = from;
-        work->to_remote = 0U;
-        work->local = destination;
-        work->remote_offset =
-            (uint64_t)((const char *)source - (const char *)from->reservation);
-    }
-    const uint64_t chunk_bytes = lane->tuning.chunk_bytes;
-    work->chunks = lane->stages
-        ? (uint32_t)((bytes + chunk_bytes - 1U) / chunk_bytes)
-        : 1U;
-    /* Under the lane's lock, because `claim_slot` holds it: the chunk
-       numbering is shared with the thread and was read unprotected before the
-       ring gave the claim a lock to sit under. */
+    work->chunks = bytes == 0U
+        ? 1U
+        : (uint32_t)((bytes + lane->piece_bytes - 1U) / lane->piece_bytes);
     work->first_chunk = lane->chunks_planned;
     lane->chunks_planned += work->chunks;
     work->traced =
         shadowspill_lane_trace_active(lane->base.runtime) != 0 ? 1U : 0U;
-    work->issued_host_ns = work->traced ? monotonic_ns() : 0U;
+    work->issued_host_ns = work->traced ? remote_lane_monotonic_ns() : 0U;
     work->started_host_ns = 0U;
     work->finished_host_ns = 0U;
     return 0;
 }
 
 /*
- * The device's half of a staged transfer, enqueued here and nowhere else.
+ * Plan it, hand it to the thread, then give the route stream the device's
+ * side. Nothing is waited for here: this runs on the runtime's worker.
  *
- * All of it goes on the route stream, in chunk order, at dispatch. The lane
- * still makes device calls -- these are they -- but they are made by the
- * runtime's own thread, on the runtime's own stream, before the lane's thread
- * sees the transfer at all. What matters is that the lane's *thread* makes
- * none, so it can always reach the reports the stream is waiting for. Each
- * chunk waits on what the thread will report
- * and, when it is done, writes what the thread will wait for:
- *
- *   fetch   wait: the NIC filled this chunk's slot  -> copy it to the device
- *   evict   wait: the NIC emptied the slot being reused -> refill it
- *
- * and both then store a rising count so the thread knows the device is
- * finished with that slot.
+ * The thread is given the transfer *before* the device side is enqueued, and
+ * the order matters: every value wait enqueued below is satisfied by this
+ * lane's thread, and a driver asked to enqueue behind a wait nobody can
+ * satisfy yet may hold the caller. Handing the work over first is safe
+ * because the waits are greater-or-equal -- one enqueued after its value was
+ * stored passes at once -- and stream order is unchanged. The plan is copied
+ * out first because the slot belongs to the thread the moment it is
+ * published.
  */
-static int stage_enqueue_device_work(RemoteLane *lane, const Work *work) {
-    const ShadowSpillBackend *const backend = lane->base.backend;
-    const uint64_t chunk_bytes = lane->tuning.chunk_bytes;
-    const uint32_t slots = lane->tuning.ring_slots;
-    for (uint32_t index = 0U; index < work->chunks; ++index) {
-        const uint64_t offset = (uint64_t)index * chunk_bytes;
-        const uint64_t chunk = work->bytes - offset < chunk_bytes
-            ? work->bytes - offset : chunk_bytes;
-        const uint64_t chunk_number = work->first_chunk + index;
-        char *const slot = stage_slot(lane, chunk_number);
-        char *const local = (char *)work->local + offset;
-        if (work->to_remote) {
-            /*
-             * Before overwriting a slot, wait for the NIC to have finished the
-             * chunk that last occupied it -- `slots` chunks ago on the lane's
-             * global numbering, **not** on this transfer's.
-             *
-             * It was `index >= slots`, which is the same thing only for the
-             * first transfer: from the second on it let the opening `slots`
-             * chunks skip the wait entirely and the device wrote over slots the
-             * NIC was still reading. Harmless while a transfer's chunks were
-             * drained before the next one began, and a silent corruption once
-             * the ring spans transfers -- one byte of one word, in a payload
-             * that otherwise arrives intact.
-             */
-            if (chunk_number >= slots && backend->wait_value(
-                    backend->state, lane->base.stream, lane->signals, SIGNAL_NIC,
-                    chunk_number + 1U - slots
-                ) != 0) {
-                return -1;
-            }
-            if (backend->copy_device_to_host(
-                    backend->state, slot, local, chunk, lane->base.stream
-                ) != 0) {
-                return -1;
-            }
-        } else {
-            if (backend->wait_value(
-                    backend->state, lane->base.stream, lane->signals, SIGNAL_NIC,
-                    chunk_number + 1U
-                ) != 0) {
-                return -1;
-            }
-            if (backend->copy_host_to_device(
-                    backend->state, local, slot, chunk, lane->base.stream
-                ) != 0) {
-                return -1;
-            }
-        }
-        if (backend->write_value(
-                backend->state, lane->base.stream, lane->signals, SIGNAL_DEVICE,
-                chunk_number + 1U
-            ) != 0) {
-            return -1;
-        }
-    }
-    return 0;
-}
-
-/*
- * Give this transfer a timeline row if it has the lane to itself: nothing
- * accepted that the last `synchronize` did not cover, nothing in flight, and
- * one chunk. Under the lane's lock and before the slot is published, so the
- * thread reads the row it should stamp. `entered` is the instant `copy` was
- * called, taken before the lock and belonging to this transfer now that it is
- * known which that is.
- */
-static void capture_timeline(RemoteLane *lane, Work *work, double entered) {
-    if (lane->timeline_rows >= TIMELINE_ROWS ||
-        lane->accepted != lane->retired ||
-        lane->accepted != lane->synchronized_through ||
-        work->chunks != 1U) {
-        return;
-    }
-    TimelineRow *const row = &lane->timeline[lane->timeline_rows];
-    memset(row, 0, sizeof(*row));
-    row->bytes = work->bytes;
-    row->first_chunk = work->first_chunk;
-    row->at[TIMELINE_ENTERED] = entered;
-    work->timeline_row = (int32_t)lane->timeline_rows++;
-}
-
-/* Plan it, give the device its half if there is one, hand the rest to the
-   thread. Nothing is waited for here: this runs on the runtime's worker. */
 static int remote_copy(
     ShadowSpillLane *lane,
     void *destination,
@@ -1207,7 +553,7 @@ static int remote_copy(
     uint64_t *handle
 ) {
     RemoteLane *self = (RemoteLane *)lane;
-    const double entered = self->measuring ? seconds_now() : 0.0;
+    const double entered = self->measuring ? remote_lane_seconds_now() : 0.0;
     *handle = 0U;
     shadowspill_lane_counted(&lane->copies, 1U);
     shadowspill_lane_counted(&lane->bytes, bytes);
@@ -1223,57 +569,43 @@ static int remote_copy(
         return -1;
     }
     if (self->measuring) {
-        capture_timeline(self, work, entered);
+        remote_lane_capture_timeline(self, work, entered);
     }
-    /*
-     * The thread is given the transfer *before* the device side is enqueued,
-     * and the order matters.
-     *
-     * Every chunk's value wait is satisfied by this lane's thread. Enqueuing
-     * them all first would leave this thread -- the runtime's worker -- issuing
-     * device calls behind value waits nobody can satisfy yet, and an
-     * outstanding value wait blocks calls on other streams too. `copy` would
-     * then block, which the contract forbids and which is the deadlock this
-     * design exists to avoid, merely moved onto the caller.
-     *
-     * Handing the work over first is safe because the wait is greater-or-equal:
-     * a wait enqueued after its value was already stored passes at once.
-     * Stream order is unchanged -- every copy is still enqueued before this
-     * returns, so `signal`'s event still lands behind all of them.
-     *
-     * The plan is copied out first because the slot belongs to the thread the
-     * moment it is published: the thread may finish the transfer and a later
-     * `copy` may claim the slot while this function is still enqueuing the
-     * device side. Everything the device side needs is a handful of scalars,
-     * so a copy costs nothing and removes the question.
-     */
     const Work plan = *work;
     publish_slot(self, work, claimed);
     *handle = claimed;
-    if (self->stages && stage_enqueue_device_work(self, &plan) != 0) {
+
+    const ShadowSpillBackend *const backend = lane->backend;
+    int enqueued;
+    if (self->stages) {
+        enqueued = remote_lane_stage_enqueue(self, &plan);
+    } else {
+        /* The gate: the transfer's number, stored by the route stream once it
+           has passed whatever the runtime enqueued ahead of this. The thread
+           posts nothing of the transfer before it reads it. */
+        enqueued = backend->write_value(
+            backend->state, lane->stream, self->signals, SIGNAL_GATE, claimed
+        );
+    }
+    if (enqueued != 0) {
+        shadowspill_lane_counted(&lane->failures, 1U);
         return -1;
     }
-    stamp(self, &plan, TIMELINE_ENQUEUED);
+    remote_lane_stamp(self, &plan, TIMELINE_ENQUEUED);
     return 0;
 }
 
-/*
- * What one transfer did. No instants: this lane's clock is the host's, and
- * nothing anchors that to the trace's device-side origin -- which is what the
- * pair of interval entries it had to leave NULL used to mean. What it does
- * know is how much it moved and in how many pieces, and the pieces are the
- * number worth having here: the ratio of bytes to chunks is what says whether
- * a slow transfer was one long wait or many short ones.
- */
 /* An instant this lane observed, placed on the trace origin's axis. Zero is
-   "never reached this point" -- a transfer that failed before posting, or one
-   whose slot was filled while nothing was tracing. */
+   "never reached this point". */
 static uint64_t instant_on_origin(ShadowSpillLane *lane, uint64_t monotonic_ns) {
     return monotonic_ns == 0U
         ? SHADOWSPILL_LANE_NO_TIME
         : shadowspill_lane_origin_instant(lane->runtime, monotonic_ns);
 }
 
+/* What one transfer did. Read without the lock, the handle checked on both
+   sides of the fields: a `copy` claiming the slot rewrites the handle first,
+   so a match before and after means nothing overwrote what was read. */
 static int remote_transfer(
     ShadowSpillLane *lane, uint64_t handle, ShadowSpillLaneTransfer *transfer
 ) {
@@ -1282,13 +614,6 @@ static int remote_transfer(
         return -1;
     }
     const Work *work = &self->work_ring[(handle - 1U) % WORK_SLOTS];
-    /*
-     * Read without the lock, and the handle is checked on both sides of the
-     * fields. A `copy` claiming this slot rewrites the handle first, so a
-     * match before and after means nothing overwrote what was read between
-     * them -- and taking the lane's lock here would let a trace's reader stall
-     * a transfer, which is the trade this avoids everywhere else too.
-     */
     if (atomic_load_explicit(&work->handle, memory_order_acquire) != handle) {
         return -1;
     }
@@ -1310,30 +635,26 @@ static int remote_transfer(
 /*
  * Make `event` complete once everything queued before it has landed.
  *
- * Two calls, and the same two whichever path the transfer took. The wait is on
- * the last report this lane's thread will make, so the event cannot complete
- * before the hardware is done; where the transfer also had device work, that
- * work is already ahead of this on the same stream and the wait is satisfied
- * by the time the stream reaches it.
- *
- * The wait is enqueued here, on the dispatching thread, rather than left to
- * the lane's thread to arrange: the stream must already be waiting before the
- * word can be stored, or a store that landed first would make the wait pass
- * for the wrong reason.
+ * Two calls on the route stream, the same on either path: a value wait on
+ * the last report this lane's thread will make for everything planned so
+ * far, and the record behind it. Where the transfer had device work, that
+ * work is already ahead of this on the same stream. The wait is enqueued
+ * here, on the dispatching thread, rather than left to the lane's thread to
+ * arrange -- which could not, see the header -- and it covers every piece
+ * planned so far, so the handle says nothing this does not already know.
  */
 static int remote_signal(
     ShadowSpillLane *lane, uint64_t handle, ShadowSpillBackendEvent event
 ) {
-    /* The value wait covers every chunk planned so far, which is every
-       transfer issued before this signal and not only the one named. So the
-       handle says nothing this does not already know. */
     (void)handle;
     RemoteLane *self = (RemoteLane *)lane;
     const ShadowSpillBackend *const backend = lane->backend;
     shadowspill_lane_counted(&lane->signals, 1U);
-    if (self->chunks_planned != 0U && backend->wait_value(
-            backend->state, lane->stream, self->signals, SIGNAL_NIC,
-            self->chunks_planned
+    pthread_mutex_lock(&self->lock);
+    const uint64_t planned = self->chunks_planned;
+    pthread_mutex_unlock(&self->lock);
+    if (planned != 0U && backend->wait_value(
+            backend->state, lane->stream, self->signals, SIGNAL_NIC, planned
         ) != 0) {
         return -1;
     }
@@ -1342,111 +663,34 @@ static int remote_signal(
 }
 
 /*
- * Block until everything issued has landed.
- *
- * Waits on `outstanding`, not on the list being empty. The list empties when
- * the thread *takes* an item, which is before it does it -- so a wait on the
- * list could return with the transfer still on the wire, and would, whenever
- * `synchronize` was called in the window between the two. That the canary
- * passed anyway is luck about timing, not evidence.
+ * Block until everything issued has landed: every transfer retired by the
+ * thread, then the route stream synchronized, which covers the device's
+ * side and the events. Watches for the drain before blocking on it, for the
+ * reason the thread does: a condition variable costs about twenty
+ * microseconds to wake from, and a small transfer finishes in fewer.
  */
-/*
- * The transfer whose instants this `synchronize` stamps: the one accepted
- * since the last, when exactly one was and it was captured. Under the lock.
- */
-static const Work *captured_transfer(const RemoteLane *lane) {
-    if (lane->accepted != lane->synchronized_through + 1U) {
-        return NULL;
-    }
-    const Work *const work =
-        &lane->work_ring[(lane->accepted - 1U) % WORK_SLOTS];
-    return work->timeline_row >= 0 ? work : NULL;
-}
-
-/*
- * A batch's first transfer was claimed with the lane to itself and captured,
- * and the rest of the batch was then accepted behind it -- so no `synchronize`
- * will ever cover it alone and its row cannot be completed. Release the row.
- * It is the last one claimed, since nothing accepted after it qualified.
- * Under the lock and after the drain, so the thread has stamped its last.
- */
-static void release_batch_row(RemoteLane *lane, uint64_t accepted) {
-    const uint64_t batch = accepted - lane->synchronized_through;
-    if (batch < 2U || batch > WORK_SLOTS) {
-        return;
-    }
-    Work *const first =
-        &lane->work_ring[lane->synchronized_through % WORK_SLOTS];
-    if (first->timeline_row >= 0 &&
-        first->timeline_row + 1 == (int32_t)lane->timeline_rows) {
-        memset(&lane->timeline[first->timeline_row], 0, sizeof(TimelineRow));
-        --lane->timeline_rows;
-        first->timeline_row = -1;
-    }
-}
-
-/*
- * Watch, from the host, for the device's last store for this transfer, and
- * stamp when it is seen.
- *
- * It is where a fetch's time after the NIC goes. The stream is waiting on the
- * word the thread stored at `TIMELINE_REPORTED`; it then copies the chunk in
- * and stores this word; and `synchronize_stream` returns only once all of it
- * is done. Seen from here, the store separates the device finishing from the
- * host noticing that it has. Bounded, because a stream that failed never
- * stores it.
- */
-static void watch_device(RemoteLane *lane, const Work *work) {
-    const uint64_t last = work->first_chunk + work->chunks;
-    const double deadline = seconds_now() + 1.0;
-    while (!device_reached(lane, last)) {
-        if (seconds_now() >= deadline) {
-            ++lane->device_watch_timeouts;
-            return;
-        }
-#if defined(__x86_64__) || defined(__i386__)
-        __builtin_ia32_pause();
-#elif defined(__aarch64__)
-        __asm__ volatile("yield");
-#endif
-    }
-    stamp(lane, work, TIMELINE_DEVICE_SEEN);
-}
-
 static int remote_synchronize(ShadowSpillLane *base_lane) {
     RemoteLane *lane = (RemoteLane *)base_lane;
-    /* The transfer this call's instants belong to, when one was captured. */
     const Work *captured = NULL;
     if (lane->measuring) {
         pthread_mutex_lock(&lane->lock);
-        captured = captured_transfer(lane);
+        captured = remote_lane_captured_transfer(lane);
         pthread_mutex_unlock(&lane->lock);
-        stamp(lane, captured, TIMELINE_SYNC_ENTERED);
+        remote_lane_stamp(lane, captured, TIMELINE_SYNC_ENTERED);
     }
-    /*
-     * Watch for the drain before blocking on it, for the reason the lane
-     * thread already spins before sleeping: a condition variable costs about
-     * twenty microseconds to wake from, and a small transfer finishes in about
-     * thirteen. Measured, on one 4 KiB transfer in flight: the NIC answered in
-     * 13.55 us and this handoff cost 19.86 us -- more than the transfer.
-     *
-     * Bounded by the same `spin_nanoseconds` the thread uses, so one knob
-     * governs both handoffs and an idle runtime still costs nothing. The lock
-     * is taken and released each turn rather than the counters read unlocked:
-     * an uncontended mutex is tens of nanoseconds, and a data race to save
-     * that is not a trade worth making.
-     */
     if (lane->tuning.spin_nanoseconds != 0U) {
         const int forever =
             lane->tuning.spin_nanoseconds == SHADOWSPILL_NETWORK_SPIN_FOREVER;
         const double deadline = forever
             ? 0.0
-            : seconds_now() + (double)lane->tuning.spin_nanoseconds * 1e-9;
+            : remote_lane_seconds_now()
+              + (double)lane->tuning.spin_nanoseconds * 1e-9;
         for (;;) {
             pthread_mutex_lock(&lane->lock);
             const int drained = lane->retired == lane->accepted;
             pthread_mutex_unlock(&lane->lock);
-            if (drained || (!forever && seconds_now() >= deadline)) {
+            if (drained ||
+                (!forever && remote_lane_seconds_now() >= deadline)) {
                 break;
             }
 #if defined(__x86_64__) || defined(__i386__)
@@ -1460,262 +704,30 @@ static int remote_synchronize(ShadowSpillLane *base_lane) {
     while (lane->retired != lane->accepted) {
         pthread_cond_wait(&lane->drained, &lane->lock);
     }
-    stamp(lane, captured, TIMELINE_SYNC_DRAINED);
+    remote_lane_stamp(lane, captured, TIMELINE_SYNC_DRAINED);
     const uint64_t accepted = lane->accepted;
     if (lane->measuring) {
-        release_batch_row(lane, accepted);
+        remote_lane_release_batch_row(lane, accepted);
     }
     pthread_mutex_unlock(&lane->lock);
     if (atomic_load_explicit(&lane->failed, memory_order_acquire) != 0U) {
         return -1;
     }
     if (captured != NULL) {
-        watch_device(lane, captured);
+        remote_lane_watch_device(lane, captured);
     }
-    const int status = lane->base.backend->synchronize_stream(
-        lane->base.backend->state, lane->base.stream
-    );
-    stamp(lane, captured, TIMELINE_SYNC_RETURNED);
+    const ShadowSpillBackend *const backend = lane->base.backend;
+    const int status =
+        backend->synchronize_stream(backend->state, lane->base.stream);
+    remote_lane_stamp(lane, captured, TIMELINE_SYNC_RETURNED);
     if (lane->measuring) {
         lane->synchronized_through = accepted;
     }
     return status == 0 ? 0 : -1;
 }
 
-/*
- * No intervals. The two entries are optional as a pair, and this lane cannot
- * place an instant on the trace's clock: its bytes move on a NIC, whose
- * completions are not events on the stream the trace is read against. Its
- * transfers are recorded untimed rather than timed wrongly.
- */
-
-/* A span between two instants, on one thread or across the two. */
-typedef struct TimelineSpan {
-    const char *name;
-    unsigned from;
-    unsigned to;
-} TimelineSpan;
-
-static int compare_doubles(const void *first, const void *second) {
-    const double left = *(const double *)first;
-    const double right = *(const double *)second;
-    return left < right ? -1 : (left > right ? 1 : 0);
-}
-
-/*
- * The captured transfers, as medians: each instant after `copy` was entered,
- * in the order they happen, and then the spans that say where the time went.
- * Only a row with every instant counts. One without is a transfer captured at
- * its claim and then not synchronized alone, or one whose device store was
- * never seen; either is reported as a count rather than folded in.
- */
-static void report_timeline(const RemoteLane *lane) {
-    static const char *const point_names[TIMELINE_POINTS] = {
-        "worker  copy entered",
-        "worker  slot published",
-        "worker  device work enqueued",
-        "worker  synchronize entered",
-        "worker  saw the thread retire",
-        "worker  saw the device's store",
-        "worker  stream synchronized",
-        "thread  saw the transfer",
-        "thread  saw the device's half done",
-        "thread  posted",
-        "thread  completion polled",
-        "thread  reported to the stream",
-        "thread  retired",
-    };
-    static const TimelineSpan spans[] = {
-        {"worker: claim and plan", TIMELINE_ENTERED, TIMELINE_PUBLISHED},
-        {"worker: enqueue device work", TIMELINE_PUBLISHED, TIMELINE_ENQUEUED},
-        {"worker: copy returns to sync", TIMELINE_ENQUEUED, TIMELINE_SYNC_ENTERED},
-        {"worker: waits for the thread", TIMELINE_SYNC_ENTERED, TIMELINE_SYNC_DRAINED},
-        {"worker: device finishes after", TIMELINE_SYNC_DRAINED, TIMELINE_DEVICE_SEEN},
-        {"worker: stream synchronize", TIMELINE_DEVICE_SEEN, TIMELINE_SYNC_RETURNED},
-        {"thread: picks it up", TIMELINE_PUBLISHED, TIMELINE_SEEN},
-        {"thread: waits for the device", TIMELINE_SEEN, TIMELINE_READY},
-        {"thread: ibv_post_send", TIMELINE_READY, TIMELINE_POSTED},
-        {"thread: NIC, posted to polled", TIMELINE_POSTED, TIMELINE_COMPLETED},
-        {"thread: report to the stream", TIMELINE_COMPLETED, TIMELINE_REPORTED},
-        {"thread: retire under the lock", TIMELINE_REPORTED, TIMELINE_RETIRED},
-        {"handoff: retired to sync sees", TIMELINE_RETIRED, TIMELINE_SYNC_DRAINED},
-        {"device: NIC word to its store", TIMELINE_REPORTED, TIMELINE_DEVICE_SEEN},
-        {"end to end", TIMELINE_ENTERED, TIMELINE_SYNC_RETURNED},
-    };
-    const TimelineRow *rows[TIMELINE_ROWS];
-    uint32_t complete = 0U;
-    for (uint32_t which = 0U; which < lane->timeline_rows; ++which) {
-        const TimelineRow *const row = &lane->timeline[which];
-        unsigned point = 0U;
-        while (point < TIMELINE_POINTS && row->at[point] != 0.0) {
-            ++point;
-        }
-        if (point == TIMELINE_POINTS) {
-            rows[complete++] = row;
-        }
-    }
-    if (complete == 0U) {
-        fprintf(
-            stderr,
-            "shadowspill network:   timeline -- no transfer had the lane to "
-            "itself (%u rows claimed, %llu device watches timed out)\n",
-            lane->timeline_rows,
-            (unsigned long long)lane->device_watch_timeouts
-        );
-        return;
-    }
-    fprintf(
-        stderr,
-        "shadowspill network:   timeline -- %u transfers of %llu bytes that had "
-        "the lane to themselves (%u rows incomplete); median us after copy() "
-        "was entered\n",
-        complete, (unsigned long long)rows[0]->bytes,
-        lane->timeline_rows - complete
-    );
-    double values[TIMELINE_ROWS];
-    double offsets[TIMELINE_POINTS];
-    unsigned order[TIMELINE_POINTS];
-    for (unsigned point = 0U; point < TIMELINE_POINTS; ++point) {
-        for (uint32_t which = 0U; which < complete; ++which) {
-            values[which] =
-                (rows[which]->at[point] - rows[which]->at[TIMELINE_ENTERED])
-                * 1e6;
-        }
-        qsort(values, complete, sizeof(values[0]), compare_doubles);
-        offsets[point] = values[complete / 2U];
-        order[point] = point;
-    }
-    /* In the order they happen, which interleaves the two chains. */
-    for (unsigned outer = 1U; outer < TIMELINE_POINTS; ++outer) {
-        for (unsigned inner = outer;
-             inner > 0U && offsets[order[inner]] < offsets[order[inner - 1U]];
-             --inner) {
-            const unsigned swap = order[inner];
-            order[inner] = order[inner - 1U];
-            order[inner - 1U] = swap;
-        }
-    }
-    for (unsigned rank = 0U; rank < TIMELINE_POINTS; ++rank) {
-        fprintf(
-            stderr, "shadowspill network:     %-36s %8.2f\n",
-            point_names[order[rank]], offsets[order[rank]]
-        );
-    }
-    fprintf(stderr, "shadowspill network:   spans -- median, min us\n");
-    for (size_t span = 0U; span < sizeof(spans) / sizeof(spans[0]); ++span) {
-        for (uint32_t which = 0U; which < complete; ++which) {
-            values[which] =
-                (rows[which]->at[spans[span].to]
-                 - rows[which]->at[spans[span].from]) * 1e6;
-        }
-        qsort(values, complete, sizeof(values[0]), compare_doubles);
-        fprintf(
-            stderr, "shadowspill network:     %-36s %8.2f  %8.2f\n",
-            spans[span].name, values[complete / 2U], values[0]
-        );
-    }
-    /* Every row, for a reader after the distribution rather than its middle:
-       each instant in the enum's order, us after entry, and which ring slot
-       the chunk used. */
-    for (uint32_t which = 0U; which < complete; ++which) {
-        fprintf(
-            stderr, "shadowspill network:     row %2u chunk %llu slot %llu:",
-            which, (unsigned long long)rows[which]->first_chunk,
-            (unsigned long long)(rows[which]->first_chunk
-                                 % lane->tuning.ring_slots)
-        );
-        for (unsigned point = 1U; point < TIMELINE_POINTS; ++point) {
-            fprintf(
-                stderr, " %.2f",
-                (rows[which]->at[point] - rows[which]->at[TIMELINE_ENTERED])
-                * 1e6
-            );
-        }
-        fputc('\n', stderr);
-    }
-    if (lane->device_watch_timeouts != 0U) {
-        fprintf(
-            stderr, "shadowspill network:   %llu device watches timed out\n",
-            (unsigned long long)lane->device_watch_timeouts
-        );
-    }
-}
-
-static void remote_destroy(ShadowSpillLane *base_lane) {
-    RemoteLane *lane = (RemoteLane *)base_lane;
-    if (lane == NULL) {
-        return;
-    }
-    /* What measuring found, on stderr, because a lane has no other channel
-       out and the reader is the person who set the variable. */
-    if (lane->measuring) {
-        report_timeline(lane);
-        fprintf(
-            stderr,
-            "shadowspill network:   completion queue -- %llu polls, %llu empty,"
-            " %.1f polls per chunk (%llu registrations made, %u cached)\n",
-            (unsigned long long)lane->polls,
-            (unsigned long long)lane->polls_empty,
-            lane->base.chunks != 0U
-                ? (double)lane->polls
-                  / (double)atomic_load_explicit(
-                      &lane->base.chunks, memory_order_relaxed
-                  )
-                : 0.0,
-            (unsigned long long)lane->registrations_made,
-            lane->registration_count
-        );
-        const uint64_t timed = atomic_load_explicit(
-            &lane->stat_timed, memory_order_relaxed
-        );
-        if (timed != 0U) {
-            fprintf(
-                stderr,
-                "shadowspill network:   posted to completion -- %llu chunks, "
-                "%.2f us mean, %.2f us longest\n",
-                (unsigned long long)timed,
-                (double)atomic_load_explicit(
-                    &lane->stat_completion_micros, memory_order_relaxed
-                ) / (double)timed,
-                (double)atomic_load_explicit(
-                    &lane->stat_longest_micros, memory_order_relaxed
-                )
-            );
-        }
-    }
-    if (lane->thread_started) {
-        atomic_store_explicit(&lane->stopping, 1U, memory_order_release);
-        pthread_mutex_lock(&lane->lock);
-        pthread_cond_broadcast(&lane->work_ready);
-        pthread_mutex_unlock(&lane->lock);
-        (void)pthread_join(lane->thread, NULL);
-    }
-    for (uint32_t index = 0U; index < lane->registration_count; ++index) {
-        (void)ibv_dereg_mr(lane->registrations[index].registration);
-    }
-    if (lane->ring != NULL) {
-        (void)lane->base.backend->unregister_host_memory(
-            lane->base.backend->state, lane->ring, lane->ring_bytes
-        );
-        (void)munmap(lane->ring, (size_t)lane->ring_bytes);
-    }
-    if (lane->signal_host != NULL) {
-        (void)lane->base.backend->free_signals(lane->base.backend->state, lane->signals);
-    }
-    pthread_cond_destroy(&lane->drained);
-    pthread_cond_destroy(&lane->work_ready);
-    pthread_mutex_destroy(&lane->lock);
-    free(lane);
-}
-
-/*
- * What a transfer cost this lane. Read without locking: every field is atomic
- * and the reader wants a recent picture, not a consistent instant -- taking the
- * lane's lock here would make a diagnostics call able to stall a transfer,
- * which is the wrong trade for a number nobody acts on within a microsecond.
- *
- * The counters are not here. They are in the base, and the runtime reads them.
- */
+/* What a transfer cost this lane, without locking: every field is atomic and
+   a reader wants a recent picture, not a consistent instant. */
 static int remote_timing(
     const ShadowSpillLane *lane, ShadowSpillLaneTiming *timing
 ) {
@@ -1739,6 +751,37 @@ static int remote_timing(
     return 0;
 }
 
+static void remote_destroy(ShadowSpillLane *base_lane) {
+    RemoteLane *lane = (RemoteLane *)base_lane;
+    if (lane == NULL) {
+        return;
+    }
+    if (lane->measuring) {
+        /* On stderr, because a lane has no other channel out and the reader is
+           the person who set the variable. */
+        remote_lane_report(lane);
+    }
+    if (lane->thread_started) {
+        atomic_store_explicit(&lane->stopping, 1U, memory_order_release);
+        pthread_mutex_lock(&lane->lock);
+        pthread_cond_broadcast(&lane->work_ready);
+        pthread_mutex_unlock(&lane->lock);
+        (void)pthread_join(lane->thread, NULL);
+    }
+    /* The pool's and the ring's registrations are the region's and go with
+       it; the ring itself is this lane's. */
+    remote_lane_stage_destroy(lane);
+    if (lane->signal_host != NULL) {
+        (void)lane->base.backend->free_signals(
+            lane->base.backend->state, lane->signals
+        );
+    }
+    pthread_cond_destroy(&lane->drained);
+    pthread_cond_destroy(&lane->work_ready);
+    pthread_mutex_destroy(&lane->lock);
+    free(lane);
+}
+
 static const ShadowSpillLaneOperations remote_operations = {
     .wait = remote_wait,
     .copy = remote_copy,
@@ -1749,6 +792,25 @@ static const ShadowSpillLaneOperations remote_operations = {
     .timing = remote_timing,
 };
 
+static const char *kind_name(uint8_t kind) {
+    switch (kind) {
+    case SHADOWSPILL_POOL_DEVICE:
+        return "device";
+    case SHADOWSPILL_POOL_PINNED_HOST:
+        return "pinned host";
+    default:
+        return "local";
+    }
+}
+
+/*
+ * Made once per route, and this is where the lane probes: which region the
+ * route reaches, a queue pair of its own from it, and whether the NIC can
+ * address the local pool -- a registration of the whole pool, through the
+ * backend's dma-buf where it exports one and plainly otherwise, kept by the
+ * region and shared with the lane serving the other direction. If it can, the
+ * direct path; if it cannot, the ring. Then the three words, and the thread.
+ */
 static int remote_create(
     const ShadowSpillLane *base, void *configuration, ShadowSpillLane **created
 ) {
@@ -1767,7 +829,7 @@ static int remote_create(
     shadowspill_network_tuning_read(&lane->tuning);
     lane->measuring = getenv("SHADOWSPILL_NETWORK_MEASURE") != NULL;
     for (uint32_t index = 0U; index < WORK_SLOTS; ++index) {
-        /* Not captured until `capture_timeline` says so; 0 would be a row. */
+        /* Not captured until the timeline says so; 0 would be a row. */
         lane->work_ring[index].timeline_row = -1;
     }
     atomic_init(&lane->stopping, 0U);
@@ -1779,40 +841,61 @@ static int remote_create(
         free(lane);
         return -1;
     }
-    /*
-     * The ring: an anonymous mapping the lane owns, registered with the
-     * backend so the device copies are real asynchronous DMA. Its NIC
-     * registrations come later, one per region, because a registration belongs
-     * to a protection domain and the regions are not known yet.
-     */
-    lane->ring_bytes = lane->tuning.chunk_bytes * lane->tuning.ring_slots;
-    lane->ring = mmap(
-        NULL, (size_t)lane->ring_bytes, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+
+    const int to_remote = base->to_kind == SHADOWSPILL_POOL_REMOTE;
+    const ShadowSpillLaneRange remote = to_remote ? base->to_range : base->from_range;
+    const ShadowSpillLaneRange local = to_remote ? base->from_range : base->to_range;
+    const uint8_t local_kind = to_remote ? base->from_kind : base->to_kind;
+    lane->region = shadowspill_remote_region_for(remote.address);
+    if (lane->region == NULL) {
+        fprintf(
+            stderr,
+            "shadowspill network: this route's remote pool is not a region "
+            "this process holds\n"
+        );
+        remote_destroy(&lane->base);
+        return -1;
+    }
+    lane->queue_pair = shadowspill_remote_region_claim_queue_pair(lane->region);
+    if (lane->queue_pair < 0) {
+        fprintf(
+            stderr,
+            "shadowspill network: no queue pair left for this lane; raise "
+            "SHADOWSPILL_NETWORK_QUEUE_PAIRS above %u\n",
+            lane->region->endpoint.queue_pair_count
+        );
+        remote_destroy(&lane->base);
+        return -1;
+    }
+    /* Device memory reaches the NIC through the backend, where the backend
+       has a way; host memory reaches it plainly. */
+    lane->pool_registration = shadowspill_remote_region_register_local(
+        lane->region,
+        local_kind == SHADOWSPILL_POOL_DEVICE ? backend : NULL,
+        local.address, local.bytes
     );
-    if (lane->ring == MAP_FAILED) {
-        lane->ring = NULL;
-        remote_destroy(&lane->base);
-        return -1;
+    if (lane->pool_registration != NULL) {
+        lane->stages = 0U;
+        lane->piece_bytes = lane->region->endpoint.max_message_bytes != 0U
+            ? lane->region->endpoint.max_message_bytes
+            : lane->tuning.chunk_bytes;
+    } else {
+        fprintf(
+            stderr,
+            "shadowspill network: the NIC cannot address the %s pool; "
+            "staging through a host ring of %u x %llu bytes\n",
+            kind_name(local_kind), lane->tuning.ring_slots,
+            (unsigned long long)lane->tuning.chunk_bytes
+        );
+        lane->stages = 1U;
+        lane->piece_bytes = lane->tuning.chunk_bytes;
+        if (remote_lane_stage_create(lane) != 0) {
+            remote_destroy(&lane->base);
+            return -1;
+        }
     }
-    if (backend->register_host_memory(
-            backend->state, lane->ring, lane->ring_bytes
-        ) != 0) {
-        (void)munmap(lane->ring, (size_t)lane->ring_bytes);
-        lane->ring = NULL;
-        remote_destroy(&lane->base);
-        return -1;
-    }
-    /*
-     * Two words, and both are counters rather than per-transfer objects, so
-     * this allocation happens once per lane and never again -- which matters,
-     * because registering host memory with the driver is not cheap and this is
-     * the only place it is paid.
-     *
-     * Transfers on a route are ordered, so one rising count per direction
-     * describes all of them: what the NIC has finished, and what the device
-     * has finished.
-     */
+    /* Three words, once per lane: what the NIC has finished, what the device
+       has, and which transfer the route stream has passed. */
     if (backend->allocate_signals(
             backend->state, SIGNAL_WORDS, &lane->signals, &lane->signal_host
         ) != 0) {
@@ -1822,9 +905,6 @@ static int remote_create(
     for (uint32_t index = 0U; index < SIGNAL_WORDS; ++index) {
         lane->signal_host[index] = 0U;
     }
-    /* No peer memory on this box, so every transfer stages. The probe that
-       would decide otherwise belongs here; nothing else would change. */
-    lane->stages = 1U;
     if (pthread_create(&lane->thread, NULL, lane_thread, lane) != 0) {
         remote_destroy(&lane->base);
         return -1;
@@ -1835,11 +915,13 @@ static int remote_create(
 }
 
 /*
- * Both directions, because a route is directed and a spill topology has two.
- * Registered by kind pair like every other lane, so the runtime finds this one
- * exactly as it finds the built-in.
+ * Both directions, for each local pool the NIC may address or stage for --
+ * device memory, and pinned host memory, which the NIC always can and which
+ * is how the direct path runs on a machine whose device cannot be reached.
+ * Registered by kind pair like every other lane, so the runtime finds this
+ * one exactly as it finds the built-in.
  */
-const ShadowSpillLaneDescription shadowspill_remote_lanes[2] = {
+const ShadowSpillLaneDescription shadowspill_remote_lanes[4] = {
     {
         .from_kind = SHADOWSPILL_POOL_REMOTE,
         .to_kind = SHADOWSPILL_POOL_DEVICE,
@@ -1849,6 +931,20 @@ const ShadowSpillLaneDescription shadowspill_remote_lanes[2] = {
     },
     {
         .from_kind = SHADOWSPILL_POOL_DEVICE,
+        .to_kind = SHADOWSPILL_POOL_REMOTE,
+        .operations = &remote_operations,
+        .create = remote_create,
+        .configuration = NULL,
+    },
+    {
+        .from_kind = SHADOWSPILL_POOL_REMOTE,
+        .to_kind = SHADOWSPILL_POOL_PINNED_HOST,
+        .operations = &remote_operations,
+        .create = remote_create,
+        .configuration = NULL,
+    },
+    {
+        .from_kind = SHADOWSPILL_POOL_PINNED_HOST,
         .to_kind = SHADOWSPILL_POOL_REMOTE,
         .operations = &remote_operations,
         .create = remote_create,

@@ -19,6 +19,8 @@
 #include <string.h>
 
 #include <shadowspill/backend_mock.h>
+
+#include <stdatomic.h>
 #include <shadowspill/runtime.h>
 
 #include "../../../csrc/src/runtime/internal.h"
@@ -55,7 +57,8 @@ static const ShadowSpillLibraryDescription *load_library(void **handle) {
         return NULL;
     }
     const ShadowSpillLibraryDescription *description = describe.describe();
-    if (description == NULL || description->lane_count != 2U) {
+    /* Both directions for each of the two local pool kinds. */
+    if (description == NULL || description->lane_count != 4U) {
         fprintf(stderr, "remote transfer: the library offers no lanes\n");
         return NULL;
     }
@@ -85,6 +88,15 @@ static void fill(uint64_t *words, uint64_t bytes, uint64_t salt) {
     for (uint64_t index = 0U; index < bytes / sizeof(*words); ++index) {
         words[index] = index ^ salt;
     }
+}
+
+static int all_zero(const uint64_t *words, uint64_t bytes) {
+    for (uint64_t index = 0U; index < bytes / sizeof(*words); ++index) {
+        if (words[index] != 0U) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static int check(const uint64_t *words, uint64_t bytes, uint64_t salt) {
@@ -391,6 +403,67 @@ int main(void) {
 
     failed = failed || check(device.pointer, payload_bytes, 0xA5A5A5A5U) != 0;
 
+    /*
+     * A transfer the runtime ordered behind something. The dependency is an
+     * event recorded on the compute stream behind a value wait this canary
+     * releases from the host, so until the release the event is not complete
+     * and a lane honouring the order has not touched the pool. On the direct
+     * path nothing stands between the NIC and the pool, so this is the one
+     * obligation the lane's thread has before it posts. An evict that posted
+     * early carries the pattern from before the release; a fetch that did has
+     * written its destination before it.
+     */
+    ShadowSpillBackendSignals release_signals = 0U;
+    uint64_t *release = NULL;
+    ShadowSpillBackendEvent dependency = 0U;
+    failed = failed || mock.allocate_signals(
+        mock.state, 1U, &release_signals, &release
+    ) != 0;
+    failed = failed || mock.create_event(mock.state, &dependency, 0U) != 0;
+    const struct timespec long_enough = {.tv_sec = 0, .tv_nsec = 20000000L};
+    if (!failed) {
+        failed = mock.wait_value(mock.state, compute, release_signals, 0U, 1U) != 0 ||
+            mock.record_event(mock.state, dependency, compute) != 0 ||
+            evict->operations->wait(evict->lane, dependency) != 0 ||
+            evict->operations->copy(
+                evict->lane, stored.pointer, device.pointer, payload_bytes,
+                &lane_handle
+            ) != 0;
+        /* Long enough for a post that ignored the gate to have completed. */
+        (void)nanosleep(&long_enough, NULL);
+        fill(device.pointer, payload_bytes, 0x3C3C3C3CU);
+        atomic_store_explicit((_Atomic uint64_t *)release, 1U, memory_order_release);
+        failed = failed || evict->operations->synchronize(evict->lane) != 0;
+        memset(device.pointer, 0, payload_bytes);
+        failed = failed || fetch->operations->copy(
+            fetch->lane, device.pointer, stored.pointer, payload_bytes,
+            &lane_handle
+        ) != 0 || fetch->operations->synchronize(fetch->lane) != 0;
+        failed = failed || check(device.pointer, payload_bytes, 0x3C3C3C3CU) != 0;
+        if (failed) {
+            fprintf(stderr, "remote transfer: an evict posted before its dependency\n");
+        }
+    }
+    if (!failed) {
+        memset(device.pointer, 0, payload_bytes);
+        failed = mock.wait_value(mock.state, compute, release_signals, 0U, 2U) != 0 ||
+            mock.record_event(mock.state, dependency, compute) != 0 ||
+            fetch->operations->wait(fetch->lane, dependency) != 0 ||
+            fetch->operations->copy(
+                fetch->lane, device.pointer, stored.pointer, payload_bytes,
+                &lane_handle
+            ) != 0;
+        (void)nanosleep(&long_enough, NULL);
+        const int untouched = all_zero(device.pointer, payload_bytes);
+        atomic_store_explicit((_Atomic uint64_t *)release, 2U, memory_order_release);
+        failed = failed || fetch->operations->synchronize(fetch->lane) != 0;
+        failed = failed || check(device.pointer, payload_bytes, 0x3C3C3C3CU) != 0;
+        if (!untouched) {
+            fprintf(stderr, "remote transfer: a fetch posted before its dependency\n");
+            failed = 1;
+        }
+    }
+
     /* Now both directions at once, on separate ranges so the two arms do not
        race over the same bytes -- what is under test is the lanes, not the
        memory. */
@@ -426,6 +499,12 @@ int main(void) {
 
     if (runtime != NULL) {
         shadowspill_runtime_destroy(runtime);
+    }
+    if (dependency != 0U) {
+        (void)mock.destroy_event(mock.state, dependency);
+    }
+    if (release_signals != 0U) {
+        (void)mock.free_signals(mock.state, release_signals);
     }
     if (compute != 0U) {
         (void)mock.destroy_stream(mock.state, compute);

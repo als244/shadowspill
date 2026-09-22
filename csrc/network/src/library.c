@@ -17,9 +17,10 @@ static const ShadowSpillLibraryDescription description = {
     .name = "network",
     .pool_memory = &shadowspill_remote_pool_memory,
     .pool_memory_count = 1U,
-    /* Both directions: a route is directed, and a spill topology has two. */
+    /* Both directions for each local pool kind: a route is directed, and a
+       spill topology has two; a pinned-host pool may spill to a peer too. */
     .lanes = shadowspill_remote_lanes,
-    .lane_count = 2U,
+    .lane_count = 4U,
 };
 
 SHADOWSPILL_NETWORK_API const ShadowSpillLibraryDescription *

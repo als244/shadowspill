@@ -28,6 +28,8 @@ add_library(
   src/endpoint_verbs.c
   src/library.c
   src/remote_lane.c
+  src/remote_lane_staging.c
+  src/remote_lane_timeline.c
   src/remote_memory.c
   src/tuning.c
 )
@@ -37,6 +39,23 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
     ${SHADOWSPILL_VERBS_INCLUDE_DIR}
 )
+# Whether this verbs library can register a dma-buf, which is how device
+# memory reaches the NIC on the open NVIDIA kernel modules. Older libraries
+# cannot, and the lane then registers plainly or stages; nothing else differs.
+include(CheckSymbolExists)
+set(CMAKE_REQUIRED_INCLUDES ${SHADOWSPILL_VERBS_INCLUDE_DIR})
+set(CMAKE_REQUIRED_LIBRARIES ${SHADOWSPILL_VERBS_LIBRARY})
+check_symbol_exists(
+  ibv_reg_dmabuf_mr "infiniband/verbs.h" SHADOWSPILL_HAVE_DMABUF_MR
+)
+unset(CMAKE_REQUIRED_INCLUDES)
+unset(CMAKE_REQUIRED_LIBRARIES)
+if(SHADOWSPILL_HAVE_DMABUF_MR)
+  target_compile_definitions(
+    shadowspill_network PRIVATE SHADOWSPILL_HAVE_DMABUF_MR=1
+  )
+  message(STATUS "ShadowSpill network extension: dma-buf registration available")
+endif()
 # Links the runtime as well as verbs, for one call: the way a lane reports a
 # failure it found on a thread of its own.
 #
