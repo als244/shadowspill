@@ -284,6 +284,43 @@ static int destroy_event(void *state, ShadowSpillBackendEvent event) {
 }
 
 /*
+ * A dma-buf for device memory, where the device can export one.
+ *
+ * Whether it can is a device attribute -- consumer parts say no -- and a
+ * device that cannot makes this refuse without recording an error: the caller
+ * has somewhere else to go, and a refusal here is a fact about the hardware
+ * rather than something that went wrong. The range is the whole of a pool,
+ * which is what the mapping granularity wants.
+ */
+static int export_dma_buf(void *state, void *address, uint64_t bytes, int *fd) {
+    ShadowSpillCudaBackend *backend = state;
+    if (fd == NULL || bytes == 0U || bytes > SIZE_MAX ||
+        activate_context(backend) != 0) {
+        return -1;
+    }
+#if CUDA_VERSION >= 11070
+    int supported = 0;
+    if (cuDeviceGetAttribute(
+            &supported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, backend->device
+        ) != CUDA_SUCCESS || !supported) {
+        return -1;
+    }
+    int handle = -1;
+    if (cuMemGetHandleForAddressRange(
+            &handle, (CUdeviceptr)(uintptr_t)address, (size_t)bytes,
+            CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0U
+        ) != CUDA_SUCCESS) {
+        return -1;
+    }
+    *fd = handle;
+    return 0;
+#else
+    (void)address;
+    return -1;
+#endif
+}
+
+/*
  * Signal words, and a stream that waits on one.
  *
  * `cuStreamWaitValue64` takes a device pointer, so a signal word needs two
@@ -651,6 +688,7 @@ SHADOWSPILL_BACKEND_CUDA_API int shadowspill_backend_create(
         .free_device = free_device,
         .register_host_memory = register_host_memory,
         .unregister_host_memory = unregister_host_memory,
+        .export_dma_buf = export_dma_buf,
         .allocate_signals = allocate_signals,
         .free_signals = free_signals,
         .wait_value = wait_value,

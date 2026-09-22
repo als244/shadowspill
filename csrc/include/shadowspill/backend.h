@@ -102,6 +102,19 @@ typedef struct ShadowSpillBackend {
     int (*register_host_memory)(void *state, void *address, uint64_t bytes);
     int (*unregister_host_memory)(void *state, void *address, uint64_t bytes);
     /*
+     * Export `bytes` of this provider's memory at `address` as a dma-buf, for
+     * hardware outside the provider that must address it directly -- a NIC
+     * reaching device memory. **Optional**: NULL when the provider has no
+     * such mechanism. Answers with a file descriptor the caller owns and
+     * closes once it has used it, or fails when the device cannot export the
+     * range -- which is a fact about the hardware, not a failure of the
+     * backend, and is not recorded as one. The caller then reaches the memory
+     * some other way, or stages through memory it can reach.
+     */
+    int (*export_dma_buf)(
+        void *state, void *address, uint64_t bytes, int *fd
+    );
+    /*
      * Words a stream can wait on and a host thread can store to. Separate from
      * the pair above because a provider may require them mapped a particular
      * way for a stream to read them at all, in which case one word has two
