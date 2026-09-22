@@ -40,6 +40,8 @@ compile_commands.json
 *.nsys-rep
 *.sqlite
 /benchmarking/quickstart_reports/
+# Presentation material: launchers, experiment outputs, stores and figures.
+/presentation/
 
 # Figures, the raw data behind them, and logs. `plot_step_search()` writes
 # wherever its caller points it, so the file types are ignored rather than one
