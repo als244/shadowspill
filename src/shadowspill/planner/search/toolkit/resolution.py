@@ -449,11 +449,11 @@ def _forced_by_equal_retention(
     )
 
 
-__all__ = ["CostedAlternatives", "CostedGroup", "CostedOption"]
-
-
 __all__ = [
     "DEFAULT_RESOLUTION_OPTIONS",
+    "CostedAlternatives",
+    "CostedGroup",
+    "CostedOption",
     "Resolution",
     "ShareValue",
     "resolutions",

@@ -115,6 +115,17 @@ class RuntimeBridge:
         require_status(self.library, raw_status, operation)
 
 
+
+
+def abort_task(bridge: RuntimeBridge, task_handle: int) -> None:
+    """Close the matching admitted task scope after frontend failure."""
+
+    bridge.require(
+        bridge.library.shadowspill_pytorch_abort_task_handle(task_handle),
+        "abort admitted task",
+    )
+
+
 __all__ = [
     "EncodedTask",
     "PlanObjects",
@@ -122,6 +133,7 @@ __all__ = [
     "RuntimeExecutionError",
     "TaskMemoryEnvelope",
     "TaskPublication",
+    "abort_task",
     "actions_by_task",
     "admit_caller_acquisition",
     "admit_fixed_layout",
@@ -142,18 +154,4 @@ __all__ = [
     "seal_fixed_layout",
     "set_profiler_annotations",
     "statistics",
-]
-
-
-def abort_task(bridge: RuntimeBridge, task_handle: int) -> None:
-    """Close the matching admitted task scope after frontend failure."""
-
-    bridge.require(
-        bridge.library.shadowspill_pytorch_abort_task_handle(task_handle),
-        "abort admitted task",
-    )
-
-
-__all__ = [
-    "abort_task",
 ]

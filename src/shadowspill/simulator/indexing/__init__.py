@@ -29,15 +29,6 @@ from .results import (
 )
 from .template import IndexedSimulationTemplate, index_simulation_template
 
-__all__ = [
-    "IndexedSimulationTemplate",
-    "IntervalArrays",
-    "index_simulation_template",
-    "interval_arrays_from_result",
-    "simulate_program",
-    "simulate_template",
-]
-
 
 def simulate_program(
     program: ShadowSpillProgram,
@@ -72,6 +63,7 @@ __all__ = [
     "IndexedSimulationTemplate",
     "IntervalArrays",
     "index_simulation_template",
+    "interval_arrays_from_result",
     "simulate_program",
     "simulate_template",
 ]
