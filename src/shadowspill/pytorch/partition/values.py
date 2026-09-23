@@ -5,6 +5,15 @@ provider caches.  They therefore cannot use geometry-only synthetic values.
 This module evaluates only the producer dependency slice needed to construct
 such a value from caller-supplied roots or previously resolved control values.
 It never executes an unrelated model stage to manufacture profiling inputs.
+
+The slice runs on the planning host, so two things are put there first.
+Every value it is given: a root input may be a view into a pool, because a
+model whose state was imported has device-resident parameters and buffers,
+while a value resolved from an earlier stage is already a host snapshot, and
+a slice handed both cannot run at all. And every device the graph itself
+names, because a captured operation that creates a value carries the capture's
+device with it and would otherwise produce one on an accelerator in the
+middle of a slice that is otherwise on the host.
 """
 
 from __future__ import annotations
@@ -14,7 +23,7 @@ from collections.abc import Mapping
 import torch
 from torch._subclasses.fake_tensor import unset_fake_temporarily
 from torch.fx import Graph, GraphModule, Node
-from torch.utils._pytree import tree_flatten
+from torch.utils._pytree import tree_flatten, tree_map
 
 from shadowspill.errors import CaptureError
 
@@ -131,10 +140,27 @@ def _evaluate_control_slice(
         raise
     except BaseException as error:
         names = ", ".join(str(index) for index in output_indices)
+        # Say where every value the slice was given lives, and where the
+        # module it runs holds anything of its own. A device mismatch here
+        # is the common failure and the cause alone does not say which side
+        # of it came from where.
+        places = ", ".join(
+            f"{position}:{value.device}"
+            if isinstance(value, torch.Tensor)
+            else f"{position}:static"
+            for position, value in zip(input_positions, arguments, strict=True)
+        )
+        held = ", ".join(
+            f"{name}:{value.device}"
+            for name, value in sliced.named_buffers()
+            if isinstance(value, torch.Tensor)
+        )
         raise CaptureError(
             "failed to derive authentic integer/boolean stage output values: "
             f"producer=stage_{stage_index:04d}, outputs=[{names}], "
-            f"cause={error}"
+            f"inputs=[{places}]"
+            + (f", module holds [{held}]" if held else "")
+            + f", cause={error}"
         ) from error
 
     leaves, _ = tree_flatten(output)
@@ -195,10 +221,35 @@ def _slice_outputs(
             continue
         if node.op == "output" or node not in required:
             continue
-        environment[node] = graph.node_copy(node, lambda item: environment[item])
+        copied = graph.node_copy(node, lambda item: environment[item])
+        _run_on_the_planning_host(copied)
+        environment[node] = copied
     graph.output(tuple(environment[target] for target in targets))
     graph.lint()
     return GraphModule(module, graph), tuple(used_positions)
+
+
+def _run_on_the_planning_host(node: Node) -> None:
+    """Point one copied node's device arguments at the host.
+
+    A captured graph carries the device it was captured for in every
+    operation that creates a value: an index built with
+    ``torch.arange(..., device=...)`` names an accelerator forever after.
+    The slice runs on the host, so a node left as captured would produce a
+    device value there and index a host one with it, which is an error and
+    not a small one to read.
+
+    Every value in the slice is on the host, so rewriting them all keeps the
+    slice consistent, and what comes out is snapshotted to the host anyway.
+    """
+
+    def on_host(value: object) -> object:
+        if isinstance(value, torch.device) and value.type != "cpu":
+            return torch.device("cpu")
+        return value
+
+    node.args = tree_map(on_host, node.args)
+    node.kwargs = tree_map(on_host, node.kwargs)
 
 
 def _resolve_slice_input(
@@ -235,7 +286,7 @@ def _resolve_slice_input(
                 f"stage_{stage_index:04d} root input {source.root_input_index} "
                 "is not an authentic tensor"
             )
-        return value
+        return _on_planning_host(value)
     assert source.producer_stage_index is not None
     assert source.producer_output_index is not None
     key = (source.producer_stage_index, source.producer_output_index)
@@ -292,6 +343,20 @@ def _validate_geometry(
             f"{origin} control value {key} has geometry {actual_geometry}, "
             f"expected {expected_geometry}"
         )
+
+
+def _on_planning_host(value: torch.Tensor) -> torch.Tensor:
+    """Return this value where the producer slice runs, copying if it is not.
+
+    Values are what a control input is for, and a copy keeps them exactly,
+    so this changes where the slice reads from and nothing else. Only the
+    producer's own dependency slice is evaluated, so what moves is small.
+    """
+
+    if value.device.type == "cpu":
+        return value
+    with unset_fake_temporarily(), torch.no_grad():
+        return value.detach().to(device="cpu")
 
 
 def _snapshot(value: torch.Tensor) -> torch.Tensor:
