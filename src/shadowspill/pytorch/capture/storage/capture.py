@@ -30,7 +30,6 @@ from .symbolic import (
     _storage_root,
     _symbolic_output_values,
     _view_span_bytes,
-    make_storage_contract,
 )
 
 
@@ -99,7 +98,7 @@ def capture_task_storage_contract(
         output_views,
         catalog.roots,
     )
-    return make_storage_contract(
+    return TaskStorageContract.build(
         catalog.roots,
         output_views,
         (*schema_mutations, *mutation_bindings),

@@ -49,9 +49,28 @@ class ProfileStore:
             self.policy.refuse_miss("profile", key.digest)
             return None
         self._validate_payload(path, key, payload)
-        measurement = TaskMeasurement.from_dict(payload.get("measurement"))
+        measurement = self._decode(payload)
+        if measurement is None:
+            self.policy.refuse_miss("profile", key.digest)
+            return None
         self._record(key, path, "read")
         return measurement
+
+    @staticmethod
+    def _decode(payload: dict[str, object]) -> TaskMeasurement | None:
+        """The measurement one entry holds, or nothing this build can read.
+
+        The envelope says which build wrote the entry and which key it
+        answers, and an envelope that disagrees is corruption. The record
+        inside it is a snapshot of the measurement contract that wrote it,
+        and none is migrated: a record this build cannot read is one this
+        build has not got, so it is measured again and written over.
+        """
+
+        try:
+            return TaskMeasurement.from_dict(payload.get("measurement"))
+        except ValueError:
+            return None
 
     def _read_payload(self, path: Path) -> dict[str, object] | None:
         try:
@@ -114,13 +133,23 @@ class ProfileStore:
             existing = path.read_text()
         except OSError as error:
             raise ValueError(f"profile cache entry {path} cannot be read") from error
-        if existing != encoded:
-            raise ValueError(
-                "fresh profiling differs from an existing cache entry; "
-                "use a 'refresh' store mode or a new export_bypass_key: "
-                f"{path}"
-            )
-        return True
+        if existing == encoded:
+            return True
+        if self._decode(self._parsed(existing)) is None:
+            return False
+        raise ValueError(
+            "fresh profiling differs from an existing cache entry; "
+            "use a 'refresh' store mode or a new export_bypass_key: "
+            f"{path}"
+        )
+
+    @staticmethod
+    def _parsed(encoded: str) -> dict[str, object]:
+        try:
+            value = json.loads(encoded)
+        except json.JSONDecodeError:
+            return {}
+        return value if isinstance(value, dict) else {}
 
     @staticmethod
     def _atomic_write(path: Path, digest: str, encoded: str) -> None:

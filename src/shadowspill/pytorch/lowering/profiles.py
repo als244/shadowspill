@@ -99,15 +99,35 @@ class TaskProfileCatalog:
         return tuple(self._profiles)
 
     def contract(self, artifact: GraphArtifact) -> TaskStorageContract:
-        if self._storage_contracts is None:
-            return artifact.storage_contract
-        try:
-            return self._storage_contracts[artifact.compatibility_digest]
-        except KeyError as exc:
+        """The storage this task's outputs occupy on the execution device.
+
+        A contract is written from a trace, and a trace can be wrong about
+        where a result lives. Every measurement of this task agrees on what
+        came back off the device -- residence belongs to the compiled task,
+        not to one occurrence of it -- so the contract is narrowed once,
+        here, and every reader of it sees the same one.
+        """
+
+        declared = (
+            artifact.storage_contract
+            if self._storage_contracts is None
+            else self._storage_contracts.get(artifact.compatibility_digest)
+        )
+        if declared is None:
             raise CaptureError(
                 "compiled storage contract is missing for artifact "
                 f"{artifact.compatibility_digest}"
-            ) from exc
+            )
+        return declared.without_device_storage(self._off_device_output_leaves(artifact))
+
+    def _off_device_output_leaves(self, artifact: GraphArtifact) -> frozenset[int]:
+        return frozenset(
+            leaf_index
+            for key, measurement in self._measurements.items()
+            for leaf_index in measurement.off_device_output_leaves
+            if (key[0] if isinstance(key, tuple) else key)
+            == artifact.compatibility_digest
+        )
 
     def measurement(
         self,

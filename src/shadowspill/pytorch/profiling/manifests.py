@@ -58,7 +58,9 @@ def validate_compiled_profile(
         ) from exc
     try:
         reconcile_compiled_task_layout(
-            manifest.storage_contract,
+            manifest.storage_contract.without_device_storage(
+                measurement.off_device_output_leaves
+            ),
             measurement,
             root_allocations=manifest.root_allocations,
         )

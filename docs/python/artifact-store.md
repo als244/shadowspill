@@ -255,14 +255,20 @@ schema, key_digest, measurement{
   workspace_requested_bytes, workspace_charged_bytes, workspace_extent_bytes,
   persistent_extent_bytes,
   allocation_contract, allocation_trace, allocation_path_observations,
-  output_input_bindings, representative_inputs,
+  output_input_bindings, off_device_output_leaves, representative_inputs,
   provenance, phase_timings_ns, profiling_wall_time_ns }
 ```
 
 `runtime_ns` with its samples is the measured cost the planner schedules
 against, and the three `timing_*` fields say how much to trust it. The
-allocation contract and trace are what physical admission replays, and
-`provenance` records the hardware and policy the measurement was taken under.
+allocation contract and trace are what physical admission replays,
+`off_device_output_leaves` names the outputs that came back from somewhere
+the plan does not manage, and `provenance` records the hardware and policy
+the measurement was taken under.
+
+A record this build cannot read is one it has not got: the entry is measured
+again and written over, rather than failing the run. The envelope is what has
+to be this build's, and an envelope that disagrees is corruption.
 
 **Step archive** files a `StepProgram` under the identity its build had before
 any capture, which is what lets a build with an export bypass key answer
