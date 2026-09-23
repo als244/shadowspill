@@ -241,3 +241,68 @@ def test_integer_tensor_spec_requires_authentic_caller_value() -> None:
     authentic = torch.tensor([13, 19, 32], dtype=torch.int64)
     (observed,) = representative_cpu_inputs((authentic,))
     assert observed is authentic
+
+
+def _one_input_artifact(
+    example: torch.Tensor, reference: torch.Tensor
+) -> GraphArtifact:
+    """One task taking `example`, whose authentic value is `reference`."""
+
+    class _Identity(nn.Module):
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            return value * 2
+
+    return GraphArtifact.capture(
+        kind="inference",
+        graph_module=torch.fx.symbolic_trace(_Identity()),
+        example_inputs=(example,),
+        input_provenance=(
+            TaskInputProvenance(
+                TaskInputRole.PARAMETER,
+                "value",
+                representative_value=reference,
+            ),
+        ),
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_authentic_value_is_written_by_index_not_by_layout() -> None:
+    """What a value is worth is the producer's; how it is laid out is not."""
+
+    values = torch.arange(12, dtype=torch.float32).view(3, 4)
+    declared = torch.empty_strided((3, 4), (1, 3), dtype=torch.float32)
+    assert declared.stride() != values.stride()
+
+    artifact = _one_input_artifact(declared, values)
+    (actual,) = materialize_representative_inputs(artifact, device_ordinal=0).arguments
+
+    assert isinstance(actual, torch.Tensor)
+    assert actual.stride() == declared.stride()
+    torch.testing.assert_close(actual.cpu(), values, rtol=0, atol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_authentic_value_of_another_shape_is_refused() -> None:
+    artifact = _one_input_artifact(
+        torch.empty(3, 4, dtype=torch.float32),
+        torch.arange(8, dtype=torch.float32).view(2, 4),
+    )
+    with pytest.raises(CaptureError, match="authentic value is not this input's"):
+        materialize_representative_inputs(artifact, device_ordinal=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_a_broadcast_reader_takes_one_value_per_location() -> None:
+    """A stride of zero is one location, so one of the values survives it."""
+
+    values = torch.tensor([[5.0, 6.0, 7.0]]).expand(4, 3).contiguous()
+    declared = torch.empty(1, 3, dtype=torch.float32).expand(4, 3)
+    assert declared.stride() == (0, 1)
+
+    artifact = _one_input_artifact(declared, values)
+    (actual,) = materialize_representative_inputs(artifact, device_ordinal=0).arguments
+
+    assert isinstance(actual, torch.Tensor)
+    assert actual.stride() == (0, 1)
+    torch.testing.assert_close(actual.cpu(), values, rtol=0, atol=0)

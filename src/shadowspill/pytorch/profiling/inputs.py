@@ -20,6 +20,8 @@ from shadowspill.task.inputs import (
     TaskInputRole,
 )
 
+from .geometry import distinct_locations
+
 _REFERENCE_ROLES = frozenset(
     {
         TaskInputRole.PARAMETER,
@@ -113,7 +115,15 @@ def _materialize_alias_group(
     if any(not isinstance(value, torch.Tensor) for value in examples):
         raise CaptureError("compiled task tensor contract contains a static argument")
     tensors = tuple(value for value in examples if isinstance(value, torch.Tensor))
-    target_device = _representative_device(tensors, device_ordinal)
+    observed = {
+        artifact.input_provenance[position].produced_device_type
+        for position in positions
+    }
+    target_device = _representative_device(
+        tensors,
+        device_ordinal,
+        observed=observed.pop() if len(observed) == 1 else None,
+    )
     owner = torch.empty(
         max(_minimum_storage_bytes(value) for value in tensors),
         dtype=torch.uint8,
@@ -165,11 +175,26 @@ def _materialize_alias_group(
 def _representative_device(
     tensors: tuple[torch.Tensor, ...],
     device_ordinal: int,
+    *,
+    observed: str | None = None,
 ) -> torch.device:
+    """Where one alias group's representative values belong.
+
+    The contract says where a traced value lived, and a contract is traced
+    over fake ones. A fake kernel may disagree with the real kernel about
+    which of an operator's results are device memory and which are host
+    scalars describing it, and a host scalar materialized as device memory
+    is read by the next kernel as an address rather than a number.
+
+    So an observation from a producer that really ran outranks the trace.
+    Nothing here knows which operators those are: what is used is where the
+    value was seen to be.
+    """
+
     device_types = {value.device.type for value in tensors}
     if len(device_types) != 1:
         raise CaptureError("one task input alias group spans multiple devices")
-    device_type = next(iter(device_types))
+    device_type = observed or next(iter(device_types))
     return (
         accelerator_device(device_ordinal)
         if device_type == DEVICE_TYPE
@@ -213,7 +238,16 @@ def _populate_value(
             position=position,
             provenance=provenance,
         )
-        target.copy_(reference, non_blocking=False)
+        try:
+            _write_reference(target, reference)
+        except BaseException as exc:
+            raise _value_error(
+                structural_contract_key,
+                position,
+                provenance,
+                target,
+                f"authentic value could not be written: {exc}",
+            ) from exc
         return (
             "authentic_control"
             if provenance.role is TaskInputRole.CONTROL
@@ -244,11 +278,11 @@ def _populate_value(
     try:
         if target.is_floating_point():
             generator = torch.Generator(device=target.device).manual_seed(seed)
-            target.normal_(mean=0.0, std=1.0, generator=generator)
+            distinct_locations(target).normal_(mean=0.0, std=1.0, generator=generator)
             return "deterministic_normal_0_1"
         if target.is_complex():
             generator = torch.Generator(device=target.device).manual_seed(seed)
-            torch.view_as_real(target).normal_(
+            torch.view_as_real(distinct_locations(target)).normal_(
                 mean=0.0,
                 std=1.0,
                 generator=generator,
@@ -265,6 +299,29 @@ def _populate_value(
         ) from exc
 
 
+def _write_reference(target: torch.Tensor, reference: torch.Tensor) -> None:
+    """Write an authentic value into the geometry its consumer declares.
+
+    What a value is worth belongs to the producer that made it; how it is
+    laid out belongs to the task that reads it, and the two need not agree.
+    A copy is by index, so a difference in stride alone is nothing to
+    resolve: the value lands at the indices it had.
+
+    A stride of zero is a difference in more than layout. Where the
+    destination has one, every index along that axis is one location, so
+    only one of the source's indices along it can survive -- and a value
+    that is broadcast there is constant along it, so the first is the value.
+    Where only the source has one, the copy reads it repeatedly, which is
+    what a broadcast means.
+    """
+
+    destination = distinct_locations(target)
+    for dimension, stride in enumerate(target.stride()):
+        if stride == 0:
+            reference = reference.narrow(dimension, 0, 1)
+    destination.copy_(reference, non_blocking=False)
+
+
 def _validate_reference(
     reference: torch.Tensor,
     target: torch.Tensor,
@@ -273,17 +330,22 @@ def _validate_reference(
     position: int,
     provenance: TaskInputProvenance,
 ) -> None:
-    if (
-        tuple(reference.shape) != tuple(target.shape)
-        or tuple(reference.stride()) != tuple(target.stride())
-        or reference.dtype != target.dtype
-    ):
+    """Refuse an authentic value that is not this input's value.
+
+    Shape and dtype are what the value *is*, and a producer that returned
+    something else returned something else. Stride is how the reader wants
+    it, which is not the producer's to decide and not a disagreement.
+    """
+
+    if tuple(reference.shape) != tuple(target.shape) or reference.dtype != target.dtype:
         raise _value_error(
             structural_contract_key,
             position,
             provenance,
             target,
-            "authentic value geometry differs from the structural contract",
+            "authentic value is not this input's: "
+            f"produced {reference.dtype} {tuple(reference.shape)}, "
+            f"declared {target.dtype} {tuple(target.shape)}",
         )
 
 
