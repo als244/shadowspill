@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy
 import inspect
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -95,8 +95,18 @@ def validate_optimizer_inputs(
 def discover_optimizer_state(
     inventory: OptimizerInventory,
     optimizer: torch.optim.Optimizer,
+    *,
+    receives_gradient: Collection[str] | None = None,
 ) -> OptimizerDiscovery | OptimizerCapture:
-    """Discover lazy tensor state on a storage-free optimizer copy."""
+    """Discover lazy tensor state on a storage-free optimizer copy.
+
+    ``receives_gradient`` names the parameters a captured backward really
+    produces a gradient for. Those it leaves out are stepped by nothing, so
+    the sandbox is given no gradient for them and the optimizer declares no
+    state for them -- which is what eager training does, where a parameter
+    whose ``grad`` is ``None`` is skipped entirely. Left unset, every
+    parameter that may be trained is treated as trained.
+    """
 
     copied = _copy_discovery_sandbox(inventory, optimizer)
     if isinstance(copied, OptimizerCapture):
@@ -113,6 +123,11 @@ def discover_optimizer_state(
     _seed_discovery_gradients(
         inventory.actual_parameters,
         sandbox_parameters,
+        skipped=frozenset(
+            identity
+            for identity, name in actual_names.items()
+            if receives_gradient is not None and name not in receives_gradient
+        ),
     )
     baseline = _discovery_baseline(sandbox, sandbox_parameters, names)
     initial_sandbox = copy_optimizer(sandbox)
@@ -186,12 +201,24 @@ def _copy_discovery_sandbox(
 def _seed_discovery_gradients(
     actual_parameters: tuple[torch.nn.Parameter, ...],
     sandbox_parameters: tuple[torch.nn.Parameter, ...],
+    *,
+    skipped: frozenset[int] = frozenset(),
 ) -> None:
-    for _actual, sandbox in zip(
+    for actual, sandbox in zip(
         actual_parameters,
         sandbox_parameters,
         strict=True,
     ):
+        if id(actual) in skipped:
+            # Nothing will ever hand this one a gradient, so in the sandbox
+            # it is not a trained parameter at all. Saying that with the
+            # flag every path already consults keeps them all agreeing: the
+            # optimizer declares no state for it, the bindings carry
+            # neither it nor a gradient for it, and the check that a
+            # captured optimizer was given its gradients still means what
+            # it says for the parameters that are trained.
+            sandbox.requires_grad_(False)
+            continue
         if not sandbox.requires_grad or sandbox.grad is not None:
             continue
         # State discovery depends on gradient presence and geometry, not its

@@ -19,7 +19,10 @@ from .artifacts import (
 from .capture import capture_optimizer, current_optimizer_bindings
 from .checkpoint import restore_optimizer_checkpoint_structure
 from .opaque import materialize_opaque_optimizer, opaque_optimizer_outputs
-from .staging import training_parameter_stage_owners
+from .staging import (
+    training_parameter_stage_owners,
+    training_parameters_with_gradients,
+)
 
 __all__ = [
     "OpaqueOptimizerArtifact",
@@ -34,4 +37,5 @@ __all__ = [
     "opaque_optimizer_outputs",
     "restore_optimizer_checkpoint_structure",
     "training_parameter_stage_owners",
+    "training_parameters_with_gradients",
 ]

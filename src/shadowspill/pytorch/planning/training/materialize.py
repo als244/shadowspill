@@ -20,6 +20,7 @@ from shadowspill.pytorch.materialization.training import (
 from shadowspill.pytorch.optimizer import (
     capture_optimizer,
     training_parameter_stage_owners,
+    training_parameters_with_gradients,
 )
 from shadowspill.pytorch.state.optimizer import (
     adopt_optimizer_state_for_plan,
@@ -91,12 +92,21 @@ def materialize_training_state(
             # import below, which is the same import that adopts state the
             # caller built. Capture finds the state already present and does
             # not create any of its own.
+            # A parameter the objective never reaches receives no gradient
+            # however it is flagged, and eager training skips it. The plan
+            # has to skip it too, or it keeps state nothing steps and
+            # reserves a gradient nothing writes.
+            receives_gradient = training_parameters_with_gradients(
+                captured.partitioned,
+                dict(model.named_parameters()),
+            )
             with timer.measure("optimizer_state_install"):
                 installed_entries = install_declared_optimizer_state(
                     model,
                     optimizer,
                     runtime=runtime,
                     initialize=optimizer_state_init,
+                    receives_gradient=receives_gradient,
                 )
             optimizer_capture = capture_optimizer(
                 dict(model.named_parameters()),
@@ -105,6 +115,7 @@ def materialize_training_state(
                     captured.partitioned,
                     dict(model.named_parameters()),
                 ),
+                receives_gradient=receives_gradient,
                 store=stores.optimizer_captures,
                 timer=timer,
             )
