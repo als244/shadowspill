@@ -32,7 +32,9 @@ REQUIRED_STORAGE_OPERATIONS: Final = (
     "_acquire_storages",
     "_before_task_storages",
     "_dematerialize_storages",
+    "_before_task_boundary",
     "_after_task_storages",
+    "_after_task_boundary",
     "_transfer_acquired_storage_to_caller",
 )
 

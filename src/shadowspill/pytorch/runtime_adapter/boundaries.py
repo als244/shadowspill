@@ -18,8 +18,13 @@ import torch
 
 from shadowspill.ir import MemoryAction
 from shadowspill.runtime.abi import ObjectBinding
-from shadowspill.runtime.failures import RuntimeExecutionError
+from shadowspill.runtime.failures import (
+    RuntimeExecutionError,
+    generic_runtime_error,
+    read_allocator_failure,
+)
 from shadowspill.runtime.plan.common import plan_local_id
+from shadowspill.runtime.plan.report import describe_refused_action
 
 if TYPE_CHECKING:
     from shadowspill.pytorch.materialization.replacement import (
@@ -128,12 +133,25 @@ def submit_initial_actions(
             "initial action batch changed after admission: "
             f"task={task_number}, expected={expected}, observed={observed}"
         )
-    bridge.require(
+    status = int(
         bridge.runtime_library.shadowspill_submit_action_batch_handle(
             bridge.runtime._runtime_handle, handle, stream.cuda_stream
-        ),
-        "submit admitted initial actions",
+        )
     )
+    if status != 0:
+        # The runtime refuses one action, for the state of the object it names,
+        # and reports that object as a runtime identifier. Resolve it to its
+        # alias and read the residency back before raising: an opening fetch is
+        # the first thing a plan does, so this is where a model whose state does
+        # not match its plan says so, and a bare identifier makes that the
+        # reader's problem.
+        operation = "submit admitted initial actions"
+        diagnostics = read_allocator_failure(bridge.library, operation)
+        if diagnostics is not None:
+            raise generic_runtime_error(
+                describe_refused_action(bridge, diagnostics, runtime_actions_values)
+            )
+        raise RuntimeExecutionError(f"{operation} failed with status {status}")
 
 
 def transfer_outputs_to_caller(
@@ -199,6 +217,13 @@ def before_task_and_acquire(
 ) -> None:
     """Acquire one predecoded storage-only input vector."""
 
+    if not tensors:
+        # As at the other boundary: PyTorch takes its dispatch key from the
+        # tensors it is given, and a task that acquires no storage gives it
+        # none. A fused sampler has such a task, one that builds a value out
+        # of nothing.
+        torch.ops.shadowspill._before_task_boundary(task_handle, device_ordinal)
+        return
     torch.ops.shadowspill._before_task_storages(
         tensors,
         task_handle,
@@ -235,6 +260,14 @@ def after_task_and_update(
         raise RuntimeExecutionError(
             "task publication tensors and ordinals have different lengths"
         )
+    if not (adopted or dematerialized or replacements):
+        # PyTorch picks a dispatch key from the tensors it is given, and a
+        # task that adopts no storage and dematerializes nothing gives it
+        # none, so the boundary is published through the operator whose
+        # arguments are handles. A stage can have nothing to publish: a
+        # UNet's does.
+        torch.ops.shadowspill._after_task_boundary(task_handle, device_ordinal)
+        return
     if not replacements:
         torch.ops.shadowspill._after_task_storages(
             tuple(item.tensor for item in adopted),

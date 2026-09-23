@@ -82,6 +82,40 @@ void wait_task_allocations(int64_t task_handle, int64_t device_ordinal) {
       shadowspill_status_string(status));
 }
 
+// Open one task boundary with the runtime. The stream comes from the ordinal
+// the caller names rather than from a tensor, which is what lets a task that
+// acquires no storage open at all.
+void acquire_task_boundary(
+    int64_t task_handle,
+    int64_t device_ordinal,
+    const ShadowSpillObjectBinding** bindings,
+    uint32_t* binding_count
+) {
+  TORCH_CHECK(task_handle > 0, "task handle must be positive");
+  TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  const c10::cuda::CUDAStream stream =
+      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
+  const ShadowSpillStatus status =
+      shadowspill_pytorch_before_task_handle(
+          static_cast<uintptr_t>(task_handle),
+          reinterpret_cast<uintptr_t>(stream.stream()),
+          bindings,
+          binding_count);
+  TORCH_CHECK(
+      status == SHADOWSPILL_STATUS_OK,
+      "task acquisition failed: ",
+      shadowspill_status_string(status));
+}
+
+void before_task_boundary(int64_t task_handle, int64_t device_ordinal) {
+  const ShadowSpillObjectBinding* bindings = nullptr;
+  uint32_t binding_count = 0U;
+  acquire_task_boundary(task_handle, device_ordinal, &bindings, &binding_count);
+  TORCH_CHECK(
+      binding_count == 0U,
+      "task with no storage to acquire was given bindings");
+}
+
 void before_task_storages(
     at::TensorList tensors,
     int64_t task_handle,
@@ -99,18 +133,7 @@ void before_task_storages(
 
   const ShadowSpillObjectBinding* bindings = nullptr;
   uint32_t binding_count = 0U;
-  const c10::cuda::CUDAStream stream =
-      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
-  const ShadowSpillStatus status =
-      shadowspill_pytorch_before_task_handle(
-          static_cast<uintptr_t>(task_handle),
-          reinterpret_cast<uintptr_t>(stream.stream()),
-          &bindings,
-          &binding_count);
-  TORCH_CHECK(
-      status == SHADOWSPILL_STATUS_OK,
-      "task acquisition failed: ",
-      shadowspill_status_string(status));
+  acquire_task_boundary(task_handle, device_ordinal, &bindings, &binding_count);
   TORCH_CHECK(
       binding_count == count && (count == 0U || bindings != nullptr),
       "task acquisition returned the wrong binding count");
@@ -328,6 +351,28 @@ void rebind_replacement_views(
   }
 }
 
+// Publish one task boundary to the runtime. The stream comes from the ordinal
+// the caller names rather than from a tensor, which is what lets a boundary
+// with no storage to adopt be published at all.
+void publish_task_boundary(int64_t task_handle, int64_t device_ordinal) {
+  TORCH_CHECK(task_handle > 0, "task handle must be positive");
+  TORCH_CHECK(device_ordinal >= 0, "device ordinal must be nonnegative");
+  const c10::cuda::CUDAStream stream =
+      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
+  const ShadowSpillStatus status =
+      shadowspill_pytorch_after_task_handle(
+          static_cast<uintptr_t>(task_handle),
+          reinterpret_cast<uintptr_t>(stream.stream()));
+  TORCH_CHECK(
+      status == SHADOWSPILL_STATUS_OK,
+      "task publication failed: ",
+      shadowspill_status_string(status));
+}
+
+void after_task_boundary(int64_t task_handle, int64_t device_ordinal) {
+  publish_task_boundary(task_handle, device_ordinal);
+}
+
 void after_task_storages(
     at::TensorList adopted_tensors,
     at::IntArrayRef publication_ordinals,
@@ -347,16 +392,7 @@ void after_task_storages(
       publication_ordinals,
       task_handle);
   dematerialize_storages(dematerialized_tensors);
-  const c10::cuda::CUDAStream stream =
-      c10::cuda::getCurrentCUDAStream(static_cast<c10::DeviceIndex>(device_ordinal));
-  const ShadowSpillStatus status =
-      shadowspill_pytorch_after_task_handle(
-          static_cast<uintptr_t>(task_handle),
-          reinterpret_cast<uintptr_t>(stream.stream()));
-  TORCH_CHECK(
-      status == SHADOWSPILL_STATUS_OK,
-      "task publication failed: ",
-      shadowspill_status_string(status));
+  publish_task_boundary(task_handle, device_ordinal);
 }
 
 at::Tensor transfer_acquired_storage_to_caller(
@@ -421,6 +457,15 @@ TORCH_LIBRARY_FRAGMENT(shadowspill, library) {
   library.def(
       "_wait_task_allocations(int task_handle, int device_ordinal) -> ()",
       TORCH_FN(wait_task_allocations));
+  // Its arguments are handles, so it is defined with its implementation and
+  // dispatches without a tensor to pick a key from. A task that adopts no
+  // storage and dematerializes nothing reaches its boundary this way.
+  library.def(
+      "_before_task_boundary(int task_handle, int device_ordinal) -> ()",
+      TORCH_FN(before_task_boundary));
+  library.def(
+      "_after_task_boundary(int task_handle, int device_ordinal) -> ()",
+      TORCH_FN(after_task_boundary));
   library.def("_dematerialize_storages(Tensor(a!)[] tensors) -> ()");
   library.def(
       "_after_task_storages(Tensor(a!)[] adopted_tensors, int[] "
