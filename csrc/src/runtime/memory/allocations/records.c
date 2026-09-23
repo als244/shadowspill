@@ -37,12 +37,26 @@ ShadowSpillMemoryLease *shadowspill_memory_pool_acquire_lease_record_locked(
         pool->free_lease_records = record->free_record_next;
         record->free_record_next = NULL;
         --pool->lease_record_available;
-    } else if (pool->lease_records_sealed) {
-        ++pool->lease_record_growth_rejections;
-        return NULL;
     } else {
+        /*
+         * A pool's bytes are sealed and its metadata is not, and the two are
+         * different kinds of resource.  How many bytes a plan needs is what
+         * the plan says.  How many lease records it needs is not: a record is
+         * taken per live lease and one more each time a free range is split
+         * to fit a request, so the peak follows the order allocations and
+         * releases happen in and how far the dispatcher runs ahead of the
+         * device.  Neither is visible when the reserve is computed, and a
+         * count that cannot be derived cannot be a correctness bound.
+         *
+         * So the reserve is a warm start rather than a limit.  It is sized to
+         * cover the steady state, growth happens only at a new high-water
+         * mark and converges within the first invocations, and a pool that
+         * outgrows it says so through its capacity rather than refusing a
+         * request the memory was there to serve.
+         */
         record = calloc(1U, sizeof(*record));
         if (record == NULL) {
+            ++pool->lease_record_growth_rejections;
             return NULL;
         }
         record->metadata_owner = pool;

@@ -125,8 +125,6 @@ typedef struct ShadowSpillMemoryPool {
     _Atomic uint64_t free_bytes_snapshot;
     _Atomic uint64_t largest_free_bytes_snapshot;
     uint8_t initialized;
-    uint8_t lease_records_sealed;
-    uint8_t use_records_sealed;
 } ShadowSpillMemoryPool;
 
 typedef enum ShadowSpillMemoryLeaseState {

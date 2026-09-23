@@ -386,6 +386,68 @@ static int release_frontier_uses_cold_reserved_workspace(void) {
     return failed ? -1 : 0;
 }
 
+static int metadata_grows_past_its_reserve(void) {
+    /*
+     * A pool's bytes are sealed and its metadata is not, because the two are
+     * bounded by different things. Reserving records warm-starts the free
+     * list so a steady-state step takes one without allocating; it does not
+     * cap the list, because the peak follows the order allocations and
+     * releases happen in and how far the dispatcher runs ahead, neither of
+     * which is known when the reserve is computed. Asking for more than was
+     * reserved therefore grows the pool rather than refusing a request its
+     * bytes were there to serve, and the capacity it reaches is how a caller
+     * sees that it did.
+     */
+    enum { RESERVED = 2U, TAKEN = 8U };
+    ShadowSpillMemoryPool pool = {0};
+    if (initialize_pool(&pool) != 0) {
+        return -1;
+    }
+    int failed = shadowspill_memory_pool_reserve_lease_records(
+        &pool, (uint64_t)RESERVED
+    ) != SHADOWSPILL_STATUS_OK;
+    const uint64_t reserved_capacity = pool.use_record_capacity;
+    failed = failed || reserved_capacity < (uint64_t)RESERVED;
+
+    ShadowSpillLeaseUseRecord *chain = NULL;
+    for (unsigned index = 0U; index < (unsigned)TAKEN; ++index) {
+        pthread_mutex_lock(&pool.lock);
+        ShadowSpillLeaseUseRecord *record =
+            shadowspill_memory_pool_acquire_use_record_locked(&pool);
+        pthread_mutex_unlock(&pool.lock);
+        if (record == NULL) {
+            failed = 1;
+            break;
+        }
+        record->next = chain;
+        chain = record;
+    }
+
+    /* Grown, not refused, and the growth is visible in the capacity. */
+    failed = failed || pool.use_record_capacity <= reserved_capacity ||
+        pool.use_record_capacity < (uint64_t)TAKEN ||
+        pool.use_record_in_use != (uint64_t)TAKEN ||
+        pool.use_record_growth_rejections != 0U;
+
+    pthread_mutex_lock(&pool.lock);
+    failed = failed ||
+        shadowspill_memory_pool_release_use_records_locked(&pool, chain) != 0;
+    pthread_mutex_unlock(&pool.lock);
+    failed = failed || pool.use_record_in_use != 0U;
+
+    ShadowSpillLeaseUseRecord *owned = pool.owned_use_records;
+    while (owned != NULL) {
+        ShadowSpillLeaseUseRecord *next = owned->ownership_next;
+        free(owned);
+        owned = next;
+    }
+    pool.owned_use_records = NULL;
+    pool.free_use_records = NULL;
+    destroy_pool(&pool);
+    return failed ? -1 : 0;
+}
+
+
 int main(void) {
     if (completion_without_successor_frees_and_coalesces() != 0) {
         fprintf(stderr, "completion-to-free transition failed\n");
@@ -417,6 +479,10 @@ int main(void) {
     }
     if (release_frontier_uses_cold_reserved_workspace() != 0) {
         fprintf(stderr, "release frontier workspace reuse failed\n");
+        return 1;
+    }
+    if (metadata_grows_past_its_reserve() != 0) {
+        fprintf(stderr, "pool metadata refused to grow past its reserve\n");
         return 1;
     }
     return 0;
