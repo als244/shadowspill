@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import torch
@@ -25,14 +24,13 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
     after_task_and_update,
 )
 from shadowspill.runtime.failures import (
-    RuntimeFailureDiagnostics,
     allocator_oom_error,
     generic_runtime_error,
     read_allocator_failure,
 )
 from shadowspill.runtime.plan import (
     abort_task,
-    describe_object_state,
+    describe_refused_action,
 )
 
 from ..records import (
@@ -157,7 +155,9 @@ def _publish_admitted_task(
             task=record.identity,
         )
         if diagnostics is not None:
-            diagnostics = _describe_refusal(executor, diagnostics, record)
+            diagnostics = describe_refused_action(
+                executor._bridge, diagnostics, record.actions
+            )
             if diagnostics.is_allocator_oom:
                 raise allocator_oom_error(diagnostics) from error
             raise generic_runtime_error(diagnostics) from error
@@ -393,38 +393,6 @@ def _accumulate_gradients(
     if destinations:
         torch._foreach_add_(destinations, contributions)
     return tuple(adopted)
-
-
-def _describe_refusal(
-    executor: TrainingExecutor,
-    diagnostics: RuntimeFailureDiagnostics,
-    record: _ExecutionTaskRecord,
-) -> RuntimeFailureDiagnostics:
-    """Name the action a refusal was about, and the state that refused it.
-
-    The runtime refuses an action because of the state of the object it names, and
-    it reports the object. Without the action and the state beside it, the report
-    has to be decoded by hand against the plan.
-    """
-
-    if diagnostics.object_id is None:
-        return diagnostics
-    alias_id = executor._bridge.objects.alias_for_runtime_object(diagnostics.object_id)
-    refused: str | None = None
-    if alias_id is not None:
-        for action in record.actions:
-            if action.alias_group_id == alias_id:
-                refused = (
-                    f"{action.kind.name} {alias_id} (trigger {action.trigger_task_id})"
-                )
-                break
-        if refused is None:
-            refused = f"no action on {alias_id} at this task"
-    return replace(
-        diagnostics,
-        refused_action=refused,
-        object_state=describe_object_state(executor._bridge, diagnostics.object_id),
-    )
 
 
 def _dematerialization_tensors(

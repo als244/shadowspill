@@ -9,6 +9,7 @@ and what holds them; the object states are what a failed task boundary names.
 from __future__ import annotations
 
 import ctypes
+import dataclasses
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -137,6 +138,45 @@ def describe_object_state(bridge: RuntimeBridge, object_id: int) -> str | None:
     )
 
 
+def describe_refused_action(
+    bridge: RuntimeBridge,
+    diagnostics: failures.RuntimeFailureDiagnostics,
+    actions: Iterable[Any],
+) -> failures.RuntimeFailureDiagnostics:
+    """Name the action a refusal was about, and the state that refused it.
+
+    The runtime refuses an action because of the state of the object it names,
+    and it reports that object as a runtime identifier. On its own that has to
+    be decoded by hand against the plan, so this resolves the identifier to its
+    alias, finds the action among `actions` that named it, and reads back the
+    residency the refusal turned on.
+
+    `actions` is whatever the caller was submitting when it was refused. An
+    object that no action among them names is reported as such, because that is
+    itself the answer: the refusal was not about the batch it arrived with.
+    """
+
+    if diagnostics.object_id is None:
+        return dataclasses.replace(diagnostics)
+    alias_id = bridge.objects.alias_for_runtime_object(diagnostics.object_id)
+    refused: str | None = None
+    if alias_id is not None:
+        for action in actions:
+            if action.alias_group_id == alias_id:
+                refused = (
+                    f"{action.kind.name} {alias_id} "
+                    f"(trigger {action.trigger_task_id})"
+                )
+                break
+        if refused is None:
+            refused = f"no action on {alias_id} in this batch"
+    return dataclasses.replace(
+        diagnostics,
+        refused_action=refused,
+        object_state=describe_object_state(bridge, diagnostics.object_id),
+    )
+
+
 def input_failure_states(
     bridge: RuntimeBridge, alias_ids: Iterable[str]
 ) -> tuple[str, ...]:
@@ -231,6 +271,7 @@ __all__ = [
     "begin_runtime_trace",
     "describe_object_state",
     "describe_pool_occupants",
+    "describe_refused_action",
     "end_and_read_runtime_trace",
     "input_failure_states",
     "prepare_runtime_trace",
