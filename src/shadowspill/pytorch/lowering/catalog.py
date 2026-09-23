@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -17,12 +16,12 @@ from shadowspill.ir import (
     Persistence,
     SharedResidencyPolicy,
 )
+from shadowspill.pytorch.accelerator import DEVICE_TYPE
 from shadowspill.pytorch.capture.live_storage import (
     live_storage_bytes,
     live_storage_identity,
     live_view_key,
 )
-from shadowspill.pytorch.capture.storage import OutputView
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +98,22 @@ def serialized_dtype_role(
 
 
 def _view_extent_bytes(tensor: torch.Tensor) -> int:
-    """Return the compact storage span needed for one strided tensor view."""
+    """Return the device storage span one strided tensor view occupies.
 
-    if tensor.numel() == 0:
+    This is what an object is worth in bytes: the reach of its locations
+    from where it starts, which is what its alias group must hold and what
+    moving it costs. It is not how many elements it has. A broadcast reads
+    one location many times and so has more elements than bytes, and a view
+    that steps over its storage has more bytes than elements; neither is
+    the storage it occupies.
+
+    A task may also return a value it allocated somewhere the plan does not
+    manage. Such a value is still one of the task's outputs and is still
+    passed on to whatever reads it, but no device storage holds it, which
+    is what its contract says and what this has to agree with.
+    """
+
+    if tensor.numel() == 0 or tensor.device.type != DEVICE_TYPE:
         return 0
     if any(stride < 0 for stride in tensor.stride()):
         raise CaptureError("compiled task output has a negative stride")
@@ -110,21 +122,6 @@ def _view_extent_bytes(tensor: torch.Tensor) -> int:
         for extent, stride in zip(tensor.shape, tensor.stride(), strict=True)
     )
     return int((last_element + 1) * tensor.element_size())
-
-
-def _contract_view_size(view: OutputView) -> int:
-    """Return logical bytes from one already-validated symbolic output view."""
-
-    elements = math.prod(view.shape)
-    if elements == 0:
-        return 0
-    span_elements = 1 + sum(
-        (extent - 1) * stride
-        for extent, stride in zip(view.shape, view.stride, strict=True)
-    )
-    if span_elements <= 0 or view.span_bytes % span_elements:
-        raise CaptureError("task output view has an invalid symbolic byte span")
-    return elements * (view.span_bytes // span_elements)
 
 
 class ObjectCatalog:
@@ -177,115 +174,82 @@ class ObjectCatalog:
 
     def add_output_view(
         self,
-        tensor: torch.Tensor,
         *,
         alias_id: str,
         offset_bytes: int,
+        span_bytes: int,
         role: ObjectRole,
         persistence: Persistence,
+        tensor: torch.Tensor | None = None,
     ) -> str:
-        """Create one graph-declared view in an existing residency bundle."""
+        """Create one graph-declared view in an existing residency bundle.
 
-        if alias_id not in self._alias_sizes:
-            raise CaptureError("task output references an unknown alias group")
-        if offset_bytes + _view_extent_bytes(tensor) > self._alias_sizes[alias_id]:
-            raise CaptureError("task output view exceeds its declared storage")
-        self._tensor_keepalive.append(tensor)
-        return self._new_object(
-            self.key(tensor),
-            alias_id=alias_id,
-            offset_bytes=offset_bytes,
-            tensor=tensor,
-            role=role,
-            persistence=persistence,
-            index_by_tensor_key=False,
-        )
+        The contract says where the view sits and how far it reaches; a
+        tensor, where one was returned, is kept alive because the storage
+        it names has to outlive the call that produced it.
+        """
 
-    def add_contract_output_view(
-        self,
-        view: OutputView,
-        *,
-        alias_id: str,
-        offset_bytes: int,
-        role: ObjectRole,
-        persistence: Persistence,
-    ) -> str:
-        """Create an output object directly from the offline task contract."""
-
-        if alias_id not in self._alias_sizes:
-            raise CaptureError("task output references an unknown alias group")
-        if offset_bytes + view.span_bytes > self._alias_sizes[alias_id]:
-            raise CaptureError("task output view exceeds its declared storage")
+        self._require_within(alias_id, offset_bytes, span_bytes, "task output")
+        if tensor is not None:
+            self._tensor_keepalive.append(tensor)
         return self._new_record(
             alias_id=alias_id,
             offset_bytes=offset_bytes,
-            size_bytes=_contract_view_size(view),
+            size_bytes=span_bytes,
             role=role,
             persistence=persistence,
         )
 
     def validate_canonical_output_view(
         self,
-        tensor: torch.Tensor,
         object_id: str,
         *,
         alias_id: str,
         offset_bytes: int,
+        span_bytes: int,
+        tensor: torch.Tensor | None = None,
     ) -> None:
-        """Validate a compiled output against an existing canonical object.
+        """Validate one compiled output against an existing canonical object.
 
         This deliberately never merges alias groups.  Compiled input reuse is
         a task-local lease handoff, not proof that two cross-task objects share
         one permanent residency bundle.
         """
 
-        self._tensor_keepalive.append(tensor)
+        if tensor is not None:
+            self._tensor_keepalive.append(tensor)
         record = self._record(object_id)
         if record.alias_group_id != alias_id:
             raise CaptureError("canonical output changed its alias group")
-        if offset_bytes + _view_extent_bytes(tensor) > self._alias_sizes[alias_id]:
-            raise CaptureError("canonical output exceeds its declared storage")
+        self._require_within(alias_id, offset_bytes, span_bytes, "canonical output")
         if record.offset_bytes != offset_bytes:
             raise CaptureError(
                 "canonical output changed its storage offset: "
                 f"object={object_id}, expected={record.offset_bytes}, "
                 f"actual={offset_bytes}"
             )
-        size_bytes = int(tensor.numel()) * tensor.element_size()
-        if record.size_bytes != size_bytes:
+        if record.size_bytes != span_bytes:
             raise CaptureError(
-                "canonical output changed its logical byte size: "
+                "canonical output changed its byte span: "
                 f"object={object_id}, expected={record.size_bytes}, "
-                f"actual={size_bytes}"
+                f"actual={span_bytes}"
             )
 
-    def validate_canonical_contract_view(
+    def _require_within(
         self,
-        view: OutputView,
-        object_id: str,
-        *,
         alias_id: str,
         offset_bytes: int,
+        span_bytes: int,
+        what: str,
     ) -> None:
-        """Validate a contract view against an existing canonical object."""
-
-        record = self._record(object_id)
-        if record.alias_group_id != alias_id:
-            raise CaptureError("canonical output changed its alias group")
-        if offset_bytes + view.span_bytes > self._alias_sizes[alias_id]:
-            raise CaptureError("canonical output exceeds its declared storage")
-        if record.offset_bytes != offset_bytes:
+        extent = self._alias_sizes.get(alias_id)
+        if extent is None:
+            raise CaptureError(f"{what} references an unknown alias group")
+        if offset_bytes + span_bytes > extent:
             raise CaptureError(
-                "canonical output changed its storage offset: "
-                f"object={object_id}, expected={record.offset_bytes}, "
-                f"actual={offset_bytes}"
-            )
-        size_bytes = _contract_view_size(view)
-        if record.size_bytes != size_bytes:
-            raise CaptureError(
-                "canonical output changed its logical byte size: "
-                f"object={object_id}, expected={record.size_bytes}, "
-                f"actual={size_bytes}"
+                f"{what} view exceeds its declared storage: "
+                f"alias_group={alias_id}, span=[{offset_bytes}, "
+                f"{offset_bytes + span_bytes}), extent={extent}"
             )
 
     def _add(
@@ -353,17 +317,15 @@ class ObjectCatalog:
         tensor: torch.Tensor,
         role: ObjectRole,
         persistence: Persistence,
-        index_by_tensor_key: bool = True,
     ) -> str:
         object_id = self._new_record(
             alias_id=alias_id,
             offset_bytes=offset_bytes,
-            size_bytes=int(tensor.numel()) * tensor.element_size(),
+            size_bytes=_view_extent_bytes(tensor),
             role=role,
             persistence=persistence,
         )
-        if index_by_tensor_key:
-            self._object_by_key[key] = object_id
+        self._object_by_key[key] = object_id
         return object_id
 
     def _new_record(

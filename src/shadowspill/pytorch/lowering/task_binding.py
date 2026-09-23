@@ -68,20 +68,26 @@ class TaskBindingResolver:
     def bind(
         self,
         leaf_index: int,
-        tensor: torch.Tensor,
         *,
         role: ObjectRole,
         persistence: Persistence,
+        tensor: torch.Tensor | None = None,
         canonical_object_id: str | None = None,
     ) -> str:
-        """Bind one returned tensor and validate it against the contract."""
+        """Bind one output leaf to a canonical object.
+
+        The offline contract is what the object is made from. A returned
+        tensor, where the caller has one, is checked against that contract
+        and then kept alive; it never decides anything the contract has
+        already said.
+        """
 
         view = self._views.get(leaf_index)
         if view is None:
             raise CaptureError(
                 f"tensor output leaf {leaf_index} has no graph storage contract"
             )
-        if (
+        if tensor is not None and (
             tuple(tensor.shape) != view.shape
             or tuple(tensor.stride()) != view.stride
             or str(tensor.dtype) != view.dtype
@@ -92,30 +98,6 @@ class TaskBindingResolver:
             leaf_index,
             view,
             tensor=tensor,
-            role=role,
-            persistence=persistence,
-            canonical_object_id=canonical_object_id,
-        )
-
-    def bind_contract(
-        self,
-        leaf_index: int,
-        *,
-        role: ObjectRole,
-        persistence: Persistence,
-        canonical_object_id: str | None = None,
-    ) -> str:
-        """Bind one output using only its offline semantic/physical contract."""
-
-        view = self._views.get(leaf_index)
-        if view is None:
-            raise CaptureError(
-                f"tensor output leaf {leaf_index} has no graph storage contract"
-            )
-        return self._bind_view(
-            leaf_index,
-            view,
-            tensor=None,
             role=role,
             persistence=persistence,
             canonical_object_id=canonical_object_id,
@@ -271,46 +253,28 @@ class TaskBindingResolver:
         )
         existing = self._view_by_identity.get(view_identity)
         if canonical_object_id is not None:
-            object_id = canonical_object_id
-            if existing is not None and existing != object_id:
+            if existing is not None and existing != canonical_object_id:
                 raise CaptureError(
                     "one compiled output view maps to multiple canonical objects"
                 )
-            if tensor is None:
-                self._inventory.validate_canonical_contract_view(
-                    view,
-                    object_id,
-                    alias_id=alias_id,
-                    offset_bytes=offset_bytes,
-                )
-            else:
-                self._inventory.validate_canonical_output_view(
-                    tensor,
-                    object_id,
-                    alias_id=alias_id,
-                    offset_bytes=offset_bytes,
-                )
-        elif existing is not None:
-            object_id = existing
-        else:
-            object_id = (
-                self._inventory.add_contract_output_view(
-                    view,
-                    alias_id=alias_id,
-                    offset_bytes=offset_bytes,
-                    role=role,
-                    persistence=persistence,
-                )
-                if tensor is None
-                else self._inventory.add_output_view(
-                    tensor,
-                    alias_id=alias_id,
-                    offset_bytes=offset_bytes,
-                    role=role,
-                    persistence=persistence,
-                )
+            self._inventory.validate_canonical_output_view(
+                canonical_object_id,
+                alias_id=alias_id,
+                offset_bytes=offset_bytes,
+                span_bytes=view.span_bytes,
+                tensor=tensor,
             )
-        return object_id
+            return canonical_object_id
+        if existing is not None:
+            return existing
+        return self._inventory.add_output_view(
+            alias_id=alias_id,
+            offset_bytes=offset_bytes,
+            span_bytes=view.span_bytes,
+            role=role,
+            persistence=persistence,
+            tensor=tensor,
+        )
 
     @property
     def mutation_object_ids(self) -> tuple[str, ...]:
