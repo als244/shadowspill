@@ -16,7 +16,6 @@ from shadowspill.task.storage import (
 )
 
 from .capture import ExplicitMutation, capture_task_storage_contract
-from .symbolic import make_storage_contract
 
 __all__ = [
     "ExplicitMutation",
@@ -26,5 +25,4 @@ __all__ = [
     "StorageRootKind",
     "TaskStorageContract",
     "capture_task_storage_contract",
-    "make_storage_contract",
 ]

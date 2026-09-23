@@ -253,7 +253,7 @@ Measured cost and memory geometry for one executable graph contract.
 | `semantic_roots`, `semantic_output_views`, `semantic_mutations` | Its storage roots, returned views, and in-place mutations. |
 | `executable_contract_digest` | Digest of the traced, executable form. |
 | `executable_contract_capture_ns` | How long capturing that took. |
-| `executable_roots`, `executable_output_views`, `executable_mutations` | The same three, after tracing. |
+| `executable_roots`, `executable_output_views`, `executable_mutations` | The same three, after tracing and after the measurement narrowed them: an output the task was seen to produce off the execution device has no span here, because no device storage holds it. |
 | `compiled_layout_digest` | Digest of what the compiler actually laid out. |
 | `compiled_roots`, `compiled_output_views` | The observed physical allocation and binding for each. |
 | `physical_profile_wall_time_ns` | How long the profiling harness spent measuring. |

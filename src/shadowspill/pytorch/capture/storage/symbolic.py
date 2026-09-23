@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import operator
 from collections.abc import Mapping
 from typing import Any
@@ -21,31 +19,9 @@ from shadowspill.pytorch.capture.live_storage import (
 from shadowspill.pytorch.capture.schema import operator_alias_contract
 from shadowspill.task.storage import (
     MutationBinding,
-    OutputView,
-    StorageRoot,
-    TaskStorageContract,
 )
 
 from .roots import _FreshRoot, _InputRoot, _SemanticRoot
-
-
-def make_storage_contract(
-    roots: tuple[StorageRoot, ...],
-    output_views: tuple[OutputView, ...],
-    mutations: tuple[MutationBinding, ...],
-) -> TaskStorageContract:
-    identity = {
-        "roots": [root.identity() for root in roots],
-        "output_views": [view.identity() for view in output_views],
-        "mutations": [mutation.identity() for mutation in mutations],
-    }
-    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return TaskStorageContract(
-        roots=tuple(roots),
-        output_views=output_views,
-        mutations=mutations,
-        compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
-    )
 
 
 def _symbolic_output_values(

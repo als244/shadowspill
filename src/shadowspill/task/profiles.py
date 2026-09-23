@@ -20,9 +20,9 @@ from .inputs import (
     RepresentativeInputSummary,
 )
 
-# Profile artifacts are strict snapshots of the current measurement contract.
-# Bump this identity whenever serialized measurement fields or their semantics
-# change; historical profile artifacts are not migrated.
+# A profile artifact is a strict snapshot of the measurement contract that
+# wrote it, and none is migrated. A stored record this build cannot read is
+# one this build has not got, so it is measured again and written over.
 PROFILE_SCHEMA = artifact_schema("pytorch.profile")
 
 _TASK_MEASUREMENT_FIELDS = frozenset(
@@ -44,6 +44,7 @@ _TASK_MEASUREMENT_FIELDS = frozenset(
         "timing_unstable",
         "allocation_contract",
         "allocation_path_observations",
+        "off_device_output_leaves",
     }
 )
 
@@ -142,6 +143,13 @@ class TaskMeasurement:
     timing_unstable: bool = False
     allocation_contract: TaskAllocationContract | None = None
     allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = ()
+    #: Output leaves this task was observed to produce off the execution
+    #: device. A storage contract is traced, and a trace can claim device
+    #: memory for a result an operator really returns as a host scalar. No
+    #: device allocation accounts for such a leaf, so it is named here and
+    #: the contract gives up its span rather than an allocation being
+    #: looked for that was never made.
+    off_device_output_leaves: tuple[int, ...] = ()
 
     @property
     def dynamic_scratch_maximum_requested_bytes(self) -> int:
@@ -202,6 +210,12 @@ class TaskMeasurement:
             raise ValueError("profile provenance must be non-empty")
         if any(not name for name, _duration in self.phase_timings_ns):
             raise ValueError("profile phase names must be non-empty")
+        if any(index < 0 for index in self.off_device_output_leaves):
+            raise ValueError("profile host output leaves must be non-negative")
+        if len(set(self.off_device_output_leaves)) != len(
+            self.off_device_output_leaves
+        ):
+            raise ValueError("profile names one host output leaf twice")
         if not math.isfinite(self.timing_relative_mad) or self.timing_relative_mad < 0:
             raise ValueError("profile relative MAD must be finite and non-negative")
         if not math.isfinite(self.timing_half_drift) or self.timing_half_drift < 0:
@@ -332,6 +346,7 @@ class TaskMeasurement:
             "allocation_path_observations": [
                 item.to_dict() for item in self.allocation_path_observations
             ],
+            "off_device_output_leaves": list(self.off_device_output_leaves),
         }
 
     @classmethod
@@ -380,6 +395,9 @@ class TaskMeasurement:
                 allocation_path_observations=tuple(
                     TaskAllocationPathObservation.from_dict(item)
                     for item in value["allocation_path_observations"]
+                ),
+                off_device_output_leaves=tuple(
+                    int(item) for item in value["off_device_output_leaves"]
                 ),
             )
         except (KeyError, TypeError) as exc:

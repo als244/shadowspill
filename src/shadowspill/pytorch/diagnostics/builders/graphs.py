@@ -81,8 +81,10 @@ def _graph_profile(
 
 def _build_graph_profile(problem: _GraphProfileProblem) -> PlanGraphProfile:
     artifact = problem.artifact
-    contract = problem.manifest.storage_contract
     measurement = problem.measurement
+    contract = problem.manifest.storage_contract.without_device_storage(
+        measurement.off_device_output_leaves
+    )
     return PlanGraphProfile(
         direction=problem.direction,
         structural_contract_key=artifact.compatibility_digest,

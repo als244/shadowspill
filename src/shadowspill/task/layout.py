@@ -236,8 +236,20 @@ def reconcile_compiled_task_layout(
     *,
     root_allocations: tuple[ExecutableRootAllocation, ...] | None = None,
 ) -> CompiledTaskLayout:
-    """Validate physical observations without changing semantic ownership."""
+    """Validate physical observations without changing semantic ownership.
 
+    The contract is narrowed first to the storage this measurement found.
+    A contract is written from a trace, and a trace can be wrong about
+    where a result lives: an operator whose result is a host scalar is
+    traced as device memory of the scalar's size. Nothing on the device is
+    allocated for it and nothing here could find an allocation for it, so
+    the leaves the task was seen to produce off the device give up their
+    span before anything is looked for. Narrowing a contract that has
+    already given them up changes nothing, so a caller that narrowed it
+    first gets the same layout, under the same digest.
+    """
+
+    contract = contract.without_device_storage(measurement.off_device_output_leaves)
     observations = _index_physical_observations(contract, measurement, root_allocations)
     views_by_root = _views_by_root(contract)
     builder = _LayoutBuilder([], [], {})

@@ -249,7 +249,7 @@ def _task_contract_digests(
     )
     return (
         artifact.storage_contract.compatibility_digest,
-        manifest.storage_contract.compatibility_digest,
+        layout.contract_digest,
         layout.compatibility_digest,
     )
 
