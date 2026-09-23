@@ -41,9 +41,39 @@ class _ForwardNetwork(nn.Module):
         return value[:, 2:6]
 
 
-def _lowered() -> object:
+class _SkipBody(nn.Module):
+    """Two blocks, both conditioned on one value computed before them.
+
+    A diffusion transformer is shaped this way: the timestep embedding is
+    computed once and every block reads it, so the second block consumes an
+    output from two stages back and not from the stage before it. A UNet's
+    decoder does the same with its encoder's skips.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.condition = nn.Linear(8, 8, bias=False)
+        self.first = nn.Linear(8, 8, bias=False)
+        self.second = nn.Linear(8, 8, bias=False)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        shift = self.condition(value)
+        value = torch.relu(self.first(value) + shift)
+        return torch.relu(self.second(value) + shift)
+
+
+class _SkipNetwork(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.body = _SkipBody()
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return self.body(value)
+
+
+def _lowered(factory: type[nn.Module] = _ForwardNetwork) -> object:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
-    model = fake_device_model(_ForwardNetwork(), mode)
+    model = fake_device_model(factory(), mode)
     inputs = fake_device_inputs([torch.randn(2, 8)], mode)
     with mode, torch.no_grad():
         partitioned = partition_export(capture_forward(model, inputs), model)
@@ -52,6 +82,32 @@ def _lowered() -> object:
     return lower_partitioned_forward_program(
         model, partitioned, artifacts, measurements
     )
+
+
+def test_a_forward_task_names_the_producer_of_every_input() -> None:
+    """Stage order is not the whole story once a value skips a stage.
+
+    Forward stages run one after another, so naming only the previous task
+    orders them correctly, but the program says what each task waits on and
+    a consumer two stages downstream then names nobody who produces its
+    input. The IR refuses that, which is how a diffusion transformer failed
+    to plan at all.
+    """
+
+    lowered = _lowered(_SkipNetwork)
+    produced_by = {
+        object_id: task.task_id
+        for task in lowered.program.tasks
+        for object_id in task.outputs
+    }
+    skipping = [
+        (task.task_id, object_id, produced_by[object_id])
+        for task in lowered.program.tasks
+        for object_id in task.inputs
+        if object_id in produced_by and produced_by[object_id] not in task.dependencies
+    ]
+    assert not skipping
+    assert any(len(task.dependencies) > 1 for task in lowered.program.tasks)
 
 
 def _measurement(artifact: object) -> TaskMeasurement:

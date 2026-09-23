@@ -67,6 +67,12 @@ class _ForwardTaskEmitter:
         self.produced_aliases: set[str] = set()
         self.public_outputs: dict[int, str] = {}
         self.stage_outputs: list[dict[int, str]] = []
+        #: Which task produced each object, so a task can name the producers
+        #: of its inputs. Forward stages run in order, but a stage may consume
+        #: an output from further back than the one before it: a diffusion
+        #: transformer conditions every block on one timestep embedding, and
+        #: a UNet's decoder consumes its encoder's skips.
+        self.object_producers: dict[str, str] = {}
 
     def build(self) -> ForwardTaskGraph:
         for index, values in enumerate(self._stages()):
@@ -132,6 +138,8 @@ class _ForwardTaskEmitter:
         )
         task = self._task(index, profile_id, input_objects, outputs, resolver)
         self.tasks.append(task)
+        for object_id in outputs:
+            self.object_producers.setdefault(object_id, task.task_id)
         self.entrypoints.append(
             TaskEntrypoint(
                 task.task_id,
@@ -166,11 +174,21 @@ class _ForwardTaskEmitter:
         resolver: TaskBindingResolver,
     ) -> TaskSpec:
         task_id = f"task_{index:06d}"
+        # The stage before it, because forward stages run in order, and then
+        # the actual producer of every input, because the program declares
+        # what each task waits on rather than leaving it to be inferred from
+        # the chain.
+        dependencies = [] if index == 0 else [f"task_{index - 1:06d}"]
+        dependencies.extend(
+            producer
+            for object_id in inputs
+            if (producer := self.object_producers.get(object_id)) is not None
+        )
         return TaskSpec(
             task_id,
             ResourceSpec(self.device_id, ResourceKind.COMPUTE),
             profile_id,
-            dependencies=() if index == 0 else (f"task_{index - 1:06d}",),
+            dependencies=tuple(dict.fromkeys(dependencies)),
             inputs=inputs,
             outputs=outputs,
             mutations=tuple(
