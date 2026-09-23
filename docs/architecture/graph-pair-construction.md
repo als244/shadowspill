@@ -189,7 +189,27 @@ code, runtimes, workspace, allocation paths, and mutation transition bytes.
 Graph-pair construction produces semantic graph artifacts; it does not assign
 task runtimes or workspace from AOT heuristics. The profiling pipeline later
 compiles and measures the forward and backward artifact of every unique
-variant contract independently.
+variant contract.
+
+**A pair is measured as a pair.** A backward is not a task that can be
+measured on its own: its saved inputs are what its forward kept -- the
+activations it will need again, the statistics a fused operator needs to
+rebuild its result, the random state it drew from -- and they mean something
+only together. Inventing them one at a time asks a kernel to undo a forward
+pass that never happened, and a kernel entitled to assume its saved state
+came from somewhere is not obliged to survive state that did not.
+
+So the forward runs on its own representative inputs and the backward runs
+on what came out of it, with only its tangents invented. Nothing decides
+which saved values may be invented, because none of them may. One forward
+run is shared per forward contract, declared metadata and saved arity, which
+is the identity a profile already has.
+
+What a saved value is worth belongs to the forward that made it; how it is
+laid out belongs to the backward that reads it, and the two need not agree.
+The value is written into the geometry its reader declares, through the
+locations that geometry actually has, so a broadcast is filled once and read
+many times rather than written many times to one place.
 
 Compilation/profiling records, for both halves of every pair:
 

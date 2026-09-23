@@ -25,7 +25,7 @@ from ..runner import ProfilableArtifact
 from .boundary import AllocatorBoundary
 from .measurement import MeasuredTask, measure_task
 from .opaque import measure_opaque_optimizer
-from .saved_controls import resolve_graph_pair_controls
+from .saved_values import resolve_graph_pair_saved_values
 
 
 class TaskProfiler:
@@ -73,16 +73,16 @@ class TaskProfiler:
         self.probe_repetitions = allocation_probe_repetitions
         self._profiling_wall_time_ns = 0
         self._entrypoint_warmup_wall_time_ns = 0
-        self._saved_control_compilation_wall_time_ns = 0
-        self._saved_control_values: dict[
-            tuple[str, str | None, int], tuple[torch.Tensor | None, ...]
+        self._saved_value_compilation_wall_time_ns = 0
+        self._saved_values: dict[
+            tuple[str, str | None, int], tuple[tuple[torch.Tensor, str], ...]
         ] = {}
 
     @property
     def wall_times(self) -> ProfilingWallTimes:
         """What building entrypoints, measuring, and re-warming cost.
 
-        Compilation charged to the saved-control phase is already subtracted:
+        Compilation charged to the saved-value phase is already subtracted:
         that phase is timed where it runs, so counting it here would attribute
         the same nanoseconds twice.
         """
@@ -90,7 +90,7 @@ class TaskProfiler:
         return ProfilingWallTimes(
             compilation_ns=(
                 self.executables.compilation_wall_time_ns
-                - self._saved_control_compilation_wall_time_ns
+                - self._saved_value_compilation_wall_time_ns
             ),
             profiling_ns=self._profiling_wall_time_ns,
             cached_warmup_ns=self._entrypoint_warmup_wall_time_ns,
@@ -132,20 +132,20 @@ class TaskProfiler:
         self.executables.release_occurrence_values(executable)
         return measurement
 
-    def resolve_graph_pair_controls(
+    def resolve_graph_pair_saved_values(
         self,
         pair: AotGraphPair,
         metadata_digest: str | None = None,
     ) -> AotGraphPair:
-        """Populate backward saved controls from the paired forward task."""
+        """Populate a backward's saved values from the forward that made them."""
 
         compilation_before = self.executables.compilation_wall_time_ns
         try:
-            return resolve_graph_pair_controls(
-                self, pair, metadata_digest, self._saved_control_values
+            return resolve_graph_pair_saved_values(
+                self, pair, metadata_digest, self._saved_values
             )
         finally:
-            self._saved_control_compilation_wall_time_ns += (
+            self._saved_value_compilation_wall_time_ns += (
                 self.executables.compilation_wall_time_ns - compilation_before
             )
 

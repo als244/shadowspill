@@ -79,6 +79,15 @@ class TaskInputProvenance:
         repr=False,
         compare=False,
     )
+    #: Where the producer put this value when it really ran, if that is
+    #: known. A captured contract is traced over fake values, and a fake
+    #: kernel is free to disagree with the real one about which of an
+    #: operator's results are device memory and which are host scalars
+    #: describing it. Where a value really lives is observed rather than
+    #: traced, so it is carried beside the value rather than in the
+    #: contract, and excluded from identity for the same reason the value
+    #: is: it is an occurrence-local observation, not semantic evidence.
+    produced_device_type: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.role, TaskInputRole):

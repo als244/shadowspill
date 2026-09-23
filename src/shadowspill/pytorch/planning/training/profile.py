@@ -32,7 +32,7 @@ from shadowspill.runtime.bootstrap import (
 from shadowspill.runtime.failures import wait_allocator_idle
 
 from ...graph_pairs import (
-    resolve_partitioned_saved_controls,
+    resolve_partitioned_saved_values,
 )
 from ..artifacts import (
     TrainingCaptureArtifacts,
@@ -74,10 +74,10 @@ def profile_training_tasks(
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
     )
-    with timer.measure("saved_control_resolution"):
-        partitioned = resolve_partitioned_saved_controls(
+    with timer.measure("saved_value_resolution"):
+        partitioned = resolve_partitioned_saved_values(
             captured.partitioned,
-            profiler.resolve_graph_pair_controls,
+            profiler.resolve_graph_pair_saved_values,
             tuple(workload.digest for workload in captured.workloads),
         )
     resolved_capture = replace(captured, partitioned=partitioned)
