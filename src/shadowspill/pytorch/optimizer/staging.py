@@ -10,6 +10,7 @@ from shadowspill.errors import CaptureError
 from shadowspill.pytorch.graph_pairs.artifacts import (
     DifferentiatedStage,
     PartitionedTrainingCapture,
+    parameter_gradient_leaves,
 )
 
 
@@ -79,4 +80,53 @@ def _optimizer_parameter_name(spec: InputSpec, known: frozenset[str]) -> str:
     return name
 
 
-__all__ = ["training_parameter_stage_owners"]
+def training_parameters_with_gradients(
+    captures: tuple[PartitionedTrainingCapture, ...],
+    parameter_names: Collection[str],
+) -> frozenset[str]:
+    """Return the parameters a captured backward actually produces gradients for.
+
+    ``requires_grad`` says a parameter *may* be trained. It does not say the
+    objective reaches it. A weight whose only use is to produce integers --
+    an index into keys, a routing choice -- has no gradient through it
+    however it is flagged, and eager training skips such a parameter because
+    its ``grad`` is ``None``.
+
+    A plan has to know the same thing before it runs. Otherwise it reserves
+    a gradient object nobody writes, the optimizer declares state for it,
+    and the first step refuses on a fetch of an object that was never
+    produced.
+    """
+
+    known = frozenset(parameter_names)
+    trained: set[str] = set()
+    for capture in captures:
+        input_specs = tuple(
+            capture.training.exported.exported_program.graph_signature.input_specs
+        )
+        for stage in capture.stages:
+            sources = stage.example.stage.input_sources
+            for variant in stage.graph_pairs.variants:
+                for position in parameter_gradient_leaves(variant.pair):
+                    if position >= len(sources):
+                        continue
+                    source = sources[position]
+                    if source is None or source.root_input_index is None:
+                        continue
+                    try:
+                        spec = input_specs[source.root_input_index]
+                    except IndexError as exc:
+                        raise CaptureError(
+                            "stage parameter provenance refers outside the "
+                            "Export contract"
+                        ) from exc
+                    if spec.kind is not InputKind.PARAMETER:
+                        continue
+                    trained.add(_optimizer_parameter_name(spec, known))
+    return frozenset(trained)
+
+
+__all__ = [
+    "training_parameter_stage_owners",
+    "training_parameters_with_gradients",
+]

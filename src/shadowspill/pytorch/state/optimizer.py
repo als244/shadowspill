@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
 import torch
 
@@ -193,6 +193,7 @@ def install_declared_optimizer_state(
     *,
     runtime: Runtime,
     initialize: Callable[[str, torch.Tensor, torch.nn.Parameter], None] | None,
+    receives_gradient: Collection[str] | None = None,
 ) -> int:
     """Build the optimizer's declared state, and let the caller fill it.
 
@@ -219,7 +220,9 @@ def install_declared_optimizer_state(
     if persistent_state(runtime, optimizer) is not None:
         return 0
     named = dict(model.named_parameters())
-    declared = declare_optimizer_state(named, optimizer)
+    declared = declare_optimizer_state(
+        named, optimizer, receives_gradient=receives_gradient
+    )
     if not declared:
         return 0
     if initialize is None:
