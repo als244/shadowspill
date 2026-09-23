@@ -123,6 +123,7 @@ def admit_forward_plan(
                 profiled.compiled_tasks.functions,
                 captured.capture.user_output_indices,
                 captured.output_tree_spec,
+                simulation=selected.simulation,
                 shared_outputs=captured.shared_outputs,
                 fixed_layout=runtime_fixed_layout,
                 memory_envelopes=selected_admission.envelopes_by_task(),

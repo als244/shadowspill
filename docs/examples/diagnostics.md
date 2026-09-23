@@ -10,6 +10,20 @@ error from transfer drift.
 result = train_step(inputs, runtime_trace=True)
 step = result.diagnostics.result()
 report = train_step.plan_report
+```
+
+A planned forward call is traced the same way, and its handle is on the
+callable rather than on a returned result:
+
+```python
+output = run_forward(inputs, runtime_trace=True)
+step = run_forward.diagnostics.result()
+report = run_forward.plan_report
+```
+
+Everything below reads the same fields from either.
+
+```python
 
 summary = step.summary
 print("profiled task sum", summary.profiled_task_seconds)
