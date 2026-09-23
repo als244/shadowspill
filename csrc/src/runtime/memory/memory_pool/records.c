@@ -56,8 +56,6 @@ ShadowSpillStatus shadowspill_memory_pool_reserve_lease_records(
         target_range_capacity;
     if (additional_leases == 0U && additional_uses == 0U &&
         !grow_frontier && !grow_ranges) {
-        pool->lease_records_sealed = 1U;
-        pool->use_records_sealed = 1U;
         pthread_mutex_unlock(&pool->lock);
         return SHADOWSPILL_STATUS_OK;
     }
@@ -139,8 +137,6 @@ ShadowSpillStatus shadowspill_memory_pool_reserve_lease_records(
         pool->release_range_workspace = ranges;
         pool->release_range_capacity = target_range_capacity;
     }
-    pool->lease_records_sealed = 1U;
-    pool->use_records_sealed = 1U;
     pthread_mutex_unlock(&pool->lock);
     free(old_ranges);
     free(old_frontier);
@@ -158,12 +154,11 @@ ShadowSpillLeaseUseRecord *shadowspill_memory_pool_acquire_use_record_locked(
         pool->free_use_records = record->free_next;
         record->free_next = NULL;
         --pool->use_record_available;
-    } else if (pool->use_records_sealed) {
-        ++pool->use_record_growth_rejections;
-        return NULL;
     } else {
+        /* Metadata grows past its reserve for the reason lease records do. */
         record = calloc(1U, sizeof(*record));
         if (record == NULL) {
+            ++pool->use_record_growth_rejections;
             return NULL;
         }
         record->ownership_next = pool->owned_use_records;

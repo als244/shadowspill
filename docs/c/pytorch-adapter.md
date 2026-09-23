@@ -104,9 +104,11 @@ frontend copies both.
   Sealing confirms the profiled provider reserve fits the bootstrap
   reservation; it never resizes or weakens the budget. Its second argument is
   a record reserve it passes straight through to the neutral runtime, sealing
-  the event leases, the retirement records, and every pool's memory-lease
-  records in one call, so no steady-state step allocates one. A later callable
-  may grow any of those inventories again during plan adoption.
+  the event leases and the retirement records and warm-starting every pool's
+  memory-lease records in one call, so no steady-state step allocates one. A
+  later callable may grow any of those inventories again during plan
+  adoption. A pool's metadata is a warm start rather than a sealed limit; see
+  [the runtime reference](runtime.md).
 - Transfer calibration is the neutral runtime's:
   `shadowspill_runtime_calibrate_transfer_capabilities()` and
   `shadowspill_runtime_transfer_profiles()`, called with the handle.

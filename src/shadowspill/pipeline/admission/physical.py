@@ -24,7 +24,18 @@ def _runtime_record_reserve(
     fixed_lifetime_count: int,
     dynamic_lifetime_count: int,
 ) -> int:
-    """Return one safe lower bound for all sealed runtime record tables."""
+    """Return the size every runtime record table starts at.
+
+    A bound for the inventories the plan bounds -- event leases and
+    retirement records -- and a warm start for the ones it does not. How
+    many lease records a pool needs is not derivable here: one is taken per
+    live lease and one more each time a free range is split to fit a
+    request, so the peak follows the order allocations and releases happen
+    in and how far the dispatcher runs ahead of the device. A pool grows its
+    own metadata past this rather than refusing a request its bytes were
+    there to serve, so what this has to be is large enough for the steady
+    state, not large enough for every future model.
+    """
 
     event_records = max(
         256,

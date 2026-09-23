@@ -47,8 +47,16 @@ buffers, and first-failure state.
   the pool owner. The same cold call reserves the pool's prospective-release
   frontier and range workspace, so a pressure-driven destination reservation
   can test coalescing pending ranges without allocating under the pool lock.
-  Exhaustion after sealing fails closed instead of allocating process-heap
-  metadata.
+  This reserve is a warm start and not a limit. A pool's bytes are what its
+  plan says they are; how many records it needs is not, because one is taken
+  per live lease and one more each time a free range is split to fit a
+  request, so the peak follows the order allocations and releases happen in
+  and how far the dispatcher runs ahead of the device. A pool therefore grows
+  its own metadata past the reserve rather than refusing a request its bytes
+  were there to serve, and `memory_lease_record_capacity` exceeding what was
+  reserved is how a caller sees that it did. The event-lease and
+  retirement-record inventories above are bounded by the plan and still fail
+  closed.
 - `shadowspill_runtime_close()` stops new work, drains or reports failure,
   stops and joins the worker, closes lanes and pools, and is idempotent.
 - `shadowspill_runtime_destroy()` performs close and releases the handle.
