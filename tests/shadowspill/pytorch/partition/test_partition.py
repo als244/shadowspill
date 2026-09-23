@@ -13,6 +13,7 @@ from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_mod
 from shadowspill.pytorch.partition import (
     partition_export,
 )
+from shadowspill.pytorch.partition.computation import computes_nothing
 from shadowspill.task.inputs import TaskInputRole
 
 
@@ -149,6 +150,62 @@ def test_custom_partition_policy_rejects_incomplete_or_noncontiguous_labels() ->
             partition_export(exported, replica, partition=Incomplete())
         with pytest.raises(CaptureError, match="contiguous"):
             partition_export(exported, replica, partition=Noncontiguous())
+
+
+class _ViewOnlyPrologueNetwork(nn.Module):
+    """A model whose first stage only renames what it was given.
+
+    The reshape happens at model scope, before the first repeated block, so
+    the automatic policy makes a prologue of it. Published models do this:
+    CLIP's text encoder opens with a view and an alias ahead of its
+    embedding tables.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.blocks = nn.ModuleList([_PlainBlock() for _ in range(2)])
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        value = value.reshape(2, 4)
+        for block in self.blocks:
+            value = block(value)
+        return value
+
+
+class _PlainBlock(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.inner = nn.Linear(4, 4)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return torch.relu(self.inner(value))
+
+
+def test_a_stage_with_no_kernel_is_folded_into_the_stage_that_uses_it() -> None:
+    """A stage that only renames its input has nothing to compile.
+
+    Every operator in it returns a view, so a compiler asked for one kernel
+    graph exposes none and the build fails by name. Left standing it refuses
+    the whole model, which is what CLIP's text encoder did.
+    """
+
+    model = _ViewOnlyPrologueNetwork()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_device_model(model, mode)
+    inputs = fake_device_inputs([torch.randn(8)], mode)
+    with mode, torch.no_grad():
+        exported = capture_forward(replica, inputs)
+        partitioned = partition_export(exported, replica)
+        artifacts = capture_forward_stage_artifacts(partitioned)
+
+    # One stage per block. Without the fold the reshape stands as a third
+    # ahead of them, and compiling it exposes no root graph.
+    assert len(partitioned.stages) == 2
+    assert not any(
+        computes_nothing(example.stage.graph_module) for example in partitioned.stages
+    )
+    # Every stage has something for the compiler to do.
+    assert all(artifact.operator_targets for artifact in artifacts)
 
 
 def test_auto_partition_uses_outer_repeated_blocks_not_nested_experts() -> None:
