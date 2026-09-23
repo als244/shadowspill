@@ -62,18 +62,22 @@ class PlannedForward:
         adopt_plan(self._runtime, plan_handle)
         self._closed = False
         self._closing = False
+        self._trace_prepared = False
         self._profiler_annotations_active = False
+        self._pending_diagnostics: DiagnosticsHandle | None = None
         self._pending_invocation: InvocationResult[object] | None = None
 
     def __call__(
         self,
         inputs: Sequence[Any],
         *,
+        runtime_trace: bool = False,
         profiler_annotations: bool = False,
     ) -> object:
         self._require_no_pending_invocation()
         return self._invoke(
             inputs,
+            runtime_trace=runtime_trace,
             profiler_annotations=profiler_annotations,
         )
 
@@ -81,6 +85,7 @@ class PlannedForward:
         self,
         inputs: Sequence[Any],
         *,
+        runtime_trace: bool = False,
         profiler_annotations: bool = False,
     ) -> InvocationResult[object]:
         """Dispatch without synchronizing and return explicit result ownership."""
@@ -88,6 +93,7 @@ class PlannedForward:
         self._require_no_pending_invocation()
         output = self._invoke(
             inputs,
+            runtime_trace=runtime_trace,
             profiler_annotations=profiler_annotations,
         )
         try:
@@ -114,10 +120,21 @@ class PlannedForward:
         self,
         inputs: Sequence[Any],
         *,
+        runtime_trace: bool,
         profiler_annotations: bool,
     ) -> object:
         if self._closed:
             raise RuntimeError("planned forward callable is closed")
+        if (
+            self._pending_diagnostics is not None
+            and not self._pending_diagnostics.resolved
+        ):
+            raise RuntimeError(
+                "resolve the preceding traced call's diagnostics before "
+                "launching another traced call"
+            )
+        if not isinstance(runtime_trace, bool):
+            raise TypeError("runtime_trace must be a bool")
         if not isinstance(profiler_annotations, bool):
             raise TypeError("profiler_annotations must be a bool")
         if self._profiler_annotations_active and not profiler_annotations:
@@ -132,11 +149,59 @@ class PlannedForward:
         # failures.  Reject them before entering failure cleanup so releasing
         # the outstanding reference makes this callable immediately reusable.
         self._executor.validate_invocation()
+        trace_setup_ns = 0
+        if runtime_trace:
+            if not self._trace_prepared:
+                started_ns = time.perf_counter_ns()
+                self._executor.timing.prepare()
+                trace_setup_ns = time.perf_counter_ns() - started_ns
+                self._trace_prepared = True
+            self._executor.arm_runtime_trace(trace_setup_ns=trace_setup_ns)
         try:
-            return self._executor(prepared_inputs)
+            output = self._executor(prepared_inputs)
         except BaseException as error:
+            if runtime_trace:
+                try:
+                    self._executor.timing.cancel()
+                except BaseException as timing_error:
+                    error.add_note(
+                        "Failed to cancel execution timing during fault cleanup: "
+                        f"{timing_error}"
+                    )
             self._close_after_failure(error, operation="execute planned forward")
             raise
+        self._pending_diagnostics = (
+            DiagnosticsHandle(self._executor.timing.collect_step_diagnostics)
+            if runtime_trace
+            else None
+        )
+        return output
+
+    @property
+    def diagnostics(self) -> DiagnosticsHandle | None:
+        """The last traced call's diagnostics, or None if it was not traced.
+
+        A training step carries its handle on the `StepResult` it returns. A
+        forward call returns the model's own output and nothing else, so its
+        handle is here. It resolves the same way, and until it is resolved no
+        second traced call may begin.
+        """
+
+        return self._pending_diagnostics
+
+    def mark_cycle_end(self) -> None:
+        """Close the last invocation's cycle where the next one would begin."""
+        self._require_open("mark the cycle's end")
+        self._executor.timing.mark_cycle_end()
+
+    def invocation_timings(self) -> tuple[InvocationTiming, ...]:
+        """Completed invocations on the device clock, once each, oldest first."""
+        self._require_open("read invocation timings")
+        return self._executor.timing.invocation_timings()
+
+    def _require_open(self, action: str) -> None:
+        if self._closed:
+            raise RuntimeError(f"cannot {action} a closed planned forward callable")
 
     def _require_no_pending_invocation(self) -> None:
         pending = self._pending_invocation
@@ -199,12 +264,26 @@ class PlannedForward:
                     self._pending_invocation._resolve_for_close,
                 )
             )
+        if (
+            self._pending_diagnostics is not None
+            and not self._pending_diagnostics.resolved
+        ):
+            operations.append(
+                ("resolve pending diagnostics", self._pending_diagnostics.result)
+            )
         if self._profiler_annotations_active:
             operations.append(
                 ("finish profiler annotations", self._finish_profiler_annotations)
             )
         operations.extend(
             (
+                # The same order the training callable keeps, and for the same
+                # reason: giving up an object the runtime still has queued work
+                # against is refused.
+                (
+                    "wait for this plan's work to finish",
+                    lambda: wait_plan_idle(self._plan_handle),
+                ),
                 ("restore model state", self._state.restore_cpu_and_unregister),
                 ("release compiled executor", self._release_executor),
                 (
@@ -462,7 +541,8 @@ class PlannedTrainStep:
                 trace_setup_ns = time.perf_counter_ns() - started_ns
                 self._trace_prepared = True
             self._executor.timing.arm(
-                self._executor.run_in_force, trace_setup_ns=trace_setup_ns
+                self._executor.run_in_force.traced_invocation(),
+                trace_setup_ns=trace_setup_ns,
             )
         try:
             objectives, metrics = self._executor(inputs, self._step + 1)
@@ -620,6 +700,15 @@ class PlannedTrainStep:
             )
         operations.extend(
             (
+                # Nothing this plan owns can be given up while the runtime
+                # still has work queued against it: unregistering an object a
+                # queued action names is refused, and rightly. The wait used
+                # to happen inside the executor release, which is after the
+                # first thing that gives an object up.
+                (
+                    "wait for this plan's work to finish",
+                    lambda: wait_plan_idle(self._plan_handle),
+                ),
                 ("clear parameter gradients", self._clear_parameter_gradients),
                 ("release optimizer state", self._executor.optimizer_state.release),
                 ("restore model state", self._state.restore_cpu_and_unregister),
