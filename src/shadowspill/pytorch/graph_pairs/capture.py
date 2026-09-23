@@ -8,6 +8,7 @@ from torch.utils._pytree import tree_flatten
 from shadowspill.errors import CaptureError
 
 from ..partition.artifacts import PartitionedExport
+from ..partition.differentiability import differentiable_output_positions
 from .artifacts import DifferentiatedStage
 from .store import GraphPairStore
 
@@ -43,13 +44,20 @@ def _capture_training_stage(
     leaves, _ = tree_flatten(example.output)
     if not leaves or any(not isinstance(value, torch.Tensor) for value in leaves):
         raise CaptureError("training stage outputs must be tensors")
-    differentiable = tuple(
-        position
-        for position, value in enumerate(leaves)
-        if value.requires_grad and (value.is_floating_point() or value.is_complex())
-    )
+    differentiable = differentiable_output_positions(example.output)
     if not differentiable:
-        raise CaptureError(f"training {example.stage.stage_id} has no gradient output")
+        # The automatic partition folds a stage with nothing to differentiate
+        # into the stage that consumes it, so reaching this means a supplied
+        # policy drew the boundary. Say what the stage produced, because
+        # "no gradient output" on its own reads as a model that cannot train.
+        kinds = ", ".join(str(value.dtype).removeprefix("torch.") for value in leaves)
+        raise CaptureError(
+            f"training {example.stage.stage_id} has no gradient output: its "
+            f"{len(leaves)} output(s) are {kinds}, which carry no gradient. A "
+            "training stage is differentiated through its outputs, so every "
+            "stage must produce at least one continuous value that requires "
+            "one."
+        )
     roots = (
         (partitioned.user_output_indices[0],)
         if stage_index == len(partitioned.stages) - 1

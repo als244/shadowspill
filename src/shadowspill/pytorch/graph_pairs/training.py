@@ -30,6 +30,10 @@ def partition_training_capture(
         capture.capture_module,
         partition=partition,
         representative_root_inputs=representative_root_inputs,
+        # Training differentiates a stage through its outputs, so a stage
+        # that produces only control values belongs to the stage consuming
+        # it rather than standing alone.
+        fold_control_only_stages=True,
     )
     return PartitionedTrainingCapture(
         training=capture,

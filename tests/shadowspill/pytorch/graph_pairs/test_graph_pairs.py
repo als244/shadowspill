@@ -13,9 +13,13 @@ from shadowspill.pytorch.graph_pairs import (
     DifferentiatedStage,
     GraphPairStore,
     capture_training_stages,
+    partition_training_capture,
     saved_value_footprint,
 )
 from shadowspill.pytorch.partition import PartitionedExport, partition_export
+from shadowspill.pytorch.partition.differentiability import (
+    differentiable_output_positions,
+)
 
 
 class _RepeatedNetwork(nn.Module):
@@ -38,6 +42,89 @@ class _Block(nn.Module):
         result = self.experts[0](value) + self.experts[1](value)
         assert isinstance(result, torch.Tensor)
         return result
+
+
+class _IndexedEmbedding(nn.Module):
+    """Positions computed at this module's own scope, then two children.
+
+    GPT-2 is shaped this way. `torch.arange` runs in the body's forward,
+    before any child, so the automatic policy leaves it out of every anchored
+    block and makes it a prologue of its own -- a stage whose only output is
+    an index.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.values = nn.Embedding(8, 4)
+        self.positions = nn.Embedding(8, 4)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        order = torch.arange(tokens.shape[-1], device=tokens.device)
+        return self.values(tokens) + self.positions(order)
+
+
+class _ControlPrologueNetwork(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.body = _IndexedEmbedding()
+        self.head = nn.Linear(4, 4)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        return self.head(self.body(tokens))
+
+
+def _capture_control_prologue() -> tuple[FakeTensorMode, object, tuple[object, ...]]:
+    """Capture the objective, with real values for the authentic index."""
+
+    model = _ControlPrologueNetwork()
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    replica = fake_device_model(model, mode)
+    tokens = torch.tensor([1, 5, 2, 7], dtype=torch.int64)
+    target = torch.randn(4, 4)
+    inputs = fake_device_inputs([tokens, target], mode)
+
+    def objective(
+        current: nn.Module, value: torch.Tensor, expected: torch.Tensor
+    ) -> torch.Tensor:
+        return torch.nn.functional.mse_loss(current(value), expected)
+
+    with mode:
+        captured = capture_training(replica, objective, inputs)
+    # Deriving the index runs its producer slice for real, so the roots have
+    # to be real tensors of the captured geometry, as planning supplies.
+    roots = tuple(
+        torch.zeros(tuple(value.shape), dtype=value.dtype)
+        if isinstance(value, torch.Tensor)
+        else value
+        for value in captured.exported.flat_inputs
+    )
+    return mode, captured, roots
+
+
+def test_a_control_only_prologue_is_folded_into_the_stage_that_uses_it() -> None:
+    """A stage with only an index to show for itself is not a training stage.
+
+    It holds no activation, produces no gradient and receives no cotangent,
+    so a boundary there costs a task and saves nothing. Left standing it
+    refuses the whole model, which is what GPT-2 did.
+    """
+
+    mode, captured, roots = _capture_control_prologue()
+    with mode:
+        standing = partition_export(
+            captured.exported,
+            captured.capture_module,
+            representative_root_inputs=roots,
+        )
+        folded = partition_training_capture(
+            captured, representative_root_inputs=roots
+        ).partitioned
+
+    assert not differentiable_output_positions(standing.stages[0].output)
+    assert len(folded.stages) == len(standing.stages) - 1
+    assert all(differentiable_output_positions(stage.output) for stage in folded.stages)
+    with mode:
+        assert len(capture_training_stages(folded)) == len(folded.stages)
 
 
 def _capture() -> tuple[FakeTensorMode, PartitionedExport]:
