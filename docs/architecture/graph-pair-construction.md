@@ -103,6 +103,24 @@ specialize that unit seed out of the backward task's public object set. This
 specialization applies only to the terminal unit seed; intermediate
 cotangents remain real task inputs because they carry activation gradients.
 
+### What a cotangent is laid out like
+
+A backward is captured for one tangent layout and is then called directly:
+nothing stands between a plan and the compiled artifact. Left to itself the
+compiler assumes a tangent arrives strided exactly like the forward output it
+belongs to, and restrides any gradient that disagrees on the way in. A stage
+boundary has no such step -- the gradient one task publishes is the gradient
+the next task is handed -- so a layout assumed rather than known would reach
+the compiled kernel as a wrong stride.
+
+Restriding at the boundary is not available either: geometry sizes objects,
+alias extents and offsets before any task is compiled, so a copy nobody
+planned has nowhere to live. Construction therefore fixes a tangent's contract
+as the canonical memory format of the output it belongs to, which is a
+function of the graph's structure rather than of the strides one capture
+happened to produce. It is the same reasoning that keeps the compiler from
+choosing an output's geometry through shape padding.
+
 ## Structural deduplication
 
 Before AOT capture, ShadowSpill computes the stage structural contract from:
