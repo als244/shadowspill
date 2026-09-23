@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import Any, cast
@@ -156,11 +156,36 @@ def _flatten_inputs(
     return tuple(flatten(tuple(inputs), {}))
 
 
+def _functional_copy(
+    destination: torch.Tensor,
+    source: torch.Tensor,
+    non_blocking: bool = False,
+) -> torch.Tensor:
+    """What a copy into a value is worth, as a value.
+
+    Writing into a slice of a value is how several models assemble one:
+    an output is allocated and its halves written in place. Capture
+    functionalizes that write into `aten.copy`, whose result is the
+    destination's shape and type holding the source's numbers -- and
+    which has no derivative, because the operator it came from is a
+    mutation and mutations are not differentiated.
+
+    Read as a value it is differentiable, and this says how: the source,
+    shaped and typed like the destination it was written into. Without it
+    a model that assembles a tensor by writing into it captures for a
+    forward pass and refuses for a backward one.
+    """
+
+    return source.to(destination.dtype).expand_as(destination).clone()
+
+
 def _export(module: nn.Module, inputs: Sequence[Any]) -> ExportCapture:
     try:
         with quiet_leaf_spec_deprecation():
             exported = torch.export.export(module, tuple(inputs), strict=True)
-            exported = exported.run_decompositions({})
+            exported = exported.run_decompositions(
+                {torch.ops.aten.copy.default: _functional_copy}
+            )
     except BaseException as exc:
         raise CaptureError(f"strict PyTorch export failed: {exc}") from exc
     flat_inputs = _flatten_inputs(exported, inputs)
@@ -366,6 +391,22 @@ def capture_graph_pair(
     )
 
 
+# A backward graph is captured for one tangent layout and is then called
+# directly: nothing stands between a plan and the compiled artifact. The
+# compiler's own guess is that a tangent arrives strided exactly like the
+# forward output it belongs to, and its runtime wrapper restrides every
+# incoming gradient that disagrees. A stage boundary has no such wrapper --
+# the gradient one task publishes is the gradient the next task is handed --
+# so a guessed layout that the producing task does not yield is read as a
+# wrong stride inside the compiled kernel. Restriding at the boundary is not
+# open to us either: geometry sizes objects, alias extents and offsets before
+# any task is compiled, so a copy nobody planned has nowhere to live. Pinning
+# the guess off asks for the canonical memory format of the output, which is
+# a function of the graph's structure rather than of the strides one capture
+# happened to produce.
+_PINNED_TANGENT_LAYOUT: Mapping[str, Any] = {"guess_tangent_strides_as_outputs": False}
+
+
 def _execute_aot_capture(
     graph_module: torch.fx.GraphModule,
     capture_inputs: tuple[object, ...],
@@ -376,15 +417,16 @@ def _execute_aot_capture(
     root_output_positions: tuple[int, ...] | None,
 ) -> tuple[torch.Tensor, ...]:
     try:
-        compiled = _aot_callable(
-            graph_module,
-            collector,
-            recomputation=recomputation,
-            activation_memory_budget=activation_memory_budget,
-        )
-        outputs = compiled(*capture_inputs)
-        roots = _differentiable_roots(outputs, root_output_positions)
-        _trigger_backward_capture(roots, capture_inputs)
+        with functorch_config.patch(**_PINNED_TANGENT_LAYOUT):
+            compiled = _aot_callable(
+                graph_module,
+                collector,
+                recomputation=recomputation,
+                activation_memory_budget=activation_memory_budget,
+            )
+            outputs = compiled(*capture_inputs)
+            roots = _differentiable_roots(outputs, root_output_positions)
+            _trigger_backward_capture(roots, capture_inputs)
         return roots
     except CaptureError:
         raise
