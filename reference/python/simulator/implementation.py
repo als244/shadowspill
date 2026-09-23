@@ -776,9 +776,15 @@ class _Simulator:
         else:
             queue = self.pending_evict[device_id]
             active_table = self.active_evict
-        if device_id in active_table or not queue:
+        if not queue:
             return False
         pending = queue[0]
+        # The head of this lane's queue, named before the lane's state is
+        # consulted, so a copy that is eligible and waiting for a lane
+        # carrying another says so.
+        if device_id in active_table:
+            pending.stall_reasons.add("lane-busy")
+            return False
         state = self.alias_state[pending.alias_group_id]
         reuse_dependencies = self.action_reuse_dependencies.get(
             pending.action_index, ()

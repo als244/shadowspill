@@ -56,6 +56,7 @@ _STALL_REASONS = (
     (1 << 2, "source-readiness"),
     (1 << 3, "host-capacity"),
     (1 << 4, "memory-reuse"),
+    (1 << 5, "lane-busy"),
 )
 _VIOLATION_REASONS = (
     "initial-device-capacity",
@@ -66,22 +67,6 @@ _VIOLATION_REASONS = (
 )
 _VIOLATION_LOCATIONS = ("device", "spill")
 _DEFAULT_PHYSICAL_DELTA = -(1 << 63)
-
-_STALL_REASONS = (
-    (1 << 0, "input-residency"),
-    (1 << 1, "device-capacity"),
-    (1 << 2, "source-readiness"),
-    (1 << 3, "host-capacity"),
-    (1 << 4, "memory-reuse"),
-)
-_VIOLATION_REASONS = (
-    "initial-device-capacity",
-    "initial-spill-capacity",
-    "fetch-device-capacity",
-    "evict-spill-capacity",
-    "task-device-capacity",
-)
-_VIOLATION_LOCATIONS = ("device", "spill")
 
 
 @dataclass(frozen=True, slots=True)
