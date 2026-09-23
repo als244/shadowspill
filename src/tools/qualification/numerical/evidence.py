@@ -14,11 +14,11 @@ from typing import Any
 from shadowspill.schema import artifact_schema
 from shadowspill.store import StorePolicy
 
+from ..planning_phases import planning_breakdown
 from .compare import Comparison
 from .measures import (
     failure_tensor_values,
     optimizer_steps,
-    planning_breakdown,
     recomputation_savings_bytes,
 )
 from .metrics import state_digest

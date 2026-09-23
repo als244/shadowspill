@@ -25,6 +25,7 @@ from tools.qualification.runtime_evidence import (
 from workloads.common.training import LEARNING_RATE, optimizer_state_init
 from workloads.full_model import FullModelManifest
 
+from ..planning_phases import planning_breakdown, planning_summary
 from .readings import (
     _calibration_suspect,
     _phase_seconds,
@@ -166,11 +167,10 @@ def _plan_case(
         directory=output.parent / f"{output.stem}_plan_records",
     )
     print(
-        f"planned {manifest.identity}: total={planning_seconds:.3f}s "
-        f"lowering={phases.get('capture_lowering', 0.0):.3f}s "
-        f"compilation={phases.get('compiled_entrypoint_construction', 0.0):.3f}s "
-        f"profiling={phases.get('unique_stage_warmup_profiling', 0.0):.3f}s "
-        f"search={phases.get('search', 0.0):.3f}s",
+        planning_summary(
+            manifest.identity,
+            planning_breakdown(phases, planning_seconds=planning_seconds),
+        ),
         flush=True,
     )
     return _PlannedCase(
