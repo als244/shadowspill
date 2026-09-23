@@ -1,4 +1,4 @@
-"""Resolve authentic saved controls within one AOT graph pair."""
+"""Bind every saved value a backward takes from the forward that makes it."""
 
 from __future__ import annotations
 
@@ -15,17 +15,17 @@ from .artifacts import (
 )
 
 
-def resolve_partitioned_saved_controls(
+def resolve_partitioned_saved_values(
     captures: tuple[PartitionedTrainingCapture, ...],
     resolve_pair: Callable[[AotGraphPair, str | None], AotGraphPair],
     metadata_digests: tuple[str | None, ...] | None = None,
 ) -> tuple[PartitionedTrainingCapture, ...]:
-    """Bind producer-derived saved controls to every backward occurrence.
+    """Bind producer-derived saved values to every backward occurrence.
 
     ``metadata_digests`` aligns with ``captures``: producer executions are
     shared per (producer contract, declared profiling metadata), matching
     profile identity, so structurally identical microbatches reuse one
-    saved-control production while metadata-distinguished microbatches
+    saved-value production while metadata-distinguished microbatches
     keep their own.
     """
 
@@ -67,4 +67,4 @@ def _resolve_stage(
     )
 
 
-__all__ = ["resolve_partitioned_saved_controls"]
+__all__ = ["resolve_partitioned_saved_values"]
