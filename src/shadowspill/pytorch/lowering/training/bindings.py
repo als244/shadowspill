@@ -148,7 +148,7 @@ def _bind_canonical_stage_boundary(
         if not isinstance(value, torch.Tensor):
             raise CaptureError("training stage output became non-tensor")
         ids.append(
-            resolver.bind_contract(
+            resolver.bind(
                 index,
                 role=(
                     ObjectRole.OUTPUT
@@ -512,14 +512,14 @@ def _stage_forward_outputs(
                 f"{problem}: forward output {index} has no storage view"
             ) from error
         if index < public_count:
-            object_id = resolver.bind_contract(
+            object_id = resolver.bind(
                 index,
                 role=role,
                 persistence=Persistence.STEP,
                 canonical_object_id=canonical_outputs[index],
             )
         else:
-            object_id = resolver.bind_contract(
+            object_id = resolver.bind(
                 index,
                 role=role,
                 persistence=Persistence.STEP,
@@ -627,7 +627,7 @@ def _stage_backward_contributions(
             destination = cotangent_by_activation.get((position, object_id))
             if destination is None:
                 continue
-        bound = resolver.bind_contract(
+        bound = resolver.bind(
             output_index,
             role=ObjectRole.GRADIENT,
             persistence=Persistence.STEP,

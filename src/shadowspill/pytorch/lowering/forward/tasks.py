@@ -215,7 +215,7 @@ def _bind_forward_outputs(
             continue
         object_id = resolver.bind(
             position,
-            leaf,
+            tensor=leaf,
             role=tensor_value_role(
                 leaf,
                 continuous_role=ObjectRole.ACTIVATION,

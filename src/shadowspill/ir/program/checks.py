@@ -115,7 +115,10 @@ def check_objects(program: ShadowSpillProgram, ids: Identities) -> None:
         require(
             item.offset_bytes + item.size_bytes <= extent,
             path,
-            f"span exceeds alias-group extent of {extent} bytes",
+            f"object {item.object_id!r} ({item.role.value}, "
+            f"{item.persistence.value}) spans "
+            f"[{item.offset_bytes}, {item.offset_bytes + item.size_bytes}) of "
+            f"alias group {item.alias_group_id!r}, which is {extent} bytes",
         )
 
 
