@@ -10,9 +10,10 @@ from contextlib import contextmanager
 from typing import Any
 
 import torch
+from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
-from shadowspill.pytorch.accelerator import accelerator_device
+from shadowspill.pytorch.accelerator import DEVICE_TYPE, accelerator_device
 from shadowspill.runtime.abi import (
     PROFILING_SCOPE_BASE,
     AdapterStatistics,
@@ -97,17 +98,34 @@ class AllocatorBoundary:
                 f"profiling allocation scope end failed with status {status}"
             )
 
-    def invoke(self, task: Callable[[], object], stream: torch.cuda.Stream) -> None:
-        """Run the task once inside a scope and drain before returning."""
+    def invoke(
+        self, task: Callable[[], object], stream: torch.cuda.Stream
+    ) -> tuple[int, ...]:
+        """Run the task once inside a scope, and say where its outputs came back.
+
+        A compiled task is traced over fake values, and a fake kernel may
+        disagree with the real one about which of an operator's results are
+        device memory and which are host scalars describing it. Where a
+        result really lives is not something a trace can be asked for, so it
+        is read from the result: the leaves that came back off the execution
+        device are the ones no device allocation will ever account for.
+        """
 
         with self.scope(stream):
             output = task()
-            del output
+            leaves, _ = tree_flatten(output)
+            off_device = tuple(
+                index
+                for index, leaf in enumerate(leaves)
+                if isinstance(leaf, torch.Tensor) and leaf.device.type != DEVICE_TYPE
+            )
+            del output, leaves
         # Drain before the next invocation. Retirement is asynchronous, so
         # without this a warmup loop runs every iteration while the previous
         # ones still hold their ranges, leaving more outstanding than a pool
         # sized to fit the task being measured can hold.
         self.drain(stream, problem="task warmup")
+        return off_device
 
     def time_once(self, task: Callable[[], object], stream: torch.cuda.Stream) -> int:
         """Run the task once between timing events; return its duration in ns."""

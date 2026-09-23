@@ -71,9 +71,11 @@ def measure_task(
     stream = boundary.stream()
     phases: list[tuple[str, int]] = []
 
+    off_device_leaves: list[tuple[int, ...]] = []
+
     def invoke() -> None:
         with source.open() as task:
-            boundary.invoke(task, stream)
+            off_device_leaves.append(boundary.invoke(task, stream))
 
     def sample() -> int:
         with source.open() as task:
@@ -141,6 +143,7 @@ def measure_task(
         phases,
         allocation_contract,
         path_observations,
+        off_device_leaves[-1] if off_device_leaves else (),
     )
 
 
@@ -187,6 +190,7 @@ def task_measurement(
     phases: list[tuple[str, int]],
     allocation_contract: TaskAllocationContract,
     path_observations: tuple[TaskAllocationPathObservation, ...] = (),
+    off_device_output_leaves: tuple[int, ...] = (),
 ) -> TaskMeasurement:
     """Assemble the record the profile store keeps for one task.
 
@@ -221,4 +225,5 @@ def task_measurement(
         timing_unstable=timing.variability > STABLE_VARIABILITY,
         allocation_contract=allocation_contract,
         allocation_path_observations=path_observations,
+        off_device_output_leaves=off_device_output_leaves,
     )

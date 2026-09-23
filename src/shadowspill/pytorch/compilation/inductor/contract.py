@@ -12,7 +12,6 @@ from shadowspill.pytorch.capture.storage import (
     StorageRoot,
     StorageRootKind,
     TaskStorageContract,
-    make_storage_contract,
 )
 
 from .manifest import _GraphLoweringManifest
@@ -43,7 +42,7 @@ def _project_callable_contract(
         roots,
         output_views,
     )
-    return make_storage_contract(roots, output_views, mutations)
+    return TaskStorageContract.build(roots, output_views, mutations)
 
 
 def _project_visible_outputs(
@@ -130,5 +129,5 @@ def _graph_lowering_contract(
     roots, allocations = _build_executable_roots(graph, records, input_position_by_name)
     output_views = _lowered_output_views(records, roots)
     mutations = _project_mutations(semantic_contract, roots, output_views)
-    contract = make_storage_contract(roots, output_views, mutations)
+    contract = TaskStorageContract.build(roots, output_views, mutations)
     return _GraphLoweringManifest(contract, allocations)

@@ -38,6 +38,11 @@ Each compiled task has a deterministic `TaskStorageContract`:
 - fresh roots name one producer node and result index;
 - output views retain shape, stride, dtype, layout, and offset within their
   root;
+- a view's span is the reach of its locations from where it starts, which is
+  what its root must hold and what moving it costs; it is not how many
+  elements the view has. A broadcast reads one location many times and so has
+  more elements than bytes, and a view that steps over its storage has more
+  bytes than elements. An object is worth its span;
 - a mutation names the input position a task updates, and the output leaf that
   replaces it where the compiled form returns one;
 - duplicate leaves reference the same root directly.
@@ -59,6 +64,27 @@ The executable contract reconciles semantic roots with actual output
 allocations and views. Physical sizes and offsets validate that views fit and
 that distinct live roots are not accidentally merged. They do not redefine
 semantic object identity.
+
+### Storage the plan does not manage
+
+A contract is written from a trace, and a trace is taken over values that only
+describe the real ones. A describing value can be wrong about where a result
+lives: an operator whose result is a scalar allocated off the execution device
+is traced as device memory of that scalar's size. No device allocation is ever
+made for it, so none can be found for it either.
+
+Where a result lives is therefore observed rather than traced. Profiling runs
+the compiled task and records which of its output leaves came back off the
+execution device, and reconciliation narrows the contract to match before it
+looks for anything: those leaves give up their span, and a root all of whose
+leaves gave up theirs gives up its own. One root is one allocation and so is
+in one place, and a root named for some of its leaves and not others is
+refused rather than reconciled.
+
+What is left is how the rest of the system already says *this needs no
+storage*: zero bytes, no allocation, no residency, no transfer. The object
+still exists, is still produced by one task and read by another, and is still
+passed between them; only the plan's memory has nothing to do with it.
 
 ## Allocation behavior
 

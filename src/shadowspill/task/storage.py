@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
+from shadowspill.errors import CaptureError
 from shadowspill.planner.strict import (
     _integer as strict_integer,
 )
@@ -205,12 +206,105 @@ class TaskStorageContract:
         if len(self.compatibility_digest) != 64:
             raise ValueError("task storage contract digest must be SHA-256")
 
+    @staticmethod
+    def digest_of(
+        roots: tuple[StorageRoot, ...],
+        output_views: tuple[OutputView, ...],
+        mutations: tuple[MutationBinding, ...],
+    ) -> str:
+        """What these parts identify, whether or not they make a contract.
+
+        A record read from a store is answered for by its digest before
+        anything is built from it, so a record that was changed is rejected
+        as changed rather than as whatever its contents then trip over.
+        """
+
+        identity = {
+            "roots": [root.identity() for root in roots],
+            "output_views": [view.identity() for view in output_views],
+            "mutations": [mutation.identity() for mutation in mutations],
+        }
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode()).hexdigest()
+
+    @classmethod
+    def build(
+        cls,
+        roots: tuple[StorageRoot, ...],
+        output_views: tuple[OutputView, ...],
+        mutations: tuple[MutationBinding, ...],
+    ) -> TaskStorageContract:
+        """One contract over these parts, identified by what they say."""
+
+        return cls(
+            roots=roots,
+            output_views=output_views,
+            mutations=mutations,
+            compatibility_digest=cls.digest_of(roots, output_views, mutations),
+        )
+
     def identity(self) -> dict[str, object]:
         return {
             "roots": [root.identity() for root in self.roots],
             "output_views": [view.identity() for view in self.output_views],
             "mutations": [mutation.identity() for mutation in self.mutations],
         }
+
+    def without_device_storage(self, leaves: Collection[int]) -> TaskStorageContract:
+        """This contract with the named output leaves holding no storage.
+
+        A contract says what device storage a task's outputs occupy, and it
+        is written from a trace. A trace is taken over values that only
+        describe the real ones, and a describing value can be wrong about
+        where a result lives: an operator whose result is a host scalar is
+        traced as device memory of the scalar's size. Nothing on the device
+        is ever allocated for it, so no allocation can be found for it
+        either, and the contract is what has to give.
+
+        A leaf named here keeps its identity, shape and dtype -- it is still
+        one of the task's outputs, still passed from the task that produces
+        it to the task that reads it -- and gives up its span. A root whose
+        leaves are all named gives up its span with them, which is how the
+        rest of the system already says *this needs no storage*: zero bytes,
+        no allocation, no residency, no fetch.
+
+        One root is one allocation, so it is in one place. A root named for
+        some of its leaves and not others describes an allocation half on
+        the device, which no observation can mean, and is refused.
+        """
+
+        named = frozenset(leaves)
+        unknown = sorted(named - {view.leaf_index for view in self.output_views})
+        if unknown:
+            raise CaptureError(f"task storage contract has no output leaves {unknown}")
+        if not named:
+            return self
+        emptied = {
+            view.root_id for view in self.output_views if view.leaf_index in named
+        }
+        divided = sorted(
+            view.leaf_index
+            for view in self.output_views
+            if view.root_id in emptied and view.leaf_index not in named
+        )
+        if divided:
+            raise CaptureError(
+                "one task storage root is partly off the execution device: "
+                f"roots={sorted(emptied)}, leaves_left_on_device={divided}"
+            )
+        return TaskStorageContract.build(
+            tuple(
+                replace(root, minimum_span_bytes=0) if root.root_id in emptied else root
+                for root in self.roots
+            ),
+            tuple(
+                replace(view, offset_bytes=0, span_bytes=0)
+                if view.leaf_index in named
+                else view
+                for view in self.output_views
+            ),
+            self.mutations,
+        )
 
     def to_json(self) -> str:
         """Return deterministic standalone diagnostic serialization."""
@@ -253,17 +347,12 @@ class TaskStorageContract:
         mutations = tuple(
             _mutation_from_record(item) for item in _records(payload, "mutations")
         )
-        identity = {
-            "roots": [root.identity() for root in roots],
-            "output_views": [view.identity() for view in output_views],
-            "mutations": [mutation.identity() for mutation in mutations],
-        }
-        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-        calculated = hashlib.sha256(encoded.encode()).hexdigest()
         declared = payload["compatibility_digest"]
-        if not isinstance(declared, str) or declared != calculated:
+        if not isinstance(declared, str) or declared != cls.digest_of(
+            roots, output_views, mutations
+        ):
             raise ValueError("task storage contract digest does not match its contents")
-        return cls(roots, output_views, mutations, calculated)
+        return cls.build(roots, output_views, mutations)
 
     @classmethod
     def from_json(cls, encoded: str) -> TaskStorageContract:
