@@ -44,10 +44,10 @@ from ..records import (
 from ..records import (
     build_plan_run,
 )
+from ..timing import ExecutionTiming
 from .admission import admit_run
 from .boundary import execute_task
 from .optimizer_state import OptimizerState
-from .timing import ExecutionTiming
 
 
 class TrainingExecutor(AnnotatedExecutor):

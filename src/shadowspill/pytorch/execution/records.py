@@ -22,6 +22,8 @@ from shadowspill.runtime.plan import (
 from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import TaskEntrypoint
 
+from .timing import TracedInvocation, TracedTask, alias_accesses
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutionTaskRecord:
@@ -107,6 +109,33 @@ class PlanRun:
     public_by_microbatch: tuple[tuple[str, ...], ...]
     initial_task_id: int | None = None
     caller_acquisition_handle: int = 0
+
+    def traced_invocation(self) -> TracedInvocation:
+        """This run in the terms a runtime trace is taken in."""
+
+        return TracedInvocation(
+            tasks=tuple(
+                TracedTask(
+                    record.entrypoint,
+                    self.expected_task_seconds[record.task.task_id],
+                    record.execution_ordinal,
+                    record.semantic_name,
+                )
+                for record in self.execution
+            ),
+            actions=(
+                tuple(
+                    MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
+                    for alias_id in self.initial_fetches
+                )
+                + self.plan.schedule.actions
+            ),
+            simulation=self.simulation,
+            alias_accesses=alias_accesses(
+                self.plan.program,
+                ((record.execution_ordinal, record.task) for record in self.execution),
+            ),
+        )
 
 
 def build_plan_run(

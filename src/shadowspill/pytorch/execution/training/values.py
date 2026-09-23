@@ -10,7 +10,6 @@ import torch
 from shadowspill.diagnostics.timing import (
     ArmedTaskTiming as _ArmedTaskTiming,
 )
-from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.pytorch.materialization.replacement import ReplacementStorageViews
 from shadowspill.pytorch.runtime_adapter.boundaries import PublishedStorage
 
@@ -67,29 +66,6 @@ class ProcessedTaskOutputs:
         return frozenset(item.alias_id for item in self.replacements)
 
 
-def alias_accesses(
-    run: _PlanRun,
-) -> FrozenMapping[str, tuple[tuple[int, bool], ...]]:
-    """Each alias group's reads and writes by the selected tasks, in order."""
-
-    alias_of = {
-        item.object_id: item.alias_group_id for item in run.plan.program.objects
-    }
-    accesses: dict[str, list[tuple[int, bool]]] = {}
-    for record in run.execution:
-        task = record.task
-        for object_id in task.inputs:
-            accesses.setdefault(alias_of[object_id], []).append(
-                (record.execution_ordinal, False)
-            )
-        written = tuple(task.outputs) + tuple(item.object_id for item in task.mutations)
-        for object_id in written:
-            accesses.setdefault(alias_of[object_id], []).append(
-                (record.execution_ordinal, True)
-            )
-    return FrozenMapping({key: tuple(value) for key, value in accesses.items()})
-
-
 def same_tensor_view(left: torch.Tensor, right: torch.Tensor) -> bool:
     """Return whether two tensors name the same bytes with the same geometry."""
 
@@ -108,6 +84,5 @@ __all__ = [
     "ProcessedTaskOutputs",
     "TaskCall",
     "TensorLayout",
-    "alias_accesses",
     "same_tensor_view",
 ]

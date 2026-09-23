@@ -1025,12 +1025,17 @@ Both callables expose the `plan_report` attribute, `close() -> None`, context
 manager support, and a `state_dict()` / `load_state_dict()` pair that takes back
 exactly what `state_dict()` produced. `PlannedForward`'s pair is the model's own
 CPU state mapping; `PlannedTrainStep`'s is the three-key checkpoint below.
-`PlannedTrainStep` also exposes `invocation_timings()` and `mark_cycle_end()`,
-the step's time on the device clock; see [timing](timing.md).
+Both also expose `invocation_timings()` and `mark_cycle_end()`, the
+invocation's time on the device clock; see [timing](timing.md).
 
 <!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedForward.__call__ -->
 ```text
-PlannedForward(inputs, *, profiler_annotations=False) -> object
+PlannedForward(
+    inputs,
+    *,
+    runtime_trace=False,
+    profiler_annotations=False,
+) -> object
 ```
 
 <!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedForward.submit -->
@@ -1038,6 +1043,7 @@ PlannedForward(inputs, *, profiler_annotations=False) -> object
 PlannedForward.submit(
     inputs,
     *,
+    runtime_trace=False,
     profiler_annotations=False,
 ) -> InvocationResult[object]
 ```
@@ -1068,7 +1074,7 @@ PlannedTrainStep.submit(
 |---|---|---|---|
 | `inputs` | `Sequence[Any]`, or `Sequence[Sequence[Any]]` for a step | required | This invocation's values, validated against the fixed template before any input slot is written or task launched. A difference raises `InputGuardError`. |
 | `hyperparams` | `Mapping[str, float \| Sequence[float]]` \| `None` | `None` | This step's tunable values. `PlannedTrainStep` only. |
-| `runtime_trace` | `bool` | `False` | Records the structured step trace, reached through `StepResult.diagnostics`. `PlannedTrainStep` only. |
+| `runtime_trace` | `bool` | `False` | Records the structured trace of this invocation. `PlannedTrainStep` reaches it through `StepResult.diagnostics`; `PlannedForward` returns the model output and nothing else, so its handle is `PlannedForward.diagnostics`. Resolve one before the next call. |
 | `profiler_annotations` | `bool` | `False` | Emits backend profiler ranges for tasks, compiled calls, transfers and allocations. Independent of `runtime_trace`. |
 
 `PlannedForward` returns the model output; `PlannedTrainStep` returns a

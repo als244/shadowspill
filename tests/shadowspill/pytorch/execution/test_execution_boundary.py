@@ -10,15 +10,15 @@ from unittest.mock import patch
 import pytest
 
 import shadowspill.pytorch.execution.annotations as annotations_module
+import shadowspill.pytorch.execution.timing as timing_module
 import shadowspill.pytorch.execution.training.boundary as boundary_module
 import shadowspill.pytorch.execution.training.publication as publication_module
-import shadowspill.pytorch.execution.training.timing as timing_module
 from shadowspill.diagnostics.timing import InvocationTimelines
 from shadowspill.pytorch.execution.annotations import TaskBoundaryAnnotations
+from shadowspill.pytorch.execution.timing import ExecutionTiming
 from shadowspill.pytorch.execution.training import TrainingExecutor
 from shadowspill.pytorch.execution.training.boundary import execute_task
 from shadowspill.pytorch.execution.training.publication import after_task
-from shadowspill.pytorch.execution.training.timing import ExecutionTiming
 from tests.shadowspill.runtime._timing import TimingLibrary, install
 
 

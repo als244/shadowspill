@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -9,6 +10,7 @@ import torch
 import torch.nn as nn
 from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
+from shadowspill.diagnostics.timing import ArmedTaskTiming as _ArmedTaskTiming
 from shadowspill.errors import PlanningError
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 from shadowspill.ir.schedule import first_use_initial_order
@@ -42,14 +44,25 @@ from shadowspill.runtime.plan import (
     seal_fixed_layout,
 )
 from shadowspill.runtime.transfer_labels import TransferLabelIndex
+from shadowspill.simulator import SimulationResult
 
 from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
+from .timing import (
+    ExecutionTiming,
+    TracedInvocation,
+    TracedTask,
+    alias_accesses,
+)
 
 
 @dataclass(slots=True)
 class _PreparedForwardTask:
     arguments: tuple[object, ...]
     input_aliases: tuple[str, ...]
+    #: Resolved only when something records on it -- a trace, or the
+    #: always-on span this task opens or closes. Otherwise the boundary
+    #: never asks the framework which stream it is on.
+    stream: torch.cuda.Stream | None = None
     runtime_scope_open: bool = True
 
 
@@ -100,8 +113,12 @@ class _ExecutingStage(nn.Module):
         task_handle: int,
         publications: tuple[TaskPublication, ...],
         annotations: TaskBoundaryAnnotations,
+        timing: ExecutionTiming,
+        ends_compute_span: bool,
     ) -> None:
         super().__init__()
+        self._timing = timing
+        self._ends_compute_span = ends_compute_span
         self._entrypoint = entrypoint
         self._task = task
         self._function = function
@@ -127,21 +144,30 @@ class _ExecutingStage(nn.Module):
         )
 
     def forward(self, *arguments: object) -> object:
-        prepared = self._before_task(arguments)
+        task = self._timing.begin_task(self._entrypoint)
+        prepared = self._before_task(arguments, task)
         try:
-            raw_outputs = self._run_compiled_task(prepared)
-            return self._after_task(prepared, raw_outputs)
+            raw_outputs = self._run_compiled_task(prepared, task)
+            return self._after_task(prepared, raw_outputs, task)
         except BaseException:
             self._abort_task(prepared)
+            self._timing.finish_task(task)
             raise
 
-    def _before_task(self, arguments: tuple[object, ...]) -> _PreparedForwardTask:
+    def _before_task(
+        self,
+        arguments: tuple[object, ...],
+        task: _ArmedTaskTiming | None,
+    ) -> _PreparedForwardTask:
         runtime_scope_open = False
+        stream = self._task_stream(task)
         try:
             with self._annotations.range(
                 f"shadowspill.before_task.{self._trace_label}"
             ):
+                self._timing.record_task_readiness(task, stream)
                 input_tensors = self._resolve_inputs(arguments)
+                acquire_started_ns = time.perf_counter_ns() if task else 0
                 before_task_and_acquire(
                     self._bridge,
                     self._task_handle,
@@ -150,14 +176,35 @@ class _ExecutingStage(nn.Module):
                         input_tensors[index] for index in self._input_storage_indices
                     ),
                 )
+                if task is not None:
+                    task.dispatch_input_acquire_ns = (
+                        time.perf_counter_ns() - acquire_started_ns
+                    )
                 runtime_scope_open = True
                 self._publish_input_bindings(input_tensors)
-                prepared = _PreparedForwardTask(input_tensors, self._input_aliases)
+                self._timing.record_task_inputs_ready(task, stream)
+                prepared = _PreparedForwardTask(
+                    input_tensors, self._input_aliases, stream
+                )
+            self._timing.record_compute_start(stream)
+            self._timing.record_task_start(task, stream)
             return prepared
         except BaseException:
             if runtime_scope_open:
                 abort_task(self._bridge, self._task_handle)
+            self._timing.finish_task(task)
             raise
+
+    def _task_stream(self, task: _ArmedTaskTiming | None) -> torch.cuda.Stream | None:
+        """The stream to record on, asked for only when something records."""
+
+        if (
+            task is None
+            and not self._timing.span_pending
+            and (not self._ends_compute_span)
+        ):
+            return None
+        return torch.cuda.current_stream()
 
     def _resolve_inputs(
         self, arguments: tuple[object, ...]
@@ -178,19 +225,32 @@ class _ExecutingStage(nn.Module):
         for tensor, alias_id in zip(tensors, self._input_aliases, strict=True):
             self._state.object_store[alias_id] = tensor
 
-    def _run_compiled_task(self, prepared: _PreparedForwardTask) -> object:
+    def _run_compiled_task(
+        self,
+        prepared: _PreparedForwardTask,
+        task: _ArmedTaskTiming | None,
+    ) -> object:
         # Forward-only execution has no captured backward. Avoid creating
         # hidden dispatcher-autograd problems across planned task bounds.
+        if task is not None:
+            task.before_task_exit_ns = time.perf_counter_ns()
         with (
             self._annotations.range(f"shadowspill.compiled_call.{self._trace_label}"),
             torch.no_grad(),
         ):
-            return self._function(*prepared.arguments)
+            outputs = self._function(*prepared.arguments)
+        if task is not None:
+            task.after_task_enter_ns = time.perf_counter_ns()
+        self._timing.record_task_end(task, prepared.stream)
+        if self._ends_compute_span:
+            self._timing.record_compute_end(prepared.stream)
+        return outputs
 
     def _after_task(
         self,
         prepared: _PreparedForwardTask,
         output: object,
+        task: _ArmedTaskTiming | None,
     ) -> object:
         with self._annotations.range(f"shadowspill.after_task.{self._trace_label}"):
             processed = self._process_outputs(output)
@@ -207,6 +267,7 @@ class _ExecutingStage(nn.Module):
             self._publish_output_bindings(processed)
             self._forget_released_bindings(processed)
             result = processed.raw
+        self._timing.finish_task(task)
         return result
 
     def _process_outputs(self, output: object) -> _ProcessedForwardOutputs:
@@ -335,6 +396,7 @@ class ForwardExecutor(AnnotatedExecutor):
         user_output_indices: tuple[int, ...],
         output_tree_spec: TreeSpec,
         *,
+        simulation: SimulationResult,
         shared_outputs: tuple[ResolvedSharedOutput, ...] = (),
         fixed_layout: RuntimeFixedLayout,
         memory_envelopes: Mapping[str, TaskMemoryEnvelope],
@@ -348,6 +410,9 @@ class ForwardExecutor(AnnotatedExecutor):
         self._output_tree_spec = output_tree_spec
         self._shared_outputs = tuple(shared_outputs)
         self._task_annotations = TaskBoundaryAnnotations(bridge)
+        self.timing = ExecutionTiming(
+            bridge, tuple(item.task_id for item in lowered.entrypoints)
+        )
         task_by_id = {task.task_id: task for task in plan.program.tasks}
         grouped_actions = actions_by_task(plan.schedule.actions)
         self._initial_fetches = tuple(
@@ -417,11 +482,14 @@ class ForwardExecutor(AnnotatedExecutor):
                 task_handle,
                 publications,
                 self._task_annotations,
+                self.timing,
+                execution_ordinal == len(lowered.entrypoints) - 1,
             )
             self._root.set_submodule(
                 entrypoint.options.target or entrypoint.task_id, wrapper
             )
         seal_fixed_layout(bridge)
+        self._traced = self._describe_for_tracing(plan, task_by_id, simulation)
         self._public_output_aliases = tuple(
             bridge.objects.alias_for_object(object_id)
             for object_id in lowered.public_outputs
@@ -457,26 +525,93 @@ class ForwardExecutor(AnnotatedExecutor):
         self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
 
+    def _describe_for_tracing(
+        self,
+        plan: ExecutionPlan,
+        task_by_id: Mapping[str, TaskSpec],
+        simulation: SimulationResult,
+    ) -> TracedInvocation:
+        """This program in the terms a runtime trace is taken in."""
+
+        profiles = {item.profile_id: item for item in plan.program.profiles}
+        entrypoints = tuple(enumerate(self._lowered.entrypoints))
+        return TracedInvocation(
+            tasks=tuple(
+                TracedTask(
+                    entrypoint,
+                    profiles[task_by_id[entrypoint.task_id].profile_id].runtime_ns
+                    / 1e9,
+                    execution_ordinal,
+                    f"forward.stage_{execution_ordinal:04d}."
+                    f"{entrypoint.options.target}",
+                )
+                for execution_ordinal, entrypoint in entrypoints
+            ),
+            actions=(
+                tuple(
+                    self._initial_fetch_action(alias_id)
+                    for alias_id in self._initial_fetches
+                )
+                + plan.schedule.actions
+            ),
+            simulation=simulation,
+            alias_accesses=alias_accesses(
+                plan.program,
+                (
+                    (execution_ordinal, task_by_id[entrypoint.task_id])
+                    for execution_ordinal, entrypoint in entrypoints
+                ),
+            ),
+        )
+
     def release_timing(self) -> None:
-        """Give the completion marker back to the runtime."""
+        """Give every marker this executor holds back to the runtime."""
 
         self._completion.release()
+        self.timing.release()
+
+    def arm_runtime_trace(self, *, trace_setup_ns: int = 0) -> None:
+        """Bracket the next invocation, which is then traced in full."""
+
+        self.timing.arm(self._traced, trace_setup_ns=trace_setup_ns)
 
     def __call__(self, arguments: Sequence[object]) -> object:
+        timing = self.timing.armed
+        if timing is not None:
+            timing.dispatch_call_started_ns = time.perf_counter_ns()
+        stream = torch.cuda.current_stream()
+        self.timing.record_origin(stream)
+        timing_timeline = self.timing.begin_invocation(self._invocations + 1, stream)
+        if timing is not None:
+            timing.timeline = timing_timeline
+        self.timing.prior_invocation_drain_ns = 0
         if self._invocations:
             # Forward v1 is also non-cyclic: begin only after the preceding
             # invocation reaches its declared terminal residency.
+            #
+            # Timed on every invocation rather than only a traced one: the
+            # first invocation has nothing to wait for, so a trace taken on a
+            # warm first call is exactly the call that never pays this.
+            started_ns = time.perf_counter_ns()
             self._bridge.wait_until_idle()
+            self.timing.prior_invocation_drain_ns = time.perf_counter_ns() - started_ns
+            if timing is not None:
+                timing.prior_invocation_drain_ns = self.timing.prior_invocation_drain_ns
             self._release_closed_shared_output_generations()
+        if timing is not None:
+            self.timing.begin_armed_runtime_trace(timing, self._invocations + 1)
         root_arguments = self._state.refresh_inputs(arguments)
         initial_actions = tuple(
             self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
         )
+        started_ns = time.perf_counter_ns() if timing is not None else 0
         submit_initial_actions(
             self._bridge,
             initial_actions,
             task_number=self._initial_task_id,
         )
+        if timing is not None:
+            timing.dispatch_initial_actions_ns = time.perf_counter_ns() - started_ns
         flat_output = self._root(*root_arguments)
         output_leaves, _ = tree_flatten(flat_output)
         public_leaves = [output_leaves[index] for index in self._user_output_indices]
@@ -503,6 +638,8 @@ class ForwardExecutor(AnnotatedExecutor):
             self._state.object_store.pop(alias_id, None)
         self._invocations += 1
         self._active_shared_outputs = created
+        if timing is not None:
+            timing.dispatch_call_finished_ns = time.perf_counter_ns()
         return tree_unflatten(public_leaves, self._output_tree_spec)
 
     def validate_invocation(self) -> None:

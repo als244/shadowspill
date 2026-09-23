@@ -1,7 +1,7 @@
 # Timing: the step on the device clock
 
-Every invocation of a planned training callable records three timing
-events on the compute stream, without being asked: its origin before its
+Every invocation of a planned callable, training or forward, records three
+timing events on the compute stream, without being asked: its origin before its
 first task, its span start at its first task's compute, and its span end at
 its last task's compute. The step's time is the **cycle**, origin to the next
 invocation's origin, which is what a repeated step costs and what throughput
@@ -12,10 +12,11 @@ The instants are the runtime's own, on the same clock it times its transfers
 with, so a step's cycle and the transfers inside it are comparable without
 correcting between two clocks.
 
-## `PlannedTrainStep.invocation_timings()`
+## `invocation_timings()`
 
 ```text
 PlannedTrainStep.invocation_timings() -> tuple[InvocationTiming, ...]
+PlannedForward.invocation_timings() -> tuple[InvocationTiming, ...]
 ```
 
 Takes no arguments and returns one `InvocationTiming` for every invocation
@@ -27,10 +28,11 @@ draining the stream. The callable keeps the timelines of the sixteen most
 recent invocations; a loop that never reads loses the oldest completed ones
 past that, never a running one. Reading a closed callable raises.
 
-## `PlannedTrainStep.mark_cycle_end()`
+## `mark_cycle_end()`
 
 ```text
 PlannedTrainStep.mark_cycle_end() -> None
+PlannedForward.mark_cycle_end() -> None
 ```
 
 Takes no arguments and returns `None`. It closes the last invocation's cycle
