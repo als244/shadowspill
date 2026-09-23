@@ -134,7 +134,7 @@ class GraphArtifact:
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
         )
-        _normalize_input_provenance(
+        normalized = _normalize_input_provenance(
             graph_module,
             original_inputs,
             tensor_positions,
@@ -151,6 +151,15 @@ class GraphArtifact:
                 for value in tensor_arguments
             ],
             "tensor_argument_positions": tensor_positions,
+            # What each input *is* -- a parameter, an activation, a
+            # constant -- decides how it may be given a value: an
+            # activation may be invented, a parameter may not. Two graphs
+            # that are the same shape over inputs of different kinds are
+            # therefore not the same task, and an artifact captured for one
+            # does not fit the other. Leaving this out let a stored graph
+            # pair be handed to a stage it was not captured for, which was
+            # caught only where the roles disagreed loudly enough to refuse.
+            "input_roles": [item.role.value for item in normalized],
             "tensor_argument_alias_groups": [
                 alias_group_by_storage.setdefault(
                     live_storage_identity(value), len(alias_group_by_storage)
