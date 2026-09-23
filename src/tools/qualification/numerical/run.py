@@ -24,6 +24,7 @@ from workloads.common.training import LEARNING_RATE, optimizer_state_init
 
 from ..model_state import import_case_model, release_case_model
 from ..plan_record import write_plan_records
+from ..planning_phases import planning_breakdown, planning_summary
 from ..runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
@@ -235,15 +236,10 @@ def _plan_case(
         for name, nanoseconds in training.plan_report.phase_timings_ns
     }
     print(
-        f"planned {case_name}: "
-        f"total={planning_seconds:.3f}s, "
-        f"lowering_aot={phases.get('capture_lowering', 0.0):.3f}s, "
-        "compilation="
-        f"{phases.get('compiled_entrypoint_construction', 0.0):.3f}s, "
-        "profiling="
-        f"{phases.get('unique_stage_warmup_profiling', 0.0):.3f}s, "
-        "search="
-        f"{phases.get('search', 0.0):.3f}s",
+        planning_summary(
+            case_name,
+            planning_breakdown(phases, planning_seconds=planning_seconds),
+        ),
         flush=True,
     )
     _announce_prediction(case, training, runtime, case_name)
