@@ -3,7 +3,7 @@ points, composing discovery, the trace and the tasks."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, replace
 
 import torch
@@ -43,6 +43,8 @@ class DeclaredStateEntry:
 def declare_optimizer_state(
     named_parameters: Mapping[str, torch.nn.Parameter],
     optimizer: torch.optim.Optimizer,
+    *,
+    receives_gradient: Collection[str] | None = None,
 ) -> tuple[DeclaredStateEntry, ...]:
     """Ask the optimizer what state it will keep, without allocating any.
 
@@ -53,11 +55,16 @@ def declare_optimizer_state(
     matches the parameter's -- the optimizer says, and this reports.
 
     A parameter that is not trained is not given a gradient in the copy, so an
-    optimizer skips it and declares nothing for it.
+    optimizer skips it and declares nothing for it. `receives_gradient`
+    widens what "not trained" means beyond the flag: a parameter the
+    objective never reaches gets no gradient however it is flagged, and an
+    optimizer that is handed one anyway keeps state it will never step.
     """
 
     inventory = validate_optimizer_inputs(named_parameters, optimizer)
-    discovery = discover_optimizer_state(inventory, optimizer)
+    discovery = discover_optimizer_state(
+        inventory, optimizer, receives_gradient=receives_gradient
+    )
     if isinstance(discovery, OptimizerCapture):
         return ()
     declared: list[DeclaredStateEntry] = []
@@ -84,6 +91,7 @@ def capture_optimizer(
     optimizer: torch.optim.Optimizer,
     *,
     parameter_stage_owners: Mapping[str, tuple[int, ...]] | None = None,
+    receives_gradient: Collection[str] | None = None,
     store: OptimizerCaptureStore | None = None,
     timer: PhaseTimer | None = None,
 ) -> OptimizerCapture:
@@ -102,7 +110,9 @@ def capture_optimizer(
     phases = timer if timer is not None else NoTimer()
     with phases.measure("optimizer_discovery"):
         inventory = validate_optimizer_inputs(named_parameters, optimizer)
-        discovery = discover_optimizer_state(inventory, optimizer)
+        discovery = discover_optimizer_state(
+            inventory, optimizer, receives_gradient=receives_gradient
+        )
     if isinstance(discovery, OptimizerCapture):
         return discovery
     captured = capture_recurrent_optimizer(

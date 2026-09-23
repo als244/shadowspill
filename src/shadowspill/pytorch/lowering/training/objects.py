@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 import torch
 import torch.nn as nn
 from torch.export.graph_signature import InputKind
@@ -10,7 +12,11 @@ from shadowspill.errors import CaptureError
 from shadowspill.ir import ObjectRole, Persistence
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
 from shadowspill.pytorch.capture.live_storage import live_view_key
-from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTensorRole
+from shadowspill.pytorch.optimizer import (
+    OptimizerCapture,
+    OptimizerTensorRole,
+    training_parameters_with_gradients,
+)
 from shadowspill.task.slots import ObjectSlot
 
 from ...graph_pairs import PartitionedTrainingCapture
@@ -63,7 +69,14 @@ def register_training_objects(
         base_captures,
         catalog,
     )
-    gradients = _register_gradients(model, catalog, parameter_objects)
+    gradients = _register_gradients(
+        model,
+        catalog,
+        parameter_objects,
+        receives_gradient=training_parameters_with_gradients(
+            captures, dict(model.named_parameters())
+        ),
+    )
     gradient_by_parameter = {
         item.parameter_object_id: item.gradient_object_id for item in gradients
     }
@@ -127,10 +140,20 @@ def _register_gradients(
     model: nn.Module,
     inventory: ObjectCatalog,
     parameter_objects: dict[tuple[int, int], str],
+    *,
+    receives_gradient: Collection[str],
 ) -> tuple[GradientBinding, ...]:
+    """Give a gradient object to every parameter a task will write one for.
+
+    A parameter the objective never reaches gets no gradient however it is
+    flagged, and reserving one for it puts an object in the plan that no
+    task produces: the schedule then fetches it for the optimizer and the
+    runtime refuses, because nothing ever wrote it.
+    """
+
     results: list[GradientBinding] = []
     for name, parameter in model.named_parameters():
-        if not parameter.requires_grad:
+        if not parameter.requires_grad or name not in receives_gradient:
             continue
         parameter_id = parameter_objects[live_view_key(parameter)]
         # A program is lowered from fake tensors, so this describes the

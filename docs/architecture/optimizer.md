@@ -133,6 +133,15 @@ The frozen parameter itself still lives in the pool as model state, because it
 is read every step. What does not exist is state for an update that will not
 happen.
 
+The flag is not the only way a parameter goes without a gradient. What decides
+it is whether any captured backward produces one, which the graph pairs
+already say, and a parameter the objective never reaches produces none however
+it is flagged. Eager training steps over such a parameter for exactly that
+reason; the plan reads the same fact off the captured pairs, so what the
+optimizer declares and what the tasks bind agree by construction rather than
+by the caller having flagged it correctly. The alternative is a plan that
+keeps state nothing steps and reserves a gradient nothing writes.
+
 ## Values that change between steps
 
 An optimizer's update is captured once and replayed every step, so anything
