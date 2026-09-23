@@ -1,11 +1,19 @@
 """What an invocation measures about itself: the timelines every invocation
 records, the armed qualification measurement, and the runtime trace behind it.
+
+Nothing here knows which kind of program it is measuring. An executor hands
+over a :class:`TracedInvocation` -- the selected tasks in execution order, the
+memory actions the invocation performs, the simulation to compare against, and
+which task reads and writes each alias group -- and every executor that runs a
+plan can describe itself that way.
 """
 
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -24,7 +32,8 @@ from shadowspill.diagnostics.timing import (
     InvocationTimelines,
     InvocationTiming,
 )
-from shadowspill.ir import MemoryAction, MemoryActionKind
+from shadowspill.ir import MemoryAction, ShadowSpillProgram, TaskSpec
+from shadowspill.planner.diagnostics.mapping import FrozenMapping
 from shadowspill.runtime.plan import (
     RuntimeBridge,
     begin_runtime_trace,
@@ -33,12 +42,55 @@ from shadowspill.runtime.plan import (
     statistics,
 )
 from shadowspill.runtime.timing import Marker, wait_for_stream
+from shadowspill.simulator import SimulationResult
 from shadowspill.task.entrypoints import TaskEntrypoint
 
-from ..records import (
-    PlanRun as _PlanRun,
-)
-from .values import alias_accesses
+
+@dataclass(frozen=True, slots=True)
+class TracedTask:
+    """One selected task, under the three names a trace reports it by."""
+
+    entrypoint: TaskEntrypoint
+    expected_profile_seconds: float
+    execution_ordinal: int
+    semantic_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class TracedInvocation:
+    """One invocation as a trace needs to see it, whatever runs it.
+
+    The actions are every transfer the invocation performs, so the opening
+    placement's fetches belong here as well as the schedule's own: they are
+    not in the schedule, and a trace that omitted them would price the
+    invocation's first wait against nothing.
+    """
+
+    tasks: tuple[TracedTask, ...]
+    actions: tuple[MemoryAction, ...]
+    simulation: SimulationResult
+    alias_accesses: FrozenMapping[str, tuple[tuple[int, bool], ...]]
+
+
+def alias_accesses(
+    program: ShadowSpillProgram,
+    tasks: Iterable[tuple[int, TaskSpec]],
+) -> FrozenMapping[str, tuple[tuple[int, bool], ...]]:
+    """Each alias group's reads and writes by the selected tasks, in order."""
+
+    alias_of = {item.object_id: item.alias_group_id for item in program.objects}
+    accesses: dict[str, list[tuple[int, bool]]] = {}
+    for execution_ordinal, task in tasks:
+        for object_id in task.inputs:
+            accesses.setdefault(alias_of[object_id], []).append(
+                (execution_ordinal, False)
+            )
+        written = tuple(task.outputs) + tuple(item.object_id for item in task.mutations)
+        for object_id in written:
+            accesses.setdefault(alias_of[object_id], []).append(
+                (execution_ordinal, True)
+            )
+    return FrozenMapping({key: tuple(value) for key, value in accesses.items()})
 
 
 class ExecutionTiming:
@@ -133,11 +185,11 @@ class ExecutionTiming:
                 marker.release()
         self._trace_task_events = {}
 
-    def arm(self, run: _PlanRun, *, trace_setup_ns: int = 0) -> None:
+    def arm(self, traced: TracedInvocation, *, trace_setup_ns: int = 0) -> None:
         """Bracket the next invocation's numerical compute stream only.
 
         This qualification-only measurement begins after the first task's
-        readiness waits and ends after the final optimizer launch. It excludes
+        readiness waits and ends after the last task's launch. It excludes
         invocation-start staging and terminal writeback without synchronizing
         ordinary execution.
         """
@@ -156,31 +208,25 @@ class ExecutionTiming:
         if origin_event is None or start_event is None or end_event is None:
             raise AssertionError("trace event preparation did not complete")
         tasks = {
-            record.task.task_id: _ArmedTaskTiming(
-                record.entrypoint,
-                run.expected_task_seconds[record.task.task_id],
-                record.execution_ordinal,
-                record.semantic_name,
-                *self._trace_task_events[record.task.task_id],
+            item.entrypoint.task_id: _ArmedTaskTiming(
+                item.entrypoint,
+                item.expected_profile_seconds,
+                item.execution_ordinal,
+                item.semantic_name,
+                *self._trace_task_events[item.entrypoint.task_id],
             )
-            for record in run.execution
+            for item in traced.tasks
         }
         armed = _ArmedExecutionTiming(
             origin_event,
             start_event,
             end_event,
             tasks,
-            tuple(record.task.task_id for record in run.execution),
-            actions=(
-                tuple(
-                    MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
-                    for alias_id in run.initial_fetches
-                )
-                + run.plan.schedule.actions
-            ),
-            simulation=run.simulation,
+            tuple(item.entrypoint.task_id for item in traced.tasks),
+            actions=traced.actions,
+            simulation=traced.simulation,
             trace_setup_ns=trace_setup_ns,
-            alias_accesses=alias_accesses(run),
+            alias_accesses=traced.alias_accesses,
         )
         self.armed = armed
 
@@ -334,4 +380,4 @@ def _handle(stream: torch.cuda.Stream) -> int:
     return int(stream.cuda_stream)
 
 
-__all__ = ["ExecutionTiming"]
+__all__ = ["ExecutionTiming", "TracedInvocation", "TracedTask", "alias_accesses"]

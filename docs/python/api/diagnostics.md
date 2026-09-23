@@ -68,7 +68,10 @@ to the top-level `shadowspill.pytorch` import surface.
 `StepResult` contains the detached objectives, the reconstructed objective
 metrics, the completed step number, and an optional diagnostics handle.
 Tensor-valued metric leaves remain tensors; static leaves preserve their
-captured values. `StepResult.diagnostics` is `None` for an ordinary step and a
+captured values. A planned forward call is traced the same way and reaches
+its handle through `PlannedForward.diagnostics`, because a forward call
+returns the model's own output and carries nothing else back.
+`StepResult.diagnostics` is `None` for an ordinary step and a
 `DiagnosticsHandle` for a traced one; resolving the handle returns
 `StepDiagnostics` and may wait for recorded events.
 
