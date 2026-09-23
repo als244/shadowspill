@@ -404,24 +404,52 @@ class TrainingMaterializedState(MaterializedState):
             self._model_aliases.add(alias_id)
             entries.setdefault(alias_id, []).append((item.tensor, None))
         slot_maps: list[dict[int, str]] = []
+        # A constant Export lifted out of a module carries that module's
+        # device, and a model imported into the pool is on the accelerator by
+        # the time it is captured. The initial payload of a spill object must
+        # be CPU resident, so the constant is copied back once, here. Copying
+        # is keyed by the source tensor so two captures sharing one constant
+        # still share one storage.
+        cpu_copies: dict[int, torch.Tensor] = {}
         for position, (flat, root_slots) in enumerate(
             zip(self._flat_arguments, self.layout.root_input_slots, strict=True)
         ):
+            constants = self._constant_leaf_indices(position)
             slots: dict[int, str] = {}
             for slot in root_slots:
                 value = flat[slot.leaf_index]
                 if not isinstance(value, torch.Tensor):
                     raise PlanningError("training tensor slot became static")
+                if slot.leaf_index in constants and is_accelerator(value.device):
+                    value = cpu_copies.setdefault(
+                        id(value), value.detach().to(device="cpu")
+                    )
                 alias_id = self.bridge.objects.alias_for_object(slot.object_id)
                 if alias_id not in self._model_aliases:
                     self._input_aliases.add(alias_id)
-                    slots[slot.leaf_index] = alias_id
+                    # A lifted constant is published here like any other root
+                    # input, but it is the same value on every step, so it is
+                    # kept out of the map the per-step refresh walks.
+                    if slot.leaf_index not in constants:
+                        slots[slot.leaf_index] = alias_id
                     entries.setdefault(alias_id, []).append(
                         (value, (position, slot.leaf_index))
                     )
             slot_maps.append(slots)
         self._user_alias_by_position = tuple(slot_maps)
         return entries
+
+    def _constant_leaf_indices(self, position: int) -> frozenset[int]:
+        """Return the root positions Export lifted as constants."""
+
+        specs = self.captures[
+            position
+        ].exported.exported_program.graph_signature.input_specs
+        return frozenset(
+            index
+            for index, spec in enumerate(specs)
+            if spec.kind is InputKind.CONSTANT_TENSOR
+        )
 
     def _materialize_initial_alias(
         self,

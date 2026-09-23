@@ -41,7 +41,7 @@ def lower_training_storage_layout(
     device_id = execution_device_id(device_ordinal)
     inventory = ObjectCatalog(device_id=device_id)
     registrations, _parameter_objects = register_model_state(model, inventory)
-    root_slots, _initial_inputs = _register_microbatch_inputs(captures, inventory)
+    root_slots, _initial_inputs = _register_supplied_inputs(captures, inventory)
     return TrainingStorageLayout(
         publish_storage_program(inventory, device_ordinal=device_ordinal),
         registrations,
@@ -59,7 +59,7 @@ def register_training_objects(
     catalog = ObjectCatalog(device_id=device_id)
     registrations, parameter_objects = register_model_state(model, catalog)
     base_captures = tuple(item.training for item in captures)
-    root_slots, _initial_inputs = _register_microbatch_inputs(
+    root_slots, _initial_inputs = _register_supplied_inputs(
         base_captures,
         catalog,
     )
@@ -83,7 +83,17 @@ def register_training_objects(
     )
 
 
-def _register_microbatch_inputs(
+#: The root inputs something outside the step has to supply, as Export
+#: classifies them. Parameters and buffers are model state and are registered
+#: from the module. Everything else a task consumes and no task produces has
+#: to arrive from outside, and a lifted constant is one of those: Export lifts
+#: a tensor a module built inline into the signature, where it belongs to
+#: neither `named_parameters` nor `named_buffers`. Forward lowering registers
+#: root inputs by excluding model state, which covers the same set.
+_SUPPLIED_INPUT_KINDS = frozenset({InputKind.USER_INPUT, InputKind.CONSTANT_TENSOR})
+
+
+def _register_supplied_inputs(
     captures: tuple[TrainingObjectiveCapture, ...], inventory: ObjectCatalog
 ) -> tuple[tuple[tuple[ObjectSlot, ...], ...], set[str]]:
     positions: list[tuple[ObjectSlot, ...]] = []
@@ -97,7 +107,7 @@ def _register_microbatch_inputs(
                 strict=True,
             )
         ):
-            if spec.kind is not InputKind.USER_INPUT or not isinstance(
+            if spec.kind not in _SUPPLIED_INPUT_KINDS or not isinstance(
                 value, torch.Tensor
             ):
                 continue
