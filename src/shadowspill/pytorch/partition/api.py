@@ -10,7 +10,8 @@ from torch.fx import Node
 
 from shadowspill.pytorch.capture.aot import ExportCapture
 
-from .artifacts import PartitionedExport
+from .artifacts import PartitionedExport, StageRecord
+from .computation import computes_nothing
 from .differentiability import differentiable_output_positions
 from .policy import PartitionSpec, resolve_partition_assignments
 from .provenance import build_stage_examples, root_input_provenance
@@ -35,7 +36,9 @@ def partition_export(
 
     ``fold_control_only_stages`` is what a training caller asks for, because
     a stage is differentiated through its outputs and one that produces only
-    control values has no backward to take.
+    control values has no backward to take. A stage with no kernel to
+    generate is folded whatever the caller, because neither path can compile
+    one.
     """
 
     assignments, repeated = resolve_partition_assignments(
@@ -48,8 +51,12 @@ def partition_export(
         representative_root_inputs=representative_root_inputs,
     )
     split = split_export_graph(capture, assignments)
-    if fold_control_only_stages:
-        split = _fold_control_only_stages(capture, assignments, split)
+    split = _fold_unproductive_stages(
+        capture,
+        assignments,
+        split,
+        control_only=fold_control_only_stages,
+    )
     return PartitionedExport(
         root=split.root,
         root_inputs=capture.flat_inputs,
@@ -66,42 +73,61 @@ def partition_export(
     )
 
 
-def _fold_control_only_stages(
+def _fold_unproductive_stages(
     capture: ExportCapture,
     assignments: dict[Node, int],
     split: SplitExportGraph,
+    *,
+    control_only: bool,
 ) -> SplitExportGraph:
-    """Merge a stage with nothing to differentiate into the one after it.
+    """Merge away a boundary drawn where there is nothing for a stage to do.
 
-    A stage whose outputs are all integer or boolean holds no activation, has
-    no gradient to produce and no cotangent to receive, so a boundary around
-    it costs a task and buys no memory. It is setup for the stage that
-    consumes it, and that is where it belongs.
+    Two stages are unproductive, and a boundary around either costs a task
+    and buys no memory.
 
-    GPT-2 has one. It computes its position indices at model scope before the
-    first transformer block, and the automatic policy makes everything before
-    that block a prologue, so the prologue is one `arange`. Folding it is what
-    lets the model train; refusing it described a graph the partition drew,
-    not a model that cannot be trained.
+    A stage with **no kernel to generate**, every operation of which only
+    renames what it was given. A compiler asked to compile one exposes no
+    root graph and the build fails. CLIP's text encoder opens with one: a
+    `view` and an `alias`, because the partition cuts before an embedding
+    table that the policy reads as a repeated group. Neither path can
+    compile such a stage, so this is folded for every caller.
 
-    The fold repeats, because merging can leave the next stage control-only
-    as well. A trailing control-only stage is left alone: there is nothing
-    after it to fold into, and stage capture refuses it by name.
+    A stage with **nothing to differentiate**, whose outputs are all integer
+    or boolean. It holds no activation, has no gradient to produce and no
+    cotangent to receive. GPT-2 has one: it computes its position indices at
+    model scope before the first transformer block, so the automatic policy
+    makes the prologue a single `arange`. Only a training caller asks for
+    this, because only training differentiates a stage through its outputs.
+
+    The fold repeats, because merging can leave the stage it merged into
+    unproductive as well. A stage merges into the one after it; a trailing
+    one merges with the stage before it instead, which is the same merge
+    named from the other side.
     """
 
-    while True:
+    while len(split.stages) > 1:
         target = next(
             (
                 index
-                for index, record in enumerate(split.stages[:-1])
-                if not differentiable_output_positions(record.output)
+                for index, record in enumerate(split.stages)
+                if _is_unproductive(record, control_only=control_only)
             ),
             None,
         )
         if target is None:
-            return split
-        assignments = _merge_stage_forward(assignments, target)
+            break
+        # The last stage has nothing after it to fold into, so the merge is
+        # named from its predecessor and produces the same single stage.
+        merged = min(target, len(split.stages) - 2)
+        assignments = _merge_stage_forward(assignments, merged)
         split = split_export_graph(capture, assignments)
+    return split
+
+
+def _is_unproductive(record: StageRecord, *, control_only: bool) -> bool:
+    if computes_nothing(record.graph_module):
+        return True
+    return control_only and not differentiable_output_positions(record.output)
 
 
 def _merge_stage_forward(
