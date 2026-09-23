@@ -101,6 +101,24 @@ class _StatefulTrainingModel(nn.Module):
         return value * self.weight + self.running
 
 
+class _LiftedConstantModel(nn.Module):
+    """A module whose forward builds a tensor Export lifts into the signature.
+
+    Export names it `lifted_tensor_0` and carries it as a `CONSTANT_TENSOR`
+    input, reached by neither `named_parameters` nor `named_buffers`.
+    Published models are full of these. The tasks consume the value and no
+    task produces it, so the frontend has to supply it like any other root
+    input.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.projection = nn.Linear(3, 2)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return self.projection(value) * torch.tensor([0.5, 2.0], device=value.device)
+
+
 def _objective(
     model: nn.Module, value: torch.Tensor, target: torch.Tensor
 ) -> torch.Tensor:
@@ -762,6 +780,54 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
         )
         for entrypoint in forward_entries
     )
+
+
+def _supplied_aliases(lowered: LoweredTrainingProgram) -> set[str]:
+    """Every alias the frontend can publish before the step runs."""
+
+    alias_by_object = {
+        item.object_id: item.alias_group_id for item in lowered.program.objects
+    }
+    return {
+        alias_by_object[object_id]
+        for object_id in (
+            *(item.object_id for item in lowered.registrations),
+            *(slot.object_id for slots in lowered.root_input_slots for slot in slots),
+            *(item.object_id for item in lowered.optimizer_objects),
+            *(item.object_id for item in lowered.fixed_tensors),
+        )
+    }
+
+
+def test_every_initial_residency_alias_has_a_publisher() -> None:
+    """A plan may not open by fetching something nothing puts in the pool.
+
+    The initial residency is what the step begins with, and the frontend
+    publishes it from model state, the root inputs and optimizer state. An
+    alias in one set and not the other is a plan whose opening placement the
+    runtime refuses, which is what a lifted constant used to produce.
+    """
+
+    for factory in (_Model, _LiftedConstantModel):
+        lowered = _lowered(model_factory=factory, microbatches=1)
+        declared = {item.alias_group_id for item in lowered.initial_residency}
+        assert declared - _supplied_aliases(lowered) == set()
+
+
+def test_a_lifted_constant_becomes_a_root_input() -> None:
+    """Export's third kind of state reaches the pool like the other two.
+
+    `_Model` and `_LiftedConstantModel` take the same two user inputs, so the
+    one extra root slot is the constant and nothing else.
+    """
+
+    plain = _lowered(model_factory=_Model, microbatches=1)
+    lifted = _lowered(model_factory=_LiftedConstantModel, microbatches=1)
+    counts = tuple(
+        sum(len(slots) for slots in program.root_input_slots)
+        for program in (plain, lifted)
+    )
+    assert counts == (2, 3)
 
 
 def test_training_lowering_rejects_empty_templates() -> None:
