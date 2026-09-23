@@ -97,6 +97,22 @@ to create is zero. An integer or boolean input has no synthetic form, so it
 must come from its caller or its producing task and profiling refuses the task
 when neither supplies one.
 
+Taking it from its producing task means evaluating the slice that computes it,
+and what that slice needs is not always another such value: a model that
+chooses which tokens to attend to computes the choice from the activations of
+the layer that produces them. Those are resolved the same way and by the same
+code, recursively, back to the caller's roots, and a value needed twice is
+evaluated once. Only the slices the value depends on are run; a stage it does
+not depend on is never executed to manufacture an input.
+
+The slices run on the device the graph was captured for, because a captured
+graph is specialized to that device's layouts. Export records a view wherever
+a reshape was legal as one, and whether it was legal depends on strides the
+two implementations of an operator need not agree about, so replaying such a
+graph anywhere but where it was traced is unsound. The alternative to deriving
+the value at all is a partition that puts every consumer of it in one task
+with its producer, which is the width a memory budget exists to avoid.
+
 The resulting `TaskAllocationContract` contains an invariant allocation path
 and a bounded optional path:
 
