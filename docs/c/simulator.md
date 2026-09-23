@@ -41,12 +41,17 @@ matching status (`SHADOWSPILL_STATUS_INVALID_RELEASE`, `_INVALID_EVICT`,
 [Simulation](../architecture/simulation.md#memory-actions) states the
 preconditions.
 Stall masks distinguish input residency, device capacity, source readiness,
-spill capacity, and physical memory reuse. The last two of those sound alike
-and are not: memory reuse is an ordering wait the plan created, for the
+spill capacity, physical memory reuse, and a busy lane. Two of those sound
+alike and are not: memory reuse is an ordering wait the plan created, for the
 eviction or release that frees the allocation about to be reused, while device
 capacity is a shortfall -- no room at all for a fetch to land or for a task's
 outputs and workspace. A plan that arranges its own capacity waits on the
 first and never reaches the second.
+
+A busy lane is the one wait a plan does not arrange and cannot avoid: the
+copy is eligible and the lane is carrying another. It is set on the copy at
+the head of that lane's queue, which is the one actually waiting, and which
+every copy behind it becomes before it starts.
 
 A fetch or task launch that does not fit waits for room and is retried,
 rather than ending the simulation; only a plan that can never make room

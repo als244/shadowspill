@@ -74,9 +74,6 @@ static int try_start_direction(
     uint32_t *cursor = direction == SHADOWSPILL_TRANSFER_FETCH
         ? &work->fetch_cursor[device]
         : &work->evict_cursor[device];
-    if (*active >= 0) {
-        return 0;
-    }
     for (uint32_t index = *cursor; index < work->submitted_actions; ++index) {
         ShadowSpillTransferState *transfer = &work->transfers[index];
         if (transfer->state != SHADOWSPILL_TRANSFER_QUEUED ||
@@ -85,6 +82,15 @@ static int try_start_direction(
             continue;
         }
         *cursor = index;
+        /* The head of this lane's queue, found before the lane's state is
+         * consulted, so a copy that is eligible and waiting for a lane
+         * carrying another says so. The cursor parks here and only moves
+         * forward, so the walk costs nothing once it has reached the head.
+         */
+        if (*active >= 0) {
+            transfer->stall_mask |= SHADOWSPILL_STALL_LANE_BUSY;
+            return 0;
+        }
         if (!shadowspill_action_reuse_dependencies_complete(
                 program, work, index
             )) {

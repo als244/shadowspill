@@ -22,7 +22,9 @@ The model includes:
   [lane](lanes.md) taken together: copies on one route are ordered and do not
   overlap each other, and the two routes proceed independently. It is not the
   runtime's lane *contract*, which the simulator has no model of and does not
-  need -- what it prices is occupancy, not transport;
+  need -- what it prices is occupancy, not transport. A copy that is eligible
+  while the lane carries another records a `lane-busy` stall, so queueing is
+  told apart from the waits a plan arranges for itself;
 - route latency and calibrated directional bandwidth;
 - object residency and task input readiness;
 - physical allocation deltas and reuse dependencies.
