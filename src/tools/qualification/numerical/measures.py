@@ -45,55 +45,6 @@ def recomputation_savings_bytes(
     return available, selected
 
 
-def planning_breakdown(
-    phase_seconds: dict[str, float], *, planning_seconds: float
-) -> dict[str, float]:
-    """Return non-overlapping public planning phases for matrix comparisons."""
-
-    lowering_aot = phase_seconds.get("capture_lowering", 0.0)
-    profiling = phase_seconds.get(
-        "unique_stage_warmup_profiling",
-        phase_seconds.get("structural_profiling", 0.0),
-    )
-    compilation = phase_seconds.get(
-        "compiled_entrypoint_construction",
-        phase_seconds.get("compilation", 0.0),
-    )
-    cached_warmup = phase_seconds.get("cached_entrypoint_warmup", 0.0)
-    profile_orchestration = phase_seconds.get(
-        "profile_cache_and_entrypoint_orchestration", 0.0
-    )
-    program_lowering = phase_seconds.get("program_lowering", 0.0)
-    search = phase_seconds.get("search", 0.0)
-    admission = (
-        phase_seconds.get("admission_facts", 0.0)
-        + phase_seconds.get("spill_admission", 0.0)
-        + phase_seconds.get("slab_admission", 0.0)
-    )
-    classified = (
-        lowering_aot
-        + profiling
-        + compilation
-        + cached_warmup
-        + profile_orchestration
-        + program_lowering
-        + search
-        + admission
-    )
-    return {
-        "lowering_aot": lowering_aot,
-        "profiling": profiling,
-        "compiled_entrypoint_construction": compilation,
-        "cached_entrypoint_warmup": cached_warmup,
-        "profile_cache_and_entrypoint_orchestration": profile_orchestration,
-        "canonical_program_lowering": program_lowering,
-        "search": search,
-        "physical_admission": admission,
-        "other": max(0.0, planning_seconds - classified),
-        "total": planning_seconds,
-    }
-
-
 def state_tensor_at_path(state: object, path: str) -> torch.Tensor:
     """Resolve one compare_states() tensor path for failure diagnostics."""
 
