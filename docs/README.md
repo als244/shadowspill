@@ -254,6 +254,12 @@ How the repository is laid out, validated, and named, for anyone changing it.
 - [Naming conventions](development/naming.md) — identifier and vocabulary
   rules, including what stays generic outside a backend.
 
+## Training
+
+- [Training](../training/README.md) — a generic trainer that runs a model on
+  real text, on plain PyTorch or on ShadowSpill, from Python or a JSON config:
+  packed documents, schedules, evaluation, resumable checkpoints, metrics.
+
 ## Benchmarking and qualification
 
 The trees that measure ShadowSpill: the planning benchmark over a program
