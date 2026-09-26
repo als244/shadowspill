@@ -80,6 +80,7 @@ script](benchmarking/quickstart.md) runs one model end to end, and the
 | `workloads/` | Model and data clients used by benchmarks and qualification |
 | `benchmarking/` | The quickstart tour, program collection, and planning evaluation |
 | `qualification/` | Release gates: suite, numerical, performance, and remote |
+| `training/` | A generic trainer: real-text runs on PyTorch or ShadowSpill |
 | `src/tools/` | Source-tree diagnostics and acceptance tooling |
 | `reference/` | Readable reference implementations of the planner |
 | `scripts/` | One-command environment setup |
