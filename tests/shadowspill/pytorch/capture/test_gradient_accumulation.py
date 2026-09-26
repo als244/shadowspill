@@ -12,6 +12,7 @@ added there too.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 import torch
@@ -425,3 +426,72 @@ def test_by_default_a_bf16_step_accumulates_as_adding_after_does() -> None:
     total = accumulating.graph_module(*arguments, *priors)
     for index, leaf in enumerate(leaves):
         assert torch.equal(total[leaf], expected[index])
+
+
+@torch.library.custom_op("shadowspill_tests::scale", mutates_args=())
+def _scale(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    return x * weight
+
+
+@_scale.register_fake
+def _scale_fake(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    del weight
+    return torch.empty_like(x)
+
+
+@torch.library.custom_op("shadowspill_tests::scale_vjp", mutates_args=())
+def _scale_vjp(
+    grad: torch.Tensor, x: torch.Tensor, weight: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The weight's gradient summed at fp32 and returned so, as a kernel asked
+    for fp32 weight gradients returns it."""
+
+    return grad * weight, (grad.float() * x.float()).sum(0)
+
+
+@_scale_vjp.register_fake
+def _scale_vjp_fake(
+    grad: torch.Tensor, x: torch.Tensor, weight: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor]:
+    del grad
+    return torch.empty_like(x), torch.empty_like(weight, dtype=torch.float32)
+
+
+def _scale_context(ctx: Any, inputs: tuple[torch.Tensor, ...], output: object) -> None:
+    del output
+    ctx.save_for_backward(*inputs)
+
+
+def _scale_backward(ctx: Any, grad: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    x, weight = ctx.saved_tensors
+    return _scale_vjp(grad, x, weight)
+
+
+_scale.register_autograd(_scale_backward, setup_context=_scale_context)
+
+_CONVERSIONS = {
+    torch.ops.aten._to_copy.default,
+    torch.ops.prims.convert_element_type.default,
+}
+
+
+def test_a_gradient_an_operation_returns_at_the_dtype_asked_for_is_kept() -> None:
+    """Autograd gives a parameter its gradient at the parameter's dtype, so an
+    operation that returns an fp32 gradient for a bf16 weight has it converted
+    as it leaves. Kept at fp32, the conversion goes: the gradient is the value
+    the operation returned, not its bf16 rounding widened again."""
+
+    weight = torch.randn(16, dtype=torch.bfloat16, requires_grad=True)
+    values = torch.randn(64, 16, dtype=torch.bfloat16)
+    backward, leaves = _backward(lambda w, x: _scale(x, w), (weight, values))
+    assert _output(backward).args[0][leaves[0]].target in _CONVERSIONS
+
+    kept = cast_gradient_outputs(backward, leaves, torch.float32)
+    assert not _CONVERSIONS & {node.target for node in kept.graph_module.graph.nodes}
+
+    arguments = tuple(_materialize(item, "cpu") for item in backward.example_arguments)
+    rounded = backward.graph_module(*arguments)[leaves[0]]
+    gradient = kept.graph_module(*arguments)[leaves[0]]
+    assert gradient.dtype == torch.float32
+    assert torch.equal(gradient.to(torch.bfloat16), rounded)
+    assert not torch.equal(gradient, rounded.float())

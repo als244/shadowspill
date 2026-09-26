@@ -356,11 +356,12 @@ def plan_step(
     ``grad_dtype`` is the dtype gradients are created and accumulated at, the
     weights' own when ``None``. With fp32, each backward gives its
     parameters' gradients at fp32 -- written there by the matrix multiply
-    that computes one where PyTorch has a kernel for it, cast as they leave
-    it otherwise -- and adds them into gradients kept at fp32, so the sum over
-    microbatches is taken at fp32; the update casts a gradient only where its
-    parameter is at another dtype, which fp32 masters are not. It is normally
-    given with ``master_dtype``.
+    that computes one where PyTorch has a kernel for it, kept as an operation
+    returns one at fp32 already, cast as they leave it otherwise -- and adds
+    them into gradients kept at fp32, so the sum over microbatches is taken at
+    fp32; the update casts a gradient only where its parameter is at another
+    dtype, which fp32 masters are not. It is normally given with
+    ``master_dtype``.
 
     A microbatch after the first adds its gradients onto the running ones,
     and one a matrix multiply computes is added by the multiply as it writes
