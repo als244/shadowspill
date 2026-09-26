@@ -200,12 +200,14 @@ def test_optimizer_compilation_uses_no_grad_mutation_contract() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
     for parameter in model.parameters():
         parameter.grad = torch.zeros_like(parameter)
+    # The update is captured over state that exists, as planning installs it.
+    optimizer.step()
     captured = capture_optimizer(dict(model.named_parameters()), optimizer)
-    assert captured.recurrent is not None
+    assert captured.update is not None
 
-    executable = compile_artifact(captured.recurrent, device_ordinal=0)
+    executable = compile_artifact(captured.update, device_ordinal=0)
     representatives = materialize_representative_inputs(
-        captured.recurrent, device_ordinal=0
+        captured.update, device_ordinal=0
     )
     with torch.no_grad():
         outputs = executable.function(*representatives.arguments)
@@ -219,7 +221,8 @@ def test_explicit_optimizer_preserves_outer_aot_mutation_contract() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), foreach=False)
     for parameter in model.parameters():
         parameter.grad = torch.zeros_like(parameter)
-    artifact = capture_optimizer(dict(model.named_parameters()), optimizer).recurrent
+    optimizer.step()
+    artifact = capture_optimizer(dict(model.named_parameters()), optimizer).update
     assert artifact is not None
 
     outer_arguments = tuple(

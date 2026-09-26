@@ -49,8 +49,6 @@ class OptimizerDiscovery:
     created_state_names: tuple[str, ...]
     initialized_state_dict: dict[str, Any] | None
     representative_values: dict[str, torch.Tensor]
-    initial_sandbox: torch.optim.Optimizer
-    initial_parameter_names: dict[int, str]
     #: The sandbox before it moved onto fake tensors, and its names: what an
     #: opaque fallback is captured from, since an opaque task keeps real values.
     real_sandbox: torch.optim.Optimizer | None = None
@@ -135,23 +133,6 @@ def discover_optimizer_state(
         ),
     )
     baseline = _discovery_baseline(sandbox, sandbox_parameters, names)
-    initial_sandbox = copy_optimizer(sandbox)
-    initial_parameters = optimizer_parameters(initial_sandbox)
-    for source, copied_parameter in zip(
-        sandbox_parameters,
-        initial_parameters,
-        strict=True,
-    ):
-        if source.grad is not None:
-            copied_parameter.grad = source.grad.detach().clone()
-    initial_parameter_names = {
-        id(copied): names[id(source)]
-        for source, copied in zip(
-            sandbox_parameters,
-            initial_parameters,
-            strict=True,
-        )
-    }
     recorder = StartRecorder(
         sandbox_parameters,
         tuple(
@@ -179,8 +160,6 @@ def discover_optimizer_state(
         baseline,
         initialized_state,
         representative_values,
-        initial_sandbox,
-        initial_parameter_names,
         _state_starts(sandbox, names, recorder),
     )
 
@@ -376,8 +355,6 @@ def _finish_optimizer_discovery(
     baseline: _DiscoveryBaseline,
     initialized_state: dict[str, Any] | None,
     representative_values: dict[str, torch.Tensor],
-    initial_sandbox: torch.optim.Optimizer,
-    initial_parameter_names: dict[int, str],
     state_starts: dict[tuple[str, str], StateStart],
 ) -> OptimizerDiscovery:
     first_step_is_opaque = state_structure(sandbox, names) != baseline.state_structure
@@ -400,8 +377,6 @@ def _finish_optimizer_discovery(
         created_state_names=created_state_names,
         initialized_state_dict=initialized_state,
         representative_values=representative_values,
-        initial_sandbox=initial_sandbox,
-        initial_parameter_names=initial_parameter_names,
         state_starts=state_starts,
     )
 
@@ -455,7 +430,7 @@ def _complete_failed_state_discovery(
 
     A CUDA-only operation can reject the CPU sandbox after its optimizer has
     initialized one parameter's state. Optimizers commonly visit parameters in
-    sequence, so one failed call does not establish the complete recurrent
+    sequence, so one failed call does not establish the update's complete
     tensor inventory. Retry with gradients enabled only for parameters whose
     state is still empty. Every failed attempt must leave parameter values
     unchanged; otherwise the failure boundary is not safe to use for capture.
@@ -514,7 +489,7 @@ def _require_unchanged_discovery_parameters(
             raise CaptureError("optimizer discovery failed after mutating a parameter")
 
 
-def fake_recurrent_sandbox(discovery: OptimizerDiscovery) -> None:
+def fake_update_sandbox(discovery: OptimizerDiscovery) -> None:
     """Move the sandbox onto fake device tensors, keeping its representative values."""
 
     sandbox = discovery.sandbox
@@ -553,11 +528,8 @@ def is_data_dependent_failure(failure: BaseException) -> bool:
 def _empty_opaque_capture(optimizer_type: str, reason: str) -> OptimizerCapture:
     return OptimizerCapture(
         optimizer_type=optimizer_type,
-        first_step_is_opaque=True,
-        created_state_names=(),
-        initial=None,
-        recurrent=None,
-        recurrent_tasks=(),
+        update=None,
+        update_tasks=(),
         bindings=(),
         mutation_names=(),
         opaque_reason=reason,

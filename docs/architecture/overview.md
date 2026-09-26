@@ -141,7 +141,7 @@ flowchart TD
     pairs --> profile
     profile --> program
     program -->|"+ residency, capacity, simulation inputs"| inputs
-    inputs -->|"recurrent, and optionally initial"| step
+    inputs -->|"one per step"| step
     inputs -->|"graph-pair selection + policy search"| annotated
     annotated -->|"physical admission + materialization"| report
 ```
@@ -150,7 +150,7 @@ flowchart TD
 |---|---|---|
 | `ShadowSpillProgram` | Logical objects, tasks, profiles, resources, and graph-pair alternatives for one schedule role | PyTorch |
 | `ShadowSpillPlanningProblem` | A `ShadowSpillProgram` plus residency, capacity, admission, and simulation inputs | Capture, compilation, or profiling |
-| `StepProgram` | The recurrent and optional initial `ShadowSpillPlanningProblem`, plus training-step provenance | Searching or callable materialization |
+| `StepProgram` | The step's `ShadowSpillPlanningProblem`, plus training-step provenance | Searching or callable materialization |
 | `AnnotatedProgramPlan` | One selected schedule, physical layout, simulation result, and planning diagnostics | The model or runtime |
 | `PlanReport` | The published callable's program, plan, execution mapping, profiles, artifact-store hits and misses, and diagnostics | Console logging |
 
@@ -409,7 +409,7 @@ index](../README.md) annotates the same order; this is the map.
     `after_task` do, and what is still in flight when the dispatcher returns.
 27. [Failure, abort, and process exit](failure-and-exit.md) -- what each scope
     does with a failure, and why an exiting process is abandoned.
-28. [Step boundaries](step-boundaries.md) -- the recurrent invocation cycle,
+28. [Step boundaries](step-boundaries.md) -- the invocation cycle,
     and what step time means.
 29. [PyTorch adapter](adapter.md) -- what sits between PyTorch and the
     runtime.

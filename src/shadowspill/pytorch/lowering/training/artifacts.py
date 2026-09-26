@@ -38,7 +38,6 @@ class OptimizerObjectBinding:
     object_id: str
     role: OptimizerTensorRole
     mutable: bool
-    created_on_first_step: bool
 
 
 @dataclass(frozen=True, slots=True)

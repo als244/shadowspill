@@ -26,10 +26,7 @@ print(task.semantic_name, task.chosen_graph_pair_variant)
 
 Besides the derived `summary` (a `PlanSummary`, described in [the field
 reference](../plan-report-fields.md#plansummary)), the report exposes the
-selected `execution_plan` and optional `initial_execution_plan`, the
-`search_result` and `initial_search_result` for the recurrent step and for an
-initialization step when there was one -- with `search_results` holding both --
-the configured pool names and budgets, the transfer capabilities, task
+selected `execution_plan`, its `search_result`, the configured pool names and budgets, the transfer capabilities, task
 profiles, transfer actions, aggregate transfer bytes, the `StepDataOrdering`
 the step walked its microbatches with, and the `search_options` it was searched
 under. It also carries a `PlanDiagnostics` tree, keyed primarily by

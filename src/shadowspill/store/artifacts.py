@@ -395,7 +395,6 @@ class ArtifactStore:
         model_label: str,
         capture_identity: str,
         execution_plan: ExecutionPlan,
-        initial_execution_plan: ExecutionPlan | None,
         manifest: Mapping[str, object],
     ) -> Path:
         """Write the resolved plan and a readable lineage manifest."""
@@ -419,19 +418,6 @@ class ArtifactStore:
             schema=artifact_schema("execution_plan"),
             dependencies=(execution_plan.program.digest,),
         )
-        initial_path: Path | None = None
-        if initial_execution_plan is not None:
-            initial_path = directory / "initial_execution_plan.json"
-            atomic_text(initial_path, initial_execution_plan.to_json())
-            self.record(
-                category="plans",
-                kind="initial_execution_plan",
-                digest=initial_execution_plan.digest,
-                path=initial_path,
-                access="write",
-                schema=artifact_schema("execution_plan"),
-                dependencies=(initial_execution_plan.program.digest,),
-            )
         manifest_path = directory / "manifest.json"
         atomic_json(
             manifest_path,
@@ -441,9 +427,6 @@ class ArtifactStore:
                 "capture_identity": capture_identity,
                 "execution_plan_digest": execution_plan.digest,
                 "execution_plan": plan_path.name,
-                "initial_execution_plan": (
-                    None if initial_path is None else initial_path.name
-                ),
                 **dict(manifest),
             },
         )
@@ -556,7 +539,7 @@ this one and replans.
 - `build/exports/`: normalized Export archives and manifests.
 - `build/inductor/`: files managed internally by the framework's compiler.
 - `build/graph_pairs/`: structural AOT graph pairs.
-- `build/optimizers/`: traced recurrent optimizer updates, keyed by the
+- `build/optimizers/`: traced optimizer updates, keyed by the
   optimizer, the objects it binds, its hyperparameters and its stage split.
 - `build/profiling/`: hardware/compiler-specific layouts and task measurements.
 

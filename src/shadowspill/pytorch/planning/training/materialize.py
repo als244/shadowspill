@@ -99,7 +99,7 @@ def materialize_training_state(
                 dict(model.named_parameters()),
             )
             with timer.measure("optimizer_state_install"):
-                installed_entries = install_declared_optimizer_state(
+                install_declared_optimizer_state(
                     model,
                     optimizer,
                     runtime=runtime,
@@ -130,14 +130,12 @@ def materialize_training_state(
 
         with timer.measure("model_placeholder_restoration"):
             state.restore_device_placeholders_after_optimizer_capture()
-        if optimizer_capture.recurrent is None:
+        if optimizer_capture.update is None:
             raise PlanningError(
                 "the optimizer state/update cannot be bounded: "
                 f"{optimizer_capture.opaque_reason}"
             )
-        return TrainingMaterializationArtifacts(
-            state, optimizer, optimizer_capture, installed_entries
-        )
+        return TrainingMaterializationArtifacts(state, optimizer, optimizer_capture)
     except BaseException as error:
         if state is not None:
 

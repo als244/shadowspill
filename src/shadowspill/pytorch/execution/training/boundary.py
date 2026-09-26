@@ -260,10 +260,7 @@ def _assemble_optimizer_call(
     executor: TrainingExecutor, record: _ExecutionTaskRecord
 ) -> TaskCall:
     artifact = record.artifact
-    eager = isinstance(artifact, OpaqueOptimizerArtifact) or (
-        not executor.optimizer_state.available
-    )
-    if eager:
+    if isinstance(artifact, OpaqueOptimizerArtifact):
         return TaskCall((), None, True)
     if not isinstance(artifact, GraphArtifact):
         raise RuntimeError("optimizer task has no executable artifact")

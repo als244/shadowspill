@@ -93,7 +93,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("one program per ordering was expected")
         if tuple(item.data_ordering for item in first) != orderings:
             raise AssertionError("programs must come back in the orderings' order")
-        if first[0].recurrent.program.digest == first[1].recurrent.program.digest:
+        if first[0].problem.program.digest == first[1].problem.program.digest:
             raise AssertionError("two orderings lowered to the same program")
         if "objective_export" not in _phases(first[0]):
             raise AssertionError("the first program must carry the shared capture")
@@ -129,7 +129,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         # again and its costs may differ; its structure may not.
         structure = lambda program: (  # noqa: E731
             program.data_ordering,
-            tuple(task.task_id for task in program.recurrent.program.tasks),
+            tuple(task.task_id for task in program.problem.program.tasks),
         )
         if structure(other) != structure(first[0]):
             raise AssertionError("the same request under another key is the same step")

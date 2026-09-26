@@ -218,8 +218,6 @@ class TrainingMaterializedState(MaterializedState):
         for item in lowered.optimizer_objects:
             actual = current.get(item.name)
             if actual is None:
-                if item.created_on_first_step:
-                    continue
                 raise PlanningError(
                     f"optimizer state {item.name!r} is absent after initialization"
                 )

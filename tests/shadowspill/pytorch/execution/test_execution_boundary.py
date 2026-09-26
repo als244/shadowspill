@@ -204,10 +204,7 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
     # Every invocation records its timeline against the fake library, which
     # keeps the call log to the boundary's own steps.
     harness.timing._timelines = InvocationTimelines(0)
-    harness._initial = None
-    harness.optimizer_state = cast(Any, SimpleNamespace(initialized=True))
-    harness._recurrent = run  # type: ignore[assignment]
-    harness._active_run = run  # type: ignore[assignment]
+    harness._run = run  # type: ignore[assignment]
     harness._state = SimpleNamespace(  # type: ignore[assignment]
         refresh_inputs=lambda _inputs: calls.append("refresh_inputs")
     )

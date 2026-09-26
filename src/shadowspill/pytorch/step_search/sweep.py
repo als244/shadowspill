@@ -203,7 +203,7 @@ class _Sweep:
                 phase_seconds=MappingProxyType(
                     {name: duration / 1e9 for name, duration in step.phase_timings_ns}
                 ),
-                transfer_bandwidths=step.recurrent.transfer_bandwidths,
+                transfer_bandwidths=step.problem.transfer_bandwidths,
             )
         )
 
@@ -231,7 +231,7 @@ class _Sweep:
             inherited: int | None = None
             try:
                 answer = self.ask.answer(
-                    step.recurrent,
+                    step.problem,
                     execution_budget,
                     spill_budget,
                     carried if self.incumbents else None,
@@ -255,7 +255,7 @@ class _Sweep:
                 held = self.best_by_budget.get((execution_budget, spill_budget))
                 if held is None or answer.makespan_ns < held.makespan_ns:
                     self.best_by_budget[(execution_budget, spill_budget)] = _Best(
-                        answer.makespan_ns, step.recurrent, answer.plan
+                        answer.makespan_ns, step.problem, answer.plan
                     )
             self.announce(
                 f"point {self.point_index}/{self.point_total}: {name} @"

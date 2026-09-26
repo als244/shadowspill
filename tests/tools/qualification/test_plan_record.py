@@ -31,7 +31,7 @@ from tests.shadowspill.simulator.test_admission_accounting import (
 )
 from tools.qualification.plan_record import (
     plan_record,
-    write_plan_records,
+    write_plan_record,
 )
 
 
@@ -57,7 +57,7 @@ def _result() -> ProgramPlanResult:
 
 def test_record_contains_complete_request_and_expected_result() -> None:
     result = _result()
-    record = plan_record(result, role="recurrent")
+    record = plan_record(result, role="step")
 
     assert record["request"]["program"] == result.program.to_dict()  # type: ignore[index]
     assert record["request"]["search_options"]["algorithm"]["name"] == "pressurefit"  # type: ignore[index]
@@ -89,7 +89,7 @@ def test_record_carries_the_physical_pressurefit_call_boundary() -> None:
         admission=admission,
     )
 
-    record = plan_record(result, role="recurrent")
+    record = plan_record(result, role="step")
 
     assert record["schema"] == artifact_schema("plan_record")
     assert record["request"]["admission"] == admission.to_dict()  # type: ignore[index]
@@ -98,18 +98,12 @@ def test_record_carries_the_physical_pressurefit_call_boundary() -> None:
 
 def test_record_file_is_byte_deterministic(tmp_path: Path) -> None:
     result = _result()
-    first = write_plan_records(
-        results=(result,),
-        directory=tmp_path,
-    )
-    first_bytes = (tmp_path / "recurrent.json").read_bytes()
-    second = write_plan_records(
-        results=(result,),
-        directory=tmp_path,
-    )
+    first = write_plan_record(result=result, directory=tmp_path)
+    first_bytes = (tmp_path / "step.json").read_bytes()
+    second = write_plan_record(result=result, directory=tmp_path)
 
-    assert (tmp_path / "recurrent.json").read_bytes() == first_bytes
+    assert (tmp_path / "step.json").read_bytes() == first_bytes
     assert first == second
     payload = json.loads(first_bytes)
-    assert payload["request_digest"] == first[0]["request_digest"]
-    assert payload["expected_digest"] == first[0]["expected_digest"]
+    assert payload["request_digest"] == first["request_digest"]
+    assert payload["expected_digest"] == first["expected_digest"]

@@ -1,6 +1,5 @@
-"""The optimizer's state as the plan holds it: whether it exists yet, how a
-checkpoint reads and writes it through the spill pool, and how the plan lets it
-go."""
+"""The optimizer's state as the plan holds it: how a checkpoint reads and
+writes it through the spill pool, and how the plan lets it go."""
 
 from __future__ import annotations
 
@@ -17,12 +16,9 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.optimizer import (
-    OpaqueOptimizerArtifact,
     current_optimizer_bindings,
-    opaque_optimizer_outputs,
     restore_optimizer_checkpoint_structure,
 )
-from shadowspill.pytorch.runtime_adapter.boundaries import PublishedStorage
 from shadowspill.pytorch.spill import (
     read_spill_tensor,
     spill_view,
@@ -33,20 +29,12 @@ from shadowspill.runtime.plan import (
     RuntimeBridge,
 )
 
-from ..records import (
-    ExecutionTaskRecord as _ExecutionTaskRecord,
-)
 from .values import ExposedOptimizerTensor, TensorLayout
 
 
 class OptimizerState:
-    """The optimizer and the plan's account of its state.
-
-    `initialized` says whether the state the optimizer keeps exists yet -- a
-    lazy optimizer creates it on its first step, which the initial plan runs;
-    `available` whether the traced update may run over it. Both are the
-    executor's to read at a task boundary and this class's to change.
-    """
+    """The optimizer and the plan's account of its state, which exists in the
+    spill pool from planning on."""
 
     def __init__(
         self,
@@ -54,32 +42,15 @@ class OptimizerState:
         state: TrainingMaterializedState,
         bridge: RuntimeBridge,
         lowered: LoweredTrainingProgram,
-        *,
-        has_initial_plan: bool,
-        was_lazy: bool,
-        preinitialized: bool,
     ) -> None:
         self.optimizer = optimizer
         self._state = state
         self._bridge = bridge
         self._lowered = lowered
-        self._has_initial_plan = has_initial_plan
-        self.initialized = not was_lazy
-        self.available = preinitialized or not was_lazy
         self._size_by_alias = {
             item.alias_group_id: item.size_bytes
             for item in lowered.program.alias_groups
         }
-
-    def set_initialized(self, value: bool) -> None:
-        """Select the recurrent plan after a checkpoint restores lazy state."""
-
-        if value and not self._has_initial_plan:
-            self.initialized = True
-            self.available = True
-            return
-        self.initialized = value
-        self.available = value
 
     def state_dict(self) -> dict[str, object]:
         """Synchronously snapshot optimizer state without stale CUDA pointers.
@@ -92,13 +63,6 @@ class OptimizerState:
         large model that is the biggest transient the frontend asks for, so
         budget for it.
         """
-
-        if not self.initialized:
-            raw = self.optimizer.state_dict()
-            return {
-                "state": {},
-                "param_groups": copy.deepcopy(raw["param_groups"]),
-            }
 
         exposed = self.expose_cpu()
         try:
@@ -127,65 +91,34 @@ class OptimizerState:
         placeholders when it ends.
         """
 
-        if not self.initialized:
-            yield self.state_dict()
-            return
         exposed = self.expose_cpu(in_place=True)
         try:
             yield self.optimizer.state_dict()
         finally:
             self.restore_spill_only(exposed)
 
-    def load(self, value: Mapping[str, object]) -> bool:
-        """Restore optimizer metadata and write tensor bytes into spill storage."""
+    def load(self, value: Mapping[str, object]) -> None:
+        """Restore optimizer metadata and write tensor bytes into spill storage.
+
+        The checkpoint has to hold every entry the plan keeps; one that lacks
+        any is refused before anything changes.
+        """
 
         exposed = self.expose_cpu()
-        initialized = False
         try:
-            restored = restore_optimizer_checkpoint_structure(
-                dict(self._state.model.named_parameters()),
-                self.optimizer,
-                value,
-            )
-            tensors = {item.name: item for item in restored.tensors}
-            current = self.current_bindings()
             planned = self._lowered.optimizer_objects
-            present = {item.name for item in planned if item.name in current}
-            required_created = {
-                item.name for item in planned if item.created_on_first_step
+            tensors = {
+                item.name: item
+                for item in restore_optimizer_checkpoint_structure(
+                    dict(self._state.model.named_parameters()),
+                    self.optimizer,
+                    value,
+                    required=tuple(item.name for item in planned),
+                )
             }
-            if present and present != {item.name for item in planned}:
-                missing = sorted({item.name for item in planned} - present)
-                raise RuntimeError(
-                    f"optimizer checkpoint has incomplete planned state: {missing}"
-                )
-            initialized = not required_created or (
-                restored.initialized and required_created.issubset(present)
-            )
-            if initialized:
-                self._write_restored_tensors(
-                    planned,
-                    current,
-                    tensors,
-                )
+            self._write_restored_tensors(planned, self.current_bindings(), tensors)
         finally:
             self.restore_spill_only(exposed)
-
-        if not initialized:
-            aliases = tuple(
-                self._bridge.objects.alias_for_object(item.object_id)
-                for item in planned
-            )
-            self._bridge.objects.unregister(aliases)
-            for item in planned:
-                alias_id = self._bridge.objects.alias_for_object(item.object_id)
-                self._state.object_store.pop(alias_id, None)
-                self._state.object_tensors.pop(item.object_id, None)
-            self.initialized = False
-            return False
-
-        self.initialized = True
-        return True
 
     def _write_restored_tensors(
         self,
@@ -233,47 +166,6 @@ class OptimizerState:
         ):
             return
         self.optimizer.state.clear()
-        self.initialized = False
-        self.available = False
-
-    def created_state(
-        self,
-        record: _ExecutionTaskRecord,
-    ) -> tuple[
-        tuple[PublishedStorage, ...],
-        tuple[tuple[str, torch.Tensor, str], ...],
-    ]:
-        artifact = record.artifact
-        if not isinstance(artifact, OpaqueOptimizerArtifact):
-            raise RuntimeError("initial optimizer state requires an opaque artifact")
-        outputs = {
-            binding.name: binding.tensor
-            for binding in opaque_optimizer_outputs(
-                artifact,
-                self.optimizer,
-                device_ordinal=self._state.device.index or 0,
-            )
-        }
-        produced: set[str] = set()
-        adopted: list[PublishedStorage] = []
-        bound: list[tuple[str, torch.Tensor, str]] = []
-        for item in record.optimizer_outputs:
-            tensor = outputs.get(item.name)
-            if tensor is None:
-                raise RuntimeError(
-                    f"optimizer did not create planned state {item.name!r}"
-                )
-            if item.alias_id not in produced and item.publication_ordinal is not None:
-                adopted.append(
-                    PublishedStorage(
-                        tensor,
-                        item.alias_id,
-                        item.publication_ordinal,
-                    )
-                )
-                produced.add(item.alias_id)
-            bound.append((item.object_id, tensor, item.alias_id))
-        return tuple(adopted), tuple(bound)
 
     def current_bindings(self) -> dict[str, Any]:
         return {

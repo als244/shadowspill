@@ -46,10 +46,7 @@ def save_annotated_plan(
         selected_program = step_program
         if selected_program.digest != case.program_digest:
             raise ValueError("provided StepProgram does not match the saved case")
-    program_digests = {selected_program.recurrent.program.digest}
-    if selected_program.initial is not None:
-        program_digests.add(selected_program.initial.program.digest)
-    if plan.program.program.digest not in program_digests:
+    if plan.program.program.digest != selected_program.problem.program.digest:
         raise ValueError("annotated plan does not belong to the saved StepProgram")
 
     budgets = plan.memory_budgets

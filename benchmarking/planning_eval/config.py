@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from shadowspill.schema import artifact_schema
 from shadowspill.store import STORE_MODES, StoreMode
@@ -112,7 +112,6 @@ class FrontierConfig:
     name: str
     expected_programs: int
     expected_points_per_program: int
-    program_role: Literal["recurrent", "initial", "forward"]
     point_timeout_seconds: int
     max_point_attempts: int
     max_worker_restarts_per_program: int
@@ -162,7 +161,6 @@ class FrontierConfig:
             "name": self.name,
             "expected_programs": self.expected_programs,
             "expected_points_per_program": self.expected_points_per_program,
-            "program_role": self.program_role,
             "point_timeout_seconds": self.point_timeout_seconds,
             "max_point_attempts": self.max_point_attempts,
             "max_worker_restarts_per_program": (self.max_worker_restarts_per_program),
@@ -190,7 +188,6 @@ def load_frontier_config(path: Path) -> FrontierConfig:
             "name",
             "expected_programs",
             "expected_points_per_program",
-            "program_role",
             "point_timeout_seconds",
             "max_point_attempts",
             "max_worker_restarts_per_program",
@@ -219,14 +216,6 @@ def load_frontier_config(path: Path) -> FrontierConfig:
         expected_points_per_program=_integer(
             data.get("expected_points_per_program"),
             "config.expected_points_per_program",
-        ),
-        program_role=cast(
-            Literal["recurrent", "initial", "forward"],
-            _literal(
-                data.get("program_role"),
-                {"recurrent", "initial", "forward"},
-                "config.program_role",
-            ),
         ),
         point_timeout_seconds=_integer(
             data.get("point_timeout_seconds"), "config.point_timeout_seconds"

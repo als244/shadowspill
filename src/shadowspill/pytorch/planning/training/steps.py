@@ -283,33 +283,15 @@ def _public_step_program(
     """Archive programs and publish only stable, serializable planning facts."""
 
     with timer.measure("program_archival"):
-        stores.store.archive_program(programs.recurrent.program)
-        if programs.initial.program.digest != programs.recurrent.program.digest:
-            stores.store.archive_program(programs.initial.program)
+        stores.store.archive_program(programs.lowered.program)
     scratch_reserve = dynamic_scratch_reserve_bytes(
         programs.measurements_by_profile,
         minimum_bytes=programs.dynamic_scratch_reserve_bytes,
     )
-    recurrent = _planning_problem_artifact(
-        "recurrent",
-        programs.recurrent,
-        programs.recurrent_admission,
-        programs.simulation_config,
-        source_execution_budget_bytes=memory.execution_budget,
-        maximum_execution_budget_bytes=(
-            memory.execution.physical_capacity or memory.execution.capacity
-        ),
-        maximum_spill_budget_bytes=memory.spill.capacity,
-        dynamic_scratch_reserve_bytes_=scratch_reserve,
-    )
-    needs_initial = any(
-        item.created_on_first_step for item in programs.initial.optimizer_objects
-    )
-    initial = (
-        _planning_problem_artifact(
-            "initial",
-            programs.initial,
-            programs.initial_admission,
+    return StepProgram(
+        problem=_planning_problem_artifact(
+            programs.lowered,
+            programs.admission,
             programs.simulation_config,
             source_execution_budget_bytes=memory.execution_budget,
             maximum_execution_budget_bytes=(
@@ -317,13 +299,7 @@ def _public_step_program(
             ),
             maximum_spill_budget_bytes=memory.spill.capacity,
             dynamic_scratch_reserve_bytes_=scratch_reserve,
-        )
-        if needs_initial
-        else None
-    )
-    return StepProgram(
-        recurrent=recurrent,
-        initial=initial,
+        ),
         optimizer_ordering=optimizer_ordering,
         data_ordering=data_ordering,
         signature_digests=tuple(item.digest for item in captured.signatures),
@@ -343,7 +319,6 @@ def _public_step_program(
 
 
 def _planning_problem_artifact(
-    role: Literal["initial", "recurrent"],
     lowered: LoweredTrainingProgram,
     admission: AdmissionFacts,
     simulation_config: SimulationConfig,
@@ -357,7 +332,7 @@ def _planning_problem_artifact(
     fixed_bytes = source_execution_budget_bytes - admission.pool_capacity_bytes
     object_reserve = admission.pool_capacity_bytes - device.capacity_bytes
     return ShadowSpillPlanningProblem(
-        role=role,
+        role="step",
         program=lowered.program,
         initial_residency=lowered.initial_residency,
         final_residency=lowered.final_residency,

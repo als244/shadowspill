@@ -62,7 +62,7 @@ def build_training(
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
-    `incumbent` is the plan to beat for the recurrent program, and
+    `incumbent` is the plan to beat, and
     `transfer_bandwidths` the lanes to price copies at instead of the
     runtime's calibration, both as :func:`shadowspill.planner.plan_program`
     takes them.
@@ -116,7 +116,7 @@ def build_training(
             timer=timer,
             transfer_bandwidths=transfer_bandwidths,
         )
-        selections = plan_training_programs(
+        selection = plan_training_programs(
             programs,
             stores=artifacts,
             timer=timer,
@@ -126,7 +126,7 @@ def build_training(
         executable = compile_selected_training_tasks(
             profiled,
             programs,
-            selections,
+            selection,
             installed=captured.installed,
             timer=timer,
         )
@@ -151,7 +151,7 @@ def build_training(
         materialized,
         profiled,
         programs,
-        selections,
+        selection,
         executable,
         memory=memory,
         optimizer_ordering=optimizer_ordering,

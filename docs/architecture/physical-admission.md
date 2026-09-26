@@ -533,8 +533,7 @@ is how the store comes to hold one.
 
 ## Diagnostics
 
-`PlanReport.diagnostics` carries one `PlanPhysicalLayout` per recurrent or
-initialization plan: the capacities, the bytes each term of $L + D + S \le P$
+`PlanReport.diagnostics` carries the plan's `PlanPhysicalLayout`: the capacities, the bytes each term of $L + D + S \le P$
 required, the placements and their offsets, the reuse dependencies, the task
 memory envelopes, the digests, and the logical and physically admitted
 simulations side by side. Its `attempts` hold one `PlanFixedLayoutAttempt`,

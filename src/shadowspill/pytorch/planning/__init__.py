@@ -16,7 +16,6 @@ from .artifacts import (
     TrainingMaterializationArtifacts,
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
-    TrainingSelections,
 )
 from .forward import (
     admit_forward_plan,
@@ -50,7 +49,6 @@ __all__ = [
     "TrainingMaterializationArtifacts",
     "TrainingProfileArtifacts",
     "TrainingProgramArtifacts",
-    "TrainingSelections",
     "admit_forward_plan",
     "admit_training_plan",
     "build_forward_program",

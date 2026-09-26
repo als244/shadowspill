@@ -12,7 +12,7 @@ artifact_store/
     │   ├── exports/      normalized Export archives and manifests
     │   ├── inductor/     PyTorch Inductor and Triton caches
     │   ├── graph_pairs/  structural AOT graph pairs
-    │   ├── optimizers/   traced recurrent optimizer updates
+    │   ├── optimizers/   traced optimizer updates
     │   └── profiling/
     │       ├── compiled_manifests/
     │       └── measurements/
@@ -364,12 +364,10 @@ execution_budget_bytes, spill_budget_bytes,
 requested_dynamic_scratch_reserve_bytes,
 allocation_probe_seeds, allocation_probe_repetitions,
 export_bypass_key, execution_plan_digest,
-execution_plan, initial_execution_plan,
-artifacts, phase_timings_ns
+execution_plan, artifacts, phase_timings_ns
 ```
 
-`execution_plan` and `initial_execution_plan` are the filenames beside the
-manifest, the second `null` when the plan has no distinct first step.
+`execution_plan` is the filename beside the manifest.
 
 `artifacts` lists every store entry the call depended on, which is how a plan
 is traced back to the profiles and programs behind it.

@@ -83,7 +83,7 @@ def plan_program(
 ) -> AnnotatedProgramPlan:
     """Plan one problem: search, simulate, and physically admit the winner.
 
-    ``problem`` is normally ``build_step_program(...).recurrent`` or the
+    ``problem`` is normally ``build_step_program(...).problem`` or the
     value reconstructed by :meth:`ShadowSpillPlanningProblem.from_value`. It
     carries the program, where it must start and end, and what the machine
     is; it carries no policy, so this call is model- and runtime-independent

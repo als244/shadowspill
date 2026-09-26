@@ -174,11 +174,6 @@ def _register_optimizer_objects(
 ) -> tuple[OptimizerObjectBinding, ...]:
     parameter_names = {item.parameter_name for item in gradients}
     gradient_names = {f"gradient.{item.parameter_name}" for item in gradients}
-    created = (
-        set()
-        if optimizer.initialized_state_dict is not None
-        else set(optimizer.created_state_names)
-    )
     results: list[OptimizerObjectBinding] = []
     for binding in optimizer.bindings:
         if binding.role is OptimizerTensorRole.PARAMETER:
@@ -207,7 +202,6 @@ def _register_optimizer_objects(
                 object_id,
                 binding.role,
                 binding.mutable,
-                binding.name in created,
             )
         )
     return tuple(results)
