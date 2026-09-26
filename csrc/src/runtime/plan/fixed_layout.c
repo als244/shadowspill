@@ -875,3 +875,57 @@ ShadowSpillStatus shadowspill_plan_seal_fixed_layout(
     }
     return SHADOWSPILL_STATUS_OK;
 }
+
+ShadowSpillStatus shadowspill_plan_require_empty_layout(ShadowSpillPlan *plan) {
+    if (plan == NULL || plan->runtime == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillRuntime *runtime = plan->runtime;
+    const ShadowSpillStatus status = shadowspill_failure_status(runtime);
+    if (status != SHADOWSPILL_STATUS_OK) {
+        return status;
+    }
+    /* The live list is the one a caller reads its allocations from, walked
+       under the lock the slice itself is reserved under. A lease a call
+       placed borrows its bytes from inside the slice; any other owns a
+       range the slice cannot overlap, so position alone decides. */
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
+    uint64_t task_id = SHADOWSPILL_RUNTIME_NO_ID;
+    uint64_t object_id = SHADOWSPILL_RUNTIME_NO_ID;
+    uint64_t allocation_id = SHADOWSPILL_RUNTIME_NO_ID;
+    uint64_t bytes = 0U;
+    int occupied = 0;
+    pthread_mutex_lock(&pool->lock);
+    const uint64_t begin = plan->fixed_layout.slice_offset;
+    const uint64_t end = begin + plan->fixed_layout.slice_bytes;
+    if (plan->fixed_layout.active && plan->fixed_layout.slice_bytes != 0U) {
+        for (const ShadowSpillMemoryLease *lease = pool->active_leases;
+             lease != NULL; lease = lease->active_next) {
+            if (lease->offset < end &&
+                lease->offset + lease->charged_bytes > begin) {
+                task_id = lease->origin_task_id;
+                object_id = lease->bound_object == NULL
+                    ? SHADOWSPILL_RUNTIME_NO_ID
+                    : lease->bound_object->object_id;
+                allocation_id = lease->allocation_id;
+                bytes = lease->charged_bytes;
+                occupied = 1;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&pool->lock);
+    if (!occupied) {
+        return SHADOWSPILL_STATUS_OK;
+    }
+    shadowspill_latch_task_failure(
+        runtime,
+        SHADOWSPILL_STATUS_PLAN_VIOLATION,
+        SHADOWSPILL_FAILURE_REASON_LAYOUT_OCCUPIED_BETWEEN_CALLS,
+        task_id,
+        object_id,
+        allocation_id,
+        bytes
+    );
+    return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+}

@@ -768,6 +768,131 @@ static int eviction_completion_orders_fixed_fetch_reuse(int same_object) {
     return failed ? -1 : 0;
 }
 
+/*
+ * Between calls a plan's layout holds nothing. A placed allocation its task
+ * frees leaves the layout empty; one that outlives its task is refused, named
+ * by the task that made it, its allocation and its size.
+ */
+static int layout_holds_nothing_between_calls(void) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = 0U;
+    int failed = shadowspill_test_create_runtime(
+            &mock, 256U, 128U, 16U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0;
+
+    const ShadowSpillFixedPlacementDescription placements[2] = {
+        {
+            .task_id = 7U,
+            .ordinal = 0U,
+            .object_id = SHADOWSPILL_RUNTIME_NO_ID,
+            .offset = 0U,
+            .bytes = 64U,
+            .alignment_bytes = 16U,
+            .kind = SHADOWSPILL_FIXED_TASK_ALLOCATION,
+        },
+        {
+            .task_id = 8U,
+            .ordinal = 0U,
+            .object_id = SHADOWSPILL_RUNTIME_NO_ID,
+            .offset = 64U,
+            .bytes = 64U,
+            .alignment_bytes = 16U,
+            .kind = SHADOWSPILL_FIXED_TASK_ALLOCATION,
+        },
+    };
+    const ShadowSpillFixedLayoutDescription layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .slice_bytes = 128U,
+        .placements = placements,
+        .placement_count = 2U,
+    };
+    const ShadowSpillTaskAllocationContractStep freed_steps[2] = {
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 64U,
+            .charged_bytes = 64U,
+            .alignment_bytes = 16U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_ALLOCATE,
+        },
+        {
+            .allocation_ordinal = 0U,
+            .requested_bytes = 64U,
+            .charged_bytes = 64U,
+            .alignment_bytes = 16U,
+            .operation = SHADOWSPILL_TASK_ALLOCATION_FREE,
+        },
+    };
+    const ShadowSpillTaskDescription freeing = {
+        .task_id = 7U,
+        .allocation_contract_steps = freed_steps,
+        .allocation_contract_step_count = 2U,
+        .enforce_allocation_contract = 1U,
+    };
+    /* Its allocation is what a library keeps past the task. */
+    const ShadowSpillTaskDescription keeping = {
+        .task_id = 8U,
+        .allocation_contract_steps = freed_steps,
+        .allocation_contract_step_count = 1U,
+        .enforce_allocation_contract = 1U,
+    };
+    failed = failed || shadowspill_test_admit_fixed_layout(runtime, &layout) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_admit_task(runtime, &freeing) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_admit_task(runtime, &keeping) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_seal_fixed_layout(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_require_empty_layout(runtime) != SHADOWSPILL_STATUS_OK;
+
+    ShadowSpillAllocation freed = {0};
+    failed = failed || shadowspill_test_before_task(
+            runtime, freeing.task_id, compute, NULL, 0U
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_allocate(runtime, 0U, 64U, 16U, compute, &freed) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_free(runtime, 0U, freed.allocation_id, compute) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_after_task(runtime, freeing.task_id, compute) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_require_empty_layout(runtime) != SHADOWSPILL_STATUS_OK;
+
+    ShadowSpillAllocation kept = {0};
+    failed = failed || shadowspill_test_before_task(
+            runtime, keeping.task_id, compute, NULL, 0U
+        ) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_allocate(runtime, 0U, 64U, 16U, compute, &kept) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_after_task(runtime, keeping.task_id, compute) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_require_empty_layout(runtime) !=
+            SHADOWSPILL_STATUS_PLAN_VIOLATION;
+    ShadowSpillRuntimeFailure failure = {0};
+    failed = failed || shadowspill_runtime_failure(runtime, &failure) !=
+            SHADOWSPILL_STATUS_OK ||
+        failure.status != SHADOWSPILL_STATUS_PLAN_VIOLATION ||
+        failure.reason !=
+            SHADOWSPILL_FAILURE_REASON_LAYOUT_OCCUPIED_BETWEEN_CALLS ||
+        failure.task_id != keeping.task_id ||
+        failure.allocation_id != kept.allocation_id ||
+        failure.requested_bytes != 64U;
+
+    shadowspill_test_destroy_runtime(runtime);
+    if (compute != 0U) {
+        failed = failed ||
+            mock.destroy_stream(mock.state, compute) != 0;
+    }
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (layout_lifecycle_preserves_dynamic_allocations() != 0) {
         fprintf(stderr, "fixed layout lifecycle failed\n");
@@ -795,6 +920,10 @@ int main(void) {
     }
     if (eviction_completion_orders_fixed_fetch_reuse(1) != 0) {
         fprintf(stderr, "same-object fixed fetch dependency failed\n");
+        return EXIT_FAILURE;
+    }
+    if (layout_holds_nothing_between_calls() != 0) {
+        fprintf(stderr, "a survivor in a layout between calls was not refused\n");
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;

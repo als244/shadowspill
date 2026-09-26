@@ -59,6 +59,7 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
     ("shadowspill_plan_close", [ctypes.c_size_t], ctypes.c_uint32),
     ("shadowspill_plan_destroy", [ctypes.c_size_t], None),
     ("shadowspill_plan_wait_idle", [ctypes.c_size_t], ctypes.c_uint32),
+    ("shadowspill_plan_require_empty_layout", [ctypes.c_size_t], ctypes.c_uint32),
     (
         "shadowspill_timing_marker_create",
         [ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)],

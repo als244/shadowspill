@@ -34,6 +34,9 @@ class _CallLog:
     def wait_until_idle(self) -> None:
         self.calls.append("wait_plan_idle")
 
+    def require_empty_layout(self) -> None:
+        self.calls.append("require_empty_layout")
+
 
 class _RawOutputs:
     pass
@@ -235,6 +238,7 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
         "statistics",
         ("begin_runtime_trace", 7),
         "refresh_inputs",
+        "require_empty_layout",
     ]
     assert timing.statistics_before is bridge.statistics_value
 
