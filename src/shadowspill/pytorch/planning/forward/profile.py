@@ -85,6 +85,7 @@ def profile_forward_tasks(
             ),
         )
         _verify_manifest_identity(manifests, compiled_tasks)
+        profiler.release_host_memory()
         message = wait_allocator_idle(
             captured.installed.library,
             captured.installed.runtime_handle,

@@ -27,6 +27,7 @@ from ...contracts import (
 from ...partition import (
     PartitionSpec,
 )
+from ..artifacts import TrainingProfileArtifacts
 from ..stores import open_planning_stores
 from .admit import admit_training_plan, compile_selected_training_tasks
 from .capture import capture_training_graphs
@@ -96,6 +97,7 @@ def build_training(
         stores=artifacts,
         timer=timer,
     )
+    profiled: TrainingProfileArtifacts | None = None
     try:
         profiled = profile_training_tasks(
             captured,
@@ -132,10 +134,18 @@ def build_training(
             timer=timer,
         )
     except BaseException as error:
+
+        def rollback() -> None:
+            # What profiling kept is released once compiling is done; a
+            # failure before then leaves it for the rollback.
+            if profiled is not None:
+                profiled.profiler.release_host_memory()
+            rollback_training_materialization(model, materialized)
+
         rollback_training_failure(
             memory.runtime,
             error,
-            lambda: rollback_training_materialization(model, materialized),
+            rollback,
             operation="profile and lower training plan",
         )
     return admit_training_plan(
