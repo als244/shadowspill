@@ -24,12 +24,12 @@ from shadowspill.pytorch.profiling import (
     validate_compiled_profile,
 )
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
-from shadowspill.pytorch.profiling.profiler import TaskProfiler
+from shadowspill.pytorch.profiling.profiler import SavedValuePool, TaskProfiler
 from shadowspill.runtime.bootstrap import (
     InstalledRuntime,
     validate_dynamic_execution_reservation,
 )
-from shadowspill.runtime.failures import wait_allocator_idle
+from shadowspill.runtime.failures import format_bytes, wait_allocator_idle
 
 from ...graph_pairs import (
     resolve_partitioned_saved_values,
@@ -66,6 +66,7 @@ def profile_training_tasks(
     is profiled, so one profiling serves every ordering of these inputs.
     """
 
+    state = materialized.state
     profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
@@ -73,13 +74,51 @@ def profile_training_tasks(
         device_ordinal=captured.device_ordinal,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
+        saved_value_pool=SavedValuePool(
+            state.runtime,
+            next(
+                name
+                for name, pool in state.runtime.pools.items()
+                if pool.pool_id == state.bridge.spill_pool_id
+            ),
+            state.bridge.plan_handle,
+        ),
     )
+    try:
+        return _profile_training_tasks(
+            captured,
+            materialized,
+            profiler,
+            stores=stores,
+            timer=timer,
+            allocation_probe_seeds=allocation_probe_seeds,
+            allocation_probe_repetitions=allocation_probe_repetitions,
+        )
+    except BaseException:
+        profiler.release_host_memory()
+        raise
+
+
+def _profile_training_tasks(
+    captured: TrainingCaptureArtifacts,
+    materialized: TrainingMaterializationArtifacts,
+    profiler: TaskProfiler,
+    *,
+    allocation_probe_seeds: int,
+    allocation_probe_repetitions: int,
+    stores: PlanningStores,
+    timer: PlanningTimer,
+) -> TrainingProfileArtifacts:
     with timer.measure("saved_value_resolution"):
         partitioned = resolve_partitioned_saved_values(
             captured.partitioned,
             profiler.resolve_graph_pair_saved_values,
             tuple(workload.digest for workload in captured.workloads),
         )
+    timer.progress(
+        f"saved values: {format_bytes(profiler.saved_value_bytes_in_pool)} "
+        "in the spill pool"
+    )
     resolved_capture = replace(captured, partitioned=partitioned)
     inventory = _training_task_inventory(
         resolved_capture,
@@ -267,10 +306,11 @@ def _profile_training_inventory(
 def release_build_executables(
     profiled: TrainingProfileArtifacts, installed: InstalledRuntime
 ) -> None:
-    """Release the profiler's compiled callables and prove the pool is back
-    where planning left it."""
+    """Release the profiler's compiled callables and what it kept on the
+    host, and prove the pool is back where planning left it."""
 
     profiled.profiler.executables.discard()
+    profiled.profiler.release_host_memory()
     message = wait_allocator_idle(
         installed.library, installed.runtime_handle, problem="compiled task release"
     )
