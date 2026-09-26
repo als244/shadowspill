@@ -283,6 +283,21 @@ typedef struct ShadowSpillLiveAllocation {
     uint8_t framework_free_seen;
 } ShadowSpillLiveAllocation;
 
+/*
+ * One admitted plan's fixed layout, as `shadowspill_memory_pool_plan_slices`
+ * reports it. `offset` and `bytes` are where the plan's own layout lies.
+ * `slab_plan_id` is the plan that reserved the range it lies in -- the plan
+ * itself, unless its layout was admitted into another's -- and `slab_bytes`
+ * that range's size.
+ */
+typedef struct ShadowSpillPlanSlice {
+    uint64_t plan_id;
+    uint64_t offset;
+    uint64_t bytes;
+    uint64_t slab_plan_id;
+    uint64_t slab_bytes;
+} ShadowSpillPlanSlice;
+
 typedef struct ShadowSpillRuntimeFailure {
     uint32_t status;
     /* ShadowSpillFailureReason; UNSPECIFIED where the status says it all. */

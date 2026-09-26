@@ -34,6 +34,7 @@ int main(void) {
     REPORT(ShadowSpillTraceSummary);
     REPORT(ShadowSpillAllocation);
     REPORT(ShadowSpillRuntimeFailure);
+    REPORT(ShadowSpillPlanSlice);
     REPORT(ShadowSpillObjectBinding);
     REPORT(ShadowSpillObjectDescription);
     REPORT(ShadowSpillObjectUpdate);

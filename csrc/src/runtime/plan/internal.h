@@ -29,6 +29,11 @@ typedef struct ShadowSpillFixedLayoutState {
     uint64_t placement_count;
     ShadowSpillFixedRuntimeDependency *dependencies;
     uint64_t dependency_count;
+    /* The plan whose slice this layout was admitted into, or NULL when the
+       layout reserved its own; set and read under the pool's reservation. */
+    ShadowSpillPlan *slab_host;
+    /* How many other plans' layouts are admitted into this plan's slice. */
+    uint32_t slab_guests;
     uint8_t active;
     uint8_t sealed;
 } ShadowSpillFixedLayoutState;

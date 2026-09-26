@@ -171,6 +171,7 @@ def admit_training_plan(
             memory.plan_handle,
             execution_pool_id=memory.execution.pool_id,
             spill_pool_id=memory.spill.pool_id,
+            slab_host=memory.slab_host,
         )
         with timer.measure("plan_adoption"):
             materialized.state.adopt_execution_plan(

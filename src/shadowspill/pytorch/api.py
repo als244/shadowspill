@@ -105,6 +105,15 @@ def _clear_failure_frame_locals(error: BaseException) -> None:
             pending.extend(current.exceptions)
 
 
+def _slab_host(share_slab_with: PlannedForward | PlannedTrainStep | None) -> int | None:
+    """The plan whose slab a new plan's layout is admitted into, if any."""
+
+    if share_slab_with is None:
+        return None
+    share_slab_with._require_open("share the slab of")
+    return share_slab_with._plan_handle
+
+
 def plan_forward(
     model: nn.Module,
     *,
@@ -113,6 +122,7 @@ def plan_forward(
     execution: str,
     spill: str,
     execution_budget: int | None = None,
+    share_slab_with: PlannedForward | PlannedTrainStep | None = None,
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
     search_options: SearchOptions | None = None,
@@ -160,6 +170,14 @@ def plan_forward(
     :class:`PartitionPolicy`. Partitioning only creates ordered stage
     occurrences; it does not choose training graph-pair alternatives.
 
+    ``share_slab_with`` names an open planned callable whose slab this plan's
+    layout is admitted into, instead of a range of its own: a forward that
+    evaluates a training step, say, shares the step's slab, and the pool holds
+    the bytes once. The plans run in turn -- a call begins once every plan
+    placing into the slab has drained, and only if nothing is live in it -- and
+    ``execution_budget`` is at most the slab's size, which it is when not
+    given. Close this plan before the one whose slab it shares.
+
     ``dynamic_scratch_reserve_bytes`` optionally raises the physical reserve
     for bounded allocation-path insertions above the automatically profiled
     requirement. It never reduces the measured reserve.
@@ -199,6 +217,7 @@ def plan_forward(
             spill_budget=spill_budget,
             dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
             execution_device=execution_device,
+            slab_host=_slab_host(share_slab_with),
         )
         planning_started = True
         # After the handle exists, so state imported here can name the plan
@@ -257,6 +276,7 @@ def plan_step(
     execution: str,
     spill: str,
     execution_budget: int | None = None,
+    share_slab_with: PlannedForward | PlannedTrainStep | None = None,
     spill_budget: int | None = None,
     dynamic_scratch_reserve_bytes: int | None = None,
     execution_device: int | str | torch.device | None = None,
@@ -287,6 +307,13 @@ def plan_step(
     state has not been imported, in which case planning imports it in place
     and owns it: closing the callable releases that state and empties the
     parameters that viewed it, so read what you need before the close.
+
+    ``share_slab_with`` names an open planned callable whose slab this plan's
+    layout is admitted into, instead of a range of its own, so the pool holds
+    the bytes once. The plans run in turn -- a call begins once every plan
+    placing into the slab has drained, and only if nothing is live in it -- and
+    ``execution_budget`` is at most the slab's size, which it is when not
+    given. Close this plan before the one whose slab it shares.
 
     ``verbose=True`` reports each planning phase and unique structural contract as
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
@@ -374,6 +401,7 @@ def plan_step(
             spill_budget=spill_budget,
             dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
             execution_device=execution_device,
+            slab_host=_slab_host(share_slab_with),
         )
         planning_started = True
         # After the handle exists, so state imported here can name the plan

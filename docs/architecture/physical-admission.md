@@ -445,6 +445,31 @@ out-of-envelope scratch request, or unresolved dependency is a plan violation
 or task-attributed allocation failure. It is rejected before an invalid
 pointer reaches a backend kernel.
 
+## Sharing a slab
+
+A plan's layout holds its slice for as long as the plan is admitted, whether or
+not it is running. Plans that run in turn -- a training step and the forward
+that evaluates it -- need not each hold one: a plan made with
+`share_slab_with=` another is admitted into that plan's slice instead of a
+range of its own (`shadowspill_plan_admit_fixed_layout_in()`), at the same
+offset, and must fit inside it. Its execution budget is at most the slab's
+size, and is that size when not given. The smallest workspace allowance any
+plan is given is checked against it like any budget, so a slab smaller than
+that allowance cannot be shared.
+
+The bytes are counted once, for the plan that reserved them: a sharing plan
+records no layout bytes of its own, and none of the process's persistent
+provider bytes are charged against its budget, since they lie outside the
+slab and its owner counted them already.
+
+Taking turns is what makes this sound, and it needs nothing new: every call
+begins only once the whole runtime has drained, and only if nothing is live in
+its layout ([step boundaries](step-boundaries.md#what-begins-the-next-one)),
+so whatever the other plan placed in the shared bytes is gone before this one
+places anything. The plan that reserved the slab cannot be cleared while
+another is admitted into it; it closes last. `plan_slices()` lists each
+admitted layout with the plan whose slab it lies in.
+
 ## Capacity refinement
 
 A schedule may satisfy logical boundary capacity yet require a fixed extent

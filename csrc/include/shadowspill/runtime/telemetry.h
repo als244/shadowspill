@@ -223,6 +223,23 @@ SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_live_allocations(
     uint64_t *count
 );
 
+/*
+ * Copies the fixed layout of every plan admitted in `pool_id` into caller-owned
+ * storage, and writes their number to `count`, as
+ * `shadowspill_memory_pool_live_allocations` does. A layout is a reserved range
+ * rather than an allocation -- what a plan's tasks place inside it are the
+ * allocations, listed there while they live -- so the two lists together are
+ * the pool's map: this one says which ranges are held for which plans, and
+ * which plans share one.
+ */
+SHADOWSPILL_API ShadowSpillStatus shadowspill_memory_pool_plan_slices(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    ShadowSpillPlanSlice *out,
+    uint64_t capacity,
+    uint64_t *count
+);
+
 /* Copies the immutable first-failure snapshot; status is OK before failure. */
 SHADOWSPILL_API ShadowSpillStatus shadowspill_runtime_failure(
     ShadowSpillRuntime *runtime,

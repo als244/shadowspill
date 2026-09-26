@@ -27,6 +27,18 @@ class LiveAllocation(ctypes.Structure):
     ]
 
 
+class PlanSliceRecord(ctypes.Structure):
+    """One admitted plan's fixed layout, mirroring `ShadowSpillPlanSlice`."""
+
+    _fields_ = [
+        ("plan_id", ctypes.c_uint64),
+        ("offset", ctypes.c_uint64),
+        ("bytes", ctypes.c_uint64),
+        ("slab_plan_id", ctypes.c_uint64),
+        ("slab_bytes", ctypes.c_uint64),
+    ]
+
+
 class MemoryPoolStatistics(ctypes.Structure):
     """What one pool holds, mirroring `ShadowSpillMemoryPoolStatistics`.
 
