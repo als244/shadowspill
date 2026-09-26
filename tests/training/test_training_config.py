@@ -53,3 +53,32 @@ def test_references_name_objects_calls_and_partials() -> None:
     assert resolved["plain"] == {"a": 1}
     with pytest.raises(ValueError, match="module:name"):
         config.resolve("@fractions")
+
+
+CONFIGS = Path(__file__).resolve().parents[2] / "training" / "configs"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(CONFIGS.glob("*.json")), ids=lambda path: path.stem
+)
+def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
+    path: Path,
+) -> None:
+    """mlops kernels return the weight gradients they sum unrounded only when
+    asked at the dtype gradients are kept at; a config keeping them at the
+    weights' own asks for nothing."""
+
+    raw = json.loads(path.read_text())
+    settings = raw.get("settings", [])
+    if not any(
+        setting.get("@call") == "workloads.providers:select_implementation"
+        and setting.get("implementation") == "mlops"
+        for setting in settings
+    ):
+        pytest.skip("the model does not run on mlops kernels")
+    asked = [
+        setting.get("dtype")
+        for setting in settings
+        if setting.get("@call") == "mlops.dispatch:set_weight_gradient_dtype"
+    ]
+    assert asked == ([raw["grad_dtype"]] if "grad_dtype" in raw else [])
