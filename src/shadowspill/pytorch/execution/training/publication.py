@@ -419,9 +419,7 @@ def _forget_released_objects(
 ) -> None:
     del run
     for alias_id, object_ids in record.released_ephemeral:
-        executor._state.object_store.pop(alias_id, None)
-        for object_id in object_ids:
-            executor._state.object_tensors.pop(object_id, None)
+        executor._state.forget(alias_id, object_ids)
 
 
 __all__ = [

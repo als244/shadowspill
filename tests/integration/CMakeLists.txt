@@ -139,6 +139,9 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_follows_a_learning_rate_schedule 300
 )
 shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_keeps_no_output_the_caller_dropped 300
+)
+shadowspill_add_public_api_test(
   test_02_shared_model.py test_a_forward_planned_after_training_sees_every_update 300
 )
 shadowspill_add_public_api_test(
