@@ -47,11 +47,14 @@ def occupants(
     found: dict[int, list[object]] = {key: [] for key in wanted}
     # Walking every object touches deprecated framework attributes whose
     # getters warn; the warning belongs to the object being looked at, not
-    # to this query.
+    # to this query. A tensor is recognized by its type rather than by
+    # `isinstance`, which a weak proxy answers from its referent -- and one
+    # whose referent is gone, as graph capture leaves behind, raises instead.
+    # A live proxy's tensor is in this walk itself.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         candidates = [
-            item for item in gc.get_objects() if isinstance(item, torch.Tensor)
+            item for item in gc.get_objects() if issubclass(type(item), torch.Tensor)
         ]
     for candidate in candidates:
         try:
