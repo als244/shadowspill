@@ -59,8 +59,13 @@ class ShadowSpill:
 
     ShadowSpill creates the optimizer's state in its pool before any step runs,
     each entry where the optimizer's own first step starts it -- moments at
-    zero, a master copy of the weights at the weights -- and a resumed run's
-    checkpoint replaces it."""
+    zero, say -- with the master copies a run's ``master_dtype`` asks for, and a
+    resumed run's checkpoint replaces them.
+
+    ``round_accumulation_once`` is ``plan_step``'s: a matrix multiply then adds
+    its product into bf16 running gradients as it writes it, rounding the sum
+    once where PyTorch rounds it twice -- more precise, and no longer the
+    PyTorch backend's step bit for bit."""
 
     checkpoint_device = "cpu"  # mapped, and copied from there into the pool
 
@@ -69,8 +74,10 @@ class ShadowSpill:
         execution_gib: float,
         spill_gib: float,
         eval_execution_gib: float | None = None,
+        round_accumulation_once: bool = False,
     ) -> None:
         self.budget = (int(execution_gib * GIB), int(spill_gib * GIB))
+        self.round_accumulation_once = round_accumulation_once
         self.eval_budget = (
             None if eval_execution_gib is None else int(eval_execution_gib * GIB)
         )
@@ -91,6 +98,9 @@ class ShadowSpill:
             "objective": planned_objective,
             "optimizer": functools.partial(setup.optimizer, **setup.optimizer_args),
             "hyperparams": setup.hyperparams,
+            "master_dtype": setup.master_dtype,
+            "grad_dtype": setup.grad_dtype,
+            "round_accumulation_once": self.round_accumulation_once,
             "runtime": self.runtime,
             "execution": "device",
             "spill": "spill",

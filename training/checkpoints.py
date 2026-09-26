@@ -1,17 +1,17 @@
 """The checkpoint format both backends write.
 
-A checkpoint is ``torch.save`` of ``{"model", "optimizer", "step",
-"model_from_optimizer"}``: the model's state dict, the optimizer's, the steps
-taken, and which model entries were left out because an optimizer entry
-reproduces them bit for bit by a cast -- a weight kept beside the
-higher-precision master it is the rounding of is written once, as the master.
-Which entries qualify is found from the values, not from names or dtypes.
-ShadowSpill's ``PlannedTrainStep.save`` writes this format straight from its
-pool; the PyTorch backend writes it with ``save`` here.
+A checkpoint is ``torch.save`` of ``{"model", "optimizer", "step"}``: the
+model's state dict, the optimizer's, and the steps taken. A weight trained over
+a master copy at another precision is written as its master, under the weight's
+name, so the checkpoint holds the training state at full precision once and the
+weight follows from it -- and it loads into a plain model of either precision
+as it stands. ShadowSpill's ``PlannedTrainStep.save`` writes this format
+straight from its pool; the PyTorch backend writes it with ``save`` here.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -20,54 +20,50 @@ import torch.nn as nn
 
 
 def save(
-    path: Path, module: nn.Module, optimizer: torch.optim.Optimizer, step: int
+    path: Path,
+    module: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    step: int,
+    masters: Mapping[str, torch.Tensor] | None = None,
 ) -> None:
-    """Write the module's and the optimizer's state, each weight at most once."""
+    """Write the module's and the optimizer's state, each master in place of
+    its weight."""
 
     model = module.state_dict()
-    state = optimizer.state_dict()
-    names = dict(enumerate(name for name, _ in module.named_parameters()))
-    derived = {}
-    for index, entries in state["state"].items():
-        weight = model[names[index]]
-        for key, value in entries.items():
-            if _reproduces(value, weight):
-                derived[names[index]] = (index, key)
-                break
-    kept = {name: value for name, value in model.items() if name not in derived}
+    for name, master in (masters or {}).items():
+        for alias in _names(module)[name]:
+            model[alias] = master.detach()
     torch.save(
-        {
-            "model": kept,
-            "optimizer": state,
-            "step": step,
-            "model_from_optimizer": derived,
-        },
-        path,
+        {"model": model, "optimizer": optimizer.state_dict(), "step": step}, path
     )
 
 
 def load(
-    state: dict[str, Any], module: nn.Module, optimizer: torch.optim.Optimizer
+    state: dict[str, Any],
+    module: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    masters: Mapping[str, torch.Tensor] | None = None,
 ) -> int:
-    """Restore a checkpoint into the module and optimizer; return its step."""
+    """Restore a checkpoint into the module, its masters and the optimizer;
+    return its step. A master takes the value written for its weight, and the
+    weight that value's cast."""
 
     model = dict(state["model"])
     dtypes = {name: value.dtype for name, value in module.state_dict().items()}
-    for name, (index, key) in state.get("model_from_optimizer", {}).items():
-        model[name] = state["optimizer"]["state"][index][key].to(dtypes[name])
+    with torch.no_grad():
+        for name, master in (masters or {}).items():
+            master.copy_(model[name])
+            for alias in _names(module)[name]:
+                model[alias] = model[alias].to(dtypes[alias])
     module.load_state_dict(model)
     optimizer.load_state_dict(state["optimizer"])
     return int(state["step"])
 
 
-def _reproduces(value: object, weight: torch.Tensor) -> bool:
-    return (
-        torch.is_tensor(value)
-        and value.dtype != weight.dtype
-        and value.shape == weight.shape
-        and torch.equal(_bits(value.to(weight.dtype)), _bits(weight))
-    )
+def _names(module: nn.Module) -> dict[str, tuple[str, ...]]:
+    """Every name a weight goes by, under the first of them."""
 
-
-def _bits(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor.contiguous().reshape(-1).view(torch.uint8)
+    names: dict[int, list[str]] = {}
+    for name, parameter in module.named_parameters(remove_duplicate=False):
+        names.setdefault(id(parameter), []).append(name)
+    return {every[0]: tuple(every) for every in names.values()}

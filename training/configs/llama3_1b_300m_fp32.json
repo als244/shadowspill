@@ -1,41 +1,44 @@
 {
-  "run_dir": "training/runs/olmoe_1b_300m",
+  "run_dir": "training/runs/llama3_1b_300m_fp32",
   "settings": [
     {
       "@call": "workloads.providers:select_implementation",
-      "family": "olmoe",
+      "family": "llama3",
       "implementation": "mlops"
     },
     {
       "@call": "mlops.dispatch:set_deterministic_kernels",
       "enabled": true
+    },
+    {
+      "@call": "mlops.dispatch:set_weight_gradient_dtype",
+      "dtype": "@torch:float32"
     }
   ],
   "model": {
     "@call": "training.models:build_on_meta",
-    "model": "@workloads.mlops:OLMoE",
+    "model": "@workloads.mlops:Llama3",
     "dtype": "bfloat16",
     "config": {
       "@call": "training.models:config_preset",
-      "preset": "@workloads.mlops:OLMoEConfig.numerical",
+      "preset": "@workloads.mlops:Llama3Config.numerical",
       "max_seq_len": 2048
     }
   },
   "objective": "@training.objectives:model_loss",
-  "objective_args": {
-    "aux_coef": 0.01
-  },
   "optimizer": "@mlops.optim:AdamW",
   "optimizer_args": {
     "betas": [
       0.9,
       0.95
     ],
-    "weight_decay": 0.1
+    "weight_decay": 0.1,
+    "gradient_dtype": "parameter",
+    "state_dtype": "@torch:float32"
   },
   "data": {
     "@call": "training.data:PackedTokens",
-    "directory": "training/data/tokens/olmoe"
+    "directory": "training/data/tokens/llama3"
   },
   "steps": 4578,
   "max_seq_len": 2048,
@@ -53,6 +56,8 @@
     "spill_gib": 32,
     "eval_execution_gib": 4
   },
+  "master_dtype": "@torch:float32",
+  "grad_dtype": "@torch:float32",
   "seed": 0,
   "eval_every": 100,
   "eval_batches": 10,

@@ -97,6 +97,8 @@ def _setup(tmp_path: Path) -> Setup:
         max_tokens_per_step=4096,
         max_tokens_per_microbatch=None,
         hyperparams=("lr",),
+        master_dtype=None,
+        grad_dtype=None,
         seed=0,
         run_dir=tmp_path / "run",
         artifact_store=tmp_path / "run" / "artifact_store",
@@ -143,3 +145,22 @@ def test_a_run_refuses_other_budgets_than_it_was_planned_at(
     ShadowSpill(execution_gib=1, spill_gib=2).setup(setup)
     with pytest.raises(ValueError, match="planned at other budgets"):
         ShadowSpill(execution_gib=2, spill_gib=2).setup(setup)
+
+
+@pytest.mark.parametrize("round_once", [False, True])
+def test_a_run_plans_its_steps_with_the_accumulation_it_asked_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, round_once: bool
+) -> None:
+    stand_ins = StandIns(monkeypatch)
+    setup = _setup(tmp_path)
+    setup.run_dir.mkdir()
+
+    backend = ShadowSpill(execution_gib=1, spill_gib=2)
+    if round_once:
+        backend = ShadowSpill(
+            execution_gib=1, spill_gib=2, round_accumulation_once=True
+        )
+    backend.setup(setup)
+
+    assert stand_ins.searches[0]["round_accumulation_once"] is round_once
+    assert stand_ins.plans[0]["round_accumulation_once"] is round_once
