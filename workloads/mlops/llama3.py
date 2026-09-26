@@ -6,7 +6,7 @@ import mlops
 import torch
 import torch.nn as nn
 
-from workloads.common import RotaryEmbedding, SequenceLengths, attention_metadata
+from workloads.common import Packing, RotaryEmbedding, SequenceLengths, packed_metadata
 from workloads.pytorch.llama3 import Llama3Config
 
 from .common import RMSNorm
@@ -28,8 +28,7 @@ class Attention(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        positions: torch.Tensor,
-        lengths: tuple[int, ...],
+        packing: Packing,
         rotary: RotaryEmbedding,
     ) -> torch.Tensor:
         config = self.config
@@ -39,14 +38,14 @@ class Attention(nn.Module):
         value = self.wv(hidden).view_as(key)
         query = mlops.rope(
             query,
-            positions,
+            packing.positions,
             config.rope_base,
             rotary.cosine,
             rotary.sine,
         )
         key = mlops.rope(
             key,
-            positions,
+            packing.positions,
             config.rope_base,
             rotary.cosine,
             rotary.sine,
@@ -55,7 +54,8 @@ class Attention(nn.Module):
             query.reshape(batch * sequence, config.n_heads, config.head_dim),
             key.reshape(batch * sequence, config.n_kv_heads, config.head_dim),
             value.reshape(batch * sequence, config.n_kv_heads, config.head_dim),
-            lengths,
+            packing.cu_seqlens,
+            packing.max_seqlen,
         )
         return self.wo(attended.reshape(batch, sequence, config.d_model))
 
@@ -82,11 +82,10 @@ class Block(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        positions: torch.Tensor,
-        lengths: tuple[int, ...],
+        packing: Packing,
         rotary: RotaryEmbedding,
     ) -> torch.Tensor:
-        hidden = hidden + self.attn(self.attn_norm(hidden), positions, lengths, rotary)
+        hidden = hidden + self.attn(self.attn_norm(hidden), packing, rotary)
         return hidden + self.mlp(self.ffn_norm(hidden))
 
 
@@ -109,12 +108,12 @@ class Llama3(nn.Module):
     def hidden(
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None
     ) -> torch.Tensor:
-        positions, lengths = attention_metadata(
+        packing = packed_metadata(
             tokens, sequence_lengths, capacity=self.config.max_seq_len
         )
         hidden = mlops.embedding(tokens, self.embed.weight)
         for block in self.blocks:
-            hidden = block(hidden, positions, lengths, self.rotary)
+            hidden = block(hidden, packing, self.rotary)
         return self.final_norm(hidden)
 
     def forward(

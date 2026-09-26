@@ -6,7 +6,7 @@ import mlops
 import torch
 import torch.nn as nn
 
-from workloads.common import RotaryEmbedding, SequenceLengths, attention_metadata
+from workloads.common import Packing, RotaryEmbedding, SequenceLengths, packed_metadata
 from workloads.pytorch.olmoe import OLMoEConfig
 
 from .common import RMSNorm
@@ -26,8 +26,7 @@ class Attention(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        positions: torch.Tensor,
-        lengths: tuple[int, ...],
+        packing: Packing,
         rotary: RotaryEmbedding,
     ) -> torch.Tensor:
         config = self.config
@@ -40,14 +39,14 @@ class Attention(nn.Module):
         )
         query = mlops.rope(
             query,
-            positions,
+            packing.positions,
             config.rope_base,
             rotary.cosine,
             rotary.sine,
         )
         key = mlops.rope(
             key,
-            positions,
+            packing.positions,
             config.rope_base,
             rotary.cosine,
             rotary.sine,
@@ -58,7 +57,8 @@ class Attention(nn.Module):
             self.wv(hidden).reshape(
                 batch * sequence, config.n_kv_heads, config.head_dim
             ),
-            lengths,
+            packing.cu_seqlens,
+            packing.max_seqlen,
         )
         return self.wo(attended.reshape(batch, sequence, config.query_width))
 
@@ -85,8 +85,10 @@ class MoE(nn.Module):
             nn.init.normal_(self.w2_experts, std=config.d_ff_expert**-0.5)
 
     def forward(
-        self, hidden: torch.Tensor, residual: torch.Tensor, lengths: tuple[int, ...]
+        self, hidden: torch.Tensor, residual: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        # Softmax-then-top-k balances experts over the whole microbatch, so
+        # where its sequences begin is no concern of the router's.
         output, auxiliary, _counts, _probability_sum = mlops.moe(
             hidden,
             residual,
@@ -95,7 +97,6 @@ class MoE(nn.Module):
             self.w2_experts,
             top_k=self.config.top_k,
             routing_mode="softmax_then_topk",
-            lengths=lengths,
         )
         return output, auxiliary
 
@@ -111,12 +112,11 @@ class Block(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        positions: torch.Tensor,
-        lengths: tuple[int, ...],
+        packing: Packing,
         rotary: RotaryEmbedding,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        hidden = hidden + self.attn(self.attn_norm(hidden), positions, lengths, rotary)
-        return self.moe(self.ffn_norm(hidden), hidden, lengths)
+        hidden = hidden + self.attn(self.attn_norm(hidden), packing, rotary)
+        return self.moe(self.ffn_norm(hidden), hidden)
 
 
 class OLMoE(nn.Module):
@@ -138,13 +138,13 @@ class OLMoE(nn.Module):
     def hidden(
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        positions, lengths = attention_metadata(
+        packing = packed_metadata(
             tokens, sequence_lengths, capacity=self.config.max_seq_len
         )
         hidden = mlops.embedding(tokens, self.embed.weight)
         auxiliary = torch.zeros((), dtype=torch.float32, device=hidden.device)
         for block in self.blocks:
-            hidden, block_auxiliary = block(hidden, positions, lengths, self.rotary)
+            hidden, block_auxiliary = block(hidden, packing, self.rotary)
             auxiliary = auxiliary + block_auxiliary
         return self.final_norm(hidden), auxiliary
 
