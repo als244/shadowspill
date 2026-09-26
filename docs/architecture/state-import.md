@@ -32,6 +32,13 @@ applying. Where the transient is what decides whether the state fits, import
 from a checkpoint instead — the row below that maps the file rather than
 reading it, and pays reclaimable page cache rather than anonymous memory.
 
+Optimizer state that planning creates is different, because planning allocates
+it and hands each entry to an initialiser that writes into it: it takes the
+checkpoint's order -- imported before it holds values, then filled in the pool
+-- and the other order only for a pool that cannot be written through, which
+keeps a host copy of its state regardless. See [the
+optimizer](optimizer.md#created-in-the-pool-then-filled).
+
 ## Three paths in
 
 All three end with the same thing — a `PersistentState` the runtime owns —

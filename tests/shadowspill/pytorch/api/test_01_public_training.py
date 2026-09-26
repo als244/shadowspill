@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Iterable
 from functools import partial
+from pathlib import Path
 
 import pytest
 import torch
@@ -17,7 +18,10 @@ from shadowspill.pytorch import (
     import_model_state,
     plan_step,
     read_model_state,
+    read_optimizer_state,
 )
+from shadowspill.pytorch.execution.training.optimizer_state import OptimizerState
+from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.optimizer import trace as optimizer_trace
 from shadowspill.pytorch.state.storage import persistent_state
 from shadowspill.runtime import RuntimeConfigurationError
@@ -400,6 +404,225 @@ def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
     assert persistent_state(runtime, built[0]) is None
     export_model_state(model, runtime=runtime, release_runtime=True)
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_fills_declared_state_in_the_spill_pool(
+    tmp_path: object,
+) -> None:
+    """The host never holds the optimizer's state beside the pool.
+
+    Each declared entry is imported before it holds anything, so the
+    initialiser is handed the entry's own storage in the spill pool, and what
+    it writes is what the plan holds.
+    """
+
+    _require_adapter()
+    torch.manual_seed(77)
+    model = _TrainingNetwork()
+    examples = [[torch.randn(2, 6), torch.randn(2, 3), "left"]]
+    runtime = public_test_runtime()
+    model = import_model_state(model, runtime=runtime, pool="spill")
+    built: list[torch.optim.Optimizer] = []
+    in_pool: list[bool] = []
+
+    def build_optimizer(
+        parameters: Iterable[torch.nn.Parameter],
+    ) -> torch.optim.Optimizer:
+        optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
+        built.append(optimizer)
+        return optimizer
+
+    def fill(name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter) -> None:
+        owner = persistent_state(runtime, built[0])
+        leases = (
+            set() if owner is None else {item.pool_pointer for item in owner.storages}
+        )
+        in_pool.append(tensor.untyped_storage().data_ptr() in leases)
+        tensor.fill_(0.25)
+
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        optimizer=build_optimizer,
+        example_inputs=examples,
+        optimizer_state_init=fill,
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+    )
+    assert in_pool and all(in_pool)
+    values = read_optimizer_state(built[0], runtime=runtime)
+    assert values and all(torch.all(value == 0.25) for value in values.values())
+    training.close()
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_refuses_state_an_initialiser_replaced(
+    tmp_path: object,
+) -> None:
+    """An initialiser that swaps its tensor's storage fails rather than trains.
+
+    Its values would never reach the pool, which would keep what it held at
+    import -- a wrong answer that reads as values.
+    """
+
+    _require_adapter()
+    torch.manual_seed(78)
+    model = _TrainingNetwork()
+    examples = [[torch.randn(2, 6), torch.randn(2, 3), "left"]]
+    runtime = public_test_runtime()
+    model = import_model_state(model, runtime=runtime, pool="spill")
+    built: list[torch.optim.Optimizer] = []
+
+    def build_optimizer(
+        parameters: Iterable[torch.nn.Parameter],
+    ) -> torch.optim.Optimizer:
+        optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
+        built.append(optimizer)
+        return optimizer
+
+    def replace(name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter) -> None:
+        tensor.data = torch.zeros_like(tensor)
+
+    with pytest.raises(RuntimeConfigurationError, match="new storage"):
+        plan_step(
+            model,
+            objective=_training_objective,
+            optimizer=build_optimizer,
+            example_inputs=examples,
+            optimizer_state_init=replace,
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            artifact_store=tmp_path,
+        )
+    # The refused plan's state went with it; the caller's model stays imported.
+    assert persistent_state(runtime, built[0]) is None
+    assert persistent_state(runtime, model) is not None
+
+
+def _refuse_copy(*args: object, **kwargs: object) -> None:
+    raise AssertionError("the state was copied out of the pool")
+
+
+def _same_state(first: dict[str, object], second: dict[str, object]) -> bool:
+    models = first["model"], second["model"]
+    assert isinstance(models[0], dict) and isinstance(models[1], dict)
+    return set(models[0]) == set(models[1]) and all(
+        torch.equal(value, models[1][name]) for name, value in models[0].items()
+    )
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_saves_straight_from_the_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkpoint is written from the pool itself, and resumes exactly."""
+
+    _require_adapter()
+    torch.manual_seed(81)
+    runtime = public_test_runtime()
+    model = import_model_state(_TrainingNetwork(), runtime=runtime, pool="spill")
+    batches = [[[torch.randn(2, 6), torch.randn(2, 3), "left"]] for _ in range(3)]
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        optimizer=partial(torch.optim.AdamW, lr=0.003, foreach=False),
+        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
+        example_inputs=batches[0],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+    )
+    training(batches[1])
+    path = tmp_path / "checkpoint.pt"
+    with monkeypatch.context() as patch:
+        patch.setattr(OptimizerState, "_copied_alias_buffer", _refuse_copy)
+        patch.setattr(TrainingMaterializedState, "_read_model_aliases", _refuse_copy)
+        training.save(path)
+    saved = torch.load(path, mmap=True, weights_only=True)
+    expected = training.state_dict()
+    assert _same_state(saved, expected)
+    for index, entries in expected["optimizer"]["state"].items():
+        for key, value in entries.items():
+            assert torch.equal(saved["optimizer"]["state"][index][key], value)
+    assert saved["step"] == 1 and not saved["model_from_optimizer"]
+
+    training(batches[2])
+    uninterrupted = training.state_dict()
+    training.load_state_dict(torch.load(path, mmap=True, weights_only=True))
+    training(batches[2])
+    assert _same_state(training.state_dict(), uninterrupted)
+    training.close()
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_saves_a_master_copy_once(tmp_path: Path) -> None:
+    """A weight the optimizer keeps a higher-precision master of is its master
+    cast, bit for bit, after every update, so a checkpoint writes it once."""
+
+    mlops = pytest.importorskip("mlops")
+    _require_adapter()
+    torch.manual_seed(82)
+    runtime = public_test_runtime()
+    model = import_model_state(
+        _TrainingNetwork().to(torch.bfloat16), runtime=runtime, pool="spill"
+    )
+    batches = [
+        [
+            [
+                torch.randn(2, 6, dtype=torch.bfloat16),
+                torch.randn(2, 3, dtype=torch.bfloat16),
+                "left",
+            ]
+        ]
+        for _ in range(3)
+    ]
+
+    def initialize(name: str, tensor: torch.Tensor, parameter: torch.Tensor) -> None:
+        with torch.no_grad():
+            if name == "master_parameter":
+                tensor.copy_(parameter)
+            else:
+                tensor.zero_()
+
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        optimizer=partial(
+            mlops.optim.AdamW, lr=0.003, master_parameter_dtype=torch.float32
+        ),
+        optimizer_state_init=initialize,
+        example_inputs=batches[0],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+    )
+    training(batches[1])
+    path = tmp_path / "checkpoint.pt"
+    training.save(path)
+    saved = torch.load(path, mmap=True, weights_only=True)
+    weights = {name for name, _parameter in model.named_parameters()}
+    assert set(saved["model_from_optimizer"]) == weights
+    assert {key for _index, key in saved["model_from_optimizer"].values()} == {
+        "master_parameter"
+    }
+    assert not weights & set(saved["model"])
+
+    training(batches[2])
+    uninterrupted = training.state_dict()
+    training.load_state_dict(torch.load(path, mmap=True, weights_only=True))
+    training(batches[2])
+    assert _same_state(training.state_dict(), uninterrupted)
+    training.close()
 
 
 @pytest.mark.cuda

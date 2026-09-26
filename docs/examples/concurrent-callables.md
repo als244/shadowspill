@@ -17,7 +17,10 @@ second_forward.close()
 Each `submit()` performs the complete host dispatch and returns after recording
 the callable's public completion event. `result()` waits for that event once.
 The callables may share one runtime and may consume the same runtime-owned
-object through `shared_input()`.
+object through `shared_input()`. They may also share one model: a training
+step and a forward pass planned over the same model imported with
+`import_model_state()` both run on its state, and the forward sees each update
+the step has made -- which is how a training loop evaluates as it goes.
 
 One callable has one outstanding submitted invocation. Resolve its pending
 result before reusing that callable. This keeps its admitted physical layout,

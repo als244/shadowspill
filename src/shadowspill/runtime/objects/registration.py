@@ -215,9 +215,11 @@ def require_state_operation_allowed(
 ) -> None:
     with runtime._lock:
         runtime._require_open()
-        if runtime._active_plan_handles or (
-            runtime._planning_plan_handle is not None and not allow_in_progress_plan
-        ):
+        if allow_in_progress_plan:
+            # A plan being made imports state of its own -- new objects that
+            # no admitted plan binds -- so the others may stay admitted.
+            return
+        if runtime._active_plan_handles or runtime._planning_plan_handle is not None:
             raise RuntimeConfigurationError(
                 "persistent state import requires an idle Runtime"
             )

@@ -385,7 +385,9 @@ class MaterializedForwardState(MaterializedState):
             return
         self.bridge.wait_runtime_idle()
         registrations = self._registrations()
-        restore_persistent_state(self.runtime, self._persistent_state)
+        restore_persistent_state(
+            self.runtime, self._persistent_state, self.bridge.plan_handle
+        )
         owners = self._read_model_aliases(
             aliases=self._registered_model_aliases - self._persistent_aliases
         )
