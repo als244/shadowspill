@@ -16,10 +16,11 @@ import signal
 import sys
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from shadowspill.schema import artifact_schema
-from workloads.full_model import FullModelManifest, manifests
+from workloads.full_model import FullModelManifest, manifest_for, manifests
 
 from .matrix_logging import MatrixConsole, format_bytes, utc_now
 
@@ -103,27 +104,23 @@ def _write_parent_failure(
 def _parse_cell_planning_budgets(
     entries: Sequence[str],
     identities: frozenset[str],
+    *,
+    flag: str = "planning-spill-budget-gib",
 ) -> dict[str, int]:
-    """Parse repeatable ``IDENTITY=GIB`` planning-budget overrides."""
+    """Parse repeatable ``IDENTITY=GIB`` per-cell budget overrides."""
 
     budgets: dict[str, int] = {}
     for entry in entries:
         identity, separator, gib_text = entry.partition("=")
         if not separator:
-            raise ValueError(
-                f"planning-spill-budget-gib entry {entry!r} must be IDENTITY=GIB"
-            )
+            raise ValueError(f"{flag} entry {entry!r} must be IDENTITY=GIB")
         if identity not in identities:
-            raise ValueError(
-                f"planning-spill-budget-gib names unknown cell {identity!r}"
-            )
+            raise ValueError(f"{flag} names unknown cell {identity!r}")
         if identity in budgets:
-            raise ValueError(f"planning-spill-budget-gib repeats cell {identity!r}")
+            raise ValueError(f"{flag} repeats cell {identity!r}")
         gib = int(gib_text)
         if gib <= 0:
-            raise ValueError(
-                f"planning-spill-budget-gib for {identity!r} must be positive"
-            )
+            raise ValueError(f"{flag} for {identity!r} must be positive")
         budgets[identity] = gib
     return budgets
 
@@ -312,6 +309,17 @@ def _parser() -> argparse.ArgumentParser:
             "for example mlops_qwen35=100; repeatable"
         ),
     )
+    parser.add_argument(
+        "--spill-budget-gib",
+        action="append",
+        default=[],
+        metavar="IDENTITY=GIB",
+        help=(
+            "per-cell spill-pool capacity in place of the manifest's, for a "
+            "host with less memory than the manifests were sized on, for "
+            "example mlops_llama3=80; repeatable"
+        ),
+    )
     return parser
 
 
@@ -370,6 +378,9 @@ def _cell_command(
         command.extend(
             ("--planning-spill-budget-gib", str(planning_budgets[manifest.identity]))
         )
+    canonical = manifest_for(manifest.family, manifest.implementation)
+    if manifest.spill_budget_bytes != canonical.spill_budget_bytes:
+        command.extend(("--spill-budget-gib", str(manifest.spill_budget_bytes >> 30)))
     if arguments.export_bypass_key is not None:
         command.extend(("--export-bypass-key", arguments.export_bypass_key))
     remote_spill = getattr(arguments, "remote_spill", None)
@@ -485,6 +496,9 @@ def main_with_spill(spill: object | None = None) -> int:
         planning_budgets = _parse_cell_planning_budgets(
             arguments.planning_spill_budget_gib, identities
         )
+        pool_budgets = _parse_cell_planning_budgets(
+            arguments.spill_budget_gib, identities, flag="spill-budget-gib"
+        )
     except ValueError as error:
         parser.error(str(error))
     output = arguments.output_directory.expanduser().resolve()
@@ -494,6 +508,14 @@ def main_with_spill(spill: object | None = None) -> int:
         chosen = [item for item in manifests() if item.identity in selected]
     else:
         chosen = list(default_cells())
+    # A smaller pool is the cell's manifest from here on, so what the banner
+    # and each cell's record say is the pool it actually ran with.
+    chosen = [
+        replace(manifest, spill_budget_bytes=pool_budgets[manifest.identity] << 30)
+        if manifest.identity in pool_budgets
+        else manifest
+        for manifest in chosen
+    ]
     rows: list[dict[str, object]] = []
     failed = False
     matrix_started = time.perf_counter()
