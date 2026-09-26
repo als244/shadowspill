@@ -61,6 +61,7 @@ def build_training(
     transfer_bandwidths: TransferBandwidths | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
@@ -87,6 +88,7 @@ def build_training(
         stores=artifacts,
         timer=timer,
         grad_dtype=grad_dtype,
+        round_accumulation_once=round_accumulation_once,
     )
     materialized = materialize_training_state(
         model,

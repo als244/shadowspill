@@ -66,9 +66,12 @@ def capture_training_graphs(
     stores: PlanningStores,
     timer: PlanningTimer,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline, their
-    parameter gradients at ``grad_dtype`` when one is given."""
+    parameter gradients at ``grad_dtype`` when one is given, their
+    accumulating forms rounding once where they may with
+    ``round_accumulation_once``."""
 
     with timer.measure("validation"):
         signatures, cpu_inputs, workloads = _prepare_training_inputs(
@@ -104,6 +107,7 @@ def capture_training_graphs(
             stores=stores,
             timer=timer,
             grad_dtype=grad_dtype,
+            round_accumulation_once=round_accumulation_once,
         )
         with timer.measure("storage_layout_lowering"):
             layout = lower_training_storage_layout(fake_model, captures)
@@ -209,6 +213,7 @@ def _partition_training_graphs(
     stores: PlanningStores,
     timer: PlanningTimer,
     grad_dtype: torch.dtype | None,
+    round_accumulation_once: bool,
 ) -> tuple[PartitionedTrainingCapture, ...]:
     """Partition every position against its own example inputs.
 
@@ -235,6 +240,7 @@ def _partition_training_graphs(
                 # forms; the store derives each contract's once.
                 accumulating=len(captures) > 1,
                 gradient_dtype=grad_dtype,
+                round_accumulation_once=round_accumulation_once,
             )
             for capture, root_inputs in zip(captures, representative_roots, strict=True)
         )
