@@ -40,6 +40,7 @@ _MIRRORS = {
     "ShadowSpillTraceSummary": abi.TraceSummary,
     "ShadowSpillAllocation": abi.Allocation,
     "ShadowSpillRuntimeFailure": abi.RuntimeFailure,
+    "ShadowSpillPlanSlice": abi.PlanSliceRecord,
     "ShadowSpillObjectBinding": abi.ObjectBinding,
     "ShadowSpillObjectDescription": abi.ObjectDescription,
     "ShadowSpillObjectUpdate": abi.ObjectUpdate,

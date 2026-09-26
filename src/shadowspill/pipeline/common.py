@@ -240,8 +240,15 @@ def simulation_capacity(
 
 
 def fixed_execution_bytes(memory: PlanMemory, profiles: ProfilingResult) -> int:
-    """Return every process-persistent byte carved from the execution slab."""
+    """Return every process-persistent byte carved from the execution slab.
 
+    None for a plan whose layout shares another plan's slab: that slab holds
+    layouts only, so what providers keep live lies outside it, counted already
+    by the plan that reserved it.
+    """
+
+    if memory.slab_host is not None:
+        return 0
     return memory.installed.fixed_execution_bytes + profiles.fixed_slab_bytes
 
 

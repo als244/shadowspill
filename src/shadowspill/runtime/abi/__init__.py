@@ -53,6 +53,7 @@ from .statistics import (
     BackendStatistics,
     LiveAllocation,
     MemoryPoolStatistics,
+    PlanSliceRecord,
     RuntimeStatistics,
     TransferProfile,
 )
@@ -83,6 +84,7 @@ __all__ = [
     "PhysicalAdmission",
     "PhysicalMemory",
     "PlanDescription",
+    "PlanSliceRecord",
     "PoolConfig",
     "RouteConfig",
     "RuntimeAction",

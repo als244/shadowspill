@@ -893,6 +893,114 @@ static int layout_holds_nothing_between_calls(void) {
     return failed ? -1 : 0;
 }
 
+static uint64_t find_slice(
+    const ShadowSpillPlanSlice *slices,
+    uint64_t count,
+    uint64_t plan_id,
+    ShadowSpillPlanSlice *found
+) {
+    for (uint64_t index = 0U; index < count; ++index) {
+        if (slices[index].plan_id == plan_id) {
+            *found = slices[index];
+            return 1U;
+        }
+    }
+    return 0U;
+}
+
+/*
+ * A second plan's layout admitted into the first's slice lies at the same
+ * offset and reserves nothing. What does not fit is refused; the plan that
+ * reserved the slice cannot be cleared before the one sharing it, and once
+ * both are, the bytes are free again.
+ */
+static int layouts_share_one_slice(void) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    int failed = shadowspill_test_create_runtime(
+            &mock, 512U, 128U, 16U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK;
+
+    const ShadowSpillFixedLayoutDescription host_layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .slice_bytes = 128U,
+    };
+    const ShadowSpillFixedLayoutDescription guest_layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .slice_bytes = 96U,
+    };
+    const ShadowSpillFixedLayoutDescription oversized_layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .slice_bytes = 160U,
+    };
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    ShadowSpillTestStatistics before = {0};
+    ShadowSpillTestStatistics shared = {0};
+    ShadowSpillTestStatistics after = {0};
+    ShadowSpillPlan *guest = NULL;
+    ShadowSpillPlan *oversized = NULL;
+    failed = failed || shadowspill_test_admit_fixed_layout(runtime, &host_layout) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_seal_fixed_layout(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_statistics(runtime, &before) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_plan_create(runtime, &roles, &guest) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_plan_create(runtime, &roles, &oversized) !=
+            SHADOWSPILL_STATUS_OK;
+    ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
+    ShadowSpillPlan *host = record == NULL ? NULL : record->plan;
+    failed = failed || host == NULL ||
+        shadowspill_plan_admit_fixed_layout_in(guest, &guest_layout, host) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_seal_fixed_layout(guest) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_admit_fixed_layout_in(oversized, &oversized_layout, host) !=
+            SHADOWSPILL_STATUS_OUT_OF_MEMORY ||
+        shadowspill_test_statistics(runtime, &shared) != SHADOWSPILL_STATUS_OK ||
+        shared.execution.allocated_bytes != before.execution.allocated_bytes;
+
+    ShadowSpillPlanSlice slices[4] = {0};
+    uint64_t count = 0U;
+    ShadowSpillPlanSlice host_slice = {0};
+    ShadowSpillPlanSlice guest_slice = {0};
+    failed = failed || shadowspill_memory_pool_plan_slices(
+            runtime, 0U, slices, 4U, &count
+        ) != SHADOWSPILL_STATUS_OK ||
+        count != 2U ||
+        !find_slice(slices, count, shadowspill_plan_id(host), &host_slice) ||
+        !find_slice(slices, count, shadowspill_plan_id(guest), &guest_slice) ||
+        host_slice.bytes != 128U ||
+        host_slice.slab_plan_id != host_slice.plan_id ||
+        guest_slice.offset != host_slice.offset ||
+        guest_slice.bytes != 96U ||
+        guest_slice.slab_plan_id != host_slice.plan_id ||
+        guest_slice.slab_bytes != 128U;
+
+    failed = failed ||
+        shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_plan_clear_tasks(guest) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_statistics(runtime, &after) != SHADOWSPILL_STATUS_OK ||
+        after.execution.allocated_bytes + 128U != before.execution.allocated_bytes ||
+        shadowspill_memory_pool_plan_slices(runtime, 0U, NULL, 0U, &count) !=
+            SHADOWSPILL_STATUS_OK ||
+        count != 0U;
+
+    shadowspill_plan_destroy(oversized);
+    shadowspill_plan_destroy(guest);
+    shadowspill_test_destroy_runtime(runtime);
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
     if (layout_lifecycle_preserves_dynamic_allocations() != 0) {
         fprintf(stderr, "fixed layout lifecycle failed\n");
@@ -920,6 +1028,10 @@ int main(void) {
     }
     if (eviction_completion_orders_fixed_fetch_reuse(1) != 0) {
         fprintf(stderr, "same-object fixed fetch dependency failed\n");
+        return EXIT_FAILURE;
+    }
+    if (layouts_share_one_slice() != 0) {
+        fprintf(stderr, "a layout admitted into another plan's slice failed\n");
         return EXIT_FAILURE;
     }
     if (layout_holds_nothing_between_calls() != 0) {

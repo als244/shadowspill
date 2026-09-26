@@ -280,6 +280,12 @@ runtime's pool, route, event, and object owners:
   the admitted offset. See [physical admission and offset
   handling](../architecture/physical-admission.md) for the layout certificate
   and the offset coordinate systems.
+- `shadowspill_plan_admit_fixed_layout_in()` admits a layout into the slice
+  another plan holds instead of reserving one: at that slice's offset, which it
+  must fit inside, following a host that shares a slice itself to the plan that
+  reserved it. That plan's layout cannot be cleared while another is admitted
+  into its slice. See [sharing a
+  slab](../architecture/physical-admission.md#sharing-a-slab).
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
 - `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
   task scopes, submitted actions, and task-owned retirements. Other plans on
@@ -498,6 +504,13 @@ The object id travels rather than a role. The runtime does not know what an
 object is *for* -- that is the program's to say -- so a frontend holding the
 program resolves the id and reports a parameter or an activation, while the
 runtime reports only that the range is bound.
+
+`shadowspill_memory_pool_plan_slices()` reports the ranges that list leaves out:
+one `ShadowSpillPlanSlice` per admitted plan's fixed layout -- the plan id, the
+layout's offset and bytes, and the plan that reserved the range it lies in with
+that range's size. A layout is a reserved range rather than an allocation; what
+a plan's tasks place inside it are the live allocations above, so the two lists
+together are the pool's map. The count is reported the same way.
 
 The offsets are the point. A fixed layout refused for want of a contiguous
 range is not explained by a count, because a small allocation in the wrong place

@@ -64,6 +64,7 @@ class RuntimeBridge:
         *,
         execution_pool_id: int,
         spill_pool_id: int,
+        slab_host: int | None = None,
     ) -> None:
         if execution_pool_id < 0 or spill_pool_id < 0:
             raise ValueError("plan pool IDs must be non-negative")
@@ -75,6 +76,9 @@ class RuntimeBridge:
         # calls it directly.
         self.runtime_library = runtime_library()
         self.plan_handle = plan_handle
+        #: The plan whose slice this plan's layout is admitted into, when it
+        #: shares one; its own reserved slice otherwise.
+        self.slab_host = slab_host
         self.execution_pool_id = execution_pool_id
         self.spill_pool_id = spill_pool_id
         self.objects = PlanObjects(

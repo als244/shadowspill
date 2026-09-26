@@ -13,6 +13,8 @@ import ctypes
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from shadowspill.errors import AdmissionError
+
 from ..abi import PlanDescription, runtime_library
 from ..bootstrap import InstalledRuntime
 from ..calibration import read_transfer_capabilities
@@ -48,6 +50,9 @@ class PlanMemory:
     #: This plan's identity for the life of the runtime. Every lease its tasks
     #: make records it, and the allocation scopes opened for it name it too.
     plan_id: int
+    #: The plan whose slab this plan's layout is admitted into, when it shares
+    #: one (`share_slab_with`); None when it reserves its own.
+    slab_host: int | None = None
 
 
 def begin_plan(
@@ -59,6 +64,7 @@ def begin_plan(
     spill_budget: int | None,
     dynamic_scratch_reserve_bytes: int | None,
     execution_device: object | None,
+    slab_host: int | None = None,
 ) -> PlanMemory:
     with runtime._lock:
         runtime._require_open()
@@ -85,6 +91,10 @@ def begin_plan(
             runtime.frontend, execution_device, execution_pool
         )
         resolved_execution = resolve_execution_budget(execution_budget, execution_pool)
+        if slab_host is not None:
+            resolved_execution = _within_shared_slab(
+                runtime, execution, slab_host, execution_budget, resolved_execution
+            )
         resolved_spill = resolve_budget(spill_budget, spill_pool, "spill_budget")
         resolved_scratch = resolve_dynamic_scratch_reserve(
             dynamic_scratch_reserve_bytes,
@@ -148,9 +158,48 @@ def begin_plan(
             transfers=transfers,
             plan_handle=plan_handle,
             plan_id=plan_id,
+            slab_host=slab_host,
         )
         runtime._planning_plan_handle = plan_handle
         return memory
+
+
+def _within_shared_slab(
+    runtime: Runtime,
+    execution: str,
+    slab_host: int,
+    requested: int | None,
+    resolved: int,
+) -> int:
+    """The budget of a plan whose layout shares another plan's slab.
+
+    Its layout is placed inside that slab, so the slab's size is the most it
+    can plan against: the budget when none is given, and a ceiling on one that
+    is. The slab is the range the host's layout lies in -- the host's own, or
+    the one it shares in turn.
+    """
+
+    from ..occupancy import plan_slices
+
+    host_id = int(runtime_library().shadowspill_plan_id(slab_host))
+    slabs = [
+        item.slab_bytes
+        for item in plan_slices(runtime, execution)
+        if item.plan_id == host_id
+    ]
+    if not slabs:
+        raise AdmissionError(
+            "the plan to share a slab with holds none in pool "
+            f"{execution!r}: plan it first, and share it while it is open"
+        )
+    if requested is None:
+        return slabs[0]
+    if resolved > slabs[0]:
+        raise AdmissionError(
+            f"execution_budget={resolved} exceeds the {slabs[0]}-byte slab this "
+            "plan shares; a plan sharing a slab plans within it"
+        )
+    return resolved
 
 
 def adopt_plan(runtime: Runtime, plan_handle: int) -> None:
@@ -176,6 +225,7 @@ def release_plan(runtime: Runtime, plan_handle: int) -> None:
         finally:
             runtime._active_plan_handles.discard(plan_handle)
             runtime._installed.admitted_layout_bytes.pop(plan_handle, None)
+            runtime._installed.slab_hosts.pop(plan_handle, None)
 
 
 def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
@@ -193,6 +243,7 @@ def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
         finally:
             runtime._planning_plan_handle = None
             runtime._installed.admitted_layout_bytes.pop(target, None)
+            runtime._installed.slab_hosts.pop(target, None)
 
 
 def wait_plan_idle(plan_handle: int) -> None:

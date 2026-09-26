@@ -98,6 +98,23 @@ shadowspill_plan_admit_fixed_layout(
     const ShadowSpillFixedLayoutDescription *description
 );
 
+/*
+ * Admit a layout into the slice `host` holds instead of reserving one: the
+ * layout is placed at that slice's offset and must fit inside it. Plans whose
+ * layouts share a slice never run at once -- a call begins only once every
+ * plan placing into the slice has drained, and only if nothing is live in it
+ * (shadowspill_plan_require_empty_layout()) -- so the bytes serve each in turn
+ * and are held once. A host that shares a slice itself is followed to the
+ * plan that reserved it. That plan's layout cannot be cleared while another
+ * is admitted into its slice, so it is cleared last.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_plan_admit_fixed_layout_in(
+    ShadowSpillPlan *plan,
+    const ShadowSpillFixedLayoutDescription *description,
+    ShadowSpillPlan *host
+);
+
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
 

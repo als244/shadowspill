@@ -19,6 +19,7 @@ from .abi import (
     RUNTIME_OBJECT_SCOPE_ID,
     Allocation,
     LiveAllocation,
+    PlanSliceRecord,
     runtime_library,
 )
 from .configuration import RuntimeConfigurationError
@@ -246,6 +247,76 @@ def live_allocations(
     return tuple(sorted(entries, key=lambda item: item.offset))
 
 
+@dataclass(frozen=True, slots=True)
+class PlanSlice:
+    """One admitted plan's fixed layout in a pool.
+
+    A layout is a reserved range, not an allocation: what the plan's tasks place
+    inside it are the allocations, which `live_allocations` lists while they
+    live. `offset` and `bytes` are where the plan's own layout lies;
+    `slab_plan_id` is the plan that reserved the range it lies in -- the plan
+    itself, unless its layout was admitted into another's -- and `slab_bytes`
+    that range's size.
+    """
+
+    plan_id: int
+    offset: int
+    bytes: int
+    slab_plan_id: int
+    slab_bytes: int
+
+
+def plan_slices(runtime: Runtime, pool: str = "execution") -> tuple[PlanSlice, ...]:
+    """The fixed layout of every plan admitted in the named pool, in pool order.
+
+    With `live_allocations`, the pool's whole map: which ranges are held for
+    which plans, and which plans share one.
+    """
+
+    registered = runtime._pools.get(pool)
+    if registered is None:
+        raise KeyError(f"no pool named {pool!r}")
+    library = runtime_library()
+    count = ctypes.c_uint64()
+    status = int(
+        library.shadowspill_memory_pool_plan_slices(
+            runtime._runtime_handle, registered.pool_id, None, 0, ctypes.byref(count)
+        )
+    )
+    if status != 0:
+        raise RuntimeConfigurationError(f"plan slice query failed with status {status}")
+    if count.value == 0:
+        return ()
+    buffer = (PlanSliceRecord * count.value)()
+    copied = ctypes.c_uint64()
+    status = int(
+        library.shadowspill_memory_pool_plan_slices(
+            runtime._runtime_handle,
+            registered.pool_id,
+            buffer,
+            count.value,
+            ctypes.byref(copied),
+        )
+    )
+    if status != 0:
+        raise RuntimeConfigurationError(f"plan slice query failed with status {status}")
+    return tuple(
+        sorted(
+            (
+                PlanSlice(
+                    plan_id=int(item.plan_id),
+                    offset=int(item.offset),
+                    bytes=int(item.bytes),
+                    slab_plan_id=int(item.slab_plan_id),
+                    slab_bytes=int(item.slab_bytes),
+                )
+                for item in buffer[: min(copied.value, count.value)]
+            ),
+            key=lambda item: (item.offset, item.plan_id),
+        )
+    )
+
+
 def describe_live_allocations(
     runtime: Runtime, pool: str = "execution"
 ) -> tuple[str, ...]:
@@ -290,8 +361,10 @@ def describe_live_allocations(
 
 
 __all__ = [
+    "PlanSlice",
     "PoolAllocation",
     "allocation_id_for_address",
     "describe_live_allocations",
     "live_allocations",
+    "plan_slices",
 ]

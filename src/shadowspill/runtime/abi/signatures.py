@@ -34,6 +34,7 @@ from .statistics import (
     LaneStatistics,
     LiveAllocation,
     MemoryPoolStatistics,
+    PlanSliceRecord,
     TransferProfile,
 )
 from .trace import AllocationEvent, TraceEvent, TraceSummary
@@ -146,6 +147,11 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
         ctypes.c_uint32,
     ),
     (
+        "shadowspill_plan_admit_fixed_layout_in",
+        [ctypes.c_size_t, ctypes.POINTER(FixedLayoutDescription), ctypes.c_size_t],
+        ctypes.c_uint32,
+    ),
+    (
         "shadowspill_plan_admit_object_acquisition",
         [
             ctypes.c_size_t,
@@ -244,6 +250,17 @@ _RUNTIME_SIGNATURES: tuple[tuple[str, list[object], object], ...] = (
             ctypes.c_size_t,
             ctypes.c_uint32,
             ctypes.POINTER(LiveAllocation),
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+        ],
+        ctypes.c_uint32,
+    ),
+    (
+        "shadowspill_memory_pool_plan_slices",
+        [
+            ctypes.c_size_t,
+            ctypes.c_uint32,
+            ctypes.POINTER(PlanSliceRecord),
             ctypes.c_uint64,
             ctypes.POINTER(ctypes.c_uint64),
         ],
