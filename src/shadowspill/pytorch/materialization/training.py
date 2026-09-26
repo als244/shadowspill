@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -287,6 +287,20 @@ class TrainingMaterializedState(MaterializedState):
                 if alias_id not in written:
                     write_spill_tensor(self.bridge.objects, alias_id, tensor)
                     written.add(alias_id)
+
+    def forget(self, alias_id: str, object_ids: Iterable[str]) -> None:
+        """Drop every reference this state holds to one alias and its objects.
+
+        A released value is gone, and an output handed to the caller is the
+        caller's from then on: it lives as long as the caller keeps it, and a
+        reference kept here would keep its range in the execution pool after
+        the caller had let it go. The objects are named by the running
+        program, which the caller passes them from.
+        """
+
+        self.object_store.pop(alias_id, None)
+        for object_id in object_ids:
+            self.object_tensors.pop(object_id, None)
 
     def replacement_storage_views(self, alias_id: str) -> ReplacementStorageViews:
         """Collect persistent views before runtime task publication begins."""

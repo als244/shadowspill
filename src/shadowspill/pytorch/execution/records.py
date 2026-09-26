@@ -107,6 +107,9 @@ class PlanRun:
     execution: tuple[ExecutionTaskRecord, ...]
     initial_fetches: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
+    #: Every alias group's objects in this run's program, which is what names
+    #: the objects a task publishes.
+    object_ids_by_alias: Mapping[str, tuple[str, ...]]
     initial_task_id: int | None = None
     caller_acquisition_handle: int = 0
 
@@ -194,6 +197,7 @@ def build_plan_run(
             if bridge.objects.requires_storage(alias_group_id)
         ),
         public_by_microbatch=_public_outputs(entrypoints, bridge),
+        object_ids_by_alias=object_ids,
     )
 
 
