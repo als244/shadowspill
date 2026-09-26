@@ -93,6 +93,7 @@ def admit_forward_plan(
         memory.plan_handle,
         execution_pool_id=memory.execution.pool_id,
         spill_pool_id=memory.spill.pool_id,
+        slab_host=memory.slab_host,
     )
     state: MaterializedForwardState | None = None
     try:

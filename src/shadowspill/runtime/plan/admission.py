@@ -159,16 +159,24 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
         dependencies=dependencies if layout.dependencies else None,
         dependency_count=len(layout.dependencies),
     )
-    status = int(
-        bridge.runtime_library.shadowspill_plan_admit_fixed_layout(
-            bridge.plan_handle, ctypes.byref(description)
+    if bridge.slab_host is None:
+        status = int(
+            bridge.runtime_library.shadowspill_plan_admit_fixed_layout(
+                bridge.plan_handle, ctypes.byref(description)
+            )
         )
-    )
+    else:
+        status = int(
+            bridge.runtime_library.shadowspill_plan_admit_fixed_layout_in(
+                bridge.plan_handle, ctypes.byref(description), bridge.slab_host
+            )
+        )
     if status != 0:
         pool = statistics(bridge).allocator_pool
         raise RuntimeExecutionError(
             "admit fixed physical layout failed: "
             f"status={status}, requested_slice={layout.slice_bytes}, "
+            f"{'shared slab, ' if bridge.slab_host is not None else ''}"
             f"allocated={int(pool.allocated_bytes)}, "
             f"free={int(pool.free_bytes)}, "
             f"free_prefix={int(pool.free_prefix_bytes)}, "
@@ -181,9 +189,16 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
             f"{describe_pool_occupants(bridge)}"
         )
     bridge._fixed_layout_installed = True
-    bridge.runtime._installed.admitted_layout_bytes[bridge.plan_handle] = (
-        layout.slice_bytes
+    # A layout in another plan's slice holds no bytes of its own: they are
+    # counted once, for the plan that reserved them.
+    installed = bridge.runtime._installed
+    installed.admitted_layout_bytes[bridge.plan_handle] = (
+        0 if bridge.slab_host is not None else layout.slice_bytes
     )
+    if bridge.slab_host is not None:
+        installed.slab_hosts[bridge.plan_handle] = installed.slab_hosts.get(
+            bridge.slab_host, bridge.slab_host
+        )
 
 
 def admit_initial_actions(
@@ -305,6 +320,7 @@ def clear_tasks(bridge: RuntimeBridge) -> None:
     bridge._admitted_acquisitions.clear()
     bridge._fixed_layout_installed = False
     bridge.runtime._installed.admitted_layout_bytes.pop(bridge.plan_handle, None)
+    bridge.runtime._installed.slab_hosts.pop(bridge.plan_handle, None)
 
 
 def _runtime_inputs(

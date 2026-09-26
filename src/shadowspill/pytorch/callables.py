@@ -26,6 +26,7 @@ from shadowspill.pytorch.state.storage import (
     restore_persistent_object_ids,
 )
 from shadowspill.runtime import Runtime
+from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.plan import (
     adopt_plan,
     release_plan,
@@ -33,6 +34,25 @@ from shadowspill.runtime.plan import (
 )
 from shadowspill.runtime.residue import reclaim_plan_scoped_residue
 from shadowspill.runtime.teardown import prepare_failure_cleanup
+
+
+def _require_no_plan_sharing_slab(runtime: Runtime, plan_handle: int) -> None:
+    """Refuse to close a plan whose slab another open plan's layout lies in.
+
+    The bytes are that plan's too, so it closes first; closing this one would
+    take them from under it.
+    """
+
+    sharing = sorted(
+        int(runtime_library().shadowspill_plan_id(guest))
+        for guest, host in runtime._installed.slab_hosts.items()
+        if host == plan_handle
+    )
+    if sharing:
+        raise RuntimeError(
+            "close the plans whose layouts share this plan's slab first "
+            f"(plan ids {sharing})"
+        )
 
 
 class PlannedForward:
@@ -239,6 +259,7 @@ class PlannedForward:
 
         if self._closed:
             return
+        _require_no_plan_sharing_slab(self._runtime, self._plan_handle)
         self._close(primary_error=None)
 
     def _close_after_failure(self, error: BaseException, *, operation: str) -> None:
@@ -713,6 +734,7 @@ class PlannedTrainStep:
 
         if self._closed:
             return
+        _require_no_plan_sharing_slab(self._runtime, self._plan_handle)
         self._close(primary_error=None)
 
     def _close_after_failure(self, error: BaseException, *, operation: str) -> None:

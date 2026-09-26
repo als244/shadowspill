@@ -8,6 +8,8 @@ callable was given and records on the fake runtime what it was asked to do.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import shadowspill.pytorch.callables as callable_module
@@ -20,6 +22,8 @@ class FakeRuntime:
         self.prepared_error: BaseException | None = None
         self.released = False
         self.residue_reclaimed = False
+        # No plan shares another's slab here.
+        self._installed = SimpleNamespace(slab_hosts={})
 
 
 def fake_plan_lifecycle(monkeypatch: pytest.MonkeyPatch, *, plan_handle: int) -> None:

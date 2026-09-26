@@ -198,6 +198,40 @@ ShadowSpillStatus shadowspill_fixed_layout_reserve_slice(
     return status;
 }
 
+/*
+ * Place a layout in the slice another plan holds, following a host that
+ * shares one itself to the plan that reserved it. Nothing is reserved: the
+ * bytes are counted once, for their owner.
+ */
+static ShadowSpillStatus share_slice(
+    ShadowSpillPlan *plan,
+    ShadowSpillPlan *host,
+    uint64_t bytes
+) {
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
+    shadowspill_memory_pool_lock_reservation(pool);
+    ShadowSpillPlan *owner = host->fixed_layout.slab_host != NULL
+        ? host->fixed_layout.slab_host
+        : host;
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
+    if (plan->fixed_layout.active) {
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
+    } else if (!owner->fixed_layout.active) {
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
+    } else if (bytes > owner->fixed_layout.slice_bytes) {
+        status = SHADOWSPILL_STATUS_OUT_OF_MEMORY;
+    } else {
+        plan->fixed_layout.slice_offset = owner->fixed_layout.slice_offset;
+        plan->fixed_layout.slice_bytes = bytes;
+        plan->fixed_layout.slab_host = owner;
+        plan->fixed_layout.active = 1U;
+        ++owner->fixed_layout.slab_guests;
+    }
+    shadowspill_memory_pool_unlock_reservation(pool);
+    shadowspill_memory_pool_relinquish_reservation(pool);
+    return status;
+}
+
 static int has_borrowed_layout_lease(const ShadowSpillMemoryPool *pool) {
     for (const ShadowSpillMemoryLease *lease = pool->range_leases;
         lease != NULL; lease = lease->pool_next) {
@@ -219,8 +253,15 @@ ShadowSpillStatus shadowspill_fixed_layout_clear(
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (!plan->fixed_layout.active) {
         /* Clearing an absent layout is intentionally idempotent. */
-    } else if (has_borrowed_layout_lease(pool)) {
+    } else if (has_borrowed_layout_lease(pool) ||
+               plan->fixed_layout.slab_guests != 0U) {
+        /* A slice other layouts are admitted into is theirs too: they go
+           first. */
         status = SHADOWSPILL_STATUS_INVALID_STATE;
+    } else if (plan->fixed_layout.slab_host != NULL) {
+        /* The bytes stay reserved for the plan that reserved them. */
+        --plan->fixed_layout.slab_host->fixed_layout.slab_guests;
+        clear_metadata(&plan->fixed_layout);
     } else if (plan->fixed_layout.slice_bytes == 0U) {
         clear_metadata(&plan->fixed_layout);
     } else if (shadowspill_memory_pool_release_locked(
@@ -667,6 +708,34 @@ ShadowSpillStatus shadowspill_plan_admit_fixed_layout(
     return status;
 }
 
+ShadowSpillStatus shadowspill_plan_admit_fixed_layout_in(
+    ShadowSpillPlan *plan,
+    const ShadowSpillFixedLayoutDescription *description,
+    ShadowSpillPlan *host
+) {
+    if (plan == NULL || host == NULL || plan == host ||
+        plan->execution_pool != host->execution_pool ||
+        !descriptions_are_valid(description)) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    if (plan->fixed_layout.active || plan->tasks.owned_head != NULL) {
+        return SHADOWSPILL_STATUS_INVALID_STATE;
+    }
+    ShadowSpillStatus status = copy_layout_description(plan, description);
+    if (status != SHADOWSPILL_STATUS_OK) {
+        return status;
+    }
+    if (!sorted_layout_is_unique(&plan->fixed_layout)) {
+        clear_metadata(&plan->fixed_layout);
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    status = share_slice(plan, host, description->slice_bytes);
+    if (status != SHADOWSPILL_STATUS_OK) {
+        clear_metadata(&plan->fixed_layout);
+    }
+    return status;
+}
+
 static const ShadowSpillTaskAllocationContractStep *allocation_step(
     const ShadowSpillTaskRecord *record,
     uint64_t ordinal
@@ -928,4 +997,50 @@ ShadowSpillStatus shadowspill_plan_require_empty_layout(ShadowSpillPlan *plan) {
         bytes
     );
     return SHADOWSPILL_STATUS_PLAN_VIOLATION;
+}
+
+ShadowSpillStatus shadowspill_memory_pool_plan_slices(
+    ShadowSpillRuntime *runtime,
+    uint32_t pool_id,
+    ShadowSpillPlanSlice *out,
+    uint64_t capacity,
+    uint64_t *count
+) {
+    if (runtime == NULL || count == NULL || (out == NULL && capacity != 0U)) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillMemoryPool *pool = shadowspill_runtime_pool(runtime, pool_id);
+    if (pool == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    /* A linked plan is not freed while the list's lock is held, and its layout
+       changes only under the pool's lock: one consistent moment, as for the
+       live allocations. The list's lock is never taken under a pool's. */
+    uint64_t found = 0U;
+    pthread_mutex_lock(&runtime->plans_lock);
+    pthread_mutex_lock(&pool->lock);
+    for (const ShadowSpillPlan *plan = runtime->plans; plan != NULL;
+         plan = plan->ownership_next) {
+        const ShadowSpillFixedLayoutState *layout = &plan->fixed_layout;
+        if (plan->execution_pool != pool || !layout->active ||
+            layout->slice_bytes == 0U) {
+            continue;
+        }
+        if (found < capacity) {
+            const ShadowSpillPlan *owner =
+                layout->slab_host != NULL ? layout->slab_host : plan;
+            out[found] = (ShadowSpillPlanSlice){
+                .plan_id = plan->plan_id,
+                .offset = layout->slice_offset,
+                .bytes = layout->slice_bytes,
+                .slab_plan_id = owner->plan_id,
+                .slab_bytes = owner->fixed_layout.slice_bytes,
+            };
+        }
+        ++found;
+    }
+    pthread_mutex_unlock(&pool->lock);
+    pthread_mutex_unlock(&runtime->plans_lock);
+    *count = found;
+    return SHADOWSPILL_STATUS_OK;
 }

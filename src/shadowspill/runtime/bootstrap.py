@@ -68,6 +68,9 @@ class InstalledRuntime:
     #: bytes, by plan handle. A plan holds its layout for as long as it is
     #: admitted, so a plan being made beside it finds those bytes taken.
     admitted_layout_bytes: dict[int, int] = field(default_factory=dict)
+    #: The plan that reserved the slab each sharing plan's layout lies in, both
+    #: by plan handle. That plan closes last.
+    slab_hosts: dict[int, int] = field(default_factory=dict)
 
 
 _installed: InstalledRuntime | None = None

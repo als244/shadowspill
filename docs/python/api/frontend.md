@@ -223,6 +223,14 @@ among them. A plan that has finished is named as such -- `plan 5 task 1112
 something that should have gone. This reads a pool's occupancy; deciding what to
 do about it is a separate question.
 
+`plan_slices(runtime, pool="execution")` returns the other half of a pool's map:
+one `PlanSlice` per admitted plan's fixed layout, in pool order. A layout is a
+reserved range rather than an allocation -- what a plan's tasks place inside it
+are the allocations above. `plan_id`, `offset` and `bytes` say where the plan's
+own layout lies; `slab_plan_id` and `slab_bytes` name the plan that reserved the
+range it lies in, and that range's size: the plan itself, unless its layout
+shares another's slab.
+
 `occupants(runtime, allocations)` maps each range to the framework objects whose
 storage lies inside it -- what the range is in PyTorch's terms. A range with no
 occupant is held by something the framework does not own, and that is itself the
@@ -571,6 +579,7 @@ ones it does take are listed in [its own section](#plan_step_search).
 | `execution` | `str` | required | Name of the device pool in `runtime.pools`. |
 | `spill` | `str` | required | Name of the spill pool in `runtime.pools`. |
 | `execution_budget` | `int` \| `None` | `None` | Device bytes the plan may use; the pool's suballocatable capacity when `None`. A value at or below that capacity is taken as given, and the pool's whole `physical_capacity` is accepted as the same thing spelled the way it was configured. A value strictly between the two is ambiguous and refused, as is anything above the physical cap. |
+| `share_slab_with` | `PlannedForward` \| `PlannedTrainStep` \| `None` | `None` | `plan_forward()` and `plan_step()` only. An open planned callable whose slab this plan's layout is admitted into, instead of a range of its own; see [sharing a slab](../../architecture/physical-admission.md#sharing-a-slab). `execution_budget` is then at most the slab's size, and is that size when `None`. Close this plan before the one whose slab it shares. |
 | `spill_budget` | `int` \| `None` | `None` | Spill bytes the plan may use; the pool's capacity when `None`, and never more than it. |
 | `dynamic_scratch_reserve_bytes` | `int` \| `None` | `None` | Device bytes held back for allocations the plan does not own. Measured when `None`; an explicit value can only raise the measured reserve, never lower it, and cannot exceed the execution budget. |
 | `execution_device` | `int` \| `str` \| `torch.device` \| `None` | `None` | Accelerator to plan for; PyTorch's current one when `None`. An explicit device must match the execution pool. |
@@ -605,6 +614,7 @@ plan_forward(
     execution,
     spill,
     execution_budget=None,
+    share_slab_with=None,
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
     search_options=None,
@@ -724,6 +734,7 @@ plan_step(
     execution,
     spill,
     execution_budget=None,
+    share_slab_with=None,
     spill_budget=None,
     dynamic_scratch_reserve_bytes=None,
     execution_device=None,

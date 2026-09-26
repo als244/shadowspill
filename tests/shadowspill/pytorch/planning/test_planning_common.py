@@ -305,6 +305,7 @@ def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> 
         execution_budget=8 << 30,
         spill_budget=64 << 30,
         installed=SimpleNamespace(fixed_execution_bytes=0),
+        slab_host=None,
     )
     profiles = SimpleNamespace(measurements=(), fixed_slab_bytes=0)
 
