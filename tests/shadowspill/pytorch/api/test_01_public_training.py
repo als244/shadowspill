@@ -25,7 +25,10 @@ from shadowspill.pytorch.materialization.training import TrainingMaterializedSta
 from shadowspill.pytorch.optimizer import trace as optimizer_trace
 from shadowspill.pytorch.state.storage import persistent_state
 from shadowspill.runtime import RuntimeConfigurationError
+from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.configuration import adapter_path
+from shadowspill.runtime.occupancy import live_allocations
+from shadowspill.runtime.plan.lifecycle import wait_plan_idle
 
 from ..runtime_test_support import public_test_runtime
 
@@ -872,3 +875,55 @@ def test_public_training_follows_a_learning_rate_schedule() -> None:
         torch.testing.assert_close(
             planned[name], expected.detach().float().cpu(), rtol=1e-5, atol=1e-6
         )
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_keeps_no_output_the_caller_dropped() -> None:
+    """A step's outputs are the caller's alone once handed over.
+
+    The losses a step returns live in the execution pool for as long as the
+    caller keeps them. When the caller lets its result go and the step has
+    finished, none of them may still be held there.
+    """
+
+    _require_adapter()
+
+    def objective(model: nn.Module, value: torch.Tensor, target: torch.Tensor):
+        return torch.nn.functional.mse_loss(model(value), target)
+
+    def batches() -> list[list[torch.Tensor]]:
+        return [[torch.randn(2, 8), torch.randn(2, 4)] for _ in range(2)]
+
+    runtime = public_test_runtime()
+    torch.manual_seed(5)
+    model = import_model_state(
+        nn.Linear(8, 4), runtime=runtime, pool="spill", release_source=True
+    )
+    training = plan_step(
+        model,
+        objective=objective,
+        optimizer=partial(torch.optim.SGD, lr=0.1),
+        example_inputs=batches(),
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+    )
+    plan_id = int(runtime_library().shadowspill_plan_id(training._plan_handle))
+
+    def handed_over() -> list[object]:
+        return [
+            item
+            for item in live_allocations(runtime, "execution")
+            if item.origin_plan_id == plan_id
+            and item.ever_plan_owned
+            and not item.logical_freed
+        ]
+
+    result = training(batches())
+    assert len(result.objectives) == 2
+    wait_plan_idle(training._plan_handle)
+    assert len(handed_over()) == 2
+    del result
+    assert handed_over() == []
+    training.close()

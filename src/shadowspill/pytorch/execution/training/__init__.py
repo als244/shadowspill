@@ -292,7 +292,7 @@ class TrainingExecutor(AnnotatedExecutor):
             acquisition_handle=run.caller_acquisition_handle,
         )
         for alias_id in aliases:
-            self._state.object_store.pop(alias_id, None)
+            self._state.forget(alias_id, run.object_ids_by_alias.get(alias_id, ()))
 
     def _rebuild_objective_results(
         self,
