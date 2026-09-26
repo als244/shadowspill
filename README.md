@@ -19,8 +19,8 @@ the mlops operation library, and verifies it.
 ## Minimal example
 
 Initialize the runtime before model state exists, so its pools and routes are
-ready first. Planning declares what exists: `optimizer_state_init` says what
-optimizer state starts at, `hyperparams` names what a step may change.
+ready first. Planning declares what exists: `hyperparams` names what a step
+may change.
 
 ```python
 import torch
@@ -52,7 +52,6 @@ train_step = plan_step(
     ).loss,
     optimizer=torch.optim.AdamW,
     hyperparams=("lr",),
-    optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
     example_inputs=[[tokens_example, targets_example]],
     runtime=runtime,
     execution="device",

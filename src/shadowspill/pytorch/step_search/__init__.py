@@ -11,7 +11,6 @@ from os import PathLike
 from types import MappingProxyType
 from typing import Any, Literal
 
-import torch
 from torch import nn
 
 from shadowspill.planner import (
@@ -52,8 +51,6 @@ def plan_step_search(
     *,
     objective: Any,
     optimizer: Any,
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None = None,
     hyperparams: Sequence[str] = (),
     example_microbatches: Callable[[int, int], Sequence[Sequence[Any]]],
     total_sequences_per_step: int,
@@ -170,7 +167,6 @@ def plan_step_search(
             model=model,
             objective=objective,
             optimizer=optimizer,
-            optimizer_state_init=optimizer_state_init,
             hyperparams=hyperparams,
             example_microbatches=example_microbatches,
             runtime=runtime,

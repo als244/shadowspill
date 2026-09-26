@@ -24,6 +24,7 @@ from .phases import NoTimer, PhaseTimer
 from .sandbox import (
     canonical_parameters,
 )
+from .starts import HeldStart, NoStart, StateStart
 from .store import OptimizerCaptureStore
 from .trace import (
     capture_recurrent_optimizer,
@@ -32,12 +33,14 @@ from .trace import (
 
 @dataclass(frozen=True, slots=True)
 class DeclaredStateEntry:
-    """One optimizer-state tensor an optimizer says it will keep."""
+    """One optimizer-state tensor an optimizer says it will keep, and what it
+    starts at."""
 
     parameter_name: str
     entry_name: str
     shape: tuple[int, ...]
     dtype: torch.dtype
+    start: StateStart
 
 
 def declare_optimizer_state(
@@ -53,6 +56,10 @@ def declare_optimizer_state(
     dtype at no cost. Nothing is assumed about which entries exist, how many
     there are, whether they are parameter-shaped, or whether their dtype
     matches the parameter's -- the optimizer says, and this reports.
+
+    How the step makes each entry says what it starts at (`starts`). An entry
+    the optimizer already holds, as after loading a checkpoint into it, starts
+    at what it holds.
 
     A parameter that is not trained is not given a gradient in the copy, so an
     optimizer skips it and declares nothing for it. `receives_gradient`
@@ -72,15 +79,22 @@ def declare_optimizer_state(
         name = discovery.name_by_sandbox_id.get(id(parameter))
         if name is None or not isinstance(entries, Mapping):
             continue
+        held = optimizer.state.get(inventory.canonical_parameters[name], {})
         for entry_name, value in entries.items():
             if not isinstance(value, torch.Tensor):
                 continue
+            start = discovery.state_starts.get(
+                (name, str(entry_name)), NoStart("made before the step")
+            )
+            if isinstance(held.get(entry_name), torch.Tensor):
+                start = HeldStart()
             declared.append(
                 DeclaredStateEntry(
                     parameter_name=name,
                     entry_name=str(entry_name),
                     shape=tuple(value.shape),
                     dtype=value.dtype,
+                    start=start,
                 )
             )
     return tuple(declared)

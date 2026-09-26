@@ -22,7 +22,7 @@ from tools.qualification.runtime_evidence import (
     check_physical_budget,
     measured_rate_clause,
 )
-from workloads.common.training import LEARNING_RATE, optimizer_state_init
+from workloads.common.training import LEARNING_RATE
 from workloads.full_model import FullModelManifest
 
 from ..planning_phases import planning_breakdown, planning_summary
@@ -140,7 +140,6 @@ def _plan_case(
         case.model,
         objective=case.objective,
         optimizer=case.optimizer,
-        optimizer_state_init=optimizer_state_init,
         hyperparams=("lr",),
         example_inputs=case.microbatches,
         runtime=runtime,

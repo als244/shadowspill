@@ -21,7 +21,6 @@ from shadowspill.pytorch import (
 )
 from shadowspill.step import StepProgram
 from shadowspill.store import STORE_MODES
-from workloads.common.training import optimizer_state_init
 
 from .config import load_collection_config
 from .matrix import ProgramRequest, select_program_request
@@ -95,7 +94,6 @@ def collect_program(
                 case.model,
                 objective=case.objective,
                 optimizer=case.optimizer,
-                optimizer_state_init=optimizer_state_init,
                 hyperparams=("lr",),
                 example_inputs=case.microbatches,
                 runtime=runtime,

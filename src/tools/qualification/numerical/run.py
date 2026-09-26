@@ -20,7 +20,7 @@ import torch
 from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.planner import GenericPlanningOptions, SearchOptions
 from shadowspill.pytorch import Runtime, plan_step
-from workloads.common.training import LEARNING_RATE, optimizer_state_init
+from workloads.common.training import LEARNING_RATE
 
 from ..model_state import import_case_model, release_case_model
 from ..plan_record import write_plan_records
@@ -208,7 +208,6 @@ def _plan_case(
         case.model,
         objective=case.objective,
         optimizer=case.optimizer,
-        optimizer_state_init=optimizer_state_init,
         hyperparams=("lr",),
         example_inputs=case.microbatches,
         runtime=runtime,

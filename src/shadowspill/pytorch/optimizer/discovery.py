@@ -7,7 +7,7 @@ import copy
 import inspect
 from collections import defaultdict
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -30,6 +30,7 @@ from .sandbox import (
     fake_device_optimizer,
     optimizer_parameters,
 )
+from .starts import StartRecorder, StateStart
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,9 @@ class OptimizerDiscovery:
     #: opaque fallback is captured from, since an opaque task keeps real values.
     real_sandbox: torch.optim.Optimizer | None = None
     real_name_by_sandbox_id: dict[int, str] | None = None
+    #: What each state entry starts at, by parameter and entry name, read from
+    #: how the step made it (`starts`).
+    state_starts: dict[tuple[str, str], StateStart] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,12 +152,21 @@ def discover_optimizer_state(
             strict=True,
         )
     }
-    step = _run_discovery_step(
-        inventory.optimizer_type,
-        sandbox,
-        names,
-        baseline,
+    recorder = StartRecorder(
+        sandbox_parameters,
+        tuple(
+            parameter.grad
+            for parameter in sandbox_parameters
+            if parameter.grad is not None
+        ),
     )
+    with recorder:
+        step = _run_discovery_step(
+            inventory.optimizer_type,
+            sandbox,
+            names,
+            baseline,
+        )
     if isinstance(step, OptimizerCapture):
         return step
     sandbox, names, initialized_state, discovered_values = step
@@ -168,7 +181,30 @@ def discover_optimizer_state(
         representative_values,
         initial_sandbox,
         initial_parameter_names,
+        _state_starts(sandbox, names, recorder),
     )
+
+
+def _state_starts(
+    sandbox: torch.optim.Optimizer,
+    names: Mapping[int, str],
+    recorder: StartRecorder,
+) -> dict[tuple[str, str], StateStart]:
+    """What every state entry the sandbox holds after the step starts at.
+
+    Read before the sandbox is restored: an entry the step made is what the
+    starts are for, and restoring puts back only what was there before it.
+    """
+
+    starts: dict[tuple[str, str], StateStart] = {}
+    for parameter, entries in sandbox.state.items():
+        name = names.get(id(parameter))
+        if name is None or not isinstance(entries, Mapping):
+            continue
+        for entry_name, value in entries.items():
+            if isinstance(value, torch.Tensor):
+                starts[(name, str(entry_name))] = recorder.start_of(value)
+    return starts
 
 
 def _copy_discovery_sandbox(
@@ -342,6 +378,7 @@ def _finish_optimizer_discovery(
     representative_values: dict[str, torch.Tensor],
     initial_sandbox: torch.optim.Optimizer,
     initial_parameter_names: dict[int, str],
+    state_starts: dict[tuple[str, str], StateStart],
 ) -> OptimizerDiscovery:
     first_step_is_opaque = state_structure(sandbox, names) != baseline.state_structure
     actual_names = {
@@ -365,6 +402,7 @@ def _finish_optimizer_discovery(
         representative_values=representative_values,
         initial_sandbox=initial_sandbox,
         initial_parameter_names=initial_parameter_names,
+        state_starts=state_starts,
     )
 
 

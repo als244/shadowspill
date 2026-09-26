@@ -356,7 +356,6 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
     from shadowspill.planner.program_inputs import TransferBandwidths
     from shadowspill.pytorch import Runtime, plan_step_search
     from tools.qualification.model_state import release_case_model
-    from workloads.common.training import optimizer_state_init
     from workloads.full_model import build_case, manifest_for
 
     fetch, evict = _bandwidth_pairs(parsed.plan_one)[0]
@@ -415,7 +414,6 @@ def plan_one_calibration(parsed: argparse.Namespace, raw_data: Path) -> Path:
             case.model,
             objective=case.objective,
             optimizer=case.optimizer,
-            optimizer_state_init=optimizer_state_init,
             hyperparams=("lr",),
             example_microbatches=example_microbatches,
             total_sequences_per_step=parsed.sequences_per_step,

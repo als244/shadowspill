@@ -37,7 +37,6 @@ def _plan_training(model: nn.Module, runtime: object):
         model,
         objective=_objective,
         optimizer=torch.optim.AdamW,
-        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         hyperparams=("lr",),
         example_inputs=[_batch(0)],
         runtime=runtime,
