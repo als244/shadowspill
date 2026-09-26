@@ -14,6 +14,7 @@ from os import PathLike
 from types import MappingProxyType
 from typing import Any, Literal
 
+import torch
 from torch import OutOfMemoryError, nn
 
 from shadowspill.planner import StepDataOrdering
@@ -50,6 +51,8 @@ class _Build:
     build_store: str | PathLike[str] | None
     build_store_mode: StoreMode
     export_bypass_key: str | None
+    master_dtype: torch.dtype | None
+    grad_dtype: torch.dtype | None
 
     def programs(
         self,
@@ -78,6 +81,8 @@ class _Build:
                     build_store=self.build_store,
                     build_store_mode=self.build_store_mode,
                     export_bypass_key=self.export_bypass_key,
+                    master_dtype=self.master_dtype,
+                    grad_dtype=self.grad_dtype,
                 ),
                 None,
             )

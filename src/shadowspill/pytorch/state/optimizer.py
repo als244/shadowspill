@@ -196,13 +196,14 @@ def declare_varying_hyperparams(
 
 
 def install_declared_optimizer_state(
-    model: torch.nn.Module,
+    named_parameters: Mapping[str, torch.nn.Parameter],
     optimizer: torch.optim.Optimizer,
     *,
     runtime: Runtime,
     pool: str,
     owning_plan: int,
     receives_gradient: Collection[str] | None = None,
+    master_sources: Mapping[str, torch.Tensor] | None = None,
 ) -> None:
     """Create the optimizer's declared state in ``pool``, each entry at its start.
 
@@ -222,17 +223,26 @@ def install_declared_optimizer_state(
     value before the first step, and is refused rather than given one: import
     the optimizer's state before planning to start it elsewhere.
 
+    ``named_parameters`` are the optimizer's parameters by the model's names.
+    ``master_sources`` names those that are master copies, each with the
+    weights it is a master of: a master is imported with the state and starts
+    at its weights, cast to its dtype, so the state that starts at the
+    parameter starts at the master.
+
     State the caller already imported for this optimizer is left alone, since
     the caller owns it and it outlives the plan.
     """
 
     if persistent_state(runtime, optimizer) is not None:
         return
-    named = dict(model.named_parameters())
+    named = dict(named_parameters)
+    masters = tuple(
+        (name, named[name], source) for name, source in (master_sources or {}).items()
+    )
     declared = declare_optimizer_state(
         named, optimizer, receives_gradient=receives_gradient
     )
-    if not declared:
+    if not declared and not masters:
         return
     unstarted = [item for item in declared if isinstance(item.start, NoStart)]
     if unstarted:
@@ -257,6 +267,8 @@ def install_declared_optimizer_state(
 
     def fill() -> None:
         with torch.no_grad():
+            for _name, master, source in masters:
+                master.copy_(source)
             for start, value, parameter, held in created:
                 if isinstance(start, ConstantStart):
                     value.fill_(start.value)
@@ -269,7 +281,10 @@ def install_declared_optimizer_state(
 
     import_then_fill(
         optimizer,
-        _optimizer_tensors(optimizer),
+        (
+            *_optimizer_tensors(optimizer),
+            *(NamedTensor(f"master.{name}", master) for name, master, _ in masters),
+        ),
         fill,
         runtime=runtime,
         pool=pool,

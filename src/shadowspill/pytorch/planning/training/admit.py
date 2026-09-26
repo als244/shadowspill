@@ -145,6 +145,7 @@ def admit_training_plan(
                 bridge,
                 programs.lowered,
                 optimizer=materialized.optimizer,
+                optimizer_parameters=materialized.optimizer_parameters,
             )
         with timer.measure("physical_sealing"):
             seal_physical_budget(captured.installed, plan, fixed_layout)
@@ -156,6 +157,7 @@ def admit_training_plan(
                 materialized.state,
                 executable.tasks.functions,
                 materialized.optimizer,
+                optimizer_parameters=materialized.optimizer_parameters,
                 simulation=admitted.admission.simulation,
                 fixed_layout=project_runtime_fixed_layout(
                     fixed_layout,

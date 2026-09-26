@@ -11,6 +11,7 @@ from .artifacts import (
 )
 from .objects import lower_training_storage_layout
 from .program import lower_partitioned_training_program
+from .tasks import optimizer_object_ids
 
 __all__ = [
     "FixedTensorBinding",
@@ -21,4 +22,5 @@ __all__ = [
     "TrainingStorageLayout",
     "lower_partitioned_training_program",
     "lower_training_storage_layout",
+    "optimizer_object_ids",
 ]

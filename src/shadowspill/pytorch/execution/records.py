@@ -10,6 +10,7 @@ from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
+    optimizer_object_ids,
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.runtime.failures import ExecutionTaskIdentity
@@ -150,7 +151,9 @@ def build_plan_run(
     aliases = _input_aliases(tasks, bridge)
     object_ids = _object_ids_by_alias(plan)
     ephemeral = _ephemeral_aliases(plan)
-    optimizer_objects = _optimizer_objects(lowered)
+    optimizer_objects = optimizer_object_ids(
+        lowered.gradients, lowered.optimizer_objects
+    )
     identities = _execution_identities(entrypoints)
     execution = tuple(
         _build_task_record(
@@ -381,17 +384,6 @@ def _ephemeral_aliases(plan: ExecutionPlan) -> frozenset[str]:
         for item in plan.program.alias_groups
         if item.alias_group_id not in initial
     )
-
-
-def _optimizer_objects(lowered: LoweredTrainingProgram) -> dict[str, str]:
-    return {
-        **{item.parameter_name: item.parameter_object_id for item in lowered.gradients},
-        **{
-            f"gradient.{item.parameter_name}": item.gradient_object_id
-            for item in lowered.gradients
-        },
-        **{item.name: item.object_id for item in lowered.optimizer_objects},
-    }
 
 
 def _execution_identities(

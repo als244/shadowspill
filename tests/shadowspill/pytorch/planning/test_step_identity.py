@@ -70,6 +70,8 @@ def test_every_fact_the_capture_depends_on_moves_the_key() -> None:
         step_key(_identity(model, environment={"device_name": "other"}), ordering)
         != base
     )
+    assert step_key(_identity(model, master_dtype=torch.float32), ordering) != base
+    assert step_key(_identity(model, grad_dtype=torch.float32), ordering) != base
 
 
 def test_the_identity_is_readable() -> None:

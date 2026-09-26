@@ -981,3 +981,96 @@ def test_interleaved_optimizer_follows_the_stages_last_backward() -> None:
 def test_ordering_must_cover_the_step() -> None:
     with pytest.raises(CaptureError, match="covers 4 microbatches, but the step has 2"):
         _lowered(microbatches=2, data_ordering=StepDataOrdering(1, 4))
+
+
+@pytest.mark.parametrize("gradient_dtype", [None, torch.float32])
+def test_an_update_over_masters_owns_them_and_writes_the_weights(
+    gradient_dtype: torch.dtype | None,
+) -> None:
+    """Masters are the update's own objects, twice the weights' bytes at fp32
+    over bf16; the update reads each with its gradient and writes it and the
+    weights it is a master of. A gradient is kept at the weights' dtype, which
+    the update casts, or at the one asked for -- fp32 here, the masters' own,
+    which it does not."""
+
+    real_model = _Model().to(torch.bfloat16)
+    weights = dict(real_model.named_parameters())
+    masters = {
+        name: nn.Parameter(parameter.detach().float())
+        for name, parameter in weights.items()
+    }
+    optimizer = torch.optim.AdamW(masters.values(), lr=0.01, foreach=False)
+    for master in masters.values():
+        optimizer.state[master] = {
+            "step": torch.zeros(()),
+            "exp_avg": torch.zeros_like(master),
+            "exp_avg_sq": torch.zeros_like(master),
+        }
+    optimizer_capture = capture_optimizer(
+        masters, optimizer, compute_copies=weights, gradient_dtype=gradient_dtype
+    )
+    assert optimizer_capture.update is not None
+    casts = [
+        node
+        for node in optimizer_capture.update.graph_module.graph.nodes
+        if node.target is torch.ops.prims.convert_element_type.default
+    ]
+    assert len(casts) == (0 if gradient_dtype is torch.float32 else len(weights))
+    mode = FakeTensorMode(allow_non_fake_inputs=True)
+    model = fake_device_model(real_model, mode)
+    with mode:
+        examples = [
+            torch.randn(4, 3, dtype=torch.bfloat16),
+            torch.randn(4, 2, dtype=torch.bfloat16),
+        ]
+        captures = (
+            partition_training_capture(
+                capture_training(model, _objective, fake_device_inputs(examples, mode)),
+                gradient_dtype=gradient_dtype,
+            ),
+        )
+    artifacts = (
+        *(
+            artifact
+            for capture in captures
+            for stage in capture.stages
+            for option in _both_forms(stage.graph_pairs)
+            for pair in (option.pair,)
+            for artifact in (pair.forward, pair.backward)
+        ),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
+    )
+    measurements = {
+        artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
+    }
+    lowered = lower_partitioned_training_program(
+        model, captures, measurements, optimizer_capture
+    )
+
+    size = {item.object_id: item.size_bytes for item in lowered.program.objects}
+    master_of = {
+        item.name: item.object_id
+        for item in lowered.optimizer_objects
+        if item.name in masters
+    }
+    assert sorted(master_of) == sorted(masters)
+    update_tasks = tuple(
+        task
+        for task in lowered.program.tasks
+        if task.task_id in lowered.optimizer_task_ids
+    )
+    read = {object_id for task in update_tasks for object_id in task.inputs}
+    written = {
+        mutation.object_id for task in update_tasks for mutation in task.mutations
+    }
+    for item in lowered.gradients:
+        master = master_of[item.parameter_name]
+        assert size[master] == 2 * size[item.parameter_object_id]
+        assert size[item.gradient_object_id] == (
+            size[master]
+            if gradient_dtype is torch.float32
+            else size[item.parameter_object_id]
+        )
+        assert {master, item.gradient_object_id} <= read
+        assert {master, item.parameter_object_id} <= written

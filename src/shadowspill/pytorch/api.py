@@ -105,6 +105,13 @@ def _clear_failure_frame_locals(error: BaseException) -> None:
             pending.extend(current.exceptions)
 
 
+def _require_floating_dtype(name: str, dtype: torch.dtype | None) -> None:
+    if dtype is not None and (
+        not isinstance(dtype, torch.dtype) or not dtype.is_floating_point
+    ):
+        raise TypeError(f"{name} must be a floating torch.dtype, not {dtype!r}")
+
+
 def _slab_host(share_slab_with: PlannedForward | PlannedTrainStep | None) -> int | None:
     """The plan whose slab a new plan's layout is admitted into, if any."""
 
@@ -299,6 +306,8 @@ def plan_step(
     plan_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -331,6 +340,26 @@ def plan_step(
     whose state the caller has already imported, planning adopts that state:
     the object it is handed is the reference. State imported for some other
     optimizer is invisible to planning, which neither knows nor cares about it.
+
+    ``master_dtype`` keeps a master copy of the weights at that dtype -- fp32
+    masters of bf16 weights, say. Every weight the step trains at another
+    dtype gets one, starting at the weight cast to it, and ``optimizer`` is
+    built over the masters in the weights' place, so any optimizer steps them
+    as it would its own parameters. The step computes with the weights as
+    they are; the update casts their gradients to the masters' dtype, steps
+    the masters, and writes each weight from its master. A weight already at
+    ``master_dtype`` is its own master. The masters are optimizer state, the
+    plan's like the rest of it, and a checkpoint holds each one in place of
+    its weights, which follow from it.
+
+    ``grad_dtype`` is the dtype gradients are created and accumulated at, the
+    weights' own when ``None``. With fp32, each backward gives its
+    parameters' gradients at fp32 -- written there by the matrix multiply
+    that computes one where PyTorch has a kernel for it, cast as they leave
+    it otherwise -- and adds them into gradients kept at fp32, so the sum over
+    microbatches is taken at fp32; the update casts a gradient only where its
+    parameter is at another dtype, which fp32 masters are not. It is normally
+    given with ``master_dtype``.
 
     A value that varies between steps -- a scheduled learning rate, say --
     is passed to the optimizer as a **tensor** rather than a float, and
@@ -384,6 +413,8 @@ def plan_step(
 
     from .planning.training import build_training
 
+    _require_floating_dtype("master_dtype", master_dtype)
+    _require_floating_dtype("grad_dtype", grad_dtype)
     data_ordering = StepDataOrdering.resolve(
         microbatches=len(example_inputs),
         depth=depth,
@@ -442,6 +473,8 @@ def plan_step(
                 search_options=search_options,
                 incumbent=incumbent,
                 transfer_bandwidths=transfer_bandwidths,
+                master_dtype=master_dtype,
+                grad_dtype=grad_dtype,
             )
         hold_persistent_state(runtime, model, memory.plan_handle)
         return step
@@ -479,6 +512,8 @@ def build_step_programs(
     allocation_probe_repetitions: int = 2,
     build_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> tuple[StepProgram, ...]:
     """Capture, profile, and lower a reusable step without searching.
 
@@ -506,6 +541,8 @@ def build_step_programs(
 
     from .planning.training import make_training_programs
 
+    _require_floating_dtype("master_dtype", master_dtype)
+    _require_floating_dtype("grad_dtype", grad_dtype)
     microbatches = len(example_inputs)
     resolved = (
         (StepDataOrdering.depth_first(microbatches),)
@@ -558,6 +595,8 @@ def build_step_programs(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                master_dtype=master_dtype,
+                grad_dtype=grad_dtype,
             )
         try:
             abort_plan(runtime)

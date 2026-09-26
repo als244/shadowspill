@@ -343,9 +343,7 @@ def _accumulate_gradients(
             )
         elif same_tensor_view(destination, contribution):
             executor._state.object_tensors[item.object_id] = destination
-            parameter = executor._gradients.get(item.alias_id)
-            if parameter is not None:
-                parameter.grad = destination
+            _attach_gradient(executor, item.alias_id, destination)
         else:
             destinations.append(destination)
             contributions.append(contribution)
@@ -365,14 +363,24 @@ def _accumulate_gradients(
     for object_id, alias_id, contribution, _publication_ordinal in first:
         executor._state.object_store[alias_id] = contribution
         executor._state.object_tensors[object_id] = contribution
-        parameter = executor._gradients.get(alias_id)
-        if parameter is not None:
-            parameter.grad = contribution
+        _attach_gradient(executor, alias_id, contribution)
     if timing is not None:
         timing.dispatch_output_state_publish_ns = time.perf_counter_ns() - started_ns
     if destinations:
         torch._foreach_add_(destinations, contributions)
     return tuple(adopted)
+
+
+def _attach_gradient(
+    executor: TrainingExecutor, alias_id: str, gradient: torch.Tensor
+) -> None:
+    """Give the parameter its gradient as ``.grad``, as an eager optimizer
+    reads it. A gradient kept at another dtype than its parameter cannot be
+    one, and is read only by a traced update, which takes it as an input."""
+
+    parameter = executor._gradients.get(alias_id)
+    if parameter is not None and parameter.dtype == gradient.dtype:
+        parameter.grad = gradient
 
 
 def _dematerialization_tensors(

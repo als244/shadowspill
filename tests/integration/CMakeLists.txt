@@ -127,7 +127,10 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_saves_straight_from_the_pool 300
 )
 shadowspill_add_public_api_test(
-  test_01_public_training.py test_public_training_saves_a_master_copy_once 300
+  test_01_public_training.py test_public_training_steps_masters_of_its_weights 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_checkpoints_masters_in_place_of_their_weights 300
 )
 shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_profiles_bounded_opaque_optimizer 300

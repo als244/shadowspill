@@ -63,6 +63,8 @@ def step_identity(
     export_bypass_key: str,
     machine: Mapping[str, object],
     environment: Mapping[str, object],
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> dict[str, object]:
     """What one capture is the same as, before it runs.
 
@@ -110,6 +112,8 @@ def step_identity(
             ],
         },
         "hyperparams": list(hyperparams),
+        "master_dtype": None if master_dtype is None else str(master_dtype),
+        "grad_dtype": None if grad_dtype is None else str(grad_dtype),
         "partition": partition if isinstance(partition, str) else repr(partition),
         "optimizer_ordering": optimizer_ordering,
         "allocation_probes": {

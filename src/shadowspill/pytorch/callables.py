@@ -640,9 +640,12 @@ class PlannedTrainStep:
         """
 
         self._require_open("read a checkpoint from")
+        optimizer, masters = self._executor.optimizer_state.state_dict()
         return {
-            "model": self._state.state_dict(),
-            "optimizer": self._executor.optimizer_state.state_dict(),
+            "model": _with_masters(
+                self._state.state_dict(), masters, self._state.model
+            ),
+            "optimizer": optimizer,
             "step": self._step,
         }
 
@@ -654,37 +657,24 @@ class PlannedTrainStep:
         address, saving costs no host copy of the state, which on a large
         model is otherwise the largest transient a checkpoint asks for. The
         state stays where it is, and the callable goes on training. Resume
-        with ``load_state_dict(torch.load(path, mmap=True))``.
-
-        A model entry the optimizer's state reproduces exactly by a cast -- a
-        weight whose master copy the optimizer keeps at another precision,
-        say -- is written once, as the optimizer's entry, and the checkpoint
-        says which entry it is (``model_from_optimizer``) so that
-        :meth:`load_state_dict` can cast it back. Which entry, if any, is
-        found from the values at the time of the save, bit for bit, rather
-        than assumed from its name or dtype.
+        with ``load_state_dict(torch.load(path, mmap=True))``. A weight with a
+        master copy is written once, as its master.
         """
 
         self._require_open("save a checkpoint from")
-        with self._executor.optimizer_state.state_dict_in_place() as optimizer:
-            model = self._state.state_dict(in_place=True)
-            derived = _reproduced_by_optimizer(
-                model,
-                optimizer,
-                _names_by_optimizer_index(
-                    self._state.model, self._executor.optimizer_state.optimizer
-                ),
-            )
+        with self._executor.optimizer_state.state_dict_in_place() as (
+            optimizer,
+            masters,
+        ):
             torch.save(
                 {
-                    "model": OrderedDict(
-                        (name, value)
-                        for name, value in model.items()
-                        if name not in derived
+                    "model": _with_masters(
+                        self._state.state_dict(in_place=True),
+                        masters,
+                        self._state.model,
                     ),
                     "optimizer": optimizer,
                     "step": self._step,
-                    "model_from_optimizer": derived,
                 },
                 path,
             )
@@ -693,26 +683,28 @@ class PlannedTrainStep:
         """Restore a checkpoint :meth:`state_dict` or :meth:`save` produced."""
 
         self._require_open("restore a checkpoint into")
-        if set(checkpoint) - {"model_from_optimizer"} != {"model", "optimizer", "step"}:
+        if set(checkpoint) != {"model", "optimizer", "step"}:
             raise RuntimeError("training state_dict keys differ")
         model_state = checkpoint["model"]
         optimizer_state = checkpoint["optimizer"]
         step = checkpoint["step"]
-        derived = checkpoint.get("model_from_optimizer", {})
-        if (
-            not isinstance(model_state, Mapping)
-            or not isinstance(optimizer_state, Mapping)
-            or not isinstance(derived, Mapping)
+        if not isinstance(model_state, Mapping) or not isinstance(
+            optimizer_state, Mapping
         ):
             raise TypeError("training checkpoint model/optimizer must be mappings")
         if isinstance(step, bool) or not isinstance(step, int) or step < 0:
             raise TypeError("training checkpoint step must be non-negative")
-        if derived:
-            model_state = _with_reproduced_entries(
-                model_state, optimizer_state, derived, self._state.model
-            )
-        self._state.load_model_state(model_state)
-        self._executor.optimizer_state.load(optimizer_state)
+        # A master is where its weights were written; the weights are its cast.
+        state = self._executor.optimizer_state
+        masters = {
+            name: model_state[name]
+            for name in state.master_names
+            if name in model_state
+        }
+        self._state.load_model_state(
+            _as_weights(model_state, masters, self._state.model)
+        )
+        state.load(optimizer_state, masters)
         self._step = step
 
     def _require_open(self, action: str) -> None:
@@ -883,68 +875,50 @@ def _run_cleanup_operations(
     raise first
 
 
-def _names_by_optimizer_index(
-    model: nn.Module, optimizer: torch.optim.Optimizer
-) -> dict[int, str]:
-    """The model name of each parameter, by its index in an optimizer state_dict."""
+def _weight_names(module: nn.Module) -> dict[str, tuple[str, ...]]:
+    """Every name a weight goes by, under the first of them."""
 
-    name_of = {id(parameter): name for name, parameter in model.named_parameters()}
-    parameters = (
-        parameter for group in optimizer.param_groups for parameter in group["params"]
-    )
-    return {
-        index: name_of[id(parameter)]
-        for index, parameter in enumerate(parameters)
-        if id(parameter) in name_of
-    }
+    names: dict[int, list[str]] = {}
+    for name, parameter in module.named_parameters(remove_duplicate=False):
+        names.setdefault(id(parameter), []).append(name)
+    return {every[0]: tuple(every) for every in names.values()}
 
 
-def _reproduced_by_optimizer(
+def _with_masters(
     model: Mapping[str, torch.Tensor],
-    optimizer: Mapping[str, Any],
-    names: Mapping[int, str],
-) -> dict[str, tuple[int, str]]:
-    """The model entries an optimizer entry reproduces bit for bit by a cast."""
-
-    found: dict[str, tuple[int, str]] = {}
-    for index, entries in optimizer["state"].items():
-        weight = model.get(names.get(index, ""))
-        if weight is None:
-            continue
-        for key, value in entries.items():
-            if (
-                isinstance(value, torch.Tensor)
-                and value.dtype != weight.dtype
-                and value.shape == weight.shape
-                and _same_bits(value.to(weight.dtype), weight)
-            ):
-                found[names[index]] = (index, key)
-                break
-    return found
-
-
-def _same_bits(first: torch.Tensor, second: torch.Tensor) -> bool:
-    return torch.equal(
-        first.contiguous().reshape(-1).view(torch.uint8),
-        second.contiguous().reshape(-1).view(torch.uint8),
-    )
-
-
-def _with_reproduced_entries(
-    model: Mapping[str, torch.Tensor],
-    optimizer: Mapping[str, Any],
-    derived: Mapping[str, Any],
+    masters: Mapping[str, torch.Tensor],
     module: nn.Module,
-) -> dict[str, torch.Tensor]:
-    """A checkpoint's model entries, with those written as optimizer entries
-    cast back to the model's dtype."""
+) -> OrderedDict[str, torch.Tensor]:
+    """A model state_dict with each master in place of its weights, under every
+    name the weights go by."""
 
+    result = OrderedDict(model)
+    if masters:
+        names = _weight_names(module)
+        for name, value in masters.items():
+            for alias in names[name]:
+                result[alias] = value
+    return result
+
+
+def _as_weights(
+    model: Mapping[str, Any],
+    masters: Mapping[str, torch.Tensor],
+    module: nn.Module,
+) -> dict[str, Any]:
+    """A checkpoint's model entries with each master cast to its weights' dtype."""
+
+    if not masters:
+        return dict(model)
+    names = _weight_names(module)
     dtypes = {
         name: value.dtype for name, value in module.state_dict(keep_vars=True).items()
     }
     restored = dict(model)
-    for name, (index, key) in derived.items():
-        restored[name] = optimizer["state"][index][key].to(dtypes[name])
+    for name in masters:
+        for alias in names[name]:
+            if alias in restored:
+                restored[alias] = restored[alias].to(dtypes[alias])
     return restored
 
 
