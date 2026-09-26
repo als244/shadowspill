@@ -600,7 +600,10 @@ class ForwardExecutor(AnnotatedExecutor):
             self._release_closed_shared_output_generations()
         if timing is not None:
             self.timing.begin_armed_runtime_trace(timing, self._invocations + 1)
+        # Staging the inputs waits for the whole runtime, so every earlier
+        # call has drained here and must have left the layout empty.
         root_arguments = self._state.refresh_inputs(arguments)
+        self._bridge.require_empty_layout()
         initial_actions = tuple(
             self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
         )

@@ -229,7 +229,10 @@ class TrainingExecutor(AnnotatedExecutor):
             self._active_run = run
         if timing is not None:
             self.timing.begin_armed_runtime_trace(timing, step_number)
+        # Staging the inputs waits for the whole runtime, so every earlier
+        # call has drained here and must have left the layout empty.
         self._state.refresh_inputs(inputs)
+        self._bridge.require_empty_layout()
         return run
 
     def _submit_initial_placement(

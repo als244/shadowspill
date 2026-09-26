@@ -383,6 +383,15 @@ static inline ShadowSpillStatus shadowspill_test_seal_fixed_layout(
         : shadowspill_plan_seal_fixed_layout(record->plan);
 }
 
+static inline ShadowSpillStatus shadowspill_test_require_empty_layout(
+    ShadowSpillRuntime *runtime
+) {
+    ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
+    return record == NULL
+        ? SHADOWSPILL_STATUS_INVALID_STATE
+        : shadowspill_plan_require_empty_layout(record->plan);
+}
+
 static inline ShadowSpillStatus shadowspill_test_clear_plan(
     ShadowSpillRuntime *runtime
 ) {

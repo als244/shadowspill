@@ -99,6 +99,11 @@ typedef enum ShadowSpillFailureReason {
        whose transport is a network fails here, on a thread of its own, with
        no call of the runtime's to fail out of. */
     SHADOWSPILL_FAILURE_REASON_TRANSFER_REJECTED = 15,
+    /* An allocation was still live inside a plan's fixed layout between
+       calls. Whatever a call places there is gone once its work has drained,
+       so a survivor is one the next call placing into those bytes would
+       overwrite. */
+    SHADOWSPILL_FAILURE_REASON_LAYOUT_OCCUPIED_BETWEEN_CALLS = 16,
 } ShadowSpillFailureReason;
 
 typedef enum ShadowSpillObjectResidency {

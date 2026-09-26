@@ -46,6 +46,9 @@ const char *shadowspill_failure_reason_string(
                    "fixed offset";
         case SHADOWSPILL_FAILURE_REASON_TRANSFER_REJECTED:
             return "a lane could not move bytes it had accepted";
+        case SHADOWSPILL_FAILURE_REASON_LAYOUT_OCCUPIED_BETWEEN_CALLS:
+            return "an allocation was still live in a plan's fixed layout "
+                   "between calls, where the next call would overwrite it";
     }
     return "unknown reason";
 }
