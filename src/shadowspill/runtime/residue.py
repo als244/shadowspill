@@ -27,6 +27,16 @@ if TYPE_CHECKING:
     from .core import Runtime
 
 
+def _execution_pool(runtime: Runtime) -> str:
+    """The name of the runtime's one device pool, where scope workspace lives.
+
+    Pool names are the caller's to choose, so the pool is found by its kind
+    rather than assumed to be called "execution".
+    """
+
+    return next(name for name, pool in runtime.pools.items() if pool.kind == "device")
+
+
 def _unclaimed_by_plan(
     runtime: Runtime, plan_handle: int
 ) -> tuple[PoolAllocation, ...]:
@@ -37,7 +47,7 @@ def _unclaimed_by_plan(
         return ()
     return tuple(
         item
-        for item in live_allocations(runtime)
+        for item in live_allocations(runtime, _execution_pool(runtime))
         if item.origin_plan_id == plan_id and item.unclaimed_scope_workspace
     )
 
@@ -155,7 +165,7 @@ def reclaim_plan_scoped_residue(runtime: Runtime, plan_handle: int) -> None:
     """
 
     if os.environ.get("SHADOWSPILL_REPORT_LIVE_ALLOCATIONS"):
-        held = describe_live_allocations(runtime)
+        held = describe_live_allocations(runtime, _execution_pool(runtime))
         warnings.warn(
             f"the execution pool holds {len(held)} range(s) as this callable"
             " closes:\n  " + "\n  ".join(held),
