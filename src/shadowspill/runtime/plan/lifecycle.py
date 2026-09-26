@@ -175,6 +175,7 @@ def release_plan(runtime: Runtime, plan_handle: int) -> None:
             raise
         finally:
             runtime._active_plan_handles.discard(plan_handle)
+            runtime._installed.admitted_layout_bytes.pop(plan_handle, None)
 
 
 def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
@@ -191,6 +192,7 @@ def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
             raise
         finally:
             runtime._planning_plan_handle = None
+            runtime._installed.admitted_layout_bytes.pop(target, None)
 
 
 def wait_plan_idle(plan_handle: int) -> None:

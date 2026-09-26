@@ -181,6 +181,9 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
             f"{describe_pool_occupants(bridge)}"
         )
     bridge._fixed_layout_installed = True
+    bridge.runtime._installed.admitted_layout_bytes[bridge.plan_handle] = (
+        layout.slice_bytes
+    )
 
 
 def admit_initial_actions(
@@ -301,6 +304,7 @@ def clear_tasks(bridge: RuntimeBridge) -> None:
     bridge._admitted_action_batches.clear()
     bridge._admitted_acquisitions.clear()
     bridge._fixed_layout_installed = False
+    bridge.runtime._installed.admitted_layout_bytes.pop(bridge.plan_handle, None)
 
 
 def _runtime_inputs(
