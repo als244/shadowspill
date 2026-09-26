@@ -210,6 +210,13 @@ class PlannedForward:
 
         return self._pending_diagnostics
 
+    def synchronize(self) -> None:
+        """Return once this callable's work has finished, the end-of-step
+        writeback included: a call returns before it has, so that the
+        caller's own work between calls overlaps it."""
+        self._require_open("wait for")
+        wait_plan_idle(self._plan_handle)
+
     def mark_cycle_end(self) -> None:
         """Close the last invocation's cycle where the next one would begin."""
         self._require_open("mark the cycle's end")
@@ -602,6 +609,13 @@ class PlannedTrainStep:
     ) -> None:
         if self._pending_invocation is invocation:
             self._pending_invocation = None
+
+    def synchronize(self) -> None:
+        """Return once this callable's work has finished, the end-of-step
+        writeback included: a call returns before it has, so that the
+        caller's own work between calls overlaps it."""
+        self._require_open("wait for")
+        wait_plan_idle(self._plan_handle)
 
     def mark_cycle_end(self) -> None:
         """Close the last invocation's cycle where the next one would begin."""

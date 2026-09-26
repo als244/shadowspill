@@ -1041,6 +1041,18 @@ its `save(path)` writes to a file straight from the pool.
 Both also expose `invocation_timings()` and `mark_cycle_end()`, the
 invocation's time on the device clock; see [timing](timing.md).
 
+```text
+PlannedTrainStep.synchronize() -> None
+PlannedForward.synchronize() -> None
+```
+
+Returns once the callable's work has finished, its end-of-step writeback
+included. A call returns before then, so that whatever the caller does between
+calls overlaps the writeback, and the next call waits for it before it stages
+anything; wait explicitly only to keep what comes next apart from the step --
+timing a step to its end, say, or reading the pool once it has drained.
+Raises once the callable is closed.
+
 <!-- source-signature: src/shadowspill/pytorch/callables.py:PlannedForward.__call__ -->
 ```text
 PlannedForward(
