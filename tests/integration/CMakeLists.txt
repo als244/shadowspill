@@ -118,7 +118,7 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_fills_declared_state_in_the_spill_pool 300
 )
 shadowspill_add_public_api_test(
-  test_01_public_training.py test_public_training_refuses_state_an_initialiser_replaced 300
+  test_01_public_training.py test_public_training_refuses_state_with_no_value_before_its_first_step 300
 )
 shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_owns_the_model_state_it_imported 300

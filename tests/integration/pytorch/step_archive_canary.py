@@ -76,7 +76,6 @@ def main(arguments: Iterable[str] | None = None) -> int:
         request = dict(
             objective=_objective,
             optimizer=_build_optimizer,
-            optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
             example_inputs=example_inputs,
             runtime=runtime,
             execution="execution",

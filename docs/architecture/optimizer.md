@@ -37,7 +37,8 @@ The optimizer declares its own state by being run on meta parameters: it names
 every entry, fixes every shape, and chooses every dtype, without allocating a
 byte. Entries that are not parameter-shaped come through as themselves, and an
 optimizer that keeps its moments in a different dtype from the parameter is
-read as it is rather than assumed to match.
+read as it is rather than assumed to match. The same run says where each entry
+starts ([below](#started-where-the-optimizer-starts-it)).
 
 This costs nothing and asks nothing of the caller. ShadowSpill does it with
 the optimizer the caller already passes.
@@ -47,8 +48,8 @@ the optimizer the caller already passes.
 Every declared entry lives in the spill pool for the run, and is put there
 before it holds anything: planning allocates each entry and imports it into the
 spill pool as the plan's own state -- memory nothing has written to is not
-committed, so this costs the pool and nothing else -- and only then hands it to
-the initialiser, which writes its values where they will live. The host never
+committed, so this costs the pool and nothing else -- and only then writes its
+start there, where it will live. The host never
 holds the state beside the pool, and for an ordinary adaptive optimizer, several
 times the model, that is what decides whether a large model fits. It is the
 order [a checkpoint import](state-import.md#three-paths-in) takes, through the
@@ -64,35 +65,26 @@ after. That costs nothing extra, because such a pool keeps a host copy of its
 state for as long as it holds it; the two orders differ only where that copy
 would otherwise have been temporary.
 
-### Filled by the caller
+### Started where the optimizer starts it
 
-ShadowSpill does not fill state. A default of zeros would be an assumption
-that fails silently -- an optimizer whose state starts elsewhere would train
-subtly wrong rather than fail -- and it would be ShadowSpill deciding a value.
+ShadowSpill does not choose a starting value. The optimizer does, on its first
+step, and the meta run watches it: the operation that makes an entry, before
+the update first writes to it, says where the entry starts.
 
-So the caller passes an initialiser as `plan_step(optimizer_state_init=...)`,
-beside the optimizer it belongs to:
+- An entry made as a constant -- zeros for moments and step counters, any
+  other fill -- starts at that constant.
+- An entry made as a copy of its parameter, cast or not -- a higher-precision
+  master copy of a bf16 weight, say -- starts at the parameter, at the entry's
+  own dtype.
+- An entry the optimizer already holds, as after loading a checkpoint into
+  it, starts at what it holds.
 
-```python
-def zero_state(
-    name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter
-) -> None:
-    """Moment-based optimizers start at zero; this one says so."""
-
-    with torch.no_grad():
-        tensor.zero_()
-```
-
-It is called once per declared entry, with the entry's name, the tensor to
-fill, and the parameter the entry belongs to -- so an initialiser
-that depends on the parameter can see it. Per entry rather than per state
-mapping, so an initialiser needing scratch gets it for one entry at a time and
-the transient stays bounded by construction.
-
-An optimizer that declares state with no initialiser to fill it is refused at
-planning, naming the entries it declared. Running on whatever the memory
-held would be the same silent wrong answer that
-[a missing `reset_parameters`](state-import.md#what-is-refused) would be.
+So nothing is assumed about any optimizer, and nothing is asked of the caller:
+the value an entry starts at is the one the optimizer's own first step would
+give it. An entry made from anything else has no value before the first step
+-- SGD's momentum buffer begins as the first gradient -- and planning refuses
+it, naming the entry and what it was made from, rather than choosing a value
+the optimizer never starts at. To start such state elsewhere, supply it whole.
 
 ### Or supplied whole, by the caller
 
@@ -108,8 +100,8 @@ training = plan_step(model, optimizer=lambda params: optimizer)
 
 The optimizer handed to planning is the reference. State imported for *that*
 optimizer is adopted as it stands and outlives the plan, because the caller
-owns it; state declared and filled through the initialiser belongs to the
-plan, and closing the plan releases it.
+owns it; state planning declared and started belongs to the plan, and closing
+the plan releases it.
 
 Importing state outside planning is therefore always valid and never changes
 what planning does. It has an effect only when that optimizer is the one
@@ -172,7 +164,6 @@ training = plan_step(
     optimizer=torch.optim.AdamW,
     hyperparams=("lr",),
     objective=objective,
-    optimizer_state_init=optimizer_state_init,
     example_inputs=example_inputs,
     runtime=runtime,
     execution="device",
@@ -263,7 +254,6 @@ training = plan_step(
     optimizer=torch.optim.AdamW,
     hyperparams=("lr", "betas"),
     objective=objective,
-    optimizer_state_init=optimizer_state_init,
     example_inputs=example_inputs,
     runtime=runtime,
     execution="device",

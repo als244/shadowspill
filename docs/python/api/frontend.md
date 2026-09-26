@@ -491,11 +491,13 @@ move between pools, and the tensors the lowering builds them from are fake, so
 they cost nothing while a program is being built. Optimizer state is created in
 the spill pool too, in the order a checkpoint is imported: the optimizer
 declares what it keeps on meta, which allocates nothing; planning imports those
-entries into the spill pool before they hold anything, and
-`optimizer_state_init` writes their values there. Where the pool is one this
-process cannot address, the entries are filled first and imported after, which
-costs nothing extra: such a pool keeps a host copy of its state for as long as
-it holds it.
+entries into the spill pool before they hold anything, and writes each one's
+start there -- the value the optimizer's own first step gives it, read from how
+that step makes the entry (see [the
+optimizer](../../architecture/optimizer.md#started-where-the-optimizer-starts-it)).
+Where the pool is one this process cannot address, the entries are filled first
+and imported after, which costs nothing extra: such a pool keeps a host copy of
+its state for as long as it holds it.
 
 The optimizer planning is given is the reference for whose state that is. If
 *its* state was already imported, planning adopts it as it stands and it
@@ -716,7 +718,6 @@ plan_step(
     *,
     objective,
     optimizer,
-    optimizer_state_init=None,
     hyperparams=(),
     example_inputs,
     runtime,
@@ -754,7 +755,6 @@ Beyond the shared and store arguments:
 |---|---|---|---|
 | `objective` | callable | required | `(model, *microbatch) -> Tensor \| ObjectiveResult`, returning the scalar the step differentiates. |
 | `optimizer` | callable | required | Given the model's parameters, returns a `torch.optim.Optimizer`. The class itself does (`torch.optim.AdamW`); so does any partial or lambda over one. |
-| `optimizer_state_init` | `(name, tensor, parameter) -> None` \| `None` | `None` | Fills one declared state entry in place, given the entry's name, the tensor to fill, and the parameter it belongs to. Required unless the optimizer handed back already holds imported state, because a default would be an assumption that fails silently. |
 | `hyperparams` | `Sequence[str]` | `()` | Names of values a step may set later, e.g. `("lr",)` or `("lr", "betas")`. Each must name an entry in a parameter group or a model buffer holding a number, or a sequence of them. Named entries are held in host scalars before capture -- float64 for a float, int64 for an int -- and everything else is left as the optimizer made it. A bool is refused: it selects what the update does, which is what the capture is. |
 | `example_inputs` | `Sequence[Sequence[Any]]` | required | One fixed example sequence per microbatch; its length is the step's microbatch count. |
 | `optimizer_ordering` | `"stage_interleaved"` \| `"tail"` | `"stage_interleaved"` | Whether each stage updates as its gradients land, or all updates run at the end. |
@@ -820,7 +820,6 @@ build_step_programs(
     *,
     objective,
     optimizer,
-    optimizer_state_init=None,
     hyperparams=(),
     example_inputs,
     runtime,
@@ -874,7 +873,6 @@ plan_step_search(
     *,
     objective,
     optimizer,
-    optimizer_state_init=None,
     hyperparams=(),
     example_microbatches,
     total_sequences_per_step,
@@ -901,7 +899,7 @@ plan_step_search(
 ) -> StepSearchReport
 ```
 
-`model`, `objective`, `optimizer`, `optimizer_state_init`, `hyperparams`,
+`model`, `objective`, `optimizer`, `hyperparams`,
 `runtime`, `execution`, `spill`,
 `optimizer_ordering` and the store arguments mean what they mean for
 `plan_step()`. The rest are:

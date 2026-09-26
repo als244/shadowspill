@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any, Literal, NoReturn
 
 import torch
@@ -251,8 +251,6 @@ def plan_step(
     *,
     objective: Any,
     optimizer: Any,
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None = None,
     hyperparams: Sequence[str] = (),
     example_inputs: Sequence[Sequence[Any]],
     runtime: Runtime,
@@ -294,16 +292,18 @@ def plan_step(
     it starts. Set it to ``False`` for silent embedding; diagnostics are still
     retained in :attr:`PlannedTrainStep.plan_report` either way.
 
-    ``optimizer_state_init`` fills one declared optimizer-state entry, given
-    the entry's name, the tensor to fill, and the parameter the entry belongs
-    to. The optimizer declares what state exists by being run on meta
-    parameters, which costs nothing; ShadowSpill creates those entries in the
-    spill pool; and this writes their values there, because a default would be
-    an assumption that fails silently. It is not needed when ``optimizer``
-    returns an optimizer whose state the caller has already imported:
-    planning adopts the state of the optimizer it is handed, and that object
-    is the reference. State imported for some other optimizer is invisible to
-    planning, which neither knows nor cares about it.
+    The optimizer's state is created in the spill pool before the first step,
+    each entry at what the optimizer's own first step starts it at. The
+    optimizer is run once on meta parameters, which costs nothing, and how it
+    makes each entry says what that is: zero for moments and counters, the
+    parameter itself at the entry's dtype for a higher-precision master copy.
+    An entry it makes from anything else -- a momentum buffer started from the
+    gradient, say -- has no value before the first step, and planning refuses
+    it. State the optimizer already holds, loaded from a checkpoint for
+    instance, starts at what it holds. When ``optimizer`` returns an optimizer
+    whose state the caller has already imported, planning adopts that state:
+    the object it is handed is the reference. State imported for some other
+    optimizer is invisible to planning, which neither knows nor cares about it.
 
     A value that varies between steps -- a scheduled learning rate, say --
     is passed to the optimizer as a **tensor** rather than a float, and
@@ -400,7 +400,6 @@ def plan_step(
                 model,
                 objective=objective,
                 build_optimizer=optimizer,
-                optimizer_state_init=optimizer_state_init,
                 hyperparams=hyperparams,
                 example_inputs=example_inputs,
                 memory=memory,
@@ -432,8 +431,6 @@ def build_step_programs(
     *,
     objective: Any,
     optimizer: Any,
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None = None,
     hyperparams: Sequence[str] = (),
     example_inputs: Sequence[Sequence[Any]],
     runtime: Runtime,
@@ -522,7 +519,6 @@ def build_step_programs(
                 model,
                 objective=objective,
                 build_optimizer=optimizer,
-                optimizer_state_init=optimizer_state_init,
                 hyperparams=hyperparams,
                 example_inputs=example_inputs,
                 memory=memory,

@@ -42,21 +42,11 @@ model = nn.Sequential(
 )
 model = import_model_state(model, runtime=runtime, pool="spill")
 
-def zero_state(
-    name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter
-) -> None:
-    """Moment-based optimizers start at zero; ShadowSpill never assumes it."""
-
-    with torch.no_grad():
-        tensor.zero_()
-
-
 train_step = plan_step(
     model,
     objective=objective,
     optimizer=torch.optim.AdamW,
     hyperparams=("lr",),
-    optimizer_state_init=zero_state,
     example_inputs=[batch(4)],
     runtime=runtime,
     execution="execution",
@@ -80,11 +70,10 @@ The optimizer is built plainly, at its defaults. Anything that varies between
 steps is named at planning instead: `hyperparams=("lr",)` declares that the
 learning rate is a value the caller supplies, and each call sets it. A value
 named this way is captured once, by geometry, so a schedule that changes it
-every step never recaptures the update. `optimizer_state_init` is required
-whenever the optimizer keeps state: the optimizer declares what state exists
-by running on meta parameters, ShadowSpill builds it, this fills it -- because
-a default would be an assumption that fails silently -- and the import that
-adopts the optimizer's state for the plan puts it in the spill pool.
+every step never recaptures the update. The optimizer's state asks nothing of
+the caller: the optimizer declares what it keeps by running on meta parameters,
+each entry starts where the optimizer's own first step would start it, and the
+import that adopts the state for the plan puts it in the spill pool.
 
 The scalar loss is `result.objectives[0]`. ShadowSpill validates and records
 this explicit objective return during capture; it does not guess which model

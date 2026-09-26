@@ -45,8 +45,6 @@ def build_training(
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     build_optimizer: Callable[[Any], torch.optim.Optimizer],
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None,
     hyperparams: Sequence[str],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
@@ -91,7 +89,6 @@ def build_training(
         model,
         captured,
         build_optimizer=build_optimizer,
-        optimizer_state_init=optimizer_state_init,
         hyperparams=hyperparams,
         memory=memory,
         stores=artifacts,
