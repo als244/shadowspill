@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import NamedTuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-SequenceLengths = Sequence[int] | None
+SequenceLengths = Sequence[int] | torch.Tensor | None
 
 
 class RMSNorm(nn.Module):
@@ -127,6 +128,63 @@ def attention_metadata(
             f"sequence length {max(lengths)} exceeds rotary capacity {capacity}"
         )
     return positions, lengths
+
+
+class Packing(NamedTuple):
+    """Where the packed sequences are, in the form attention reads."""
+
+    #: Each token's position within its own sequence.
+    positions: torch.Tensor
+    #: Cumulative sequence offsets along the token axis, int32.
+    cu_seqlens: torch.Tensor
+    #: A bound on the longest sequence.
+    max_seqlen: int
+    #: The lengths as integers when they are structure; ``None`` when data.
+    lengths: tuple[int, ...] | None
+
+
+def packed_metadata(
+    tokens: torch.Tensor,
+    sequence_lengths: SequenceLengths,
+    *,
+    capacity: int,
+) -> Packing:
+    """Return the packing of ``tokens`` that attention and rotation read.
+
+    Integer lengths, or ``None`` for one sequence per row, are structure: they
+    are read as ``attention_metadata`` reads them, and a captured graph holds
+    them as constants. A one-dimensional integer tensor is data -- the lengths
+    of the sequences packed into ``[1, T]`` tokens, zero-padded to a fixed
+    size -- so one captured graph serves every packing. It is int32 on the
+    tokens' device, which is what attention reads, so nothing converts it. Its
+    values stay on the device: the caller guarantees they sum to ``T`` and
+    none exceeds ``capacity``.
+    """
+
+    if not isinstance(sequence_lengths, torch.Tensor):
+        positions, lengths = attention_metadata(
+            tokens, sequence_lengths, capacity=capacity
+        )
+        offsets = [0]
+        for length in lengths:
+            offsets.append(offsets[-1] + length)
+        cu_seqlens = torch.tensor(offsets, dtype=torch.int32, device=tokens.device)
+        return Packing(positions, cu_seqlens, max(lengths), lengths)
+    if tokens.ndim != 2 or tokens.shape[0] != 1:
+        raise ValueError("tokens packed by a lengths tensor must have shape [1, T]")
+    if (
+        sequence_lengths.ndim != 1
+        or sequence_lengths.dtype != torch.int32
+        or sequence_lengths.device != tokens.device
+    ):
+        raise ValueError("a lengths tensor must be one-dimensional int32 beside tokens")
+    ends = torch.cumsum(sequence_lengths, 0, dtype=torch.int32)
+    token = torch.arange(tokens.shape[1], dtype=torch.int32, device=tokens.device)
+    # A repeated end is an empty sequence, which owns no token.
+    sequence = torch.searchsorted(ends, token, right=True)
+    positions = (token - (ends - sequence_lengths)[sequence]).long()
+    cu_seqlens = F.pad(ends, (1, 0))
+    return Packing(positions, cu_seqlens, min(capacity, tokens.shape[1]), None)
 
 
 def apply_rotary(
