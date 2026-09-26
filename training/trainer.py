@@ -29,7 +29,11 @@ class Trainer:
     tokens, targets, seq_lens, **objective_args)`` is the loss a step
     differentiates. The optimizer is ``optimizer(parameters,
     **optimizer_args)``, and a ``schedule`` sets its learning rate every step;
-    without one, its own rate stays. ``data`` supplies the microbatches, each at
+    without one, its own rate stays. ``master_dtype`` gives every weight
+    trained at another dtype a master copy at that one, which the optimizer
+    steps in its place and each step writes the weight from; ``grad_dtype`` is
+    the dtype gradients are summed at over a step's microbatches, the weights'
+    own when not given. ``data`` supplies the microbatches, each at
     most ``max_tokens_per_microbatch`` tokens, ``max_tokens_per_step`` a step,
     in documents of at most ``max_seq_len`` tokens; leaving the microbatch size
     out lets ShadowSpill search for the fastest.
@@ -65,6 +69,8 @@ class Trainer:
         optimizer_args: Mapping[str, Any] | None = None,
         schedule: Constant | WarmupCosine | None = None,
         backend: Backend | None = None,
+        master_dtype: torch.dtype | None = None,
+        grad_dtype: torch.dtype | None = None,
         seed: int = 0,
         eval_every: int = 0,
         eval_batches: int = 0,
@@ -93,6 +99,8 @@ class Trainer:
         self.max_tokens_per_microbatch = max_tokens_per_microbatch
         self.schedule = schedule
         self.backend = backend
+        self.master_dtype = master_dtype
+        self.grad_dtype = grad_dtype
         self.seed = seed
         self.eval_every = eval_every
         self.eval_batches = eval_batches
@@ -154,6 +162,8 @@ class Trainer:
                 max_tokens_per_step=self.max_tokens_per_step,
                 max_tokens_per_microbatch=self.max_tokens_per_microbatch,
                 hyperparams=("lr",) if self.schedule is not None else (),
+                master_dtype=self.master_dtype,
+                grad_dtype=self.grad_dtype,
                 seed=self.seed,
                 run_dir=self.run_dir,
                 artifact_store=self.artifact_store,

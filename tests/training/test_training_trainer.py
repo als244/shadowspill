@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import torch
 
 from tests.training._synthetic import NOTES, write_dataset
 from training.backends import Microbatch
@@ -147,6 +148,41 @@ def test_a_step_is_finished_before_it_is_evaluated_or_saved(tmp_path: Path) -> N
         (0, "loss"), (1, "loss"), (1, "val_loss"),
         (2, "loss"), (3, "loss"), (3, "val_loss"),
     ]  # fmt: skip
+
+
+def test_masters_keep_the_weights_and_the_checkpoint_on_pytorch(
+    tmp_path: Path,
+) -> None:
+    """With fp32 masters of a bf16 model and gradients kept at fp32, each
+    weight is its master's cast after every step, a checkpoint holds the
+    masters, and a resumed run replays the uninterrupted one."""
+
+    config = _config(tmp_path)
+    overrides = [
+        "model.dtype=bfloat16",
+        "master_dtype=@torch:float32",
+        "grad_dtype=@torch:float32",
+    ]
+    whole = tmp_path / "whole"
+    trainer = Trainer.from_config(config, [f"run_dir={whole}", *overrides])
+    trainer.train()
+    kept = trainer.backend.masters
+    assert kept.masters and all(
+        master.dtype == torch.float32 for master in kept.masters.values()
+    )
+    for name, master in kept.masters.items():
+        assert torch.equal(kept.named[name].detach(), master.detach().bfloat16())
+    saved = torch.load(whole / "checkpoint.pt", weights_only=True)
+    for name, master in kept.masters.items():
+        assert torch.equal(saved["model"][name], master.detach())
+
+    resumed = tmp_path / "resumed"
+    Trainer.from_config(config, [f"run_dir={resumed}", *overrides, "steps=3"]).train()
+    Trainer.from_config(config, [f"run_dir={resumed}", *overrides]).train()
+    losses = {step: line["loss"] for step, line in _records(whole, "loss").items()}
+    assert {
+        step: line["loss"] for step, line in _records(resumed, "loss").items()
+    } == losses
 
 
 def test_setting_up_on_pytorch_plans_nothing(tmp_path: Path) -> None:

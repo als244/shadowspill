@@ -42,6 +42,8 @@ class Setup:
     max_tokens_per_step: int
     max_tokens_per_microbatch: int | None
     hyperparams: tuple[str, ...]  # what the step is given every time: ("lr",) or ()
+    master_dtype: torch.dtype | None  # masters of the weights trained at another dtype
+    grad_dtype: torch.dtype | None  # gradients kept at this dtype; None: the weights'
     seed: int
     run_dir: Path
     artifact_store: Path  # where planning's captures, graphs, profiles and plans go

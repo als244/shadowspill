@@ -133,6 +133,8 @@ and, by keyword:
 | `model` | The model on `meta`: structure only. `training.models.build_on_meta(model, dtype, **arguments)` builds one. The backend materializes it and every module initializes its own storage from `seed`, in module order, so both backends start from the same weights. |
 | `objective`, `objective_args` | The loss a step differentiates, `objective(model, tokens, targets, seq_lens, **objective_args)`. `training.objectives.model_loss` calls the model's own `loss(tokens, targets, seq_lens=..., **objective_args)`. By convention the loss sums over trained positions and divides by all the microbatch's positions, so a step weighs every trained token alike and the trainer can report the loss per trained token. |
 | `optimizer`, `optimizer_args` | The optimizer class, built as `optimizer(parameters, **optimizer_args)`. |
+| `master_dtype` | A dtype -- `torch.float32` -- to keep a master copy of every weight trained at another dtype at. The optimizer steps the masters in the weights' place and each step writes the weights from them; without it the optimizer steps the weights themselves. |
+| `grad_dtype` | The dtype gradients are summed at over a step's microbatches, the weights' own when not given; normally `torch.float32` with fp32 masters. An optimizer given masters whose gradients arrive at their dtype should take them as they are: `gradient_dtype="parameter"` for mlops AdamW. A model on mlops kernels asks them for its weight gradients at the same dtype among the `settings` -- `mlops.dispatch:set_weight_gradient_dtype` -- so those they sum come back unrounded; the fp32 config does. |
 | `data` | A `PackedTokens`. |
 | `steps` | The optimizer steps the run takes. |
 | `max_seq_len` | The longest sequence a microbatch holds; the data drops, truncates or splices longer documents, and planning assumes sequences of this length. |
@@ -191,7 +193,8 @@ The example configs in [`configs/`](configs/) train the reference workloads'
 ~1B models with mlops AdamW and a warmup-cosine schedule, on ShadowSpill at an
 8 GiB budget: `<family>_1b.json` for 1000 steps of 16K tokens, and
 `<family>_1b_300m.json` for 300M tokens at 64K tokens a step, checkpointing
-every 50M.
+every 50M -- all at bf16, weights and moments alike. `llama3_1b_300m_fp32.json`
+is the 300M-token Llama-3 run with fp32 masters, gradients and moments.
 
 ## Backends
 
@@ -205,13 +208,17 @@ state on the device (by default, PyTorch's current accelerator) and compiles
 the objective with `torch.compile` unless `compile=False`. It needs
 `max_tokens_per_microbatch`.
 
-`ShadowSpill(execution_gib, spill_gib, eval_execution_gib=None)` keeps the
-state in a pinned host pool of `spill_gib` and plans every step to fit
-`execution_gib` of the device, which is the whole device pool. Evaluation plans
-its forward pass into the step's slab (`share_slab_with`): the two run in turn,
-so the pool holds the bytes once. It plans within `eval_execution_gib` when
-given -- the example configs give 4 GiB of the step's 8 -- and within the whole
-slab when not.
+`ShadowSpill(execution_gib, spill_gib, eval_execution_gib=None,
+round_accumulation_once=False)` keeps the state in a pinned host pool of
+`spill_gib` and plans every step to fit `execution_gib` of the device, which is
+the whole device pool. Evaluation plans its forward pass into the step's slab
+(`share_slab_with`): the two run in turn, so the pool holds the bytes once. It
+plans within `eval_execution_gib` when given -- the example configs give 4 GiB
+of the step's 8 -- and within the whole slab when not. `round_accumulation_once`
+is `plan_step`'s: with bf16 gradients a matrix multiply adds its product into
+the running gradient as it writes it, rounding the sum once where the PyTorch
+backend rounds it twice, so the two backends' steps no longer agree bit for
+bit.
 
 - **Planning.** A run's first launch searches for its plan with
   `plan_step_search` -- over microbatch sizes when the trainer gave none -- and
@@ -223,9 +230,12 @@ slab when not.
   with.
 - **Optimizer state.** ShadowSpill creates the optimizer's state in its pool
   before any step runs, each entry where the optimizer's own first step starts
-  it -- moments at zero, a master copy of the weights at the weights -- and a
-  resumed run's checkpoint replaces it. The PyTorch backend builds nothing
-  ahead: the optimizer makes its own state on the first step.
+  it -- moments at zero, for instance -- and a resumed run's checkpoint
+  replaces it. The PyTorch backend builds nothing ahead: the optimizer makes
+  its own state on the first step.
+- **Masters.** ShadowSpill keeps them with the optimizer's state in its pool
+  (`plan_step(master_dtype=..., grad_dtype=...)`); the PyTorch backend keeps
+  them on the device and does the same around an ordinary optimizer step.
 - **Evaluation** plans the forward pass once, beside the training step, over
   the same weights.
 
@@ -264,11 +274,11 @@ With a W&B project every value goes to W&B too, one row per step.
 ## Checkpoints and resuming
 
 A checkpoint holds the model's and the optimizer's state and the steps taken.
-A model entry that an optimizer entry reproduces bit for bit by a cast -- a
-weight kept beside the higher-precision master it is the rounding of -- is
-written once, as the optimizer's entry, and `model_from_optimizer` says where it
-comes from. ShadowSpill writes checkpoints straight from its pool, without a
-copy of the state first; both backends write the same format. A checkpoint is
+A weight trained over a master copy is written as its master, under the
+weight's name, so the training state is in it once and at full precision, and
+it loads into a plain model of either precision as it stands. ShadowSpill
+writes checkpoints straight from its pool, without a copy of the state first;
+both backends write the same format. A checkpoint is
 written to `checkpoint.partial` and then renamed, so `checkpoint.pt` is always
 whole.
 
