@@ -2,6 +2,7 @@
 
 from .decoder import (
     GatedRMSNorm,
+    Packing,
     RMSNorm,
     RotaryEmbedding,
     SequenceLengths,
@@ -10,11 +11,13 @@ from .decoder import (
     causal_attention,
     l2_normalize,
     language_model_loss,
+    packed_metadata,
     swiglu,
 )
 
 __all__ = [
     "GatedRMSNorm",
+    "Packing",
     "RMSNorm",
     "RotaryEmbedding",
     "SequenceLengths",
@@ -23,5 +26,6 @@ __all__ = [
     "causal_attention",
     "l2_normalize",
     "language_model_loss",
+    "packed_metadata",
     "swiglu",
 ]

@@ -6,7 +6,7 @@ import mlops
 import torch
 import torch.nn as nn
 
-from workloads.common import RotaryEmbedding, SequenceLengths, attention_metadata
+from workloads.common import Packing, RotaryEmbedding, SequenceLengths, packed_metadata
 from workloads.pytorch.qwen35 import Qwen35Config
 
 from .common import GatedRMSNorm, RMSNorm
@@ -26,8 +26,7 @@ class GatedAttention(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        positions: torch.Tensor,
-        lengths: tuple[int, ...],
+        packing: Packing,
         rotary: RotaryEmbedding,
     ) -> torch.Tensor:
         config = self.config
@@ -42,7 +41,7 @@ class GatedAttention(nn.Module):
         )
         query = mlops.partial_rope(
             query,
-            positions,
+            packing.positions,
             config.rope_base,
             config.rotary_width,
             rotary.cosine,
@@ -50,7 +49,7 @@ class GatedAttention(nn.Module):
         )
         key = mlops.partial_rope(
             key,
-            positions,
+            packing.positions,
             config.rope_base,
             config.rotary_width,
             rotary.cosine,
@@ -62,7 +61,8 @@ class GatedAttention(nn.Module):
             self.wv(hidden).reshape(
                 batch * sequence, config.n_kv_heads, config.head_dim
             ),
-            lengths,
+            packing.cu_seqlens,
+            packing.max_seqlen,
         ).reshape(batch, sequence, config.attention_width)
         gated = attended * torch.sigmoid(gate.float()).to(attended.dtype)
         return self.wo(gated)
@@ -97,7 +97,6 @@ class GatedDeltaNet(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        lengths: tuple[int, ...],
         cumulative: torch.Tensor,
         chunk_indices: torch.Tensor,
     ) -> torch.Tensor:
@@ -108,7 +107,6 @@ class GatedDeltaNet(nn.Module):
         convolved = mlops.causal_conv_silu(
             qkvz[..., : config.convolution_width],
             self.conv.weight,
-            lengths,
             cumulative,
             chunk_indices,
         )
@@ -137,7 +135,6 @@ class GatedDeltaNet(nn.Module):
             decay.reshape(batch * sequence, config.lin_v_heads),
             self.A_log,
             self.dt_bias,
-            lengths,
             cumulative,
             chunk_indices,
         ).reshape(batch, sequence, config.lin_v_heads, config.lin_v_head_dim)
@@ -171,17 +168,16 @@ class Block(nn.Module):
     def forward(
         self,
         hidden: torch.Tensor,
-        positions: torch.Tensor,
-        lengths: tuple[int, ...],
+        packing: Packing,
         rotary: RotaryEmbedding,
         cumulative: torch.Tensor,
         chunk_indices: torch.Tensor,
     ) -> torch.Tensor:
         normalized = self.attn_norm(hidden)
         if self.kind == "full":
-            update = self.mixer(normalized, positions, lengths, rotary)
+            update = self.mixer(normalized, packing, rotary)
         else:
-            update = self.mixer(normalized, lengths, cumulative, chunk_indices)
+            update = self.mixer(normalized, cumulative, chunk_indices)
         hidden = hidden + update
         return hidden + self.mlp(self.ffn_norm(hidden))
 
@@ -209,18 +205,18 @@ class Qwen35(nn.Module):
     def hidden(
         self, tokens: torch.Tensor, sequence_lengths: SequenceLengths = None
     ) -> torch.Tensor:
-        positions, lengths = attention_metadata(
+        packing = packed_metadata(
             tokens, sequence_lengths, capacity=self.config.max_seq_len
         )
+        # Linear attention reads its own form of the same packing.
         cumulative, chunk_indices = mlops.prepare_packed_sequence_metadata(
-            lengths, tokens
+            sequence_lengths if packing.lengths is None else packing.lengths, tokens
         )
         hidden = mlops.embedding(tokens, self.embed.weight)
         for block in self.blocks:
             hidden = block(
                 hidden,
-                positions,
-                lengths,
+                packing,
                 self.rotary,
                 cumulative,
                 chunk_indices,
