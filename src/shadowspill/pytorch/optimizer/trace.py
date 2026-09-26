@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensor
 from torch.fx import GraphModule
 
 from shadowspill.errors import CaptureError
@@ -18,10 +19,12 @@ from .artifacts import (
     OptimizerCapture,
     OptimizerTask,
     OptimizerTensorBinding,
+    OptimizerTensorRole,
 )
 from .bindings import (
     optimizer_input_provenance,
     restore_binding_values,
+    step_bindings,
     tensor_bindings,
 )
 from .discovery import (
@@ -46,16 +49,34 @@ def capture_optimizer_update(
     parameter_stage_owners: Mapping[str, tuple[int, ...]] | None,
     store: OptimizerCaptureStore | None = None,
     timer: PhaseTimer,
+    compute_copies: Mapping[str, torch.Tensor] | None = None,
+    gradient_dtype: torch.dtype | None = None,
 ) -> OptimizerCapture:
-    """Capture the optimizer's update, or publish a bounded opaque task."""
+    """Capture the optimizer's update, or publish a bounded opaque task.
 
+    The update takes each gradient as the step produces it -- at
+    ``gradient_dtype``, or at its weights' dtype -- and casts it where the
+    optimizer's parameter is at another. ``compute_copies`` names the
+    parameters the optimizer holds master copies of, with the weights the
+    model computes with, and the update writes each copy from its master once
+    it has stepped.
+    """
+
+    copies = dict(compute_copies or {})
+    for name, copy in copies.items():
+        if not isinstance(copy, FakeTensor) and not copy.is_meta:
+            discovery.representative_values[f"compute.{name}"] = copy.detach()
     if has_optimizer_step_hooks(optimizer):
         return _hooked_optimizer_capture(discovery)
     key: str | None = None
     if store is not None:
         key = update_capture_identity(
             discovery.sandbox,
-            tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
+            step_bindings(
+                tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
+                copies,
+                gradient_dtype,
+            ),
             parameter_stage_owners=parameter_stage_owners,
         )
         stored = store.read(key)
@@ -64,8 +85,10 @@ def capture_optimizer_update(
             # tasks is graph analysis, derived here as it is on a miss.
             with timer.measure("optimizer_trace_read"):
                 fake_update_sandbox(discovery)
-                bindings = tensor_bindings(
-                    discovery.sandbox, discovery.name_by_sandbox_id
+                bindings = step_bindings(
+                    tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
+                    copies,
+                    gradient_dtype,
                 )
                 artifact = stored.restore(
                     bindings,
@@ -85,7 +108,7 @@ def capture_optimizer_update(
     if discovery.initialized_state_dict is None:
         fake_update_sandbox(discovery)
     with timer.measure("optimizer_trace"):
-        captured = _capture_optimizer_artifact(discovery)
+        captured = _capture_optimizer_artifact(discovery, copies, gradient_dtype)
     if isinstance(captured, OptimizerCapture):
         return captured
     artifact, bindings = captured
@@ -133,18 +156,36 @@ def _hooked_optimizer_capture(
 
 def _capture_optimizer_artifact(
     discovery: OptimizerDiscovery,
+    copies: Mapping[str, torch.Tensor],
+    gradient_dtype: torch.dtype | None,
 ) -> tuple[GraphArtifact, tuple[OptimizerTensorBinding, ...]] | OptimizerCapture:
     sandbox = discovery.sandbox
     names = discovery.name_by_sandbox_id
-    bindings = tensor_bindings(sandbox, names)
+    own = tensor_bindings(sandbox, names)
+    bindings = step_bindings(own, copies, gradient_dtype)
+    # What the update closes over: the optimizer's own tensors, each gradient
+    # among them at its parameter's dtype, and the copies it writes. The
+    # graph's inputs are found by those; the bindings then say what each
+    # input is, a gradient arriving at the dtype the step produces it in.
+    closed = own + bindings[len(own) :]
+    masters = {
+        binding.name: binding.tensor
+        for binding in own
+        if binding.role is OptimizerTensorRole.PARAMETER
+    }
+    written = tuple(
+        (binding.tensor, masters[binding.name.removeprefix("compute.")])
+        for binding in bindings[len(own) :]
+    )
     snapshots = {
-        id(binding.tensor): binding.tensor.detach().clone() for binding in bindings
+        id(binding.tensor): binding.tensor.detach().clone() for binding in closed
     }
     grad_enabled = torch.is_grad_enabled()
     try:
-        graph_module = _export_optimizer_graph(sandbox)
-        restore_binding_values(bindings, snapshots)
-        graph_module = _lift_optimizer_tensors(graph_module, bindings)
+        graph_module = _export_optimizer_graph(sandbox, written)
+        restore_binding_values(closed, snapshots)
+        graph_module = _lift_optimizer_tensors(graph_module, closed)
+        graph_module = _cast_gradients(graph_module, closed, bindings)
         artifact = GraphArtifact.capture(
             kind="optimizer",
             graph_module=graph_module,
@@ -155,7 +196,7 @@ def _capture_optimizer_artifact(
             ),
         )
     except BaseException as exc:
-        restore_binding_values(bindings, snapshots)
+        restore_binding_values(closed, snapshots)
         # An opaque task runs the real update, so it is captured from the
         # sandbox as it was before it moved onto fake tensors.
         real = discovery.real_sandbox
@@ -209,18 +250,62 @@ def _opaque_optimizer_capture(
     )
 
 
-def _export_optimizer_graph(optimizer: torch.optim.Optimizer) -> GraphModule:
+def _export_optimizer_graph(
+    optimizer: torch.optim.Optimizer,
+    written: tuple[tuple[torch.Tensor, torch.Tensor], ...] = (),
+) -> GraphModule:
+    """The step as a graph; each ``(copy, master)`` in ``written`` is then
+    written from its master, in the same graph."""
+
     raw_step = inspect.unwrap(type(optimizer).step).__get__(optimizer, type(optimizer))
 
     @torch.no_grad()
     def update() -> Any:
-        return raw_step()
+        result = raw_step()
+        for copy, master in written:
+            copy.copy_(master)
+        return result
 
     with torch._dynamo.config.patch(
         recompile_limit=max(torch._dynamo.config.recompile_limit, 64)
     ):
         exported = torch._dynamo.export(update, aten_graph=True)()
     return exported.graph_module
+
+
+def _cast_gradients(
+    graph_module: GraphModule,
+    closed: tuple[OptimizerTensorBinding, ...],
+    bindings: tuple[OptimizerTensorBinding, ...],
+) -> GraphModule:
+    """Take each gradient at the dtype the step produces it in.
+
+    The graph was traced with each gradient at its parameter's dtype, as an
+    optimizer requires; where the input it gets is at another -- a master's
+    gradient, as the model computes it, or a gradient kept at a wider dtype
+    -- the graph casts it before anything reads it. Nothing else changes: the
+    cast is the first use of the input and every former use reads the cast.
+    """
+
+    graph = graph_module.graph
+    placeholders = [node for node in graph.nodes if node.op == "placeholder"]
+    changed = False
+    for node, before, after in zip(placeholders, closed, bindings, strict=True):
+        if before.tensor is after.tensor:
+            continue
+        with graph.inserting_after(node):
+            cast = graph.call_function(
+                torch.ops.prims.convert_element_type.default,
+                (node, before.tensor.dtype),
+            )
+        node.replace_all_uses_with(
+            cast, delete_user_cb=lambda user, cast=cast: user is not cast
+        )
+        changed = True
+    if changed:
+        graph.lint()
+        graph_module.recompile()
+    return graph_module
 
 
 def _lift_optimizer_tensors(

@@ -48,6 +48,12 @@ class GraphPairStore:
         artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self._pairs: dict[tuple[str, tuple[int, ...], bool], TaskGraphPairs] = {}
+        #: The forms a step asks for, derived from the captured pairs: their
+        #: gradients at a dtype, and the accumulating form.
+        self._derived: dict[
+            tuple[tuple[str, tuple[int, ...], bool], str | None, bool],
+            TaskGraphPairs,
+        ] = {}
         self._root = None if root is None else Path(root).expanduser()
         self._policy = policy
         self._artifact_recorder = artifact_recorder
@@ -66,7 +72,16 @@ class GraphPairStore:
         *,
         specialize_unit_tangents: bool,
         accumulating: bool = False,
+        gradient_dtype: torch.dtype | None = None,
     ) -> TaskGraphPairs:
+        """The stage's graph pairs, their parameter gradients produced at
+        ``gradient_dtype`` (the parameters' own when ``None``), and with the
+        accumulating form when the stage runs in an ``accumulating`` step.
+
+        The store holds the pairs as captured; the forms a step asks for are
+        derived from them, once per contract, and rebound per occurrence.
+        """
+
         stage_contract = GraphArtifact.input_compatibility_digest(
             graph_module=example.stage.graph_module,
             example_inputs=example.inputs,
@@ -82,7 +97,7 @@ class GraphPairStore:
                 self._pairs[key] = existing
                 self.hits += 1
                 return rebind_task_graph_pairs(
-                    self._with_accumulating(key, existing, accumulating), example
+                    self._derive(key, existing, gradient_dtype, accumulating), example
                 )
             self._policy.refuse_miss("graph pair", str(key[0]))
             existing = build_default_graph_pairs(
@@ -93,33 +108,43 @@ class GraphPairStore:
             self._pairs[key] = existing
             self._write(key, existing)
             self.misses += 1
-            return self._with_accumulating(key, existing, accumulating)
+            return self._derive(key, existing, gradient_dtype, accumulating)
         self.hits += 1
         return rebind_task_graph_pairs(
-            self._with_accumulating(key, existing, accumulating), example
+            self._derive(key, existing, gradient_dtype, accumulating), example
         )
 
-    def _with_accumulating(
+    def _derive(
         self,
         key: tuple[str, tuple[int, ...], bool],
         pairs: TaskGraphPairs,
+        gradient_dtype: torch.dtype | None,
         accumulating: bool,
     ) -> TaskGraphPairs:
-        """Give this contract its accumulating form the first time one is asked for.
+        """The captured pairs in the form a step runs them, derived once.
 
-        Deriving it costs a graph capture, so it belongs with the structural
+        Each form costs a graph capture, so it belongs with the structural
         entry rather than with each occurrence that rebinds from it. A step
-        whose microbatches never accumulate never asks, and never pays.
+        whose microbatches never accumulate never asks for that form, and
+        never pays for it; the gradients' dtype is fixed before the
+        accumulating form is derived, which then adds at that dtype.
         """
 
-        if not accumulating or any(item.accumulates for item in pairs.variants):
-            return pairs
-        grown = replace(
-            pairs,
-            variants=(*pairs.variants, *pairs.accumulating_variants()),
+        derived_key = (
+            key,
+            None if gradient_dtype is None else str(gradient_dtype),
+            accumulating,
         )
-        self._pairs[key] = grown
-        return grown
+        derived = self._derived.get(derived_key)
+        if derived is None:
+            derived = pairs.with_gradient_dtype(gradient_dtype)
+            if accumulating:
+                derived = replace(
+                    derived,
+                    variants=(*derived.variants, *derived.accumulating_variants()),
+                )
+            self._derived[derived_key] = derived
+        return derived
 
     def _path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
         if self._root is None:

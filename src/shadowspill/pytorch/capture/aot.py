@@ -15,6 +15,7 @@ from torch._functorch.aot_autograd import aot_function
 from torch._functorch.partitioners import min_cut_rematerialization_partition
 from torch._guards import detect_fake_mode
 from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
+from torch.fx.passes.shape_prop import _extract_tensor_metadata
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError, ObjectiveError
@@ -857,6 +858,160 @@ def accumulate_gradient_outputs(
             *(TaskInputProvenance(role=TaskInputRole.GRADIENT) for _ in leaf_indices),
         ),
     )
+
+
+def cast_gradient_outputs(
+    backward: GraphArtifact,
+    leaf_indices: Sequence[int],
+    dtype: torch.dtype,
+) -> GraphArtifact:
+    """Return a backward whose gradients at ``leaf_indices`` come out at ``dtype``.
+
+    A backward computes a gradient at the dtype of what it is the gradient of.
+    One kept at another dtype -- fp32 gradients of bf16 weights, say -- comes
+    out at that one: a gradient the step creates is created at it, and the
+    accumulating form, derived from this one, adds each contribution into the
+    running gradient there.
+
+    Which operation computed a gradient decides how. One a matrix multiply
+    computes, moved at most by views and copies on its way out, is written at
+    ``dtype`` by the multiply itself where PyTorch has a kernel for it (fp32
+    from fp16 or bf16 operands on CUDA, say): its products are summed at
+    ``dtype`` and never rounded to the operands'. Any other is what the
+    operations computed, cast as it leaves.
+    """
+
+    graph_module = copy_graph_module(backward.graph_module)
+    graph = graph_module.graph
+    output_node = next(node for node in graph.nodes if node.op == "output")
+    outputs = list(output_node.args[0])
+    fake_mode = detect_fake_mode(backward.example_arguments)
+    changed = False
+    for leaf in leaf_indices:
+        produced = outputs[leaf] if 0 <= leaf < len(outputs) else None
+        if produced is None or not isinstance(produced.meta.get("val"), torch.Tensor):
+            raise CaptureError(f"backward gradient at leaf {leaf} has no geometry")
+        value = produced.meta["val"]
+        if value.dtype == dtype:
+            continue
+        changed = True
+        if _write_at_dtype(graph, produced, outputs, dtype, fake_mode):
+            continue
+        with graph.inserting_before(output_node):
+            cast = graph.call_function(
+                torch.ops.prims.convert_element_type.default, args=(produced, dtype)
+            )
+        cast.meta = dict(produced.meta)
+        with fake_mode if fake_mode is not None else nullcontext():
+            _record_value(cast, value.to(dtype))
+        outputs[leaf] = cast
+    if not changed:
+        return backward
+    output_node.args = (tuple(outputs),)
+    graph.lint()
+    graph_module.recompile()
+    return GraphArtifact.capture(
+        kind="backward",
+        graph_module=graph_module,
+        example_inputs=backward.example_arguments,
+        input_provenance=backward.input_provenance,
+    )
+
+
+#: Matrix multiplies beside the overload of each that sums its products and
+#: writes its result at a dtype it is given, over the same arguments.
+_WRITING_AT_DTYPE: dict[object, torch._ops.OpOverload] = {
+    torch.ops.aten.mm.default: torch.ops.aten.mm.dtype,
+    torch.ops.aten.bmm.default: torch.ops.aten.bmm.dtype,
+    torch.ops.aten.addmm.default: torch.ops.aten.addmm.dtype,
+    torch.ops.aten.baddbmm.default: torch.ops.aten.baddbmm.dtype,
+}
+
+#: Operations that only move values -- views and copies of one tensor --
+#: which a gradient may pass through between what computes it and the
+#: backward's output.
+_MOVING_ONLY = frozenset(
+    {
+        torch.ops.aten.alias.default,
+        torch.ops.aten.clone.default,
+        torch.ops.aten.permute.default,
+        torch.ops.aten.reshape.default,
+        torch.ops.aten.squeeze.default,
+        torch.ops.aten.squeeze.dim,
+        torch.ops.aten.squeeze.dims,
+        torch.ops.aten.t.default,
+        torch.ops.aten.transpose.int,
+        torch.ops.aten.unsqueeze.default,
+        torch.ops.aten.view.default,
+        torch.ops.aten._unsafe_view.default,
+    }
+)
+
+
+def _write_at_dtype(
+    graph: torch.fx.Graph,
+    produced: torch.fx.Node,
+    outputs: Sequence[object],
+    dtype: torch.dtype,
+    fake_mode: Any,
+) -> bool:
+    """Have the matrix multiply that computes ``produced`` write it at ``dtype``.
+
+    It does when ``produced`` is a multiply's result, moved at most, that
+    nothing else reads, and PyTorch has a kernel that writes that multiply at
+    ``dtype`` from these operands on their device -- which dtypes it accepts
+    is the operator's own check. Every node from the multiply to the output
+    then carries ``dtype``. Returns whether it did.
+    """
+
+    chain = [produced]
+    while chain[-1].target in _MOVING_ONLY:
+        source = chain[-1].args[0]
+        if not isinstance(source, torch.fx.Node):
+            return False
+        chain.append(source)
+    multiply = chain[-1]
+    writing = _WRITING_AT_DTYPE.get(multiply.target)
+    if (
+        writing is None
+        or outputs.count(produced) != 1
+        or any(len(node.users) != 1 for node in chain)
+    ):
+        return False
+    operands = torch.fx.node.map_arg(multiply.args, lambda item: item.meta["val"])
+    device = cast(torch.Tensor, operands[0]).device
+    schema = writing._schema
+    if not torch._C._dispatch_has_kernel_for_dispatch_key(
+        f"{schema.name}.{schema.overload_name}",
+        torch._C._dispatch_key_for_device(device.type),
+    ):
+        return False
+    with fake_mode if fake_mode is not None else nullcontext():
+        try:
+            value = writing(*operands, dtype, **multiply.kwargs)
+        except RuntimeError:  # not a dtype it writes from these operands
+            return False
+        with graph.inserting_after(multiply):
+            written = graph.call_function(
+                writing, args=(*multiply.args, dtype), kwargs=dict(multiply.kwargs)
+            )
+        written.meta = dict(multiply.meta)
+        _record_value(written, value)
+        multiply.replace_all_uses_with(written)
+        graph.erase_node(multiply)
+        for node in reversed(chain[:-1]):
+            args, kwargs = torch.fx.node.map_arg(
+                (node.args, node.kwargs), lambda item: item.meta["val"]
+            )
+            _record_value(node, cast(Callable[..., Any], node.target)(*args, **kwargs))
+    return True
+
+
+def _record_value(node: torch.fx.Node, value: torch.Tensor) -> None:
+    """Record what ``node`` now computes, as graph capture records it."""
+
+    node.meta["val"] = value
+    node.meta["tensor_meta"] = _extract_tensor_metadata(value)
 
 
 def _specialize_terminal_unit_tangents(

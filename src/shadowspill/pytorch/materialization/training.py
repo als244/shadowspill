@@ -158,8 +158,13 @@ class TrainingMaterializedState(MaterializedState):
         lowered: LoweredTrainingProgram,
         *,
         optimizer: torch.optim.Optimizer,
+        optimizer_parameters: Mapping[str, torch.nn.Parameter],
     ) -> None:
-        """Switch from provisional identities and install fixed graph inputs."""
+        """Switch from provisional identities and install fixed graph inputs.
+
+        ``optimizer_parameters`` names the optimizer's parameters, which is
+        how its objects are found: the model's weights, or their masters.
+        """
 
         existing = self.bridge.objects.registered_runtime_objects()
         bridge.objects.adopt_registered(existing)
@@ -200,19 +205,18 @@ class TrainingMaterializedState(MaterializedState):
                 binding.generation,
                 (1 << 20) + ordinal,
             )
-        self._materialize_optimizer_state(optimizer, lowered)
+        self._materialize_optimizer_state(optimizer, lowered, optimizer_parameters)
         bridge.wait_runtime_idle()
 
     def _materialize_optimizer_state(
         self,
         optimizer: torch.optim.Optimizer,
         lowered: LoweredTrainingProgram,
+        optimizer_parameters: Mapping[str, torch.nn.Parameter],
     ) -> None:
         current = {
             item.name: item
-            for item in current_optimizer_bindings(
-                dict(self.model.named_parameters()), optimizer
-            )
+            for item in current_optimizer_bindings(optimizer_parameters, optimizer)
         }
         entries: dict[str, list[tuple[str, torch.Tensor]]] = {}
         for item in lowered.optimizer_objects:

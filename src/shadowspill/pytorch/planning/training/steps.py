@@ -74,6 +74,8 @@ def make_training_programs(
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> tuple[StepProgram, ...]:
     """Build one self-contained step artifact per ordering, before any search.
 
@@ -104,6 +106,8 @@ def make_training_programs(
                 optimizer_ordering=optimizer_ordering,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                master_dtype=master_dtype,
+                grad_dtype=grad_dtype,
                 export_bypass_key=bypass_key,
                 machine=machine_identity(memory),
                 environment=profile_environment(
@@ -150,6 +154,8 @@ def make_training_programs(
                 started=started,
                 keys=keys,
                 identity=identity,
+                master_dtype=master_dtype,
+                grad_dtype=grad_dtype,
             )
         )
     return tuple(found[item] for item in orderings)
@@ -174,6 +180,8 @@ def _build_training_step_programs(
     started: int,
     keys: Mapping[StepDataOrdering, str],
     identity: Mapping[str, object] | None,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> dict[StepDataOrdering, StepProgram]:
     """Capture, profile and lower once, and publish one program per ordering.
 
@@ -193,6 +201,7 @@ def _build_training_step_programs(
         profiling_metadata=profiling_metadata,
         stores=artifacts,
         timer=timer,
+        grad_dtype=grad_dtype,
     )
     materialized = materialize_training_state(
         model,
@@ -202,6 +211,8 @@ def _build_training_step_programs(
         memory=memory,
         stores=artifacts,
         timer=timer,
+        master_dtype=master_dtype,
+        grad_dtype=grad_dtype,
     )
     results: dict[StepDataOrdering, StepProgram] = {}
     try:

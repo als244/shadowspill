@@ -109,6 +109,8 @@ def capture_optimizer(
     receives_gradient: Collection[str] | None = None,
     store: OptimizerCaptureStore | None = None,
     timer: PhaseTimer | None = None,
+    compute_copies: Mapping[str, torch.Tensor] | None = None,
+    gradient_dtype: torch.dtype | None = None,
 ) -> OptimizerCapture:
     """Capture the optimizer's update without mutating the caller's state.
 
@@ -121,6 +123,15 @@ def capture_optimizer(
 
     With a ``store``, the traced update is served from it when the same
     optimizer, over the same tensors, split the same way, was traced before.
+
+    ``compute_copies`` names the parameters in ``named_parameters`` that are
+    master copies, each with the weights the model computes with at another
+    precision, and the update writes each copy from its master once it has
+    stepped. Every gradient reaches the update as the step produces it: at
+    ``gradient_dtype``, or at its weights' dtype when that is ``None``; the
+    update casts one that is not at its parameter's dtype. Only a traced
+    update does either; an optimizer whose update cannot be traced is refused
+    them.
     """
 
     phases = timer if timer is not None else NoTimer()
@@ -129,21 +140,41 @@ def capture_optimizer(
         discovery = discover_optimizer_state(
             inventory, optimizer, receives_gradient=receives_gradient
         )
+    casts = bool(compute_copies) or any(
+        parameter.requires_grad and parameter.dtype != gradient_dtype
+        for parameter in named_parameters.values()
+        if gradient_dtype is not None
+    )
     if isinstance(discovery, OptimizerCapture):
-        return discovery
+        return _refuse_opaque_casts(discovery, casts)
     if discovery.created_state_names:
         created = ", ".join(discovery.created_state_names[:4])
         raise CaptureError(
             f"the optimizer's first step creates state ({created}) that planning "
             "did not create before it; import the optimizer's state before planning"
         )
-    return capture_optimizer_update(
-        discovery,
-        optimizer,
-        parameter_stage_owners=parameter_stage_owners,
-        store=store,
-        timer=phases,
+    return _refuse_opaque_casts(
+        capture_optimizer_update(
+            discovery,
+            optimizer,
+            parameter_stage_owners=parameter_stage_owners,
+            store=store,
+            timer=phases,
+            compute_copies=compute_copies,
+            gradient_dtype=gradient_dtype,
+        ),
+        casts,
     )
+
+
+def _refuse_opaque_casts(captured: OptimizerCapture, casts: bool) -> OptimizerCapture:
+    if casts and captured.update_is_opaque:
+        raise CaptureError(
+            "an optimizer over master copies or over gradients kept at another "
+            "dtype needs an update that can be traced, which casts the gradients "
+            f"and writes the copies; this one cannot be: {captured.opaque_reason}"
+        )
+    return captured
 
 
 def current_optimizer_bindings(

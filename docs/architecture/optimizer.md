@@ -138,6 +138,62 @@ optimizer declares and what the tasks bind agree by construction rather than
 by the caller having flagged it correctly. The alternative is a plan that
 keeps state nothing steps and reserves a gradient nothing writes.
 
+### Master copies, and the dtype gradients are kept at
+
+A model that computes at bf16 can still be trained at fp32.
+`plan_step(..., master_dtype=torch.float32)` gives every weight the step
+trains at another dtype a master copy at fp32, and builds the optimizer over
+the masters in the weights' place. The optimizer is whatever the caller
+passes, and nothing about it has to know: to it the masters are simply its
+parameters.
+
+- A master starts at its weight, cast to the master's dtype, and is created in
+  the pool with the rest of the optimizer's state -- it is optimizer state,
+  the plan's like the rest of it.
+- The step computes with the weights as they are. The update, one traced graph
+  per stage as always, steps each master and then writes its weight from it,
+  cast to the weight's dtype, so every forward reads the weights as of the
+  last update. The pool holds both, and the weights are what a plan fetches
+  to compute with.
+- A weight already at `master_dtype` is its own master, and nothing is added
+  for it.
+
+`grad_dtype` is the dtype gradients are created and accumulated at, the
+weights' own when it is `None`, and it is independent of the masters. With
+fp32, each backward gives its parameters' gradients at fp32, and its
+accumulating form adds each contribution into a gradient kept at fp32, so a
+step's microbatches are summed at fp32. How a gradient comes out at that dtype
+is decided by the operation that computes it in the backward graph, never by
+the model:
+
+- A matrix multiply's result (`mm`, `bmm`, `addmm`, `baddbmm`), moved at most
+  by views and copies on its way out and read by nothing else, is written at
+  `grad_dtype` by the multiply itself where PyTorch has a kernel for that on
+  the device: its products are summed at that dtype and never rounded to the
+  operands'. Which dtypes it writes -- fp32 from bf16 or fp16 operands, say --
+  is the operator's own check.
+- Any other gradient is the backward's result, cast as it leaves. Compiled,
+  the cast is fused into the kernel that computes the gradient, so one a
+  reduction or an embedding lookup computes -- at fp32 from bf16, as Inductor
+  does -- is stored without being rounded to bf16 first. A multiply is a
+  library call that stores its result before anything reads it, which is why
+  it is told the dtype instead.
+
+The update takes each gradient at the dtype it is kept at and casts it only
+where the parameter it steps is at another: fp32 masters over bf16 gradients
+are cast in the update, over fp32 gradients not at all. The two are normally
+given together.
+
+A checkpoint holds each master where its weights would be: the `model` entry
+of a weight with a master is the master's value, and `load_state_dict()`
+writes it to the master and its cast to the weights. A checkpoint is
+therefore the training state at full precision, the weights follow from it,
+and it loads into a plain model of either precision as it stands.
+
+The update casts and writes in the graph it captures, so an optimizer whose
+update cannot be traced is refused masters, and gradients kept at another
+dtype than its parameters, rather than run eagerly without them.
+
 ## Values that change between steps
 
 An optimizer's update is captured once and replayed every step, so anything

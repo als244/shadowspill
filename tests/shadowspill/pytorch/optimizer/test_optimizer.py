@@ -93,7 +93,7 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
     captured = capture_optimizer({"weight": parameter}, optimizer)
 
     assert captured.update is not None
-    assert "mlops.master_adamw_.default" in captured.update.operator_targets
+    assert "mlops.adamw_.default" in captured.update.operator_targets
     # Everything the update computes with is on the device. A hyperparameter
     # is not: it is a scalar the update reads and passes to its kernel, so it
     # stays on the host, where writing the next step's value copies nothing.
@@ -105,36 +105,31 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
 
 
 def test_state_kept_at_another_precision_is_captured_at_it() -> None:
-    """A master copy and moments kept apart from the parameter's dtype keep theirs.
+    """Moments kept apart from the parameter's dtype keep theirs.
 
     Discovery puts its copy of the optimizer back as it found it. Doing that
     with ``Optimizer.load_state_dict`` cast every floating-point entry but
-    ``step`` to the parameter's dtype, so an fp32 master over bf16 weights was
-    captured as a bf16 one, and profiling refused the planned fp32 state.
+    ``step`` to the parameter's dtype, so fp32 moments over bf16 weights were
+    captured as bf16 ones, and profiling refused the planned fp32 state.
     """
 
     mlops = pytest.importorskip("mlops")
     parameter = torch.nn.Parameter(torch.ones(8, dtype=torch.bfloat16))
     parameter.grad = torch.ones_like(parameter)
-    optimizer = mlops.optim.AdamW(
-        [parameter],
-        lr=1e-3,
-        state_dtype=torch.float32,
-        master_parameter_dtype=torch.float32,
-    )
+    optimizer = mlops.optim.AdamW([parameter], lr=1e-3, state_dtype=torch.float32)
     _install_declared_state({"weight": parameter}, optimizer)
 
     captured = capture_optimizer({"weight": parameter}, optimizer)
 
     dtypes = {binding.name: binding.tensor.dtype for binding in captured.bindings}
     assert dtypes["weight"] == torch.bfloat16
-    for entry in ("master_parameter", "exp_avg", "exp_avg_sq"):
+    for entry in ("exp_avg", "exp_avg_sq"):
         assert dtypes[f"optimizer.weight.{entry}"] == torch.float32, entry
-    # What the traced update declares for the master, which profiling checks
-    # the planned fp32 master against.
+    # What the traced update declares for a moment, which profiling checks the
+    # planned fp32 moment against.
     assert captured.update is not None
     names = [binding.name for binding in captured.bindings]
-    position = names.index("optimizer.weight.master_parameter")
+    position = names.index("optimizer.weight.exp_avg")
     assert captured.update.tensor_inputs[position].dtype == torch.float32
 
 
@@ -156,12 +151,7 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
         optimizer,
     )
 
-    expected_suffixes = {
-        "exp_avg",
-        "exp_avg_sq",
-        "master_parameter",
-        "step",
-    }
+    expected_suffixes = {"exp_avg", "exp_avg_sq", "step"}
     state_names = {
         binding.name for binding in captured.bindings if binding.role == "state"
     }
@@ -173,8 +163,7 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
     assert captured.update is not None
     assert (
         sum(
-            node.op == "call_function"
-            and str(node.target) == "mlops.master_adamw_.default"
+            node.op == "call_function" and str(node.target) == "mlops.adamw_.default"
             for node in captured.update.graph_module.graph.nodes
         )
         == 2
@@ -529,3 +518,140 @@ def test_an_update_capture_is_served_from_the_store(tmp_path: Path) -> None:
         store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
     )
     assert [item["access"] for item in records] == ["write", "read", "write"]
+
+
+def _masters_of(
+    model: torch.nn.Module, lr: float = 1e-2
+) -> tuple[dict[str, torch.nn.Parameter], torch.optim.Optimizer]:
+    """Master copies of a model's weights at fp32, and AdamW over them."""
+
+    masters = {
+        name: torch.nn.Parameter(parameter.detach().float())
+        for name, parameter in model.named_parameters()
+    }
+    optimizer = torch.optim.AdamW(masters.values(), lr=lr, foreach=False)
+    for master in masters.values():
+        optimizer.state[master] = {
+            "step": torch.tensor(0.0),
+            "exp_avg": torch.zeros_like(master),
+            "exp_avg_sq": torch.zeros_like(master),
+        }
+    return masters, optimizer
+
+
+def _run_update(
+    captured: object,
+    masters: dict[str, torch.nn.Parameter],
+    optimizer: torch.optim.Optimizer,
+    gradients: dict[str, torch.Tensor],
+    copies: dict[str, torch.Tensor],
+    steps: int,
+) -> dict[str, torch.Tensor]:
+    """Run a captured update on real tensors, in binding order, ``steps`` times."""
+
+    values: dict[str, torch.Tensor] = {}
+    for binding in captured.bindings:  # type: ignore[attr-defined]
+        name = binding.name
+        if binding.role is OptimizerTensorRole.PARAMETER:
+            values[name] = masters[name].detach().clone()
+        elif binding.role is OptimizerTensorRole.GRADIENT:
+            values[name] = gradients[name.removeprefix("gradient.")].clone()
+        elif binding.role is OptimizerTensorRole.STATE:
+            owner, entry = name.removeprefix("optimizer.").rsplit(".", 1)
+            values[name] = optimizer.state[masters[owner]][entry].detach().clone()
+        else:
+            values[name] = copies[name.removeprefix("compute.")].detach().clone()
+    arguments = [values[binding.name] for binding in captured.bindings]  # type: ignore[attr-defined]
+    with torch.no_grad():
+        for _ in range(steps):
+            captured.update.graph_module(*arguments)  # type: ignore[attr-defined]
+    return values
+
+
+def test_an_update_over_masters_steps_them_and_writes_their_copies() -> None:
+    """A bf16 model's fp32 masters step exactly as fp32 weights would, given
+    the gradients the model computes, and each copy is its master's cast."""
+
+    torch.manual_seed(0)
+    model = torch.nn.Linear(6, 3).to(torch.bfloat16)
+    copies = dict(model.named_parameters())
+    gradients = {name: torch.randn_like(value) for name, value in copies.items()}
+
+    masters, optimizer = _masters_of(model)
+    captured = capture_optimizer(masters, optimizer, compute_copies=copies)
+    roles = {binding.name: binding for binding in captured.bindings}
+    assert roles["weight"].tensor.dtype == torch.float32
+    assert roles["gradient.weight"].tensor.dtype == torch.bfloat16
+    assert roles["compute.weight"].role is OptimizerTensorRole.COMPUTE_COPY
+    assert "compute.weight" in captured.mutation_names
+    # One task per parameter, its copy with it.
+    assert sorted(task.binding_names[-1] for task in captured.update_tasks) == [
+        "compute.bias",
+        "compute.weight",
+    ]
+    stepped = _run_update(captured, masters, optimizer, gradients, copies, steps=3)
+
+    # The same optimizer over fp32 weights, handed the gradients cast up front.
+    plain_masters, plain_optimizer = _masters_of(model)
+    plain = capture_optimizer(plain_masters, plain_optimizer)
+    reference = _run_update(
+        plain,
+        plain_masters,
+        plain_optimizer,
+        {name: value.float() for name, value in gradients.items()},
+        {},
+        steps=3,
+    )
+    for name in copies:
+        assert torch.equal(stepped[name], reference[name])
+        assert torch.equal(stepped[f"compute.{name}"], reference[name].bfloat16())
+        assert not torch.equal(stepped[name], masters[name])  # it moved
+
+
+def test_an_update_over_masters_is_served_from_the_store(tmp_path: Path) -> None:
+    from shadowspill.pytorch.optimizer.store import OptimizerCaptureStore
+
+    records: list[dict[str, object]] = []
+
+    def record(**kwargs: object) -> None:
+        records.append(kwargs)
+
+    torch.manual_seed(0)
+    model = torch.nn.Linear(6, 3).to(torch.bfloat16)
+    copies = dict(model.named_parameters())
+    first = capture_optimizer(
+        *_masters_of(model),
+        compute_copies=copies,
+        store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
+    )
+    again = capture_optimizer(
+        *_masters_of(model),
+        compute_copies=copies,
+        store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
+    )
+    # Without copies, the same optimizer is another entry.
+    capture_optimizer(
+        *_masters_of(model),
+        store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
+    )
+
+    assert [item["access"] for item in records] == ["write", "read", "write"]
+    assert [
+        (binding.name, binding.role, binding.tensor.dtype) for binding in again.bindings
+    ] == [
+        (binding.name, binding.role, binding.tensor.dtype) for binding in first.bindings
+    ]
+    assert first.update is not None and again.update is not None
+    assert again.update.compatibility_digest == first.update.compatibility_digest
+
+
+def test_masters_need_an_update_that_can_be_traced() -> None:
+    parameter = torch.nn.Parameter(torch.ones(4))
+    master = torch.nn.Parameter(torch.ones(4, dtype=torch.float64))
+
+    with pytest.raises(CaptureError, match="needs an update that can be traced"):
+        capture_optimizer(
+            {"parameter": master},
+            _DataDependentOptimizer([master]),
+            compute_copies={"parameter": parameter},
+        )
