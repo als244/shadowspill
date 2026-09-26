@@ -308,6 +308,7 @@ def plan_step(
     transfer_bandwidths: TransferBandwidths | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -360,6 +361,15 @@ def plan_step(
     microbatches is taken at fp32; the update casts a gradient only where its
     parameter is at another dtype, which fp32 masters are not. It is normally
     given with ``master_dtype``.
+
+    A microbatch after the first adds its gradients onto the running ones,
+    and one a matrix multiply computes is added by the multiply as it writes
+    its result. That rounds the sum once, as adding after it does when the
+    running gradients are kept at the dtype the multiply sums at -- fp32 --
+    so the two agree. Kept narrower -- bf16 -- adding after rounds the
+    product first: ``round_accumulation_once`` has the multiply add those too,
+    for one rounding instead of two and one pass fewer over the gradient, at
+    the price of a step that no longer computes what adding after computes.
 
     A value that varies between steps -- a scheduled learning rate, say --
     is passed to the optimizer as a **tensor** rather than a float, and
@@ -475,6 +485,7 @@ def plan_step(
                 transfer_bandwidths=transfer_bandwidths,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                round_accumulation_once=round_accumulation_once,
             )
         hold_persistent_state(runtime, model, memory.plan_handle)
         return step
@@ -514,6 +525,7 @@ def build_step_programs(
     export_bypass_key: str | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> tuple[StepProgram, ...]:
     """Capture, profile, and lower a reusable step without searching.
 
@@ -597,6 +609,7 @@ def build_step_programs(
                 allocation_probe_repetitions=allocation_probe_repetitions,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                round_accumulation_once=round_accumulation_once,
             )
         try:
             abort_plan(runtime)

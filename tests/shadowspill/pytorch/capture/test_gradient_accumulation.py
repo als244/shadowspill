@@ -25,6 +25,7 @@ from shadowspill.pytorch.capture.aot import (
     cast_gradient_outputs,
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.compilation.compiler import compile_artifact
 from shadowspill.task.inputs import TaskInputRole
 
 
@@ -250,3 +251,177 @@ def test_the_accumulating_form_adds_at_the_gradient_dtype() -> None:
     for index, leaf in enumerate(leaves):
         assert total[leaf].data_ptr() == priors[index].data_ptr()
         assert torch.equal(total[leaf], originals[index] + contributions[leaf])
+
+
+def _kept(
+    backward: GraphArtifact, leaves: tuple[int, ...], dtype: torch.dtype | None
+) -> GraphArtifact:
+    return backward if dtype is None else cast_gradient_outputs(backward, leaves, dtype)
+
+
+@pytest.mark.parametrize(
+    ("gradient_dtype", "round_once"), [(torch.float32, False), (None, True)]
+)
+def test_a_multiply_adds_the_gradient_it_computes_into_the_running_one(
+    gradient_dtype: torch.dtype | None, round_once: bool
+) -> None:
+    """On CUDA, where a kernel adds a product into a tensor in place, the
+    weight's gradient is added by the multiply that computes it -- the
+    running gradient is what the backward returns -- when gradients are kept
+    at fp32, the dtype the multiply sums bf16 at, and when kept at the
+    weights' bf16 if the sum may be rounded once. The bias's sum is added
+    after."""
+
+    with FakeTensorMode():
+        backward, leaves = _projection_backward("cuda")
+    accumulating = accumulate_gradient_outputs(
+        _kept(backward, leaves, gradient_dtype),
+        leaves,
+        round_accumulation_once=round_once,
+    )
+
+    nodes = list(accumulating.graph_module.graph.nodes)
+    weight, bias = (_output(accumulating).args[0][leaf] for leaf in leaves)
+    assert weight.op == "placeholder"
+    assert weight.name.startswith("shadowspill_prior_grad_")
+    assert [node.target for node in nodes].count(
+        torch.ops.shadowspill.accumulate_matmul_.default
+    ) == 1
+    assert not {torch.ops.aten.mm.default, torch.ops.aten.mm.dtype} & {
+        node.target for node in nodes
+    }
+    assert bias.target is torch.ops.aten.add_.Tensor
+
+
+def test_a_bf16_running_gradient_is_added_after_the_multiply_by_default() -> None:
+    """Kept at bf16, narrower than the multiply sums at, a gradient added
+    inside the multiply would be rounded once where adding after rounds the
+    product first; by default the step computes what adding after does."""
+
+    with FakeTensorMode():
+        backward, leaves = _projection_backward("cuda")
+    accumulating = accumulate_gradient_outputs(backward, leaves)
+
+    targets = {node.target for node in accumulating.graph_module.graph.nodes}
+    assert torch.ops.shadowspill.accumulate_matmul_.default not in targets
+    assert all(
+        _output(accumulating).args[0][leaf].target is torch.ops.aten.add_.Tensor
+        for leaf in leaves
+    )
+
+
+def test_where_no_kernel_adds_in_place_the_gradient_is_added_after() -> None:
+    backward, leaves = _projection_backward("cpu")
+    accumulating = accumulate_gradient_outputs(backward, leaves)
+
+    assert all(
+        _output(accumulating).args[0][leaf].target is torch.ops.aten.add_.Tensor
+        for leaf in leaves
+    )
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize(
+    ("gradient_dtype", "tolerance"), [(None, 2**-8), (torch.float32, 1e-5)]
+)
+def test_the_multiply_adds_in_place_rounding_once(
+    gradient_dtype: torch.dtype | None, tolerance: float
+) -> None:
+    """The sum of the running gradient and the product is rounded once, as it
+    is written: within one bf16 rounding of the exact sum at bf16, and within
+    fp32's error at fp32."""
+
+    backward, leaves = _projection_backward("cuda")
+    accumulating = accumulate_gradient_outputs(
+        _kept(backward, leaves, gradient_dtype),
+        leaves,
+        round_accumulation_once=True,
+    )
+
+    arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
+    priors = [
+        _materialize(item, "cuda")
+        for item in accumulating.example_arguments[len(arguments) :]
+    ]
+    exact = backward.graph_module(*(item.double() for item in arguments))
+    expected = [
+        exact[leaf] + prior.double() for leaf, prior in zip(leaves, priors, strict=True)
+    ]
+    total = accumulating.graph_module(*arguments, *priors)
+
+    weight = leaves[0]
+    assert total[weight].data_ptr() == priors[0].data_ptr()
+    error = (total[weight].double() - expected[0]).abs().max()
+    assert error <= tolerance * expected[0].abs().max()
+
+
+@pytest.mark.cuda
+def test_a_batched_multiply_adds_through_the_moves_it_leaves_by() -> None:
+    """A gradient that leaves a batched multiply through a permute is added
+    where the permute would have put it."""
+
+    weight = torch.randn(4, 32, 16, device="cuda", requires_grad=True)
+    values = torch.randn(4, 64, 32, device="cuda")
+    backward, leaves = _backward(
+        lambda w, x: torch.bmm(x, w).permute(1, 0, 2), (weight, values)
+    )
+    accumulating = accumulate_gradient_outputs(backward, leaves)
+    assert torch.ops.shadowspill.accumulate_matmul_.default in {
+        node.target for node in accumulating.graph_module.graph.nodes
+    }
+
+    arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
+    contribution = backward.graph_module(*arguments)[leaves[0]]
+    prior = torch.randn_like(contribution)
+    expected = prior + contribution
+    total = accumulating.graph_module(*arguments, prior)[leaves[0]]
+    assert total.data_ptr() == prior.data_ptr()
+    torch.testing.assert_close(total, expected, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.cuda
+def test_the_multiply_adding_in_place_compiles_as_one_call() -> None:
+    """Compiled, the running gradient is the multiply's output: the backward
+    returns it, updated in place, with no product written anywhere else. (The
+    bias's sum, compiled, is not rounded to bf16 before it is added, so only
+    the weight's gradient is compared with the graph run eagerly.)"""
+
+    backward, leaves = _projection_backward("cuda")
+    kept = cast_gradient_outputs(backward, leaves, torch.float32)
+    accumulating = accumulate_gradient_outputs(kept, leaves)
+    arguments = tuple(
+        _materialize(item, "cuda") for item in accumulating.example_arguments
+    )
+    expected = accumulating.graph_module(*(item.clone() for item in arguments))
+
+    compiled = compile_artifact(
+        accumulating, device_ordinal=0, representative_arguments=arguments
+    )
+    total = compiled()
+
+    for index, leaf in enumerate(leaves):
+        prior = arguments[len(kept.example_arguments) + index]
+        assert total[leaf].data_ptr() == prior.data_ptr()
+    torch.testing.assert_close(total[leaves[0]], expected[leaves[0]])
+
+
+@pytest.mark.cuda
+def test_by_default_a_bf16_step_accumulates_as_adding_after_does() -> None:
+    """The running gradient after the default accumulating backward is, bit
+    for bit, the product the creating form computes added to it."""
+
+    backward, leaves = _projection_backward("cuda")
+    accumulating = accumulate_gradient_outputs(backward, leaves)
+
+    arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
+    contributions = backward.graph_module(*arguments)
+    priors = [
+        _materialize(item, "cuda")
+        for item in accumulating.example_arguments[len(arguments) :]
+    ]
+    expected = [
+        prior + contributions[leaf] for leaf, prior in zip(leaves, priors, strict=True)
+    ]
+    total = accumulating.graph_module(*arguments, *priors)
+    for index, leaf in enumerate(leaves):
+        assert torch.equal(total[leaf], expected[index])

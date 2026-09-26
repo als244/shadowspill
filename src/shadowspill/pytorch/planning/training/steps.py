@@ -76,6 +76,7 @@ def make_training_programs(
     allocation_probe_repetitions: int,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> tuple[StepProgram, ...]:
     """Build one self-contained step artifact per ordering, before any search.
 
@@ -108,6 +109,7 @@ def make_training_programs(
                 allocation_probe_repetitions=allocation_probe_repetitions,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                round_accumulation_once=round_accumulation_once,
                 export_bypass_key=bypass_key,
                 machine=machine_identity(memory),
                 environment=profile_environment(
@@ -156,6 +158,7 @@ def make_training_programs(
                 identity=identity,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                round_accumulation_once=round_accumulation_once,
             )
         )
     return tuple(found[item] for item in orderings)
@@ -182,6 +185,7 @@ def _build_training_step_programs(
     identity: Mapping[str, object] | None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> dict[StepDataOrdering, StepProgram]:
     """Capture, profile and lower once, and publish one program per ordering.
 
@@ -202,6 +206,7 @@ def _build_training_step_programs(
         stores=artifacts,
         timer=timer,
         grad_dtype=grad_dtype,
+        round_accumulation_once=round_accumulation_once,
     )
     materialized = materialize_training_state(
         model,

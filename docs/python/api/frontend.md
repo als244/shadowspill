@@ -759,6 +759,7 @@ plan_step(
     transfer_bandwidths=None,
     master_dtype=None,
     grad_dtype=None,
+    round_accumulation_once=False,
 ) -> PlannedTrainStep
 ```
 
@@ -780,6 +781,7 @@ Beyond the shared and store arguments:
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | As for `plan_forward()`. A step that runs what `plan_step_search()` chose is planned against the report's `planned_lanes`, so it asks the store the search's question and executes the plan the search chose. |
 | `master_dtype` | `torch.dtype` \| `None` | `None` | Gives every weight the step trains at another dtype a master copy at this one, and builds `optimizer` over the masters; the update writes each weight from its master. See [the optimizer](../../architecture/optimizer.md#master-copies-and-the-dtype-gradients-are-kept-at). |
 | `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
+| `round_accumulation_once` | `bool` | `False` | Lets a matrix multiply add its product into running gradients kept narrower than it sums at -- bf16 -- rounding the sum once instead of twice and saving a pass over the gradient; the step then no longer computes what adding after the multiply computes. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
 
 `depth` and `breadth` say how the step walks those microbatches: `depth`
 passes of `breadth` microbatches each, every microbatch of a pass running one
@@ -857,6 +859,7 @@ build_step_programs(
     export_bypass_key=None,
     master_dtype=None,
     grad_dtype=None,
+    round_accumulation_once=False,
 ) -> tuple[StepProgram, ...]
 ```
 
@@ -915,13 +918,14 @@ plan_step_search(
     export_bypass_key=None,
     master_dtype=None,
     grad_dtype=None,
+    round_accumulation_once=False,
 ) -> StepSearchReport
 ```
 
 `model`, `objective`, `optimizer`, `hyperparams`,
 `runtime`, `execution`, `spill`,
-`optimizer_ordering`, `master_dtype`, `grad_dtype` and the store arguments
-mean what they mean for `plan_step()`. The rest are:
+`optimizer_ordering`, `master_dtype`, `grad_dtype`, `round_accumulation_once`
+and the store arguments mean what they mean for `plan_step()`. The rest are:
 
 | argument | type | default | what it must be |
 |---|---|---|---|
