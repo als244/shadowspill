@@ -223,6 +223,10 @@ which saved values may be invented, because none of them may. One forward
 run is shared per forward contract, declared metadata and saved arity, which
 is the identity a profile already has.
 
+What the forward saved is kept in the plan's spill pool, not beside it: it can
+be as large as the step's activations. It is released when planning is done,
+and planning fails when the pool has no room for it.
+
 What a saved value is worth belongs to the forward that made it; how it is
 laid out belongs to the backward that reads it, and the two need not agree.
 The value is written into the geometry its reader declares, through the

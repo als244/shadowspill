@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
 
-from shadowspill.errors import ProfilingError
+from shadowspill.errors import PlanningError, ProfilingError
 from shadowspill.profiling.wall_times import ProfilingWallTimes
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
@@ -17,7 +17,13 @@ from shadowspill.pytorch.capture.artifacts import (
 )
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
-from shadowspill.runtime.failures import raise_if_allocator_failed
+from shadowspill.pytorch.state.storage import (
+    NamedTensor,
+    import_then_fill,
+    release_persistent_tensors,
+)
+from shadowspill.runtime import Runtime
+from shadowspill.runtime.failures import format_bytes, raise_if_allocator_failed
 from shadowspill.task.profiles import TaskMeasurement
 
 from ..executables import ProfileExecutable, ProfileExecutableStore
@@ -26,6 +32,27 @@ from .boundary import AllocatorBoundary
 from .measurement import MeasuredTask, measure_task
 from .opaque import measure_opaque_optimizer
 from .saved_values import resolve_graph_pair_saved_values
+
+
+@dataclass(frozen=True, slots=True)
+class SavedValuePool:
+    """Where a plan's saved values are kept while its backwards are measured.
+
+    The spill pool the plan will use, holding them as the plan's own state:
+    host memory the pool has already been given, and pinned, rather than more
+    of it beside the pool.
+    """
+
+    runtime: Runtime
+    pool: str
+    owning_plan: int
+
+
+class _SavedValues:
+    """One forward's host copies of what it saved, imported as one target."""
+
+    def __init__(self, values: tuple[torch.Tensor, ...]) -> None:
+        self.values = values
 
 
 class TaskProfiler:
@@ -43,6 +70,7 @@ class TaskProfiler:
         telemetry_capacity: int = 1_048_576,
         allocation_probe_seeds: int = 1,
         allocation_probe_repetitions: int = 2,
+        saved_value_pool: SavedValuePool | None = None,
     ) -> None:
         if warmup_iterations < 1:
             raise ValueError("task profiler requires at least one warmup")
@@ -77,6 +105,10 @@ class TaskProfiler:
         self._saved_values: dict[
             tuple[str, str | None, int], tuple[tuple[torch.Tensor, str], ...]
         ] = {}
+        self._saved_value_pool = saved_value_pool
+        self._pooled_saved_values: list[_SavedValues] = []
+        #: Bytes of saved values kept in the spill pool.
+        self.saved_value_bytes_in_pool = 0
 
     @property
     def wall_times(self) -> ProfilingWallTimes:
@@ -148,6 +180,81 @@ class TaskProfiler:
             self._saved_value_compilation_wall_time_ns += (
                 self.executables.compilation_wall_time_ns - compilation_before
             )
+
+    def keep_saved_values(
+        self, copies: tuple[torch.Tensor, ...], fill: Callable[[], None]
+    ) -> None:
+        """Keep one forward's saved-value copies in the spill pool, filled there.
+
+        The copies are imported as state the plan owns before anything is
+        written to them, so ``fill`` writes the values straight into the pool
+        (:func:`import_then_fill`). A pool without room for them fails
+        planning, naming what was needed: holding them beside the pool would
+        spend the host memory the pool was sized to leave free.
+
+        A profiler made without a pool measures no backward, and fills them
+        where they are.
+        """
+
+        pool = self._saved_value_pool
+        named = tuple(
+            NamedTensor(f"saved.{index}", copy)
+            for index, copy in enumerate(copies)
+            if copy.untyped_storage().nbytes()
+        )
+        if pool is None or not named:
+            fill()
+            return
+        size = sum(item.tensor.untyped_storage().nbytes() for item in named)
+        free = int(pool.runtime.pool_statistics(pool.pool).free_bytes)
+        if size > free:
+            raise PlanningError(
+                f"spill pool {pool.pool!r} has no room for the values a forward "
+                f"saves, which its backward is measured on: {format_bytes(size)} "
+                f"needed, {format_bytes(free)} free"
+            )
+        held = _SavedValues(copies)
+        import_then_fill(
+            held,
+            named,
+            fill,
+            runtime=pool.runtime,
+            pool=pool.pool,
+            owning_plan=pool.owning_plan,
+            _allow_in_progress_plan=True,
+        )
+        self._pooled_saved_values.append(held)
+        self.saved_value_bytes_in_pool += size
+
+    def release_host_memory(self) -> None:
+        """Give back what measuring kept on the host, once nothing will measure.
+
+        Two things outlive the measurements unless they are released here:
+
+        - The copies of what each forward saved, which its backward was
+          measured on (``saved_values``), in the spill pool or beside it. They
+          are referenced from the backward artifacts' provenance, which
+          planning keeps, so forgetting this memo alone would free nothing:
+          each copy is emptied, which lets go of it wherever it is
+          referenced, and then the pool is given back what they occupied.
+        - Pinned host blocks that the compiler's autotuning copied mutated
+          arguments into. ShadowSpill's allocator does not appear in
+          PyTorch's memory statistics, so autotuning takes any mutated
+          argument to exceed its device budget and copies it to pinned host
+          memory, whose blocks PyTorch then keeps cached for the life of the
+          process.
+        """
+
+        for values in self._saved_values.values():
+            for value, _device_type in values:
+                value.data = torch.empty(0, dtype=value.dtype)
+        self._saved_values.clear()
+        pool = self._saved_value_pool
+        for held in self._pooled_saved_values:
+            if pool is not None:
+                release_persistent_tensors(held, runtime=pool.runtime)
+        self._pooled_saved_values.clear()
+        torch._C._host_emptyCache()
 
     def take_compiled_tasks(
         self,
@@ -224,6 +331,7 @@ def profiling_error(
 
 __all__ = [
     "ProfilingWallTimes",
+    "SavedValuePool",
     "TaskProfiler",
     "profiling_error",
 ]

@@ -88,7 +88,7 @@ def _run_producer(
             saved = leaves[original_count:]
             if len(saved) != pair.saved_value_count:
                 raise CaptureError("paired forward changed its saved-value arity")
-            values = tuple(_snapshot(value) for value in saved)
+            values = _snapshot(profiler, saved)
             del output
         boundary.drain(stream, problem="saved-value producer")
         return values
@@ -96,8 +96,10 @@ def _run_producer(
         executables.release_occurrence_values(executable)
 
 
-def _snapshot(value: object) -> tuple[torch.Tensor, str]:
-    """One saved value on the host, in the geometry the forward gave it.
+def _snapshot(
+    profiler: TaskProfiler, saved: list[object]
+) -> tuple[tuple[torch.Tensor, str], ...]:
+    """What one forward saved, on the host, in the geometry the forward gave it.
 
     Moving a tensor to the host is free to choose its own layout, and for a
     broadcast it chooses a dense one -- which is a different tensor from the
@@ -109,16 +111,31 @@ def _snapshot(value: object) -> tuple[torch.Tensor, str]:
     included: an attention mask is a plane of zeros and negative infinities,
     and a backward given a finite stand-in for one is given a mask that
     masks nothing.
+
+    The copies are given to the profiler to keep before anything is written
+    to them, and it has them filled in the spill pool.
     """
 
-    if not isinstance(value, torch.Tensor):
-        raise CaptureError("paired forward saved value is not a tensor")
-    source = value.detach()
-    result = torch.empty_strided(
-        tuple(source.shape),
-        tuple(source.stride()),
-        dtype=source.dtype,
-        device="cpu",
+    sources = []
+    for value in saved:
+        if not isinstance(value, torch.Tensor):
+            raise CaptureError("paired forward saved value is not a tensor")
+        sources.append(value.detach())
+    copies = tuple(
+        torch.empty_strided(
+            tuple(source.shape),
+            tuple(source.stride()),
+            dtype=source.dtype,
+            device="cpu",
+        )
+        for source in sources
     )
-    distinct_locations(result).copy_(distinct_locations(source))
-    return result, source.device.type
+
+    def fill() -> None:
+        for copy, source in zip(copies, sources, strict=True):
+            distinct_locations(copy).copy_(distinct_locations(source))
+
+    profiler.keep_saved_values(copies, fill)
+    return tuple(
+        (copy, source.device.type) for copy, source in zip(copies, sources, strict=True)
+    )
