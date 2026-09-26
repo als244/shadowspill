@@ -21,7 +21,11 @@ from shadowspill.runtime import (
     ObjectRef,
     Runtime,
 )
-from shadowspill.runtime.abi import ObjectBinding, ObjectSnapshot
+from shadowspill.runtime.abi import (
+    ObjectBinding,
+    ObjectLocationSnapshot,
+    ObjectSnapshot,
+)
 from shadowspill.runtime.failures import RuntimeExecutionError
 from shadowspill.runtime.objects import (
     acquire_object_reference,
@@ -498,6 +502,38 @@ class PlanObjects:
         except StopIteration:
             return tuple(result)
         raise RuntimeExecutionError("runtime returned excess object bindings")
+
+    def spill_location(self, alias_id: str) -> tuple[int, int] | None:
+        """Where one alias's current bytes are in the spill pool, and how many.
+
+        ``None`` where they cannot be read in place -- a pool this process
+        cannot address, or a spill copy that is not the current one -- and
+        :meth:`read_spill_bytes` copies them out instead.
+        """
+
+        size = self._size(alias_id)
+        pool = next(
+            (
+                item
+                for item in self.runtime.pools.values()
+                if item.pool_id == self.spill_pool_id
+            ),
+            None,
+        )
+        if size == 0 or pool is None or not pool.addressable:
+            return None
+        snapshot = ObjectLocationSnapshot()
+        status = int(
+            self.runtime_library.shadowspill_object_location_snapshot(
+                self.runtime._runtime_handle,
+                self.runtime_object_id(alias_id),
+                self.spill_pool_id,
+                ctypes.byref(snapshot),
+            )
+        )
+        if status != 0 or not snapshot.has_lease or not snapshot.current:
+            return None
+        return (int(snapshot.pointer), size) if snapshot.pointer else None
 
     def _size(self, alias_id: str) -> int:
         try:

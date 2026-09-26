@@ -15,6 +15,7 @@ from .storage import (
     export_tensors,
     import_state_from_file,
     import_tensors,
+    import_then_fill,
     persistent_state,
     read_state,
     release_persistent_tensors,
@@ -192,21 +193,21 @@ def install_declared_optimizer_state(
     optimizer: torch.optim.Optimizer,
     *,
     runtime: Runtime,
+    pool: str,
+    owning_plan: int,
     initialize: Callable[[str, torch.Tensor, torch.nn.Parameter], None] | None,
     receives_gradient: Collection[str] | None = None,
 ) -> int:
-    """Build the optimizer's declared state, and let the caller fill it.
+    """Create the optimizer's declared state in ``pool``, and let the caller fill it.
 
     The optimizer declares what state it keeps by being run on meta
     parameters, which allocates nothing and fixes every entry's shape and
     dtype -- including entries that are not parameter-shaped, and dtypes it
-    chose rather than inherited. Each declared entry is then built in ordinary
-    host memory and handed to ``initialize``, which writes its values.
-
-    Nothing is put in a pool here. The state is left on the optimizer, and the
-    import that adopts it for a plan is what moves it -- the same import that
-    serves an optimizer whose state the caller built and imported, so there is
-    one way in rather than one for each.
+    chose rather than inherited. Each declared entry is then allocated,
+    imported into ``pool`` as state ``owning_plan`` owns, and handed to
+    ``initialize``, which writes its values there (:func:`import_then_fill`).
+    So the state never occupies ordinary host memory on its way in: beside a
+    pool sized to fill the host, a large model's optimizer state would not fit.
 
     Nothing is assumed about what those values are: a default would be one
     optimizer family's convention, and an optimizer whose state starts
@@ -232,11 +233,26 @@ def install_declared_optimizer_state(
             "starts at. Pass optimizer_state_init to fill each entry, or "
             "import the optimizer's state yourself before planning."
         )
+    created: list[tuple[str, torch.Tensor, torch.nn.Parameter]] = []
     for entry in declared:
         parameter = named[entry.parameter_name]
         value = torch.empty(entry.shape, dtype=entry.dtype, device="cpu")
-        initialize(entry.entry_name, value, parameter)
         optimizer.state.setdefault(parameter, {})[entry.entry_name] = value
+        created.append((entry.entry_name, value, parameter))
+
+    def fill() -> None:
+        for name, value, parameter in created:
+            initialize(name, value, parameter)
+
+    import_then_fill(
+        optimizer,
+        _optimizer_tensors(optimizer),
+        fill,
+        runtime=runtime,
+        pool=pool,
+        owning_plan=owning_plan,
+        _allow_in_progress_plan=True,
+    )
     return len(declared)
 
 
@@ -253,8 +269,9 @@ def adopt_optimizer_state_for_plan(
     state the caller imported is adopted as it stands and outlives the plan,
     state the caller did not import is imported here and belongs to the plan.
 
-    State this plan installed itself arrives here as ordinary host memory and
-    is imported like any other, which is what makes the two cases one path.
+    State this plan installed itself was imported as it was created
+    (:func:`install_declared_optimizer_state`), so it arrives here already in
+    the pool and already the plan's.
     """
 
     existing = persistent_state(runtime, optimizer)
@@ -263,7 +280,7 @@ def adopt_optimizer_state_for_plan(
             raise RuntimeError(
                 f"optimizer state is in pool {existing.pool!r}, not requested {pool!r}"
             )
-        return False
+        return existing.owning_plan == owning_plan
     import_tensors(
         optimizer,
         _optimizer_tensors(optimizer),

@@ -21,7 +21,11 @@ from shadowspill.pytorch.state.model import (
     adopt_model_state_for_plan,
     require_model_state_for_plan,
 )
-from shadowspill.pytorch.state.storage import restore_persistent_object_ids
+from shadowspill.pytorch.state.storage import (
+    hold_persistent_state,
+    host_views_while_planning,
+    restore_persistent_object_ids,
+)
 from shadowspill.pytorch.store import FrameworkArtifacts
 from shadowspill.runtime.plan import (
     abort_plan,
@@ -213,8 +217,11 @@ def plan_forward(
             plan_store_mode=plan_store_mode,
             export_bypass_key=export_bypass_key,
         )
-        with FrameworkArtifacts(cache).activate():
-            return build_forward(
+        with (
+            FrameworkArtifacts(cache).activate(),
+            host_views_while_planning(runtime, model),
+        ):
+            forward = build_forward(
                 model,
                 example_inputs=example_inputs,
                 memory=memory,
@@ -228,6 +235,8 @@ def plan_forward(
                 search_options=search_options,
                 transfer_bandwidths=transfer_bandwidths,
             )
+        hold_persistent_state(runtime, model, memory.plan_handle)
+        return forward
     except BaseException as error:
         _surface_failed_plan(
             runtime,
@@ -288,10 +297,9 @@ def plan_step(
     ``optimizer_state_init`` fills one declared optimizer-state entry, given
     the entry's name, the tensor to fill, and the parameter the entry belongs
     to. The optimizer declares what state exists by being run on meta
-    parameters, which costs nothing; ShadowSpill builds that in ordinary
-    memory; this supplies the values, because a default would be an assumption
-    that fails silently; and the import that adopts the optimizer's state for
-    the plan is what moves it into the spill pool. It is not needed when ``optimizer``
+    parameters, which costs nothing; ShadowSpill creates those entries in the
+    spill pool; and this writes their values there, because a default would be
+    an assumption that fails silently. It is not needed when ``optimizer``
     returns an optimizer whose state the caller has already imported:
     planning adopts the state of the optimizer it is handed, and that object
     is the reference. State imported for some other optimizer is invisible to
@@ -384,8 +392,11 @@ def plan_step(
             plan_store_mode=plan_store_mode,
             export_bypass_key=export_bypass_key,
         )
-        with FrameworkArtifacts(cache).activate():
-            return build_training(
+        with (
+            FrameworkArtifacts(cache).activate(),
+            host_views_while_planning(runtime, model),
+        ):
+            step = build_training(
                 model,
                 objective=objective,
                 build_optimizer=optimizer,
@@ -405,6 +416,8 @@ def plan_step(
                 incumbent=incumbent,
                 transfer_bandwidths=transfer_bandwidths,
             )
+        hold_persistent_state(runtime, model, memory.plan_handle)
+        return step
     except BaseException as error:
         _surface_failed_plan(
             runtime,
@@ -501,7 +514,10 @@ def build_step_programs(
             build_store_mode=build_store_mode,
             export_bypass_key=export_bypass_key,
         )
-        with FrameworkArtifacts(cache).activate():
+        with (
+            FrameworkArtifacts(cache).activate(),
+            host_views_while_planning(runtime, model),
+        ):
             result = make_training_programs(
                 model,
                 objective=objective,

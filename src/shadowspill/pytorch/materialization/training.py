@@ -31,7 +31,11 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
     publish_initial_tensor,
     submit_initial_actions,
 )
-from shadowspill.pytorch.spill import register_spill_tensor, write_spill_tensor
+from shadowspill.pytorch.spill import (
+    register_spill_tensor,
+    spill_view,
+    write_spill_tensor,
+)
 from shadowspill.pytorch.state.storage import (
     adopt_persistent_tensor,
     persistent_state,
@@ -303,10 +307,13 @@ class TrainingMaterializedState(MaterializedState):
             tensors=unique,
         )
 
-    def state_dict(self) -> OrderedDict[str, torch.Tensor]:
+    def state_dict(self, *, in_place: bool = False) -> OrderedDict[str, torch.Tensor]:
+        """The model's state, read out of the spill pool -- or, ``in_place``,
+        viewed where it is there, valid only until the next step."""
+
         if self._closed:
             return OrderedDict(self.model.state_dict())
-        owners = self._read_model_aliases()
+        owners = self._model_alias_views() if in_place else self._read_model_aliases()
         result: OrderedDict[str, torch.Tensor] = OrderedDict()
         for item in self._registrations():
             if item.binding.name not in self._state_names:
@@ -317,6 +324,21 @@ class TrainingMaterializedState(MaterializedState):
         if missing:
             raise RuntimeError(f"unsupported model state entries: {sorted(missing)}")
         return result
+
+    def _model_alias_views(self) -> dict[str, torch.Tensor]:
+        """Each model alias viewed where it is in the spill pool, and copied out
+        only where it cannot be viewed."""
+
+        self.bridge.wait_runtime_idle()
+        owners: dict[str, torch.Tensor] = {}
+        for alias_id in self._model_aliases:
+            view = spill_view(self.bridge.objects, alias_id)
+            if view is not None:
+                owners[alias_id] = view
+        missing = self._model_aliases - set(owners)
+        if missing:
+            owners.update(self._read_model_aliases(aliases=missing))
+        return owners
 
     def load_model_state(self, state: Mapping[str, torch.Tensor]) -> None:
         expected = set(self._state_names)
@@ -347,7 +369,9 @@ class TrainingMaterializedState(MaterializedState):
         if self._closed:
             return
         self.bridge.wait_runtime_idle()
-        restore_persistent_state(self.runtime, self._persistent_state)
+        restore_persistent_state(
+            self.runtime, self._persistent_state, self.bridge.plan_handle
+        )
         owners = (
             self._planning_cpu_owners
             if self._model_on_cpu

@@ -90,17 +90,17 @@ about how the pool works.
 
 Planning creates state the plan will keep, and the largest of it is an
 optimizer's: several times the model for an ordinary adaptive optimizer. It is
-built in ordinary host memory, filled by the caller, and imported -- which is
-how state built outside planning arrives, and the reason there is no second
-mechanism here to describe.
+imported into the spill pool before it holds any values and filled there by
+the caller, so the host is never asked for the whole of it beside the pool about
+to hold it. That is the import a checkpoint takes, and the reason there is no
+second mechanism here to describe.
 
-That state was once taken from the spill pool as it was created, so the host
-was never asked for the whole of it beside the pool about to hold it. It is the
-cheaper arrangement and it rests on a pool being able to hand out memory for
-someone else to write, which a pool on another machine cannot do. The choice
-was between keeping both and keeping the one that always works; what it costs
-is a host copy of the state while it is being built, and what it buys is that
-every kind of pool is reached the same way.
+Filling through the import rests on the pool handing out memory for someone
+else to write, which a pool on another machine cannot do. There the same import
+runs the other way round -- filled on the host, then imported -- and costs
+nothing extra, because such a pool keeps a host copy of its state for as long
+as it holds it. Every kind of pool is reached the same way; only which comes
+first differs.
 
 Everything else a plan owns is created in a pool and never leaves it.
 Gradients, activations and workspaces are runtime objects created in a pool,

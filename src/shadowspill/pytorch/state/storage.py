@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -128,9 +129,9 @@ def import_state_from_file(
     ``torch.load`` ordinarily materializes a whole checkpoint in ordinary host
     memory before an import copies it into the pool, so the peak is the
     checkpoint plus the pool. Mapping the file instead makes the source
-    reclaimable page cache, and importing before the copy means the values
-    land in pool memory directly: the only anonymous host memory involved is
-    whatever the target already occupied.
+    reclaimable page cache, and :func:`import_then_fill` copies from it into
+    pool memory directly: the only anonymous host memory involved is whatever
+    the target already occupied.
 
     The checkpoint must name every tensor in ``tensors`` and agree with each
     on dtype and shape. Raw bytes cannot be converted, so a disagreement is
@@ -151,6 +152,45 @@ def import_state_from_file(
             for item in named:
                 item.tensor.copy_(values[item.name])
 
+    return import_then_fill(
+        target, named, fill, runtime=runtime, pool=pool, owning_plan=owning_plan
+    )
+
+
+def import_then_fill(
+    target: object,
+    tensors: Iterable[NamedTensor],
+    fill: Callable[[], None],
+    *,
+    runtime: Runtime,
+    pool: str,
+    owning_plan: int | None = None,
+    _allow_in_progress_plan: bool = False,
+) -> PersistentState:
+    """Import ``tensors`` into ``pool``, then let ``fill`` write their values.
+
+    Importing first is what makes this cheap: the target's storages become
+    the pool, so ``fill`` writes straight into it and the values never occupy
+    ordinary host memory. The storages need hold nothing yet, and then they
+    occupy none either: memory that was allocated and never written is not
+    committed, so reading it into the pool adds nothing to the host but the
+    pool.
+
+    That ordering depends on the import being able to hand the storages a
+    pool address. Where it cannot, the storages stay the target's own and
+    ``fill`` would write into them rather than into the pool, leaving the pool
+    holding what the target happened to contain at import. So the order is
+    reversed: fill first, import after, which copies once and is correct
+    either way -- and costs nothing extra, because such a pool keeps a host
+    copy of its state regardless.
+
+    ``fill`` has to write into the tensors it is given. One it points at new
+    storage instead would take its values with it and leave the pool holding
+    what it held at import, which reads as values, so that is refused.
+    """
+
+    named = tuple(tensors)
+
     def adopt() -> PersistentState:
         return import_tensors(
             target,
@@ -159,23 +199,31 @@ def import_state_from_file(
             pool=pool,
             release_source=True,
             owning_plan=owning_plan,
+            _allow_in_progress_plan=_allow_in_progress_plan,
         )
 
-    # Importing first is what makes this cheap: the target's storages become
-    # the pool, so the copy below writes the file's values straight into it and
-    # the only memory the values ever occupy is the mapping and the pool.
-    #
-    # That ordering depends on the import being able to hand the storages a
-    # pool address. Where it cannot, the storages stay the target's own and the
-    # copy would land in them rather than in the pool, leaving the pool holding
-    # what the target happened to contain at import. So the order is reversed:
-    # fill first, import after, which copies once and is correct either way.
-    if _validate_pool(runtime, pool).addressable:
-        state = adopt()
+    selected = _validate_pool(
+        runtime, pool, allow_in_progress_plan=_allow_in_progress_plan
+    )
+    if not selected.addressable:
         fill()
-    else:
-        fill()
-        state = adopt()
+        return adopt()
+    state = adopt()
+    fill()
+    leases = {item.pool_pointer for item in state.storages}
+    moved = [
+        item.name
+        for item in named
+        if item.tensor.untyped_storage().nbytes()
+        and int(item.tensor.untyped_storage().data_ptr()) not in leases
+    ]
+    if moved:
+        raise RuntimeConfigurationError(
+            f"filling {', '.join(moved[:4])}{' and more' if len(moved) > 4 else ''} "
+            "gave it new storage rather than writing into the storage it was "
+            "given, so its values never reached the pool; write in place "
+            "(copy_, fill_, zero_)"
+        )
     return state
 
 
@@ -522,11 +570,66 @@ def adopt_persistent_tensor(
 def restore_persistent_state(
     runtime: Runtime,
     state: PersistentState | None,
+    plan_handle: int | None = None,
 ) -> None:
-    """Restore frontend tensor views after one adopted plan becomes idle."""
+    """Restore frontend tensor views after one adopted plan becomes idle.
+
+    A plan that closes stops holding the state. While another still does, the
+    tensors stay on placeholders it runs on, and only the last holder's close
+    brings them back to host views.
+    """
 
     if state is None:
         return
+    if plan_handle is not None:
+        state.holders.discard(plan_handle)
+    if state.holders:
+        return
+    _restore_host_views(runtime, state)
+
+
+def hold_persistent_state(runtime: Runtime, target: object, plan_handle: int) -> None:
+    """Record that an admitted plan now binds the target's state."""
+
+    state = persistent_state(runtime, target)
+    if state is not None:
+        state.holders.add(plan_handle)
+
+
+@contextmanager
+def host_views_while_planning(runtime: Runtime, target: object) -> Iterator[None]:
+    """Show planning the host views of state that admitted plans hold.
+
+    Planning reads a model's tensors where its import left them, but a plan
+    points them at device placeholders for as long as it lives. So while one
+    more plan over held state is captured, profiled and admitted, the tensors
+    view their pool copies again, once every plan is idle; afterwards the
+    holders get back the placeholders they had, whether the new plan was made
+    or not. It is the swap an optimizer checkpoint makes for its own state.
+    """
+
+    state = persistent_state(runtime, target)
+    if state is None or not state.holders:
+        yield
+        return
+    held = [
+        (view.tensor, view.tensor.data)
+        for storage in state.storages
+        for view in storage.views
+    ]
+    _require_status(
+        runtime_library().shadowspill_runtime_wait_idle(runtime._runtime_handle),
+        "wait for the runtime to be idle",
+    )
+    _restore_host_views(runtime, state)
+    try:
+        yield
+    finally:
+        for tensor, placeholder in held:
+            tensor.data = placeholder
+
+
+def _restore_host_views(runtime: Runtime, state: PersistentState) -> None:
     for item in state.storages:
         if not item.frontend_storage_is_separate:
             continue

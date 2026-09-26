@@ -488,11 +488,14 @@ callable that could own the result.
 Everything else a plan owns is created in the pools rather than on the host:
 gradients, activations and workspaces are runtime objects the plan's actions
 move between pools, and the tensors the lowering builds them from are fake, so
-they cost nothing while a program is being built. Optimizer state reaches a pool
-differently, and by the ordinary route: the optimizer declares what it keeps on
-meta, which allocates nothing; planning builds those entries in host memory,
-`optimizer_state_init` fills them, and the import that would have adopted
-caller-built state moves them into the spill pool.
+they cost nothing while a program is being built. Optimizer state is created in
+the spill pool too, in the order a checkpoint is imported: the optimizer
+declares what it keeps on meta, which allocates nothing; planning imports those
+entries into the spill pool before they hold anything, and
+`optimizer_state_init` writes their values there. Where the pool is one this
+process cannot address, the entries are filled first and imported after, which
+costs nothing extra: such a pool keeps a host copy of its state for as long as
+it holds it.
 
 The optimizer planning is given is the reference for whose state that is. If
 *its* state was already imported, planning adopts it as it stands and it
@@ -751,7 +754,7 @@ Beyond the shared and store arguments:
 |---|---|---|---|
 | `objective` | callable | required | `(model, *microbatch) -> Tensor \| ObjectiveResult`, returning the scalar the step differentiates. |
 | `optimizer` | callable | required | Given the model's parameters, returns a `torch.optim.Optimizer`. The class itself does (`torch.optim.AdamW`); so does any partial or lambda over one. |
-| `optimizer_state_init` | `(name, tensor, parameter) -> None` \| `None` | `None` | Fills one declared state entry, given the entry's name, the host tensor to fill, and the parameter it belongs to. The filled entry is imported into the spill pool afterwards. Required unless the optimizer handed back already holds imported state, because a default would be an assumption that fails silently. |
+| `optimizer_state_init` | `(name, tensor, parameter) -> None` \| `None` | `None` | Fills one declared state entry in place, given the entry's name, the tensor to fill, and the parameter it belongs to. Required unless the optimizer handed back already holds imported state, because a default would be an assumption that fails silently. |
 | `hyperparams` | `Sequence[str]` | `()` | Names of values a step may set later, e.g. `("lr",)` or `("lr", "betas")`. Each must name an entry in a parameter group or a model buffer holding a number, or a sequence of them. Named entries are held in host scalars before capture -- float64 for a float, int64 for an int -- and everything else is left as the optimizer made it. A bool is refused: it selects what the update does, which is what the capture is. |
 | `example_inputs` | `Sequence[Sequence[Any]]` | required | One fixed example sequence per microbatch; its length is the step's microbatch count. |
 | `optimizer_ordering` | `"stage_interleaved"` \| `"tail"` | `"stage_interleaved"` | Whether each stage updates as its gradients land, or all updates run at the end. |
@@ -1024,7 +1027,8 @@ labels. It must not mutate the graph.
 Both callables expose the `plan_report` attribute, `close() -> None`, context
 manager support, and a `state_dict()` / `load_state_dict()` pair that takes back
 exactly what `state_dict()` produced. `PlannedForward`'s pair is the model's own
-CPU state mapping; `PlannedTrainStep`'s is the three-key checkpoint below.
+CPU state mapping; `PlannedTrainStep`'s is the three-key checkpoint below, which
+its `save(path)` writes to a file straight from the pool.
 Both also expose `invocation_timings()` and `mark_cycle_end()`, the
 invocation's time on the device clock; see [timing](timing.md).
 
@@ -1130,20 +1134,26 @@ Closing copies nothing, and it moves no weights. `import_model_state()` put the
 model's parameters in the spill pool -- as the parameters' own storage, where
 the pool is one this process can address, and as the authoritative copy behind
 them where it is not -- and the pool holds the updated weights throughout: a step both begins and ends with parameters
-spill-resident, so each update is already there. Running a step points those
-same `Parameter` objects at device memory; closing points them back.
+spill-resident, so each update is already there. Planning points those same
+`Parameter` objects at device placeholders for as long as the plan lives; the
+last plan over the model to close points them back.
 `export_model_state()` is the separate call that copies the values into
 ordinary CPU tensors. Closing also takes back whatever the plan's own scopes
 left behind, as [above](#what-a-closing-plan-leaves-behind).
 
+A model imported with `import_model_state()` can back several planned
+callables at once -- a training step and a forward pass that evaluates it,
+say -- planned in either order and closed in either order. They bind the
+same runtime objects, so each call sees every update an earlier call made.
+State a plan imported for itself, from a model passed to planning without
+`import_model_state()`, goes when that plan closes, so it is not shared: the
+second plan is refused.
+
 Optimizer state has no equivalent home. `plan_step()` builds the
 optimizer from the callable it is given and creates its state in storage the
 plan owns, so unless the caller imported that state themselves there is no
-caller-owned pool for it to be left in. The state is built in ordinary host
-memory, filled by `optimizer_state_init`, and imported into the spill pool by
-the same call that adopts state a caller built -- so the host holds it while it
-is being built, beside the pool about to receive it. State the caller imported
-is untouched by this, because nothing is created for it.
+caller-owned pool for it to be left in. State the caller imported is untouched
+by this, because nothing is created for it.
 
 Releasing the plan therefore releases the state with it: a training callable's
 `state_dict()` and `load_state_dict()` answer only while it is open, and both
@@ -1160,6 +1170,19 @@ continues. The spill pool keeps the authoritative copy throughout and is read
 in place, so the snapshot is normally the only copy of the state outside the
 pool; an object whose pool copy is not current is read into a buffer first and
 costs two until the snapshot is built.
+
+`save(path)` writes that checkpoint to a file without the snapshot: the model's
+and the optimizer's state are viewed where they are in the spill pool and
+written from there, so saving costs no host copy of the state, however large,
+and the callable goes on training on the same state. Resume with
+`load_state_dict(torch.load(path, mmap=True))`. A pool this process cannot
+address is read out as `state_dict()` reads it. A model entry that an entry of
+the optimizer's state reproduces bit for bit by a cast -- a weight whose master
+copy the optimizer keeps at a higher precision, say -- is written once, as the
+optimizer's entry, and a fourth key, `model_from_optimizer`, says which entry
+each such weight comes from, for `load_state_dict()` to cast it back. Which
+entries qualify is found from their values at the time of the save, not from
+their names or dtypes.
 
 ## Exceptions
 

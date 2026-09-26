@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 
@@ -45,6 +45,11 @@ class PersistentState:
     plan and only the caller releases it; a plan handle means that plan
     created it, so closing that plan releases it. Nothing here knows whether
     the target is a model, an optimizer, or anything else.
+
+    ``holders`` are the admitted plans bound to this state, whose device
+    placeholders its tensors point at while they live. Any of them runs on
+    any holder's placeholders, so the state goes back to host views only when
+    the last holder closes.
     """
 
     target: object
@@ -52,6 +57,7 @@ class PersistentState:
     storages: tuple[PersistentStorage, ...]
     source_owner: object | None
     owning_plan: int | None = None
+    holders: set[int] = field(default_factory=set)
 
     def by_storage_identity(self) -> dict[int, PersistentStorage]:
         return {item.storage_identity: item for item in self.storages}
