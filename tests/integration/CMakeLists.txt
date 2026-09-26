@@ -115,6 +115,21 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_declared_adamw_state_replays 300
 )
 shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_fills_declared_state_in_the_spill_pool 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_refuses_state_an_initialiser_replaced 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_owns_the_model_state_it_imported 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_saves_straight_from_the_pool 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_saves_a_master_copy_once 300
+)
+shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_profiles_bounded_opaque_optimizer 300
 )
 shadowspill_add_public_api_test(
@@ -122,4 +137,22 @@ shadowspill_add_public_api_test(
 )
 shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_follows_a_learning_rate_schedule 300
+)
+shadowspill_add_public_api_test(
+  test_02_shared_model.py test_a_forward_planned_after_training_sees_every_update 300
+)
+shadowspill_add_public_api_test(
+  test_02_shared_model.py test_a_training_step_planned_after_a_forward_shares_its_model 300
+)
+shadowspill_add_public_api_test(
+  test_02_shared_model.py test_state_a_plan_imported_for_itself_is_not_shared 300
+)
+shadowspill_add_public_api_test(
+  test_03_planning_host_memory.py test_a_plan_keeps_no_host_copy_of_what_its_forwards_saved 300
+)
+shadowspill_add_public_api_test(
+  test_03_planning_host_memory.py test_planning_fails_when_the_spill_pool_has_no_room_for_saved_values 300
+)
+shadowspill_add_public_api_test(
+  test_04_plans_side_by_side.py test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves 300
 )
