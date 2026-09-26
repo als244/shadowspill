@@ -16,14 +16,12 @@ from shadowspill.ir import (
 )
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.optimizer import (
-    OpaqueOptimizerArtifact,
     OptimizerCapture,
     OptimizerTask,
     OptimizerTaskArtifact,
 )
 from shadowspill.step import StepDataOrdering
 from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
-from shadowspill.task.slots import ObjectSlot
 
 from ..profiles import TaskProfileCatalog
 from .artifacts import (
@@ -56,7 +54,6 @@ class _TrainingTaskEmitter:
         optimizer: OptimizerCapture,
         profiles: TaskProfileCatalog,
         *,
-        optimizer_phase: Literal["initial", "recurrent"],
         optimizer_ordering: Literal["stage_interleaved", "tail"],
         ordering: StepDataOrdering,
         device_id: str,
@@ -74,7 +71,6 @@ class _TrainingTaskEmitter:
         self.objects = objects
         self.optimizer = optimizer
         self.profiles = profiles
-        self.optimizer_phase = optimizer_phase
         self.device_id = device_id
 
         self.tasks: list[TaskSpec] = []
@@ -91,12 +87,7 @@ class _TrainingTaskEmitter:
         # optimizer components follow its last one, whichever microbatch that is.
         self.backwards_emitted_by_stage: dict[int, int] = {}
 
-        self.has_lazy_optimizer_outputs = any(
-            item.created_on_first_step for item in objects.optimizer_objects
-        )
-        self.interleave_optimizer = optimizer_ordering == "stage_interleaved" and not (
-            optimizer_phase == "initial" and self.has_lazy_optimizer_outputs
-        )
+        self.interleave_optimizer = optimizer_ordering == "stage_interleaved"
         self.optimizer_by_stage, self.unplaced_optimizer = (
             self._optimizer_stage_assignments()
         )
@@ -416,13 +407,11 @@ class _TrainingTaskEmitter:
 
     def _emit_tail_optimizer(self) -> None:
         components = (
-            self.optimizer.recurrent_tasks
+            self.optimizer.update_tasks
             if not self.interleave_optimizer
             else self.unplaced_optimizer
         )
-        if components or (
-            self.optimizer_phase == "initial" and self.has_lazy_optimizer_outputs
-        ):
+        if components:
             self._append_optimizer(
                 components,
                 tuple(self.all_backward_ids),
@@ -441,7 +430,6 @@ class _TrainingTaskEmitter:
                 self.optimizer,
                 self.objects.optimizer_objects,
                 self.objects.gradients,
-                optimizer_phase=self.optimizer_phase,
                 dependencies=dependencies,
                 device_id=self.device_id,
                 profile_id=self.profiles.profile_id,
@@ -464,7 +452,7 @@ class _TrainingTaskEmitter:
         stage_count = len(self.prepared[0])
         invalid = tuple(
             component.completion_stage_index
-            for component in self.optimizer.recurrent_tasks
+            for component in self.optimizer.update_tasks
             if component.completion_stage_index is not None
             and not 0 <= component.completion_stage_index < stage_count
         )
@@ -475,14 +463,14 @@ class _TrainingTaskEmitter:
         by_stage = {
             stage_index: tuple(
                 component
-                for component in self.optimizer.recurrent_tasks
+                for component in self.optimizer.update_tasks
                 if component.completion_stage_index == stage_index
             )
             for stage_index in range(stage_count)
         }
         unplaced = tuple(
             component
-            for component in self.optimizer.recurrent_tasks
+            for component in self.optimizer.update_tasks
             if component.completion_stage_index is None
         )
         return by_stage, unplaced
@@ -522,7 +510,6 @@ def emit_training_tasks(
     optimizer: OptimizerCapture,
     profiles: TaskProfileCatalog,
     *,
-    optimizer_phase: Literal["initial", "recurrent"],
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     ordering: StepDataOrdering,
     device_id: str,
@@ -535,7 +522,6 @@ def emit_training_tasks(
         objects,
         optimizer,
         profiles,
-        optimizer_phase=optimizer_phase,
         optimizer_ordering=optimizer_ordering,
         ordering=ordering,
         device_id=device_id,
@@ -550,7 +536,6 @@ def _append_optimizer_tasks(
     optimizer_objects: tuple[OptimizerObjectBinding, ...],
     gradients: tuple[GradientBinding, ...],
     *,
-    optimizer_phase: Literal["initial", "recurrent"],
     dependencies: tuple[str, ...],
     device_id: str,
     profile_id: Callable[..., str],
@@ -566,7 +551,6 @@ def _append_optimizer_tasks(
         optimizer,
         optimizer_objects,
         gradients,
-        optimizer_phase=optimizer_phase,
         dependencies=dependencies,
         device_id=device_id,
         profile_id=profile_id,
@@ -586,28 +570,25 @@ class _OptimizerTaskAppender:
         optimizer_objects: tuple[OptimizerObjectBinding, ...],
         gradients: tuple[GradientBinding, ...],
         *,
-        optimizer_phase: Literal["initial", "recurrent"],
         dependencies: tuple[str, ...],
         device_id: str,
         profile_id: Callable[..., str],
         components: tuple[OptimizerTask, ...] | None,
         object_dependencies: dict[str, tuple[str, ...]] | None,
     ) -> None:
-        if optimizer.recurrent is None:
-            raise CaptureError("optimizer has no recurrent artifact")
+        if optimizer.update is None:
+            raise CaptureError("optimizer has no update artifact")
         self.tasks = tasks
         self.entrypoints = entrypoints
         self.executables = executables
         self.optimizer = optimizer
         self.optimizer_objects = optimizer_objects
-        self.optimizer_phase = optimizer_phase
         self.dependencies = dependencies
         self.device_id = device_id
         self.profile_id = profile_id
         self.components = components
         self.object_dependencies = object_dependencies or {}
         self.object_by_name = _optimizer_object_ids(gradients, optimizer_objects)
-        self.binding_by_name = {item.name: item for item in optimizer_objects}
 
     def append(self) -> tuple[str, ...]:
         components = self._selected_components()
@@ -625,25 +606,8 @@ class _OptimizerTaskAppender:
         return tuple(task_ids)
 
     def _selected_components(self) -> tuple[OptimizerTask, ...]:
-        lazy_outputs = any(
-            item.created_on_first_step for item in self.optimizer_objects
-        )
-        if self.optimizer_phase == "initial" and lazy_outputs:
-            if self.optimizer.initial is None:
-                raise CaptureError(
-                    "lazy optimizer state has no profiled first-step artifact"
-                )
-            return (
-                OptimizerTask(
-                    self.optimizer.initial,
-                    tuple(binding.name for binding in self.optimizer.bindings),
-                    self.optimizer.mutation_names,
-                ),
-            )
         return (
-            self.optimizer.recurrent_tasks
-            if self.components is None
-            else self.components
+            self.optimizer.update_tasks if self.components is None else self.components
         )
 
     def _task(
@@ -653,7 +617,6 @@ class _OptimizerTaskAppender:
     ) -> TaskSpec:
         task_id = f"task_{len(self.tasks):06d}"
         objects = self._component_objects(component)
-        outputs = self._component_outputs(component)
         dependencies = _unique(
             (
                 *preceding,
@@ -669,15 +632,11 @@ class _OptimizerTaskAppender:
             ResourceSpec(self.device_id, ResourceKind.COMPUTE),
             self.profile_id(component.artifact),
             dependencies=dependencies,
-            inputs=tuple(
-                object_id for object_id in objects if object_id not in outputs
-            ),
-            outputs=outputs,
+            inputs=objects,
             mutations=tuple(
                 MutationSpec(self.object_by_name[name])
                 for name in component.mutation_names
                 if name in self.object_by_name
-                and self.object_by_name[name] not in outputs
             ),
             phase="optimizer",
         )
@@ -689,42 +648,18 @@ class _OptimizerTaskAppender:
             if name in self.object_by_name
         )
 
-    def _component_outputs(self, component: OptimizerTask) -> tuple[str, ...]:
-        if self.optimizer_phase != "initial":
-            return ()
-        return tuple(
-            self.object_by_name[name]
-            for name in component.mutation_names
-            if name in self.binding_by_name
-            and self.binding_by_name[name].created_on_first_step
-        )
-
     def _entrypoint(
         self,
         component: OptimizerTask,
         task_id: str,
     ) -> TaskEntrypoint:
-        artifact = component.artifact
-        output_names = (
-            artifact.profile_output_names
-            if isinstance(artifact, OpaqueOptimizerArtifact)
-            else ()
-        )
-        output_slots = tuple(
-            ObjectSlot(leaf_index, self.object_by_name[name])
-            for leaf_index, name in enumerate(output_names)
-            if name in self.object_by_name
-        )
         return TaskEntrypoint(
             task_id,
             (),
-            output_slots,
+            (),
             options=TaskOptions(
                 phase="optimizer",
                 named_inputs=component.binding_names,
-                named_outputs=tuple(
-                    name for name in output_names if name in self.object_by_name
-                ),
             ),
         )
 

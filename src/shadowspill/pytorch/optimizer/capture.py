@@ -4,12 +4,13 @@ points, composing discovery, the trace and the tasks."""
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 import torch
 
+from shadowspill.errors import CaptureError
+
 from .artifacts import (
-    OpaqueOptimizerArtifact,
     OptimizerCapture,
     OptimizerTensorBinding,
 )
@@ -27,7 +28,7 @@ from .sandbox import (
 from .starts import HeldStart, NoStart, StateStart
 from .store import OptimizerCaptureStore
 from .trace import (
-    capture_recurrent_optimizer,
+    capture_optimizer_update,
 )
 
 
@@ -109,16 +110,17 @@ def capture_optimizer(
     store: OptimizerCaptureStore | None = None,
     timer: PhaseTimer | None = None,
 ) -> OptimizerCapture:
-    """Capture a recurrent tensor update without mutating the caller's state.
+    """Capture the optimizer's update without mutating the caller's state.
 
-    Lazy Python/tensor state is discovered on a deep-copied optimizer. Its first
-    semantic update remains an ordinary bounded optimizer task. Once state is
-    stable, a lifted tensor-only graph is used when Dynamo can represent it;
-    otherwise all steps remain bounded opaque tasks with measured workspace.
+    The update is found on a deep-copied optimizer, which must already hold the
+    state the update reads: planning creates what the optimizer's first step
+    would before capturing, and state that step would still create is refused.
+    A lifted tensor-only graph is used when Dynamo can represent the update;
+    otherwise every step runs it as a bounded opaque task with measured
+    workspace.
 
     With a ``store``, the traced update is served from it when the same
-    optimizer, over the same tensors, split the same way, was traced before;
-    the discovery of lazy state and the opaque first step run either way.
+    optimizer, over the same tensors, split the same way, was traced before.
     """
 
     phases = timer if timer is not None else NoTimer()
@@ -129,32 +131,19 @@ def capture_optimizer(
         )
     if isinstance(discovery, OptimizerCapture):
         return discovery
-    captured = capture_recurrent_optimizer(
+    if discovery.created_state_names:
+        created = ", ".join(discovery.created_state_names[:4])
+        raise CaptureError(
+            f"the optimizer's first step creates state ({created}) that planning "
+            "did not create before it; import the optimizer's state before planning"
+        )
+    return capture_optimizer_update(
         discovery,
         optimizer,
         parameter_stage_owners=parameter_stage_owners,
         store=store,
         timer=phases,
     )
-    if discovery.created_state_names:
-        spillable_names = {
-            binding.name for binding in captured.bindings if binding.spillable
-        }
-        initial_bindings = tensor_bindings(
-            discovery.initial_sandbox,
-            discovery.initial_parameter_names,
-        )
-        initial = OpaqueOptimizerArtifact.capture(
-            discovery.initial_sandbox,
-            initial_bindings,
-            profile_output_names=tuple(
-                name
-                for name in discovery.created_state_names
-                if name in spillable_names
-            ),
-        )
-        captured = replace(captured, initial=initial)
-    return captured
 
 
 def current_optimizer_bindings(

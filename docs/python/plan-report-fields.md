@@ -32,7 +32,7 @@ them.
 
 ```text
 PlanReport
-├── execution_plan / initial_execution_plan   ExecutionPlan (IR)
+├── execution_plan                            ExecutionPlan (IR)
 ├── task_profiles[]                           TaskProfile (IR)
 ├── transfer_actions[]                        MemoryAction (IR)
 ├── transfer_capabilities                     TransferCapabilities → TransferProfile[]
@@ -66,8 +66,7 @@ What one planning call produced. `mode` is `forward` or `training`.
 |---|---|
 | `mode` | Which planning entry point produced this report. |
 | `capture_identity` | Digest over mode, signature, artifacts, and profiling metadata: the identity of what was captured. |
-| `execution_plan` | The recurrent step's plan. `program` reads through it. |
-| `initial_execution_plan` | The first step's plan when it differs, as it does for a lazily initialized optimizer; `None` otherwise. |
+| `execution_plan` | The plan every call runs. `program` reads through it. |
 | `task_profiles` | The isolated profile behind every task the plan prices. |
 | `transfer_actions` | The schedule's memory actions. Named for the transfers but carries releases too, which move no bytes. |
 | `transfer_bytes_evicted`, `transfer_bytes_fetched` | Bytes the schedule's evictions and fetches move. Distinct from the identically named fields on `summary`, which count what the simulation ran rather than what the schedule asked for. |
@@ -83,16 +82,15 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `transfer_capabilities` | The measured transfer matrix the simulator planned against. |
 | `optimizer_ordering` | How optimizer work was ordered, or `None` for a forward plan. |
 | `data_ordering` | The `StepDataOrdering` the step walked its microbatches under -- its `depth`, `breadth`, `reverse_breadth`, and `pair_loss` -- or `None` for a forward plan. |
-| `search_results` | The selected plan for each role the report covers, first-step first and recurrent last. |
+| `search_results` | The selected plan, as the search answered it. |
 | `search_options` | What the search was told: the generic options, which algorithm ran, and that algorithm's own options. For the search that ships those include the candidate space and `resolution_options`, the shares of the flexible groups to recompute as exact fractions, every quarter by default. `None` for a forward plan. |
-| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each selected plan was read back from the store. One count per plan the report covers -- the recurrent one, plus the initialization step where there is one -- so the two sum to the number of plans. |
+| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether the selected plan was read back from the store: one of the two is 1. |
 | `fixed_slab_bytes` | The slab the fixed layout occupies. |
 | `captured_stage_count` | Stages the capture produced. |
 | `aot_unique_stage_contracts` | Distinct structural contracts among them. |
 | `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Graph pairs served from the store rather than compiled. |
 
-Derived on access, not stored: `program`, `initial_program`,
-`search_result`, `initial_search_result`,
+Derived on access, not stored: `program`, `search_result`,
 `predicted_device_peak_bytes`, `predicted_spill_peak_bytes`,
 `predicted_makespan_ns`, `summary`, `shared_aliases`,
 `shared_execution_bytes`, `shared_spill_bytes`,
@@ -390,7 +388,7 @@ gave back is `original_object_capacity_bytes` minus
 
 | Field | Meaning |
 |---|---|
-| `plan_role` | Which plan this layout admitted, first-step or recurrent. |
+| `plan_role` | Which plan this layout admitted: `step` or `forward`. |
 | `strategy` | How the layout was built. |
 | `layout_digest`, `program_digest`, `schedule_digest`, `facts_digest` | The identities this admission is a function of. |
 | `pool_capacity_bytes` | The pool it had to fit inside. |

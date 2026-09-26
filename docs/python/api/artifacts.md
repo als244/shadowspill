@@ -13,7 +13,7 @@ Three of them form one chain:
 
 ```text
 build_step_programs() ->  tuple[StepProgram, ...], one per ordering
-                          (.recurrent is a ShadowSpillPlanningProblem)
+                          (.problem is a ShadowSpillPlanningProblem)
 plan_program()        ->  AnnotatedProgramPlan
 summarize_plan()      ->  PlanSummaryLookup | None, the same question answered
                           from the summary beside the stored plan
@@ -30,9 +30,7 @@ result: everything capture, profiling and canonical lowering produced for one
 step under one ordering, with nothing planned yet. It records the `StepDataOrdering` the step was
 lowered with, since a different walk is a different program. It contains:
 
-- `recurrent`, the `ShadowSpillPlanningProblem` for the repeated step;
-- `initial`, an optional `ShadowSpillPlanningProblem` for a first step that has lazy
-  optimizer state to create, or `None`;
+- `problem`, the `ShadowSpillPlanningProblem` every invocation of the step runs;
 - `optimizer_ordering` and `data_ordering`;
 - `signature_digests`, one per microbatch input signature;
 - `profiling_metadata`, `unique_profile_count` and `captured_stage_count`;
@@ -66,7 +64,7 @@ loaded = StepProgram.from_json(Path("program.json").read_text())
 ## `ShadowSpillPlanningProblem`
 
 A self-contained problem: the only input `plan_program()` needs. It holds its
-`role` (`"recurrent"`, `"initial"` or `"forward"`), the canonical
+`role` (`"step"` or `"forward"`), the canonical
 `ShadowSpillProgram`, its `initial_residency` and `final_residency`, the
 `SimulationConfig` describing the machine, the `AdmissionFacts`, the
 `source_execution_budget_bytes` it was profiled under with the
@@ -108,7 +106,7 @@ from shadowspill.planner import plan_program
 from shadowspill.planner.program import TransferBandwidths
 
 annotated = plan_program(
-    loaded.recurrent,
+    loaded.problem,
     execution_budget=16 << 30,
     spill_budget=96 << 30,
     transfer_bandwidths=TransferBandwidths(

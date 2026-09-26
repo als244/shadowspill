@@ -1,4 +1,4 @@
-"""Persistent repository of recurrent optimizer captures.
+"""Persistent repository of traced optimizer updates.
 
 Tracing an optimizer's update is the one capture that depends on nothing a
 graph pair already keys: the optimizer's type and step code, the tensors it
@@ -49,13 +49,13 @@ if TYPE_CHECKING:
 _OPTIMIZER_CAPTURE_SCHEMA = artifact_schema("optimizer_capture")
 
 
-def recurrent_capture_identity(
+def update_capture_identity(
     optimizer: torch.optim.Optimizer,
     bindings: tuple[OptimizerTensorBinding, ...],
     *,
     parameter_stage_owners: Mapping[str, tuple[int, ...]] | None,
 ) -> str:
-    """The digest of everything that determines a traced recurrent update.
+    """The digest of everything that determines a traced optimizer update.
 
     The bound tensors enter by name and geometry, never by device: the trace
     always runs on fake accelerator tensors, whatever the sandbox holds when
@@ -63,11 +63,11 @@ def recurrent_capture_identity(
     """
 
     identity = {
-        "kind": "recurrent_optimizer_capture",
+        "kind": "optimizer_update_capture",
         "schema": _OPTIMIZER_CAPTURE_SCHEMA,
         # What the entry holds. An entry written before this contract keys
         # differently, so it is unreachable rather than misread.
-        "format": "traced_recurrent_graph/v1",
+        "format": "traced_update_graph/v1",
         "optimizer_type": optimizer_type_name(optimizer),
         "step": optimizer_step_identity(optimizer),
         "bindings": [
@@ -101,9 +101,9 @@ def recurrent_capture_identity(
 
 @dataclass(frozen=True, slots=True)
 class StoredOptimizerCapture:
-    """One traced recurrent update, free of the values it was traced over."""
+    """One traced optimizer update, free of the values it was traced over."""
 
-    recurrent: CachedGraphArtifact
+    update: CachedGraphArtifact
 
     @classmethod
     def capture(cls, artifact: GraphArtifact) -> StoredOptimizerCapture:
@@ -127,10 +127,10 @@ class StoredOptimizerCapture:
         mode = getattr(bindings[0].tensor, "fake_mode", None) if bindings else None
         with torch.no_grad():
             if mode is None:
-                artifact = self.recurrent.restore()
+                artifact = self.update.restore()
             else:
                 with mode:
-                    artifact = self.recurrent.restore()
+                    artifact = self.update.restore()
         return artifact.rebind_examples(
             tuple(binding.tensor for binding in bindings),
             input_provenance=provenance,
@@ -138,7 +138,7 @@ class StoredOptimizerCapture:
 
 
 class OptimizerCaptureStore:
-    """Serve a traced recurrent update to every step that binds the same one."""
+    """Serve a traced optimizer update to every step that binds the same one."""
 
     def __init__(
         self,
@@ -238,7 +238,7 @@ class OptimizerCaptureStore:
                 "schema": _OPTIMIZER_CAPTURE_SCHEMA,
                 "key": key,
                 "optimizer_type": optimizer_type,
-                "recurrent_digest": artifact.compatibility_digest,
+                "update_digest": artifact.compatibility_digest,
                 "binding_count": len(artifact.tensor_inputs),
             },
         )
@@ -256,12 +256,12 @@ class OptimizerCaptureStore:
             path=path,
             access=access,
             schema=_OPTIMIZER_CAPTURE_SCHEMA,
-            dependencies=(stored.recurrent.compatibility_digest,),
+            dependencies=(stored.update.compatibility_digest,),
         )
 
 
 __all__ = [
     "OptimizerCaptureStore",
     "StoredOptimizerCapture",
-    "recurrent_capture_identity",
+    "update_capture_identity",
 ]

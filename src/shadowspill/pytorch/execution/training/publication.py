@@ -188,11 +188,6 @@ def publish_frontend_bindings(
             executor._state.publish_replacement_views(replacement_by_alias[alias_id])
         else:
             executor._state.object_store[alias_id] = publication.tensor
-    if processed.optimizer_bindings:
-        for object_id, tensor, alias_id in processed.optimizer_bindings:
-            executor._state.object_store.setdefault(alias_id, tensor)
-            executor._state.object_tensors[object_id] = tensor
-        executor.optimizer_state.available = True
     if prepared.timing is not None:
         prepared.timing.dispatch_output_state_publish_ns = (
             time.perf_counter_ns() - started_ns
@@ -214,51 +209,42 @@ def _process_task_outputs(
     prepared: PreparedTask,
     raw_outputs: object,
 ) -> ProcessedTaskOutputs:
+    entrypoint = prepared.record.entrypoint
+    if entrypoint.options.phase == "optimizer":
+        # An update writes the state it was given in place: nothing to publish.
+        return ProcessedTaskOutputs((), (), ())
     outputs: tuple[torch.Tensor, ...] = ()
     adopted: tuple[PublishedStorage, ...] = ()
     replacement_aliases: frozenset[str] = frozenset()
-    optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
-    entrypoint = prepared.record.entrypoint
     timing = prepared.timing
-    if entrypoint.options.phase == "optimizer":
-        started_ns = time.perf_counter_ns() if timing is not None else 0
-        if prepared.eager_optimizer and not executor.optimizer_state.available:
-            adopted, optimizer_bindings = executor.optimizer_state.created_state(
-                prepared.record
-            )
-        else:
-            optimizer_bindings = ()
-        if timing is not None:
-            timing.dispatch_output_publish_ns = time.perf_counter_ns() - started_ns
+    started_ns = time.perf_counter_ns() if timing is not None else 0
+    if isinstance(raw_outputs, (tuple, list)):
+        leaves = raw_outputs
     else:
-        started_ns = time.perf_counter_ns() if timing is not None else 0
-        if isinstance(raw_outputs, (tuple, list)):
-            leaves = raw_outputs
-        else:
-            leaves, _ = tree_flatten(raw_outputs)
-        if timing is not None:
-            timing.dispatch_output_flatten_ns = time.perf_counter_ns() - started_ns
-        started_ns = time.perf_counter_ns() if timing is not None else 0
-        if entrypoint.options.phase == "forward":
-            if not all(isinstance(value, torch.Tensor) for value in leaves):
-                raise RuntimeError("captured forward graph returned a static leaf")
-            tensor_outputs = tuple(cast(torch.Tensor, value) for value in leaves)
-            adopted, replacement_aliases = _bind_forward_outputs(
-                executor,
-                prepared.record,
-                tensor_outputs,
-                timing,
+        leaves, _ = tree_flatten(raw_outputs)
+    if timing is not None:
+        timing.dispatch_output_flatten_ns = time.perf_counter_ns() - started_ns
+    started_ns = time.perf_counter_ns() if timing is not None else 0
+    if entrypoint.options.phase == "forward":
+        if not all(isinstance(value, torch.Tensor) for value in leaves):
+            raise RuntimeError("captured forward graph returned a static leaf")
+        tensor_outputs = tuple(cast(torch.Tensor, value) for value in leaves)
+        adopted, replacement_aliases = _bind_forward_outputs(
+            executor,
+            prepared.record,
+            tensor_outputs,
+            timing,
+        )
+        if entrypoint.options.public_output_leaves:
+            outputs = tuple(
+                tensor_outputs[index]
+                for index in entrypoint.options.public_output_leaves
             )
-            if entrypoint.options.public_output_leaves:
-                outputs = tuple(
-                    tensor_outputs[index]
-                    for index in entrypoint.options.public_output_leaves
-                )
-        else:
-            adopted = _accumulate_gradients(executor, prepared.record, leaves, timing)
-        if timing is not None:
-            timing.dispatch_output_publish_ns = time.perf_counter_ns() - started_ns
-        del leaves
+    else:
+        adopted = _accumulate_gradients(executor, prepared.record, leaves, timing)
+    if timing is not None:
+        timing.dispatch_output_publish_ns = time.perf_counter_ns() - started_ns
+    del leaves
     replacements = (
         tuple(
             executor._state.replacement_storage_views(alias_id)
@@ -269,18 +255,12 @@ def _process_task_outputs(
         if replacement_aliases
         else ()
     )
-    return ProcessedTaskOutputs(
-        outputs,
-        adopted,
-        replacements,
-        optimizer_bindings,
-    )
+    return ProcessedTaskOutputs(outputs, adopted, replacements)
 
 
 def _cleanup_after_task(executor: TrainingExecutor, prepared: PreparedTask) -> None:
     _forget_released_objects(executor, prepared.run, prepared.record)
     if prepared.record.task.task_id == prepared.run.lowered.optimizer_task_id:
-        executor.optimizer_state.initialized = True
         for parameter in executor._gradients.values():
             parameter.grad = None
         for alias_id in executor._gradients:

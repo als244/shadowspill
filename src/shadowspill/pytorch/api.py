@@ -360,7 +360,7 @@ def plan_step(
     reverse during backward; both are on by default and vacuous at
     ``breadth=1``.
 
-    ``incumbent`` is the plan to beat for the recurrent program: a plan a
+    ``incumbent`` is the plan to beat: a plan a
     search already found for this step, which the replan here measures at
     this budget and answers with unless it does strictly better, so a step
     run after a sweep executes the plan the sweep chose even when the

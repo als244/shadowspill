@@ -16,7 +16,7 @@ from shadowspill.pytorch import (
     Runtime,
     plan_step,
 )
-from tools.qualification.plan_record import write_plan_records
+from tools.qualification.plan_record import write_plan_record
 from tools.qualification.runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
@@ -161,10 +161,12 @@ def _plan_case(
     phases = _phase_seconds(report)
     plan_path = output.with_name(f"{output.stem}_plan_report.pt")
     torch.save(report, plan_path)
-    fixtures = write_plan_records(
-        results=report.search_results,
-        directory=output.parent / f"{output.stem}_plan_records",
-    )
+    fixtures = [
+        write_plan_record(
+            result=report.search_result,
+            directory=output.parent / f"{output.stem}_plan_records",
+        )
+    ]
     print(
         planning_summary(
             manifest.identity,

@@ -3,7 +3,7 @@
 Use `build_step_programs()` when capture, graph-pair construction, compilation,
 profiling, and canonical program lowering should occur once. It returns one
 `StepProgram` per ordering asked for, the depth-first one alone by default; each
-can be serialized and its recurrent or initial
+can be serialized and its
 `ShadowSpillPlanningProblem` planned repeatedly without executing the model or
 repeating compiler work. Capturing one needs the frontend; planning one
 again does not, so the second half of this example imports no torch.
@@ -44,7 +44,7 @@ points = [
 
 for execution_budget, spill_budget, bandwidth in points:
     annotated = plan_program(
-        loaded.recurrent,
+        loaded.problem,
         execution_budget=execution_budget,
         spill_budget=spill_budget,
         transfer_bandwidths=TransferBandwidths(

@@ -1,4 +1,4 @@
-"""The recurrent update traced once as a lifted tensor-only graph, served from the
+"""The optimizer update traced once as a lifted tensor-only graph, served from the
 store when it was traced before, and the bounded opaque task it falls back to."""
 
 from __future__ import annotations
@@ -26,20 +26,20 @@ from .bindings import (
 )
 from .discovery import (
     OptimizerDiscovery,
-    fake_recurrent_sandbox,
+    fake_update_sandbox,
     is_data_dependent_failure,
 )
 from .phases import PhaseTimer
 from .sandbox import (
     has_optimizer_step_hooks,
 )
-from .store import OptimizerCaptureStore, recurrent_capture_identity
+from .store import OptimizerCaptureStore, update_capture_identity
 from .tasks import (
     partition_optimizer_graph,
 )
 
 
-def capture_recurrent_optimizer(
+def capture_optimizer_update(
     discovery: OptimizerDiscovery,
     optimizer: torch.optim.Optimizer,
     *,
@@ -47,13 +47,13 @@ def capture_recurrent_optimizer(
     store: OptimizerCaptureStore | None = None,
     timer: PhaseTimer,
 ) -> OptimizerCapture:
-    """Capture the stable recurrent update or publish a bounded opaque task."""
+    """Capture the optimizer's update, or publish a bounded opaque task."""
 
     if has_optimizer_step_hooks(optimizer):
         return _hooked_optimizer_capture(discovery)
     key: str | None = None
     if store is not None:
-        key = recurrent_capture_identity(
+        key = update_capture_identity(
             discovery.sandbox,
             tensor_bindings(discovery.sandbox, discovery.name_by_sandbox_id),
             parameter_stage_owners=parameter_stage_owners,
@@ -63,7 +63,7 @@ def capture_recurrent_optimizer(
             # The trace is what the store holds; the split of it into stage
             # tasks is graph analysis, derived here as it is on a miss.
             with timer.measure("optimizer_trace_read"):
-                fake_recurrent_sandbox(discovery)
+                fake_update_sandbox(discovery)
                 bindings = tensor_bindings(
                     discovery.sandbox, discovery.name_by_sandbox_id
                 )
@@ -73,45 +73,42 @@ def capture_recurrent_optimizer(
                         bindings, discovery.representative_values
                     ),
                 )
-                recurrent_tasks = partition_optimizer_graph(
+                update_tasks = partition_optimizer_graph(
                     artifact,
                     bindings,
                     parameter_stage_owners=parameter_stage_owners,
                 )
-            return _recurrent_capture(discovery, artifact, recurrent_tasks, bindings)
+            return _update_capture(discovery, artifact, update_tasks, bindings)
     # The trace decides whether the update is representable: it exports once
     # and falls back to an opaque task when the export fails, so nothing is
     # exported twice to find out first.
     if discovery.initialized_state_dict is None:
-        fake_recurrent_sandbox(discovery)
+        fake_update_sandbox(discovery)
     with timer.measure("optimizer_trace"):
         captured = _capture_optimizer_artifact(discovery)
     if isinstance(captured, OptimizerCapture):
         return captured
     artifact, bindings = captured
-    recurrent_tasks = partition_optimizer_graph(
+    update_tasks = partition_optimizer_graph(
         artifact,
         bindings,
         parameter_stage_owners=parameter_stage_owners,
     )
     if store is not None and key is not None:
         store.write(key, artifact, optimizer_type=discovery.optimizer_type)
-    return _recurrent_capture(discovery, artifact, recurrent_tasks, bindings)
+    return _update_capture(discovery, artifact, update_tasks, bindings)
 
 
-def _recurrent_capture(
+def _update_capture(
     discovery: OptimizerDiscovery,
     artifact: GraphArtifact,
-    recurrent_tasks: tuple[OptimizerTask, ...],
+    update_tasks: tuple[OptimizerTask, ...],
     bindings: tuple[OptimizerTensorBinding, ...],
 ) -> OptimizerCapture:
     return OptimizerCapture(
         optimizer_type=discovery.optimizer_type,
-        first_step_is_opaque=discovery.first_step_is_opaque,
-        created_state_names=discovery.created_state_names,
-        initial=None,
-        recurrent=artifact,
-        recurrent_tasks=recurrent_tasks,
+        update=artifact,
+        update_tasks=update_tasks,
         bindings=bindings,
         mutation_names=tuple(binding.name for binding in bindings if binding.mutable),
         initialized_state_dict=discovery.initialized_state_dict,
@@ -183,8 +180,8 @@ def _capture_optimizer_artifact(
 def _opaque_optimizer_reason(failure: BaseException) -> str:
     description = str(failure)
     if is_data_dependent_failure(failure):
-        return f"recurrent optimizer graph is data-dependent: {description}"
-    return f"recurrent optimizer graph is opaque: {description}"
+        return f"the optimizer update is data-dependent: {description}"
+    return f"the optimizer update is opaque: {description}"
 
 
 def _opaque_optimizer_capture(
@@ -197,11 +194,8 @@ def _opaque_optimizer_capture(
     mutations = tuple(binding.name for binding in bindings if binding.mutable)
     return OptimizerCapture(
         optimizer_type=discovery.optimizer_type,
-        first_step_is_opaque=discovery.first_step_is_opaque,
-        created_state_names=discovery.created_state_names,
-        initial=None,
-        recurrent=artifact,
-        recurrent_tasks=(
+        update=artifact,
+        update_tasks=(
             OptimizerTask(
                 artifact,
                 tuple(binding.name for binding in bindings),

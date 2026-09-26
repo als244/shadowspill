@@ -87,7 +87,7 @@ def evaluate_case(
     """Load one ShadowSpillProgram once, then independently persist every point."""
 
     saved_case, step_program = load_step_program(case_directory)
-    program = _select_program(step_program, config.program_role)
+    program = step_program.problem
     case = CorpusProgramCase(
         saved_case.directory,
         saved_case.identity,
@@ -212,7 +212,7 @@ def _evaluate_point(
             plan,
             metadata={
                 "purpose": "search-frontier",
-                "program_role": config.program_role,
+                "program_role": program.role,
             },
             step_program=step_program,
             output_root=paths.case_directory(case) / "annotated-plans",
@@ -421,18 +421,6 @@ def _print_point_stop(
     print(f"  STOP: {completed_at}")
     print(f"  DURATION: {elapsed_seconds:.3f} seconds")
     print(flush=True)
-
-
-def _select_program(step: StepProgram, role: str) -> ShadowSpillPlanningProblem:
-    if role == "recurrent":
-        return step.recurrent
-    if role == "initial":
-        if step.initial is None:
-            raise ValueError("saved StepProgram has no initial variant")
-        return step.initial
-    if role == "forward" and step.recurrent.role == "forward":
-        return step.recurrent
-    raise ValueError(f"saved StepProgram does not provide role {role!r}")
 
 
 def _baseline_paths(directory: Path) -> BaselinePaths:

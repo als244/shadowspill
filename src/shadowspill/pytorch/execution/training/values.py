@@ -59,7 +59,6 @@ class ProcessedTaskOutputs:
     outputs: tuple[torch.Tensor, ...]
     adopted: tuple[PublishedStorage, ...]
     replacements: tuple[ReplacementStorageViews, ...]
-    optimizer_bindings: tuple[tuple[str, torch.Tensor, str], ...] = ()
 
     @property
     def replacement_aliases(self) -> frozenset[str]:

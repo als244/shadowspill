@@ -8,7 +8,7 @@ a framework.
 ## Why they are their own package
 
 `StepDataOrdering` and `StepProgram` speak the vocabulary of a training step --
-microbatches, passes, a recurrent role and an optional initial one. That is not
+microbatches, passes, the orderings that walk them. That is not
 planning vocabulary, so they do not belong to the [planner](planning-pipeline.md), which
 is handed a [problem](planning-problem.md) and has no opinion about what shape
 of step produced it.
@@ -56,17 +56,15 @@ names one.
 
 ## `StepProgram`
 
-The recurrent [planning problem](planning-problem.md) a captured step lowered
-to, the optional initial one for a step whose first invocation differs, the
+The [planning problem](planning-problem.md) a captured step lowered to, the
 orderings it was lowered under, and the provenance that says what produced them.
 
-The two roles exist because a training step is not always the same step. An
-optimizer whose state is created on the first step has to materialize it once,
-so that step is a different program with a different peak, planned separately
-and executed once. A step with nothing to materialize carries no initial problem
-at all.
+Every invocation of a step is the same program. Optimizer state exists in the
+spill pool before the first one -- planning creates each entry at the value the
+optimizer's own first step would give it, or the caller imports it -- so the
+first step has nothing to create and plans like every other.
 
-`digest` identifies planning content -- the programs, the orderings, and the
+`digest` identifies planning content -- the program, the orderings, and the
 measurements they were taken under -- and not the run that produced them, so two
 collections of the same step are one artifact rather than two that have to be
 planned twice. `to_json()` and `from_json()` round a step through a file, and

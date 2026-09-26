@@ -8,8 +8,8 @@ its outputs reach the caller.
 Nothing here says what kind of program it came from. A task that accumulates into
 an object rather than replacing it has `contribution_slots`, whether those
 contributions are gradients or anything else; a task that addresses some of its
-objects by name rather than by position has `named_inputs` and `named_outputs`,
-whether those names are an optimizer's or another program's. The frontend that
+inputs by name rather than by position has `named_inputs`, whether those names
+are an optimizer's or another program's. The frontend that
 built the task knows what the names mean; the plan only needs to know they exist.
 
 The executable behind a task is the frontend's, and is not here: a frontend keeps
@@ -53,10 +53,9 @@ class TaskOptions:
     #: Outputs that accumulate into an object rather than replacing it, so the
     #: object's value is the sum of what every contributing task wrote.
     contribution_slots: tuple[ObjectSlot, ...] = ()
-    #: Objects the task addresses by name rather than by position in its
+    #: Inputs the task addresses by name rather than by position in its
     #: contract, in the order the frontend binds them.
     named_inputs: tuple[str, ...] = ()
-    named_outputs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

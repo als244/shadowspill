@@ -90,39 +90,24 @@ def _write_atomic(path: Path, value: object) -> None:
             os.unlink(temporary)
 
 
-def write_plan_records(
+def write_plan_record(
     *,
-    results: tuple[ProgramPlanResult, ...],
+    result: ProgramPlanResult,
     directory: Path,
-) -> list[dict[str, object]]:
-    """Persist the initial/recurrent records and return compact artifact evidence."""
+) -> dict[str, object]:
+    """Persist the step's record and return compact artifact evidence."""
 
-    pairs: tuple[tuple[str, ProgramPlanResult], ...]
-    if len(results) == 1:
-        pairs = (("recurrent", results[0]),)
-    elif len(results) == 2:
-        pairs = (
-            ("initial", results[0]),
-            ("recurrent", results[1]),
-        )
-    else:
-        raise ValueError("results do not match initial/recurrent plans")
-    evidence: list[dict[str, object]] = []
-    for role, result in pairs:
-        record = plan_record(result, role=role)
-        path = directory / f"{role}.json"
-        _write_atomic(path, record)
-        evidence.append(
-            {
-                "role": role,
-                "path": str(path),
-                "request_digest": record["request_digest"],
-                "expected_digest": record["expected_digest"],
-                "program_digest": record["program_digest"],
-                "schedule_digest": record["schedule_digest"],
-            }
-        )
-    return evidence
+    record = plan_record(result, role="step")
+    path = directory / "step.json"
+    _write_atomic(path, record)
+    return {
+        "role": "step",
+        "path": str(path),
+        "request_digest": record["request_digest"],
+        "expected_digest": record["expected_digest"],
+        "program_digest": record["program_digest"],
+        "schedule_digest": record["schedule_digest"],
+    }
 
 
-__all__ = ["plan_record", "write_plan_records"]
+__all__ = ["plan_record", "write_plan_record"]

@@ -44,7 +44,6 @@ class ExecutionTaskRecord:
     argument_template: tuple[object, ...] | None
     forward_outputs: tuple[ForwardOutputRecord, ...]
     gradient_outputs: tuple[GradientOutputRecord, ...]
-    optimizer_outputs: tuple[OptimizerOutputRecord, ...]
     publications: tuple[TaskPublication, ...]
     optimizer_argument_object_ids: tuple[str | None, ...]
     handoff_source_aliases: frozenset[str]
@@ -87,18 +86,8 @@ class GradientOutputRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class OptimizerOutputRecord:
-    """One lazily created optimizer tensor published by an initial task."""
-
-    name: str
-    object_id: str
-    alias_id: str
-    publication_ordinal: int | None
-
-
-@dataclass(frozen=True, slots=True)
 class PlanRun:
-    """One immutable initial or recurrent training execution program."""
+    """The training step's program, predecoded for repeated execution."""
 
     lowered: LoweredTrainingProgram
     plan: ExecutionPlan
@@ -233,14 +222,13 @@ def _build_task_record(
         else _forward_outputs(entrypoint, input_aliases, bridge)
     )
     gradient_outputs = _gradient_outputs(entrypoint, bridge)
-    optimizer_outputs = _optimizer_outputs_for_entrypoint(entrypoint, bridge)
     handoff_aliases = frozenset(
         bridge.objects.alias_for_object(item.source_object_id)
         for item in entrypoint.storage_handoffs
         if item.destination_object_id in task.outputs
     )
     execution_ordinal, semantic_name = identity
-    publications = _task_publications(outputs, gradient_outputs, optimizer_outputs)
+    publications = _task_publications(outputs, gradient_outputs)
     return ExecutionTaskRecord(
         entrypoint=entrypoint,
         artifact=artifact,
@@ -260,7 +248,6 @@ def _build_task_record(
         argument_template=argument_template,
         forward_outputs=outputs,
         gradient_outputs=gradient_outputs,
-        optimizer_outputs=optimizer_outputs,
         publications=publications,
         optimizer_argument_object_ids=tuple(
             optimizer_objects.get(name) for name in entrypoint.options.named_inputs
@@ -337,44 +324,9 @@ def _gradient_outputs(
     return tuple(result)
 
 
-def _optimizer_outputs_for_entrypoint(
-    entrypoint: TaskEntrypoint,
-    bridge: RuntimeBridge,
-) -> tuple[OptimizerOutputRecord, ...]:
-    if entrypoint.options.phase != "optimizer":
-        return ()
-    if len(entrypoint.options.named_outputs) != len(entrypoint.output_slots):
-        raise ValueError("optimizer output names and tensor slots must align")
-    result: list[OptimizerOutputRecord] = []
-    next_publication = 0
-    seen: set[str] = set()
-    for name, slot in zip(
-        entrypoint.options.named_outputs,
-        entrypoint.output_slots,
-        strict=True,
-    ):
-        alias_id = bridge.objects.alias_for_object(slot.object_id)
-        publication_ordinal = None
-        if alias_id not in seen:
-            seen.add(alias_id)
-            if bridge.objects.requires_storage(alias_id):
-                publication_ordinal = next_publication
-                next_publication += 1
-        result.append(
-            OptimizerOutputRecord(
-                name,
-                slot.object_id,
-                alias_id,
-                publication_ordinal,
-            )
-        )
-    return tuple(result)
-
-
 def _task_publications(
     forward: tuple[ForwardOutputRecord, ...],
     gradients: tuple[GradientOutputRecord, ...],
-    optimizer: tuple[OptimizerOutputRecord, ...],
 ) -> tuple[TaskPublication, ...]:
     """Return the one ordered publication table for this task phase."""
 
@@ -390,11 +342,6 @@ def _task_publications(
     indexed.extend(
         (item.publication_ordinal, TaskPublication(item.alias_id))
         for item in gradients
-        if item.publication_ordinal is not None
-    )
-    indexed.extend(
-        (item.publication_ordinal, TaskPublication(item.alias_id))
-        for item in optimizer
         if item.publication_ordinal is not None
     )
     indexed.sort(key=lambda item: item[0])
@@ -497,7 +444,6 @@ __all__ = [
     "ExecutionTaskRecord",
     "ForwardOutputRecord",
     "GradientOutputRecord",
-    "OptimizerOutputRecord",
     "PlanRun",
     "build_plan_run",
 ]

@@ -1,4 +1,4 @@
-"""Admission: the selected tasks compiled, the plans physically admitted and sealed,
+"""Admission: the selected tasks compiled, the plan physically admitted and sealed,
 and the training callable published with its report."""
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from shadowspill.pytorch.optimizer import (
     OptimizerTaskArtifact,
 )
 from shadowspill.pytorch.planning.admission import (
-    SelectedAdmission,
+    FixedLayoutSelection,
     build_fixed_selected_admission,
     output_bindings_for_entrypoints,
 )
@@ -56,7 +56,6 @@ from ..artifacts import (
     TrainingMaterializationArtifacts,
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
-    TrainingSelections,
 )
 from ..stores import PlanningStores
 from .materialize import rollback_training_failure, rollback_training_materialization
@@ -67,21 +66,14 @@ from .report import training_plan_report
 def compile_selected_training_tasks(
     profiled: TrainingProfileArtifacts,
     programs: TrainingProgramArtifacts,
-    selections: TrainingSelections,
+    selection: FixedLayoutSelection,
     *,
     installed: InstalledRuntime,
     timer: PlanningTimer,
 ) -> TrainingExecutableArtifacts:
     """Retain executable callables only for selected task variants."""
 
-    required = _selected_artifact_digests(
-        programs.recurrent,
-        selections.recurrent.result,
-    )
-    if selections.initial is not None:
-        required.update(
-            _selected_artifact_digests(programs.initial, selections.initial.result)
-        )
+    required = _selected_artifact_digests(programs.lowered, selection.result)
     selected_tasks = tuple(
         artifact
         for artifact in profiled.compile_tasks
@@ -114,7 +106,7 @@ def admit_training_plan(
     materialized: TrainingMaterializationArtifacts,
     profiled: TrainingProfileArtifacts,
     programs: TrainingProgramArtifacts,
-    selections: TrainingSelections,
+    selection: FixedLayoutSelection,
     executable: TrainingExecutableArtifacts,
     *,
     memory: PlanMemory,
@@ -125,49 +117,24 @@ def admit_training_plan(
     started: int,
     search_options: SearchOptions | None = None,
 ) -> PlannedTrainStep:
-    """Physically admit selections and publish the training callable/report."""
+    """Physically admit the selection and publish the training callable/report."""
 
     try:
-        admitted = _admit_training_execution_plans(
+        admitted = _admit_training_execution_plan(
             captured,
-            profiled,
             programs,
-            selections,
+            selection,
             materialized.optimizer_capture,
             memory,
             timer,
         )
-        recurrent_plan = admitted.recurrent
-        initial_plan = admitted.initial
-        recurrent_fixed_layout = admitted.recurrent_admission.fixed_layout
-        if recurrent_fixed_layout is None:
-            raise AssertionError("recurrent admission did not produce a fixed layout")
-        recurrent_runtime_layout = project_runtime_fixed_layout(
-            recurrent_fixed_layout,
-            recurrent_plan.program,
-            recurrent_plan.schedule,
-            initial_task_id=INITIAL_ACTIONS_TASK_ID,
-            dynamic_task_allocations=(
-                admitted.recurrent_admission.dynamic_provider_allocations()
-            ),
-        )
-        initial_runtime_layout = None
-        if initial_plan is not None:
-            initial_admission = admitted.initial_admission
-            if initial_admission is None or initial_admission.fixed_layout is None:
-                raise AssertionError("initial admission did not produce a fixed layout")
-            initial_runtime_layout = project_runtime_fixed_layout(
-                initial_admission.fixed_layout,
-                initial_plan.program,
-                initial_plan.schedule,
-                initial_task_id=INITIAL_ACTIONS_TASK_ID,
-                dynamic_task_allocations=(
-                    initial_admission.dynamic_provider_allocations()
-                ),
-            )
+        plan = admitted.plan
+        fixed_layout = admitted.admission.fixed_layout
+        if fixed_layout is None:
+            raise AssertionError("admission did not produce a fixed layout")
         bridge = RuntimeBridge(
             memory.runtime,
-            recurrent_plan.program,
+            plan.program,
             memory.plan_handle,
             execution_pool_id=memory.execution.pool_id,
             spill_pool_id=memory.spill.pool_id,
@@ -176,58 +143,38 @@ def admit_training_plan(
         with timer.measure("plan_adoption"):
             materialized.state.adopt_execution_plan(
                 bridge,
-                programs.recurrent,
+                programs.lowered,
                 optimizer=materialized.optimizer,
             )
         with timer.measure("physical_sealing"):
-            seal_physical_budget(
-                captured.installed,
-                recurrent_plan,
-                recurrent_fixed_layout,
-            )
+            seal_physical_budget(captured.installed, plan, fixed_layout)
         with timer.measure("callable_construction"):
             executor = TrainingExecutor(
-                None if initial_plan is None else (programs.initial, initial_plan),
-                (programs.recurrent, recurrent_plan),
+                programs.lowered,
+                plan,
                 bridge,
                 materialized.state,
                 executable.tasks.functions,
                 materialized.optimizer,
-                recurrent_simulation=admitted.recurrent_admission.simulation,
-                initial_simulation=(
-                    None
-                    if admitted.initial_admission is None
-                    else admitted.initial_admission.simulation
+                simulation=admitted.admission.simulation,
+                fixed_layout=project_runtime_fixed_layout(
+                    fixed_layout,
+                    plan.program,
+                    plan.schedule,
+                    initial_task_id=INITIAL_ACTIONS_TASK_ID,
+                    dynamic_task_allocations=(
+                        admitted.admission.dynamic_provider_allocations()
+                    ),
                 ),
-                initial_fixed_layout=initial_runtime_layout,
-                recurrent_fixed_layout=recurrent_runtime_layout,
-                initial_memory_envelopes=(
-                    None
-                    if admitted.initial_admission is None
-                    else admitted.initial_admission.envelopes_by_task()
-                ),
-                recurrent_memory_envelopes=(
-                    admitted.recurrent_admission.envelopes_by_task()
-                ),
-                # State planning installed is already initialized, so there
-                # is nothing for an initial step to create.
-                optimizer_state_preinitialized=(
-                    materialized.optimizer_capture.initialized_state_dict is not None
-                    or materialized.installed_state_entries > 0
-                ),
-                optimizer_state_was_lazy=bool(
-                    materialized.optimizer_capture.created_state_names
-                ),
+                memory_envelopes=admitted.admission.envelopes_by_task(),
             )
         report = training_plan_report(
             model,
             captured,
             profiled,
             programs,
-            selections,
+            selection,
             admitted,
-            recurrent_plan,
-            initial_plan,
             optimizer_ordering=optimizer_ordering,
             data_ordering=data_ordering,
             stores=stores,
@@ -254,109 +201,55 @@ def admit_training_plan(
         )
 
 
-def _admit_training_execution_plans(
+def _admit_training_execution_plan(
     captured: TrainingCaptureArtifacts,
-    profiled: TrainingProfileArtifacts,
     programs: TrainingProgramArtifacts,
-    selections: TrainingSelections,
+    selection: FixedLayoutSelection,
     optimizer_capture: OptimizerCapture,
     memory: PlanMemory,
     timer: PlanningTimer,
 ) -> TrainingAdmissionArtifacts:
-    recurrent = selections.recurrent.result
-    initial = None if selections.initial is None else selections.initial.result
-    predicted_spill_peak = max(
-        recurrent.simulation.spill_peak_bytes,
-        0 if initial is None else initial.simulation.spill_peak_bytes,
-    )
+    selected = selection.result
+    predicted_spill_peak = selected.simulation.spill_peak_bytes
     with timer.measure("spill_admission"):
         reconcile_spill_pool(
             predicted_peak=predicted_spill_peak,
             budget=memory.spill_budget,
         )
-    admissions = _build_training_admissions(
-        captured,
-        profiled,
-        programs,
-        selections,
-        memory,
-        timer,
-    )
+    with timer.measure("slab_admission"):
+        selected_admission = build_fixed_selected_admission(
+            selected,
+            programs.measurements_by_profile,
+            fixed_admission=selection.admission,
+            output_bindings=output_bindings_for_entrypoints(
+                selected.program.selected_tasks(selected.selections),
+                programs.lowered.entrypoints,
+                {
+                    item.object_id: item.alias_group_id
+                    for item in selected.program.objects
+                },
+            ),
+        )
     admission = physical_admission(
         memory,
         captured.installed,
         workspace_reserve=programs.workspace_reserve,
         predicted_spill_peak_bytes=predicted_spill_peak,
-        predicted_fragmentation_bytes=max(
-            item.predicted_fragmentation_bytes for item in admissions
+        predicted_fragmentation_bytes=(
+            selected_admission.predicted_fragmentation_bytes
         ),
     )
-    recurrent_plan = _execution_plan(
-        programs.recurrent,
-        admissions[0].apply_prediction(recurrent),
-        optimizer_capture.optimizer_type,
-        admission,
-    )
-    initial_plan = (
+    result = selected_admission.apply_prediction(selected)
+    return TrainingAdmissionArtifacts(
         _execution_plan(
-            programs.initial,
-            admissions[1].apply_prediction(initial),
+            programs.lowered,
+            result,
             optimizer_capture.optimizer_type,
             admission,
-        )
-        if initial is not None
-        else None
+        ),
+        selected_admission,
+        result,
     )
-    recurrent_admission = admissions[0]
-    initial_admission = admissions[1] if len(admissions) == 2 else None
-    recurrent_result = recurrent_admission.apply_prediction(recurrent)
-    initial_result = (
-        None
-        if initial is None or initial_admission is None
-        else initial_admission.apply_prediction(initial)
-    )
-    return TrainingAdmissionArtifacts(
-        recurrent_plan,
-        initial_plan,
-        recurrent_admission,
-        initial_admission,
-        recurrent_result,
-        initial_result,
-    )
-
-
-def _build_training_admissions(
-    captured: TrainingCaptureArtifacts,
-    profiled: TrainingProfileArtifacts,
-    programs: TrainingProgramArtifacts,
-    selections: TrainingSelections,
-    memory: PlanMemory,
-    timer: PlanningTimer,
-) -> tuple[SelectedAdmission, ...]:
-    pairs = [(programs.recurrent, selections.recurrent)]
-    if selections.initial is not None:
-        pairs.append((programs.initial, selections.initial))
-    with timer.measure("slab_admission"):
-        admitted: list[SelectedAdmission] = []
-        for lowered, fixed_selection in pairs:
-            selected = fixed_selection.result
-            output_bindings = output_bindings_for_entrypoints(
-                selected.program.selected_tasks(selected.selections),
-                lowered.entrypoints,
-                {
-                    item.object_id: item.alias_group_id
-                    for item in selected.program.objects
-                },
-            )
-            admitted.append(
-                build_fixed_selected_admission(
-                    selected,
-                    programs.measurements_by_profile,
-                    fixed_admission=fixed_selection.admission,
-                    output_bindings=output_bindings,
-                ),
-            )
-        return tuple(admitted)
 
 
 def _selected_artifact_digests(

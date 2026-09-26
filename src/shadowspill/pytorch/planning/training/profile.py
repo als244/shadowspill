@@ -195,7 +195,7 @@ def _training_task_inventory(
                         ),
                         artifact,
                     )
-    for task in optimizer_capture.recurrent_tasks:
+    for task in optimizer_capture.update_tasks:
         compile_by_digest.setdefault(
             task.artifact.compatibility_digest,
             task.artifact,
@@ -206,18 +206,6 @@ def _training_task_inventory(
                 None,
             ),
             task.artifact,
-        )
-    if optimizer_capture.initial is not None:
-        compile_by_digest.setdefault(
-            optimizer_capture.initial.compatibility_digest,
-            optimizer_capture.initial,
-        )
-        profile_by_key.setdefault(
-            (
-                optimizer_capture.initial.compatibility_digest,
-                None,
-            ),
-            optimizer_capture.initial,
         )
     keys = tuple(profile_by_key)
     return _TrainingTaskInventory(
@@ -244,7 +232,7 @@ def _report_training_profile_inventory(
         f"unique={len(inventory.compile_tasks)}, "
         f"profile_variants={len(inventory.profile_tasks)}, "
         "optimizer_tasks="
-        f"{len(optimizer.recurrent_tasks)}"
+        f"{len(optimizer.update_tasks)}"
     )
 
 

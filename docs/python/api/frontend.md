@@ -1168,7 +1168,9 @@ Releasing the plan therefore releases the state with it: a training callable's
 `state_dict()` and `load_state_dict()` answer only while it is open, and both
 raise afterwards rather than reporting an empty optimizer. Take the checkpoint
 before closing, and resume from one with `load_state_dict()`, which writes the
-values into the storage the plan already owns. Execution failure closes the
+values into the storage the plan already owns. The checkpoint has to hold every
+entry of state the plan keeps -- one from an optimizer that never stepped holds
+none -- and one that lacks any is refused before anything changes. Execution failure closes the
 same way, and a failed step publishes no optimizer update in any case.
 
 `state_dict()` returns an independent snapshot -- for a training callable, the

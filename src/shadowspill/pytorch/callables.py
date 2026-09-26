@@ -563,7 +563,7 @@ class PlannedTrainStep:
                 trace_setup_ns = time.perf_counter_ns() - started_ns
                 self._trace_prepared = True
             self._executor.timing.arm(
-                self._executor.run_in_force.traced_invocation(),
+                self._executor.run.traced_invocation(),
                 trace_setup_ns=trace_setup_ns,
             )
         try:
@@ -698,8 +698,7 @@ class PlannedTrainStep:
                 model_state, optimizer_state, derived, self._state.model
             )
         self._state.load_model_state(model_state)
-        initialized = self._executor.optimizer_state.load(optimizer_state)
-        self._executor.optimizer_state.set_initialized(initialized)
+        self._executor.optimizer_state.load(optimizer_state)
         self._step = step
 
     def _require_open(self, action: str) -> None:

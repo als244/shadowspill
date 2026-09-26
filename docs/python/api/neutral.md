@@ -104,8 +104,8 @@ it went wrong.
 
 ### `StepProgram`
 
-The recurrent and optional initial `ShadowSpillPlanningProblem` a captured step
-lowered to, with the provenance that says what produced them: the ordering, the
+The `ShadowSpillPlanningProblem` a captured step lowered to, with the
+provenance that says what produced it: the ordering, the
 measured profiles, and the digests that identify the content rather than the
 run. `build_step_programs()` returns one per ordering; `to_json()` and `from_json()` round it
 through a file, and `digest` identifies what it would plan as. Its fields are
@@ -258,7 +258,7 @@ plan_program(
 
 | argument | type | default | meaning |
 |---|---|---|---|
-| `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally `build_step_programs(...)[0].recurrent` or a value read back with `ShadowSpillPlanningProblem.from_value()`. |
+| `problem` | `ShadowSpillPlanningProblem` | required | The question to answer, normally `build_step_programs(...)[0].problem` or a value read back with `ShadowSpillPlanningProblem.from_value()`. |
 | `execution_budget` | `int` \| `None` | `None` | Device bytes to plan for; the problem's own budget when `None`, and never more than the capacity it was compiled and profiled under. |
 | `spill_budget` | `int` \| `None` | `None` | Spill bytes to plan for, with the same bound. |
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | Fetch and evict rates to price copies at; the problem's embedded calibration when `None`. |

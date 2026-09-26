@@ -73,7 +73,6 @@ class OpaqueOptimizerArtifact:
     optimizer_type: str
     compatibility_digest: str
     parameter_names: tuple[str | None, ...]
-    profile_output_names: tuple[str, ...]
     optimizer: torch.optim.Optimizer = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -88,18 +87,12 @@ class OpaqueOptimizerArtifact:
             raise ValueError("opaque optimizer parameter inventory is invalid")
         if len(named_parameters) != len(set(named_parameters)):
             raise ValueError("opaque optimizer parameter names must be unique")
-        if any(not name for name in self.profile_output_names):
-            raise ValueError("opaque optimizer output names must be non-empty")
-        if len(self.profile_output_names) != len(set(self.profile_output_names)):
-            raise ValueError("opaque optimizer output names must be unique")
 
     @classmethod
     def capture(
         cls,
         optimizer: torch.optim.Optimizer,
         bindings: tuple[OptimizerTensorBinding, ...],
-        *,
-        profile_output_names: tuple[str, ...] = (),
     ) -> OpaqueOptimizerArtifact:
         optimizer_type = optimizer_type_name(optimizer)
         code_identity = optimizer_step_identity(optimizer)
@@ -119,10 +112,9 @@ class OpaqueOptimizerArtifact:
             # its copied Parameters.  Version that construction contract here
             # so correcting it invalidates only opaque-optimizer profiles,
             # rather than every compiled graph profile in the cache.
-            "profiling_contract": "explicit_initial_outputs/v1",
+            "profiling_contract": "update_with_restored_gradients/v1",
             "optimizer_type": optimizer_type,
             "parameter_names": parameter_names,
-            "profile_output_names": profile_output_names,
             "step": code_identity,
             "bindings": [
                 {
@@ -151,7 +143,6 @@ class OpaqueOptimizerArtifact:
             optimizer_type,
             hashlib.sha256(encoded.encode()).hexdigest(),
             parameter_names,
-            profile_output_names,
             optimizer,
         )
 
@@ -161,14 +152,11 @@ OptimizerTaskArtifact = GraphArtifact | OpaqueOptimizerArtifact
 
 @dataclass(frozen=True, slots=True)
 class OptimizerCapture:
-    """First/recurrent optimizer task semantics and explicit tensor inventory."""
+    """The optimizer's update, as tasks, and its explicit tensor inventory."""
 
     optimizer_type: str
-    first_step_is_opaque: bool
-    created_state_names: tuple[str, ...]
-    initial: OpaqueOptimizerArtifact | None
-    recurrent: OptimizerTaskArtifact | None
-    recurrent_tasks: tuple[OptimizerTask, ...]
+    update: OptimizerTaskArtifact | None
+    update_tasks: tuple[OptimizerTask, ...]
     bindings: tuple[OptimizerTensorBinding, ...]
     mutation_names: tuple[str, ...]
     opaque_reason: str | None = None
@@ -177,15 +165,13 @@ class OptimizerCapture:
     )
 
     @property
-    def recurrent_is_opaque(self) -> bool:
-        return self.recurrent is None or isinstance(
-            self.recurrent, OpaqueOptimizerArtifact
-        )
+    def update_is_opaque(self) -> bool:
+        return self.update is None or isinstance(self.update, OpaqueOptimizerArtifact)
 
 
 @dataclass(frozen=True, slots=True)
 class OptimizerTask:
-    """One dependency-closed recurrent optimizer component."""
+    """One dependency-closed component of the optimizer update."""
 
     artifact: OptimizerTaskArtifact
     binding_names: tuple[str, ...]

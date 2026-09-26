@@ -14,7 +14,7 @@ run together and they have different lifetimes.
 | | |
 |---|---|
 | `program` | The [ShadowSpillProgram](program.md) itself |
-| `role` | Which step this is: `initial`, `recurrent` or `forward` |
+| `role` | What it plans: a training `step` or a `forward` |
 | `initial_residency` | Where each alias group starts |
 | `final_residency` | Where each alias group must end |
 | `simulation_config` | The machine: device capacity, spill capacity, transfer bandwidths |
@@ -87,8 +87,7 @@ and its options rather than the program alone.
 ## Where it comes from
 
 `build_step_programs(...)` returns one `StepProgram` per ordering, and each
-holds one problem per role; `.recurrent` is the steady step and the one a
-sweep plans. A saved problem round-trips through
+holds its step's problem as `.problem`, the one a sweep plans. A saved problem round-trips through
 `ShadowSpillPlanningProblem.from_value()` and is the unit the corpus stores
 — see [program collection](../../benchmarking/program_collection/README.md).
 

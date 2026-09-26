@@ -147,10 +147,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     assert training.plan_report.diagnostics.cache_artifacts
     assert len(training.plan_report.diagnostics.profiling_metadata) == 2
     layouts = training.plan_report.diagnostics.physical_layouts
-    assert tuple(item.plan_role for item in layouts) in {
-        ("recurrent",),
-        ("initial", "recurrent"),
-    }
+    assert tuple(item.plan_role for item in layouts) == ("step",)
     assert all(item.strategy == "fixed" for item in layouts)
     assert all(item.required_bytes <= item.pool_capacity_bytes for item in layouts)
     assert all(item.attempts[-1].accepted for item in layouts)
@@ -360,7 +357,6 @@ def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
         spill="spill",
         artifact_store=tmp_path,
     )
-    assert training.plan_report.initial_execution_plan is None
     optimizer_owner = persistent_state(runtime, built[0])
     assert optimizer_owner is not None
     assert optimizer_owner.storages
@@ -791,7 +787,6 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
         spill="spill",
         artifact_store=tmp_path,
     )
-    assert training.plan_report.initial_execution_plan is None
     optimizer_tasks = tuple(
         task
         for task in training.plan_report.execution_plan.program.tasks

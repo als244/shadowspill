@@ -59,7 +59,7 @@ def _pressurefit_program() -> ShadowSpillPlanningProblem:
         ),
     )
     return ShadowSpillPlanningProblem(
-        role="recurrent",
+        role="step",
         program=program,
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
         final_residency=(ResidencySpec("state", MemoryLocation.SPILL),),
@@ -161,8 +161,7 @@ def test_annotated_program_plan_separates_budgets_and_bandwidths(
 def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
     pressurefit_input = _pressurefit_program()
     step_program = StepProgram(
-        recurrent=pressurefit_input,
-        initial=None,
+        problem=pressurefit_input,
         optimizer_ordering="stage_interleaved",
         data_ordering=StepDataOrdering.depth_first(1),
         signature_digests=("a" * 64,),
@@ -205,7 +204,7 @@ def test_corpus_round_trip_keeps_plan_axes_separate(tmp_path: Path) -> None:
         )
     loaded_case, loaded_program = load_step_program(saved.directory)
     selected = plan_program(
-        loaded_program.recurrent,
+        loaded_program.problem,
         transfer_bandwidths=TransferBandwidths(1_000_000, 2_000_000),
         artifact_store=tmp_path / "store",
         verbose=False,

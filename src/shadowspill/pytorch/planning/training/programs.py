@@ -1,5 +1,5 @@
-"""Programs: the canonical initial and recurrent `ShadowSpillProgram` lowered from the
-captured stages under one ordering, with the admission facts a search plans against."""
+"""Programs: the step's canonical `ShadowSpillProgram` lowered from the captured stages
+under one ordering, with the admission facts a search plans against."""
 
 from __future__ import annotations
 
@@ -13,9 +13,6 @@ from shadowspill.pipeline.common import (
     build_simulation_config,
     fixed_execution_bytes,
     workspace_reserve,
-)
-from shadowspill.planner import (
-    AdmissionFacts,
 )
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.lowering.program import execution_device_id
@@ -55,7 +52,7 @@ def build_training_programs(
     timer: PlanningTimer,
     transfer_bandwidths: TransferBandwidths | None = None,
 ) -> TrainingProgramArtifacts:
-    """Construct canonical initial/recurrent programs from semantic and physical IR.
+    """Construct the step's canonical program from semantic and physical IR.
 
     `transfer_bandwidths` prices the simulator input at given lanes instead
     of the runtime's calibration; see `build_simulation_config`.
@@ -65,7 +62,7 @@ def build_training_programs(
         measurements, measurements_by_profile, compatibility_digests = (
             _training_measurement_maps(profiled)
         )
-        initial, recurrent = _lower_optimizer_phases(
+        lowered = _lower_training_program(
             captured,
             materialized.optimizer_capture,
             profiled,
@@ -74,9 +71,8 @@ def build_training_programs(
             optimizer_ordering=optimizer_ordering,
             data_ordering=data_ordering,
         )
-        _verify_provisional_layout(captured.layout, recurrent)
-        _verify_optimizer_phase_identity(initial, recurrent)
-        _report_training_program_inventory(recurrent, timer)
+        _verify_provisional_layout(captured.layout, lowered)
+        _report_training_program_inventory(lowered, timer)
     with timer.measure("admission_facts"):
         reserve = workspace_reserve(profiled.profiles.measurements)
         simulation_config = build_simulation_config(
@@ -89,38 +85,31 @@ def build_training_programs(
         execution_pool_bytes = memory.execution_budget - fixed_execution_bytes(
             memory, profiled.profiles
         )
-
-        def admission_for(lowered: LoweredTrainingProgram) -> AdmissionFacts:
-            return build_admission_facts(
-                lowered.program,
-                execution_pool_bytes=execution_pool_bytes,
-                object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
-                allocation_traces_by_compatibility={
-                    digest: measurement.allocation_trace
-                    for digest, measurement in measurements_by_profile.items()
+        admission = build_admission_facts(
+            lowered.program,
+            execution_pool_bytes=execution_pool_bytes,
+            object_capacity_bytes=simulation_config.devices[0].capacity_bytes,
+            allocation_traces_by_compatibility={
+                digest: measurement.allocation_trace
+                for digest, measurement in measurements_by_profile.items()
+            },
+            output_bindings=output_bindings_for_entrypoints(
+                lowered.program.tasks,
+                lowered.entrypoints,
+                {
+                    item.object_id: item.alias_group_id
+                    for item in lowered.program.objects
                 },
-                output_bindings=output_bindings_for_entrypoints(
-                    lowered.program.tasks,
-                    lowered.entrypoints,
-                    {
-                        item.object_id: item.alias_group_id
-                        for item in lowered.program.objects
-                    },
-                ),
-            )
-
-        initial_admission = admission_for(initial)
-        recurrent_admission = admission_for(recurrent)
+            ),
+        )
     return TrainingProgramArtifacts(
-        initial=initial,
-        recurrent=recurrent,
+        lowered=lowered,
         measurements=measurements,
         measurements_by_profile=measurements_by_profile,
         workspace_reserve=reserve,
         dynamic_scratch_reserve_bytes=memory.dynamic_scratch_reserve_bytes,
         simulation_config=simulation_config,
-        initial_admission=initial_admission,
-        recurrent_admission=recurrent_admission,
+        admission=admission,
     )
 
 
@@ -155,7 +144,7 @@ def _training_measurement_maps(
     return measurements, by_profile, compatibility_digests
 
 
-def _lower_optimizer_phases(
+def _lower_training_program(
     captured: TrainingCaptureArtifacts,
     optimizer_capture: OptimizerCapture,
     profiled: TrainingProfileArtifacts,
@@ -164,51 +153,42 @@ def _lower_optimizer_phases(
     *,
     optimizer_ordering: Literal["stage_interleaved", "tail"],
     data_ordering: StepDataOrdering,
-) -> tuple[LoweredTrainingProgram, LoweredTrainingProgram]:
-    layout_cache = CompiledLayoutIndex()
-    storage_contracts = {
-        digest: manifest.storage_contract
-        for digest, manifest in profiled.manifests.manifests.items()
-    }
-    root_allocations = {
-        digest: manifest.root_allocations
-        for digest, manifest in profiled.manifests.manifests.items()
-    }
-    metadata_digests = tuple(item.digest for item in captured.workloads)
-
-    def lower(phase: Literal["initial", "recurrent"]) -> LoweredTrainingProgram:
-        return lower_partitioned_training_program(
-            captured.fake_model,
-            captured.partitioned,
-            measurements,
-            optimizer_capture,
-            storage_contracts=storage_contracts,
-            compiled_root_allocations=root_allocations,
-            optimizer_phase=phase,
-            optimizer_ordering=optimizer_ordering,
-            data_ordering=data_ordering,
-            layout_cache=layout_cache,
-            profiling_metadata_digests=metadata_digests,
-            profile_compatibility_digests=compatibility_digests,
-        )
-
-    return lower("initial"), lower("recurrent")
+) -> LoweredTrainingProgram:
+    return lower_partitioned_training_program(
+        captured.fake_model,
+        captured.partitioned,
+        measurements,
+        optimizer_capture,
+        storage_contracts={
+            digest: manifest.storage_contract
+            for digest, manifest in profiled.manifests.manifests.items()
+        },
+        compiled_root_allocations={
+            digest: manifest.root_allocations
+            for digest, manifest in profiled.manifests.manifests.items()
+        },
+        optimizer_ordering=optimizer_ordering,
+        data_ordering=data_ordering,
+        layout_cache=CompiledLayoutIndex(),
+        profiling_metadata_digests=tuple(item.digest for item in captured.workloads),
+        profile_compatibility_digests=compatibility_digests,
+    )
 
 
 def _report_training_program_inventory(
-    recurrent: LoweredTrainingProgram,
+    lowered: LoweredTrainingProgram,
     timer: PlanningTimer,
 ) -> None:
     largest = max(
-        recurrent.program.profiles,
+        lowered.program.profiles,
         key=lambda item: item.workspace_bytes,
     )
     timer.progress(
-        "recurrent ShadowSpillProgram inventory: "
-        f"tasks={len(recurrent.program.tasks)}, "
-        f"objects={len(recurrent.program.objects)}, "
-        f"aliases={len(recurrent.program.alias_groups)}, "
-        f"task_alternative_groups={len(recurrent.program.task_alternative_groups)}, "
+        "step ShadowSpillProgram inventory: "
+        f"tasks={len(lowered.program.tasks)}, "
+        f"objects={len(lowered.program.objects)}, "
+        f"aliases={len(lowered.program.alias_groups)}, "
+        f"task_alternative_groups={len(lowered.program.task_alternative_groups)}, "
         f"largest_workspace={largest.workspace_bytes} ({largest.profile_id})"
     )
 
@@ -225,13 +205,3 @@ def _verify_provisional_layout(
         raise PlanningError(
             "training storage identities changed after optimizer capture"
         )
-
-
-def _verify_optimizer_phase_identity(
-    initial: LoweredTrainingProgram,
-    recurrent: LoweredTrainingProgram,
-) -> None:
-    if initial.program.alias_groups != recurrent.program.alias_groups or (
-        initial.program.objects != recurrent.program.objects
-    ):
-        raise PlanningError("optimizer phases changed storage identities")

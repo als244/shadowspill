@@ -35,7 +35,7 @@ from ..lowering.training import (
 )
 from ..partition import PartitionedExport
 from ..sharing import ResolvedSharedInput, ResolvedSharedOutput
-from .admission import FixedLayoutSelection, SelectedAdmission
+from .admission import SelectedAdmission
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +101,6 @@ class TrainingMaterializationArtifacts:
     state: TrainingMaterializedState
     optimizer: torch.optim.Optimizer
     optimizer_capture: OptimizerCapture
-    #: How many optimizer-state entries planning declared, allocated in the
-    #: pool and had the caller fill. Non-zero means the state exists and is
-    #: initialized, so no separate initial step is needed to create it.
-    installed_state_entries: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,31 +119,16 @@ class TrainingProfileArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class TrainingProgramArtifacts:
-    """Initial and recurrent programs, and the inputs a search is given for each."""
+    """The step's canonical ShadowSpillProgram plus the exact inputs a search is
+    given."""
 
-    initial: LoweredTrainingProgram
-    recurrent: LoweredTrainingProgram
+    lowered: LoweredTrainingProgram
     measurements: dict[ProfileMeasurementKey, TaskMeasurement]
     measurements_by_profile: dict[str, TaskMeasurement]
     workspace_reserve: int
     dynamic_scratch_reserve_bytes: int
     simulation_config: SimulationConfig
-    initial_admission: AdmissionFacts
-    recurrent_admission: AdmissionFacts
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingSelections:
-    """Cached or freshly selected recurrent and optional first-step plans."""
-
-    recurrent: FixedLayoutSelection
-    initial: FixedLayoutSelection | None
-
-    @property
-    def results(self) -> tuple[ProgramPlanResult, ...]:
-        if self.initial is None:
-            return (self.recurrent.result,)
-        return (self.initial.result, self.recurrent.result)
+    admission: AdmissionFacts
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,14 +140,11 @@ class TrainingExecutableArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class TrainingAdmissionArtifacts:
-    """Physically admitted initial and recurrent execution plans."""
+    """The step's physically admitted execution plan."""
 
-    recurrent: ExecutionPlan
-    initial: ExecutionPlan | None
-    recurrent_admission: SelectedAdmission
-    initial_admission: SelectedAdmission | None
-    recurrent_result: ProgramPlanResult
-    initial_result: ProgramPlanResult | None
+    plan: ExecutionPlan
+    admission: SelectedAdmission
+    result: ProgramPlanResult
 
 
 __all__ = [
@@ -179,5 +157,4 @@ __all__ = [
     "TrainingMaterializationArtifacts",
     "TrainingProfileArtifacts",
     "TrainingProgramArtifacts",
-    "TrainingSelections",
 ]

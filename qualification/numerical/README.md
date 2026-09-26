@@ -95,7 +95,7 @@ pointer-lookup failure.
 By default, the JSON contains compact correctness, physical-budget, planning,
 and step-summary evidence and planning artifacts are not retained. Add
 `--detailed-artifacts` to write the complete PlanReport, per-task traces, and
-the initial and recurrent plan records. A plan record is the framework-free
+the step's plan record. A plan record is the framework-free
 request the search was given -- program, initial and final residency,
 simulation config, search options, admission and placement facts -- beside the
 answer it returned, with a digest over each, so one run's plan can be compared
