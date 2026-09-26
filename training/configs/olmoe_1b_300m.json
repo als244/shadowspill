@@ -1,0 +1,63 @@
+{
+  "run_dir": "training/runs/olmoe_1b_300m",
+  "settings": [
+    {
+      "@call": "workloads.providers:select_implementation",
+      "family": "olmoe",
+      "implementation": "mlops"
+    },
+    {
+      "@call": "mlops.dispatch:set_deterministic_kernels",
+      "enabled": true
+    }
+  ],
+  "model": {
+    "@call": "training.models:build_on_meta",
+    "model": "@workloads.mlops:OLMoE",
+    "dtype": "bfloat16",
+    "config": {
+      "@call": "training.models:config_preset",
+      "preset": "@workloads.mlops:OLMoEConfig.numerical",
+      "max_seq_len": 2048
+    }
+  },
+  "objective": "@training.objectives:model_loss",
+  "objective_args": {
+    "aux_coef": 0.01
+  },
+  "optimizer": "@mlops.optim:AdamW",
+  "optimizer_args": {
+    "betas": [
+      0.9,
+      0.95
+    ],
+    "weight_decay": 0.1,
+    "master_parameter_dtype": "@torch:bfloat16"
+  },
+  "data": {
+    "@call": "training.data:PackedTokens",
+    "directory": "training/data/tokens/olmoe"
+  },
+  "steps": 4578,
+  "max_seq_len": 2048,
+  "max_tokens_per_step": 65536,
+  "max_tokens_per_microbatch": 8192,
+  "schedule": {
+    "@call": "training.schedules:WarmupCosine",
+    "lr": 0.0003,
+    "min_lr": 3e-05,
+    "warmup_steps": 100
+  },
+  "backend": {
+    "@call": "training.backends.shadowspill:ShadowSpill",
+    "execution_gib": 8,
+    "spill_gib": 32,
+    "eval_execution_gib": 4
+  },
+  "seed": 0,
+  "eval_every": 100,
+  "eval_batches": 10,
+  "checkpoint_every": 763,
+  "artifact_store": "training/artifact_store",
+  "wandb_project": "shadowspill-training"
+}

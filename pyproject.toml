@@ -12,6 +12,14 @@ dependencies = ["matplotlib>=3.9"]
 
 [project.optional-dependencies]
 pytorch = ["torch>=2.13,<2.14"]
+training = [
+  "huggingface-hub>=1.0",
+  "matplotlib>=3.9",
+  "numpy>=2.0",
+  "pyarrow>=18",
+  "transformers>=5.0",
+  "wandb>=0.20",
+]
 dev = [
   "hypothesis>=6.130",
   "mypy>=1.15",
