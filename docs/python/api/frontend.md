@@ -757,6 +757,8 @@ plan_step(
     plan_store_mode='contribute',
     export_bypass_key=None,
     transfer_bandwidths=None,
+    master_dtype=None,
+    grad_dtype=None,
 ) -> PlannedTrainStep
 ```
 
@@ -776,6 +778,8 @@ Beyond the shared and store arguments:
 | `search_options` | `SearchOptions` \| `None` | `None` | What the planner is told about searching: `generic` for what any search understands, `algorithm` for the search itself carrying its own options, and `workers`. `None` runs the search that ships with its defaults. |
 | `incumbent` | `AnnotatedProgramPlan` \| `None` | `None` | A plan already in hand for this same program; the search measures it at this budget and never answers with worse. |
 | `transfer_bandwidths` | `TransferBandwidths` \| `None` | `None` | As for `plan_forward()`. A step that runs what `plan_step_search()` chose is planned against the report's `planned_lanes`, so it asks the store the search's question and executes the plan the search chose. |
+| `master_dtype` | `torch.dtype` \| `None` | `None` | Gives every weight the step trains at another dtype a master copy at this one, and builds `optimizer` over the masters; the update writes each weight from its master. See [the optimizer](../../architecture/optimizer.md#master-copies-and-the-dtype-gradients-are-kept-at). |
+| `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
 
 `depth` and `breadth` say how the step walks those microbatches: `depth`
 passes of `breadth` microbatches each, every microbatch of a pass running one
@@ -851,6 +855,8 @@ build_step_programs(
     allocation_probe_repetitions=2,
     build_store_mode='contribute',
     export_bypass_key=None,
+    master_dtype=None,
+    grad_dtype=None,
 ) -> tuple[StepProgram, ...]
 ```
 
@@ -907,13 +913,15 @@ plan_step_search(
     verbose=False,
     progress=None,
     export_bypass_key=None,
+    master_dtype=None,
+    grad_dtype=None,
 ) -> StepSearchReport
 ```
 
 `model`, `objective`, `optimizer`, `hyperparams`,
 `runtime`, `execution`, `spill`,
-`optimizer_ordering` and the store arguments mean what they mean for
-`plan_step()`. The rest are:
+`optimizer_ordering`, `master_dtype`, `grad_dtype` and the store arguments
+mean what they mean for `plan_step()`. The rest are:
 
 | argument | type | default | what it must be |
 |---|---|---|---|
@@ -1187,7 +1195,9 @@ same way, and a failed step publishes no optimizer update in any case.
 
 `state_dict()` returns an independent snapshot -- for a training callable, the
 three keys `model`, `optimizer` and `step`, which is exactly what
-`load_state_dict()` requires back. Every tensor in it is its own compact host
+`load_state_dict()` requires back. A weight with a master copy
+(`master_dtype`) is written as its master, at the master's dtype, and loading
+writes the value to the master and its cast to the weight. Every tensor in it is its own compact host
 allocation outside the runtime pools, so it can be serialized while training
 continues. The spill pool keeps the authoritative copy throughout and is read
 in place, so the snapshot is normally the only copy of the state outside the
@@ -1199,13 +1209,7 @@ and the optimizer's state are viewed where they are in the spill pool and
 written from there, so saving costs no host copy of the state, however large,
 and the callable goes on training on the same state. Resume with
 `load_state_dict(torch.load(path, mmap=True))`. A pool this process cannot
-address is read out as `state_dict()` reads it. A model entry that an entry of
-the optimizer's state reproduces bit for bit by a cast -- a weight whose master
-copy the optimizer keeps at a higher precision, say -- is written once, as the
-optimizer's entry, and a fourth key, `model_from_optimizer`, says which entry
-each such weight comes from, for `load_state_dict()` to cast it back. Which
-entries qualify is found from their values at the time of the save, not from
-their names or dtypes.
+address is read out as `state_dict()` reads it.
 
 ## Exceptions
 

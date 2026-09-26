@@ -588,7 +588,7 @@ class _OptimizerTaskAppender:
         self.profile_id = profile_id
         self.components = components
         self.object_dependencies = object_dependencies or {}
-        self.object_by_name = _optimizer_object_ids(gradients, optimizer_objects)
+        self.object_by_name = optimizer_object_ids(gradients, optimizer_objects)
 
     def append(self) -> tuple[str, ...]:
         components = self._selected_components()
@@ -664,12 +664,24 @@ class _OptimizerTaskAppender:
         )
 
 
-def _optimizer_object_ids(
+def optimizer_object_ids(
     gradients: tuple[GradientBinding, ...],
     optimizer_objects: tuple[OptimizerObjectBinding, ...],
 ) -> dict[str, str]:
+    """The object behind each name an optimizer task binds.
+
+    A parameter's name is its weights, unless the optimizer holds a master copy
+    of them: then the master is one of the optimizer's own objects, found under
+    the same name, and the weights are ``compute.<name>``, which the update
+    writes from it.
+    """
+
     return {
         **{item.parameter_name: item.parameter_object_id for item in gradients},
+        **{
+            f"compute.{item.parameter_name}": item.parameter_object_id
+            for item in gradients
+        },
         **{
             f"gradient.{item.parameter_name}": item.gradient_object_id
             for item in gradients

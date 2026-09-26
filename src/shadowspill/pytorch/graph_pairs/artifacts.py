@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+import torch
+
 from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     accumulate_gradient_outputs,
+    cast_gradient_outputs,
 )
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
@@ -43,6 +46,28 @@ class GraphPairVariant:
             raise ValueError(
                 "only min-cut graph-pair variants carry an activation-memory budget"
             )
+
+    def with_gradient_dtype(self, dtype: torch.dtype | None) -> GraphPairVariant:
+        """Return this variant with its parameter gradients produced at ``dtype``.
+
+        ``None`` leaves each at the dtype of its parameter. Its accumulating
+        form, derived from what this returns, then adds into gradients at
+        ``dtype`` too.
+        """
+
+        if dtype is None:
+            return self
+        return replace(
+            self,
+            pair=replace(
+                self.pair,
+                backward=cast_gradient_outputs(
+                    self.pair.backward,
+                    parameter_gradient_leaves(self.pair),
+                    dtype,
+                ),
+            ),
+        )
 
     def accumulating(self) -> GraphPairVariant:
         """Return the form of this variant that adds onto the gradients it is given.
@@ -102,6 +127,16 @@ class TaskGraphPairs:
             if item.option_id == option_id and not item.accumulates:
                 return item
         raise KeyError(option_id)
+
+    def with_gradient_dtype(self, dtype: torch.dtype | None) -> TaskGraphPairs:
+        """Every variant with its parameter gradients produced at ``dtype``."""
+
+        if dtype is None:
+            return self
+        return replace(
+            self,
+            variants=tuple(item.with_gradient_dtype(dtype) for item in self.variants),
+        )
 
     def accumulating_variants(self) -> tuple[GraphPairVariant, ...]:
         """Derive the accumulating form of every captured variant."""

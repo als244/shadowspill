@@ -55,6 +55,10 @@ class OptimizerTensorRole(StrEnum):
     GRADIENT = "gradient"
     STATE = "state"
     HYPERPARAMETER = "hyperparameter"
+    #: The weights the model computes with, where the optimizer's parameter is
+    #: a master copy of them at another precision: the update writes them from
+    #: their master once it has stepped.
+    COMPUTE_COPY = "compute_copy"
 
 
 @dataclass(frozen=True, slots=True)

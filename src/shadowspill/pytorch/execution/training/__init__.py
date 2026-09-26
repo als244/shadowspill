@@ -61,6 +61,7 @@ class TrainingExecutor(AnnotatedExecutor):
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
         *,
+        optimizer_parameters: Mapping[str, torch.nn.Parameter],
         simulation: SimulationResult,
         fixed_layout: RuntimeFixedLayout,
         memory_envelopes: Mapping[str, TaskMemoryEnvelope],
@@ -76,7 +77,9 @@ class TrainingExecutor(AnnotatedExecutor):
             functions=functions,
             memory_envelopes=memory_envelopes,
         )
-        self.optimizer_state = OptimizerState(optimizer, state, bridge, lowered)
+        self.optimizer_state = OptimizerState(
+            optimizer, state, bridge, lowered, optimizer_parameters
+        )
         # Materialization uses a short-lived action batch. Replace it with the
         # step's plan, admitted once for every invocation.
         clear_tasks(self._bridge)

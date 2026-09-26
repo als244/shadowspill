@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 
 import torch
 import torch.nn as nn
@@ -76,6 +76,13 @@ def register_training_objects(
         receives_gradient=training_parameters_with_gradients(
             captures, dict(model.named_parameters())
         ),
+        # The optimizer's capture says what dtype the step keeps each
+        # gradient at, which is the dtype the backward produces it in.
+        dtypes={
+            binding.name.removeprefix("gradient."): binding.tensor.dtype
+            for binding in optimizer.bindings
+            if binding.role is OptimizerTensorRole.GRADIENT
+        },
     )
     gradient_by_parameter = {
         item.parameter_object_id: item.gradient_object_id for item in gradients
@@ -142,8 +149,10 @@ def _register_gradients(
     parameter_objects: dict[tuple[int, int], str],
     *,
     receives_gradient: Collection[str],
+    dtypes: Mapping[str, torch.dtype],
 ) -> tuple[GradientBinding, ...]:
-    """Give a gradient object to every parameter a task will write one for.
+    """Give a gradient object to every parameter a task will write one for,
+    at the dtype ``dtypes`` names for it, or the parameter's own.
 
     A parameter the objective never reaches gets no gradient however it is
     flagged, and reserving one for it puts an object in the plan that no
@@ -159,7 +168,11 @@ def _register_gradients(
         # A program is lowered from fake tensors, so this describes the
         # gradient's geometry and allocates nothing; the object it becomes
         # is created in a pool when the plan runs.
-        gradient = torch.empty_like(parameter, memory_format=torch.preserve_format)
+        gradient = torch.empty_like(
+            parameter,
+            memory_format=torch.preserve_format,
+            dtype=dtypes.get(name, parameter.dtype),
+        )
         gradient_id = inventory.add(
             gradient, role=ObjectRole.GRADIENT, persistence=Persistence.STEP
         )
@@ -174,12 +187,40 @@ def _register_optimizer_objects(
 ) -> tuple[OptimizerObjectBinding, ...]:
     parameter_names = {item.parameter_name for item in gradients}
     gradient_names = {f"gradient.{item.parameter_name}" for item in gradients}
+    # Where the update writes a compute copy, the optimizer's parameter is a
+    # master copy of the weights, and an object of the optimizer's own.
+    mastered = {
+        binding.name.removeprefix("compute.")
+        for binding in optimizer.bindings
+        if binding.role is OptimizerTensorRole.COMPUTE_COPY
+    }
+    if not mastered <= parameter_names:
+        raise CaptureError(
+            "compute copies name weights that receive no gradient: "
+            f"{sorted(mastered - parameter_names)}"
+        )
     results: list[OptimizerObjectBinding] = []
     for binding in optimizer.bindings:
+        if binding.role is OptimizerTensorRole.COMPUTE_COPY:
+            continue  # the model's weights, registered with its state
         if binding.role is OptimizerTensorRole.PARAMETER:
             if binding.name not in parameter_names:
                 raise CaptureError(
                     f"optimizer parameter {binding.name!r} has no model binding"
+                )
+            if binding.name in mastered:
+                results.append(
+                    OptimizerObjectBinding(
+                        binding.name,
+                        inventory.add(
+                            binding.tensor,
+                            role=ObjectRole.PARAMETER,
+                            persistence=Persistence.CHECKPOINT,
+                            retain_spill_copy=True,
+                        ),
+                        binding.role,
+                        binding.mutable,
+                    )
                 )
             continue
         if binding.role is OptimizerTensorRole.GRADIENT:

@@ -4,7 +4,7 @@ abandoned or fails."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any, NoReturn
 
 import torch
@@ -51,8 +51,16 @@ def materialize_training_state(
     memory: PlanMemory,
     stores: PlanningStores,
     timer: PlanningTimer,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> TrainingMaterializationArtifacts:
-    """Materialize registered state and invoke/capture the optimizer exactly once."""
+    """Materialize registered state and invoke/capture the optimizer exactly once.
+
+    With a ``master_dtype``, every weight a step trains at another dtype gets
+    a master copy at that one, and the optimizer is built over the masters.
+    ``grad_dtype`` is the dtype the step keeps gradients at, which the
+    captured update takes them in.
+    """
 
     runtime = memory.runtime
     bridge = RuntimeBridge(
@@ -77,7 +85,20 @@ def materialize_training_state(
                 device_ordinal=captured.device_ordinal,
             )
         with timer.measure("optimizer_capture"):
-            optimizer = build_optimizer(model.parameters())
+            # A parameter the objective never reaches receives no gradient
+            # however it is flagged, and eager training skips it. The plan
+            # has to skip it too, or it keeps state nothing steps and
+            # reserves a gradient nothing writes.
+            receives_gradient = training_parameters_with_gradients(
+                captured.partitioned,
+                dict(model.named_parameters()),
+            )
+            masters = _master_copies(model, master_dtype, receives_gradient)
+            optimizer_parameters = {
+                name: masters.get(name, parameter)
+                for name, parameter in model.named_parameters()
+            }
+            optimizer = build_optimizer(iter(optimizer_parameters.values()))
             if not isinstance(optimizer, torch.optim.Optimizer):
                 raise PlanningError("optimizer must return a torch.optim.Optimizer")
             # The values a step is allowed to set are held in tensors before
@@ -89,26 +110,21 @@ def materialize_training_state(
             # nothing; each entry is then created in the spill pool as this
             # plan's, and filled there by the caller, so the state never sits
             # in ordinary host memory beside the pool. Capture finds the state
-            # already present and does not create any of its own.
-            # A parameter the objective never reaches receives no gradient
-            # however it is flagged, and eager training skips it. The plan
-            # has to skip it too, or it keeps state nothing steps and
-            # reserves a gradient nothing writes.
-            receives_gradient = training_parameters_with_gradients(
-                captured.partitioned,
-                dict(model.named_parameters()),
-            )
+            # already present and does not create any of its own. The
+            # masters go in with it, starting at their weights.
+            weights = dict(model.named_parameters())
             with timer.measure("optimizer_state_install"):
                 install_declared_optimizer_state(
-                    model,
+                    optimizer_parameters,
                     optimizer,
                     runtime=runtime,
                     pool=memory.spill.name,
                     owning_plan=memory.plan_handle,
                     receives_gradient=receives_gradient,
+                    master_sources={name: weights[name] for name in masters},
                 )
             optimizer_capture = capture_optimizer(
-                dict(model.named_parameters()),
+                optimizer_parameters,
                 optimizer,
                 parameter_stage_owners=training_parameter_stage_owners(
                     captured.partitioned,
@@ -117,6 +133,8 @@ def materialize_training_state(
                 receives_gradient=receives_gradient,
                 store=stores.optimizer_captures,
                 timer=timer,
+                compute_copies={name: weights[name] for name in masters},
+                gradient_dtype=grad_dtype,
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
@@ -135,7 +153,9 @@ def materialize_training_state(
                 "the optimizer state/update cannot be bounded: "
                 f"{optimizer_capture.opaque_reason}"
             )
-        return TrainingMaterializationArtifacts(state, optimizer, optimizer_capture)
+        return TrainingMaterializationArtifacts(
+            state, optimizer, optimizer_capture, optimizer_parameters
+        )
     except BaseException as error:
         if state is not None:
 
@@ -154,6 +174,26 @@ def materialize_training_state(
                 operation="materialize training state",
             )
         raise
+
+
+def _master_copies(
+    model: nn.Module,
+    master_dtype: torch.dtype | None,
+    receives_gradient: Collection[str],
+) -> dict[str, nn.Parameter]:
+    """An empty master copy, at ``master_dtype``, of every weight a step
+    trains at another dtype; the install gives each its values."""
+
+    if master_dtype is None:
+        return {}
+    return {
+        name: nn.Parameter(torch.empty(tuple(parameter.shape), dtype=master_dtype))
+        for name, parameter in model.named_parameters()
+        if parameter.requires_grad
+        and name in receives_gradient
+        and parameter.dtype.is_floating_point
+        and parameter.dtype != master_dtype
+    }
 
 
 def rollback_training_materialization(

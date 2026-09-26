@@ -65,8 +65,10 @@ def capture_training_graphs(
     profiling_metadata: Sequence[object] | None,
     stores: PlanningStores,
     timer: PlanningTimer,
+    grad_dtype: torch.dtype | None = None,
 ) -> TrainingCaptureArtifacts:
-    """Capture objective and stage-local graph pairs entirely offline."""
+    """Capture objective and stage-local graph pairs entirely offline, their
+    parameter gradients at ``grad_dtype`` when one is given."""
 
     with timer.measure("validation"):
         signatures, cpu_inputs, workloads = _prepare_training_inputs(
@@ -101,6 +103,7 @@ def capture_training_graphs(
             partition=partition,
             stores=stores,
             timer=timer,
+            grad_dtype=grad_dtype,
         )
         with timer.measure("storage_layout_lowering"):
             layout = lower_training_storage_layout(fake_model, captures)
@@ -205,6 +208,7 @@ def _partition_training_graphs(
     partition: PartitionSpec,
     stores: PlanningStores,
     timer: PlanningTimer,
+    grad_dtype: torch.dtype | None,
 ) -> tuple[PartitionedTrainingCapture, ...]:
     """Partition every position against its own example inputs.
 
@@ -230,6 +234,7 @@ def _partition_training_graphs(
                 # so every microbatch of an accumulating step carries both
                 # forms; the store derives each contract's once.
                 accumulating=len(captures) > 1,
+                gradient_dtype=grad_dtype,
             )
             for capture, root_inputs in zip(captures, representative_roots, strict=True)
         )

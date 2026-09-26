@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
@@ -96,11 +97,16 @@ class TrainingCaptureArtifacts:
 
 @dataclass(frozen=True, slots=True)
 class TrainingMaterializationArtifacts:
-    """Allocator-owned model state and the optimizer captured over it."""
+    """Allocator-owned model state and the optimizer captured over it.
+
+    ``optimizer_parameters`` are the optimizer's parameters by the model's
+    names: the model's own, or the master copy planning made of one.
+    """
 
     state: TrainingMaterializedState
     optimizer: torch.optim.Optimizer
     optimizer_capture: OptimizerCapture
+    optimizer_parameters: Mapping[str, nn.Parameter]
 
 
 @dataclass(frozen=True, slots=True)

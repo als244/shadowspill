@@ -573,7 +573,7 @@ def test_public_training_saves_straight_from_the_pool(
     for index, entries in expected["optimizer"]["state"].items():
         for key, value in entries.items():
             assert torch.equal(saved["optimizer"]["state"][index][key], value)
-    assert saved["step"] == 1 and not saved["model_from_optimizer"]
+    assert saved["step"] == 1 and set(saved) == {"model", "optimizer", "step"}
 
     training(batches[2])
     uninterrupted = training.state_dict()
@@ -583,13 +583,113 @@ def test_public_training_saves_straight_from_the_pool(
     training.close()
 
 
+def _master_training_reference(
+    model: nn.Module,
+    steps: list[list[list[object]]],
+    *,
+    master_dtype: torch.dtype,
+    lr: float,
+) -> tuple[list[tuple[torch.Tensor, ...]], list[torch.Tensor]]:
+    """Eager training with master copies: a step sums its microbatches'
+    gradients at the masters' dtype, steps AdamW over the masters and writes
+    each weight from its master. Returns each step's losses and the masters."""
+
+    masters = [
+        parameter.detach().to(master_dtype).clone().requires_grad_()
+        for parameter in model.parameters()
+    ]
+    optimizer = torch.optim.AdamW(masters, lr=lr, foreach=False)
+    expected: list[tuple[torch.Tensor, ...]] = []
+    for microbatches in steps:
+        sums = [torch.zeros_like(master) for master in masters]
+        losses: list[torch.Tensor] = []
+        for value, target, tag in microbatches:
+            model.zero_grad(set_to_none=True)
+            result = _training_objective(model, value, target, tag)  # type: ignore[arg-type]
+            result.loss.backward()
+            for total, parameter in zip(sums, model.parameters(), strict=True):
+                assert parameter.grad is not None
+                total.add_(parameter.grad.to(master_dtype))
+            losses.append(result.loss.detach())
+        for master, total in zip(masters, sums, strict=True):
+            master.grad = total
+        optimizer.step()
+        with torch.no_grad():
+            for parameter, master in zip(model.parameters(), masters, strict=True):
+                parameter.copy_(master)
+        expected.append(tuple(losses))
+    return expected, masters
+
+
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_saves_a_master_copy_once(tmp_path: Path) -> None:
-    """A weight the optimizer keeps a higher-precision master of is its master
-    cast, bit for bit, after every update, so a checkpoint writes it once."""
+def test_public_training_steps_masters_of_its_weights(tmp_path: Path) -> None:
+    """Masters at a wider dtype than the weights -- fp64 over fp32 here, so the
+    comparison with eager training can be tight -- are stepped over gradients
+    summed at their dtype, as eager training with masters does, and each
+    weight is its master's cast after every update."""
 
-    mlops = pytest.importorskip("mlops")
+    _require_adapter()
+    torch.manual_seed(84)
+    # The runtime installs its allocator first: an eager optimizer step
+    # initializes the device even on host tensors.
+    runtime = public_test_runtime()
+    model = _TrainingNetwork()
+    reference = copy.deepcopy(model)
+    batches = [
+        [
+            [torch.randn(2, 6), torch.randn(2, 3), "left"],
+            [torch.randn(4, 6), torch.randn(4, 3), "right"],
+        ]
+        for _ in range(3)
+    ]
+    expected, reference_masters = _master_training_reference(
+        reference, batches[1:], master_dtype=torch.float64, lr=0.003
+    )
+
+    model = import_model_state(
+        model, runtime=runtime, pool="spill", release_source=True
+    )
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        optimizer=partial(torch.optim.AdamW, lr=0.003, foreach=False),
+        example_inputs=batches[0],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+        master_dtype=torch.float64,
+        grad_dtype=torch.float64,
+    )
+    for microbatches, losses in zip(batches[1:], expected, strict=True):
+        result = training(microbatches)
+        for actual, wanted in zip(result.objectives, losses, strict=True):
+            torch.testing.assert_close(actual.cpu(), wanted, rtol=2e-5, atol=2e-6)
+
+    state = training.state_dict()
+    model_state = state["model"]
+    assert isinstance(model_state, dict)
+    weights = read_model_state(model, runtime=runtime)
+    for (name, _parameter), master in zip(
+        reference.named_parameters(), reference_masters, strict=True
+    ):
+        saved = model_state[name]
+        assert saved.dtype == torch.float64
+        torch.testing.assert_close(saved, master.detach(), rtol=2e-5, atol=2e-7)
+        assert torch.equal(weights[name], saved.to(torch.float32))
+    training.close()
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_checkpoints_masters_in_place_of_their_weights(
+    tmp_path: Path,
+) -> None:
+    """With fp32 masters of bf16 weights and gradients kept at fp32, a
+    checkpoint holds each master where its weights would be -- the weights
+    follow from it, bit for bit -- and restoring it replays exactly."""
+
     _require_adapter()
     torch.manual_seed(82)
     runtime = public_test_runtime()
@@ -610,25 +710,23 @@ def test_public_training_saves_a_master_copy_once(tmp_path: Path) -> None:
     training = plan_step(
         model,
         objective=_training_objective,
-        optimizer=partial(
-            mlops.optim.AdamW, lr=0.003, master_parameter_dtype=torch.float32
-        ),
+        optimizer=partial(torch.optim.AdamW, lr=0.003),
         example_inputs=batches[0],
         runtime=runtime,
         execution="execution",
         spill="spill",
         artifact_store=tmp_path,
+        master_dtype=torch.float32,
+        grad_dtype=torch.float32,
     )
     training(batches[1])
     path = tmp_path / "checkpoint.pt"
     training.save(path)
     saved = torch.load(path, mmap=True, weights_only=True)
-    weights = {name for name, _parameter in model.named_parameters()}
-    assert set(saved["model_from_optimizer"]) == weights
-    assert {key for _index, key in saved["model_from_optimizer"].values()} == {
-        "master_parameter"
-    }
-    assert not weights & set(saved["model"])
+    weights = read_model_state(model, runtime=runtime)
+    for name, _parameter in model.named_parameters():
+        assert saved["model"][name].dtype == torch.float32
+        assert torch.equal(weights[name], saved["model"][name].bfloat16())
 
     training(batches[2])
     uninterrupted = training.state_dict()
@@ -778,7 +876,6 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
             mlops.optim.AdamW,
             lr=3e-3,
             state_dtype=torch.bfloat16,
-            master_parameter_dtype=torch.bfloat16,
         ),
         example_inputs=inputs(92),
         runtime=runtime,

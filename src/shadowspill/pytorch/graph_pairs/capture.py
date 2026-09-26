@@ -18,8 +18,10 @@ def capture_training_stages(
     *,
     graph_pair_store: GraphPairStore | None = None,
     accumulating: bool = False,
+    gradient_dtype: torch.dtype | None = None,
 ) -> tuple[DifferentiatedStage, ...]:
-    """Bind every stage occurrence to its structural graph pairs."""
+    """Bind every stage occurrence to its structural graph pairs, their
+    parameter gradients produced at ``gradient_dtype`` when one is given."""
 
     store = graph_pair_store or GraphPairStore()
     return tuple(
@@ -28,6 +30,7 @@ def capture_training_stages(
             index,
             graph_pair_store=store,
             accumulating=accumulating,
+            gradient_dtype=gradient_dtype,
         )
         for index in range(len(partitioned.stages))
     )
@@ -39,6 +42,7 @@ def _capture_training_stage(
     *,
     graph_pair_store: GraphPairStore,
     accumulating: bool = False,
+    gradient_dtype: torch.dtype | None = None,
 ) -> DifferentiatedStage:
     example = partitioned.stages[stage_index]
     leaves, _ = tree_flatten(example.output)
@@ -72,6 +76,7 @@ def _capture_training_stage(
             roots,
             specialize_unit_tangents=stage_index == len(partitioned.stages) - 1,
             accumulating=accumulating,
+            gradient_dtype=gradient_dtype,
         ),
     )
 

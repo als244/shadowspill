@@ -59,6 +59,8 @@ def build_training(
     search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
+    master_dtype: torch.dtype | None = None,
+    grad_dtype: torch.dtype | None = None,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
@@ -84,6 +86,7 @@ def build_training(
         profiling_metadata=profiling_metadata,
         stores=artifacts,
         timer=timer,
+        grad_dtype=grad_dtype,
     )
     materialized = materialize_training_state(
         model,
@@ -93,6 +96,8 @@ def build_training(
         memory=memory,
         stores=artifacts,
         timer=timer,
+        master_dtype=master_dtype,
+        grad_dtype=grad_dtype,
     )
     profiled: TrainingProfileArtifacts | None = None
     try:

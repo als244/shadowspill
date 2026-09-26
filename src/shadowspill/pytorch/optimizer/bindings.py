@@ -4,6 +4,7 @@ state and hyperparameters, with the roles and provenance a captured task carries
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 import torch
 from torch._subclasses.fake_tensor import FakeTensor
@@ -130,6 +131,68 @@ def tensor_bindings(
     return tuple(bindings)
 
 
+def step_bindings(
+    bindings: tuple[OptimizerTensorBinding, ...],
+    compute_copies: Mapping[str, torch.Tensor],
+    gradient_dtype: torch.dtype | None = None,
+) -> tuple[OptimizerTensorBinding, ...]:
+    """The bindings of the update a step runs, from the optimizer's own.
+
+    Each gradient is bound as the step produces it: at ``gradient_dtype``, or
+    at the dtype of the weights the model computes it for when that is
+    ``None``. Where that is not the dtype of the optimizer's parameter -- a
+    master copy of those weights, say -- the update casts it.
+
+    ``compute_copies`` names the parameters the optimizer holds master copies
+    of, each with the weights the model computes with. Those are bound after
+    everything else, mutable, since the update writes each from its master.
+
+    New tensors are made beside the optimizer's own, on whatever device and in
+    whatever fake mode those are.
+    """
+
+    parameters = {
+        binding.name: binding.tensor
+        for binding in bindings
+        if binding.role is OptimizerTensorRole.PARAMETER
+    }
+    unknown = sorted(set(compute_copies) - set(parameters))
+    if unknown:
+        raise CaptureError(
+            f"compute copies name parameters the optimizer does not hold: {unknown}"
+        )
+
+    def beside(
+        like: torch.Tensor, geometry: torch.Tensor, dtype: torch.dtype
+    ) -> torch.Tensor:
+        return like.new_empty_strided(
+            tuple(geometry.shape), tuple(geometry.stride()), dtype=dtype
+        )
+
+    result: list[OptimizerTensorBinding] = []
+    for binding in bindings:
+        if binding.role is OptimizerTensorRole.GRADIENT:
+            weights = compute_copies.get(binding.name.removeprefix("gradient."))
+            geometry = binding.tensor if weights is None else weights
+            dtype = gradient_dtype or geometry.dtype
+            if dtype != binding.tensor.dtype:
+                binding = replace(
+                    binding, tensor=beside(binding.tensor, geometry, dtype)
+                )
+        result.append(binding)
+    for name, copy in compute_copies.items():
+        result.append(
+            OptimizerTensorBinding(
+                f"compute.{name}",
+                OptimizerTensorRole.COMPUTE_COPY,
+                beside(parameters[name], copy, copy.dtype),
+                True,
+                True,
+            )
+        )
+    return tuple(result)
+
+
 def representative_optimizer_values(
     optimizer: torch.optim.Optimizer,
     name_by_id: Mapping[int, str],
@@ -158,6 +221,7 @@ def optimizer_input_provenance(
         OptimizerTensorRole.GRADIENT: TaskInputRole.GRADIENT,
         OptimizerTensorRole.STATE: TaskInputRole.OPTIMIZER_STATE,
         OptimizerTensorRole.HYPERPARAMETER: (TaskInputRole.OPTIMIZER_HYPERPARAMETER),
+        OptimizerTensorRole.COMPUTE_COPY: TaskInputRole.PARAMETER,
     }
     return tuple(
         TaskInputProvenance(

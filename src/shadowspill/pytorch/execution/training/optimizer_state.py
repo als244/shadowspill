@@ -16,6 +16,7 @@ from shadowspill.pytorch.lowering.training import (
 )
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.optimizer import (
+    OptimizerTensorRole,
     current_optimizer_bindings,
     restore_optimizer_checkpoint_structure,
 )
@@ -34,7 +35,13 @@ from .values import ExposedOptimizerTensor, TensorLayout
 
 class OptimizerState:
     """The optimizer and the plan's account of its state, which exists in the
-    spill pool from planning on."""
+    spill pool from planning on.
+
+    ``optimizer_parameters`` are the optimizer's parameters by the model's
+    names, and ``master_names`` the names whose parameter is a master copy of
+    the weights rather than the weights: the masters are the optimizer's to
+    keep, and a checkpoint reads and writes them beside its state.
+    """
 
     def __init__(
         self,
@@ -42,8 +49,15 @@ class OptimizerState:
         state: TrainingMaterializedState,
         bridge: RuntimeBridge,
         lowered: LoweredTrainingProgram,
+        optimizer_parameters: Mapping[str, torch.nn.Parameter],
     ) -> None:
         self.optimizer = optimizer
+        self.optimizer_parameters = dict(optimizer_parameters)
+        self.master_names = tuple(
+            item.name
+            for item in lowered.optimizer_objects
+            if item.role is OptimizerTensorRole.PARAMETER
+        )
         self._state = state
         self._bridge = bridge
         self._lowered = lowered
@@ -52,8 +66,9 @@ class OptimizerState:
             for item in lowered.program.alias_groups
         }
 
-    def state_dict(self) -> dict[str, object]:
-        """Synchronously snapshot optimizer state without stale CUDA pointers.
+    def state_dict(self) -> tuple[dict[str, object], dict[str, torch.Tensor]]:
+        """Synchronously snapshot optimizer state without stale CUDA pointers,
+        with the masters by name.
 
         The snapshot is independent: each tensor is its own compact host
         allocation, aliasing neither runtime storage nor the other entries,
@@ -67,7 +82,7 @@ class OptimizerState:
         exposed = self.expose_cpu()
         try:
             raw = self.optimizer.state_dict()
-            return cast(
+            snapshot = cast(
                 dict[str, object],
                 tree_map(
                     lambda value: (
@@ -78,12 +93,19 @@ class OptimizerState:
                     raw,
                 ),
             )
+            return snapshot, {
+                name: self.optimizer_parameters[name].detach().cpu().clone()
+                for name in self.master_names
+            }
         finally:
             self.restore_spill_only(exposed)
 
     @contextmanager
-    def state_dict_in_place(self) -> Iterator[dict[str, object]]:
-        """The optimizer's state_dict over its bytes where they are in the pool.
+    def state_dict_in_place(
+        self,
+    ) -> Iterator[tuple[dict[str, object], dict[str, torch.Tensor]]]:
+        """The optimizer's state_dict and masters over their bytes where they
+        are in the pool.
 
         What :meth:`state_dict` returns, with nothing copied where the pool is
         one this process can address: the entries view the pool, so they are
@@ -93,30 +115,61 @@ class OptimizerState:
 
         exposed = self.expose_cpu(in_place=True)
         try:
-            yield self.optimizer.state_dict()
+            yield (
+                self.optimizer.state_dict(),
+                {
+                    name: self.optimizer_parameters[name].detach()
+                    for name in self.master_names
+                },
+            )
         finally:
             self.restore_spill_only(exposed)
 
-    def load(self, value: Mapping[str, object]) -> None:
-        """Restore optimizer metadata and write tensor bytes into spill storage.
+    def load(
+        self,
+        value: Mapping[str, object],
+        masters: Mapping[str, torch.Tensor] | None = None,
+    ) -> None:
+        """Restore optimizer metadata and write tensor bytes into spill storage,
+        each master from ``masters``, cast to its dtype.
 
-        The checkpoint has to hold every entry the plan keeps; one that lacks
-        any is refused before anything changes.
+        The checkpoint has to hold every entry the plan keeps, and ``masters``
+        every master; one that lacks any is refused before anything changes.
         """
 
+        given = dict(masters or {})
+        missing = sorted(set(self.master_names) - set(given))
+        if missing:
+            raise RuntimeError(f"checkpoint lacks the values of masters {missing}")
         exposed = self.expose_cpu()
         try:
-            planned = self._lowered.optimizer_objects
+            planned = tuple(
+                item
+                for item in self._lowered.optimizer_objects
+                if item.name not in self.master_names
+            )
             tensors = {
                 item.name: item
                 for item in restore_optimizer_checkpoint_structure(
-                    dict(self._state.model.named_parameters()),
+                    self.optimizer_parameters,
                     self.optimizer,
                     value,
                     required=tuple(item.name for item in planned),
                 )
             }
-            self._write_restored_tensors(planned, self.current_bindings(), tensors)
+            current = self.current_bindings()
+            self._write_restored_tensors(planned, current, tensors)
+            for item in self._lowered.optimizer_objects:
+                if item.name not in self.master_names:
+                    continue
+                master = current[item.name].tensor
+                with torch.no_grad():
+                    master.copy_(given[item.name].detach().to(device="cpu"))
+                write_spill_tensor(
+                    self._bridge.objects,
+                    self._bridge.objects.alias_for_object(item.object_id),
+                    master,
+                )
         finally:
             self.restore_spill_only(exposed)
 
@@ -171,7 +224,7 @@ class OptimizerState:
         return {
             item.name: item
             for item in current_optimizer_bindings(
-                dict(self._state.model.named_parameters()), self.optimizer
+                self.optimizer_parameters, self.optimizer
             )
         }
 
