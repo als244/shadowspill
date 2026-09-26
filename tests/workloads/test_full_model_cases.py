@@ -90,3 +90,21 @@ def test_performance_gate_defaults_to_the_cells_it_can_judge() -> None:
     ]
     for item in default_cells():
         assert item.regression_tokens_per_second is not None
+
+
+def test_a_smaller_spill_pool_reaches_the_cell_that_runs_it() -> None:
+    from dataclasses import replace
+    from pathlib import Path
+
+    from tools.qualification.performance_matrix import _cell_command, _parser
+    from workloads.full_model import manifest_for
+
+    manifest = manifest_for("llama3", "mlops")
+    arguments = _parser().parse_args([])
+
+    def command(item: object) -> list[str]:
+        return _cell_command(item, arguments, Path("out"), Path("out/cell.json"), {})  # type: ignore[arg-type]
+
+    assert "--spill-budget-gib" not in command(manifest)
+    smaller = command(replace(manifest, spill_budget_bytes=80 << 30))
+    assert smaller[smaller.index("--spill-budget-gib") + 1] == "80"
