@@ -273,7 +273,6 @@ def build_training_report(
     timings: tuple[tuple[str, int], ...],
     started: int,
     *,
-    initial_execution_plan: ExecutionPlan | None,
     planned_program_cache_hits: int,
     planned_program_cache_misses: int,
     captured_stage_count: int,
@@ -348,7 +347,6 @@ def build_training_report(
         report,
         mode="training",
         capture_identity=digest,
-        initial_execution_plan=initial_execution_plan,
         planned_program_cache_hits=planned_program_cache_hits,
         planned_program_cache_misses=planned_program_cache_misses,
         captured_stage_count=captured_stage_count,
@@ -380,7 +378,6 @@ def publish_plan_report(
         model_label=f"{type(model).__module__}.{type(model).__qualname__}",
         capture_identity=report.capture_identity,
         execution_plan=report.execution_plan,
-        initial_execution_plan=report.initial_execution_plan,
         manifest={
             "mode": report.mode,
             "execution_pool": report.execution_pool,

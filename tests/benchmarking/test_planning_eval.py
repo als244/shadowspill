@@ -68,7 +68,7 @@ def test_full_frontier_has_2520_points_and_three_global_bandwidths() -> None:
     assert config.max_point_attempts == 1
     assert len(expand_grid_axes(config.grids)) == 15
     assert config.expected_programs * config.expected_points_per_program == 2520
-    program = _fixture().recurrent
+    program = _fixture().problem
     points = expand_frontier_points(
         program,
         config.grids,
@@ -125,7 +125,6 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         name="test-frontier",
         expected_programs=1,
         expected_points_per_program=1,
-        program_role="recurrent",
         point_timeout_seconds=10,
         max_point_attempts=2,
         max_worker_restarts_per_program=4,
@@ -157,7 +156,7 @@ def test_corpus_discovery_and_point_crash_recovery(tmp_path: Path) -> None:
         cases=cases,
     )
     request = expand_frontier_points(
-        _fixture().recurrent,
+        _fixture().problem,
         config.grids,
         transfer_baseline=config.transfer_bandwidths,
     )[0]
@@ -211,7 +210,6 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
         name="interrupted-frontier",
         expected_programs=1,
         expected_points_per_program=1,
-        program_role="recurrent",
         point_timeout_seconds=300,
         max_point_attempts=1,
         max_worker_restarts_per_program=1,
@@ -243,7 +241,7 @@ def test_resume_preserves_but_does_not_charge_an_interrupted_attempt(
         cases=(case,),
     )
     request = expand_frontier_points(
-        _fixture().recurrent,
+        _fixture().problem,
         config.grids,
         transfer_baseline=config.transfer_bandwidths,
     )[0]
@@ -279,7 +277,6 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         name="timeout-frontier",
         expected_programs=1,
         expected_points_per_program=1,
-        program_role="recurrent",
         point_timeout_seconds=300,
         max_point_attempts=1,
         max_worker_restarts_per_program=2,
@@ -315,7 +312,7 @@ def test_timeout_recovery_writes_summarizable_canonical_evidence(
         {"case": case.to_dict()},
     )
     request = expand_frontier_points(
-        _fixture().recurrent,
+        _fixture().problem,
         config.grids,
         transfer_baseline=config.transfer_bandwidths,
     )[0]

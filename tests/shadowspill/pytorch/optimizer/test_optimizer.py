@@ -29,6 +29,19 @@ def _initialized(
     return parameter, optimizer
 
 
+def _install_declared_state(
+    named_parameters: dict[str, torch.nn.Parameter],
+    optimizer: torch.optim.Optimizer,
+) -> None:
+    """The state planning installs before it captures, at zero."""
+
+    for entry in declare_optimizer_state(named_parameters, optimizer):
+        parameter = named_parameters[entry.parameter_name]
+        optimizer.state[parameter][entry.entry_name] = torch.zeros(
+            entry.shape, dtype=entry.dtype
+        )
+
+
 @pytest.mark.parametrize(
     ("optimizer_type", "options"),
     [
@@ -37,7 +50,7 @@ def _initialized(
         (torch.optim.SGD, {"momentum": 0.9}),
     ],
 )
-def test_recurrent_graph_matches_standard_optimizer(
+def test_update_graph_matches_standard_optimizer(
     optimizer_type: type[torch.optim.Optimizer], options: dict[str, object]
 ) -> None:
     parameter, optimizer = _initialized(optimizer_type, **options)
@@ -55,7 +68,7 @@ def test_recurrent_graph_matches_standard_optimizer(
                 torch.testing.assert_close(value, expected)
             else:
                 assert value == expected
-    assert captured.recurrent is not None
+    assert captured.update is not None
     assert (
         next(
             binding for binding in captured.bindings if binding.name == "weight"
@@ -67,7 +80,7 @@ def test_recurrent_graph_matches_standard_optimizer(
         for binding in captured.bindings
         if binding.tensor.ndim != 0
     )
-    assert captured.recurrent.operator_targets
+    assert captured.update.operator_targets
 
 
 def test_device_only_registered_optimizer_uses_fake_contract() -> None:
@@ -75,17 +88,12 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
     parameter = torch.nn.Parameter(torch.ones(8))
     parameter.grad = torch.ones_like(parameter)
     optimizer = mlops.optim.AdamW([parameter], lr=1e-3)
+    _install_declared_state({"weight": parameter}, optimizer)
 
     captured = capture_optimizer({"weight": parameter}, optimizer)
 
-    # A bare optimizer's first step is opaque because its state does not exist
-    # yet. Planning avoids that by installing declared state before capture.
-    assert captured.first_step_is_opaque
-    assert captured.recurrent is not None
-    assert "mlops.master_adamw_.default" in captured.recurrent.operator_targets
-    # Nothing pre-creates state now: a bare optimizer reports what it would
-    # create, and planning installs those entries in the pool before capture.
-    assert captured.created_state_names
+    assert captured.update is not None
+    assert "mlops.master_adamw_.default" in captured.update.operator_targets
     # Everything the update computes with is on the device. A hyperparameter
     # is not: it is a scalar the update reads and passes to its kernel, so it
     # stays on the host, where writing the next step's value copies nothing.
@@ -114,11 +122,7 @@ def test_state_kept_at_another_precision_is_captured_at_it() -> None:
         state_dtype=torch.float32,
         master_parameter_dtype=torch.float32,
     )
-    # The state planning installs before it captures.
-    for entry in declare_optimizer_state({"weight": parameter}, optimizer):
-        optimizer.state[parameter][entry.entry_name] = torch.zeros(
-            entry.shape, dtype=entry.dtype
-        )
+    _install_declared_state({"weight": parameter}, optimizer)
 
     captured = capture_optimizer({"weight": parameter}, optimizer)
 
@@ -128,10 +132,10 @@ def test_state_kept_at_another_precision_is_captured_at_it() -> None:
         assert dtypes[f"optimizer.weight.{entry}"] == torch.float32, entry
     # What the traced update declares for the master, which profiling checks
     # the planned fp32 master against.
-    assert captured.recurrent is not None
+    assert captured.update is not None
     names = [binding.name for binding in captured.bindings]
     position = names.index("optimizer.weight.master_parameter")
-    assert captured.recurrent.tensor_inputs[position].dtype == torch.float32
+    assert captured.update.tensor_inputs[position].dtype == torch.float32
 
 
 def test_device_only_discovery_inventories_every_parameter() -> None:
@@ -141,6 +145,12 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
     first.grad = torch.ones_like(first)
     second.grad = torch.ones_like(second)
     optimizer = mlops.optim.AdamW([first, second], lr=1e-3)
+    _install_declared_state({"first": first, "second": second}, optimizer)
+    installed = {
+        (id(parameter), name): value
+        for parameter, state in optimizer.state.items()
+        for name, value in state.items()
+    }
     captured = capture_optimizer(
         {"first": first, "second": second},
         optimizer,
@@ -160,28 +170,32 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
         for name in ("first", "second")
         for suffix in expected_suffixes
     }
-    assert captured.created_state_names
-    assert captured.recurrent is not None
+    assert captured.update is not None
     assert (
         sum(
             node.op == "call_function"
             and str(node.target) == "mlops.master_adamw_.default"
-            for node in captured.recurrent.graph_module.graph.nodes
+            for node in captured.update.graph_module.graph.nodes
         )
         == 2
     )
-    assert len(captured.recurrent_tasks) == 2
+    assert len(captured.update_tasks) == 2
     assert {
         next(
             name.removeprefix("optimizer.").split(".", 1)[0]
             for name in task.binding_names
             if name.startswith("optimizer.")
         )
-        for task in captured.recurrent_tasks
+        for task in captured.update_tasks
     } == {"first", "second"}
-    # Discovery leaves the caller's optimizer untouched: it declares what
-    # state would exist without creating any, and the parameters are unchanged.
-    assert optimizer.state == {}
+    # Capture leaves the caller's optimizer untouched: the same state tensors,
+    # still at zero, and the parameters unchanged.
+    assert {
+        (id(parameter), name): value
+        for parameter, state in optimizer.state.items()
+        for name, value in state.items()
+    } == installed
+    assert all(not value.any() for value in installed.values())
     torch.testing.assert_close(first, torch.ones_like(first))
     torch.testing.assert_close(second, torch.full_like(second, 2.0))
     # Everything discovery had to invent is fake, so inventing it allocated
@@ -197,22 +211,14 @@ def test_device_only_discovery_inventories_every_parameter() -> None:
             assert isinstance(binding.tensor, fake)
 
 
-def test_output_created_lazy_state_retains_distinct_initial_plan() -> None:
+def test_state_the_first_step_would_create_is_refused() -> None:
     parameter = torch.nn.Parameter(torch.ones(8))
     parameter.grad = torch.ones_like(parameter)
     optimizer = torch.optim.SGD([parameter], lr=1e-3, momentum=0.9)
 
-    captured = capture_optimizer({"weight": parameter}, optimizer)
+    with pytest.raises(CaptureError, match=r"creates state \(optimizer\.weight"):
+        capture_optimizer({"weight": parameter}, optimizer)
 
-    assert captured.first_step_is_opaque
-    assert captured.created_state_names == ("optimizer.weight.momentum_buffer",)
-    assert captured.initial is not None
-    assert captured.initial.profile_output_names == (
-        "optimizer.weight.momentum_buffer",
-    )
-    assert captured.initial.compatibility_digest != (
-        captured.recurrent.compatibility_digest
-    )
     assert optimizer.state == {}
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
 
@@ -249,10 +255,9 @@ def test_optimizer_checkpoint_restore_preserves_tensor_objects() -> None:
     restored = restore_optimizer_checkpoint_structure(
         {"weight": parameter}, optimizer, checkpoint
     )
-    for item in restored.tensors:
+    for item in restored:
         item.destination.copy_(item.source)
 
-    assert restored.initialized
     assert optimizer.param_groups[0]["lr"] == checkpoint["param_groups"][0]["lr"]
     for name, value in optimizer.state[parameter].items():
         if isinstance(value, torch.Tensor):
@@ -272,6 +277,25 @@ def test_optimizer_checkpoint_restore_rejects_incompatible_tensor() -> None:
         restore_optimizer_checkpoint_structure(
             {"weight": parameter}, optimizer, checkpoint
         )
+
+
+def test_optimizer_checkpoint_without_required_state_changes_nothing() -> None:
+    parameter, optimizer = _initialized(torch.optim.AdamW)
+    before = dict(optimizer.state[parameter])
+    checkpoint = copy.deepcopy(optimizer.state_dict())
+    checkpoint["state"] = {}
+    checkpoint["param_groups"][0]["lr"] = 0.25
+
+    with pytest.raises(RuntimeError, match="lacks planned state"):
+        restore_optimizer_checkpoint_structure(
+            {"weight": parameter},
+            optimizer,
+            checkpoint,
+            required=("optimizer.weight.exp_avg",),
+        )
+
+    assert optimizer.state[parameter] == before
+    assert optimizer.param_groups[0]["lr"] == 1e-2
 
 
 class _CustomOptimizer(torch.optim.Optimizer):
@@ -323,9 +347,8 @@ def test_unrelated_custom_optimizer_is_captured_without_allowlist() -> None:
     parameter.grad = torch.full_like(parameter, 2)
     optimizer = _CustomOptimizer([parameter])
     captured = capture_optimizer({"parameter": parameter}, optimizer)
-    assert not captured.first_step_is_opaque
-    assert captured.recurrent is not None
-    assert "aten.add_.Tensor" in captured.recurrent.operator_targets
+    assert captured.update is not None
+    assert "aten.add_.Tensor" in captured.update.operator_targets
 
 
 def test_valid_data_dependent_optimizer_becomes_bounded_opaque_task() -> None:
@@ -338,9 +361,10 @@ def test_valid_data_dependent_optimizer_becomes_bounded_opaque_task() -> None:
         {"parameter": parameter}, _DataDependentOptimizer([parameter])
     )
 
-    assert first.recurrent_is_opaque
-    assert first.recurrent is not None
-    assert first.recurrent.compatibility_digest == second.recurrent.compatibility_digest
+    assert first.update_is_opaque
+    assert first.update is not None
+    assert second.update is not None
+    assert first.update.compatibility_digest == second.update.compatibility_digest
     assert "data-dependent" in (first.opaque_reason or "")
     assert torch.is_grad_enabled()
     torch.testing.assert_close(parameter, torch.ones_like(parameter))
@@ -352,7 +376,7 @@ def test_optimizer_copy_preserves_subclass_state_omitted_by_base_protocol() -> N
     captured = capture_optimizer(
         {"parameter": parameter}, _SubclassStateOptimizer([parameter])
     )
-    assert captured.recurrent is not None
+    assert captured.update is not None
 
 
 def test_parameter_coverage_mismatch_is_rejected() -> None:
@@ -409,13 +433,13 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
     uncopyable = capture_optimizer(
         {"parameter": parameter}, _UncopyableOptimizer([parameter])
     )
-    assert uncopyable.recurrent_is_opaque
+    assert uncopyable.update_is_opaque
     assert "cannot be copied" in (uncopyable.opaque_reason or "")
 
     failing = capture_optimizer(
         {"parameter": parameter}, _FailingOptimizer([parameter])
     )
-    assert failing.recurrent_is_opaque
+    assert failing.update_is_opaque
     assert "discovery step failed" in (failing.opaque_reason or "")
 
     optimizer = torch.optim.SGD([parameter], lr=0.1)
@@ -425,12 +449,12 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
 
     monkeypatch.setattr(trace_module, "_export_optimizer_graph", fail_export)
     opaque_graph = capture_optimizer({"parameter": parameter}, optimizer)
-    assert opaque_graph.recurrent_is_opaque
+    assert opaque_graph.update_is_opaque
     assert opaque_graph.bindings[1].name == "gradient.parameter"
     assert opaque_graph.bindings[1].tensor.device.type == "meta"
     assert tuple(opaque_graph.bindings[1].tensor.shape) == (4,)
     assert parameter.grad is None
-    assert "recurrent optimizer graph is opaque" in (opaque_graph.opaque_reason or "")
+    assert "the optimizer update is opaque" in (opaque_graph.opaque_reason or "")
 
     def fail_fake(*arguments: object) -> object:
         del arguments
@@ -440,7 +464,7 @@ def test_opaque_fallbacks_preserve_the_original_optimizer(
     failed_fake = capture_optimizer(
         {"parameter": parameter}, _FailingAfterStateOptimizer([parameter])
     )
-    assert failed_fake.recurrent is None
+    assert failed_fake.update is None
     assert "fake/meta behavior" in (failed_fake.opaque_reason or "")
 
 
@@ -461,7 +485,7 @@ def test_optimizer_option_identity_covers_bounded_containers() -> None:
     assert identity["object"]["type"] == "object"
 
 
-def test_a_recurrent_capture_is_served_from_the_store(tmp_path: Path) -> None:
+def test_an_update_capture_is_served_from_the_store(tmp_path: Path) -> None:
     from shadowspill.pytorch.optimizer.store import OptimizerCaptureStore
 
     records: list[dict[str, object]] = []
@@ -476,7 +500,7 @@ def test_a_recurrent_capture_is_served_from_the_store(tmp_path: Path) -> None:
         store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
     )
     assert [item["access"] for item in records] == ["write"]
-    assert first.recurrent is not None
+    assert first.update is not None
 
     # a fresh optimizer over the same inventory reads the trace back
     parameter, optimizer = _initialized(torch.optim.AdamW)
@@ -486,18 +510,16 @@ def test_a_recurrent_capture_is_served_from_the_store(tmp_path: Path) -> None:
         store=OptimizerCaptureStore(tmp_path, artifact_recorder=record),
     )
     assert [item["access"] for item in records] == ["write", "read"]
-    assert again.recurrent is not None
-    assert again.recurrent.compatibility_digest == first.recurrent.compatibility_digest
-    assert again.recurrent.operator_targets == first.recurrent.operator_targets
-    assert [task.binding_names for task in again.recurrent_tasks] == [
-        task.binding_names for task in first.recurrent_tasks
+    assert again.update is not None
+    assert again.update.compatibility_digest == first.update.compatibility_digest
+    assert again.update.operator_targets == first.update.operator_targets
+    assert [task.binding_names for task in again.update_tasks] == [
+        task.binding_names for task in first.update_tasks
     ]
     assert [binding.name for binding in again.bindings] == [
         binding.name for binding in first.bindings
     ]
     assert again.mutation_names == first.mutation_names
-    assert again.created_state_names == first.created_state_names
-    assert again.first_step_is_opaque == first.first_step_is_opaque
 
     # a different optimizer over the same tensors is another entry
     parameter, optimizer = _initialized(torch.optim.SGD, momentum=0.9)

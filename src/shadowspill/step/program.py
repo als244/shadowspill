@@ -44,8 +44,7 @@ def _data_ordering(value: object, program: ShadowSpillProgram) -> StepDataOrderi
 class StepProgram:
     """Public result of capture, profiling, and canonical step lowering."""
 
-    recurrent: ShadowSpillPlanningProblem
-    initial: ShadowSpillPlanningProblem | None
+    problem: ShadowSpillPlanningProblem
     optimizer_ordering: str
     data_ordering: StepDataOrdering
     signature_digests: tuple[str, ...]
@@ -58,10 +57,8 @@ class StepProgram:
     captured_stage_count: int
 
     def __post_init__(self) -> None:
-        if self.recurrent.role != "recurrent":
-            raise ValueError("StepProgram.recurrent has the wrong role")
-        if self.initial is not None and self.initial.role != "initial":
-            raise ValueError("StepProgram.initial has the wrong role")
+        if self.problem.role != "step":
+            raise ValueError("StepProgram.problem has the wrong role")
         parsed = json.loads(self.transfer_capabilities_json)
         if not isinstance(parsed, dict):
             raise ValueError("transfer capabilities must encode a JSON object")
@@ -75,17 +72,9 @@ class StepProgram:
                 "schema": _STEP_PROGRAM_SCHEMA,
                 "identity": {
                     "signature_digests": list(self.signature_digests),
-                    "recurrent_program_digest": self.recurrent.program.digest,
-                    "initial_program_digest": (
-                        None if self.initial is None else self.initial.program.digest
-                    ),
+                    "program_digest": self.problem.program.digest,
                 },
-                "programs": {
-                    "recurrent": self.recurrent.to_dict(),
-                    "initial": (
-                        None if self.initial is None else self.initial.to_dict()
-                    ),
-                },
+                "problem": self.problem.to_dict(),
                 "profiling": {
                     "metadata": [item.as_dict() for item in self.profiling_metadata],
                     "unique_profile_count": self.unique_profile_count,
@@ -104,15 +93,9 @@ class StepProgram:
             "schema": _STEP_PROGRAM_SCHEMA,
             "identity": {
                 "signature_digests": list(self.signature_digests),
-                "recurrent_program_digest": self.recurrent.program.digest,
-                "initial_program_digest": (
-                    None if self.initial is None else self.initial.program.digest
-                ),
+                "program_digest": self.problem.program.digest,
             },
-            "programs": {
-                "recurrent": self.recurrent.to_dict(),
-                "initial": None if self.initial is None else self.initial.to_dict(),
-            },
+            "problem": self.problem.to_dict(),
             "profiling": {
                 "metadata": [item.as_dict() for item in self.profiling_metadata],
                 "unique_profile_count": self.unique_profile_count,
@@ -139,11 +122,9 @@ class StepProgram:
         if data.get("schema") != _STEP_PROGRAM_SCHEMA:
             raise ValueError("step_program.schema: unsupported schema")
         identity = _mapping(data.get("identity"), "step_program.identity")
-        programs = _mapping(data.get("programs"), "step_program.programs")
         profiling = _mapping(data.get("profiling"), "step_program.profiling")
         planning = _mapping(data.get("planning"), "step_program.planning")
         lineage = _mapping(data.get("cache_lineage"), "step_program.cache_lineage")
-        initial_value = programs.get("initial")
         metadata = _list(profiling.get("metadata"), "step_program.profiling.metadata")
         timings = _list(
             planning.get("phase_timings_ns"), "step_program.planning.phase_timings_ns"
@@ -160,37 +141,22 @@ class StepProgram:
         transfer = _mapping(
             data.get("transfer_capabilities"), "step_program.transfer_capabilities"
         )
-        recurrent = ShadowSpillPlanningProblem.from_value(
-            programs.get("recurrent"), "step_program.programs.recurrent"
+        problem = ShadowSpillPlanningProblem.from_value(
+            data.get("problem"), "step_program.problem"
         )
-        initial = (
-            None
-            if initial_value is None
-            else ShadowSpillPlanningProblem.from_value(
-                initial_value, "step_program.programs.initial"
-            )
+        expected = _string(
+            identity.get("program_digest"), "step_program.identity.program_digest"
         )
-        expected_recurrent = _string(
-            identity.get("recurrent_program_digest"),
-            "step_program.identity.recurrent_program_digest",
-        )
-        expected_initial = _optional_string(
-            identity.get("initial_program_digest"),
-            "step_program.identity.initial_program_digest",
-        )
-        if recurrent.program.digest != expected_recurrent:
-            raise ValueError("StepProgram recurrent identity digest mismatch")
-        if (None if initial is None else initial.program.digest) != expected_initial:
-            raise ValueError("StepProgram initial identity digest mismatch")
+        if problem.program.digest != expected:
+            raise ValueError("StepProgram identity digest mismatch")
         return cls(
-            recurrent=recurrent,
-            initial=initial,
+            problem=problem,
             optimizer_ordering=_string(
                 planning.get("optimizer_ordering"),
                 "step_program.planning.optimizer_ordering",
             ),
             data_ordering=_data_ordering(
-                planning.get("data_ordering"), recurrent.program
+                planning.get("data_ordering"), problem.program
             ),
             signature_digests=tuple(
                 _string(item, f"step_program.signature_digests[{index}]")

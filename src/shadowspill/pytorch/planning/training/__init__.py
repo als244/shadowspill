@@ -20,7 +20,6 @@ from ..artifacts import (
     TrainingMaterializationArtifacts,
     TrainingProfileArtifacts,
     TrainingProgramArtifacts,
-    TrainingSelections,
 )
 from .admit import admit_training_plan, compile_selected_training_tasks
 from .build import build_training
@@ -36,7 +35,6 @@ __all__ = [
     "TrainingMaterializationArtifacts",
     "TrainingProfileArtifacts",
     "TrainingProgramArtifacts",
-    "TrainingSelections",
     "admit_training_plan",
     "build_training",
     "build_training_programs",

@@ -81,18 +81,17 @@ The top-level fields are grouped below.
 | Area | Important fields | Meaning |
 |---|---|---|
 | Identity | `mode`, `capture_identity`, `program.digest` | Planning mode and content identities. |
-| Selected plan | `execution_plan`, `initial_execution_plan` | Recurrent/forward plan, and a first-step plan when an optimizer creates state on its first step rather than having it installed beforehand. |
+| Selected plan | `execution_plan` | The plan every call runs. |
 | Prediction | `predicted_makespan_ns`, `predicted_device_peak_bytes`, `predicted_spill_peak_bytes` | Simulator result after physical admission. |
 | Promise | `summary` | The derived `PlanSummary` described above: the simulated step split into its four parts, the graph-pair selection counts, the scheduled traffic and the bandwidths behind it, planning wall time by phase, and the winning candidate. |
 | Capacity | `execution_pool`, `spill_pool`, public and callable budgets, shared bytes, `fixed_slab_bytes`, `requested_dynamic_scratch_reserve_bytes` | Pool selection, runtime-global sharing, process-persistent deductions, and requested scratch floor. |
 | Transfers | `fetch_profile`, `evict_profile`, `transfer_actions`, `transfer_bytes_fetched`, `transfer_bytes_evicted` | Calibration consumed by planning and selected traffic. |
 | Profiling | `task_profiles`, profile hit/miss counts, allocation-probe counts | Deduplicated structural measurements and their provenance. |
-| Selection | `search_result`, `initial_search_result` | The winning plan, its schedule, selections and search evidence, plus the simulated timeline: `search_result.simulation.task_intervals` (ready, start, and end per task) and `transfer_intervals` (ready, start, end, and bytes per transfer). |
+| Selection | `search_result` | The winning plan, its schedule, selections and search evidence, plus the simulated timeline: `search_result.simulation.task_intervals` (ready, start, and end per task) and `transfer_intervals` (ready, start, end, and bytes per transfer). |
 | Detailed evidence | `diagnostics` | Phase, cache, stage, graph-pair, profile, search, and layout records. |
 
-For training, `report.program` and `report.search_result` refer to the
-recurrent plan. `initial_program` and `initial_search_result` refer to the
-optional first invocation. Forward planning has one plan.
+Training and forward planning each have one plan, which `report.program` and
+`report.search_result` refer to.
 
 ## Transfer assumptions and budgets
 
@@ -157,7 +156,7 @@ The other planning-cost views are:
 | `profile_unique_keys` | Number of structural profiles needed by the call. |
 | `profile_cache_hits`, `profile_cache_misses` | Measurement reuse versus fresh profiling. |
 | `aot_graph_pair_cache_hits`, `aot_graph_pair_cache_misses` | Reuse versus construction of differentiated graph pairs. |
-| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each planned program -- the complete answer to a request, its resolved program and memory schedule -- was read from the artifact store instead of searched: one count per plan, recurrent and optional initial. |
+| `planned_program_cache_hits`, `planned_program_cache_misses` | Whether each planned program -- the complete answer to a request, its resolved program and memory schedule -- was read from the artifact store instead of searched. |
 | `store_directories` | The roots this call used, as name/path pairs: `root`, `build`, `build.inductor`, `planning`, and `plan_store`. |
 | `cache_artifacts` | Every artifact this call touched, with its access disposition and dependency digests. |
 

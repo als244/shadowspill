@@ -1588,8 +1588,6 @@ class Tour:
                 step = timing.step_number
                 cycles[step] = timing.cycle_seconds
                 note = ""
-                if step == 1 and plan_report.initial_search_result is not None:
-                    note = "   (first-step plan)"
                 # A cycle closes where the next step opens, so a step is
                 # reported one step late and the traced step's predecessor
                 # arrives beside it. Naming the traced one is what keeps that

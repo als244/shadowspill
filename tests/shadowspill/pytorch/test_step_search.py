@@ -215,11 +215,11 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     from shadowspill.pytorch.step_search import sweep as module
     from shadowspill.search import planner as planner_module
 
-    class Recurrent:
+    class Problem:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
 
     class Step:
-        recurrent = Recurrent()
+        problem = Problem()
         digest = "d0"
         phase_timings_ns = (("total", 1),)
 
@@ -260,11 +260,11 @@ def test_the_resolution_options_reach_every_point(
     from shadowspill.pytorch.step_search import sweep as module
     from shadowspill.search import planner as planner_module
 
-    class Recurrent:
+    class Problem:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
 
     class Step:
-        recurrent = Recurrent()
+        problem = Problem()
         digest = "d0"
         phase_timings_ns = (("total", 1),)
 
@@ -308,7 +308,7 @@ def test_the_resolution_options_reach_every_point(
     assert [point.status for point in report.points] == ["infeasible"]
     # the calibration the build's program embeds is on the record, and no
     # override was given
-    assert report.geometries[0].transfer_bandwidths == Recurrent.transfer_bandwidths
+    assert report.geometries[0].transfer_bandwidths == Problem.transfer_bandwidths
     serialized = report.to_dict()
     recorded = serialized["geometries"][0]["transfer_bandwidths"]
     assert recorded["fetch_bytes_per_second"] == 1_000
@@ -324,11 +324,11 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
     from shadowspill.pytorch.step_search import sweep as module
     from shadowspill.search import planner as planner_module
 
-    class Recurrent:
+    class Problem:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
 
     class Step:
-        recurrent = Recurrent()
+        problem = Problem()
         digest = "d0"
         phase_timings_ns = (("total", 1),)
 
@@ -366,7 +366,7 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
     assert seen == [pinned]
     assert plan_stores == ["plans-here"]
     assert report.transfer_bandwidths == pinned
-    assert report.geometries[0].transfer_bandwidths == Recurrent.transfer_bandwidths
+    assert report.geometries[0].transfer_bandwidths == Problem.transfer_bandwidths
     assert report.to_dict()["transfer_bandwidths"]["provenance"] == "pin"
 
 
@@ -438,11 +438,11 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     from shadowspill.pytorch.step_search import sweep as module
     from shadowspill.search import planner as planner_module
 
-    class Recurrent:
+    class Problem:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
 
     class Step:
-        recurrent = Recurrent()
+        problem = Problem()
         digest = "d0"
         phase_timings_ns = (("total", 1),)
 
@@ -595,11 +595,11 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
     from shadowspill.pytorch.step_search import sweep as module
     from shadowspill.search import planner as planner_module
 
-    class Recurrent:
+    class Problem:
         transfer_bandwidths = TransferBandwidths(1_000, 2_000, provenance="stub")
 
     class Step:
-        recurrent = Recurrent()
+        problem = Problem()
         digest = "d0"
         phase_timings_ns = (("total", 1),)
 

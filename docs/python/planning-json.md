@@ -11,7 +11,7 @@ to any stored structure moves them all together.
 |---|---|---|
 | `ShadowSpillProgram` | `shadowspill.program/v1` | Framework-neutral logical tasks, objects, costs, sharing policies, and task alternatives. |
 | `ShadowSpillPlanningProblem` | `shadowspill.plan_program/v1` | One program plus residency, machine inputs, and admission topology. It carries no search options: a program is a problem, and how to search it is the caller's. |
-| `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture and profile result, as a recurrent `ShadowSpillPlanningProblem` and an optional initial one. |
+| `StepProgram` | `shadowspill.step_program/v1` | Complete PyTorch capture and profile result, as the step's `ShadowSpillPlanningProblem`. |
 | `AnnotatedProgramPlan` | `shadowspill.annotated_program_plan/v1` | The winning plan, physical admission, and simulator evidence for one budget/bandwidth point. |
 
 Each one round-trips through `to_json()` and `from_json()`:
@@ -172,7 +172,7 @@ shadowspill.plan_program/v1
 
 | Key | Meaning |
 |---|---|
-| `role` | `initial`, `recurrent`, or `forward`. |
+| `role` | `step` or `forward`. |
 | `program.digest` | Integrity identity for `program.value`. |
 | `residency.initial`, `residency.final` | Required alias-group location/version at the phase boundaries. |
 | `capacity_contract` | Source/max execution and spill budgets plus fixed, object, and dynamic-scratch deductions. |
@@ -206,18 +206,15 @@ The capacity contract keys are:
 
 ## StepProgram format
 
-A training `StepProgram` retains both recurrent and optional initialization
-roles:
+A training `StepProgram` holds the one problem every invocation of the step
+runs:
 
 ```text
 shadowspill.step_program/v1
 ├── identity
 │   ├── signature_digests
-│   ├── recurrent_program_digest
-│   └── initial_program_digest
-├── programs
-│   ├── recurrent             ShadowSpillPlanningProblem
-│   └── initial               ShadowSpillPlanningProblem or null
+│   └── program_digest
+├── problem                   ShadowSpillPlanningProblem
 ├── profiling
 │   ├── metadata
 │   ├── unique_profile_count
@@ -463,7 +460,7 @@ strip validation evidence to make an artifact load.
 | Goal | Use |
 |---|---|
 | Inspect or hand-author a framework-neutral workload | `ShadowSpillProgram` |
-| Sweep budgets or bandwidths for one recurrent/forward role | `ShadowSpillPlanningProblem` |
+| Sweep budgets or bandwidths for one step or forward | `ShadowSpillPlanningProblem` |
 | Preserve all capture/profile work for a PyTorch training step | `StepProgram` |
 | Preserve one selected, simulated, physically admitted point | `AnnotatedProgramPlan` |
 | Preserve one planning call's explanatory tree | `PlanReport.diagnostics.as_dict()` |

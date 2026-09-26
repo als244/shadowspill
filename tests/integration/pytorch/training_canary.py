@@ -200,8 +200,6 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         raise AssertionError("graph pair omitted contract timing")
                     if profile.physical_profile_wall_time_ns <= 0:
                         raise AssertionError("graph pair omitted profiling timing")
-        if planned.plan_report.initial_execution_plan is not None:
-            raise AssertionError("preinitialized AdamW state emitted an initial plan")
         active = planned.plan_report.execution_plan.program.selected_tasks(
             planned.plan_report.execution_plan.selections
         )

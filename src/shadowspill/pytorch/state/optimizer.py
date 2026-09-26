@@ -203,7 +203,7 @@ def install_declared_optimizer_state(
     pool: str,
     owning_plan: int,
     receives_gradient: Collection[str] | None = None,
-) -> int:
+) -> None:
     """Create the optimizer's declared state in ``pool``, each entry at its start.
 
     The optimizer declares what state it keeps by being run on meta
@@ -220,21 +220,20 @@ def install_declared_optimizer_state(
 
     An entry the step makes from anything else -- the gradient, say -- has no
     value before the first step, and is refused rather than given one: import
-    the optimizer's state before planning to start it elsewhere. Returns how
-    many entries were installed.
+    the optimizer's state before planning to start it elsewhere.
 
     State the caller already imported for this optimizer is left alone, since
     the caller owns it and it outlives the plan.
     """
 
     if persistent_state(runtime, optimizer) is not None:
-        return 0
+        return
     named = dict(model.named_parameters())
     declared = declare_optimizer_state(
         named, optimizer, receives_gradient=receives_gradient
     )
     if not declared:
-        return 0
+        return
     unstarted = [item for item in declared if isinstance(item.start, NoStart)]
     if unstarted:
         described = "; ".join(
@@ -277,7 +276,6 @@ def install_declared_optimizer_state(
         owning_plan=owning_plan,
         _allow_in_progress_plan=True,
     )
-    return len(declared)
 
 
 def adopt_optimizer_state_for_plan(

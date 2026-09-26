@@ -219,7 +219,7 @@ def _lowered(
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
-    assert optimizer_capture.recurrent is not None
+    assert optimizer_capture.update is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
     examples = tuple(
@@ -271,8 +271,8 @@ def _lowered(
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
@@ -376,7 +376,7 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
-    assert optimizer_capture.recurrent is not None
+    assert optimizer_capture.update is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
     with mode:
@@ -402,8 +402,8 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
@@ -435,8 +435,8 @@ def test_saved_parameter_views_are_not_declared_as_outputs() -> None:
     assert parameter_aliases.isdisjoint(produced_aliases)
 
 
-def test_state_installed_before_capture_uses_one_recurrent_state_flow() -> None:
-    """State that exists before capture needs no initial step to create it.
+def test_state_installed_before_capture_is_updated_in_place() -> None:
+    """State that exists before capture is what the update reads and writes.
 
     Planning installs declared state in the pool before capturing; this is the
     same shape without a runtime, so the capture sees state present exactly as
@@ -455,9 +455,7 @@ def test_state_installed_before_capture_uses_one_recurrent_state_flow() -> None:
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
-    assert not optimizer_capture.first_step_is_opaque
-    assert optimizer_capture.created_state_names == ()
-    assert optimizer_capture.recurrent is not None
+    assert optimizer_capture.update is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
     with mode:
@@ -479,40 +477,30 @@ def test_state_installed_before_capture_uses_one_recurrent_state_flow() -> None:
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
     }
-    initial = lower_partitioned_training_program(
+    lowered = lower_partitioned_training_program(
         model,
         captures,
         measurements,
         optimizer_capture,
-        optimizer_phase="initial",
     )
-    recurrent = lower_partitioned_training_program(
-        model,
-        captures,
-        measurements,
-        optimizer_capture,
-        optimizer_phase="recurrent",
-    )
-    assert initial.optimizer_objects
-    assert initial.program.objects == recurrent.program.objects
-    initial_tasks = tuple(
+    state = {item.object_id for item in lowered.optimizer_objects}
+    assert state
+    update_tasks = tuple(
         task
-        for task in initial.program.tasks
-        if task.task_id in initial.optimizer_task_ids
+        for task in lowered.program.tasks
+        if task.task_id in lowered.optimizer_task_ids
     )
-    recurrent_tasks = tuple(
-        task
-        for task in recurrent.program.tasks
-        if task.task_id in recurrent.optimizer_task_ids
-    )
-    assert not any(item.created_on_first_step for item in initial.optimizer_objects)
-    assert initial_tasks == recurrent_tasks
+    assert state <= {object_id for task in update_tasks for object_id in task.inputs}
+    assert state <= {
+        mutation.object_id for task in update_tasks for mutation in task.mutations
+    }
+    assert not any(task.outputs for task in update_tasks)
 
 
 def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
@@ -523,7 +511,7 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
-    assert optimizer_capture.recurrent is not None
+    assert optimizer_capture.update is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
     with mode:
@@ -542,8 +530,8 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact) for artifact in artifacts
@@ -582,20 +570,12 @@ def test_partitioned_lowering_preserves_boundary_residual_aliases() -> None:
 
     with pytest.raises(CaptureError, match="profile scatter"):
         lower_partitioned_training_program(model, (capture,), {}, optimizer_capture)
-    with pytest.raises(CaptureError, match="unknown optimizer phase"):
-        lower_partitioned_training_program(
-            model,
-            (capture,),
-            measurements,
-            optimizer_capture,
-            optimizer_phase="unknown",  # type: ignore[arg-type]
-        )
     with pytest.raises(CaptureError, match="bounded optimizer task"):
         lower_partitioned_training_program(
             model,
             (capture,),
             measurements,
-            replace(optimizer_capture, recurrent=None),
+            replace(optimizer_capture, update=None),
         )
 
 
@@ -625,8 +605,8 @@ def test_partitioned_forward_dependencies_cover_long_lived_boundaries() -> None:
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact)
@@ -693,8 +673,8 @@ def test_partitioned_backward_uses_task_local_cotangent_handoff() -> None:
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact)
@@ -750,8 +730,8 @@ def test_functional_buffer_mutation_does_not_displace_objective_output() -> None
             for pair in (option.pair,)
             for artifact in (pair.forward, pair.backward)
         ),
-        optimizer_capture.recurrent,
-        *(task.artifact for task in optimizer_capture.recurrent_tasks),
+        optimizer_capture.update,
+        *(task.artifact for task in optimizer_capture.update_tasks),
     )
     measurements = {
         artifact.compatibility_digest: _measurement(artifact)

@@ -34,7 +34,6 @@ def lower_partitioned_training_program(
     compiled_root_allocations: Mapping[str, tuple[ExecutableRootAllocation, ...]]
     | None = None,
     device_ordinal: int = 0,
-    optimizer_phase: Literal["initial", "recurrent"] = "recurrent",
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved",
     data_ordering: StepDataOrdering | None = None,
     layout_cache: CompiledLayoutIndex | None = None,
@@ -49,7 +48,6 @@ def lower_partitioned_training_program(
     metadata = _validate_training_lowering(
         captures,
         optimizer,
-        optimizer_phase=optimizer_phase,
         optimizer_ordering=optimizer_ordering,
         profiling_metadata_digests=profiling_metadata_digests,
     )
@@ -99,7 +97,6 @@ def lower_partitioned_training_program(
         objects,
         optimizer,
         profiles,
-        optimizer_phase=optimizer_phase,
         optimizer_ordering=optimizer_ordering,
         ordering=ordering,
         device_id=device_id,
@@ -134,16 +131,13 @@ def _validate_training_lowering(
     captures: tuple[PartitionedTrainingCapture, ...],
     optimizer: OptimizerCapture,
     *,
-    optimizer_phase: str,
     optimizer_ordering: str,
     profiling_metadata_digests: tuple[str, ...] | None,
 ) -> tuple[str | None, ...]:
     if not captures:
         raise CaptureError("partitioned training lowering requires a microbatch")
-    if optimizer.recurrent is None:
+    if optimizer.update is None:
         raise CaptureError("partitioned training requires a bounded optimizer task")
-    if optimizer_phase not in {"initial", "recurrent"}:
-        raise CaptureError(f"unknown optimizer phase {optimizer_phase!r}")
     if optimizer_ordering not in {"stage_interleaved", "tail"}:
         raise CaptureError(f"unknown optimizer ordering {optimizer_ordering!r}")
     if profiling_metadata_digests is None:

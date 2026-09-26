@@ -2,8 +2,8 @@
 
 These are the two values that describe a *step* rather than a plan:
 `StepDataOrdering`, the walk a step takes through its microbatches, and
-`StepProgram`, the recurrent and optional initial planning problems a captured
-step lowered to, with the provenance that says what produced them.
+`StepProgram`, the planning problem a captured step lowered to, with the
+provenance that says what produced it.
 
 They live beside the planner rather than inside it because a step is not a
 planning concept -- the planner is handed a problem and does not care which

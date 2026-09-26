@@ -151,7 +151,7 @@ class ShadowSpillPlanningProblem:
     dynamic_scratch_reserve_bytes: int
 
     def __post_init__(self) -> None:
-        if self.role not in {"initial", "recurrent", "forward"}:
+        if self.role not in {"step", "forward"}:
             raise ValueError(f"unsupported problem role {self.role!r}")
         if len(self.simulation_config.devices) != 1:
             raise ValueError("ShadowSpillPlanningProblem currently requires one device")

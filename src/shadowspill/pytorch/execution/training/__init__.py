@@ -1,8 +1,7 @@
 """Exact accumulated-training dispatch through selected AOT graph pairs.
 
-`TrainingExecutor` runs one plan per invocation: the initial plan while a lazy
-optimizer's state does not exist yet, the recurrent plan after. Its parts are
-the modules beside it: `admission` admits a run to the runtime; `boundary` and
+`TrainingExecutor` runs the step's plan on every invocation. Its parts are the
+modules beside it: `admission` admits a run to the runtime; `boundary` and
 `publication` are the two halves of every task boundary, as functions over the
 executor; `timing` is what an invocation measures about itself; and
 `optimizer_state` is the optimizer's state as the plan holds it, which a
@@ -13,7 +12,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, cast
+from typing import Any
 
 import torch
 
@@ -55,92 +54,44 @@ class TrainingExecutor(AnnotatedExecutor):
 
     def __init__(
         self,
-        initial: tuple[LoweredTrainingProgram, ExecutionPlan] | None,
-        recurrent: tuple[LoweredTrainingProgram, ExecutionPlan],
+        lowered: LoweredTrainingProgram,
+        plan: ExecutionPlan,
         bridge: RuntimeBridge,
         state: TrainingMaterializedState,
         functions: dict[str, Callable[..., object]],
         optimizer: torch.optim.Optimizer,
         *,
-        recurrent_simulation: SimulationResult,
-        initial_simulation: SimulationResult | None = None,
-        initial_fixed_layout: RuntimeFixedLayout | None = None,
-        recurrent_fixed_layout: RuntimeFixedLayout,
-        initial_memory_envelopes: Mapping[str, TaskMemoryEnvelope] | None = None,
-        recurrent_memory_envelopes: Mapping[str, TaskMemoryEnvelope],
-        optimizer_state_preinitialized: bool = False,
-        optimizer_state_was_lazy: bool = False,
+        simulation: SimulationResult,
+        fixed_layout: RuntimeFixedLayout,
+        memory_envelopes: Mapping[str, TaskMemoryEnvelope],
     ) -> None:
         self._bridge = bridge
         self._state = state
         self._functions = functions
-        if initial is not None and initial_simulation is None:
-            raise ValueError(
-                "initial execution plan requires matching simulator evidence"
-            )
-        self._initial = (
-            None
-            if initial is None
-            else build_plan_run(
-                *initial,
-                simulation=cast(SimulationResult, initial_simulation),
-                bridge=bridge,
-                functions=functions,
-                memory_envelopes=initial_memory_envelopes or {},
-            )
-        )
-        self._recurrent = build_plan_run(
-            *recurrent,
-            simulation=recurrent_simulation,
+        run = build_plan_run(
+            lowered,
+            plan,
+            simulation=simulation,
             bridge=bridge,
             functions=functions,
-            memory_envelopes=recurrent_memory_envelopes,
+            memory_envelopes=memory_envelopes,
         )
-        if (self._initial is None) != (initial_fixed_layout is None):
-            raise ValueError(
-                "initial execution plan and fixed layout must be provided together"
-            )
-        self._initial_fixed_layout = initial_fixed_layout
-        self._recurrent_fixed_layout = recurrent_fixed_layout
-        self.optimizer_state = OptimizerState(
-            optimizer,
-            state,
-            bridge,
-            recurrent[0],
-            has_initial_plan=self._initial is not None,
-            was_lazy=optimizer_state_was_lazy,
-            preinitialized=optimizer_state_preinitialized,
-        )
-        # Materialization uses a short-lived action batch. Replace it with
-        # exactly one immutable initial or recurrent plan.
+        self.optimizer_state = OptimizerState(optimizer, state, bridge, lowered)
+        # Materialization uses a short-lived action batch. Replace it with the
+        # step's plan, admitted once for every invocation.
         clear_tasks(self._bridge)
-        if self._initial is not None and not self.optimizer_state.initialized:
-            assert self._initial_fixed_layout is not None
-            self._initial = admit_run(
-                self._bridge, self._initial, self._initial_fixed_layout
-            )
-            self._active_run = self._initial
-        else:
-            self._recurrent = admit_run(
-                self._bridge, self._recurrent, self._recurrent_fixed_layout
-            )
-            self._active_run = self._recurrent
+        self._run = admit_run(self._bridge, run, fixed_layout)
         self._gradients = {
             state.bridge.objects.alias_for_object(
                 item.gradient_object_id
             ): model_parameter
-            for item in recurrent[0].gradients
+            for item in lowered.gradients
             for model_parameter in (state.model.get_parameter(item.parameter_name),)
         }
         self._invocations = 0
-        runs = tuple(run for run in (self._initial, self._recurrent) if run is not None)
         self.timing = ExecutionTiming(
             bridge,
-            tuple(
-                dict.fromkeys(
-                    record.task.task_id for run in runs for record in run.execution
-                )
-            ),
+            tuple(dict.fromkeys(record.task.task_id for record in self._run.execution)),
         )
         self._task_annotations = TaskBoundaryAnnotations(self._bridge)
         self._completion = ReusableCompletionEvent(
@@ -148,18 +99,10 @@ class TrainingExecutor(AnnotatedExecutor):
         )
 
     @property
-    def run_in_force(self) -> _PlanRun:
-        """The plan the next invocation runs: the initial plan while a lazy
-        optimizer's state does not exist yet, the recurrent plan after."""
+    def run(self) -> _PlanRun:
+        """The plan every invocation runs."""
 
-        run = (
-            self._initial
-            if self._initial is not None and not self.optimizer_state.initialized
-            else self._recurrent
-        )
-        if run is None:
-            raise AssertionError("initial optimizer plan is unavailable")
-        return run
+        return self._run
 
     def release_timing(self) -> None:
         """Give every marker this executor holds back to the runtime."""
@@ -212,28 +155,13 @@ class TrainingExecutor(AnnotatedExecutor):
             self.timing.prior_invocation_drain_ns = time.perf_counter_ns() - started_ns
             if timing is not None:
                 timing.prior_invocation_drain_ns = self.timing.prior_invocation_drain_ns
-        run = self.run_in_force
-        if run is not self._active_run:
-            clear_tasks(self._bridge)
-            if run is self._initial:
-                layout = self._initial_fixed_layout
-                if layout is None:
-                    raise AssertionError("initial fixed layout is unavailable")
-                self._initial = admit_run(self._bridge, run, layout)
-                run = self._initial
-            else:
-                self._recurrent = admit_run(
-                    self._bridge, run, self._recurrent_fixed_layout
-                )
-                run = self._recurrent
-            self._active_run = run
         if timing is not None:
             self.timing.begin_armed_runtime_trace(timing, step_number)
         # Staging the inputs waits for the whole runtime, so every earlier
         # call has drained here and must have left the layout empty.
         self._state.refresh_inputs(inputs)
         self._bridge.require_empty_layout()
-        return run
+        return self._run
 
     def _submit_initial_placement(
         self,

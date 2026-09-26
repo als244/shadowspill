@@ -42,7 +42,7 @@ def _fixture() -> StepProgram:
         ),
     )
     pre_pressurefit = ShadowSpillPlanningProblem(
-        role="recurrent",
+        role="step",
         program=program,
         initial_residency=(ResidencySpec("state", MemoryLocation.DEVICE),),
         final_residency=(ResidencySpec("state", MemoryLocation.SPILL),),
@@ -68,8 +68,7 @@ def _fixture() -> StepProgram:
         dynamic_scratch_reserve_bytes=0,
     )
     return StepProgram(
-        recurrent=pre_pressurefit,
-        initial=None,
+        problem=pre_pressurefit,
         optimizer_ordering="stage_interleaved",
         data_ordering=StepDataOrdering.depth_first(1),
         signature_digests=("0" * 64,),

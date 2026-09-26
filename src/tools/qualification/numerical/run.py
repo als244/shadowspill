@@ -23,7 +23,7 @@ from shadowspill.pytorch import Runtime, plan_step
 from workloads.common.training import LEARNING_RATE
 
 from ..model_state import import_case_model, release_case_model
-from ..plan_record import write_plan_records
+from ..plan_record import write_plan_record
 from ..planning_phases import planning_breakdown, planning_summary
 from ..runtime_evidence import (
     adapter_statistics,
@@ -260,11 +260,13 @@ def _detailed_artifacts(
         f"{request.result_path.stem}_plan_report.pt"
     )
     torch.save(training.plan_report, plan_report_path)
-    plan_records = write_plan_records(
-        results=training.plan_report.search_results,
-        directory=request.result_path.parent
-        / f"{request.result_path.stem}_plan_records",
-    )
+    plan_records = [
+        write_plan_record(
+            result=training.plan_report.search_result,
+            directory=request.result_path.parent
+            / f"{request.result_path.stem}_plan_records",
+        )
+    ]
     return plan_records, {
         "path": str(plan_report_path),
         "size_bytes": plan_report_path.stat().st_size,

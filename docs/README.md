@@ -136,8 +136,8 @@ underneath, and the clocks a step is read on.
 28. [Failure, abort, and process exit](architecture/failure-and-exit.md) — how
     a failure is handled at each scope, and why a process that is exiting is
     abandoned rather than closed.
-29. [Step boundaries](architecture/step-boundaries.md) — the recurrent
-    invocation cycle: why repetition is sound, the synchronization points
+29. [Step boundaries](architecture/step-boundaries.md) — the invocation
+    cycle: why repetition is sound, the synchronization points
     between one step and the next, the first-use order of the opening restore,
     and what step time means.
 30. [PyTorch adapter](architecture/adapter.md) — what the adapter library is

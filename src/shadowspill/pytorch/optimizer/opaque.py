@@ -1,5 +1,5 @@
-"""An opaque optimizer on real device tensors, for profiling: the isolated copy and the
-first-step state it exposes as outputs."""
+"""An opaque optimizer on real device tensors, for profiling: the isolated copy its
+update runs on."""
 
 from __future__ import annotations
 
@@ -14,10 +14,6 @@ from shadowspill.pytorch.accelerator import accelerator_device
 
 from .artifacts import (
     OpaqueOptimizerArtifact,
-    OptimizerTensorBinding,
-)
-from .bindings import (
-    tensor_bindings,
 )
 from .sandbox import (
     copy_optimizer,
@@ -115,72 +111,3 @@ def materialize_opaque_optimizer(
         converted_state[real_parameter] = converted
     optimizer.state = converted_state
     return optimizer
-
-
-def opaque_optimizer_outputs(
-    artifact: OpaqueOptimizerArtifact,
-    optimizer: torch.optim.Optimizer,
-    *,
-    device_ordinal: int,
-) -> tuple[OptimizerTensorBinding, ...]:
-    """Expose first-step state using one profiling/execution storage policy.
-
-    An opaque optimizer does not return its lazily created state from
-    ``step()``.  The initial structural profile nevertheless needs those
-    tensors as explicit persistent outputs so allocator ordinals can be
-    reconciled with ShadowSpillProgram objects.  Names come from optimizer discovery;
-    values come only from the real isolated first step.
-    """
-
-    parameters = optimizer_parameters(optimizer)
-    if len(parameters) != len(artifact.parameter_names):
-        raise CaptureError("opaque optimizer changed its parameter inventory")
-    names = {
-        id(parameter): name
-        for parameter, name in zip(
-            parameters,
-            artifact.parameter_names,
-            strict=True,
-        )
-        if name is not None
-    }
-    by_name = {
-        binding.name: binding
-        for binding in tensor_bindings(
-            optimizer,
-            names,
-            require_gradients=False,
-        )
-    }
-    outputs: list[OptimizerTensorBinding] = []
-    target = accelerator_device(device_ordinal)
-    for name in artifact.profile_output_names:
-        binding = by_name.get(name)
-        if binding is None:
-            raise CaptureError(
-                f"opaque optimizer did not create profiled state {name!r}"
-            )
-        tensor = binding.tensor
-        if not binding.spillable:
-            raise CaptureError(f"opaque optimizer output {name!r} is not spillable")
-        if tensor.device.type == "cpu":
-            owner = torch.empty(
-                tensor.untyped_storage().nbytes(),
-                dtype=torch.uint8,
-                device=target,
-            )
-            target_tensor = torch.empty(0, dtype=tensor.dtype, device=target).set_(
-                owner.untyped_storage(),
-                int(tensor.storage_offset()),
-                tuple(tensor.shape),
-                tuple(tensor.stride()),
-            )
-            target_tensor.copy_(tensor)
-            tensor.data = target_tensor
-        elif tensor.device != target:
-            raise CaptureError(
-                f"opaque optimizer output {name!r} was created on {tensor.device}, "
-                f"expected cpu or {target}"
-            )
-        outputs.append(binding)
-    return tuple(outputs)

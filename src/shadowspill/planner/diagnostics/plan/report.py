@@ -53,7 +53,6 @@ class PlanReport:
     #: The resolution options the plan was searched over, as exact fractions
     #: of the flexible groups recomputing, or `None` for a forward plan.
     search_options: SearchOptions | None = None
-    initial_execution_plan: ExecutionPlan | None = None
     planned_program_cache_hits: int = 0
     planned_program_cache_misses: int = 0
     fixed_slab_bytes: int = 0
@@ -65,40 +64,17 @@ class PlanReport:
 
     @property
     def program(self) -> ShadowSpillProgram:
-        """Canonical recurrent ShadowSpillProgram handed straight to the search.
-
-        Forward plans have one ShadowSpillProgram.  Training plans expose the recurrent
-        step here; :attr:`initial_program` names the optional lazy-state first
-        step separately.
-        """
+        """Canonical ShadowSpillProgram handed straight to the search."""
 
         return self.execution_plan.program
 
     @property
-    def initial_program(self) -> ShadowSpillProgram | None:
-        """Canonical first-step program, when lazy optimizer state requires one."""
-
-        if self.initial_execution_plan is None:
-            return None
-        return self.initial_execution_plan.program
-
-    @property
     def search_result(self) -> ProgramPlanResult:
-        """The search call boundary and selected result for the recurrent plan."""
+        """The search call boundary and selected result for the plan."""
 
         if not self.search_results:
             raise RuntimeError("PlanReport does not contain search evidence")
         return self.search_results[-1]
-
-    @property
-    def initial_search_result(self) -> ProgramPlanResult | None:
-        """The selected first-step result, when one was planned."""
-
-        if self.initial_execution_plan is None:
-            return None
-        if len(self.search_results) < 2:
-            raise RuntimeError("PlanReport is missing first-step search evidence")
-        return self.search_results[0]
 
     @property
     def predicted_device_peak_bytes(self) -> int:
@@ -114,7 +90,7 @@ class PlanReport:
 
     @property
     def summary(self) -> PlanSummary:
-        """The selected recurrent plan's promise as one derived object."""
+        """The selected plan's promise as one derived object."""
 
         return summarize_selected_plan(
             self.search_result, phase_timings_ns=self.phase_timings_ns

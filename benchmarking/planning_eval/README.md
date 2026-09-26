@@ -59,7 +59,6 @@ One JSON file, validated strictly — an unknown or missing key is an error.
 | `name` | Names the baseline, with the config digest and revision. |
 | `expected_programs` | The corpus size this config is written for; a corpus of another size is refused. |
 | `expected_points_per_program` | Must equal the expanded grid size, so a grid edit that changes the point count fails at load rather than mid-sweep. |
-| `program_role` | Which program in each `StepProgram` is planned: `recurrent`, `initial`, or `forward`. |
 | `point_timeout_seconds` | Required, with no default; the shipped configs set 300. |
 | `max_point_attempts`, `max_worker_restarts_per_program` | How often a point may be retried, and how often its worker may be restarted. |
 | `plan_store_mode` | `contribute`, `reuse`, `require`, or `refresh`. |

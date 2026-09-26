@@ -40,7 +40,7 @@ copy, and the resulting artifact records that checkpoint qualification was
 skipped. A single-cell `run` invocation still checkpoints and restores by
 default; checkpoint/replay release coverage lives in the numerical matrix.
 
-`--plan-only` plans and writes the cell's plan records without running a step,
+`--plan-only` plans and writes the cell's plan record without running a step,
 which is how placement-bearing records are produced for replay. It is also a
 matrix option, and covers every selected cell there.
 

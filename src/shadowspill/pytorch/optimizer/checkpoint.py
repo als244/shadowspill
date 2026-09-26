@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 import torch
@@ -18,19 +18,13 @@ class OptimizerCheckpointTensor:
     source: torch.Tensor
 
 
-@dataclass(frozen=True, slots=True)
-class OptimizerCheckpointRestore:
-    """Prepared in-place optimizer restore and its tensor payloads."""
-
-    initialized: bool
-    tensors: tuple[OptimizerCheckpointTensor, ...]
-
-
 def restore_optimizer_checkpoint_structure(
     named_parameters: Mapping[str, torch.nn.Parameter],
     optimizer: torch.optim.Optimizer,
     checkpoint: Mapping[str, object],
-) -> OptimizerCheckpointRestore:
+    *,
+    required: Collection[str] = (),
+) -> tuple[OptimizerCheckpointTensor, ...]:
     """Restore public optimizer structure while retaining every tensor object.
 
     ``Optimizer.load_state_dict()`` casts checkpoint tensors to each parameter's
@@ -38,7 +32,8 @@ def restore_optimizer_checkpoint_structure(
     so that generic behavior would manufacture unplanned device allocations.
     This adapter performs the same parameter-ID reconciliation but preserves
     the optimizer's admitted tensor objects and returns the bytes to copy into
-    their runtime-owned storage.
+    their runtime-owned storage. A checkpoint without a tensor for every name in
+    ``required`` is refused before the optimizer changes.
     """
 
     if set(checkpoint) != {"state", "param_groups"}:
@@ -115,6 +110,9 @@ def restore_optimizer_checkpoint_structure(
             )
         )
 
+    missing = sorted(set(required) - {item.name for item in tensors})
+    if missing:
+        raise RuntimeError(f"optimizer checkpoint lacks planned state: {missing}")
     optimizer.state.clear()
     for parameter, state in restored_state:
         optimizer.state[parameter] = state
@@ -125,7 +123,7 @@ def restore_optimizer_checkpoint_structure(
         current_group.clear()
         current_group.update(restored)
         current_group["params"] = parameters
-    return OptimizerCheckpointRestore(bool(saved_state), tuple(tensors))
+    return tuple(tensors)
 
 
 def _restore_value(
@@ -186,7 +184,6 @@ def _is_sequence(value: object) -> bool:
 
 
 __all__ = [
-    "OptimizerCheckpointRestore",
     "OptimizerCheckpointTensor",
     "restore_optimizer_checkpoint_structure",
 ]
