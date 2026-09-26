@@ -5,7 +5,8 @@ go."""
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any, cast
 
 import torch
@@ -24,6 +25,7 @@ from shadowspill.pytorch.optimizer import (
 from shadowspill.pytorch.runtime_adapter.boundaries import PublishedStorage
 from shadowspill.pytorch.spill import (
     read_spill_tensor,
+    spill_view,
     write_spill_tensor,
 )
 from shadowspill.pytorch.state.optimizer import release_optimizer_state_from_plan
@@ -112,6 +114,25 @@ class OptimizerState:
                     raw,
                 ),
             )
+        finally:
+            self.restore_spill_only(exposed)
+
+    @contextmanager
+    def state_dict_in_place(self) -> Iterator[dict[str, object]]:
+        """The optimizer's state_dict over its bytes where they are in the pool.
+
+        What :meth:`state_dict` returns, with nothing copied where the pool is
+        one this process can address: the entries view the pool, so they are
+        valid only while the block runs, and the live state points back at its
+        placeholders when it ends.
+        """
+
+        if not self.initialized:
+            yield self.state_dict()
+            return
+        exposed = self.expose_cpu(in_place=True)
+        try:
+            yield self.optimizer.state_dict()
         finally:
             self.restore_spill_only(exposed)
 
@@ -273,14 +294,16 @@ class OptimizerState:
         read_spill_tensor(self._bridge.objects, alias_id, owner)
         return owner
 
-    def expose_cpu(self) -> tuple[ExposedOptimizerTensor, ...]:
+    def expose_cpu(
+        self, *, in_place: bool = False
+    ) -> tuple[ExposedOptimizerTensor, ...]:
         """Point live optimizer state at host copies of its pool bytes.
 
-        Each alias group is read out of the pool into a writable buffer rather
-        than viewed in place. A pool's memory is not always in this address
-        space, so copying is the one way that works for every kind -- the same
-        reason state enters a pool by copying, and the reason there is no
-        second path here that would work only sometimes.
+        Each alias group is read out of the pool into a writable buffer: a
+        pool's memory is not always in this address space, so copying is the
+        one way that works for every kind. ``in_place`` views an alias group
+        where it is instead, wherever the pool allows it, for a caller that
+        only reads the state and is done before the next step.
         """
 
         self._bridge.wait_until_idle()
@@ -295,7 +318,9 @@ class OptimizerState:
             alias_id = self._bridge.objects.alias_for_object(item.object_id)
             owner = owners.get(alias_id)
             if owner is None:
-                owner = self._copied_alias_buffer(alias_id)
+                owner = spill_view(self._bridge.objects, alias_id) if in_place else None
+                if owner is None:
+                    owner = self._copied_alias_buffer(alias_id)
                 owners[alias_id] = owner
             device_placeholder = tensor.data
             layout = TensorLayout(

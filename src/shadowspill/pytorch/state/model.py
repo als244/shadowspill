@@ -268,6 +268,12 @@ def adopt_model_state_for_plan(
             raise RuntimeError(
                 f"model state is in pool {existing.pool!r}, not requested {pool!r}"
             )
+        if existing.owning_plan is not None and existing.holders:
+            raise RuntimeError(
+                "this model's state was imported by the plan that holds it and goes "
+                "when that plan closes; import it with import_model_state before "
+                "planning to share it between plans"
+            )
         return False
     import_tensors(
         model,

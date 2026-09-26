@@ -42,23 +42,27 @@ read as it is rather than assumed to match.
 This costs nothing and asks nothing of the caller. ShadowSpill does it with
 the optimizer the caller already passes.
 
-### Built, then imported into the pool
+### Created in the pool, then filled
 
-Every declared entry ends up in the spill pool, which is where it will live for
-the run, and gets there the way all state does: it is built in ordinary host
-memory, filled, and imported. There is no size below which an entry is treated
-differently -- a step counter an optimizer keeps as a scalar tensor is imported
-like any other entry, and reads from the host as it would anywhere else. An
-entry an optimizer keeps as a plain Python number is not a tensor, so it is not
-declared and nothing is built for it.
+Every declared entry lives in the spill pool for the run, and is put there
+before it holds anything: planning allocates each entry and imports it into the
+spill pool as the plan's own state -- memory nothing has written to is not
+committed, so this costs the pool and nothing else -- and only then hands it to
+the initialiser, which writes its values where they will live. The host never
+holds the state beside the pool, and for an ordinary adaptive optimizer, several
+times the model, that is what decides whether a large model fits. It is the
+order [a checkpoint import](state-import.md#three-paths-in) takes, through the
+same import. There is no size below which an entry is treated differently -- a
+step counter an optimizer keeps as a scalar tensor is imported like any other
+entry, and reads from the host as it would anywhere else. An entry an optimizer
+keeps as a plain Python number is not a tensor, so it is not declared and
+nothing is built for it.
 
-The entries were once taken from the spill pool directly, so that the caller's
-initialiser wrote where the values would live and the host never held them.
-That is cheaper and it is available only to a pool this process can address; a
-pool on another machine cannot hand out memory for a caller to write. One path
-that always works was judged worth more than two that each work sometimes, so
-the host holds the state briefly while it is built. See [importing
-state](state-import.md).
+A pool on another machine cannot hand out memory for a caller to write, so
+there the order reverses: the entries are filled on the host and imported
+after. That costs nothing extra, because such a pool keeps a host copy of its
+state for as long as it holds it; the two orders differ only where that copy
+would otherwise have been temporary.
 
 ### Filled by the caller
 

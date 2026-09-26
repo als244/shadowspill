@@ -87,11 +87,10 @@ def materialize_training_state(
             declare_varying_hyperparams(model, optimizer, hyperparams)
             state.restore_model_cpu_for_optimizer_capture()
             # The optimizer declares what it keeps on meta, which allocates
-            # nothing; each entry is then built here and filled by the caller.
-            # It is built in ordinary host memory and put in the pool by the
-            # import below, which is the same import that adopts state the
-            # caller built. Capture finds the state already present and does
-            # not create any of its own.
+            # nothing; each entry is then created in the spill pool as this
+            # plan's, and filled there by the caller, so the state never sits
+            # in ordinary host memory beside the pool. Capture finds the state
+            # already present and does not create any of its own.
             # A parameter the objective never reaches receives no gradient
             # however it is flagged, and eager training skips it. The plan
             # has to skip it too, or it keeps state nothing steps and
@@ -105,6 +104,8 @@ def materialize_training_state(
                     model,
                     optimizer,
                     runtime=runtime,
+                    pool=memory.spill.name,
+                    owning_plan=memory.plan_handle,
                     initialize=optimizer_state_init,
                     receives_gradient=receives_gradient,
                 )
