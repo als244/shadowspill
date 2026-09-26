@@ -16,6 +16,7 @@ from shadowspill.pytorch.optimizer import discovery as discovery_module
 from shadowspill.pytorch.optimizer import sandbox as sandbox_module
 from shadowspill.pytorch.optimizer import trace as trace_module
 from shadowspill.pytorch.optimizer.artifacts import optimizer_value_identity
+from shadowspill.pytorch.optimizer.capture import declare_optimizer_state
 
 
 def _initialized(
@@ -93,6 +94,44 @@ def test_device_only_registered_optimizer_uses_fake_contract() -> None:
             "cpu" if binding.role is OptimizerTensorRole.HYPERPARAMETER else "cuda"
         )
         assert binding.tensor.device.type == expected
+
+
+def test_state_kept_at_another_precision_is_captured_at_it() -> None:
+    """A master copy and moments kept apart from the parameter's dtype keep theirs.
+
+    Discovery puts its copy of the optimizer back as it found it. Doing that
+    with ``Optimizer.load_state_dict`` cast every floating-point entry but
+    ``step`` to the parameter's dtype, so an fp32 master over bf16 weights was
+    captured as a bf16 one, and profiling refused the planned fp32 state.
+    """
+
+    mlops = pytest.importorskip("mlops")
+    parameter = torch.nn.Parameter(torch.ones(8, dtype=torch.bfloat16))
+    parameter.grad = torch.ones_like(parameter)
+    optimizer = mlops.optim.AdamW(
+        [parameter],
+        lr=1e-3,
+        state_dtype=torch.float32,
+        master_parameter_dtype=torch.float32,
+    )
+    # The state planning installs before it captures.
+    for entry in declare_optimizer_state({"weight": parameter}, optimizer):
+        optimizer.state[parameter][entry.entry_name] = torch.zeros(
+            entry.shape, dtype=entry.dtype
+        )
+
+    captured = capture_optimizer({"weight": parameter}, optimizer)
+
+    dtypes = {binding.name: binding.tensor.dtype for binding in captured.bindings}
+    assert dtypes["weight"] == torch.bfloat16
+    for entry in ("master_parameter", "exp_avg", "exp_avg_sq"):
+        assert dtypes[f"optimizer.weight.{entry}"] == torch.float32, entry
+    # What the traced update declares for the master, which profiling checks
+    # the planned fp32 master against.
+    assert captured.recurrent is not None
+    names = [binding.name for binding in captured.bindings]
+    position = names.index("optimizer.weight.master_parameter")
+    assert captured.recurrent.tensor_inputs[position].dtype == torch.float32
 
 
 def test_device_only_discovery_inventories_every_parameter() -> None:

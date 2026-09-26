@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+from collections import defaultdict
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -371,7 +372,33 @@ def _restore_discovery_baseline(
     sandbox: torch.optim.Optimizer,
     baseline: _DiscoveryBaseline,
 ) -> None:
-    sandbox.load_state_dict(baseline.state_dict)
+    # Not Optimizer.load_state_dict, which casts every floating-point entry
+    # but "step" to its parameter's dtype: a master copy or moments kept at
+    # another precision would come back at the parameter's, and the update
+    # would be captured at the wrong one. The baseline is this sandbox's own
+    # state_dict, so its entries go back as they were saved, to the
+    # parameters its indices were taken from.
+    saved = baseline.state_dict
+    parameters = [
+        parameter for group in sandbox.param_groups for parameter in group["params"]
+    ]
+    sandbox.state = defaultdict(
+        dict,
+        {
+            parameters[index]: copy.deepcopy(entries)
+            for index, entries in saved["state"].items()
+        },
+    )
+    for group, saved_group in zip(
+        sandbox.param_groups, saved["param_groups"], strict=True
+    ):
+        group.update(
+            {
+                key: copy.deepcopy(value)
+                for key, value in saved_group.items()
+                if key != "params"
+            }
+        )
     with torch.no_grad():
         for parameter, value, gradient in baseline.parameters:
             parameter.copy_(value)
