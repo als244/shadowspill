@@ -20,6 +20,7 @@ def partition_training_capture(
     representative_root_inputs: tuple[object, ...] | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template.
 
@@ -27,6 +28,9 @@ def partition_training_capture(
     gradients its predecessors created, so its stages need the backward form
     that does the adding. ``gradient_dtype`` is the dtype parameter gradients
     are created and accumulated at; ``None`` keeps each at its parameter's.
+    ``round_accumulation_once`` lets a matrix multiply add its product into a
+    running gradient narrower than it sums at, rounding the sum once
+    (:func:`~shadowspill.pytorch.capture.aot.accumulate_gradient_outputs`).
     """
 
     partitioned = partition_export(
@@ -47,6 +51,7 @@ def partition_training_capture(
             graph_pair_store=graph_pair_store,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
+            round_accumulation_once=round_accumulation_once,
         ),
     )
 

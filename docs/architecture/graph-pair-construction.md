@@ -77,9 +77,25 @@ a microbatch; a cotangent belongs to the microbatch that produced it, so those
 are left alone.
 
 The addition is in place, which is why the task declares a mutation of the
-argument rather than a fresh output: the running gradient keeps its storage,
-and the compiler is free to fold the add into whatever produced the
-contribution.
+argument rather than a fresh output: the running gradient keeps its storage.
+The compiler folds the add into the kernels it generates -- a reduction reads
+the running gradient and writes it back as it finishes -- but not into a call
+it only makes. A matrix multiply is such a call, writing its result before
+anything can read it, so a gradient one computes, moved at most by views on
+its way out, is added by the multiply itself: `shadowspill::accumulate_matmul_`
+is `C = A @ B + C` in one call, with the running gradient as `C`. The product
+is never written out and read back. That is decided from the graph's
+operations, where the device has an in-place kernel that accepts the dtypes;
+a device without one adds after. An opaque operation's result -- a custom
+kernel's -- is still written and then added.
+
+Adding inside the multiply rounds the sum once. When the running gradient is
+at the dtype the multiply sums at -- fp32 -- adding after rounds it once too,
+and the two agree. When it is narrower -- bf16 -- adding after rounds the
+product first, so adding inside computes something else: more precisely, but
+not what a step adding after computes, which is what PyTorch does. Such a
+gradient is added inside the multiply only when the step is planned with
+`round_accumulation_once`, and after it otherwise.
 
 Which form a microbatch's stage runs follows from the step's data ordering
 (`StepDataOrdering.creates`), not from planning, so both forms share one

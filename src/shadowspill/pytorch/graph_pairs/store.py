@@ -8,7 +8,7 @@ import os
 import pickle
 import tempfile
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import torch
@@ -37,6 +37,16 @@ from .serialization import (
 _GRAPH_PAIR_CACHE_SCHEMA = artifact_schema("aot_graph_pair")
 
 
+@dataclass(frozen=True, slots=True)
+class _Form:
+    """What a step asks of the captured pairs: its gradients' dtype, and
+    whether it accumulates -- rounding a sum once where it may, if asked."""
+
+    gradient_dtype: torch.dtype | None
+    accumulating: bool
+    round_accumulation_once: bool
+
+
 class GraphPairStore:
     """Reuse AOT graph pairs while rebinding occurrence-specific values."""
 
@@ -48,11 +58,9 @@ class GraphPairStore:
         artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
         self._pairs: dict[tuple[str, tuple[int, ...], bool], TaskGraphPairs] = {}
-        #: The forms a step asks for, derived from the captured pairs: their
-        #: gradients at a dtype, and the accumulating form.
+        #: The forms a step asks for, derived from the captured pairs.
         self._derived: dict[
-            tuple[tuple[str, tuple[int, ...], bool], str | None, bool],
-            TaskGraphPairs,
+            tuple[tuple[str, tuple[int, ...], bool], _Form], TaskGraphPairs
         ] = {}
         self._root = None if root is None else Path(root).expanduser()
         self._policy = policy
@@ -73,10 +81,12 @@ class GraphPairStore:
         specialize_unit_tangents: bool,
         accumulating: bool = False,
         gradient_dtype: torch.dtype | None = None,
+        round_accumulation_once: bool = False,
     ) -> TaskGraphPairs:
         """The stage's graph pairs, their parameter gradients produced at
         ``gradient_dtype`` (the parameters' own when ``None``), and with the
-        accumulating form when the stage runs in an ``accumulating`` step.
+        accumulating form when the stage runs in an ``accumulating`` step --
+        rounding a sum once where it may with ``round_accumulation_once``.
 
         The store holds the pairs as captured; the forms a step asks for are
         derived from them, once per contract, and rebound per occurrence.
@@ -89,6 +99,7 @@ class GraphPairStore:
             input_provenance=example.stage.input_provenance,
         )
         key = (stage_contract, roots, specialize_unit_tangents)
+        form = _Form(gradient_dtype, accumulating, round_accumulation_once)
         self._keys_seen.add(key)
         existing = self._pairs.get(key)
         if existing is None:
@@ -97,7 +108,7 @@ class GraphPairStore:
                 self._pairs[key] = existing
                 self.hits += 1
                 return rebind_task_graph_pairs(
-                    self._derive(key, existing, gradient_dtype, accumulating), example
+                    self._derive(key, existing, form), example
                 )
             self._policy.refuse_miss("graph pair", str(key[0]))
             existing = build_default_graph_pairs(
@@ -108,18 +119,15 @@ class GraphPairStore:
             self._pairs[key] = existing
             self._write(key, existing)
             self.misses += 1
-            return self._derive(key, existing, gradient_dtype, accumulating)
+            return self._derive(key, existing, form)
         self.hits += 1
-        return rebind_task_graph_pairs(
-            self._derive(key, existing, gradient_dtype, accumulating), example
-        )
+        return rebind_task_graph_pairs(self._derive(key, existing, form), example)
 
     def _derive(
         self,
         key: tuple[str, tuple[int, ...], bool],
         pairs: TaskGraphPairs,
-        gradient_dtype: torch.dtype | None,
-        accumulating: bool,
+        form: _Form,
     ) -> TaskGraphPairs:
         """The captured pairs in the form a step runs them, derived once.
 
@@ -130,20 +138,15 @@ class GraphPairStore:
         accumulating form is derived, which then adds at that dtype.
         """
 
-        derived_key = (
-            key,
-            None if gradient_dtype is None else str(gradient_dtype),
-            accumulating,
-        )
-        derived = self._derived.get(derived_key)
+        derived = self._derived.get((key, form))
         if derived is None:
-            derived = pairs.with_gradient_dtype(gradient_dtype)
-            if accumulating:
-                derived = replace(
-                    derived,
-                    variants=(*derived.variants, *derived.accumulating_variants()),
+            derived = pairs.with_gradient_dtype(form.gradient_dtype)
+            if form.accumulating:
+                accumulating = derived.accumulating_variants(
+                    round_accumulation_once=form.round_accumulation_once
                 )
-            self._derived[derived_key] = derived
+                derived = replace(derived, variants=(*derived.variants, *accumulating))
+            self._derived[(key, form)] = derived
         return derived
 
     def _path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:

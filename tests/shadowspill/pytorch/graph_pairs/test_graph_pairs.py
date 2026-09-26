@@ -127,11 +127,15 @@ def test_a_control_only_prologue_is_folded_into_the_stage_that_uses_it() -> None
         assert len(capture_training_stages(folded)) == len(folded.stages)
 
 
-def _capture() -> tuple[FakeTensorMode, PartitionedExport]:
-    model = _RepeatedNetwork()
+def _capture(
+    dtype: torch.dtype = torch.float32,
+) -> tuple[FakeTensorMode, PartitionedExport]:
+    model = _RepeatedNetwork().to(dtype)
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     replica = fake_device_model(model, mode)
-    inputs = fake_device_inputs([torch.randn(2, 8), torch.randn(2, 8)], mode)
+    inputs = fake_device_inputs(
+        [torch.randn(2, 8, dtype=dtype), torch.randn(2, 8, dtype=dtype)], mode
+    )
 
     def objective(
         current: nn.Module, value: torch.Tensor, target: torch.Tensor
@@ -231,6 +235,36 @@ def test_the_accumulating_form_is_derived_only_when_asked_for() -> None:
         > len(old.pair.backward.example_arguments)
         for old, new in zip(captured, derived, strict=True)
     )
+
+
+def test_rounding_an_accumulation_once_is_a_form_of_its_own() -> None:
+    """At bf16, adding a multiply's gradient inside the multiply rounds the
+    sum once where adding after rounds it twice, so the store derives the
+    accumulating form each way it is asked for, and only the one asked for
+    adds inside the multiply."""
+
+    mode, partitioned = _capture(torch.bfloat16)
+    store = GraphPairStore()
+    adding_inside = torch.ops.shadowspill.accumulate_matmul_.default
+
+    def added_inside(round_once: bool) -> set[bool]:
+        with mode:
+            stages = capture_training_stages(
+                partitioned,
+                graph_pair_store=store,
+                accumulating=True,
+                round_accumulation_once=round_once,
+            )
+        return {
+            adding_inside
+            in {node.target for node in item.pair.backward.graph_module.graph.nodes}
+            for stage in stages
+            for item in stage.graph_pairs.options(accumulates=True)
+        }
+
+    assert added_inside(False) == {False}
+    assert added_inside(True) == {True}
+    assert added_inside(False) == {False}
 
 
 def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:

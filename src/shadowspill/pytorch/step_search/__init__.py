@@ -77,6 +77,7 @@ def plan_step_search(
     export_bypass_key: str | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> StepSearchReport:
     """Plan every admitted geometry under every budget; execute nothing.
 
@@ -108,9 +109,10 @@ def plan_step_search(
     ``search_options`` names the resolutions every point is searched
     over, with the meaning it has for :func:`plan_step`; ``None`` is the
     library's default of every quarter. Options that are not valid are
-    rejected before any geometry is built. ``master_dtype`` and
-    ``grad_dtype`` have their :func:`plan_step` meanings too: every geometry
-    is built with the masters and the gradients the step it plans will keep.
+    rejected before any geometry is built. ``master_dtype``, ``grad_dtype``
+    and ``round_accumulation_once`` have their :func:`plan_step` meanings
+    too: every geometry is built with the masters and the gradients the step
+    it plans will keep, accumulated as it will accumulate them.
 
     ``incumbents`` hands each point the best plan found at a smaller budget
     of the same program, as the plan to beat: budgets are planned ascending,
@@ -185,6 +187,7 @@ def plan_step_search(
             export_bypass_key=export_bypass_key,
             master_dtype=master_dtype,
             grad_dtype=grad_dtype,
+            round_accumulation_once=round_accumulation_once,
         ),
     )
     return StepSearchReport(

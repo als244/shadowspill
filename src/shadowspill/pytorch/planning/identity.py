@@ -65,6 +65,7 @@ def step_identity(
     environment: Mapping[str, object],
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    round_accumulation_once: bool = False,
 ) -> dict[str, object]:
     """What one capture is the same as, before it runs.
 
@@ -114,6 +115,7 @@ def step_identity(
         "hyperparams": list(hyperparams),
         "master_dtype": None if master_dtype is None else str(master_dtype),
         "grad_dtype": None if grad_dtype is None else str(grad_dtype),
+        "round_accumulation_once": round_accumulation_once,
         "partition": partition if isinstance(partition, str) else repr(partition),
         "optimizer_ordering": optimizer_ordering,
         "allocation_probes": {

@@ -53,6 +53,7 @@ class _Build:
     export_bypass_key: str | None
     master_dtype: torch.dtype | None
     grad_dtype: torch.dtype | None
+    round_accumulation_once: bool
 
     def programs(
         self,
@@ -83,6 +84,7 @@ class _Build:
                     export_bypass_key=self.export_bypass_key,
                     master_dtype=self.master_dtype,
                     grad_dtype=self.grad_dtype,
+                    round_accumulation_once=self.round_accumulation_once,
                 ),
                 None,
             )
