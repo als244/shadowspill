@@ -35,8 +35,9 @@ declared final residency is not reached; [physical
 admission](physical-admission.md) proves the layout still holds what the
 step promised to end holding; and the runtime enforces each transition at
 admission time — restoring an object requires a current spill copy and no
-device copy, and staging a new microbatch requires the input object to be
-spill-resident. A violated precondition is a reported plan violation, not
+device copy, staging a new microbatch requires the input object to be
+spill-resident, and no invocation begins while anything is live in its fixed
+layout. A violated precondition is a reported plan violation, not
 silent corruption, so each invocation may begin on an assumption that has
 been proven rather than sampled.
 
@@ -71,6 +72,12 @@ synchronization points:
    copied on the host into its pinned spill lease. Staging requires the
    input objects to be spill-only — a precondition the previous step's
    contract guarantees, and one only its completed drain establishes.
+   With every earlier invocation drained, the fixed layout must hold
+   nothing: all a call places there, its terminal writeback included, is
+   gone by now, so a survivor — a tensor a library kept, say — is one this
+   invocation would overwrite. The runtime checks before the first byte
+   moves and reports a survivor as a plan violation naming the task that
+   made it, its allocation and its size.
 3. **Opening restore.** One reusable action batch — admitted once, under
    a reserved task identity outside the plan's task range — submits a
    restore for every entry in the schedule's initial device residency.

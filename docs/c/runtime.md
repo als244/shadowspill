@@ -284,6 +284,11 @@ runtime's pool, route, event, and object owners:
 - `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
   task scopes, submitted actions, and task-owned retirements. Other plans on
   the same runtime do not participate.
+- `shadowspill_plan_require_empty_layout()` refuses unless nothing is live
+  inside the plan's fixed layout, latching a plan violation that names the
+  first survivor's task, allocation and size. A frontend asks at the start of
+  every invocation, once every plan placing into the layout has drained; see
+  [step boundaries](../architecture/step-boundaries.md#what-begins-the-next-one).
 - `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
   references without closing the shared runtime.
 

@@ -109,6 +109,21 @@ class RuntimeBridge:
             "wait idle",
         )
 
+    def require_empty_layout(self) -> None:
+        """Refuse unless nothing is live in this plan's layout.
+
+        Asked at the start of a call, once every plan placing into the layout
+        has drained: whatever an earlier call placed there is gone by then, so
+        a survivor is something this call would overwrite.
+        """
+
+        self.require(
+            self.runtime_library.shadowspill_plan_require_empty_layout(
+                self.plan_handle
+            ),
+            "check that the plan's layout is empty between calls",
+        )
+
     def require(self, raw_status: Any, operation: str) -> None:
         """Raise for a nonzero adapter status, naming the operation."""
 

@@ -102,6 +102,18 @@ SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
 
 /*
+ * Refuse unless nothing is live inside this plan's fixed layout. A frontend
+ * asks between calls, once the work of every plan placing into these bytes
+ * has drained: everything a call places is gone by then, the writeback that
+ * finishes after the call returns included, so a survivor is something the
+ * next call would overwrite. The first one found is latched as a plan
+ * violation naming the task that made it, its allocation and its size. A
+ * plan admitted without a layout passes.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_plan_require_empty_layout(ShadowSpillPlan *plan);
+
+/*
  * Admit one immutable ordered object set for non-execution acquisition, such
  * as returning public outputs to a frontend. Duplicate identities are
  * expanded from one retained snapshot and one readiness wait. The borrowed
