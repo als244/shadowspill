@@ -1,11 +1,12 @@
-"""Operation-provider contexts shared by model workloads."""
+"""Operation providers shared by model workloads: which implementation each
+of a model family's operations runs, chosen for one block or from a point on."""
 
 from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, Literal, cast
 
-from mlops.dispatch import use_implementations
+from mlops.dispatch import set_implementations, use_implementations
 
 ModelImplementation = Literal["pytorch", "mlops"]
 
@@ -48,11 +49,23 @@ def implementation_context(
 
     if implementation == "pytorch":
         return nullcontext()
+    return cast(AbstractContextManager[Any], use_implementations(_selected(family)))
+
+
+def select_implementation(family: str, implementation: ModelImplementation) -> None:
+    """Select the requested model-operation provider from here on: what
+    ``implementation_context`` selects for one block, for a process that
+    chooses once."""
+
+    if implementation == "mlops":
+        set_implementations(_selected(family))
+
+
+def _selected(family: str) -> dict[str, str]:
     try:
-        selected = _MLOPS_IMPLEMENTATIONS[family]
+        return _MLOPS_IMPLEMENTATIONS[family]
     except KeyError as exc:
         raise ValueError(f"unknown mlops model family {family!r}") from exc
-    return cast(AbstractContextManager[Any], use_implementations(selected))
 
 
-__all__ = ["ModelImplementation", "implementation_context"]
+__all__ = ["ModelImplementation", "implementation_context", "select_implementation"]
