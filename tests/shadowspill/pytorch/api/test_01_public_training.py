@@ -27,8 +27,7 @@ from shadowspill.pytorch.state.storage import persistent_state
 from shadowspill.runtime import RuntimeConfigurationError
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.configuration import adapter_path
-from shadowspill.runtime.occupancy import live_allocations
-from shadowspill.runtime.plan.lifecycle import wait_plan_idle
+from shadowspill.runtime.occupancy import live_allocations, plan_slices
 
 from ..runtime_test_support import public_test_runtime
 
@@ -891,7 +890,9 @@ def test_public_training_keeps_no_output_the_caller_dropped() -> None:
 
     The losses a step returns live in the execution pool for as long as the
     caller keeps them. When the caller lets its result go and the step has
-    finished, none of them may still be held there.
+    finished, none of them may still be held there. A finished step has
+    nothing left in its plan's layout either: ``synchronize()`` waits for the
+    writeback a call returns before.
     """
 
     _require_adapter()
@@ -929,8 +930,16 @@ def test_public_training_keeps_no_output_the_caller_dropped() -> None:
 
     result = training(batches())
     assert len(result.objectives) == 2
-    wait_plan_idle(training._plan_handle)
+    training.synchronize()
+    (layout,) = (item for item in plan_slices(runtime) if item.plan_id == plan_id)
+    assert not [
+        item
+        for item in live_allocations(runtime, "execution")
+        if layout.offset <= item.offset < layout.offset + layout.bytes
+    ]
     assert len(handed_over()) == 2
     del result
     assert handed_over() == []
     training.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        training.synchronize()
