@@ -166,6 +166,11 @@ step's microbatches are summed at fp32. How a gradient comes out at that dtype
 is decided by the operation that computes it in the backward graph, never by
 the model:
 
+- An operation that returns a gradient at `grad_dtype` already -- a kernel
+  library asked for its weight gradients at fp32 -- has it converted to the
+  parameter's dtype as it leaves, since autograd gives a parameter its
+  gradient at the parameter's dtype. That conversion is dropped and the value
+  the operation returned kept.
 - A matrix multiply's result (`mm`, `bmm`, `addmm`, `baddbmm`), moved at most
   by views and copies on its way out and read by nothing else, is written at
   `grad_dtype` by the multiply itself where PyTorch has a kernel for that on

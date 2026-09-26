@@ -896,7 +896,11 @@ def cast_gradient_outputs(
     accumulating form, derived from this one, adds each contribution into the
     running gradient there.
 
-    Which operation computed a gradient decides how. One a matrix multiply
+    Which operation computed a gradient decides how. One an operation
+    returned at ``dtype`` already -- a kernel asked for fp32 weight gradients
+    -- reaches the output converted to the parameter's dtype, since autograd
+    gives a parameter its gradient at the parameter's dtype; the conversion is
+    dropped and the value the operation returned kept. One a matrix multiply
     computes, moved at most by views and copies on its way out, is written at
     ``dtype`` by the multiply itself where PyTorch has a kernel for it (fp32
     from fp16 or bf16 operands on CUDA, say): its products are summed at
@@ -918,6 +922,10 @@ def cast_gradient_outputs(
         if value.dtype == dtype:
             continue
         changed = True
+        unconverted = _before_conversion(graph, produced, outputs, dtype, fake_mode)
+        if unconverted is not None:
+            outputs[leaf] = unconverted
+            continue
         if _write_at_dtype(graph, produced, outputs, dtype, fake_mode):
             continue
         with graph.inserting_before(output_node):
@@ -939,6 +947,59 @@ def cast_gradient_outputs(
         example_inputs=backward.example_arguments,
         input_provenance=backward.input_provenance,
     )
+
+
+#: Operations that only convert a tensor's dtype.
+_CONVERTING = frozenset(
+    {
+        torch.ops.prims.convert_element_type.default,
+        torch.ops.aten._to_copy.default,
+    }
+)
+
+
+def _before_conversion(
+    graph: torch.fx.Graph,
+    produced: torch.fx.Node,
+    outputs: Sequence[object],
+    dtype: torch.dtype,
+    fake_mode: Any,
+) -> torch.fx.Node | None:
+    """The gradient ``produced`` is converted from, where that is at ``dtype``.
+
+    It is when ``produced`` is a dtype conversion, moved at most, that nothing
+    else reads, of a value at ``dtype`` already: the moves are applied to that
+    value instead, and the conversion goes. Returns the node that now gives the
+    gradient, or ``None``.
+    """
+
+    chain = [produced]
+    while chain[-1].target in _MOVING_ONLY:
+        source = chain[-1].args[0]
+        if not isinstance(source, torch.fx.Node):
+            return None
+        chain.append(source)
+    conversion = chain[-1]
+    source = conversion.args[0] if conversion.args else None
+    if (
+        conversion.target not in _CONVERTING
+        or set(conversion.kwargs) - {"dtype"}
+        or not isinstance(source, torch.fx.Node)
+        or not isinstance(source.meta.get("val"), torch.Tensor)
+        or source.meta["val"].dtype != dtype
+        or outputs.count(produced) != 1
+        or any(len(node.users) != 1 for node in chain)
+    ):
+        return None
+    conversion.replace_all_uses_with(source)
+    graph.erase_node(conversion)
+    with fake_mode if fake_mode is not None else nullcontext():
+        for node in reversed(chain[:-1]):
+            args, kwargs = torch.fx.node.map_arg(
+                (node.args, node.kwargs), lambda item: item.meta["val"]
+            )
+            _record_value(node, cast(Callable[..., Any], node.target)(*args, **kwargs))
+    return chain[0] if len(chain) > 1 else source
 
 
 #: Matrix multiplies beside the overload of each that sums its products and
