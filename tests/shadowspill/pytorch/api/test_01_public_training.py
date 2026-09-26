@@ -355,7 +355,6 @@ def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
         objective=_training_objective,
         optimizer=build_optimizer,
         example_inputs=examples,
-        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         runtime=runtime,
         execution="execution",
         spill="spill",
@@ -409,16 +408,40 @@ def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
     assert all(parameter.device.type == "cpu" for parameter in model.parameters())
 
 
+class _StartingOptimizer(torch.optim.Optimizer):
+    """Keeps a moment that starts at a quarter and a float64 master of each
+    weight, both made on the first step."""
+
+    def __init__(self, parameters: Iterable[torch.nn.Parameter], *, lr: float) -> None:
+        super().__init__(parameters, {"lr": lr})
+
+    @torch.no_grad()
+    def step(self, closure: object = None) -> None:
+        del closure
+        for group in self.param_groups:
+            for parameter in group["params"]:
+                if parameter.grad is None:
+                    continue
+                state = self.state[parameter]
+                if not state:
+                    state["moment"] = torch.full_like(parameter, 0.25)
+                    state["master"] = parameter.detach().to(torch.float64).clone()
+                state["moment"].mul_(0.5).add_(parameter.grad)
+                state["master"].sub_(group["lr"] * state["moment"])
+                parameter.copy_(state["master"])
+
+
 @pytest.mark.cuda
 @pytest.mark.fresh_process
 def test_public_training_fills_declared_state_in_the_spill_pool(
     tmp_path: object,
 ) -> None:
-    """The host never holds the optimizer's state beside the pool.
+    """Each state entry is made in the spill pool, at what the optimizer's own
+    first step starts it at.
 
-    Each declared entry is imported before it holds anything, so the
-    initialiser is handed the entry's own storage in the spill pool, and what
-    it writes is what the plan holds.
+    The host never holds the state beside the pool: every entry is imported
+    before it holds anything and given its start there -- a constant, or its
+    weight at the entry's own precision.
     """
 
     _require_adapter()
@@ -427,50 +450,55 @@ def test_public_training_fills_declared_state_in_the_spill_pool(
     examples = [[torch.randn(2, 6), torch.randn(2, 3), "left"]]
     runtime = public_test_runtime()
     model = import_model_state(model, runtime=runtime, pool="spill")
+    weights = read_model_state(model, runtime=runtime)
     built: list[torch.optim.Optimizer] = []
-    in_pool: list[bool] = []
 
     def build_optimizer(
         parameters: Iterable[torch.nn.Parameter],
     ) -> torch.optim.Optimizer:
-        optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
+        optimizer = _StartingOptimizer(parameters, lr=0.003)
         built.append(optimizer)
         return optimizer
-
-    def fill(name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter) -> None:
-        owner = persistent_state(runtime, built[0])
-        leases = (
-            set() if owner is None else {item.pool_pointer for item in owner.storages}
-        )
-        in_pool.append(tensor.untyped_storage().data_ptr() in leases)
-        tensor.fill_(0.25)
 
     training = plan_step(
         model,
         objective=_training_objective,
         optimizer=build_optimizer,
         example_inputs=examples,
-        optimizer_state_init=fill,
         runtime=runtime,
         execution="execution",
         spill="spill",
         artifact_store=tmp_path,
     )
-    assert in_pool and all(in_pool)
+    # The pool owns the state the plan created; what it holds is read back
+    # from there.
+    assert persistent_state(runtime, built[0]) is not None
+    names = {id(parameter): name for name, parameter in model.named_parameters()}
+    # State is read back as `state.<ordinal>.<entry>`, in the order of the
+    # optimizer's own state, which is keyed by parameter.
+    owners = [names[id(parameter)] for parameter in built[0].state]
     values = read_optimizer_state(built[0], runtime=runtime)
-    assert values and all(torch.all(value == 0.25) for value in values.values())
+    moments = [value for key, value in values.items() if key.endswith(".moment")]
+    masters = {key: value for key, value in values.items() if key.endswith(".master")}
+    assert moments and all(torch.all(value == 0.25) for value in moments)
+    assert len(masters) == len(names)
+    for key, value in masters.items():
+        weight = owners[int(key.split(".")[1])]
+        assert value.dtype == torch.float64
+        assert torch.equal(value, weights[weight].to(torch.float64))
     training.close()
 
 
 @pytest.mark.cuda
 @pytest.mark.fresh_process
-def test_public_training_refuses_state_an_initialiser_replaced(
+def test_public_training_refuses_state_with_no_value_before_its_first_step(
     tmp_path: object,
 ) -> None:
-    """An initialiser that swaps its tensor's storage fails rather than trains.
+    """State an optimizer starts from the gradient is refused, not guessed.
 
-    Its values would never reach the pool, which would keep what it held at
-    import -- a wrong answer that reads as values.
+    SGD's momentum buffer begins as the first gradient, which does not exist
+    before the first step; any value planning chose would be one the optimizer
+    never starts at.
     """
 
     _require_adapter()
@@ -484,20 +512,16 @@ def test_public_training_refuses_state_an_initialiser_replaced(
     def build_optimizer(
         parameters: Iterable[torch.nn.Parameter],
     ) -> torch.optim.Optimizer:
-        optimizer = torch.optim.AdamW(parameters, lr=0.003, foreach=False)
+        optimizer = torch.optim.SGD(parameters, lr=0.003, momentum=0.9)
         built.append(optimizer)
         return optimizer
 
-    def replace(name: str, tensor: torch.Tensor, parameter: torch.nn.Parameter) -> None:
-        tensor.data = torch.zeros_like(tensor)
-
-    with pytest.raises(RuntimeConfigurationError, match="new storage"):
+    with pytest.raises(RuntimeError, match="no value before its first step"):
         plan_step(
             model,
             objective=_training_objective,
             optimizer=build_optimizer,
             example_inputs=examples,
-            optimizer_state_init=replace,
             runtime=runtime,
             execution="execution",
             spill="spill",
@@ -536,7 +560,6 @@ def test_public_training_saves_straight_from_the_pool(
         model,
         objective=_training_objective,
         optimizer=partial(torch.optim.AdamW, lr=0.003, foreach=False),
-        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         example_inputs=batches[0],
         runtime=runtime,
         execution="execution",
@@ -589,20 +612,12 @@ def test_public_training_saves_a_master_copy_once(tmp_path: Path) -> None:
         for _ in range(3)
     ]
 
-    def initialize(name: str, tensor: torch.Tensor, parameter: torch.Tensor) -> None:
-        with torch.no_grad():
-            if name == "master_parameter":
-                tensor.copy_(parameter)
-            else:
-                tensor.zero_()
-
     training = plan_step(
         model,
         objective=_training_objective,
         optimizer=partial(
             mlops.optim.AdamW, lr=0.003, master_parameter_dtype=torch.float32
         ),
-        optimizer_state_init=initialize,
         example_inputs=batches[0],
         runtime=runtime,
         execution="execution",
@@ -703,7 +718,6 @@ def test_public_training_profiles_bounded_opaque_optimizer(
         model,
         objective=_training_objective,
         optimizer=partial(_OpaqueSgd, lr=0.02),
-        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         example_inputs=examples,
         runtime=runtime,
         execution="execution",
@@ -771,7 +785,6 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
             state_dtype=torch.bfloat16,
             master_parameter_dtype=torch.bfloat16,
         ),
-        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         example_inputs=inputs(92),
         runtime=runtime,
         execution="execution",
@@ -846,7 +859,6 @@ def test_public_training_follows_a_learning_rate_schedule() -> None:
         model,
         objective=objective,
         optimizer=build,
-        optimizer_state_init=lambda name, tensor, parameter: tensor.zero_(),
         hyperparams=("lr",),
         example_inputs=batches(92),
         runtime=runtime,

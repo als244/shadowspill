@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 
 import torch
 
 from shadowspill.pytorch.optimizer.capture import declare_optimizer_state
+from shadowspill.pytorch.optimizer.starts import (
+    ConstantStart,
+    NoStart,
+    ParameterStart,
+    StateStart,
+    ValueStart,
+)
 from shadowspill.runtime import Runtime
 
 from .storage import (
@@ -195,24 +202,26 @@ def install_declared_optimizer_state(
     runtime: Runtime,
     pool: str,
     owning_plan: int,
-    initialize: Callable[[str, torch.Tensor, torch.nn.Parameter], None] | None,
     receives_gradient: Collection[str] | None = None,
 ) -> int:
-    """Create the optimizer's declared state in ``pool``, and let the caller fill it.
+    """Create the optimizer's declared state in ``pool``, each entry at its start.
 
     The optimizer declares what state it keeps by being run on meta
     parameters, which allocates nothing and fixes every entry's shape and
     dtype -- including entries that are not parameter-shaped, and dtypes it
-    chose rather than inherited. Each declared entry is then allocated,
-    imported into ``pool`` as state ``owning_plan`` owns, and handed to
-    ``initialize``, which writes its values there (:func:`import_then_fill`).
-    So the state never occupies ordinary host memory on its way in: beside a
-    pool sized to fill the host, a large model's optimizer state would not fit.
+    chose rather than inherited -- and how the step makes each entry says what
+    it starts at: a constant, a copy of its parameter at the entry's own dtype
+    as a higher-precision master copy is, or what the optimizer already holds,
+    as after loading a checkpoint into it. Each entry is then allocated,
+    imported into ``pool`` as state ``owning_plan`` owns, and given that value
+    there (:func:`import_then_fill`). So the state never occupies ordinary host
+    memory on its way in: beside a pool sized to fill the host, a large
+    model's optimizer state would not fit.
 
-    Nothing is assumed about what those values are: a default would be one
-    optimizer family's convention, and an optimizer whose state starts
-    elsewhere would train subtly wrong rather than fail. Returns how many
-    entries were installed.
+    An entry the step makes from anything else -- the gradient, say -- has no
+    value before the first step, and is refused rather than given one: import
+    the optimizer's state before planning to start it elsewhere. Returns how
+    many entries were installed.
 
     State the caller already imported for this optimizer is left alone, since
     the caller owns it and it outlives the plan.
@@ -226,23 +235,38 @@ def install_declared_optimizer_state(
     )
     if not declared:
         return 0
-    if initialize is None:
-        entries = ", ".join(sorted({item.entry_name for item in declared})[:4])
-        raise RuntimeError(
-            f"this optimizer keeps state ({entries}) and nothing says what it "
-            "starts at. Pass optimizer_state_init to fill each entry, or "
-            "import the optimizer's state yourself before planning."
+    unstarted = [item for item in declared if isinstance(item.start, NoStart)]
+    if unstarted:
+        described = "; ".join(
+            f"{item.parameter_name}: {item.entry_name!r} is {item.start.reason}"
+            for item in unstarted[:4]
+            if isinstance(item.start, NoStart)
         )
-    created: list[tuple[str, torch.Tensor, torch.nn.Parameter]] = []
+        raise RuntimeError(
+            "this optimizer keeps state that has no value before its first step "
+            f"({described}). Import the optimizer's state before planning to "
+            "give it one."
+        )
+    created: list[tuple[StateStart, torch.Tensor, torch.Tensor, object]] = []
     for entry in declared:
         parameter = named[entry.parameter_name]
+        entries = optimizer.state.setdefault(parameter, {})
+        held = entries.get(entry.entry_name)
         value = torch.empty(entry.shape, dtype=entry.dtype, device="cpu")
-        optimizer.state.setdefault(parameter, {})[entry.entry_name] = value
-        created.append((entry.entry_name, value, parameter))
+        entries[entry.entry_name] = value
+        created.append((entry.start, value, parameter, held))
 
     def fill() -> None:
-        for name, value, parameter in created:
-            initialize(name, value, parameter)
+        with torch.no_grad():
+            for start, value, parameter, held in created:
+                if isinstance(start, ConstantStart):
+                    value.fill_(start.value)
+                elif isinstance(start, ParameterStart):
+                    value.copy_(parameter)
+                elif isinstance(start, ValueStart):
+                    value.copy_(start.value)
+                elif isinstance(held, torch.Tensor):
+                    value.copy_(held)
 
     import_then_fill(
         optimizer,

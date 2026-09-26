@@ -47,8 +47,6 @@ def materialize_training_state(
     captured: TrainingCaptureArtifacts,
     *,
     build_optimizer: Callable[[Any], torch.optim.Optimizer],
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None,
     hyperparams: Sequence[str],
     memory: PlanMemory,
     stores: PlanningStores,
@@ -106,7 +104,6 @@ def materialize_training_state(
                     runtime=runtime,
                     pool=memory.spill.name,
                     owning_plan=memory.plan_handle,
-                    initialize=optimizer_state_init,
                     receives_gradient=receives_gradient,
                 )
             optimizer_capture = capture_optimizer(

@@ -14,7 +14,6 @@ from os import PathLike
 from types import MappingProxyType
 from typing import Any, Literal
 
-import torch
 from torch import OutOfMemoryError, nn
 
 from shadowspill.planner import StepDataOrdering
@@ -40,7 +39,6 @@ class _Build:
     model: nn.Module
     objective: Any
     optimizer: Any
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None] | None
     hyperparams: Sequence[str]
     example_microbatches: Callable[[int, int], Sequence[Sequence[Any]]]
     runtime: Runtime
@@ -68,7 +66,6 @@ class _Build:
                     self.model,
                     objective=self.objective,
                     optimizer=self.optimizer,
-                    optimizer_state_init=self.optimizer_state_init,
                     hyperparams=self.hyperparams,
                     example_inputs=examples,
                     runtime=self.runtime,

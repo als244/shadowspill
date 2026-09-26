@@ -77,7 +77,7 @@ from shadowspill.schema import artifact_schema
 from shadowspill.search import search_geometries
 from shadowspill.store import STORE_MODES
 from tools.qualification.model_state import release_case_model
-from workloads.common.training import LEARNING_RATE, optimizer_state_init
+from workloads.common.training import LEARNING_RATE
 from workloads.full_model import build_case, manifest_for
 from workloads.providers import ModelImplementation
 
@@ -1496,7 +1496,6 @@ class Tour:
                     case.model,
                     objective=case.objective,
                     optimizer=case.optimizer,
-                    optimizer_state_init=optimizer_state_init,
                     hyperparams=("lr",),
                     example_microbatches=self.example_microbatches,
                     total_sequences_per_step=request.sequences_per_step,
@@ -1717,7 +1716,6 @@ class Tour:
                 case.model,
                 objective=case.objective,
                 optimizer=case.optimizer,
-                optimizer_state_init=optimizer_state_init,
                 hyperparams=("lr",),
                 example_inputs=microbatches,
                 runtime=runtime,

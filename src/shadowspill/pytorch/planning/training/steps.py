@@ -63,8 +63,6 @@ def make_training_programs(
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     build_optimizer: Callable[[Any], torch.optim.Optimizer],
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None,
     hyperparams: Sequence[str],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
@@ -139,7 +137,6 @@ def make_training_programs(
                 missing,
                 objective=objective,
                 build_optimizer=build_optimizer,
-                optimizer_state_init=optimizer_state_init,
                 hyperparams=hyperparams,
                 example_inputs=example_inputs,
                 memory=memory,
@@ -164,8 +161,6 @@ def _build_training_step_programs(
     *,
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     build_optimizer: Callable[[Any], torch.optim.Optimizer],
-    optimizer_state_init: Callable[[str, torch.Tensor, torch.nn.Parameter], None]
-    | None,
     hyperparams: Sequence[str],
     example_inputs: Sequence[Sequence[Any]],
     memory: PlanMemory,
@@ -203,7 +198,6 @@ def _build_training_step_programs(
         model,
         captured,
         build_optimizer=build_optimizer,
-        optimizer_state_init=optimizer_state_init,
         hyperparams=hyperparams,
         memory=memory,
         stores=artifacts,
