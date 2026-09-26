@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
@@ -64,6 +64,10 @@ class InstalledRuntime:
     #: runtime call the neutral library with this directly.
     runtime_handle: int = 0
     fixed_execution_bytes: int = 0
+    #: The fixed layout each admitted plan holds in the allocator pool, in
+    #: bytes, by plan handle. A plan holds its layout for as long as it is
+    #: admitted, so a plan being made beside it finds those bytes taken.
+    admitted_layout_bytes: dict[int, int] = field(default_factory=dict)
 
 
 _installed: InstalledRuntime | None = None
@@ -332,6 +336,10 @@ def validate_dynamic_execution_reservation(
     Dynamic admission consumes every compatible free range in the execution
     pool.  It therefore requires sufficient aggregate unreserved capacity, not
     one contiguous range as large as the complete planning capacity.
+
+    The plans already admitted hold their fixed layouts in the same pool, and
+    a plan is checked here before it admits its own, so every layout admitted
+    is another plan's and is excluded as well.
     """
 
     if reserved_bytes < installed.fixed_execution_bytes:
@@ -357,13 +365,15 @@ def validate_dynamic_execution_reservation(
     allocated = int(pool.allocated_bytes)
     free = int(pool.free_bytes)
     capacity = int(installed.admission.allocator_pool_bytes)
-    if allocated > reserved_bytes:
+    admitted = sum(installed.admitted_layout_bytes.values())
+    if allocated > reserved_bytes + admitted:
         raise RuntimeInstallError(
             "persistent provider allocations exceed the admitted slab reserve: "
-            f"observed={allocated}, reserved={reserved_bytes}"
+            f"observed={allocated}, reserved={reserved_bytes}, "
+            f"admitted layouts={admitted}"
         )
     largest = int(pool.largest_free_range_bytes)
-    usable_capacity = capacity - reserved_bytes
+    usable_capacity = capacity - reserved_bytes - admitted
     if allocated + free != capacity or free < usable_capacity:
         raise RuntimeInstallError(
             "live execution allocation accounting is incompatible with the "
