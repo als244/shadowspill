@@ -53,9 +53,10 @@ class PlanningChoice:
 class ShadowSpill:
     """Plans each training step to fit ``execution_gib`` of the device, with the
     state in ``spill_gib`` of pinned host memory; the device pool is the step's
-    budget. Evaluation plans its forward pass into the step's slab -- the two
-    run in turn, so the pool holds the bytes once -- within
-    ``eval_execution_gib`` when given, and the whole slab when not.
+    budget. Evaluation's forward pass is planned with the step, right after
+    it, into the step's slab -- the two run in turn, so the pool holds the
+    bytes once -- within the step's own budget, the whole slab, unless
+    ``eval_execution_gib`` names less.
 
     ShadowSpill creates the optimizer's state in its pool before any step runs,
     each entry where the optimizer's own first step starts it -- moments at
@@ -123,7 +124,19 @@ class ShadowSpill:
             incumbent,
         )
         self.plan = self.train_step.plan_report.summary
-        self.eval_example = setup.data.examples(documents, 1, setup.max_seq_len)[0]
+        # Evaluation's forward, planned now: right after the step, into its
+        # slab and over the same weights, so a run that cannot evaluate stops
+        # before it trains rather than at its first evaluation.
+        self.forward = plan_forward(
+            self.module,
+            example_inputs=setup.data.examples(documents, 1, setup.max_seq_len)[0],
+            runtime=self.runtime,
+            execution="device",
+            spill="spill",
+            execution_budget=self.eval_budget,
+            share_slab_with=self.train_step,
+            artifact_store=self.store,
+        )
 
     def _search(self, setup: Setup) -> tuple[PlanningChoice, Any]:
         """Find the fastest geometry at the budget, or price the one given, and
@@ -198,17 +211,6 @@ class ShadowSpill:
         self.train_step.synchronize()  # its end-of-step writeback included
 
     def evaluate(self, microbatches: list[Microbatch]) -> list[float]:
-        if self.forward is None:  # a second plan over the same weights and slab
-            self.forward = plan_forward(
-                self.module,
-                example_inputs=self.eval_example,
-                runtime=self.runtime,
-                execution="device",
-                spill="spill",
-                execution_budget=self.eval_budget,
-                share_slab_with=self.train_step,
-                artifact_store=self.store,
-            )
         return [self.forward(microbatch).item() for microbatch in microbatches]
 
     def device_peak_gib(self) -> float:
