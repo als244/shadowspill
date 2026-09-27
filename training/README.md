@@ -59,6 +59,14 @@ From the command line, the same run is a JSON config:
 training/scripts/launch.sh training/runs/llama3_1b training/configs/llama3_1b.json
 ```
 
+and any config value can be replaced for one run by its dotted key, here a
+20 GiB budget and a run without W&B:
+
+```bash
+training/scripts/launch.sh training/runs/llama3_1b_20gib training/configs/llama3_1b.json \
+    backend.execution_gib=20 wandb_project=null
+```
+
 `training/scripts/pair.sh` runs a config on PyTorch and on ShadowSpill and
 compares the two; `training/scripts/smoke.sh` checks the whole pipeline in a
 few steps on both.
@@ -193,8 +201,11 @@ The example configs in [`configs/`](configs/) train the reference workloads'
 ~1B models with mlops AdamW and a warmup-cosine schedule, on ShadowSpill at an
 8 GiB budget: `<family>_1b.json` for 1000 steps of 16K tokens, and
 `<family>_1b_300m.json` for 300M tokens at 64K tokens a step, checkpointing
-every 50M -- all at bf16, weights and moments alike. `llama3_1b_300m_fp32.json`
-is the 300M-token Llama-3 run with fp32 masters, gradients and moments.
+every 50M -- all at bf16, weights and moments alike. Two more train the
+300M-token Llama-3 run at a 20 GiB budget with other precisions:
+`llama3_1b_300m_fp32.json` with fp32 masters, gradients and moments, and
+`llama3_1b_300m_bf16_sr.json` at bf16 throughout, rounding both the weights'
+and the moments' updates stochastically.
 
 ## Backends
 
