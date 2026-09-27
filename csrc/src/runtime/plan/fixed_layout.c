@@ -169,7 +169,9 @@ ShadowSpillStatus shadowspill_fixed_layout_reserve_slice(
     ShadowSpillMemoryPool *pool = plan->execution_pool;
     shadowspill_memory_pool_lock_reservation(pool);
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
-    if (plan->fixed_layout.active) {
+    if (plan->fixed_layout.active || pool->lent_slices != 0U) {
+        /* A lent slice goes back exactly where it was, so no slice is
+           reserved until every lent one is taken back. */
         status = SHADOWSPILL_STATUS_INVALID_STATE;
     } else if (bytes == 0U) {
         plan->fixed_layout.active = 1U;
@@ -199,33 +201,33 @@ ShadowSpillStatus shadowspill_fixed_layout_reserve_slice(
 }
 
 /*
- * Place a layout in the slice another plan holds, following a host that
+ * Place a layout in the slice another plan holds, following a plan that
  * shares one itself to the plan that reserved it. Nothing is reserved: the
  * bytes are counted once, for their owner.
  */
 static ShadowSpillStatus share_slice(
     ShadowSpillPlan *plan,
-    ShadowSpillPlan *host,
+    ShadowSpillPlan *other,
     uint64_t bytes
 ) {
     ShadowSpillMemoryPool *pool = plan->execution_pool;
     shadowspill_memory_pool_lock_reservation(pool);
-    ShadowSpillPlan *owner = host->fixed_layout.slab_host != NULL
-        ? host->fixed_layout.slab_host
-        : host;
+    ShadowSpillPlan *owner = other->fixed_layout.slab_owner != NULL
+        ? other->fixed_layout.slab_owner
+        : other;
     ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
     if (plan->fixed_layout.active) {
         status = SHADOWSPILL_STATUS_INVALID_STATE;
-    } else if (!owner->fixed_layout.active) {
+    } else if (!owner->fixed_layout.active || owner->fixed_layout.lent) {
         status = SHADOWSPILL_STATUS_INVALID_STATE;
     } else if (bytes > owner->fixed_layout.slice_bytes) {
         status = SHADOWSPILL_STATUS_OUT_OF_MEMORY;
     } else {
         plan->fixed_layout.slice_offset = owner->fixed_layout.slice_offset;
         plan->fixed_layout.slice_bytes = bytes;
-        plan->fixed_layout.slab_host = owner;
+        plan->fixed_layout.slab_owner = owner;
         plan->fixed_layout.active = 1U;
-        ++owner->fixed_layout.slab_guests;
+        ++owner->fixed_layout.slab_sharers;
     }
     shadowspill_memory_pool_unlock_reservation(pool);
     shadowspill_memory_pool_relinquish_reservation(pool);
@@ -254,15 +256,19 @@ ShadowSpillStatus shadowspill_fixed_layout_clear(
     if (!plan->fixed_layout.active) {
         /* Clearing an absent layout is intentionally idempotent. */
     } else if (has_borrowed_layout_lease(pool) ||
-               plan->fixed_layout.slab_guests != 0U) {
+               plan->fixed_layout.slab_sharers != 0U) {
         /* A slice other layouts are admitted into is theirs too: they go
            first. */
         status = SHADOWSPILL_STATUS_INVALID_STATE;
-    } else if (plan->fixed_layout.slab_host != NULL) {
+    } else if (plan->fixed_layout.slab_owner != NULL) {
         /* The bytes stay reserved for the plan that reserved them. */
-        --plan->fixed_layout.slab_host->fixed_layout.slab_guests;
+        --plan->fixed_layout.slab_owner->fixed_layout.slab_sharers;
         clear_metadata(&plan->fixed_layout);
     } else if (plan->fixed_layout.slice_bytes == 0U) {
+        clear_metadata(&plan->fixed_layout);
+    } else if (plan->fixed_layout.lent) {
+        /* A lent slice is the pool's already. */
+        --pool->lent_slices;
         clear_metadata(&plan->fixed_layout);
     } else if (shadowspill_memory_pool_release_locked(
                    pool,
@@ -273,6 +279,74 @@ ShadowSpillStatus shadowspill_fixed_layout_clear(
     } else {
         clear_metadata(&plan->fixed_layout);
         shadowspill_publish_pool_geometry_locked(pool);
+    }
+    shadowspill_memory_pool_unlock_reservation(pool);
+    shadowspill_memory_pool_relinquish_reservation(pool);
+    return status;
+}
+
+ShadowSpillStatus shadowspill_plan_lend_fixed_layout(ShadowSpillPlan *plan) {
+    if (plan == NULL || plan->runtime == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    const ShadowSpillStatus failure = shadowspill_failure_status(plan->runtime);
+    if (failure != SHADOWSPILL_STATUS_OK) {
+        return failure;
+    }
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
+    shadowspill_memory_pool_lock_reservation(pool);
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
+    if (!plan->fixed_layout.active || plan->fixed_layout.slab_owner != NULL ||
+        plan->fixed_layout.lent) {
+        /* Only the plan that reserved a slice lends it, and only once. */
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
+    } else if (plan->fixed_layout.slice_bytes == 0U) {
+        /* An empty layout holds nothing to lend. */
+    } else if (has_borrowed_layout_lease(pool) ||
+               atomic_load_explicit(
+                   &pool->pending_retirements, memory_order_acquire
+               ) != 0U) {
+        /* Something a call placed is live or retiring: not between calls. */
+        status = SHADOWSPILL_STATUS_INVALID_STATE;
+    } else if (shadowspill_memory_pool_release_locked(
+                   pool,
+                   plan->fixed_layout.slice_offset,
+                   plan->fixed_layout.slice_bytes
+               ) != 0) {
+        status = SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+    } else {
+        plan->fixed_layout.lent = 1U;
+        ++pool->lent_slices;
+        shadowspill_publish_pool_geometry_locked(pool);
+    }
+    shadowspill_memory_pool_unlock_reservation(pool);
+    shadowspill_memory_pool_relinquish_reservation(pool);
+    return status;
+}
+
+ShadowSpillStatus shadowspill_plan_reclaim_fixed_layout(ShadowSpillPlan *plan) {
+    if (plan == NULL) {
+        return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    ShadowSpillMemoryPool *pool = plan->execution_pool;
+    shadowspill_memory_pool_lock_reservation(pool);
+    ShadowSpillStatus status = SHADOWSPILL_STATUS_OK;
+    if (plan->fixed_layout.lent) {
+        const int taken = shadowspill_memory_pool_reserve_at_locked(
+            pool,
+            plan->fixed_layout.slice_offset,
+            plan->fixed_layout.slice_bytes
+        );
+        if (taken == 0) {
+            plan->fixed_layout.lent = 0U;
+            --pool->lent_slices;
+            shadowspill_publish_pool_geometry_locked(pool);
+        } else {
+            /* Something allocated while it was lent still lies in it. */
+            status = taken > 0
+                ? SHADOWSPILL_STATUS_INVALID_STATE
+                : SHADOWSPILL_STATUS_INTERNAL_FAILURE;
+        }
     }
     shadowspill_memory_pool_unlock_reservation(pool);
     shadowspill_memory_pool_relinquish_reservation(pool);
@@ -297,6 +371,14 @@ ShadowSpillStatus shadowspill_fixed_layout_adopt_execution_lease_locked(
         relative_offset > plan->fixed_layout.slice_bytes ||
         bytes > plan->fixed_layout.slice_bytes - relative_offset) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
+    }
+    const ShadowSpillPlan *owner = plan->fixed_layout.slab_owner != NULL
+        ? plan->fixed_layout.slab_owner
+        : plan;
+    if (owner->fixed_layout.lent) {
+        /* The slice is the pool's while it is lent: a call takes it back
+           before it places anything. */
+        return SHADOWSPILL_STATUS_PLAN_VIOLATION;
     }
     ShadowSpillMemoryPool *pool = plan->execution_pool;
     if (alignment < pool->minimum_alignment) {
@@ -711,10 +793,10 @@ ShadowSpillStatus shadowspill_plan_admit_fixed_layout(
 ShadowSpillStatus shadowspill_plan_admit_fixed_layout_in(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description,
-    ShadowSpillPlan *host
+    ShadowSpillPlan *other
 ) {
-    if (plan == NULL || host == NULL || plan == host ||
-        plan->execution_pool != host->execution_pool ||
+    if (plan == NULL || other == NULL || plan == other ||
+        plan->execution_pool != other->execution_pool ||
         !descriptions_are_valid(description)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
@@ -729,7 +811,7 @@ ShadowSpillStatus shadowspill_plan_admit_fixed_layout_in(
         clear_metadata(&plan->fixed_layout);
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }
-    status = share_slice(plan, host, description->slice_bytes);
+    status = share_slice(plan, other, description->slice_bytes);
     if (status != SHADOWSPILL_STATUS_OK) {
         clear_metadata(&plan->fixed_layout);
     }
@@ -965,9 +1047,13 @@ ShadowSpillStatus shadowspill_plan_require_empty_layout(ShadowSpillPlan *plan) {
     uint64_t bytes = 0U;
     int occupied = 0;
     pthread_mutex_lock(&pool->lock);
+    const ShadowSpillPlan *owner = plan->fixed_layout.slab_owner != NULL
+        ? plan->fixed_layout.slab_owner
+        : plan;
+    const int lent = owner->fixed_layout.lent != 0U;
     const uint64_t begin = plan->fixed_layout.slice_offset;
     const uint64_t end = begin + plan->fixed_layout.slice_bytes;
-    if (plan->fixed_layout.active && plan->fixed_layout.slice_bytes != 0U) {
+    if (!lent && plan->fixed_layout.active && plan->fixed_layout.slice_bytes != 0U) {
         for (const ShadowSpillMemoryLease *lease = pool->active_leases;
              lease != NULL; lease = lease->active_next) {
             if (lease->offset < end &&
@@ -984,6 +1070,11 @@ ShadowSpillStatus shadowspill_plan_require_empty_layout(ShadowSpillPlan *plan) {
         }
     }
     pthread_mutex_unlock(&pool->lock);
+    if (lent) {
+        /* Allocations made while the slice was lent may lie in it: a call
+           takes it back first, which refuses while any does. */
+        return SHADOWSPILL_STATUS_INVALID_STATE;
+    }
     if (!occupied) {
         return SHADOWSPILL_STATUS_OK;
     }
@@ -1028,7 +1119,7 @@ ShadowSpillStatus shadowspill_memory_pool_plan_slices(
         }
         if (found < capacity) {
             const ShadowSpillPlan *owner =
-                layout->slab_host != NULL ? layout->slab_host : plan;
+                layout->slab_owner != NULL ? layout->slab_owner : plan;
             out[found] = (ShadowSpillPlanSlice){
                 .plan_id = plan->plan_id,
                 .offset = layout->slice_offset,

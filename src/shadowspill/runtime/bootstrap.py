@@ -66,11 +66,16 @@ class InstalledRuntime:
     fixed_execution_bytes: int = 0
     #: The fixed layout each admitted plan holds in the allocator pool, in
     #: bytes, by plan handle. A plan holds its layout for as long as it is
-    #: admitted, so a plan being made beside it finds those bytes taken.
+    #: admitted; only while another plan is being planned, between calls, is
+    #: it lent back to the pool (`lent_slabs`).
     admitted_layout_bytes: dict[int, int] = field(default_factory=dict)
     #: The plan that reserved the slab each sharing plan's layout lies in, both
     #: by plan handle. That plan closes last.
-    slab_hosts: dict[int, int] = field(default_factory=dict)
+    slab_owners: dict[int, int] = field(default_factory=dict)
+    #: Plans, by handle, whose slabs are lent back to their pools for a
+    #: planning call; each is taken back before a layout is admitted and
+    #: before any call begins.
+    lent_slabs: set[int] = field(default_factory=set)
 
 
 _installed: InstalledRuntime | None = None

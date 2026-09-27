@@ -282,10 +282,19 @@ runtime's pool, route, event, and object owners:
   and the offset coordinate systems.
 - `shadowspill_plan_admit_fixed_layout_in()` admits a layout into the slice
   another plan holds instead of reserving one: at that slice's offset, which it
-  must fit inside, following a host that shares a slice itself to the plan that
-  reserved it. That plan's layout cannot be cleared while another is admitted
-  into its slice. See [sharing a
+  must fit inside -- the slice of the plan that reserved it, when the plan named
+  shares one itself. That plan's layout cannot be cleared while another is
+  admitted into its slice. See [sharing a
   slab](../architecture/physical-admission.md#sharing-a-slab).
+- `shadowspill_plan_lend_fixed_layout()` lends the slice a plan reserved back
+  to its pool between calls, so planning another plan can allocate in it;
+  refused unless nothing a call placed is live or retiring in the pool. While
+  the slice is lent, no call of the plan or of one sharing its slice places
+  anything, nothing is admitted into it, and no slice is reserved in the pool.
+  `shadowspill_plan_reclaim_fixed_layout()` takes it back at the offset it had,
+  and refuses while anything allocated in the meantime still lies in it. See
+  [planning between
+  calls](../architecture/physical-admission.md#planning-between-calls).
 - `shadowspill_plan_clear_tasks()` discards admitted records and bindings.
 - `shadowspill_plan_wait_idle()` actively waits for only that plan's claimed
   task scopes, submitted actions, and task-owned retirements. Other plans on

@@ -26,6 +26,7 @@ from ..configuration import (
     resolve_execution_device,
 )
 from ..topology import MemoryPool, RuntimeRoute, TransferCapabilities
+from .lending import lend_reserved_slabs, require_lent_slabs_back, take_back_lent_slabs
 
 if TYPE_CHECKING:
     from ..core import Runtime
@@ -52,7 +53,7 @@ class PlanMemory:
     plan_id: int
     #: The plan whose slab this plan's layout is admitted into, when it shares
     #: one (`share_slab_with`); None when it reserves its own.
-    slab_host: int | None = None
+    slab_owner: int | None = None
 
 
 def begin_plan(
@@ -64,7 +65,7 @@ def begin_plan(
     spill_budget: int | None,
     dynamic_scratch_reserve_bytes: int | None,
     execution_device: object | None,
-    slab_host: int | None = None,
+    slab_owner: int | None = None,
 ) -> PlanMemory:
     with runtime._lock:
         runtime._require_open()
@@ -91,9 +92,9 @@ def begin_plan(
             runtime.frontend, execution_device, execution_pool
         )
         resolved_execution = resolve_execution_budget(execution_budget, execution_pool)
-        if slab_host is not None:
+        if slab_owner is not None:
             resolved_execution = _within_shared_slab(
-                runtime, execution, slab_host, execution_budget, resolved_execution
+                runtime, execution, slab_owner, execution_budget, resolved_execution
             )
         resolved_spill = resolve_budget(spill_budget, spill_pool, "spill_budget")
         resolved_scratch = resolve_dynamic_scratch_reserve(
@@ -158,16 +159,22 @@ def begin_plan(
             transfers=transfers,
             plan_handle=plan_handle,
             plan_id=plan_id,
-            slab_host=slab_host,
+            slab_owner=slab_owner,
         )
         runtime._planning_plan_handle = plan_handle
-        return memory
+    try:
+        lend_reserved_slabs(runtime)
+    except BaseException:
+        take_back_lent_slabs(runtime)
+        abort_plan(runtime, plan_handle)
+        raise
+    return memory
 
 
 def _within_shared_slab(
     runtime: Runtime,
     execution: str,
-    slab_host: int,
+    slab_owner: int,
     requested: int | None,
     resolved: int,
 ) -> int:
@@ -175,17 +182,17 @@ def _within_shared_slab(
 
     Its layout is placed inside that slab, so the slab's size is the most it
     can plan against: the budget when none is given, and a ceiling on one that
-    is. The slab is the range the host's layout lies in -- the host's own, or
+    is. The slab is the range the named plan's layout lies in -- its own, or
     the one it shares in turn.
     """
 
     from ..occupancy import plan_slices
 
-    host_id = int(runtime_library().shadowspill_plan_id(slab_host))
+    owner_id = int(runtime_library().shadowspill_plan_id(slab_owner))
     slabs = [
         item.slab_bytes
         for item in plan_slices(runtime, execution)
-        if item.plan_id == host_id
+        if item.plan_id == owner_id
     ]
     if not slabs:
         raise AdmissionError(
@@ -203,6 +210,7 @@ def _within_shared_slab(
 
 
 def adopt_plan(runtime: Runtime, plan_handle: int) -> None:
+    require_lent_slabs_back(runtime, "finish planning")
     with runtime._lock:
         runtime._require_open()
         if runtime._planning_plan_handle != plan_handle:
@@ -225,7 +233,9 @@ def release_plan(runtime: Runtime, plan_handle: int) -> None:
         finally:
             runtime._active_plan_handles.discard(plan_handle)
             runtime._installed.admitted_layout_bytes.pop(plan_handle, None)
-            runtime._installed.slab_hosts.pop(plan_handle, None)
+            runtime._installed.slab_owners.pop(plan_handle, None)
+            # A closed plan's lent slab went back to the pool with it.
+            runtime._installed.lent_slabs.discard(plan_handle)
 
 
 def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
@@ -243,7 +253,10 @@ def abort_plan(runtime: Runtime, plan_handle: int | None = None) -> None:
         finally:
             runtime._planning_plan_handle = None
             runtime._installed.admitted_layout_bytes.pop(target, None)
-            runtime._installed.slab_hosts.pop(target, None)
+            runtime._installed.slab_owners.pop(target, None)
+    # What the failed planning still holds keeps a slab lent until the next
+    # call or admission takes it back.
+    take_back_lent_slabs(runtime)
 
 
 def wait_plan_idle(plan_handle: int) -> None:

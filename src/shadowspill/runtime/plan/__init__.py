@@ -40,6 +40,7 @@ from .bridge import (
     set_profiler_annotations,
     statistics,
 )
+from .lending import take_back_lent_slabs
 from .lifecycle import (
     PlanMemory,
     abort_plan,
@@ -82,5 +83,6 @@ __all__ = [
     "seal_fixed_layout",
     "set_profiler_annotations",
     "statistics",
+    "take_back_lent_slabs",
     "wait_plan_idle",
 ]

@@ -44,9 +44,9 @@ def _require_no_plan_sharing_slab(runtime: Runtime, plan_handle: int) -> None:
     """
 
     sharing = sorted(
-        int(runtime_library().shadowspill_plan_id(guest))
-        for guest, host in runtime._installed.slab_hosts.items()
-        if host == plan_handle
+        int(runtime_library().shadowspill_plan_id(sharer))
+        for sharer, owner in runtime._installed.slab_owners.items()
+        if owner == plan_handle
     )
     if sharing:
         raise RuntimeError(

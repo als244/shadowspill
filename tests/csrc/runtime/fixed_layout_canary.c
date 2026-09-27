@@ -925,11 +925,11 @@ static int layouts_share_one_slice(void) {
             &mock, 512U, 128U, 16U, 1000U, &runtime
         ) != SHADOWSPILL_STATUS_OK;
 
-    const ShadowSpillFixedLayoutDescription host_layout = {
+    const ShadowSpillFixedLayoutDescription owner_layout = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .slice_bytes = 128U,
     };
-    const ShadowSpillFixedLayoutDescription guest_layout = {
+    const ShadowSpillFixedLayoutDescription sharer_layout = {
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .slice_bytes = 96U,
     };
@@ -946,47 +946,47 @@ static int layouts_share_one_slice(void) {
     ShadowSpillTestStatistics before = {0};
     ShadowSpillTestStatistics shared = {0};
     ShadowSpillTestStatistics after = {0};
-    ShadowSpillPlan *guest = NULL;
+    ShadowSpillPlan *sharer = NULL;
     ShadowSpillPlan *oversized = NULL;
-    failed = failed || shadowspill_test_admit_fixed_layout(runtime, &host_layout) !=
+    failed = failed || shadowspill_test_admit_fixed_layout(runtime, &owner_layout) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_test_seal_fixed_layout(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_statistics(runtime, &before) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_test_plan_create(runtime, &roles, &guest) !=
+        shadowspill_test_plan_create(runtime, &roles, &sharer) !=
             SHADOWSPILL_STATUS_OK ||
         shadowspill_test_plan_create(runtime, &roles, &oversized) !=
             SHADOWSPILL_STATUS_OK;
     ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
-    ShadowSpillPlan *host = record == NULL ? NULL : record->plan;
-    failed = failed || host == NULL ||
-        shadowspill_plan_admit_fixed_layout_in(guest, &guest_layout, host) !=
+    ShadowSpillPlan *owner = record == NULL ? NULL : record->plan;
+    failed = failed || owner == NULL ||
+        shadowspill_plan_admit_fixed_layout_in(sharer, &sharer_layout, owner) !=
             SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_seal_fixed_layout(guest) != SHADOWSPILL_STATUS_OK ||
-        shadowspill_plan_admit_fixed_layout_in(oversized, &oversized_layout, host) !=
+        shadowspill_plan_seal_fixed_layout(sharer) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_admit_fixed_layout_in(oversized, &oversized_layout, owner) !=
             SHADOWSPILL_STATUS_OUT_OF_MEMORY ||
         shadowspill_test_statistics(runtime, &shared) != SHADOWSPILL_STATUS_OK ||
         shared.execution.allocated_bytes != before.execution.allocated_bytes;
 
     ShadowSpillPlanSlice slices[4] = {0};
     uint64_t count = 0U;
-    ShadowSpillPlanSlice host_slice = {0};
-    ShadowSpillPlanSlice guest_slice = {0};
+    ShadowSpillPlanSlice owner_slice = {0};
+    ShadowSpillPlanSlice sharer_slice = {0};
     failed = failed || shadowspill_memory_pool_plan_slices(
             runtime, 0U, slices, 4U, &count
         ) != SHADOWSPILL_STATUS_OK ||
         count != 2U ||
-        !find_slice(slices, count, shadowspill_plan_id(host), &host_slice) ||
-        !find_slice(slices, count, shadowspill_plan_id(guest), &guest_slice) ||
-        host_slice.bytes != 128U ||
-        host_slice.slab_plan_id != host_slice.plan_id ||
-        guest_slice.offset != host_slice.offset ||
-        guest_slice.bytes != 96U ||
-        guest_slice.slab_plan_id != host_slice.plan_id ||
-        guest_slice.slab_bytes != 128U;
+        !find_slice(slices, count, shadowspill_plan_id(owner), &owner_slice) ||
+        !find_slice(slices, count, shadowspill_plan_id(sharer), &sharer_slice) ||
+        owner_slice.bytes != 128U ||
+        owner_slice.slab_plan_id != owner_slice.plan_id ||
+        sharer_slice.offset != owner_slice.offset ||
+        sharer_slice.bytes != 96U ||
+        sharer_slice.slab_plan_id != owner_slice.plan_id ||
+        sharer_slice.slab_bytes != 128U;
 
     failed = failed ||
         shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_INVALID_STATE ||
-        shadowspill_plan_clear_tasks(guest) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_clear_tasks(sharer) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK ||
         shadowspill_test_statistics(runtime, &after) != SHADOWSPILL_STATUS_OK ||
         after.execution.allocated_bytes + 128U != before.execution.allocated_bytes ||
@@ -995,8 +995,121 @@ static int layouts_share_one_slice(void) {
         count != 0U;
 
     shadowspill_plan_destroy(oversized);
-    shadowspill_plan_destroy(guest);
+    shadowspill_plan_destroy(sharer);
     shadowspill_test_destroy_runtime(runtime);
+    shadowspill_backend_destroy(&mock);
+    return failed ? -1 : 0;
+}
+
+/*
+ * Between calls, the plan that reserved a slice lends it back to the pool, and
+ * an allocation that only fits in those bytes is served there -- planning
+ * another plan, say. While the slice is lent, no slice is reserved and no
+ * layout admitted into it, and neither plan placing into it finds its layout
+ * empty to a call; taking it back is refused while the allocation lies in it,
+ * and done at the same offset once it is freed and retired. Only the plan that
+ * reserved the slice lends it, once, and clearing a lent slice leaves the pool
+ * whole.
+ */
+static int a_lent_slice_serves_planning_until_taken_back(void) {
+    ShadowSpillBackend mock = {0};
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = 0U;
+    int failed = shadowspill_test_create_runtime(
+            &mock, 256U, 128U, 16U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0;
+
+    const ShadowSpillFixedLayoutDescription owner_layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .slice_bytes = 192U,
+    };
+    const ShadowSpillFixedLayoutDescription sharer_layout = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .slice_bytes = 64U,
+    };
+    const ShadowSpillPlanDescription roles = {
+        .execution_pool_id = 0U,
+        .spill_pool_id = 1U,
+        .fetch_route_id = 0U,
+        .evict_route_id = 1U,
+    };
+    ShadowSpillPlan *sharer = NULL;
+    ShadowSpillPlan *late = NULL;
+    failed = failed ||
+        shadowspill_test_admit_fixed_layout(runtime, &owner_layout) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_seal_fixed_layout(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_plan_create(runtime, &roles, &sharer) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_plan_create(runtime, &roles, &late) !=
+            SHADOWSPILL_STATUS_OK;
+    ShadowSpillTestRuntime *record = shadowspill_test_runtime_record(runtime, 0);
+    ShadowSpillPlan *owner = record == NULL ? NULL : record->plan;
+    ShadowSpillPlanSlice slices[4] = {0};
+    uint64_t count = 0U;
+    ShadowSpillPlanSlice reserved = {0};
+    ShadowSpillPlanSlice taken_back = {0};
+    failed = failed || owner == NULL ||
+        shadowspill_plan_admit_fixed_layout_in(sharer, &sharer_layout, owner) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_seal_fixed_layout(sharer) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_memory_pool_plan_slices(runtime, 0U, slices, 4U, &count) !=
+            SHADOWSPILL_STATUS_OK ||
+        !find_slice(slices, count, shadowspill_plan_id(owner), &reserved);
+
+    /* 128 bytes fit only in the 192 the owner reserved of the pool's 256. */
+    ShadowSpillAllocation planning = {0};
+    ShadowSpillTestStatistics statistics = {0};
+    failed = failed ||
+        shadowspill_plan_lend_fixed_layout(sharer) != SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_plan_lend_fixed_layout(owner) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_lend_fixed_layout(owner) != SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_test_statistics(runtime, &statistics) != SHADOWSPILL_STATUS_OK ||
+        statistics.execution.allocated_bytes != 0U ||
+        shadowspill_memory_pool_allocate(runtime, 0U, 128U, 16U, compute, &planning) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_admit_fixed_layout(late, &sharer_layout) !=
+            SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_plan_admit_fixed_layout_in(late, &sharer_layout, owner) !=
+            SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_plan_require_empty_layout(owner) != SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_plan_require_empty_layout(sharer) != SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_plan_reclaim_fixed_layout(owner) != SHADOWSPILL_STATUS_INVALID_STATE ||
+        shadowspill_memory_pool_free(runtime, 0U, planning.allocation_id, compute) !=
+            SHADOWSPILL_STATUS_OK ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_reclaim_fixed_layout(owner) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_reclaim_fixed_layout(owner) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_require_empty_layout(owner) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_require_empty_layout(sharer) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_statistics(runtime, &statistics) != SHADOWSPILL_STATUS_OK ||
+        statistics.execution.allocated_bytes != 192U ||
+        shadowspill_memory_pool_plan_slices(runtime, 0U, slices, 4U, &count) !=
+            SHADOWSPILL_STATUS_OK ||
+        !find_slice(slices, count, shadowspill_plan_id(owner), &taken_back) ||
+        taken_back.offset != reserved.offset || taken_back.bytes != reserved.bytes;
+
+    failed = failed ||
+        shadowspill_plan_lend_fixed_layout(owner) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_clear_tasks(sharer) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_clear_plan(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_test_statistics(runtime, &statistics) != SHADOWSPILL_STATUS_OK ||
+        statistics.execution.allocated_bytes != 0U ||
+        statistics.execution.largest_free_range_bytes != 256U ||
+        shadowspill_plan_admit_fixed_layout(late, &owner_layout) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_plan_clear_tasks(late) != SHADOWSPILL_STATUS_OK;
+
+    shadowspill_plan_destroy(late);
+    shadowspill_plan_destroy(sharer);
+    shadowspill_test_destroy_runtime(runtime);
+    if (compute != 0U) {
+        failed = failed || mock.destroy_stream(mock.state, compute) != 0;
+    }
     shadowspill_backend_destroy(&mock);
     return failed ? -1 : 0;
 }
@@ -1032,6 +1145,10 @@ int main(void) {
     }
     if (layouts_share_one_slice() != 0) {
         fprintf(stderr, "a layout admitted into another plan's slice failed\n");
+        return EXIT_FAILURE;
+    }
+    if (a_lent_slice_serves_planning_until_taken_back() != 0) {
+        fprintf(stderr, "a slice lent between calls was not served and taken back\n");
         return EXIT_FAILURE;
     }
     if (layout_holds_nothing_between_calls() != 0) {

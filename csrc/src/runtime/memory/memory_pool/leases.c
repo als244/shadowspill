@@ -48,6 +48,17 @@ int shadowspill_memory_pool_release_locked(
     return status;
 }
 
+int shadowspill_memory_pool_reserve_at_locked(
+    ShadowSpillMemoryPool *pool,
+    uint64_t offset,
+    uint64_t bytes
+) {
+    if (pool == NULL || !pool->initialized || bytes == 0U) {
+        return -1;
+    }
+    return shadowspill_range_allocate_at(&pool->ranges, offset, bytes);
+}
+
 int shadowspill_memory_pool_reserve_lease_locked(
     ShadowSpillMemoryPool *pool,
     ShadowSpillMemoryLease *lease,

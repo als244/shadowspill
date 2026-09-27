@@ -36,6 +36,7 @@ from .common import (
     actions_by_task,
     require_status,
 )
+from .lending import require_lent_slabs_back
 from .objects import PlanObjects
 from .report import (
     begin_runtime_trace,
@@ -64,7 +65,7 @@ class RuntimeBridge:
         *,
         execution_pool_id: int,
         spill_pool_id: int,
-        slab_host: int | None = None,
+        slab_owner: int | None = None,
     ) -> None:
         if execution_pool_id < 0 or spill_pool_id < 0:
             raise ValueError("plan pool IDs must be non-negative")
@@ -78,7 +79,7 @@ class RuntimeBridge:
         self.plan_handle = plan_handle
         #: The plan whose slice this plan's layout is admitted into, when it
         #: shares one; its own reserved slice otherwise.
-        self.slab_host = slab_host
+        self.slab_owner = slab_owner
         self.execution_pool_id = execution_pool_id
         self.spill_pool_id = spill_pool_id
         self.objects = PlanObjects(
@@ -118,9 +119,11 @@ class RuntimeBridge:
 
         Asked at the start of a call, once every plan placing into the layout
         has drained: whatever an earlier call placed there is gone by then, so
-        a survivor is something this call would overwrite.
+        a survivor is something this call would overwrite. A slab lent to a
+        planning call is taken back first.
         """
 
+        require_lent_slabs_back(self.runtime, "begin a call")
         self.require(
             self.runtime_library.shadowspill_plan_require_empty_layout(
                 self.plan_handle

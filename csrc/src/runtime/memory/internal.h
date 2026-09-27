@@ -120,6 +120,9 @@ typedef struct ShadowSpillMemoryPool {
     uint64_t use_record_in_use;
     uint64_t use_record_peak_in_use;
     uint64_t use_record_growth_rejections;
+    /* Plans' slices lent back to this pool for planning; while any is, no
+       slice is reserved here, so each can be taken back where it was. */
+    uint32_t lent_slices;
     _Atomic uint64_t pending_retirements;
     _Atomic uint64_t pending_capacity_actions;
     _Atomic uint64_t free_bytes_snapshot;
@@ -422,6 +425,14 @@ int shadowspill_memory_pool_reserve_locked(
 );
 
 int shadowspill_memory_pool_release_locked(
+    ShadowSpillMemoryPool *pool,
+    uint64_t offset,
+    uint64_t bytes
+);
+
+/* Reserve exactly [offset, offset + bytes): 0 when taken, 1 while any of it
+   is not free, -1 for a range outside the pool. */
+int shadowspill_memory_pool_reserve_at_locked(
     ShadowSpillMemoryPool *pool,
     uint64_t offset,
     uint64_t bytes

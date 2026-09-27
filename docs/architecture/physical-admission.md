@@ -470,6 +470,30 @@ places anything. The plan that reserved the slab cannot be cleared while
 another is admitted into it; it closes last. `plan_slices()` lists each
 admitted layout with the plan whose slab it lies in.
 
+## Planning between calls
+
+Planning runs a plan's tasks on real tensors -- profiling measures them, and
+compilation runs them to choose kernels -- and those tensors are allocated in
+the execution pool. A pool whose slabs stayed reserved while it planned would
+leave a plan made after another only what they do not cover: once a training
+step has planned itself into the whole pool, nothing, and the forward that is
+to share its slab could not be planned at all.
+
+Planning happens between calls, when no plan is using its slab, so a planning
+call borrows them. When it begins, the runtime drains and every slab an
+admitted plan reserved is lent back to its pool
+(`shadowspill_plan_lend_fixed_layout()`), where planning allocates in it like
+any free range. Each is taken back at the offset it had
+(`shadowspill_plan_reclaim_fixed_layout()`) before a layout is admitted -- the
+new plan's own slab, or its place in another's -- and before any call begins.
+Taking a slab back is refused while anything allocated since still lies in
+it, and while any slab is lent the runtime refuses what would use it: a call of
+a plan placing into it, a layout admitted into it, and a slab reserved in the
+pool, which could land where the lent one has to go back. A planning call that
+fails gives the slabs back once its tensors are released, or, failing that,
+the next call takes them back. Planning order therefore does not matter, and
+the budget still bounds what planning uses.
+
 ## Capacity refinement
 
 A schedule may satisfy logical boundary capacity yet require a fixed extent

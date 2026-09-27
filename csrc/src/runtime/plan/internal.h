@@ -31,11 +31,14 @@ typedef struct ShadowSpillFixedLayoutState {
     uint64_t dependency_count;
     /* The plan whose slice this layout was admitted into, or NULL when the
        layout reserved its own; set and read under the pool's reservation. */
-    ShadowSpillPlan *slab_host;
+    ShadowSpillPlan *slab_owner;
     /* How many other plans' layouts are admitted into this plan's slice. */
-    uint32_t slab_guests;
+    uint32_t slab_sharers;
     uint8_t active;
     uint8_t sealed;
+    /* The slice this plan reserved is lent back to the pool between calls,
+       for planning; set and read under the pool's reservation. */
+    uint8_t lent;
 } ShadowSpillFixedLayoutState;
 
 typedef struct ShadowSpillObjectAcquisitionRecord
