@@ -30,6 +30,7 @@ from shadowspill.pytorch.store import FrameworkArtifacts
 from shadowspill.runtime.plan import (
     abort_plan,
     begin_plan,
+    take_back_lent_slabs,
 )
 from shadowspill.runtime.teardown import prepare_failure_cleanup
 from shadowspill.step import StepDataOrdering, StepProgram
@@ -81,6 +82,9 @@ def _surface_failed_plan(
         error=error,
     )
     _clear_failure_frame_locals(error)
+    # With the failure's tensors released, the slabs planning borrowed can go
+    # back now; any still in use go back at the next call.
+    take_back_lent_slabs(runtime)
     raise error
 
 
@@ -112,7 +116,9 @@ def _require_floating_dtype(name: str, dtype: torch.dtype | None) -> None:
         raise TypeError(f"{name} must be a floating torch.dtype, not {dtype!r}")
 
 
-def _slab_host(share_slab_with: PlannedForward | PlannedTrainStep | None) -> int | None:
+def _slab_owner(
+    share_slab_with: PlannedForward | PlannedTrainStep | None,
+) -> int | None:
     """The plan whose slab a new plan's layout is admitted into, if any."""
 
     if share_slab_with is None:
@@ -224,7 +230,7 @@ def plan_forward(
             spill_budget=spill_budget,
             dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
             execution_device=execution_device,
-            slab_host=_slab_host(share_slab_with),
+            slab_owner=_slab_owner(share_slab_with),
         )
         planning_started = True
         # After the handle exists, so state imported here can name the plan
@@ -443,7 +449,7 @@ def plan_step(
             spill_budget=spill_budget,
             dynamic_scratch_reserve_bytes=dynamic_scratch_reserve_bytes,
             execution_device=execution_device,
-            slab_host=_slab_host(share_slab_with),
+            slab_owner=_slab_owner(share_slab_with),
         )
         planning_started = True
         # After the handle exists, so state imported here can name the plan

@@ -2,7 +2,8 @@
 
 A plan holds its fixed layout in the execution pool for as long as it is
 admitted, so a plan made beside it shares the pool with that layout, and what
-the pool holds for the first is nothing the second leaked.
+the pool holds for the first is nothing the second leaked. While the second is
+planned, between the first's calls, the first's slab is lent to the planning.
 """
 
 from __future__ import annotations
@@ -156,4 +157,88 @@ def test_a_forward_shares_the_slab_of_the_step_it_evaluates(tmp_path: object) ->
     forward.close()
     training.close()
     assert not runtime._installed.admitted_layout_bytes
+    assert not plan_slices(runtime, "execution")
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_a_forward_is_planned_into_the_slab_of_a_step_that_fills_the_pool(
+    tmp_path: object,
+) -> None:
+    """Planning borrows the slab the step reserved, between the step's calls.
+
+    With the rest of the pool taken, the forward's planning -- which profiles
+    and compiles on real tensors, its 32 MiB weights among them -- has only the
+    step's slab to work in. It is lent to the planning and taken back where it
+    was before the forward's layout is admitted into it; the two then run in
+    turn. A planning call that fails after borrowing the slab gives it back, and
+    the step runs on.
+    """
+
+    def wide(seed: int) -> list[torch.Tensor]:
+        generator = torch.Generator().manual_seed(seed)
+        return [
+            torch.randn(8192, 2048, generator=generator),
+            torch.randn(8192, 2048, generator=generator),
+        ]
+
+    _require_adapter()
+    runtime = public_test_runtime()
+    model = import_model_state(_network(), runtime=runtime, pool="spill")
+    training = plan_step(
+        model,
+        objective=_objective,
+        optimizer=partial(torch.optim.SGD, lr=0.01, foreach=False),
+        example_inputs=[wide(0)],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+    )
+    training([wide(1)])
+    identity = runtime_library().shadowspill_plan_id
+    step_id = int(identity(training._plan_handle))
+    reserved = {item.plan_id: item for item in plan_slices(runtime, "execution")}
+    free = runtime.pool_statistics("execution").largest_free_range_bytes
+    rest = torch.empty(free - (8 << 20), dtype=torch.uint8, device="cuda")
+
+    with pytest.raises(RuntimeError):
+        plan_forward(
+            model,
+            example_inputs=[torch.randn(512, 1000)],
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            share_slab_with=training,
+            artifact_store=tmp_path,
+        )
+    assert not runtime._installed.lent_slabs
+    training([wide(2)])
+
+    forward = plan_forward(
+        model,
+        example_inputs=[_batch(0)[0]],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        share_slab_with=training,
+        artifact_store=tmp_path,
+    )
+    assert not runtime._installed.lent_slabs
+    slices = {item.plan_id: item for item in plan_slices(runtime, "execution")}
+    assert slices[step_id].offset == reserved[step_id].offset
+    assert slices[step_id].bytes == reserved[step_id].bytes
+
+    def evaluated(value: torch.Tensor) -> torch.Tensor:
+        reference = _network()
+        reference.load_state_dict(training.state_dict()["model"])
+        return reference(value).detach()
+
+    value = _batch(99)[0]
+    torch.testing.assert_close(forward([value]).cpu(), evaluated(value))
+    training([wide(3)])
+    torch.testing.assert_close(forward([value]).cpu(), evaluated(value))
+    del rest
+    forward.close()
+    training.close()
     assert not plan_slices(runtime, "execution")

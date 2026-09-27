@@ -37,6 +37,7 @@ from .common import (
     plan_local_id,
     runtime_action,
 )
+from .lending import require_lent_slabs_back
 from .report import describe_pool_occupants, statistics
 
 if TYPE_CHECKING:
@@ -159,7 +160,10 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
         dependencies=dependencies if layout.dependencies else None,
         dependency_count=len(layout.dependencies),
     )
-    if bridge.slab_host is None:
+    # The slabs planning borrowed go back where they were before anything is
+    # reserved for good -- this layout's own slab, or a place in another's.
+    require_lent_slabs_back(bridge.runtime, "admit a fixed layout")
+    if bridge.slab_owner is None:
         status = int(
             bridge.runtime_library.shadowspill_plan_admit_fixed_layout(
                 bridge.plan_handle, ctypes.byref(description)
@@ -168,7 +172,7 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
     else:
         status = int(
             bridge.runtime_library.shadowspill_plan_admit_fixed_layout_in(
-                bridge.plan_handle, ctypes.byref(description), bridge.slab_host
+                bridge.plan_handle, ctypes.byref(description), bridge.slab_owner
             )
         )
     if status != 0:
@@ -176,7 +180,7 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
         raise RuntimeExecutionError(
             "admit fixed physical layout failed: "
             f"status={status}, requested_slice={layout.slice_bytes}, "
-            f"{'shared slab, ' if bridge.slab_host is not None else ''}"
+            f"{'shared slab, ' if bridge.slab_owner is not None else ''}"
             f"allocated={int(pool.allocated_bytes)}, "
             f"free={int(pool.free_bytes)}, "
             f"free_prefix={int(pool.free_prefix_bytes)}, "
@@ -193,11 +197,11 @@ def admit_fixed_layout(bridge: RuntimeBridge, layout: RuntimeFixedLayout) -> Non
     # counted once, for the plan that reserved them.
     installed = bridge.runtime._installed
     installed.admitted_layout_bytes[bridge.plan_handle] = (
-        0 if bridge.slab_host is not None else layout.slice_bytes
+        0 if bridge.slab_owner is not None else layout.slice_bytes
     )
-    if bridge.slab_host is not None:
-        installed.slab_hosts[bridge.plan_handle] = installed.slab_hosts.get(
-            bridge.slab_host, bridge.slab_host
+    if bridge.slab_owner is not None:
+        installed.slab_owners[bridge.plan_handle] = installed.slab_owners.get(
+            bridge.slab_owner, bridge.slab_owner
         )
 
 
@@ -320,7 +324,7 @@ def clear_tasks(bridge: RuntimeBridge) -> None:
     bridge._admitted_acquisitions.clear()
     bridge._fixed_layout_installed = False
     bridge.runtime._installed.admitted_layout_bytes.pop(bridge.plan_handle, None)
-    bridge.runtime._installed.slab_hosts.pop(bridge.plan_handle, None)
+    bridge.runtime._installed.slab_owners.pop(bridge.plan_handle, None)
 
 
 def _runtime_inputs(
