@@ -43,12 +43,15 @@ class StandIns:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.searches: list[dict[str, Any]] = []
         self.plans: list[dict[str, Any]] = []
+        self.forwards: list[dict[str, Any]] = []
+        self.calls: list[str] = []
         self.search_allowed = True
         runtime = SimpleNamespace(close=lambda: None)
         monkeypatch.setattr(backend_module, "_runtime", lambda *_: runtime)
         monkeypatch.setattr(backend_module, "import_model_state", self.import_model)
         monkeypatch.setattr(backend_module, "plan_step_search", self.search)
         monkeypatch.setattr(backend_module, "plan_step", self.plan)
+        monkeypatch.setattr(backend_module, "plan_forward", self.plan_forward)
         monkeypatch.setattr(
             backend_module, "release_model_state", lambda *_, **__: None
         )
@@ -77,9 +80,15 @@ class StandIns:
 
     def plan(self, module: torch.nn.Module, **arguments: Any) -> Any:
         self.plans.append(arguments)
+        self.calls.append("plan_step")
         return SimpleNamespace(
             plan_report=SimpleNamespace(summary=Summary()), close=lambda: None
         )
+
+    def plan_forward(self, module: torch.nn.Module, **arguments: Any) -> Any:
+        self.forwards.append(arguments)
+        self.calls.append("plan_forward")
+        return SimpleNamespace(close=lambda: None)
 
 
 def _setup(tmp_path: Path) -> Setup:
@@ -134,6 +143,32 @@ def test_a_run_searches_once_and_later_launches_plan_the_record(
     assert (replanned["depth"], replanned["breadth"]) == (3, 2)
     assert replanned["example_inputs"][0][0].shape == (1, 1024)
     assert len(replanned["example_inputs"]) == 4
+
+
+@pytest.mark.parametrize("eval_execution_gib, budget", [(None, None), (0.5, 1 << 29)])
+def test_setup_plans_evaluation_right_after_the_step_into_its_slab(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    eval_execution_gib: float | None,
+    budget: int | None,
+) -> None:
+    """A run that cannot evaluate stops at setup, before it trains. Without
+    a budget of its own the forward plans within the step's: the whole slab."""
+
+    stand_ins = StandIns(monkeypatch)
+    setup = _setup(tmp_path)
+    setup.run_dir.mkdir()
+    backend = ShadowSpill(
+        execution_gib=1, spill_gib=2, eval_execution_gib=eval_execution_gib
+    )
+    backend.setup(setup)
+
+    assert stand_ins.calls == ["plan_step", "plan_forward"]
+    (forward,) = stand_ins.forwards
+    assert forward["share_slab_with"] is backend.train_step
+    assert forward["execution_budget"] == budget
+    assert forward["example_inputs"][0].shape == (1, 1024)
+    assert backend.forward is not None
 
 
 def test_a_run_refuses_other_budgets_than_it_was_planned_at(

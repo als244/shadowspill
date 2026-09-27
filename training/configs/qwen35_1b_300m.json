@@ -47,8 +47,7 @@
   "backend": {
     "@call": "training.backends.shadowspill:ShadowSpill",
     "execution_gib": 8,
-    "spill_gib": 32,
-    "eval_execution_gib": 4
+    "spill_gib": 32
   },
   "seed": 0,
   "eval_every": 100,

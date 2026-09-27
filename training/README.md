@@ -210,14 +210,14 @@ the objective with `torch.compile` unless `compile=False`. It needs
 `ShadowSpill(execution_gib, spill_gib, eval_execution_gib=None,
 round_accumulation_once=False)` keeps the state in a pinned host pool of
 `spill_gib` and plans every step to fit `execution_gib` of the device, which is
-the whole device pool. Evaluation plans its forward pass into the step's slab
+the whole device pool. Evaluation's forward pass shares the step's slab
 (`share_slab_with`): the two run in turn, so the pool holds the bytes once. It
-plans within `eval_execution_gib` when given -- the example configs give 4 GiB
-of the step's 8 -- and within the whole slab when not. `round_accumulation_once`
-is `plan_step`'s: with bf16 gradients a matrix multiply adds its product into
-the running gradient as it writes it, rounding the sum once where the PyTorch
-backend rounds it twice, so the two backends' steps no longer agree bit for
-bit.
+plans within the step's own budget -- the whole slab they share -- unless
+`eval_execution_gib` names less; a budget larger than the slab stops the run at
+setup. `round_accumulation_once` is `plan_step`'s: with bf16 gradients a matrix
+multiply adds its product into the running gradient as it writes it, rounding
+the sum once where the PyTorch backend rounds it twice, so the two backends'
+steps no longer agree bit for bit.
 
 - **Planning.** A run's first launch searches for its plan with
   `plan_step_search` -- over microbatch sizes when the trainer gave none -- and
@@ -235,8 +235,9 @@ bit.
 - **Masters.** ShadowSpill keeps them with the optimizer's state in its pool
   (`plan_step(master_dtype=..., grad_dtype=...)`); the PyTorch backend keeps
   them on the device and does the same around an ordinary optimizer step.
-- **Evaluation** plans the forward pass once, beside the training step, over
-  the same weights.
+- **Evaluation** runs a forward pass planned at setup, right after the
+  training step and over the same weights, so a run that cannot evaluate stops
+  before it trains.
 
 ## What a run writes
 
