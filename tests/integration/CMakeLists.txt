@@ -130,6 +130,12 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_steps_masters_of_its_weights 300
 )
 shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_steps_masters_beside_weights_that_have_none 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes 600
+)
+shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_checkpoints_masters_in_place_of_their_weights 300
 )
 shadowspill_add_public_api_test(
