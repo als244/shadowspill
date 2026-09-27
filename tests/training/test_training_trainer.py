@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import torch
 
+from shadowspill.planner.diagnostics.plan import PlanSummary
 from tests.training._synthetic import NOTES, write_dataset
 from training.backends import Microbatch
 from training.backends.pytorch import PyTorch
@@ -191,6 +193,39 @@ def test_setting_up_on_pytorch_plans_nothing(tmp_path: Path) -> None:
     assert trainer.plan is None and trainer.planning is None
     assert (trainer.tokens, trainer.microbatches) == (2048, 2)
     trainer.close()
+
+
+class _Planned(PyTorch):
+    """The CPU backend, reporting a plan the way ShadowSpill's backend does: a
+    real ``PlanSummary``, whose read-only mappings no deep copy can take."""
+
+    plan = PlanSummary(
+        simulated_step_seconds=2.0,
+        unconstrained_step_seconds=1.5,
+        recomputation_overhead_seconds=0.25,
+        idle_seconds=0.25,
+        terminal_writeback_seconds=0.0,
+        recomputing_group_count=1,
+        task_alternative_group_count=2,
+        flexible_group_count=2,
+        planning_phase_seconds=MappingProxyType({"search": 3.0}),
+    )
+
+    def __init__(self) -> None:
+        super().__init__(compile=False, device="cpu")
+
+
+def test_a_planned_run_writes_and_logs_what_its_plan_promises(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    trainer = Trainer.from_config(_config(tmp_path), [f"run_dir={run_dir}", "steps=1"])
+    trainer.backend = _Planned()
+    trainer.train()
+
+    written = json.loads((run_dir / "plan.json").read_text())
+    assert written["planning_phase_seconds"] == {"search": 3.0}
+    (start,) = _records(run_dir, "plan/simulated_step_seconds").values()
+    assert start["plan/simulated_step_seconds"] == 2.0
+    assert start["plan/recomputing_group_fraction"] == 0.5
 
 
 def test_token_counts_must_fit_the_data(tmp_path: Path) -> None:
