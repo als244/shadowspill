@@ -230,10 +230,13 @@ mypy
 ```
 
 The CMake build enables warnings as errors and registers the C canaries with
-CTest:
+CTest. The PyTorch adapter's storage operations build against PyTorch's CMake
+package, which `CMAKE_PREFIX_PATH` names; without it the adapter builds
+without them and every PyTorch canary fails:
 
 ```bash
-cmake -S . -B build/dev -DBUILD_TESTING=ON
+cmake -S . -B build/dev -DBUILD_TESTING=ON \
+    -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
 cmake --build build/dev --parallel
 ctest --test-dir build/dev --output-on-failure
 ```
