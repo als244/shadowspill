@@ -13,8 +13,11 @@ def public_test_runtime() -> Runtime:
     if _RUNTIME is None:
         _RUNTIME = Runtime(
             pools={
+                # Room for the largest test step on any device: a plan keeps
+                # back its largest matmul workspace, which differs by
+                # architecture -- tens of MiB on some, a few on others.
                 "execution": device(
-                    physical_capacity=2 << 30,
+                    physical_capacity=3 << 30,
                     provider_headroom=512 << 20,
                 ),
                 "spill": spill_pool(1 << 30),

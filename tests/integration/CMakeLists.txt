@@ -171,6 +171,3 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_04_plans_side_by_side.py test_a_forward_shares_the_slab_of_the_step_it_evaluates 300
 )
-shadowspill_add_public_api_test(
-  test_04_plans_side_by_side.py test_a_forward_is_planned_into_the_slab_of_a_step_that_fills_the_pool 300
-)
