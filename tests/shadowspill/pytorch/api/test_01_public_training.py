@@ -875,7 +875,7 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
         optimizer=partial(
             mlops.optim.AdamW,
             lr=3e-3,
-            state_dtype=torch.bfloat16,
+            opt_state_dtype=torch.bfloat16,
         ),
         example_inputs=inputs(92),
         runtime=runtime,

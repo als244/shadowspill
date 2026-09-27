@@ -34,7 +34,7 @@
     ],
     "weight_decay": 0.1,
     "gradient_dtype": "parameter",
-    "state_dtype": "@torch:float32"
+    "opt_state_dtype": "@torch:float32"
   },
   "data": {
     "@call": "training.data:PackedTokens",
