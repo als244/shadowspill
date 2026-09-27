@@ -243,7 +243,7 @@ class Trainer:
             setup["planned_step_seconds"] = self.plan.simulated_step_seconds
         self.log.log(self.start, **setup)
         if self.plan is not None:
-            summary = dataclasses.asdict(self.plan)
+            summary = self.plan.as_dict()
             plan = {f"plan/{k}": v for k, v in summary.items() if _is_number(v)}
             self.log.log(self.start, echo=False, **plan)
         # What the steps before this one trained on, so a resumed run's total
