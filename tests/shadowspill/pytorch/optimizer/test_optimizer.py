@@ -116,7 +116,7 @@ def test_state_kept_at_another_precision_is_captured_at_it() -> None:
     mlops = pytest.importorskip("mlops")
     parameter = torch.nn.Parameter(torch.ones(8, dtype=torch.bfloat16))
     parameter.grad = torch.ones_like(parameter)
-    optimizer = mlops.optim.AdamW([parameter], lr=1e-3, state_dtype=torch.float32)
+    optimizer = mlops.optim.AdamW([parameter], lr=1e-3, opt_state_dtype=torch.float32)
     _install_declared_state({"weight": parameter}, optimizer)
 
     captured = capture_optimizer({"weight": parameter}, optimizer)
