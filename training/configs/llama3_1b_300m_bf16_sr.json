@@ -1,5 +1,5 @@
 {
-  "run_dir": "training/runs/llama3_1b_300m_fp32",
+  "run_dir": "training/runs/llama3_1b_300m_bf16_sr",
   "settings": [
     {
       "@call": "workloads.providers:select_implementation",
@@ -9,10 +9,6 @@
     {
       "@call": "mlops.dispatch:set_deterministic_kernels",
       "enabled": true
-    },
-    {
-      "@call": "mlops.dispatch:set_weight_gradient_dtype",
-      "dtype": "@torch:float32"
     }
   ],
   "model": {
@@ -33,8 +29,8 @@
       0.95
     ],
     "weight_decay": 0.1,
-    "gradient_dtype": "parameter",
-    "opt_state_dtype": "@torch:float32"
+    "parameter_rounding": "stochastic",
+    "opt_state_rounding": "stochastic"
   },
   "data": {
     "@call": "training.data:PackedTokens",
@@ -55,8 +51,6 @@
     "execution_gib": 20,
     "spill_gib": 32
   },
-  "master_dtype": "@torch:float32",
-  "grad_dtype": "@torch:float32",
   "seed": 0,
   "eval_every": 100,
   "eval_batches": 10,
