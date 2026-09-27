@@ -50,20 +50,16 @@ def _declared_flags(tree: ast.AST) -> set[str]:
     return names
 
 
-def _cli_modules() -> list[Path]:
-    """Every module that declares a long option, and so has something to check.
+def _repository_python_files() -> list[Path]:
+    """The repository's Python files: tracked, and untracked but not ignored.
 
-    A module whose parser takes only positional arguments declares no
-    attribute that could drift from its flag, so it is not a case here.
-    Leaving it in as a case that skips itself reports a skip on every run,
-    which reads like something was not checked rather than like there was
-    nothing to check.
+    Untracked counts because a module moved into a package is untracked until
+    the move is committed. Ignored does not: a machine's local scripts are no
+    part of the repository, and a check that read them would pass on one
+    machine and fail on another.
     """
 
-    # Tracked and untracked alike: a module moved into a package is untracked
-    # until the move is committed, and a flag that drifts in a module this
-    # search cannot see is exactly the drift this test exists to catch.
-    tracked = [
+    names = [
         name
         for arguments in (["--cached"], ["--others", "--exclude-standard"])
         for name in subprocess.run(
@@ -74,17 +70,28 @@ def _cli_modules() -> list[Path]:
             check=True,
         ).stdout.split()
     ]
+    # A file git still tracks may already be gone from the worktree: a move is
+    # a deletion until it is committed, and the suite has to run in the tree
+    # it is being changed in.
+    return [ROOT / name for name in names if (ROOT / name).exists()]
+
+
+def _cli_modules() -> list[Path]:
+    """Every module that declares a long option, and so has something to check.
+
+    A module whose parser takes only positional arguments declares no
+    attribute that could drift from its flag, so it is not a case here.
+    Leaving it in as a case that skips itself reports a skip on every run,
+    which reads like something was not checked rather than like there was
+    nothing to check.
+    """
+
     # This file names the call it looks for, so it matches its own search.
     here = Path(__file__).resolve()
     candidates = [
-        ROOT / f
-        for f in tracked
-        # A file git still tracks may already be gone from the worktree: a
-        # move is a deletion until it is committed, and the suite has to run
-        # in the tree it is being changed in.
-        if (ROOT / f).exists()
-        and (ROOT / f).resolve() != here
-        and "add_argument(" in (ROOT / f).read_text()
+        path
+        for path in _repository_python_files()
+        if path.resolve() != here and "add_argument(" in path.read_text()
     ]
     return [
         path
@@ -160,33 +167,32 @@ def test_no_caller_passes_a_keyword_a_public_entry_point_does_not_accept() -> No
         "build_step_programs": api.build_step_programs,
     }
     offences: list[str] = []
-    for root in ("src", "tests", "benchmarking", "reference", "workloads"):
-        directory = ROOT / root
-        if not directory.is_dir():
+    roots = ("src", "tests", "benchmarking", "reference", "workloads", "training")
+    for path in _repository_python_files():
+        if path.relative_to(ROOT).parts[0] not in roots:
             continue
-        for path in directory.rglob("*.py"):
-            try:
-                tree = ast.parse(path.read_text())
-            except SyntaxError:
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                called = (
-                    node.func.attr
-                    if isinstance(node.func, ast.Attribute)
-                    else getattr(node.func, "id", None)
-                )
-                function = entry_points.get(called)
-                if function is None:
-                    continue
-                accepted = set(inspect.signature(function).parameters)
-                for keyword in node.keywords:
-                    if keyword.arg is not None and keyword.arg not in accepted:
-                        offences.append(
-                            f"{path.relative_to(ROOT)}:{node.lineno} "
-                            f"{called}({keyword.arg}=...)"
-                        )
+            called = (
+                node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else getattr(node.func, "id", None)
+            )
+            function = entry_points.get(called)
+            if function is None:
+                continue
+            accepted = set(inspect.signature(function).parameters)
+            for keyword in node.keywords:
+                if keyword.arg is not None and keyword.arg not in accepted:
+                    offences.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} "
+                        f"{called}({keyword.arg}=...)"
+                    )
     assert not offences, "calls passing an argument that does not exist:\n" + "\n".join(
         offences
     )
