@@ -247,7 +247,7 @@ def fixed_execution_bytes(memory: PlanMemory, profiles: ProfilingResult) -> int:
     by the plan that reserved it.
     """
 
-    if memory.slab_host is not None:
+    if memory.slab_owner is not None:
         return 0
     return memory.installed.fixed_execution_bytes + profiles.fixed_slab_bytes
 

@@ -23,7 +23,7 @@ class FakeRuntime:
         self.released = False
         self.residue_reclaimed = False
         # No plan shares another's slab here.
-        self._installed = SimpleNamespace(slab_hosts={})
+        self._installed = SimpleNamespace(slab_owners={})
 
 
 def fake_plan_lifecycle(monkeypatch: pytest.MonkeyPatch, *, plan_handle: int) -> None:

@@ -69,7 +69,7 @@ def materialize_training_state(
         memory.plan_handle,
         execution_pool_id=memory.execution.pool_id,
         spill_pool_id=memory.spill.pool_id,
-        slab_host=memory.slab_host,
+        slab_owner=memory.slab_owner,
     )
     state: TrainingMaterializedState | None = None
     optimizer: torch.optim.Optimizer | None = None

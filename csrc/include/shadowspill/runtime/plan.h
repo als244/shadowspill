@@ -99,21 +99,44 @@ shadowspill_plan_admit_fixed_layout(
 );
 
 /*
- * Admit a layout into the slice `host` holds instead of reserving one: the
+ * Admit a layout into the slice `other` holds instead of reserving one: the
  * layout is placed at that slice's offset and must fit inside it. Plans whose
  * layouts share a slice never run at once -- a call begins only once every
  * plan placing into the slice has drained, and only if nothing is live in it
  * (shadowspill_plan_require_empty_layout()) -- so the bytes serve each in turn
- * and are held once. A host that shares a slice itself is followed to the
- * plan that reserved it. That plan's layout cannot be cleared while another
- * is admitted into its slice, so it is cleared last.
+ * and are held once. When `other` shares a slice itself, the layout goes into
+ * the slice of the plan that reserved it, its owner, which cannot be cleared
+ * while another layout is admitted into its slice, so it is cleared last.
+ * Refused while the slice is lent.
  */
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_admit_fixed_layout_in(
     ShadowSpillPlan *plan,
     const ShadowSpillFixedLayoutDescription *description,
-    ShadowSpillPlan *host
+    ShadowSpillPlan *other
 );
+
+/*
+ * Lend the slice this plan reserved back to its pool between calls, so that
+ * planning another plan can allocate in those bytes like any free range
+ * instead of finding the pool full of slices no call is using. Only the plan
+ * that reserved a slice lends it, and only while nothing a call placed is live
+ * or retiring in the pool; lending an empty layout does nothing. While the
+ * slice is lent, no call of this plan or of a plan sharing its slice places
+ * anything, no layout is admitted into it, and no slice is reserved in the
+ * pool: shadowspill_plan_reclaim_fixed_layout() takes it back first.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_plan_lend_fixed_layout(ShadowSpillPlan *plan);
+
+/*
+ * Take back the slice shadowspill_plan_lend_fixed_layout() lent, at the offset
+ * it had. Refused, and the slice stays lent, while anything allocated in the
+ * meantime -- live, or freed but not yet retired -- still lies in it. Taking
+ * back a slice that is not lent does nothing.
+ */
+SHADOWSPILL_API ShadowSpillStatus
+shadowspill_plan_reclaim_fixed_layout(ShadowSpillPlan *plan);
 
 SHADOWSPILL_API ShadowSpillStatus
 shadowspill_plan_seal_fixed_layout(ShadowSpillPlan *plan);
