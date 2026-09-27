@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import itertools
 from collections.abc import Iterable
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
@@ -19,6 +21,7 @@ from shadowspill.pytorch import (
     plan_step,
     read_model_state,
     read_optimizer_state,
+    release_model_state,
 )
 from shadowspill.pytorch.execution.training.optimizer_state import OptimizerState
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
@@ -678,6 +681,276 @@ def test_public_training_steps_masters_of_its_weights(tmp_path: Path) -> None:
         assert saved.dtype == torch.float64
         torch.testing.assert_close(saved, master.detach(), rtol=2e-5, atol=2e-7)
         assert torch.equal(weights[name], saved.to(torch.float32))
+    training.close()
+
+
+def _stepped_eagerly(
+    model: nn.Module,
+    steps: list[list[list[object]]],
+    *,
+    master_dtype: torch.dtype | None,
+    grad_dtype: torch.dtype,
+    optimizer: Any,
+) -> tuple[list[list[torch.Tensor]], list[torch.Tensor]]:
+    """Eager training on the device as a planned step keeps it: a step's
+    gradients summed at ``grad_dtype``, handed to the optimizer at the dtype
+    of what it steps -- each weight's master when ``master_dtype`` asks for
+    one, the weight otherwise -- and each weight written from its master after
+    the update. Returns each step's losses and what the optimizer stepped."""
+
+    weights = list(model.parameters())
+    stepped = (
+        weights
+        if master_dtype is None
+        else [
+            weight.detach().to(master_dtype).clone().requires_grad_()
+            for weight in weights
+        ]
+    )
+    update = optimizer(stepped)
+    expected: list[list[torch.Tensor]] = []
+    for microbatches in steps:
+        sums = [torch.zeros_like(weight, dtype=grad_dtype) for weight in weights]
+        losses: list[torch.Tensor] = []
+        for value, target, tag in microbatches:
+            model.zero_grad(set_to_none=True)
+            result = _training_objective(
+                model,
+                value.cuda(),  # type: ignore[union-attr]
+                target.cuda(),  # type: ignore[union-attr]
+                tag,  # type: ignore[arg-type]
+            )
+            result.loss.backward()
+            for total, weight in zip(sums, weights, strict=True):
+                assert weight.grad is not None
+                total.add_(weight.grad.to(grad_dtype))
+            losses.append(result.loss.detach().cpu())
+        model.zero_grad(set_to_none=True)
+        for value, total in zip(stepped, sums, strict=True):
+            value.grad = total.to(value.dtype)
+        update.step()
+        if master_dtype is not None:
+            with torch.no_grad():
+                for weight, value in zip(weights, stepped, strict=True):
+                    weight.copy_(value)
+        expected.append(losses)
+    return expected, stepped
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes(
+    tmp_path: Path,
+) -> None:
+    """bf16 weights to compute with, and every choice of the dtypes a step
+    keeps apart from them -- masters (none, or fp32), gradients summed at bf16
+    or fp32, moments at bf16 or fp32 -- stepped by mlops AdamW. Each
+    combination keeps masters, gradients and moments at their dtypes and the
+    weights at bf16, each its master's cast when it has one, and trains as
+    eager training that does the same."""
+
+    _require_adapter()
+    mlops = pytest.importorskip("mlops")
+    runtime = public_test_runtime()
+    for master_dtype, grad_dtype, state_dtype in itertools.product(
+        (None, torch.float32),
+        (torch.bfloat16, torch.float32),
+        (torch.bfloat16, torch.float32),
+    ):
+        case = f"masters {master_dtype}, gradients {grad_dtype}, moments {state_dtype}"
+        torch.manual_seed(87)
+        model = _TrainingNetwork().to(torch.bfloat16)
+        names = [name for name, _parameter in model.named_parameters()]
+        batches = [
+            [
+                [
+                    torch.randn(rows, 6, dtype=torch.bfloat16),
+                    torch.randn(rows, 3, dtype=torch.bfloat16),
+                    tag,
+                ]
+                for rows, tag in ((2, "left"), (4, "right"))
+            ]
+            for _ in range(3)
+        ]
+        adamw = partial(
+            mlops.optim.AdamW,
+            lr=0.003,
+            gradient_dtype="parameter",
+            opt_state_dtype=state_dtype,
+        )
+        expected, stepped = _stepped_eagerly(
+            copy.deepcopy(model).cuda(),
+            batches[1:],
+            master_dtype=master_dtype,
+            grad_dtype=grad_dtype,
+            optimizer=adamw,
+        )
+
+        model = import_model_state(
+            model, runtime=runtime, pool="spill", release_source=True
+        )
+        training = plan_step(
+            model,
+            objective=_training_objective,
+            optimizer=adamw,
+            example_inputs=batches[0],
+            runtime=runtime,
+            execution="execution",
+            spill="spill",
+            artifact_store=tmp_path,
+            master_dtype=master_dtype,
+            grad_dtype=grad_dtype,
+        )
+        lowered = training._executor.run.lowered
+        sizes = {item.object_id: item.size_bytes for item in lowered.program.objects}
+        elements = {
+            name: parameter.numel() for name, parameter in model.named_parameters()
+        }
+        for binding in lowered.gradients:
+            assert sizes[binding.gradient_object_id] == (
+                elements[binding.parameter_name] * grad_dtype.itemsize
+            ), case
+
+        for microbatches, losses in zip(batches[1:], expected, strict=True):
+            result = training(microbatches)
+            for actual, wanted in zip(result.objectives, losses, strict=True):
+                torch.testing.assert_close(
+                    actual.cpu().float(), wanted.float(), rtol=2e-2, atol=2e-3, msg=case
+                )
+
+        state = training.state_dict()
+        weights = read_model_state(model, runtime=runtime)
+        for name, value in zip(names, stepped, strict=True):
+            saved = state["model"][name]  # type: ignore[index]
+            assert saved.dtype == (master_dtype or torch.bfloat16), case
+            torch.testing.assert_close(
+                saved.float(),
+                value.detach().cpu().float(),
+                rtol=2e-2,
+                atol=2e-3,
+                msg=case,
+            )
+            assert weights[name].dtype == torch.bfloat16, case
+            assert torch.equal(weights[name], saved.to(torch.bfloat16)), case
+        for entries in state["optimizer"]["state"].values():  # type: ignore[index]
+            assert entries["exp_avg"].dtype == state_dtype, case
+            assert entries["exp_avg_sq"].dtype == state_dtype, case
+        training.close()
+        release_model_state(model, runtime=runtime)
+
+
+class _MixedPrecisionNetwork(nn.Module):
+    """A bf16 layer beside an fp32 one: with fp32 masters, only the bf16
+    layer's weights have one, and the fp32 layer's are stepped themselves."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.first = nn.Linear(6, 10).to(torch.bfloat16)
+        self.second = nn.Linear(10, 3)
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        hidden = torch.relu(self.first(value.to(torch.bfloat16)))
+        return self.second(hidden.float())
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_steps_masters_beside_weights_that_have_none(
+    tmp_path: Path,
+) -> None:
+    """fp32 masters of bf16 weights beside fp32 weights that need none, stepped
+    by an optimizer holding its settings in tensors -- mlops AdamW, whose rate
+    and betas no plan object carries -- over gradients summed at fp32. Each
+    step matches eager training with the same masters; every bf16 weight is
+    its master's cast, and a checkpoint holds the master in its place."""
+
+    _require_adapter()
+    mlops = pytest.importorskip("mlops")
+    torch.manual_seed(86)
+    # The runtime installs its allocator first: the eager reference steps on
+    # the device.
+    runtime = public_test_runtime()
+    model = _MixedPrecisionNetwork()
+    reference = copy.deepcopy(model).cuda()
+    batches = [
+        [
+            [torch.randn(2, 6), torch.randn(2, 3), "left"],
+            [torch.randn(4, 6), torch.randn(4, 3), "right"],
+        ]
+        for _ in range(3)
+    ]
+    adamw = partial(
+        mlops.optim.AdamW,
+        lr=0.003,
+        gradient_dtype="parameter",
+        opt_state_dtype=torch.float32,
+    )
+
+    weights = list(reference.parameters())
+    stepped = [
+        weight
+        if weight.dtype == torch.float32
+        else weight.detach().float().clone().requires_grad_()
+        for weight in weights
+    ]
+    optimizer = adamw(stepped)
+    expected: list[list[torch.Tensor]] = []
+    for microbatches in batches[1:]:
+        sums = [torch.zeros_like(value) for value in stepped]
+        losses: list[torch.Tensor] = []
+        for value, target, tag in microbatches:
+            reference.zero_grad(set_to_none=True)
+            result = _training_objective(
+                reference,
+                value.cuda(),  # type: ignore[union-attr]
+                target.cuda(),  # type: ignore[union-attr]
+                tag,  # type: ignore[arg-type]
+            )
+            result.loss.backward()
+            for total, weight in zip(sums, weights, strict=True):
+                assert weight.grad is not None
+                total.add_(weight.grad.float())
+            losses.append(result.loss.detach().cpu())
+        for value, total in zip(stepped, sums, strict=True):
+            value.grad = total
+        optimizer.step()
+        with torch.no_grad():
+            for weight, value in zip(weights, stepped, strict=True):
+                if value is not weight:
+                    weight.copy_(value)
+        expected.append(losses)
+
+    model = import_model_state(
+        model, runtime=runtime, pool="spill", release_source=True
+    )
+    training = plan_step(
+        model,
+        objective=_training_objective,
+        optimizer=adamw,
+        example_inputs=batches[0],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+        master_dtype=torch.float32,
+        grad_dtype=torch.float32,
+    )
+    for microbatches, losses in zip(batches[1:], expected, strict=True):
+        result = training(microbatches)
+        for actual, wanted in zip(result.objectives, losses, strict=True):
+            torch.testing.assert_close(actual.cpu(), wanted, rtol=1e-2, atol=1e-3)
+
+    saved = training.state_dict()["model"]
+    assert isinstance(saved, dict)
+    current = read_model_state(model, runtime=runtime)
+    for (name, weight), value in zip(
+        reference.named_parameters(), stepped, strict=True
+    ):
+        assert saved[name].dtype == torch.float32
+        torch.testing.assert_close(
+            saved[name], value.detach().cpu(), rtol=1e-2, atol=1e-3
+        )
+        assert torch.equal(current[name], saved[name].to(weight.dtype))
     training.close()
 
 

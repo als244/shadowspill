@@ -264,29 +264,37 @@ def _assemble_optimizer_call(
         return TaskCall((), None, True)
     if not isinstance(artifact, GraphArtifact):
         raise RuntimeError("optimizer task has no executable artifact")
+    # Every argument the plan holds -- a parameter, its master, its gradient,
+    # the optimizer's state -- is taken where the plan placed it. Only what the
+    # optimizer holds itself and the plan does not, such as a group's rate
+    # kept in a tensor, is found by name among its live tensors: those name a
+    # gradient only through ``parameter.grad``, which cannot hold one at
+    # another dtype than its parameter's, nor one of weights stepped through
+    # their master.
     object_ids = record.optimizer_argument_object_ids
-    if all(object_id is not None for object_id in object_ids):
-        try:
-            arguments = tuple(
-                executor._state.object_tensors[object_id]
-                for object_id in object_ids
-                if object_id is not None
-            )
-        except KeyError as error:
-            raise RuntimeError(
-                f"optimizer object {error.args[0]!r} is unbound"
-            ) from error
-    else:
-        current = executor.optimizer_state.current_bindings()
-        try:
-            arguments = tuple(
-                current[name].tensor for name in record.entrypoint.options.named_inputs
-            )
-        except KeyError as error:
-            raise RuntimeError(
-                f"optimizer tensor {error.args[0]!r} is unbound"
-            ) from error
-    return TaskCall(arguments, record.function, False)
+    current = (
+        None
+        if all(object_id is not None for object_id in object_ids)
+        else executor.optimizer_state.current_bindings()
+    )
+    arguments: list[torch.Tensor] = []
+    for name, object_id in zip(
+        record.entrypoint.options.named_inputs, object_ids, strict=True
+    ):
+        if object_id is not None:
+            try:
+                arguments.append(executor._state.object_tensors[object_id])
+            except KeyError as error:
+                raise RuntimeError(
+                    f"optimizer object {object_id!r} is unbound"
+                ) from error
+        else:
+            assert current is not None
+            try:
+                arguments.append(current[name].tensor)
+            except KeyError as error:
+                raise RuntimeError(f"optimizer tensor {name!r} is unbound") from error
+    return TaskCall(tuple(arguments), record.function, False)
 
 
 def _assemble_graph_call(
