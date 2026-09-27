@@ -65,16 +65,15 @@ few steps on both.
 
 ## Setup
 
-Install ShadowSpill as the [repository README](../README.md) says, then the
-harness's own dependencies:
+Install ShadowSpill as the [repository README](../README.md) says. Its setup
+script installs the harness's dependencies with it -- the package's `training`
+extra -- and `mlops`, the operation library the example configs' models run
+on; the harness itself does not import `mlops`. To send metrics to W&B, log in
+once:
 
 ```bash
-pip install -e '.[training]'
-wandb login  # only to send metrics to W&B
+wandb login
 ```
-
-The example configs also need the operation library their models run on,
-`mlops`, installed beside it. The harness itself does not import it.
 
 ## Data
 

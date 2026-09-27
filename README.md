@@ -14,7 +14,8 @@ pools before the step runs. PyTorch still executes every kernel.
 
 The script creates `.venv`, installs the supported PyTorch and device-backend
 stack, builds the C library with its backends and the PyTorch adapter, installs
-the mlops operation library, and verifies it.
+the mlops operation library and the training harness's dependencies, and
+verifies the install.
 
 ## Minimal example
 

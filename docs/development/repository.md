@@ -210,10 +210,10 @@ suite.
 
 The script creates `.venv`, installs PyTorch with the machine accelerator
 backend, builds and installs the library, its backends and the adapter,
-installs development dependencies, installs the mlops operation library with
-its implementation providers, and verifies the device backend, component
-libraries, ABI loading, and PyTorch storage adapter. To use an existing virtual
-or Conda environment:
+installs development dependencies and those of the training harness, installs
+the mlops operation library with its implementation providers, and verifies
+the device backend, component libraries, ABI loading, and PyTorch storage
+adapter. To use an existing virtual or Conda environment:
 
 ```bash
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
