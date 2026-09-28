@@ -59,13 +59,6 @@ class Logger:
             self.wandb.finish(exit_code=exit_code)
 
 
-def per_trained_token(losses: list[float], tokens: int, trained: list[int]) -> float:
-    """The mean loss over trained positions, from losses that each divide by a
-    microbatch's ``tokens`` positions (see ``training.objectives``)."""
-
-    return sum(loss * tokens for loss in losses) / sum(trained)
-
-
 def host_rss_gib() -> float:
     """This process's resident host memory, a pinned pool included."""
 

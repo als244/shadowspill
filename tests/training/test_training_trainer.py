@@ -110,17 +110,21 @@ class _Recorded(PyTorch):
         super().__init__(compile=False, device="cpu")
         self.calls: list[str] = []
 
-    def step(self, microbatches: list[Microbatch], lr: float | None) -> list[float]:
+    def step(
+        self, microbatches: list[Microbatch], lr: float | None, trained_total: int
+    ) -> list[float]:
         self.calls.append("step")
-        return super().step(microbatches, lr)
+        return super().step(microbatches, lr, trained_total)
 
     def synchronize(self) -> None:
         self.calls.append("synchronize")
         super().synchronize()
 
-    def evaluate(self, microbatches: list[Microbatch]) -> list[float]:
+    def evaluate(
+        self, microbatches: list[Microbatch], trained_total: int
+    ) -> list[float]:
         self.calls.append("evaluate")
-        return super().evaluate(microbatches)
+        return super().evaluate(microbatches, trained_total)
 
     def save(self, path: Path) -> None:
         self.calls.append("save")
