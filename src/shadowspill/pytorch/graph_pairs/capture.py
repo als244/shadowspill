@@ -6,6 +6,7 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
+from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition.artifacts import PartitionedExport
 from ..partition.differentiability import differentiable_output_positions
@@ -17,12 +18,14 @@ def capture_training_stages(
     partitioned: PartitionedExport,
     *,
     graph_pair_store: GraphPairStore | None = None,
+    retention: RetentionPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
 ) -> tuple[DifferentiatedStage, ...]:
     """Bind every stage occurrence to its structural graph pairs, their
-    parameter gradients produced at ``gradient_dtype`` when one is given."""
+    parameter gradients produced at ``gradient_dtype`` when one is given, and
+    their ``save`` variant retaining what ``retention`` says to retain."""
 
     store = graph_pair_store or GraphPairStore()
     return tuple(
@@ -30,6 +33,7 @@ def capture_training_stages(
             partitioned,
             index,
             graph_pair_store=store,
+            retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             round_accumulation_once=round_accumulation_once,
@@ -43,6 +47,7 @@ def _capture_training_stage(
     stage_index: int,
     *,
     graph_pair_store: GraphPairStore,
+    retention: RetentionPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
@@ -78,6 +83,7 @@ def _capture_training_stage(
             example,
             roots,
             specialize_unit_tangents=stage_index == len(partitioned.stages) - 1,
+            retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             round_accumulation_once=round_accumulation_once,

@@ -159,7 +159,7 @@ def test_each_training_stage_has_endpoint_graph_pairs() -> None:
         tuple(
             (item.option_id, item.memory_budget) for item in stage.graph_pairs.variants
         )
-        == (("save", None), ("recompute", 0.0))
+        == (("save", 1.0), ("recompute", 0.0))
         for stage in stages
     )
     save_footprints = tuple(
@@ -267,21 +267,38 @@ def test_rounding_an_accumulation_once_is_a_form_of_its_own() -> None:
     assert added_inside(False) == {False}
 
 
-def test_recompute_budget_is_bound_to_lazy_partition_callback() -> None:
-    mode, partitioned = _capture()
-    with (
-        aot_module.functorch_config.patch(activation_memory_budget=1.0),
-        mode,
-    ):
-        stages = capture_training_stages(partitioned)
+def test_partition_budgets_are_bound_to_the_lazy_partition_callback() -> None:
+    """Each variant's budget is bound inside the callback AOT invokes, so the
+    ambient Functorch configuration -- set here to the other variant's budget,
+    with the bans the ``save`` variant lifts turned back on -- is not what
+    either variant is captured under."""
 
-    assert all(
-        saved_value_footprint(
-            stage.graph_pairs.variant("recompute").pair
-        ).internal_minimum_bytes
-        == 0
-        for stage in stages
+    mode, partitioned = _capture()
+    ambient = dict(
+        ban_recompute_not_in_allowlist=True,
+        ban_recompute_materialized_backward=True,
+        ban_recompute_used_far_apart=True,
+        ban_recompute_long_fusible_chains=True,
+        treat_parameters_as_free_to_save=True,
     )
+
+    def internal_bytes(budget: float, variant: str) -> int:
+        with (
+            aot_module.functorch_config.patch(
+                activation_memory_budget=budget, **ambient
+            ),
+            mode,
+        ):
+            stages = capture_training_stages(partitioned)
+        return sum(
+            saved_value_footprint(
+                stage.graph_pairs.variant(variant).pair
+            ).internal_minimum_bytes
+            for stage in stages
+        )
+
+    assert internal_bytes(1.0, "recompute") == 0
+    assert internal_bytes(0.0, "save") > 0
 
 
 def test_repeated_stage_occurrences_share_one_structural_inventory() -> None:

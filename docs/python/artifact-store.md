@@ -62,7 +62,7 @@ by whoever plans, and the same saved program answers any of them.
 | Artifact | Its key holds | Deliberately excluded |
 |---|---|---|
 | Export | callable semantics, graph signature, fixed input geometry, export bypass key | |
-| Graph pair | normalized stage semantic contract, differentiation options, partition inputs | |
+| Graph pair | normalized stage semantic contract, differentiation options, the retention policy and the class it gives each of the stage's custom operators | |
 | Compiled manifest | graph-pair contract, compiler and provider identity, physical storage contract | |
 | Profile | compiled manifest, hardware, representative-value policy, `profiling_metadata`, allocation-probe policy | |
 | Step program | the export bypass key, the model's structure, the inputs' signatures, the optimizer's type, step code and hyperparameters, the request's own settings, the machine, the profiling environment, the data ordering | the library's own version: the key stands for the code, the caller's and the library's |
@@ -141,9 +141,9 @@ something it wraps rather than by a composite: its digest is `ShadowSpillProgram
 because the archive's job is to hold one immutable copy of each distinct
 program a plan can be traced back to. Graph pairs and optimizer captures are
 the entries that are not JSON, because they hold compiled graphs and traced
-tensors; a graph pair's key covers the structural contract and the
-differentiation options together, so one entry is one digest like everything
-else.
+tensors; a graph pair's key covers the structural contract, the
+differentiation options and the retention policy together, so one entry is
+one digest like everything else.
 
 Two directories are deliberately not content-addressed, and both say why in
 their names. `build/inductor/` is PyTorch's own cache, laid out by PyTorch and
@@ -363,6 +363,7 @@ execution_device, execution_pool, spill_pool,
 execution_budget_bytes, spill_budget_bytes,
 requested_dynamic_scratch_reserve_bytes,
 allocation_probe_seeds, allocation_probe_repetitions,
+memory_bound_flops_per_byte,
 export_bypass_key, execution_plan_digest,
 execution_plan, artifacts, phase_timings_ns
 ```

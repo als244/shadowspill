@@ -15,6 +15,7 @@ import torch
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.schema import artifact_schema
 from shadowspill.store import (
     CONTRIBUTE,
@@ -35,6 +36,11 @@ from .serialization import (
 )
 
 _GRAPH_PAIR_CACHE_SCHEMA = artifact_schema("aot_graph_pair")
+
+#: What one entry is keyed by: the structural contract, the differentiation
+#: options, and the retention policy with the classes it gives the stage's
+#: custom operators, as one digest.
+_Key = tuple[str, tuple[int, ...], bool, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,15 +63,13 @@ class GraphPairStore:
         policy: StorePolicy = CONTRIBUTE,
         artifact_recorder: ArtifactRecorder | None = None,
     ) -> None:
-        self._pairs: dict[tuple[str, tuple[int, ...], bool], TaskGraphPairs] = {}
+        self._pairs: dict[_Key, TaskGraphPairs] = {}
         #: The forms a step asks for, derived from the captured pairs.
-        self._derived: dict[
-            tuple[tuple[str, tuple[int, ...], bool], _Form], TaskGraphPairs
-        ] = {}
+        self._derived: dict[tuple[_Key, _Form], TaskGraphPairs] = {}
         self._root = None if root is None else Path(root).expanduser()
         self._policy = policy
         self._artifact_recorder = artifact_recorder
-        self._keys_seen: set[tuple[str, tuple[int, ...], bool]] = set()
+        self._keys_seen: set[_Key] = set()
         self.hits = 0
         self.misses = 0
 
@@ -79,26 +83,39 @@ class GraphPairStore:
         roots: tuple[int, ...],
         *,
         specialize_unit_tangents: bool,
+        retention: RetentionPolicy | None = None,
         accumulating: bool = False,
         gradient_dtype: torch.dtype | None = None,
         round_accumulation_once: bool = False,
     ) -> TaskGraphPairs:
-        """The stage's graph pairs, their parameter gradients produced at
-        ``gradient_dtype`` (the parameters' own when ``None``), and with the
-        accumulating form when the stage runs in an ``accumulating`` step --
-        rounding a sum once where it may with ``round_accumulation_once``.
+        """The stage's graph pairs, their ``save`` variant retaining what
+        ``retention`` says to retain (the library's default when ``None``),
+        their parameter gradients produced at ``gradient_dtype`` (the
+        parameters' own when ``None``), and with the accumulating form when
+        the stage runs in an ``accumulating`` step -- rounding a sum once
+        where it may with ``round_accumulation_once``.
 
         The store holds the pairs as captured; the forms a step asks for are
-        derived from them, once per contract, and rebound per occurrence.
+        derived from them, once per contract, and rebound per occurrence. The
+        retention policy is part of an entry's key, together with the class
+        it gives every custom operator in the stage, so a policy changed by
+        the caller or a class changed by an operator's library misses rather
+        than reading back a pair built under the old one.
         """
 
+        policy = retention or RetentionPolicy()
         stage_contract = GraphArtifact.input_compatibility_digest(
             graph_module=example.stage.graph_module,
             example_inputs=example.inputs,
             explicit_mutations=example.stage.mutations,
             input_provenance=example.stage.input_provenance,
         )
-        key = (stage_contract, roots, specialize_unit_tangents)
+        key: _Key = (
+            stage_contract,
+            roots,
+            specialize_unit_tangents,
+            policy.digest(example.stage.graph_module),
+        )
         form = _Form(gradient_dtype, accumulating, round_accumulation_once)
         self._keys_seen.add(key)
         existing = self._pairs.get(key)
@@ -115,9 +132,17 @@ class GraphPairStore:
                 example,
                 roots,
                 specialize_unit_tangents=specialize_unit_tangents,
+                retention=policy,
             )
             self._pairs[key] = existing
-            self._write(key, existing)
+            self._write(
+                key,
+                existing,
+                retention={
+                    **policy.identity(),
+                    "operators": policy.operator_classes(example.stage.graph_module),
+                },
+            )
             self.misses += 1
             return self._derive(key, existing, form)
         self.hits += 1
@@ -125,7 +150,7 @@ class GraphPairStore:
 
     def _derive(
         self,
-        key: tuple[str, tuple[int, ...], bool],
+        key: _Key,
         pairs: TaskGraphPairs,
         form: _Form,
     ) -> TaskGraphPairs:
@@ -149,7 +174,7 @@ class GraphPairStore:
             self._derived[(key, form)] = derived
         return derived
 
-    def _path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
+    def _path(self, key: _Key) -> Path | None:
         if self._root is None:
             return None
         payload = {
@@ -157,18 +182,20 @@ class GraphPairStore:
             "structural_task_contract": key[0],
             "roots": key[1],
             "specialize_unit_tangents": key[2],
+            "retention": key[3],
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        # The contract and the differentiation options together are the key:
-        # one entry, one digest, like every other artifact.
+        # The contract, the differentiation options and the retention policy
+        # together are the key: one entry, one digest, like every other
+        # artifact.
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         return digest_directory(self._root, digest) / "graph_pairs.pt"
 
-    def _manifest_path(self, key: tuple[str, tuple[int, ...], bool]) -> Path | None:
+    def _manifest_path(self, key: _Key) -> Path | None:
         path = self._path(key)
         return None if path is None else path.with_name("manifest.json")
 
-    def _read(self, key: tuple[str, tuple[int, ...], bool]) -> TaskGraphPairs | None:
+    def _read(self, key: _Key) -> TaskGraphPairs | None:
         path = self._path(key)
         if path is None or not self._policy.read_enabled:
             return None
@@ -216,8 +243,10 @@ class GraphPairStore:
 
     def _write(
         self,
-        key: tuple[str, tuple[int, ...], bool],
+        key: _Key,
         pairs: TaskGraphPairs,
+        *,
+        retention: dict[str, object],
     ) -> None:
         path = self._path(key)
         if path is None or not self._policy.write_enabled:
@@ -261,6 +290,8 @@ class GraphPairStore:
             "structural_task_contract": key[0],
             "differentiable_root_positions": list(key[1]),
             "specialize_unit_tangents": key[2],
+            "retention_digest": key[3],
+            "retention": retention,
             "reference_option_id": pairs.reference_option_id,
             "variants": [
                 {
@@ -268,6 +299,7 @@ class GraphPairStore:
                     "memory_budget": item.memory_budget,
                     "forward": item.pair.forward.compatibility_digest,
                     "backward": item.pair.backward.compatibility_digest,
+                    **item.pair.retention.identity(),
                 }
                 for item in pairs.variants
             ],
@@ -284,7 +316,7 @@ class GraphPairStore:
 
     def _record(
         self,
-        key: tuple[str, tuple[int, ...], bool],
+        key: _Key,
         path: Path,
         access: str,
         pairs: TaskGraphPairs,

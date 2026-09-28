@@ -15,6 +15,7 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
     TensorGeometry,
 )
+from shadowspill.pytorch.capture.retention import RetentionSummary
 from shadowspill.pytorch.capture.storage import TaskStorageContract
 from shadowspill.pytorch.compilation.fx_graph import SerializedFxGraph
 
@@ -90,7 +91,7 @@ class CachedAotGraphPair:
 
     forward: CachedGraphArtifact
     backward: CachedGraphArtifact
-    recomputation: bool
+    retention: RetentionSummary
     saved_value_count: int
     specialized_unit_tangent_count: int
 
@@ -99,7 +100,7 @@ class CachedAotGraphPair:
         return cls(
             CachedGraphArtifact.capture(pair.forward),
             CachedGraphArtifact.capture(pair.backward),
-            pair.recomputation,
+            pair.retention,
             pair.saved_value_count,
             pair.specialized_unit_tangent_count,
         )
@@ -108,13 +109,13 @@ class CachedAotGraphPair:
         return AotGraphPair(
             forward=self.forward.restore(),
             backward=self.backward.restore(),
-            recomputation=self.recomputation,
+            retention=self.retention,
             saved_value_count=self.saved_value_count,
             specialized_unit_tangent_count=self.specialized_unit_tangent_count,
         )
 
 
-CachedGraphPairVariant = tuple[str, float | None, CachedAotGraphPair]
+CachedGraphPairVariant = tuple[str, float, CachedAotGraphPair]
 
 
 def valid_cached_variant(value: object) -> TypeGuard[CachedGraphPairVariant]:
@@ -122,8 +123,9 @@ def valid_cached_variant(value: object) -> TypeGuard[CachedGraphPairVariant]:
         isinstance(value, tuple)
         and len(value) == 3
         and isinstance(value[0], str)
-        and (value[1] is None or isinstance(value[1], float))
+        and isinstance(value[1], float)
         and isinstance(value[2], CachedAotGraphPair)
+        and isinstance(value[2].retention, RetentionSummary)
     )
 
 
