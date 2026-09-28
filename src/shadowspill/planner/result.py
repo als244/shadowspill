@@ -54,6 +54,24 @@ class ResidentSlice:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolutionPlan:
+    """The best plan one resolved program reached, beside the answer.
+
+    A search fixes the program's alternatives several ways and answers with
+    one; this is what each way found, decoded and simulated like the
+    answer, so the plans can be set side by side. Kept only when asked,
+    since each is as large as the answer.
+    """
+
+    selection_id: str
+    selections: tuple[TaskAlternativeChoice, ...]
+    candidate_id: str
+    schedule: MemorySchedule
+    simulation: SimulationResult
+    resident_slice: ResidentSlice = ResidentSlice(0, ())
+
+
+@dataclass(frozen=True, slots=True)
 class ProgramPlanResult:
     """Selected logical schedule plus exact simulator evidence."""
 
@@ -73,6 +91,10 @@ class ProgramPlanResult:
     resident_slice: ResidentSlice = ResidentSlice(0, ())
     admission_facts: AdmissionFacts | None = None
     placement_facts: AdmissionFacts | None = None
+    #: Every resolved program's best plan, when the search was asked to keep
+    #: them; the answer is among them. Empty otherwise, and on a plan read
+    #: back from a store.
+    resolutions: tuple[ResolutionPlan, ...] = ()
 
     def to_execution_plan(
         self,
@@ -137,4 +159,5 @@ __all__ = [
     "PlanSearchExhaustedError",
     "ProgramPlanResult",
     "ResidentSlice",
+    "ResolutionPlan",
 ]

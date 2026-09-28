@@ -134,6 +134,7 @@ class SearchAlgorithm(ABC):
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
         incumbent: ProgramPlanResult | None = None,
+        keep_resolutions: bool = False,
     ) -> ProgramPlanResult:
         """Answer with a schedule for ``program``.
 
@@ -168,6 +169,12 @@ class SearchAlgorithm(ABC):
         obligation -- the planner re-measures the incumbent on this machine
         and returns it if this search did worse, so the guarantee that more
         memory never plans worse holds whatever a search does with it.
+
+        ``keep_resolutions`` asks for every resolved program's best plan,
+        decoded and simulated like the answer, as
+        :attr:`ProgramPlanResult.resolutions`; the planner passes it only
+        when a caller asked, and a search that plans one resolution may
+        leave the field empty.
 
         Raises :exc:`~shadowspill.errors.PlanInfeasibleError` when no
         schedule fits the machine, and
@@ -324,6 +331,8 @@ def answer_no_worse_than(
         # incumbent's instead would file the plan under one search and key
         # it under another.
         search_options=result.search_options,
+        # The other resolutions are this search's, not the plan in hand's.
+        resolutions=result.resolutions,
     )
     if placement is not None and not _places(carried, placement):
         # Faster, but its layout does not fit the pool. A plan that cannot

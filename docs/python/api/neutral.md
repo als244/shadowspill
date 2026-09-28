@@ -253,6 +253,7 @@ plan_program(
     verbose=True,
     plan_store_mode='contribute',
     export_bypass_key=None,
+    keep_resolutions=False,
 ) -> AnnotatedProgramPlan
 ```
 
@@ -269,6 +270,7 @@ plan_program(
 | `verbose` | `bool` | `True` | Reports search progress as it runs. |
 | `plan_store_mode` | `"contribute"` \| `"reuse"` \| `"require"` \| `"refresh"` | `"contribute"` | What this call does with the planning tree. |
 | `export_bypass_key` | `str` \| `None` | `None` | The caller's name for the code the plan was measured against; artifacts are filed under it. |
+| `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer, certified like it, when the search runs: what each way of fixing the alternatives found, to read against the answer. Each is as large as the answer, and a resolution the search bounded away before it placed a plan has none; `deterministic` search options make every resolution report the plan it found. |
 
 Raises `TypeError` when `search_options` is neither a `SearchOptions` nor
 `None`. The store arguments mean exactly what [the frontend
@@ -599,6 +601,7 @@ pressurefit(
     progress=None,
     incumbent=None,
     best=None,
+    keep_resolutions=False,
 ) -> ProgramPlanResult
 ```
 
