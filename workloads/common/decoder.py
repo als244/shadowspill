@@ -261,10 +261,33 @@ def l2_normalize(value: torch.Tensor, *, epsilon: float = 1e-6) -> torch.Tensor:
     return (source * scale).to(value.dtype)
 
 
-def language_model_loss(
-    hidden: torch.Tensor, head: nn.Linear, targets: torch.Tensor
+def auxiliary_share(
+    auxiliary: torch.Tensor, targets: torch.Tensor, reduction: str
 ) -> torch.Tensor:
+    """A per-microbatch auxiliary term -- a router's balance loss -- on the
+    same footing as the cross entropy: as it is under ``"mean"``, and weighted
+    by the positions the targets train under ``"sum"``, so a step's sum over
+    microbatches divided by its trained positions gives the mean plus the
+    token-weighted auxiliary, whatever the microbatch geometry."""
+
+    if reduction == "sum":
+        return auxiliary * targets.ne(-100).sum()
+    return auxiliary
+
+
+def language_model_loss(
+    hidden: torch.Tensor,
+    head: nn.Linear,
+    targets: torch.Tensor,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """The next-token cross entropy: its mean over the positions the targets
+    train, or its sum for a caller dividing by a total of its own. A target of
+    ``-100`` trains nothing and counts in neither."""
+
     logits = head(hidden)
     return F.cross_entropy(
-        logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1).long()
+        logits.float().reshape(-1, logits.shape[-1]),
+        targets.reshape(-1).long(),
+        reduction=reduction,
     )

@@ -13,6 +13,7 @@ from workloads.common import (
     SequenceLengths,
     apply_rotary,
     attention_metadata,
+    auxiliary_share,
     causal_attention,
     language_model_loss,
     swiglu,
@@ -201,10 +202,13 @@ class OLMoE(nn.Module):
         *,
         seq_lens: SequenceLengths = None,
         aux_coef: float = 0.0,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         hidden, auxiliary = self.hidden(tokens, seq_lens)
-        objective = language_model_loss(hidden, self.lm_head, targets)
-        return objective + float(aux_coef) * auxiliary
+        objective = language_model_loss(hidden, self.lm_head, targets, reduction)
+        return objective + float(aux_coef) * auxiliary_share(
+            auxiliary, targets, reduction
+        )
 
 
 __all__ = ["OLMoE", "OLMoEConfig"]

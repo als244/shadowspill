@@ -127,9 +127,13 @@ class Llama3(nn.Module):
         targets: torch.Tensor,
         *,
         seq_lens: SequenceLengths = None,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         return mlops.head_loss(
-            self.hidden(tokens, seq_lens), self.lm_head.weight, targets
+            self.hidden(tokens, seq_lens),
+            self.lm_head.weight,
+            targets,
+            reduction=reduction,
         )
 
 

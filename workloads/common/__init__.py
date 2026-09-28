@@ -1,6 +1,7 @@
 """Shared, provider-independent model building blocks."""
 
 from .decoder import (
+    auxiliary_share,
     GatedRMSNorm,
     Packing,
     RMSNorm,
@@ -16,6 +17,7 @@ from .decoder import (
 )
 
 __all__ = [
+    "auxiliary_share",
     "GatedRMSNorm",
     "Packing",
     "RMSNorm",
