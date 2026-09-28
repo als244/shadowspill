@@ -1313,3 +1313,90 @@ def test_public_training_keeps_no_output_the_caller_dropped() -> None:
     training.close()
     with pytest.raises(RuntimeError, match="closed"):
         training.synchronize()
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_training_sets_a_model_buffer_each_step() -> None:
+    """A buffer named at planning and set per step is read by the step.
+
+    The objective divides by the buffer, so the value the step read shows in
+    every objective it returns and in the weights an eager run of the same
+    totals reaches. A value folded in at capture, or written where the step
+    does not look, is off by the total. The module's handle on the buffer is
+    the plan's, so the write has to reach the pool the state lives in.
+    """
+
+    _require_adapter()
+    totals = (4.0, 16.0, 8.0, 2.0)
+    rate = 1e-3
+
+    class Network(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            torch.manual_seed(91)
+            self.body = nn.Sequential(
+                nn.Linear(8, 12, bias=False), nn.ReLU(), nn.Linear(12, 4, bias=False)
+            )
+            self.register_buffer("trained_total", torch.ones(()))
+
+        def forward(self, value: torch.Tensor) -> torch.Tensor:
+            return self.body(value)
+
+    def objective(model: nn.Module, value: torch.Tensor, target: torch.Tensor):
+        summed = torch.nn.functional.mse_loss(model(value), target, reduction="sum")
+        return summed / model.trained_total
+
+    def batches(seed: int) -> list[list[torch.Tensor]]:
+        torch.manual_seed(seed)
+        return [[torch.randn(2, 8), torch.randn(2, 4)] for _ in range(2)]
+
+    build = partial(torch.optim.AdamW, foreach=False)
+    runtime = public_test_runtime()
+    model = import_model_state(
+        Network(), runtime=runtime, pool="spill", release_source=True
+    )
+    training = plan_step(
+        model,
+        objective=objective,
+        optimizer=build,
+        hyperparams=("lr", "trained_total"),
+        example_inputs=batches(92),
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+    )
+    objectives = []
+    for index, total in enumerate(totals):
+        result = training(
+            batches(100 + index), hyperparams={"lr": rate, "trained_total": total}
+        )
+        objectives.append([value.cpu() for value in result.objectives])
+    planned = {
+        name: value.detach().float().cpu()
+        for name, value in training.state_dict()["model"].items()
+    }
+    training.close()
+    export_model_state(model, runtime=runtime, release_runtime=True)
+    assert planned["trained_total"].item() == totals[-1]
+    assert model.trained_total.item() == totals[-1]
+
+    reference = Network().cuda()
+    optimizer = build(reference.parameters(), lr=rate)
+    for index, total in enumerate(totals):
+        with torch.no_grad():
+            reference.trained_total.fill_(total)
+        optimizer.zero_grad()
+        for (value, target), actual in zip(
+            batches(100 + index), objectives[index], strict=True
+        ):
+            loss = objective(reference, value.cuda(), target.cuda())
+            loss.backward()
+            torch.testing.assert_close(
+                actual, loss.detach().cpu(), rtol=2e-5, atol=2e-6
+            )
+        optimizer.step()
+    for name, value in reference.named_parameters():
+        torch.testing.assert_close(
+            planned[name], value.detach().float().cpu(), rtol=1e-4, atol=1e-6
+        )

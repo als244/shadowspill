@@ -123,3 +123,61 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     )
     with pytest.raises(RuntimeError, match="closed"):
         planned([inputs, 17])
+
+
+@pytest.mark.cuda
+@pytest.mark.fresh_process
+def test_public_forward_sets_a_model_buffer_each_call(tmp_path: object) -> None:
+    """A persistent buffer is set per call and read by the forward: the value
+    reaches the pool the state lives in, not the module's handle. A buffer
+    that is not state, and a name that is not a buffer, are refused."""
+
+    if torch.cuda.is_initialized():
+        pytest.skip("public allocator installation requires a fresh process")
+    try:
+        adapter_path(None)
+    except RuntimeError:
+        pytest.skip("the built PyTorch adapter is not installed")
+
+    class Network(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.layer = nn.Linear(16, 16, bias=False)
+            self.register_buffer("scale", torch.tensor(1.0))
+            self.register_buffer("runtime_scale", torch.tensor(1.0), persistent=False)
+
+        def forward(self, value: torch.Tensor) -> tuple[torch.Tensor, ...]:
+            return (torch.relu(self.layer(value)) * self.scale * self.runtime_scale,)
+
+    torch.manual_seed(23)
+    model = Network().eval()
+    reference = Network().eval()
+    reference.load_state_dict(model.state_dict())
+    inputs = torch.randn(3, 16)
+    runtime = public_test_runtime()
+    model = import_model_state(
+        model, runtime=runtime, pool="spill", release_source=True
+    )
+    planned = plan_forward(
+        model,
+        example_inputs=[inputs],
+        runtime=runtime,
+        execution="execution",
+        spill="spill",
+        artifact_store=tmp_path,
+    )
+    for scale in (2.0, 0.5, 3.0):
+        actual = planned([inputs], hyperparams={"scale": scale})[0]
+        with torch.no_grad():
+            reference.scale.fill_(scale)
+        torch.testing.assert_close(
+            actual.cpu(), reference(inputs)[0], rtol=2e-5, atol=2e-6
+        )
+    assert planned.state_dict()["scale"].item() == 3.0
+    with pytest.raises(KeyError, match="persistent"):
+        planned([inputs], hyperparams={"runtime_scale": 2.0})
+    with pytest.raises(KeyError, match="no model buffer"):
+        planned([inputs], hyperparams={"lr": 1.0})
+    planned.close()
+    export_model_state(model, runtime=runtime, release_runtime=True)
+    assert model.scale.item() == 3.0

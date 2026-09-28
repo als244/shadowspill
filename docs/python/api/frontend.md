@@ -770,7 +770,7 @@ Beyond the shared and store arguments:
 |---|---|---|---|
 | `objective` | callable | required | `(model, *microbatch) -> Tensor \| ObjectiveResult`, returning the scalar the step differentiates. |
 | `optimizer` | callable | required | Given the model's parameters, returns a `torch.optim.Optimizer`. The class itself does (`torch.optim.AdamW`); so does any partial or lambda over one. |
-| `hyperparams` | `Sequence[str]` | `()` | Names of values a step may set later, e.g. `("lr",)` or `("lr", "betas")`. Each must name an entry in a parameter group or a model buffer holding a number, or a sequence of them. Named entries are held in host scalars before capture -- float64 for a float, int64 for an int -- and everything else is left as the optimizer made it. A bool is refused: it selects what the update does, which is what the capture is. |
+| `hyperparams` | `Sequence[str]` | `()` | Names of values a step may set later, e.g. `("lr",)` or `("lr", "betas")`. Each must name an entry in a parameter group or a model buffer holding a number, or a sequence of them. Named optimizer entries are held in host scalars before capture -- float64 for a float, int64 for an int -- and everything else is left as the optimizer made it; a named buffer stays the tensor it is. A bool is refused: it selects what the update does, which is what the capture is. |
 | `example_inputs` | `Sequence[Sequence[Any]]` | required | One fixed example sequence per microbatch; its length is the step's microbatch count. |
 | `optimizer_ordering` | `"stage_interleaved"` \| `"tail"` | `"stage_interleaved"` | Whether each stage updates as its gradients land, or all updates run at the end. |
 | `depth` | `int` \| `None` | `None` | Passes over the microbatches. With `breadth`, their product must be `len(example_inputs)`. |
@@ -1075,6 +1075,7 @@ Raises once the callable is closed.
 PlannedForward(
     inputs,
     *,
+    hyperparams=None,
     runtime_trace=False,
     profiler_annotations=False,
 ) -> object
@@ -1085,6 +1086,7 @@ PlannedForward(
 PlannedForward.submit(
     inputs,
     *,
+    hyperparams=None,
     runtime_trace=False,
     profiler_annotations=False,
 ) -> InvocationResult[object]
@@ -1115,7 +1117,7 @@ PlannedTrainStep.submit(
 | argument | type | default | meaning |
 |---|---|---|---|
 | `inputs` | `Sequence[Any]`, or `Sequence[Sequence[Any]]` for a step | required | This invocation's values, validated against the fixed template before any input slot is written or task launched. A difference raises `InputGuardError`. |
-| `hyperparams` | `Mapping[str, float \| Sequence[float]]` \| `None` | `None` | This step's tunable values. `PlannedTrainStep` only. |
+| `hyperparams` | `Mapping[str, float \| Sequence[float]]` \| `None` | `None` | This invocation's tunable values: a step's optimizer values and model buffers, a forward's model buffers. See below. |
 | `runtime_trace` | `bool` | `False` | Records the structured trace of this invocation. `PlannedTrainStep` reaches it through `StepResult.diagnostics`; `PlannedForward` returns the model output and nothing else, so its handle is `PlannedForward.diagnostics`. Resolve one before the next call. |
 | `profiler_annotations` | `bool` | `False` | Emits backend profiler ranges for tasks, compiled calls, transfers and allocations. Independent of `runtime_trace`. |
 
@@ -1129,30 +1131,39 @@ reports whether that has happened.
 
 ### Setting hyperparameters
 
-`hyperparams` sets this step's tunable values: `training(batches,
-hyperparams={"lr": rate})`. Names resolve against the optimizer's parameter
-groups and the model's named buffers, the two registries of named values that
-already exist, so a learning rate and a model temperature are set the same
-way. Every optimizer group carrying the name is written, so one schedule
-reaches an optimizer with several groups; groups that must differ are written
-directly, which is the mechanism underneath. An entry holding several values,
-as `betas` does, takes one number for all of them or a sequence in order.
+`hyperparams` sets this invocation's tunable values: `training(batches,
+hyperparams={"lr": rate})`, or `forward(inputs, hyperparams={"temperature":
+0.7})`. Names resolve against the optimizer's parameter groups -- a step's,
+since a forward has none -- and the model's named buffers, the two registries
+of named values that already exist, so a learning rate and a model temperature
+are set the same way. Every optimizer group carrying the name is written, so
+one schedule reaches an optimizer with several groups; groups that must differ
+are written directly, which is the mechanism underneath. An entry holding
+several values, as `betas` does, takes one number for all of them or a
+sequence in order; a buffer takes one number, which fills it.
 
-A value can only change if it is held in a tensor, which is what `plan_step`'s
-own `hyperparams` argument arranges: it names the values a step may set, and
-planning holds exactly those in scalar tensors before the step is captured.
-Only the named ones, because an optimizer is entitled to require a number, and
-holding one behind its back would change what it computes. The scalars are
-float64 and stay on the host, so setting one copies nothing and synchronizes
-nothing.
+Where the value goes differs. An optimizer value can only change if it is
+held in a tensor, which is what `plan_step`'s own `hyperparams` argument
+arranges: it names the values a step may set, and planning holds exactly those
+in scalar tensors before the step is captured. Only the named ones, because an
+optimizer is entitled to require a number, and holding one behind its back
+would change what it computes. The scalars are float64 and stay on the host,
+so setting one copies nothing and synchronizes nothing. A model buffer is a
+tensor already, and state the plan owns: the module's own tensor is the plan's
+handle on it, pointing wherever the runtime keeps the value, so the bytes are
+written into the pool the state lives in -- once the previous invocation has
+finished with the old value, which is the one wait a call otherwise avoids.
+A forward sets a buffer without naming it anywhere, since no capture folds one
+in; a step names it in `plan_step(hyperparams=...)` like any other value.
 
-Three things are refused rather than absorbed: an unknown name raises
+Four things are refused rather than absorbed: an unknown name raises
 `KeyError`, because a value going nowhere would look like a schedule that ran;
 a name held as a plain number raises `TypeError`, because the capture fixed
 that value when it was traced, and the message says to name it in
-`plan_step(hyperparams=...)`; and a name that exists in both registries raises
-`KeyError` rather than guessing. See
-[the optimizer](../../architecture/optimizer.md).
+`plan_step(hyperparams=...)`; a name that exists in both registries raises
+`KeyError` rather than guessing; and a buffer registered with
+`persistent=False` raises `KeyError`, because it is not state and has no place
+in the pool to write. See [the optimizer](../../architecture/optimizer.md).
 
 ### Submitting without synchronizing
 

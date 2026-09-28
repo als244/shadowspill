@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import torch
@@ -55,6 +55,102 @@ def _require_no_plan_sharing_slab(runtime: Runtime, plan_handle: int) -> None:
         )
 
 
+def _apply_hyperparams(
+    model: nn.Module,
+    groups: Sequence[Mapping[str, Any]],
+    hyperparams: Mapping[str, float | Sequence[float]] | None,
+    write_buffers: Callable[[Mapping[str, torch.Tensor]], None],
+) -> None:
+    """Write one invocation's hyperparameters into the values that carry them.
+
+    Names resolve against the optimizer's parameter groups -- a step's, since
+    a forward has none -- and the model's named buffers, which are the two
+    registries of named values that already exist. Every group carrying the
+    name is written, so one schedule reaches an optimizer with several
+    groups; groups that must differ are written directly, which is the
+    mechanism underneath. An entry holding several values, as ``betas``
+    does, takes one number for all of them or a sequence in order; a buffer
+    takes one number, which fills it.
+
+    Where the value goes differs. An optimizer value the program reads from a
+    tensor is a host scalar, written in place: it can change between steps
+    without recapturing, because a tensor enters a capture's identity by
+    geometry rather than by value. Which values are tensors is settled when
+    the step is planned, by ``plan_step``'s own ``hyperparams`` argument
+    naming them; a value read from a plain number was fixed when it was
+    captured, so asking to change one is refused rather than silently
+    ignored, and only the named ones are held, because an optimizer is
+    entitled to require a number. A model buffer is a tensor already, and
+    state the plan owns: its handle on the module points wherever the
+    runtime put the value, so the bytes go through ``write_buffers`` into
+    the pool the state lives in.
+    """
+
+    if not hyperparams:
+        return
+    buffers = dict(model.named_buffers())
+    registries = "optimizer value or model buffer" if groups else "model buffer"
+    written: dict[str, torch.Tensor] = {}
+    for name, value in hyperparams.items():
+        in_groups = [
+            group[name] for group in groups if isinstance(group.get(name), torch.Tensor)
+        ]
+        buffer = buffers.get(name)
+        if in_groups and buffer is not None:
+            raise KeyError(
+                f"{name!r} names both an optimizer value and a model "
+                "buffer, so which one to write is ambiguous; rename one "
+                "or write it directly"
+            )
+        if buffer is not None:
+            if not isinstance(value, int | float):
+                raise TypeError(f"{name!r} holds one value, so it takes one number")
+            written[name] = torch.empty(tuple(buffer.shape), dtype=buffer.dtype).fill_(
+                value
+            )
+            continue
+        if in_groups:
+            if not isinstance(value, int | float):
+                raise TypeError(f"{name!r} holds one value, so it takes one number")
+            with torch.no_grad():
+                for tensor in in_groups:
+                    tensor.fill_(value)
+            continue
+        held = [
+            item
+            for group in groups
+            if isinstance(group.get(name), tuple | list)
+            for item in group[name]
+            if isinstance(item, torch.Tensor)
+        ]
+        if held:
+            # An entry holding several values, as betas does: one number
+            # sets them all, a sequence sets them in order.
+            if isinstance(value, int | float):
+                values = [float(value)] * len(held)
+            else:
+                values = [float(item) for item in value]
+            if len(values) != len(held):
+                raise ValueError(
+                    f"{name!r} holds {len(held)} values, so it needs that "
+                    f"many, not {len(values)}"
+                )
+            with torch.no_grad():
+                for tensor, item in zip(held, values, strict=True):
+                    tensor.fill_(item)
+            continue
+        if any(name in group for group in groups):
+            raise TypeError(
+                f"{name!r} is a plain number, so the capture fixed it when "
+                "it was traced. To set it per step, name it when the step "
+                f'is planned -- plan_step(..., hyperparams=("{name}",)) -- '
+                "or register it as a model buffer."
+            )
+        raise KeyError(f"no {registries} named {name!r}")
+    if written:
+        write_buffers(written)
+
+
 class PlannedForward:
     """Forward-only callable returned by :func:`plan_forward`.
 
@@ -92,10 +188,12 @@ class PlannedForward:
         self,
         inputs: Sequence[Any],
         *,
+        hyperparams: Mapping[str, float | Sequence[float]] | None = None,
         runtime_trace: bool = False,
         profiler_annotations: bool = False,
     ) -> object:
         self._require_no_pending_invocation()
+        self._apply_hyperparams(hyperparams)
         return self._invoke(
             inputs,
             runtime_trace=runtime_trace,
@@ -106,12 +204,14 @@ class PlannedForward:
         self,
         inputs: Sequence[Any],
         *,
+        hyperparams: Mapping[str, float | Sequence[float]] | None = None,
         runtime_trace: bool = False,
         profiler_annotations: bool = False,
     ) -> InvocationResult[object]:
         """Dispatch without synchronizing and return explicit result ownership."""
 
         self._require_no_pending_invocation()
+        self._apply_hyperparams(hyperparams)
         output = self._invoke(
             inputs,
             runtime_trace=runtime_trace,
@@ -136,6 +236,20 @@ class PlannedForward:
         )
         self._pending_invocation = invocation
         return invocation
+
+    def _apply_hyperparams(
+        self, hyperparams: Mapping[str, float | Sequence[float]] | None
+    ) -> None:
+        """Write this call's hyperparameters into the model buffers that carry
+        them, resolved as :func:`_apply_hyperparams` describes; a forward has
+        no optimizer, so a buffer is the one kind of value it can set."""
+
+        _apply_hyperparams(self._model, (), hyperparams, self._write_buffers)
+
+    def _write_buffers(self, values: Mapping[str, torch.Tensor]) -> None:
+        if self._closed:
+            raise RuntimeError("planned forward callable is closed")
+        self._state.write_model_entries(values)
 
     def _invoke(
         self,
@@ -418,84 +532,21 @@ class PlannedTrainStep:
     def _apply_hyperparams(
         self, hyperparams: Mapping[str, float | Sequence[float]] | None
     ) -> None:
-        """Write this step's hyperparameters into the tensors that carry them.
-
-        A value the program reads from a tensor can change between steps
-        without recapturing, because a tensor enters a capture's identity by
-        geometry rather than by value. A value read from a plain number was
-        fixed when it was captured, so asking to change one is refused rather
-        than silently ignored.
-
-        Which values are tensors is settled when the step is planned, by
-        ``plan_step``'s own ``hyperparams`` argument naming them. Only the named
-        ones are held that way, because an optimizer is entitled to require a
-        number, so a name that still holds one is an error naming the fix
-        rather than a value silently going nowhere.
-
-        Names resolve against the optimizer's parameter groups and the model's
-        named buffers, which are the two registries of named values that
-        already exist. Every optimizer group carrying the name is written, so
-        one schedule reaches an optimizer with several groups; groups that must
-        differ are written directly, which is the mechanism underneath this.
-        """
+        """Write this step's hyperparameters into the values that carry them:
+        the optimizer's parameter groups and the model's buffers, resolved as
+        :func:`_apply_hyperparams` describes."""
 
         if not hyperparams:
             return
+        if self._closed:
+            raise RuntimeError("planned training callable is closed")
         groups = self._executor.optimizer_state.optimizer.param_groups
-        buffers = dict(self._model.named_buffers())
-        for name, value in hyperparams.items():
-            in_groups = [
-                group[name]
-                for group in groups
-                if isinstance(group.get(name), torch.Tensor)
-            ]
-            buffer = buffers.get(name)
-            in_buffers = [buffer] if isinstance(buffer, torch.Tensor) else []
-            if in_groups and in_buffers:
-                raise KeyError(
-                    f"{name!r} names both an optimizer value and a model "
-                    "buffer, so which one to write is ambiguous; rename one "
-                    "or write it directly"
-                )
-            targets = in_groups or in_buffers
-            if targets:
-                if not isinstance(value, int | float):
-                    raise TypeError(f"{name!r} holds one value, so it takes one number")
-                with torch.no_grad():
-                    for tensor in targets:
-                        tensor.fill_(value)
-                continue
-            held = [
-                item
-                for group in groups
-                if isinstance(group.get(name), tuple | list)
-                for item in group[name]
-                if isinstance(item, torch.Tensor)
-            ]
-            if held:
-                # An entry holding several values, as betas does: one number
-                # sets them all, a sequence sets them in order.
-                if isinstance(value, int | float):
-                    values = [float(value)] * len(held)
-                else:
-                    values = [float(item) for item in value]
-                if len(values) != len(held):
-                    raise ValueError(
-                        f"{name!r} holds {len(held)} values, so it needs that "
-                        f"many, not {len(values)}"
-                    )
-                with torch.no_grad():
-                    for tensor, item in zip(held, values, strict=True):
-                        tensor.fill_(item)
-                continue
-            if any(name in group for group in groups) or name in buffers:
-                raise TypeError(
-                    f"{name!r} is a plain number, so the capture fixed it when "
-                    "it was traced. To set it per step, name it when the step "
-                    f'is planned -- plan_step(..., hyperparams=("{name}",)) -- '
-                    "or register it as a model buffer."
-                )
-            raise KeyError(f"no optimizer value or model buffer named {name!r}")
+        _apply_hyperparams(self._model, groups, hyperparams, self._write_buffers)
+
+    def _write_buffers(self, values: Mapping[str, torch.Tensor]) -> None:
+        if self._closed:
+            raise RuntimeError("planned training callable is closed")
+        self._state.write_model_entries(values)
 
     def submit(
         self,

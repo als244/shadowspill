@@ -8,15 +8,20 @@ import pytest
 import torch
 from torch import nn
 
-from shadowspill.pytorch.callables import PlannedTrainStep
+from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
+from shadowspill.pytorch.materialization import replacement as replacement_module
+from shadowspill.pytorch.materialization.replacement import MaterializedState
 from shadowspill.pytorch.state.optimizer import declare_varying_hyperparams
 
 
-def _apply(model: nn.Module, groups: list[dict], values: dict) -> None:
-    """Drive the resolution with a stand-in for the planned callable.
+def _apply(
+    model: nn.Module, groups: list[dict], values: dict
+) -> dict[str, torch.Tensor]:
+    """Drive the resolution with a stand-in for the planned step.
 
     The rule under test is which named value a step reaches and what happens
-    when it cannot, which needs an optimizer and a model and nothing else.
+    when it cannot, which needs an optimizer, a model and a record of what
+    would go into the pool, and nothing else. Returns that record.
     """
 
     step = object.__new__(PlannedTrainStep)
@@ -24,7 +29,23 @@ def _apply(model: nn.Module, groups: list[dict], values: dict) -> None:
     step._executor = SimpleNamespace(
         optimizer_state=SimpleNamespace(optimizer=SimpleNamespace(param_groups=groups))
     )
+    written: dict[str, torch.Tensor] = {}
+    step._state = SimpleNamespace(write_model_entries=written.update)
+    step._closed = False
     PlannedTrainStep._apply_hyperparams(step, values)
+    return written
+
+
+def _apply_forward(model: nn.Module, values: dict) -> dict[str, torch.Tensor]:
+    """The same, for a planned forward, which has no optimizer."""
+
+    forward = object.__new__(PlannedForward)
+    forward._model = model
+    written: dict[str, torch.Tensor] = {}
+    forward._state = SimpleNamespace(write_model_entries=written.update)
+    forward._closed = False
+    PlannedForward._apply_hyperparams(forward, values)
+    return written
 
 
 class _Model(nn.Module):
@@ -66,10 +87,139 @@ def test_an_entry_holding_several_values_is_written_element_wise() -> None:
     assert [value.item() for value in one] == pytest.approx([0.8, 0.8])
 
 
-def test_a_model_buffer_is_reached_by_the_same_name() -> None:
+def test_a_model_buffer_is_written_into_the_pool_by_the_same_name() -> None:
     model = _Model({"temperature": torch.tensor(1.0)})
-    _apply(model, [{"lr": torch.tensor(1.0)}], {"temperature": 0.7})
-    assert model.temperature.item() == pytest.approx(0.7)
+    written = _apply(model, [{"lr": torch.tensor(1.0)}], {"temperature": 0.7})
+    assert list(written) == ["temperature"]
+    assert written["temperature"].shape == ()
+    assert written["temperature"].dtype is torch.float32
+    assert written["temperature"].item() == pytest.approx(0.7)
+    # The module's own tensor is the plan's handle, not where the value lives.
+    assert model.temperature.item() == pytest.approx(1.0)
+
+
+def test_a_buffer_of_any_shape_is_filled_with_the_one_number() -> None:
+    model = _Model({"scale": torch.ones(3, dtype=torch.float64)})
+    written = _apply(model, [], {"scale": 2.5})
+    assert written["scale"].tolist() == [2.5, 2.5, 2.5]
+    assert written["scale"].dtype is torch.float64
+    with pytest.raises(TypeError, match="takes one number"):
+        _apply(model, [], {"scale": (2.5, 3.5, 4.5)})
+
+
+def test_a_forward_sets_a_model_buffer_and_nothing_else() -> None:
+    model = _Model({"temperature": torch.tensor(1.0)})
+    written = _apply_forward(model, {"temperature": 0.7})
+    assert written["temperature"].item() == pytest.approx(0.7)
+    assert _apply_forward(model, {}) == {}
+    with pytest.raises(KeyError, match="no model buffer named 'lr'"):
+        _apply_forward(model, {"lr": 3.0e-4})
+
+
+# --- the write that puts a buffer's value where the state lives -------------
+
+
+def _template(shape: tuple[int, ...], offset: int) -> torch.Tensor:
+    """A tensor with the geometry of a registered entry: shape, contiguous
+    strides and a storage offset, over a storage large enough to hold it."""
+
+    return torch.empty(64).as_strided(shape, tuple(torch.empty(shape).stride()), offset)
+
+
+class _PooledState(MaterializedState):
+    """A materialized state over bytes standing in for the spill pool: two
+    aliases, one holding a weight and one holding two buffers side by side."""
+
+    def __init__(self) -> None:
+        self.pool = {
+            "a": torch.zeros(16, dtype=torch.uint8),
+            "b": torch.zeros(8, dtype=torch.uint8),
+        }
+        self.reads: list[str] = []
+        self.writes: list[str] = []
+        self._state_names = ("weight", "temperature", "other")
+        self.bridge = SimpleNamespace(
+            wait_runtime_idle=lambda: None,
+            objects=SimpleNamespace(alias_for_object=lambda object_id: object_id[0]),
+        )
+        self.object_store = {}
+        self._entries = (
+            ("weight", "a-weight", (4,), 0),
+            ("temperature", "b-temperature", (), 0),
+            ("other", "b-other", (), 1),
+        )
+        with torch.no_grad():
+            self.view("a", 0, (4,)).copy_(torch.tensor([1.0, 2.0, 3.0, 4.0]))
+            self.view("b", 0, ()).fill_(1.0)
+            self.view("b", 1, ()).fill_(5.0)
+
+    def view(self, alias_id: str, offset: int, shape: tuple[int, ...]) -> torch.Tensor:
+        return self._cpu_view(self.pool[alias_id], _template(shape, offset))
+
+    def _empty_model_aliases(
+        self, *, aliases: set[str] | None = None
+    ) -> dict[str, torch.Tensor]:
+        selected = set(self.pool) if aliases is None else aliases
+        return {
+            alias: torch.empty(self.pool[alias].numel(), dtype=torch.uint8)
+            for alias in selected
+        }
+
+    def _registrations(self) -> list[SimpleNamespace]:
+        return [
+            SimpleNamespace(
+                binding=SimpleNamespace(name=name, object_id=object_id),
+                tensor=_template(shape, offset),
+            )
+            for name, object_id, shape, offset in self._entries
+        ]
+
+
+@pytest.fixture
+def pooled(monkeypatch: pytest.MonkeyPatch) -> _PooledState:
+    state = _PooledState()
+
+    def read(_objects: object, alias_id: str, owner: torch.Tensor) -> None:
+        state.reads.append(alias_id)
+        owner.copy_(state.pool[alias_id])
+
+    def write(_objects: object, alias_id: str, owner: torch.Tensor) -> None:
+        state.writes.append(alias_id)
+        state.pool[alias_id].copy_(owner)
+
+    monkeypatch.setattr(replacement_module, "read_spill_tensor", read)
+    monkeypatch.setattr(replacement_module, "write_spill_tensor", write)
+    return state
+
+
+def test_a_written_entry_reaches_the_pool_and_its_neighbours_stay(
+    pooled: _PooledState,
+) -> None:
+    pooled.write_model_entries({"temperature": torch.tensor(0.7)})
+    assert pooled.view("b", 0, ()).item() == pytest.approx(0.7)
+    assert pooled.view("b", 1, ()).item() == pytest.approx(5.0)
+    assert pooled.view("a", 0, (4,)).tolist() == [1.0, 2.0, 3.0, 4.0]
+    # Only the alias holding the entry crossed the pool's edge.
+    assert pooled.reads == ["b"]
+    assert pooled.writes == ["b"]
+
+
+def test_an_entry_of_another_geometry_is_refused_before_anything_is_written(
+    pooled: _PooledState,
+) -> None:
+    with pytest.raises(RuntimeError, match="incompatible geometry"):
+        pooled.write_model_entries({"temperature": torch.tensor([0.7, 0.8])})
+    with pytest.raises(RuntimeError, match="incompatible geometry"):
+        pooled.write_model_entries(
+            {"temperature": torch.tensor(0.7, dtype=torch.float64)}
+        )
+    assert pooled.writes == []
+
+
+def test_an_entry_that_is_not_state_is_refused(pooled: _PooledState) -> None:
+    with pytest.raises(KeyError, match="persistent"):
+        pooled.write_model_entries({"runtime_scale": torch.tensor(2.0)})
+    assert pooled.reads == []
 
 
 def test_a_plain_number_is_refused_and_the_message_names_the_fix() -> None:

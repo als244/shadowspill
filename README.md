@@ -21,7 +21,7 @@ verifies the install.
 
 Initialize the runtime before model state exists, so its pools and routes are
 ready first. Planning declares what exists: `hyperparams` names what a step
-may change.
+may change, an optimizer value such as the learning rate or a model buffer.
 
 ```python
 import torch
