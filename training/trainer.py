@@ -36,7 +36,8 @@ class Trainer:
     own when not given. ``data`` supplies the microbatches, each at
     most ``max_tokens_per_microbatch`` tokens, ``max_tokens_per_step`` a step,
     in documents of at most ``max_seq_len`` tokens; leaving the microbatch size
-    out lets ShadowSpill search for the fastest.
+    out lets ShadowSpill search for the fastest, within the bounds its backend
+    names.
 
     A run lives in ``run_dir``: its config, metrics, and the documents each
     step trained on. Its checkpoint goes to ``checkpoint_dir`` (by default the

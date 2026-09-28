@@ -7,6 +7,7 @@ so the test sees only what the backend asks of it.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,6 +77,7 @@ class StandIns:
             winner=lambda *budget: winner,
             winner_plans={tuple(arguments["budgets"][0]): "the search's plan"},
             planned_lanes=LANES,
+            save=lambda path: Path(path).write_text("{}") and path,
         )
 
     def plan(self, module: torch.nn.Module, **arguments: Any) -> Any:
@@ -126,7 +128,10 @@ def test_a_run_searches_once_and_later_launches_plan_the_record(
     assert len(stand_ins.searches) == 1
     assert stand_ins.searches[0]["total_sequences_per_step"] == 8
     assert stand_ins.searches[0]["min_tokens_per_microbatch"] is None
+    assert stand_ins.searches[0]["max_tokens_per_microbatch"] is None
+    assert stand_ins.searches[0]["orderings"] is None
     assert first.geometry == (1024, 4)
+    assert (setup.run_dir / "search.json").exists()
     assert first.plan.simulated_step_seconds == 2.0
     assert stand_ins.plans[0]["incumbent"] == "the search's plan"
     assert stand_ins.plans[0]["transfer_bandwidths"] == LANES
@@ -199,3 +204,114 @@ def test_a_run_plans_its_steps_with_the_accumulation_it_asked_for(
 
     assert stand_ins.searches[0]["round_accumulation_once"] is round_once
     assert stand_ins.plans[0]["round_accumulation_once"] is round_once
+
+
+def _resolution(search_options: Any) -> tuple[str, ...]:
+    return tuple(
+        str(share) for share in search_options.algorithm.options.resolution_options
+    )
+
+
+def test_the_trainers_microbatch_pins_the_geometry_when_the_backend_names_no_bounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stand_ins = StandIns(monkeypatch)
+    setup = _setup(tmp_path)
+    setup.run_dir.mkdir()
+    pinned = Setup(**{**setup.__dict__, "max_tokens_per_microbatch": 1024})
+    ShadowSpill(execution_gib=1, spill_gib=2).setup(pinned)
+    (search,) = stand_ins.searches
+    assert search["min_tokens_per_microbatch"] == 1024
+    assert search["max_tokens_per_microbatch"] == 1024
+
+
+def test_planning_bounds_and_search_options_reach_both_phases_and_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The backend's bounds are the search's, its options are the search's
+    and the replan's alike, and the record keeps them so a later launch asks
+    the store the same question."""
+
+    stand_ins = StandIns(monkeypatch)
+    setup = _setup(tmp_path)
+    setup.run_dir.mkdir()
+    backend = ShadowSpill(
+        execution_gib=1,
+        spill_gib=2,
+        planning_min_tokens_per_microbatch=1024,
+        planning_max_tokens_per_microbatch=2048,
+        resolution_options="halves",
+        orderings="depth-first",
+    )
+    backend.setup(setup)
+
+    (search,) = stand_ins.searches
+    assert search["min_tokens_per_microbatch"] == 1024
+    assert search["max_tokens_per_microbatch"] == 2048
+    assert _resolution(search["search_options"]) == ("0", "1/2", "1")
+    walks = search["orderings"](4)
+    assert [(walk.depth, walk.breadth) for walk in walks] == [(4, 1)]
+    (plan,) = stand_ins.plans
+    assert plan["search_options"] is search["search_options"]
+    assert backend.planning.resolution_options == ["0", "1/2", "1"]
+    assert backend.planning.orderings == "depth-first"
+    assert backend.planning.planning_min_tokens_per_microbatch == 1024
+    assert backend.planning.planning_max_tokens_per_microbatch == 2048
+
+    stand_ins.search_allowed = False
+    again = ShadowSpill(
+        execution_gib=1,
+        spill_gib=2,
+        planning_min_tokens_per_microbatch=1024,
+        planning_max_tokens_per_microbatch=2048,
+        resolution_options=["0", "1/2", "1"],
+        orderings="depth-first",
+    )
+    again.setup(setup)
+    assert again.planning == backend.planning
+    assert stand_ins.plans[1]["search_options"] is again.search_options
+    with pytest.raises(ValueError, match="other search options"):
+        ShadowSpill(execution_gib=1, spill_gib=2, resolution_options="quarters").setup(
+            setup
+        )
+
+
+def test_a_record_from_before_the_options_were_kept_reads_as_the_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stand_ins = StandIns(monkeypatch)
+    setup = _setup(tmp_path)
+    setup.run_dir.mkdir()
+    ShadowSpill(execution_gib=1, spill_gib=2).setup(setup)
+    record = setup.run_dir / PLANNING_RECORD
+    kept = json.loads(record.read_text())
+    for name in (
+        "resolution_options",
+        "orderings",
+        "planning_min_tokens_per_microbatch",
+        "planning_max_tokens_per_microbatch",
+    ):
+        del kept[name]
+    record.write_text(json.dumps(kept))
+
+    stand_ins.search_allowed = False
+    later = ShadowSpill(execution_gib=1, spill_gib=2)
+    later.setup(setup)
+    assert later.planning.resolution_options == ["0", "1/4", "1/2", "3/4", "1"]
+    assert later.planning.orderings == "factors"
+
+
+def test_the_backend_refuses_bounds_and_walks_it_cannot_plan() -> None:
+    with pytest.raises(ValueError, match="exceeds"):
+        ShadowSpill(
+            execution_gib=1,
+            spill_gib=2,
+            planning_min_tokens_per_microbatch=4096,
+            planning_max_tokens_per_microbatch=2048,
+        )
+    with pytest.raises(ValueError, match="positive"):
+        ShadowSpill(execution_gib=1, spill_gib=2, planning_min_tokens_per_microbatch=0)
+    with pytest.raises(ValueError, match="orderings"):
+        ShadowSpill(execution_gib=1, spill_gib=2, orderings="breadth-first")
+    with pytest.raises(ValueError):
+        ShadowSpill(execution_gib=1, spill_gib=2, resolution_options="x,1")
