@@ -26,6 +26,13 @@ MAXIMUM_RELATIVE_L2 = 0.025
 # bound, being what training produces.
 MAXIMUM_RELATIVE_L2_OPTIMIZER = 0.05
 MINIMUM_SIGN_AGREEMENT = 0.99
+# A weight that is still nothing but its optimizer steps -- every element of
+# the reference within `steps` learning rates of zero, as a bias started at
+# zero is -- has no scale of its own for a relative bound to measure against.
+# Two runs that round differently can disagree on the sign of such an
+# element's gradient in one step, which moves it by at most two learning
+# rates; so such a weight is held to that absolute bound instead.
+STEP_QUANTUM_DISAGREEMENTS = 2
 
 
 def state_half(key: str) -> str:
@@ -34,16 +41,38 @@ def state_half(key: str) -> str:
     return parts[1] if len(parts) > 1 and parts[0] == "state" else "other"
 
 
-def meets_tensor_tolerance(metric: Any, *, key: str = "") -> bool:
+def meets_tensor_tolerance(
+    metric: Any,
+    *,
+    key: str = "",
+    step_size: float | None = None,
+    steps: int = 0,
+) -> bool:
+    """Whether one tensor agrees with its reference.
+
+    The relative bounds decide, except for a weight whose reference is still
+    nothing but its optimizer steps: given the run's ``step_size`` and
+    ``steps``, one whose every element lies within ``steps`` learning rates of
+    zero passes when no element is further from the reference than
+    :data:`STEP_QUANTUM_DISAGREEMENTS` learning rates.
+    """
+
+    half = state_half(key)
     bound = (
-        MAXIMUM_RELATIVE_L2_OPTIMIZER
-        if state_half(key) == "optimizer"
-        else MAXIMUM_RELATIVE_L2
+        MAXIMUM_RELATIVE_L2_OPTIMIZER if half == "optimizer" else MAXIMUM_RELATIVE_L2
     )
-    return bool(
+    if (
         metric.cosine >= MINIMUM_COSINE
         and metric.relative_l2 <= bound
         and metric.sign_agreement >= MINIMUM_SIGN_AGREEMENT
+    ):
+        return True
+    return bool(
+        step_size is not None
+        and steps > 0
+        and half == "model"
+        and metric.reference_maximum_absolute <= steps * step_size
+        and metric.maximum_absolute_error <= STEP_QUANTUM_DISAGREEMENTS * step_size
     )
 
 

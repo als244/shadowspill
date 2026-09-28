@@ -98,6 +98,34 @@ def test_numerical_gate_uses_one_global_tensor_policy() -> None:
     assert not meets_tensor_tolerance(TensorMetrics(1.0, 0.0, 0.98, 0.0))
 
 
+def test_a_weight_made_only_of_optimizer_steps_is_judged_absolutely() -> None:
+    """A zero-started bias is a few learning rates from zero after a few
+    steps, so a relative bound reads one step's sign disagreement as a large
+    error; the absolute bound of two learning rates admits exactly that."""
+
+    lr, steps = 3e-4, 5
+    bias = TensorMetrics(
+        cosine=0.996,
+        relative_l2=0.09,
+        sign_agreement=1.0,
+        maximum_absolute_error=2.9e-4,
+        reference_maximum_absolute=1.2e-3,
+    )
+    key = "state/model/blocks.5.mixer.dt_bias"
+    assert meets_tensor_tolerance(bias, key=key, step_size=lr, steps=steps)
+    # Without the run's step size and count there is no absolute bound.
+    assert not meets_tensor_tolerance(bias, key=key)
+    # A weight with a scale of its own keeps the relative bound.
+    scaled = TensorMetrics(0.996, 0.09, 1.0, 2.9e-4, reference_maximum_absolute=0.05)
+    assert not meets_tensor_tolerance(scaled, key=key, step_size=lr, steps=steps)
+    # More than one step's disagreement fails.
+    drifted = TensorMetrics(0.996, 0.09, 1.0, 7e-4, reference_maximum_absolute=1.2e-3)
+    assert not meets_tensor_tolerance(drifted, key=key, step_size=lr, steps=steps)
+    # An optimizer moment is judged by its own relative bound alone.
+    moment_key = "state/optimizer/state/0/exp_avg"
+    assert not meets_tensor_tolerance(bias, key=moment_key, step_size=lr, steps=steps)
+
+
 def test_recomputation_diagnostics_count_only_retained_physical_savings() -> None:
     groups = (
         TaskAlternativeGroup(
