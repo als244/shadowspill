@@ -371,3 +371,22 @@ def test_resolution_options_change_no_rung_and_a_superset_is_never_worse() -> No
         by_rung(eighths)[rung] == value for rung, value in by_rung(quarters).items()
     )
     assert eighths.simulation.makespan_ns <= quarters.simulation.makespan_ns
+
+
+def test_named_resolution_options_spell_the_sets_a_request_records() -> None:
+    from shadowspill.planner import NAMED_RESOLUTION_OPTIONS, named_resolution_options
+
+    assert named_resolution_options("quarters") == ("0", "1/4", "1/2", "3/4", "1")
+    assert named_resolution_options("eighths") == tuple(
+        str(Fraction(n, 8)) for n in range(9)
+    )
+    assert named_resolution_options("halves") == ("0", "1/2", "1")
+    assert set(NAMED_RESOLUTION_OPTIONS) == {"quarters", "eighths", "halves"}
+    # A list of exact fractions, as a string or a sequence, comes back
+    # validated, sorted and deduplicated, in the spelling a record keeps.
+    assert named_resolution_options("1, 0, 2/4") == ("0", "1/2", "1")
+    assert named_resolution_options(["1/2", Fraction(1, 2), 0]) == ("0", "1/2")
+    with pytest.raises(ValueError):
+        named_resolution_options("x,1")
+    with pytest.raises(ValueError):
+        named_resolution_options("")
