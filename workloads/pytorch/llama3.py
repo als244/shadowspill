@@ -146,8 +146,11 @@ class Llama3(nn.Module):
         targets: torch.Tensor,
         *,
         seq_lens: SequenceLengths = None,
+        reduction: str = "mean",
     ) -> torch.Tensor:
-        return language_model_loss(self.hidden(tokens, seq_lens), self.lm_head, targets)
+        return language_model_loss(
+            self.hidden(tokens, seq_lens), self.lm_head, targets, reduction
+        )
 
 
 __all__ = ["Llama3", "Llama3Config"]

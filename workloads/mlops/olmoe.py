@@ -6,7 +6,13 @@ import mlops
 import torch
 import torch.nn as nn
 
-from workloads.common import Packing, RotaryEmbedding, SequenceLengths, packed_metadata
+from workloads.common import (
+    Packing,
+    RotaryEmbedding,
+    SequenceLengths,
+    auxiliary_share,
+    packed_metadata,
+)
 from workloads.pytorch.olmoe import OLMoEConfig
 
 from .common import RMSNorm
@@ -161,10 +167,15 @@ class OLMoE(nn.Module):
         *,
         seq_lens: SequenceLengths = None,
         aux_coef: float = 0.0,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         hidden, auxiliary = self.hidden(tokens, seq_lens)
-        objective = mlops.head_loss(hidden, self.lm_head.weight, targets)
-        return objective + float(aux_coef) * auxiliary
+        objective = mlops.head_loss(
+            hidden, self.lm_head.weight, targets, reduction=reduction
+        )
+        return objective + float(aux_coef) * auxiliary_share(
+            auxiliary, targets, reduction
+        )
 
 
 __all__ = ["OLMoE", "OLMoEConfig"]
