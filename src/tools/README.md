@@ -10,7 +10,10 @@ logic.
   and, when a peer is named, the two remote ones -- in order under one run
   name, taking each gate's own arguments from one config file. `nondeterminism/` locates the stage of a step that is not bitwise
   reproducible.
-- `diagnostics/` inspects serialized step evidence and NSYS exports.
+- `diagnostics/` reads serialized planning and step evidence: `occupancy.py`
+  attributes what occupies each pool over a step to objects and their roles,
+  and writes the pools and the transfer lanes as pages
+  ([guide](../../docs/python/occupancy.md)).
 - `check_naming.py` enforces provider and vocabulary boundaries.
 - `sanitizers/` contains tool-specific support files.
 
