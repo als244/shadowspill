@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from pathlib import Path
 
 import pytest
+import torch
 
-from benchmarking.quickstart import _reproduced_arguments, _request_record
+from benchmarking.quickstart import (
+    Precision,
+    _dtype_name,
+    _reproduced_arguments,
+    _request_record,
+)
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch import StepSearchReport
 
@@ -38,6 +45,12 @@ def _arguments(**overrides: object) -> argparse.Namespace:
         plan_store_mode="contribute",
         deterministic=True,
         incumbents=True,
+        master_dtype="float32",
+        grad_dtype="float32",
+        opt_state_dtype="parameter",
+        parameter_rounding=None,
+        opt_state_rounding="stochastic",
+        round_accumulation_once=False,
         export_bypass_key="rev-1",
         reproduce=None,
         output_dir=Path("somewhere"),
@@ -80,6 +93,12 @@ def test_the_record_holds_the_request_and_not_where_it_was_written(
     assert request["resolution_options"] == ["0", "1/2", "1"]
     assert request["artifact_store"] == str(tmp_path / "store")
     assert request["plan_store"] == str(tmp_path / "plans")
+    assert request["master_dtype"] == "float32"
+    assert request["grad_dtype"] == "float32"
+    assert request["opt_state_dtype"] == "parameter"
+    assert request["parameter_rounding"] is None
+    assert request["opt_state_rounding"] == "stochastic"
+    assert request["round_accumulation_once"] is False
     for name in ("output_dir", "force_overwrite", "plots", "reproduce"):
         assert name not in request
 
@@ -98,6 +117,9 @@ def test_reproduce_reads_the_request_and_pins_the_calibration(
     assert arguments.resolution_options == ("0", "1/2", "1")
     assert arguments.transfer_bandwidths.fetch_bytes_per_second == 25_500_000_000
     assert arguments.export_bypass_key == "rev-1"
+    assert arguments.master_dtype == "float32"
+    assert arguments.opt_state_rounding == "stochastic"
+    assert arguments.round_accumulation_once is False
 
 
 def test_reproduce_refuses_a_flag_that_would_contradict_the_record(
@@ -118,3 +140,70 @@ def test_reproduce_refuses_a_flag_that_would_contradict_the_record(
     )
     with pytest.raises(SystemExit, match="mlops_qwen35"):
         _reproduced_arguments(_Parser(), given)  # type: ignore[arg-type]
+
+
+def _adamw(parameters: object, **arguments: object) -> dict[str, object]:
+    return {"parameters": parameters, **arguments}
+
+
+def test_precision_reaches_planning_and_the_optimizer_as_the_harness_names_it() -> None:
+    """The flags carry the training config's names into the same two places:
+    plan_step's keywords, and the optimizer's own arguments."""
+
+    nothing = Precision.from_arguments(
+        _arguments(
+            master_dtype=None,
+            grad_dtype=None,
+            opt_state_dtype=None,
+            parameter_rounding=None,
+            opt_state_rounding=None,
+            round_accumulation_once=False,
+        )
+    )
+    assert nothing.plan_arguments() == {
+        "master_dtype": None,
+        "grad_dtype": None,
+        "round_accumulation_once": False,
+    }
+    # Naming nothing hands planning the optimizer as it was, so a request
+    # without the flags plans exactly as before.
+    assert nothing.optimizer(_adamw) is _adamw
+
+    precise = Precision.from_arguments(_arguments(round_accumulation_once=True))
+    assert precise.plan_arguments() == {
+        "master_dtype": torch.float32,
+        "grad_dtype": torch.float32,
+        "round_accumulation_once": True,
+    }
+    built = precise.optimizer(_adamw)
+    assert isinstance(built, functools.partial)
+    assert built(["p"]) == {
+        "parameters": ["p"],
+        # A gradient dtype is also what the optimizer reads gradients at,
+        # else it would round them to its default on the way in.
+        "gradient_dtype": torch.float32,
+        "opt_state_dtype": "parameter",
+        "opt_state_rounding": "stochastic",
+    }
+    assert (
+        Precision.from_arguments(
+            _arguments(opt_state_dtype="float32")
+        ).optimizer_arguments()["opt_state_dtype"]
+        is torch.float32
+    )
+    labels = [label for label, _value, _meaning in precise.lines()]
+    assert labels == [
+        "master dtype",
+        "gradient dtype",
+        "optimizer state",
+        "weight rounding",
+        "state rounding",
+    ]
+
+
+def test_a_dtype_flag_takes_a_torch_name_or_none() -> None:
+    assert _dtype_name("float32") == "float32"
+    assert _dtype_name("torch.bfloat16") == "bfloat16"
+    assert _dtype_name("none") is None
+    with pytest.raises(argparse.ArgumentTypeError, match="float64"):
+        _dtype_name("float64")

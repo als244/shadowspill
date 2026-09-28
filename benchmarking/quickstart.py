@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import contextlib
+import functools
 import gc
 import json
 import resource
@@ -42,6 +43,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import torch
+from mlops.dispatch import set_weight_gradient_dtype
 
 from shadowspill.diagnostics.step import TaskRecord, TransferRecord
 from shadowspill.memory import device, pinned_host, transfer_route
@@ -59,7 +61,8 @@ from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
 )
 from shadowspill.planner.search.toolkit.resolution import (
-    DEFAULT_RESOLUTION_OPTIONS,
+    NAMED_RESOLUTION_OPTIONS,
+    named_resolution_options,
     validate_resolution_options,
 )
 from shadowspill.plots import (
@@ -88,21 +91,6 @@ def _budget_list(value: str) -> list[float]:
 
 #: Named resolution options. ``quarters`` is the library's own default,
 #: spelled out here so every run records the shares it actually planned.
-_NAMED_RESOLUTION_OPTIONS: dict[str, tuple[str, ...]] = {
-    "quarters": tuple(str(share) for share in DEFAULT_RESOLUTION_OPTIONS),
-    "eighths": tuple(f"{numerator}/8" for numerator in range(9)),
-    "halves": ("0", "1/2", "1"),
-}
-
-
-def _named_resolution_options(value: str) -> tuple[str, ...]:
-    """A named set, or a comma-separated list of exact fractions."""
-
-    if value in _NAMED_RESOLUTION_OPTIONS:
-        return _NAMED_RESOLUTION_OPTIONS[value]
-    return tuple(item.strip() for item in value.split(",") if item.strip())
-
-
 def _transfer_bandwidths(value: str) -> TransferBandwidths:
     """``FETCH,EVICT[,FETCH_US,EVICT_US]``, or a search.json to pin to."""
 
@@ -635,6 +623,156 @@ def print_epilogue(diagnostics: Any) -> None:
     print()
 
 
+_DTYPE_NAMES = ("bfloat16", "float16", "float32")
+_ROUNDINGS = ("nearest", "stochastic")
+
+
+def _dtype_name(value: str) -> str | None:
+    """A floating dtype by its torch name, or ``none`` for the default."""
+
+    lowered = value.strip().lower().removeprefix("torch.")
+    if lowered == "none":
+        return None
+    if lowered not in _DTYPE_NAMES:
+        raise argparse.ArgumentTypeError(
+            f"a dtype is one of {', '.join(_DTYPE_NAMES)}, or none; not {value!r}"
+        )
+    return lowered
+
+
+@dataclass(frozen=True)
+class Precision:
+    """The dtypes and roundings a step trains under, named as the training
+    harness names them.
+
+    ``master_dtype``, ``grad_dtype`` and ``round_accumulation_once`` are
+    ``plan_step``'s. The rest are the optimizer's own, given to it when it is
+    built: the dtype it keeps its state at and how it rounds what it stores
+    and the weights it steps. A gradient dtype reaches two more places on its
+    own, because a step that names one and sets neither silently rounds: the
+    mlops kernels are asked for weight gradients at it, and the optimizer
+    reads gradients at it. ``None`` everywhere is the library's and the
+    optimizer's defaults, which is what a request that names nothing gets.
+    """
+
+    master_dtype: str | None = None
+    grad_dtype: str | None = None
+    opt_state_dtype: str | None = None
+    parameter_rounding: str | None = None
+    opt_state_rounding: str | None = None
+    round_accumulation_once: bool = False
+
+    @classmethod
+    def from_arguments(cls, arguments: argparse.Namespace) -> Precision:
+        return cls(
+            master_dtype=arguments.master_dtype,
+            grad_dtype=arguments.grad_dtype,
+            opt_state_dtype=arguments.opt_state_dtype,
+            parameter_rounding=arguments.parameter_rounding,
+            opt_state_rounding=arguments.opt_state_rounding,
+            round_accumulation_once=bool(arguments.round_accumulation_once),
+        )
+
+    @staticmethod
+    def _dtype(name: str | None) -> torch.dtype | None:
+        return None if name is None else cast(torch.dtype, getattr(torch, name))
+
+    @property
+    def master(self) -> torch.dtype | None:
+        """``plan_step``'s ``master_dtype``."""
+
+        return self._dtype(self.master_dtype)
+
+    @property
+    def gradients(self) -> torch.dtype | None:
+        """``plan_step``'s ``grad_dtype``."""
+
+        return self._dtype(self.grad_dtype)
+
+    def plan_arguments(self) -> dict[str, object]:
+        """What planning is told: the same three keywords the harness passes."""
+
+        return {
+            "master_dtype": self.master,
+            "grad_dtype": self.gradients,
+            "round_accumulation_once": self.round_accumulation_once,
+        }
+
+    def optimizer_arguments(self) -> dict[str, object]:
+        """What the optimizer is built with, beyond its defaults."""
+
+        given: dict[str, object] = {}
+        if self.grad_dtype is not None:
+            given["gradient_dtype"] = self._dtype(self.grad_dtype)
+        if self.opt_state_dtype is not None:
+            given["opt_state_dtype"] = (
+                "parameter"
+                if self.opt_state_dtype == "parameter"
+                else self._dtype(self.opt_state_dtype)
+            )
+        if self.parameter_rounding is not None:
+            given["parameter_rounding"] = self.parameter_rounding
+        if self.opt_state_rounding is not None:
+            given["opt_state_rounding"] = self.opt_state_rounding
+        return given
+
+    def optimizer(self, base: Any) -> Any:
+        """``base`` built with these settings, or ``base`` itself when it
+        names none, so a request that names nothing plans exactly as before."""
+
+        given = self.optimizer_arguments()
+        return functools.partial(base, **given) if given else base
+
+    def apply(self) -> None:
+        """Ask the mlops kernels for weight gradients at the gradient dtype,
+        so what the step sums comes back unrounded."""
+
+        if self.grad_dtype is not None:
+            set_weight_gradient_dtype(self._dtype(self.grad_dtype))
+
+    def lines(self) -> tuple[tuple[str, str, str], ...]:
+        """The banner's rows: a label, the value, and what it means."""
+
+        gradients = self.grad_dtype or "the weights'"
+        return (
+            (
+                "master dtype",
+                self.master_dtype or "none",
+                "the optimizer steps the weights themselves"
+                if self.master_dtype is None
+                else "a master copy of every weight trained at another dtype",
+            ),
+            (
+                "gradient dtype",
+                self.grad_dtype or "weights'",
+                f"gradients summed over the microbatches at {gradients} dtype;"
+                + (
+                    " a multiply adds its product in as it writes, rounded once"
+                    if self.round_accumulation_once
+                    else " a product rounded to a narrower gradient is added after"
+                ),
+            ),
+            (
+                "optimizer state",
+                self.opt_state_dtype or "default",
+                "the moments at the optimizer's default dtype"
+                if self.opt_state_dtype is None
+                else "the moments at that dtype ('parameter': what it steps)",
+            ),
+            (
+                "weight rounding",
+                self.parameter_rounding or "default",
+                "how the optimizer rounds the weights it steps; its default"
+                " is to nearest",
+            ),
+            (
+                "state rounding",
+                self.opt_state_rounding or "default",
+                "how it rounds the state it stores; its default is to nearest",
+            ),
+        )
+
+
 _REQUEST_SCHEMA = artifact_schema("quickstart_request")
 
 #: What a request is made of: every argument except the ones that say where
@@ -781,8 +919,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--resolution-options",
-        type=_named_resolution_options,
-        default=_NAMED_RESOLUTION_OPTIONS["quarters"],
+        type=named_resolution_options,
+        default=NAMED_RESOLUTION_OPTIONS["quarters"],
         help="which resolutions the search and the runs plan: the shares of"
         " flexible groups to recompute, as 'quarters' (the library"
         " default), 'eighths', 'halves', or a comma-separated list of exact"
@@ -835,6 +973,55 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--master-dtype",
+        type=_dtype_name,
+        default=None,
+        metavar="DTYPE",
+        help="keep a master copy of every weight trained at another dtype at"
+        " this one -- float32, say -- and step the masters in the weights'"
+        " place; none, the default, steps the weights themselves",
+    )
+    parser.add_argument(
+        "--grad-dtype",
+        type=_dtype_name,
+        default=None,
+        metavar="DTYPE",
+        help="the dtype gradients are created and summed at over a step's"
+        " microbatches, the weights' own by default. Naming one also asks"
+        " the mlops kernels for weight gradients at it and has the optimizer"
+        " read gradients at it, so nothing rounds them on the way",
+    )
+    parser.add_argument(
+        "--opt-state-dtype",
+        choices=(*_DTYPE_NAMES, "parameter"),
+        default=None,
+        help="the dtype the optimizer keeps its state at: a dtype, or"
+        " parameter for the dtype of what it steps. Its own default when"
+        " not given",
+    )
+    parser.add_argument(
+        "--parameter-rounding",
+        choices=_ROUNDINGS,
+        default=None,
+        help="how the optimizer rounds the weights it steps: to nearest, its"
+        " default, or stochastically, which keeps small updates in expectation",
+    )
+    parser.add_argument(
+        "--opt-state-rounding",
+        choices=_ROUNDINGS,
+        default=None,
+        help="how the optimizer rounds the state it stores, the same two ways",
+    )
+    parser.add_argument(
+        "--round-accumulation-once",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="let a matrix multiply add its product into running gradients"
+        " kept narrower than it sums at as it writes them, rounding the sum"
+        " once instead of twice; off by default, which is what PyTorch's"
+        " own step computes",
+    )
     parser.add_argument(
         "--artifact-store",
         type=Path,
@@ -1302,6 +1489,11 @@ def print_banner(
             " task reads and cannot be fetched in time"
         )
     )
+    # The precision a step trains under is not recoverable from its figures,
+    # and two runs at different precisions are not the same arithmetic, so
+    # the banner names it even when every setting is the default.
+    for label, value, meaning in Precision.from_arguments(arguments).lines():
+        print(f"  {label:<20}{value:>10}      {meaning}")
 
     # One calibration serves every geometry, so it is a property of the run.
     # The planned figures come from the planner rather than from rounding a
@@ -1407,6 +1599,12 @@ class Tour:
         self.vocabulary = int(manifest.model_config.vocab_size)
         # Built once and handed to both planning phases; see `search_policy`.
         self.policy = search_policy(arguments)
+        # Likewise the precision: the optimizer both phases build, the dtypes
+        # both phases plan with, and the gradient dtype the kernels are asked
+        # for, applied once here before anything is captured.
+        self.precision = Precision.from_arguments(arguments)
+        self.precision.apply()
+        self.optimizer = self.precision.optimizer(case.optimizer)
         self.trained = False
         self.report: StepSearchReport | None = None
         # Opened before the branch: a run that chose its geometry by hand still
@@ -1495,8 +1693,11 @@ class Tour:
                 report = self.report = plan_step_search(
                     case.model,
                     objective=case.objective,
-                    optimizer=case.optimizer,
+                    optimizer=self.optimizer,
                     hyperparams=("lr",),
+                    master_dtype=self.precision.master,
+                    grad_dtype=self.precision.gradients,
+                    round_accumulation_once=self.precision.round_accumulation_once,
                     example_microbatches=self.example_microbatches,
                     total_sequences_per_step=request.sequences_per_step,
                     sequence_length=request.sequence_length,
@@ -1713,9 +1914,12 @@ class Tour:
             training = plan_step(
                 case.model,
                 objective=case.objective,
-                optimizer=case.optimizer,
+                optimizer=self.optimizer,
                 hyperparams=("lr",),
                 example_inputs=microbatches,
+                master_dtype=self.precision.master,
+                grad_dtype=self.precision.gradients,
+                round_accumulation_once=self.precision.round_accumulation_once,
                 runtime=runtime,
                 execution="execution",
                 spill="spill",
