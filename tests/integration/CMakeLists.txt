@@ -106,6 +106,9 @@ shadowspill_add_public_api_test(
   test_00_public_forward.py test_public_forward_executes_reloads_and_restores 300
 )
 shadowspill_add_public_api_test(
+  test_00_public_forward.py test_public_forward_sets_a_model_buffer_each_call 300
+)
+shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_accumulates_replays_and_restores 300
 )
 shadowspill_add_public_api_test(
@@ -146,6 +149,9 @@ shadowspill_add_public_api_test(
 )
 shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_follows_a_learning_rate_schedule 300
+)
+shadowspill_add_public_api_test(
+  test_01_public_training.py test_public_training_sets_a_model_buffer_each_step 300
 )
 shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_keeps_no_output_the_caller_dropped 300
