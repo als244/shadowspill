@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 
 from shadowspill.pytorch.capture.aot import TrainingObjectiveCapture
+from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition import PartitionSpec, partition_export
 from .artifacts import PartitionedTrainingCapture
@@ -18,12 +19,15 @@ def partition_training_capture(
     partition: PartitionSpec = "auto",
     graph_pair_store: GraphPairStore | None = None,
     representative_root_inputs: tuple[object, ...] | None = None,
+    retention: RetentionPolicy | None = None,
     accumulating: bool = False,
     gradient_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
 ) -> PartitionedTrainingCapture:
     """Partition and differentiate one captured objective template.
 
+    ``retention`` says what each stage's ``save`` variant retains for its
+    backward and what it regenerates; ``None`` is the library's default.
     ``accumulating`` says this capture belongs to a microbatch that adds onto
     gradients its predecessors created, so its stages need the backward form
     that does the adding. ``gradient_dtype`` is the dtype parameter gradients
@@ -49,6 +53,7 @@ def partition_training_capture(
         stages=capture_training_stages(
             partitioned,
             graph_pair_store=graph_pair_store,
+            retention=retention,
             accumulating=accumulating,
             gradient_dtype=gradient_dtype,
             round_accumulation_once=round_accumulation_once,

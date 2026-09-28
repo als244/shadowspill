@@ -12,7 +12,6 @@ import torch.nn as nn
 from functorch.compile import make_boxed_func  # type: ignore[import-untyped]
 from torch._functorch import config as functorch_config
 from torch._functorch.aot_autograd import aot_function
-from torch._functorch.partitioners import min_cut_rematerialization_partition
 from torch._guards import detect_fake_mode
 from torch._prims_common import get_computation_dtype
 from torch.export.graph_signature import ExportGraphSignature, InputKind, OutputKind
@@ -27,6 +26,12 @@ from shadowspill.pytorch.capture.artifacts import (
     TaskInputProvenance,
     capture_objective_schema,
     normalize_objective_result,
+)
+from shadowspill.pytorch.capture.retention import (
+    RetentionPolicy,
+    RetentionRecord,
+    RetentionSummary,
+    partition_function,
 )
 from shadowspill.pytorch.capture.storage import ExplicitMutation, StorageRootKind
 from shadowspill.pytorch.contracts import ObjectiveResult
@@ -264,11 +269,11 @@ def capture_training(
     objective: Callable[..., torch.Tensor | ObjectiveResult],
     microbatch: Sequence[Any],
 ) -> TrainingCapture:
-    """Capture objective plus save-all and min-cut recomputation graph pairs."""
+    """Capture the objective plus its whole-graph ``save`` and ``recompute`` pairs."""
 
     objective_capture = capture_training_objective(model, objective, microbatch)
-    save_pair = _capture_pair(objective_capture.exported, recomputation=False)
-    recompute_pair = _capture_pair(objective_capture.exported, recomputation=True)
+    save_pair = _capture_pair(objective_capture.exported, memory_budget=1.0)
+    recompute_pair = _capture_pair(objective_capture.exported, memory_budget=0.0)
     return TrainingCapture(
         exported=objective_capture.exported,
         capture_module=objective_capture.capture_module,
@@ -341,14 +346,14 @@ def export_capture_digest(capture: ExportCapture) -> str:
     )
 
 
-def _capture_pair(capture: ExportCapture, *, recomputation: bool) -> AotGraphPair:
+def _capture_pair(capture: ExportCapture, *, memory_budget: float) -> AotGraphPair:
     graph_module = capture.exported_program.graph_module
     eager_output = graph_module(*capture.flat_inputs)
     return capture_graph_pair(
         graph_module,
         capture.flat_inputs,
         original_output=eager_output,
-        recomputation=recomputation,
+        memory_budget=memory_budget,
         root_output_positions=(capture.user_output_indices[0],),
         specialize_unit_tangents=True,
         explicit_mutations=_explicit_mutations(capture),
@@ -360,26 +365,37 @@ def capture_graph_pair(
     inputs: Sequence[object],
     *,
     original_output: object,
-    recomputation: bool,
-    activation_memory_budget: float | None = None,
+    memory_budget: float = 1.0,
+    retention: RetentionPolicy | None = None,
     root_output_positions: tuple[int, ...] | None = None,
     specialize_unit_tangents: bool = False,
     explicit_mutations: tuple[ExplicitMutation, ...] = (),
     input_provenance: tuple[TaskInputProvenance, ...] | None = None,
 ) -> AotGraphPair:
-    """Differentiate one functional graph with a flat tensor/static signature."""
+    """Differentiate one functional graph with a flat tensor/static signature.
 
-    _validate_activation_budget(recomputation, activation_memory_budget)
+    ``memory_budget`` is the partition's. ``1.0`` retains for the backward
+    what ``retention`` says is expensive to regenerate and regenerates the
+    rest; ``0.0`` retains the inputs alone; a value between the two is
+    PyTorch's knapsack between them. ``None`` is the library's default policy
+    (:mod:`shadowspill.pytorch.capture.retention`).
+    """
+
+    if not 0.0 <= memory_budget <= 1.0:
+        raise ValueError("memory_budget must be between zero and one")
     normalized_mutations = _tensor_only_mutations(explicit_mutations, tuple(inputs))
     tensor_provenance = _tensor_input_provenance(inputs, input_provenance)
     capture_inputs = _capture_inputs(inputs)
     collector = _GraphPairCollector(normalized_mutations, tensor_provenance)
+    record = RetentionRecord()
     roots = _execute_aot_capture(
         graph_module,
         capture_inputs,
         collector,
-        recomputation=recomputation,
-        activation_memory_budget=activation_memory_budget,
+        partition=partition_function(
+            memory_budget, retention or RetentionPolicy(), record
+        ),
+        memory_budget=memory_budget,
         root_output_positions=root_output_positions,
     )
     forward, backward_graph, backward_inputs = collector.require_complete()
@@ -389,7 +405,7 @@ def capture_graph_pair(
         backward_inputs,
         roots,
         original_output,
-        recomputation=recomputation,
+        retention=record.require(),
         specialize_unit_tangents=specialize_unit_tangents,
     )
 
@@ -415,17 +431,21 @@ def _execute_aot_capture(
     capture_inputs: tuple[object, ...],
     collector: _GraphPairCollector,
     *,
-    recomputation: bool,
-    activation_memory_budget: float | None,
+    partition: Callable[..., tuple[torch.fx.GraphModule, torch.fx.GraphModule]],
+    memory_budget: float,
     root_output_positions: tuple[int, ...] | None,
 ) -> tuple[torch.Tensor, ...]:
     try:
         with functorch_config.patch(**_PINNED_TANGENT_LAYOUT):
-            compiled = _aot_callable(
-                graph_module,
-                collector,
-                recomputation=recomputation,
-                activation_memory_budget=activation_memory_budget,
+            aot: Any = aot_function
+            compiled = cast(
+                Callable[..., object],
+                aot(
+                    graph_module,
+                    fw_compiler=collector.compile_forward,
+                    bw_compiler=collector.compile_backward,
+                    partition_fn=partition,
+                ),
             )
             outputs = compiled(*capture_inputs)
             roots = _differentiable_roots(outputs, root_output_positions)
@@ -434,69 +454,9 @@ def _execute_aot_capture(
     except CaptureError:
         raise
     except BaseException as exc:
-        mode = "recomputation" if recomputation else "save"
-        raise CaptureError(f"AOTAutograd {mode} capture failed: {exc}") from exc
-
-
-def _aot_callable(
-    graph_module: torch.fx.GraphModule,
-    collector: _GraphPairCollector,
-    *,
-    recomputation: bool,
-    activation_memory_budget: float | None,
-) -> Callable[..., object]:
-    aot: Any = aot_function
-    if not recomputation:
-        return cast(
-            Callable[..., object],
-            aot(
-                graph_module,
-                fw_compiler=collector.compile_forward,
-                bw_compiler=collector.compile_backward,
-            ),
-        )
-    return cast(
-        Callable[..., object],
-        aot(
-            graph_module,
-            fw_compiler=collector.compile_forward,
-            bw_compiler=collector.compile_backward,
-            partition_fn=_min_cut_partitioner(activation_memory_budget),
-        ),
-    )
-
-
-def _min_cut_partitioner(
-    activation_memory_budget: float | None,
-) -> Callable[..., tuple[torch.fx.GraphModule, torch.fx.GraphModule]]:
-    """Bind a memory budget to the lazy AOT partition callback itself.
-
-    ``aot_function`` does not partition when its callable is constructed.  It
-    partitions on the first invocation, after the caller's construction scope
-    has returned.  The budget must therefore be scoped inside the callback
-    that AOT invokes; wrapping callable construction silently observes the
-    ambient Functorch default instead.
-    """
-
-    def partition(
-        joint_module: torch.fx.GraphModule,
-        joint_inputs: object,
-        **kwargs: Any,
-    ) -> tuple[torch.fx.GraphModule, torch.fx.GraphModule]:
-        if activation_memory_budget is None:
-            return min_cut_rematerialization_partition(
-                joint_module,
-                joint_inputs,
-                **kwargs,
-            )
-        with functorch_config.patch(activation_memory_budget=activation_memory_budget):
-            return min_cut_rematerialization_partition(
-                joint_module,
-                joint_inputs,
-                **kwargs,
-            )
-
-    return partition
+        raise CaptureError(
+            f"AOTAutograd capture at partition budget {memory_budget:g} failed: {exc}"
+        ) from exc
 
 
 def _differentiable_roots(
@@ -546,7 +506,7 @@ def _build_graph_pair(
     roots: tuple[torch.Tensor, ...],
     original_output: object,
     *,
-    recomputation: bool,
+    retention: RetentionSummary,
     specialize_unit_tangents: bool,
 ) -> AotGraphPair:
     original_output_count = len(tree_flatten(original_output)[0])
@@ -571,22 +531,10 @@ def _build_graph_pair(
     return AotGraphPair(
         forward=forward,
         backward=backward,
-        recomputation=recomputation,
+        retention=retention,
         saved_value_count=saved,
         specialized_unit_tangent_count=specialized_count,
     )
-
-
-def _validate_activation_budget(
-    recomputation: bool,
-    activation_memory_budget: float | None,
-) -> None:
-    if activation_memory_budget is None:
-        return
-    if not recomputation:
-        raise ValueError("activation_memory_budget requires the min-cut partitioner")
-    if not 0.0 <= activation_memory_budget <= 1.0:
-        raise ValueError("activation_memory_budget must be between zero and one")
 
 
 def _tensor_input_provenance(

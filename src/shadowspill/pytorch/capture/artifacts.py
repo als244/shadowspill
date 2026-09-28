@@ -25,6 +25,7 @@ from shadowspill.pytorch.capture.storage import (
 from shadowspill.pytorch.contracts import ObjectiveResult
 from shadowspill.task.inputs import TaskInputRole
 
+from .retention import RetentionSummary
 from .torch_deprecations import copy_graph_module
 
 if TYPE_CHECKING:
@@ -542,7 +543,8 @@ class AotGraphPair:
 
     forward: GraphArtifact
     backward: GraphArtifact
-    recomputation: bool
+    #: What the partition regenerated in the backward, under which policy.
+    retention: RetentionSummary
     saved_value_count: int
     specialized_unit_tangent_count: int = 0
 

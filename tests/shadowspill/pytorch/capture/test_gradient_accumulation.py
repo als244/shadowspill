@@ -36,9 +36,7 @@ def _backward(
     """Capture one backward, and say which of its outputs are gradients."""
 
     graph = make_fx(forward)(*inputs)
-    pair = capture_graph_pair(
-        graph, inputs, original_output=forward(*inputs), recomputation=False
-    )
+    pair = capture_graph_pair(graph, inputs, original_output=forward(*inputs))
     leaves = tuple(
         index
         for index, value in enumerate(_output(pair.backward).args[0])
