@@ -1,25 +1,39 @@
 """The ShadowSpill backend: state in a pinned host pool, every step planned.
 
 The first launch of a run chooses its plan: ``plan_step_search`` finds the
-fastest geometry at the budget (or prices the one given), and the backend
-records the choice -- geometry, ordering, and the transfer bandwidths it was
-planned against -- in the run's ``planning.json``. A later launch of the same
-run plans that choice directly with ``plan_step``, which reuses the artifact
-store's captures, compiled graphs and profiles instead of searching again.
+fastest geometry at the budget within the bounds the backend names (or
+prices the one the trainer gave), under the recompute shares and the walks
+it was told to plan, and the backend records the choice -- geometry,
+ordering, the search options, and the transfer bandwidths it was planned
+against -- in the run's ``planning.json``, with the search's whole table
+beside it in ``search.json``. A later launch of the same run plans that
+choice directly with ``plan_step``, which reuses the artifact store's
+captures, compiled graphs and profiles instead of searching again.
 """
 
 from __future__ import annotations
 
 import functools
 import json
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from shadowspill.memory import device, pinned_host, transfer_route
+from shadowspill.planner import (
+    SearchOptions,
+    StepDataOrdering,
+    named_resolution_options,
+)
 from shadowspill.planner.program_inputs import TransferBandwidths
+from shadowspill.planner.search.algorithms.pressurefit import PressureFit
+from shadowspill.planner.search.algorithms.pressurefit.options import (
+    PressureFitOptions,
+)
 from shadowspill.pytorch import (
     Runtime,
     import_model_state,
@@ -32,12 +46,17 @@ from training.backends import GIB, Microbatch, Setup
 from training.objectives import planned_objective
 
 PLANNING_RECORD = "planning.json"
+SEARCH_REPORT = "search.json"
+#: Which walks the search tries per geometry: every depth x breadth factor
+#: pair, or the depth-first walk alone.
+ORDERINGS = ("factors", "depth-first")
 
 
 @dataclass(frozen=True)
 class PlanningChoice:
-    """The geometry and ordering a run's step is planned for, and what it was
-    priced against: the transfer bandwidths and the two budgets."""
+    """The geometry and ordering a run's step is planned for, what it was
+    priced against -- the transfer bandwidths and the two budgets -- and what
+    the search was told, which the replan asks the store for again."""
 
     max_tokens_per_microbatch: int
     microbatches: int
@@ -48,6 +67,16 @@ class PlanningChoice:
     transfer_bandwidths: dict[str, Any] | None
     execution_bytes: int
     spill_bytes: int
+    #: The recompute shares and the walks the search planned; a record from
+    #: before they were written was planned under the library's defaults.
+    resolution_options: list[str] = field(
+        default_factory=lambda: list(named_resolution_options("quarters"))
+    )
+    orderings: str = "factors"
+    #: The bounds the geometry was searched within, tokens a microbatch; a
+    #: pinned geometry is both bounds equal, and ``None`` is open.
+    planning_min_tokens_per_microbatch: int | None = None
+    planning_max_tokens_per_microbatch: int | None = None
 
 
 class ShadowSpill:
@@ -66,7 +95,20 @@ class ShadowSpill:
     ``round_accumulation_once`` is ``plan_step``'s: a matrix multiply then adds
     its product into bf16 running gradients as it writes it, rounding the sum
     once where PyTorch rounds it twice -- more precise, and no longer the
-    PyTorch backend's step bit for bit."""
+    PyTorch backend's step bit for bit.
+
+    The geometry is the search's to choose within
+    ``planning_min_tokens_per_microbatch`` and
+    ``planning_max_tokens_per_microbatch``, tokens a microbatch: every split
+    of the step whose microbatch falls between them is planned and the
+    fastest runs; equal bounds pin one, a missing bound is open. Without
+    either the trainer's ``max_tokens_per_microbatch`` pins the geometry, and
+    without that too every split is searched. ``resolution_options`` are the
+    shares of the flexible graph-pair groups the search plans recomputing --
+    ``quarters``, ``eighths``, ``halves``, or exact fractions -- and
+    ``orderings`` the walks it tries per geometry, every depth x breadth
+    factor pair or the depth-first walk alone; both are part of the plan's
+    identity and are recorded with the choice."""
 
     checkpoint_device = "cpu"  # mapped, and copied from there into the pool
 
@@ -76,9 +118,33 @@ class ShadowSpill:
         spill_gib: float,
         eval_execution_gib: float | None = None,
         round_accumulation_once: bool = False,
+        planning_min_tokens_per_microbatch: int | None = None,
+        planning_max_tokens_per_microbatch: int | None = None,
+        resolution_options: str | Sequence[str] = "quarters",
+        orderings: str = "factors",
     ) -> None:
         self.budget = (int(execution_gib * GIB), int(spill_gib * GIB))
         self.round_accumulation_once = round_accumulation_once
+        self.planning_bounds = _planning_bounds(
+            planning_min_tokens_per_microbatch, planning_max_tokens_per_microbatch
+        )
+        self.resolution_options = list(named_resolution_options(resolution_options))
+        if orderings not in ORDERINGS:
+            raise ValueError(
+                f"orderings is one of {', '.join(ORDERINGS)}, not {orderings!r}"
+            )
+        self.orderings = orderings
+        # One policy for both planning phases: the search ranks under it and
+        # the replan asks the store for the plan it promised under the same.
+        self.search_options = SearchOptions(
+            algorithm=PressureFit(
+                PressureFitOptions(
+                    resolution_options=tuple(
+                        Fraction(share) for share in self.resolution_options
+                    )
+                )
+            )
+        )
         self.eval_budget = (
             None if eval_execution_gib is None else int(eval_execution_gib * GIB)
         )
@@ -110,7 +176,9 @@ class ShadowSpill:
         record = setup.run_dir / PLANNING_RECORD
         incumbent = None
         if record.exists():
-            self.planning = _read_planning(record, self.budget)
+            self.planning = _read_planning(
+                record, self.budget, self.resolution_options, self.orderings
+            )
         else:
             self.planning, incumbent = self._search(setup)
             record.write_text(json.dumps(asdict(self.planning), indent=2) + "\n")
@@ -145,7 +213,11 @@ class ShadowSpill:
         of the same tokens runs on the plan it makes."""
 
         length = setup.max_seq_len
-        pinned = setup.max_tokens_per_microbatch
+        low, high = self.planning_bounds
+        if low is None and high is None:
+            # No bounds of the backend's own: the trainer's microbatch pins
+            # the geometry, and without one either every split is searched.
+            low = high = setup.max_tokens_per_microbatch
         search = plan_step_search(
             self.module,
             example_microbatches=functools.partial(
@@ -154,15 +226,21 @@ class ShadowSpill:
             total_sequences_per_step=setup.max_tokens_per_step // length,
             sequence_length=length,
             budgets=[self.budget],
-            min_tokens_per_microbatch=pinned,
-            max_tokens_per_microbatch=pinned,
+            min_tokens_per_microbatch=low,
+            max_tokens_per_microbatch=high,
+            orderings=self._orderings(),
+            search_options=self.search_options,
             progress=print,
             **self.common,
         )
+        # The whole table, not only the winner: which splits planned, at what
+        # simulated step, is the evidence behind the choice the record keeps.
+        search.save(setup.run_dir / SEARCH_REPORT)
         winner = search.winner(*self.budget)
         if winner is None:
             raise RuntimeError(
-                f"no geometry plans within {self.budget[0] / GIB:g} GiB of the device"
+                f"no geometry {_within(low, high)} plans within"
+                f" {self.budget[0] / GIB:g} GiB of the device"
             )
         lanes = search.planned_lanes
         choice = PlanningChoice(
@@ -175,8 +253,22 @@ class ShadowSpill:
             transfer_bandwidths=None if lanes is None else lanes.to_dict(),
             execution_bytes=self.budget[0],
             spill_bytes=self.budget[1],
+            resolution_options=list(self.resolution_options),
+            orderings=self.orderings,
+            planning_min_tokens_per_microbatch=low,
+            planning_max_tokens_per_microbatch=high,
         )
         return choice, search.winner_plans[self.budget]
+
+    def _orderings(
+        self,
+    ) -> Callable[[int], Sequence[StepDataOrdering]] | None:
+        """What ``plan_step_search`` tries per geometry: ``None`` is its
+        default, every factor pair."""
+
+        if self.orderings == "factors":
+            return None
+        return lambda accumulation: (StepDataOrdering.depth_first(accumulation),)
 
     def _plan_step(self, examples: list[Microbatch], incumbent: Any) -> Any:
         """Plan the step the choice describes; with the search's plan as
@@ -199,6 +291,9 @@ class ShadowSpill:
                 if bandwidths is None
                 else TransferBandwidths.from_value(bandwidths)
             ),
+            # The search's own options, so the store answers with the plan
+            # the search promised rather than missing and searching again.
+            search_options=self.search_options,
             **self.common,
         )
 
@@ -243,11 +338,59 @@ def _runtime(device_bytes: int, spill_bytes: int) -> Runtime:
     )
 
 
-def _read_planning(record: Path, budget: tuple[int, int]) -> PlanningChoice:
+def _read_planning(
+    record: Path,
+    budget: tuple[int, int],
+    resolution_options: Sequence[str],
+    orderings: str,
+) -> PlanningChoice:
     choice = PlanningChoice(**json.loads(record.read_text()))
     if (choice.execution_bytes, choice.spill_bytes) != budget:
         raise ValueError(
             f"{record} was planned at other budgets; a run keeps the geometry it "
             "started with, so remove the file to plan the run from scratch"
         )
+    if (list(choice.resolution_options), choice.orderings) != (
+        list(resolution_options),
+        orderings,
+    ):
+        raise ValueError(
+            f"{record} was planned under other search options"
+            f" ({', '.join(choice.resolution_options)}; {choice.orderings});"
+            " a run keeps the plan it started with, so remove the file to plan"
+            " the run from scratch"
+        )
     return choice
+
+
+def _planning_bounds(
+    low: int | None, high: int | None
+) -> tuple[int | None, int | None]:
+    for name, value in (
+        ("planning_min_tokens_per_microbatch", low),
+        ("planning_max_tokens_per_microbatch", high),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or type(value) is not int or value < 1
+        ):
+            raise ValueError(
+                f"{name} must be a positive number of tokens, not {value!r}"
+            )
+    if low is not None and high is not None and low > high:
+        raise ValueError(
+            f"planning_min_tokens_per_microbatch {low} exceeds"
+            f" planning_max_tokens_per_microbatch {high}"
+        )
+    return low, high
+
+
+def _within(low: int | None, high: int | None) -> str:
+    if low is not None and low == high:
+        return f"of {low} tokens a microbatch"
+    if low is None and high is None:
+        return "at all"
+    if low is None:
+        return f"of at most {high} tokens a microbatch"
+    if high is None:
+        return f"of at least {low} tokens a microbatch"
+    return f"between {low} and {high} tokens a microbatch"

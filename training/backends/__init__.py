@@ -9,8 +9,8 @@ device holds, fetches, evicts and recomputes so that each step fits a budget.
 A step is ``max_tokens_per_step`` tokens, split into microbatches of at most
 ``max_tokens_per_microbatch`` -- the geometry, as (tokens per microbatch,
 microbatches). PyTorch is told it; ShadowSpill searches for the fastest one at
-its budget when it is not given. Either way, ``geometry`` is what the backend
-runs.
+its budget within the bounds its backend names, or pins the one the trainer
+gave when it names none. Either way, ``geometry`` is what the backend runs.
 """
 
 from __future__ import annotations
