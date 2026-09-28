@@ -259,7 +259,12 @@ Against the reference, every weight must agree within a relative L2 of
 2.5 % (cosine at least 0.999, sign agreement at least 99 %); an optimizer
 moment gets 5 %, because it is an accumulator whose reduction order follows the
 plan, so the same arithmetic in two orders moves it further than it moves a
-weight. The gate also requires a checkpoint replay to agree with the
+weight. A weight that is still nothing but its optimizer steps -- every
+element of the reference within `steps` learning rates of zero, as a bias
+started at zero is after a few steps -- has no scale of its own for a relative
+bound to measure, so it is held to an absolute one instead: no element may be
+further from the reference than two learning rates, which is one step whose
+gradient sign the two runs' roundings disagreed on. The gate also requires a checkpoint replay to agree with the
 uninterrupted run within tolerance, and records whether it agreed bit for bit
 besides. When it
 did not, the useful question is which stage of the step is not reproducible,
