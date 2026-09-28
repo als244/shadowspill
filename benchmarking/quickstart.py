@@ -79,6 +79,7 @@ from shadowspill.runtime.failures import RuntimeExecutionError
 from shadowspill.schema import artifact_schema
 from shadowspill.search import search_geometries
 from shadowspill.store import STORE_MODES
+from tools.diagnostics.occupancy import write_run_timelines
 from tools.qualification.model_state import release_case_model
 from workloads.common.training import LEARNING_RATE
 from workloads.full_model import build_case, manifest_for
@@ -777,8 +778,27 @@ _REQUEST_SCHEMA = artifact_schema("quickstart_request")
 
 #: What a request is made of: every argument except the ones that say where
 #: this run writes or what it draws, which a reproduction chooses for itself.
-_NOT_REQUEST = frozenset({"reproduce", "output_dir", "force_overwrite", "plots"})
-_REPRODUCE_MAY_TAKE = frozenset({"--reproduce", "--output-dir", "--plots"})
+_NOT_REQUEST = frozenset(
+    {
+        "reproduce",
+        "output_dir",
+        "force_overwrite",
+        "plots",
+        "timelines",
+        "resolution_plans",
+    }
+)
+_REPRODUCE_MAY_TAKE = frozenset(
+    {
+        "--reproduce",
+        "--output-dir",
+        "--plots",
+        "--timelines",
+        "--no-timelines",
+        "--resolution-plans",
+        "--no-resolution-plans",
+    }
+)
 
 
 def _request_record(
@@ -940,6 +960,23 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--plots", action="store_true")
     parser.add_argument(
+        "--timelines",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="write every plan's pages under timelines/ as the run closes: the"
+        " pools and the lanes over the step, on the simulated clock for every"
+        " plan the search made and on the device's too for every budget that"
+        " ran; --no-timelines skips them",
+    )
+    parser.add_argument(
+        "--resolution-plans",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="keep every resolution's best plan in the plan store beside the"
+        " answer, certified, so the timelines carry a page per resolution;"
+        " several times the plan store, so off by default",
+    )
+    parser.add_argument(
         "--force-overwrite",
         action="store_true",
         help="replace an existing run at the output directory. Its artifact"
@@ -962,7 +999,8 @@ def _parser() -> argparse.ArgumentParser:
         " exactly: every setting is read from its request.json, the search is"
         " pinned to the calibration its search.json records, and plan-store"
         " mode is require, so a plan the store lacks refuses instead of being"
-        " searched again. Only --output-dir and --plots may be given with it",
+        " searched again. Only --output-dir, --plots, --timelines and"
+        " --resolution-plans may be given with it",
     )
     parser.add_argument(
         "--export-bypass-key",
@@ -1241,7 +1279,7 @@ def prepare_run_root(
     # begin within the same minute. Refuse, and say both ways out.
     written = tuple(
         name
-        for name in ("search.json", "progress.log", "steps", "figures")
+        for name in ("search.json", "progress.log", "steps", "figures", "timelines")
         if (run_root / name).exists()
     )
     if written and not arguments.force_overwrite:
@@ -1736,6 +1774,7 @@ class Tour:
                     search_options=self.policy,
                     transfer_bandwidths=arguments.transfer_bandwidths,
                     export_bypass_key=arguments.export_bypass_key,
+                    keep_resolutions=arguments.resolution_plans,
                 )
             print()
             print_search(report, request.tokens_per_step)
@@ -1955,6 +1994,7 @@ class Tour:
                 # the store cannot hand the plan back.
                 incumbent=incumbent,
                 transfer_bandwidths=self.lanes,
+                keep_resolutions=arguments.resolution_plans,
             )
         ledger.charge("run planning", marker)
         note_host_memory(plan_log, f"planned {gib(budget)}")
@@ -2083,6 +2123,22 @@ class Tour:
             self.ledger.charge("figures", marker)
             for path in written_run:
                 print(f"  figure: {path}")
+            print()
+        if arguments.timelines:
+            # Every plan the run made, as pages: the pools over the step and
+            # the fetch, compute and evict lanes, on the simulated clock for
+            # every search point and on the device's too for every budget
+            # that ran.
+            marker = time.perf_counter()
+            try:
+                index = write_run_timelines(self.paths.root)
+            except Exception as error:
+                # The run's data is complete on disk; a page that cannot be
+                # drawn is reported, and the tool can be run on it later.
+                print(f"  timelines: not written ({type(error).__name__}: {error})")
+            else:
+                self.ledger.charge("timelines", marker)
+                print(f"  timelines: {index}")
             print()
         release_case_model(self.case, runtime=self.runtime)
 
