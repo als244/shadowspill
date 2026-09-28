@@ -760,6 +760,7 @@ plan_step(
     master_dtype=None,
     grad_dtype=None,
     round_accumulation_once=False,
+    memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> PlannedTrainStep
 ```
 
@@ -782,6 +783,7 @@ Beyond the shared and store arguments:
 | `master_dtype` | `torch.dtype` \| `None` | `None` | Gives every weight the step trains at another dtype a master copy at this one, and builds `optimizer` over the masters; the update writes each weight from its master. See [the optimizer](../../architecture/optimizer.md#master-copies-and-the-dtype-gradients-are-kept-at). |
 | `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
 | `round_accumulation_once` | `bool` | `False` | Lets a matrix multiply add its product into running gradients kept narrower than it sums at -- bf16 -- rounding the sum once instead of twice and saving a pass over the gradient; the step then no longer computes what adding after the multiply computes. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
+| `memory_bound_flops_per_byte` | `float` | `16.0` | The arithmetic intensity, in flops per byte moved, at or under which a stage's `save` graph pair regenerates an operator's results in the backward rather than retaining them: a normalization, an activation, a rotation, a cast, a gather. Above it the results are retained, and so are those of any custom operator whose library registered no flop formula. The default sits well under any device's ridge point, so the classification does not depend on the machine; the value is part of the step's identity in the store. See [the save variant](../../architecture/graph-pair-construction.md#save). |
 
 `depth` and `breadth` say how the step walks those microbatches: `depth`
 passes of `breadth` microbatches each, every microbatch of a pass running one
@@ -860,6 +862,7 @@ build_step_programs(
     master_dtype=None,
     grad_dtype=None,
     round_accumulation_once=False,
+    memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> tuple[StepProgram, ...]
 ```
 
@@ -919,13 +922,15 @@ plan_step_search(
     master_dtype=None,
     grad_dtype=None,
     round_accumulation_once=False,
+    memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> StepSearchReport
 ```
 
 `model`, `objective`, `optimizer`, `hyperparams`,
 `runtime`, `execution`, `spill`,
-`optimizer_ordering`, `master_dtype`, `grad_dtype`, `round_accumulation_once`
-and the store arguments mean what they mean for `plan_step()`. The rest are:
+`optimizer_ordering`, `master_dtype`, `grad_dtype`, `round_accumulation_once`,
+`memory_bound_flops_per_byte` and the store arguments mean what they mean for
+`plan_step()`. The rest are:
 
 | argument | type | default | what it must be |
 |---|---|---|---|

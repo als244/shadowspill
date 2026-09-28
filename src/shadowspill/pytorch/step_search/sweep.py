@@ -54,6 +54,7 @@ class _Build:
     master_dtype: torch.dtype | None
     grad_dtype: torch.dtype | None
     round_accumulation_once: bool
+    memory_bound_flops_per_byte: float
 
     def programs(
         self,
@@ -85,6 +86,7 @@ class _Build:
                     master_dtype=self.master_dtype,
                     grad_dtype=self.grad_dtype,
                     round_accumulation_once=self.round_accumulation_once,
+                    memory_bound_flops_per_byte=self.memory_bound_flops_per_byte,
                 ),
                 None,
             )

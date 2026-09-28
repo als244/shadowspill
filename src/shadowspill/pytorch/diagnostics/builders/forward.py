@@ -173,7 +173,9 @@ def _forward_unique_stage(
             PlanGraphPair(
                 variant="inference",
                 memory_budget=None,
-                recomputation=False,
+                memory_bound_flops_per_byte=None,
+                regenerated_operators=(),
+                unknown_operators=(),
                 saved_value_count=0,
                 specialized_unit_tangent_count=0,
                 saved_input_root_count=0,

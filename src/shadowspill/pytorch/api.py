@@ -14,6 +14,7 @@ from shadowspill.planner import SearchOptions
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.pytorch.callables import PlannedForward, PlannedTrainStep
+from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.pytorch.runtime import Runtime
 from shadowspill.pytorch.sharing import SharedOutput
@@ -315,6 +316,7 @@ def plan_step(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -377,6 +379,16 @@ def plan_step(
     product first: ``round_accumulation_once`` has the multiply add those too,
     for one rounding instead of two and one pass fewer over the gradient, at
     the price of a step that no longer computes what adding after computes.
+
+    ``memory_bound_flops_per_byte`` is the arithmetic intensity, in flops per
+    byte moved, at or under which a stage's ``save`` graph pair regenerates
+    an operator's results in the backward rather than retaining them: a
+    normalization, an activation, a rotation, a cast, a gather. Above it the
+    results are retained, and so are those of any custom operator whose
+    library registered no flop formula. The default sits well under any
+    device's ridge point, so the classification does not depend on the
+    machine; the value is part of the step's identity in the store. See
+    :doc:`graph-pair construction </architecture/graph-pair-construction>`.
 
     A value that varies between steps -- a scheduled learning rate, say --
     is passed to the optimizer as a **tensor** rather than a float, and
@@ -493,6 +505,7 @@ def plan_step(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
+                memory_bound_flops_per_byte=memory_bound_flops_per_byte,
             )
         hold_persistent_state(runtime, model, memory.plan_handle)
         return step
@@ -533,6 +546,7 @@ def build_step_programs(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> tuple[StepProgram, ...]:
     """Capture, profile, and lower a reusable step without searching.
 
@@ -617,6 +631,7 @@ def build_step_programs(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
+                memory_bound_flops_per_byte=memory_bound_flops_per_byte,
             )
         try:
             abort_plan(runtime)

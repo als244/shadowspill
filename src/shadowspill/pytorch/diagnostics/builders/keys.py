@@ -30,7 +30,7 @@ def _pair_key(pair: AotGraphPair) -> dict[str, object]:
     return {
         "forward": pair.forward.compatibility_digest,
         "backward": pair.backward.compatibility_digest,
-        "recomputation": pair.recomputation,
+        "retention": pair.retention.identity(),
         "saved_value_count": pair.saved_value_count,
         "specialized_unit_tangent_count": pair.specialized_unit_tangent_count,
     }

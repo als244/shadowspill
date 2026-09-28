@@ -209,17 +209,20 @@ stage = next(
 for pair in stage.graph_pairs:
     print(
         pair.variant,
-        pair.recomputation,
+        pair.memory_budget,
+        pair.regenerated_operators,
         pair.saved_value_count,
         pair.forward.runtime_ns,
         None if pair.backward is None else pair.backward.runtime_ns,
     )
 ```
 
-A graph pair records the selected memory-budget alternative, recomputation
-flag, saved-value categories and bytes, and forward/backward physical profiles.
-The task record's `chosen_graph_pair_variant` is the direct bridge from an
-execution ID to the chosen alternative.
+A graph pair records the partition budget it was captured under, the
+threshold at or under which its forward operators were regenerated in the
+backward and which operators those were, the custom operators no flop formula
+priced, saved-value categories and bytes, and forward/backward physical
+profiles. The task record's `chosen_graph_pair_variant` is the direct bridge
+from an execution ID to the chosen alternative.
 
 ## Interpreting a graph profile
 
@@ -365,7 +368,7 @@ planning workflow.
 | Planning is slow | `diagnostics.phases`, compiler profiles, cache hits/misses, then the search's work counts. |
 | Predicted step is slow | Selected resolved program, candidate policy, transfer bytes, task profiles, and simulator makespan. |
 | One task is unexpectedly large | Execution task → unique stage → chosen graph pair → forward/backward graph profile byte fields. |
-| Save and recompute look identical | Graph-pair saved-value counts/bytes, active tasks, and semantic root/output contracts. |
+| Save and recompute look identical | Graph-pair saved-value counts/bytes, `regenerated_operators` and `unknown_operators`, active tasks, and semantic root/output contracts. |
 | Plan repeatedly refines capacity | Physical-layout attempts, required bytes against pool capacity, dynamic/scratch reserves, and search repairs. |
 | Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, export bypass key, and allocation-probe policy. |
 | Real execution disagrees with the plan | Resolve a traced step and use the [Step diagnostics guide](step-diagnostics.md). |

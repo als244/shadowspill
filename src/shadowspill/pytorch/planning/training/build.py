@@ -15,6 +15,7 @@ from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search import SearchOptions
+from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.planning.training.plan import plan_training_programs
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
@@ -62,13 +63,15 @@ def build_training(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
     `incumbent` is the plan to beat, and
     `transfer_bandwidths` the lanes to price copies at instead of the
     runtime's calibration, both as :func:`shadowspill.planner.plan_program`
-    takes them.
+    takes them. `memory_bound_flops_per_byte` is what every stage's ``save``
+    variant regenerates rather than retains, as :func:`plan_step` takes it.
     """
 
     started = time.perf_counter_ns()
@@ -89,6 +92,7 @@ def build_training(
         timer=timer,
         grad_dtype=grad_dtype,
         round_accumulation_once=round_accumulation_once,
+        memory_bound_flops_per_byte=memory_bound_flops_per_byte,
     )
     materialized = materialize_training_state(
         model,
