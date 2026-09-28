@@ -317,6 +317,7 @@ def plan_step(
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    keep_resolutions: bool = False,
 ) -> PlannedTrainStep:
     """Plan a fixed accumulated forward/objective/backward/update program.
 
@@ -506,6 +507,7 @@ def plan_step(
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
+                keep_resolutions=keep_resolutions,
             )
         hold_persistent_state(runtime, model, memory.plan_handle)
         return step

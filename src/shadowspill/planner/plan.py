@@ -80,6 +80,7 @@ def plan_program(
     verbose: bool = True,
     plan_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
+    keep_resolutions: bool = False,
 ) -> AnnotatedProgramPlan:
     """Plan one problem: search, simulate, and physically admit the winner.
 
@@ -112,6 +113,14 @@ def plan_program(
     ``plan_store`` keeps this call's request, selection and plan manifest
     apart from the artifact store, so one store can serve many runs that
     each own their plans; ``None`` keeps them in the store.
+
+    ``keep_resolutions`` files every resolved program's best plan beside
+    the answer, certified like it, when the search runs: what each way of
+    fixing the alternatives found, for reading against the answer. Off by
+    default, since each is as large as the answer. A resolution the search
+    stopped measuring, because a plan already placed bounded it, has no
+    plan to keep; ``deterministic`` search options make every resolution
+    report the plan it found.
     """
 
     from .selection import select_program
@@ -134,6 +143,7 @@ def plan_program(
         incumbent=None if incumbent is None else incumbent.result,
         artifact_store=cache,
         verbose=verbose,
+        keep_resolutions=keep_resolutions,
     )
 
 

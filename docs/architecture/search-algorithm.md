@@ -106,6 +106,7 @@ Answer with a schedule.
 | `placement` | `AdmissionFacts \| None` | The pool a layout must fit; measure against it as you go |
 | `progress` | `(str) -> None \| None` | One line per phase, or `None` |
 | `incumbent` | `ProgramPlanResult \| None` | A plan already in hand, offered as a bound |
+| `keep_resolutions` | `bool` | Report every resolved program's best plan beside the answer, as `ProgramPlanResult.resolutions`: each one that reached a plan, which under a shared bound is not every one. Passed only when a caller asked; a search that plans one resolution may leave it empty |
 
 Your own options are not in that list: you were built with them and read
 them off `self.options`.
@@ -216,7 +217,7 @@ class FirstFit(SearchAlgorithm):
 
     def __call__(self, program, *, initial_residency, final_residency=(),
                  config, generic, workers=0, admission=None, placement=None,
-                 progress=None, incumbent=None):
+                 progress=None, incumbent=None, keep_resolutions=False):
         # the toolkit does the parts that are not this search's business
         toolkit.validate_search_inputs(
             program, initial_residency, final_residency, config, admission

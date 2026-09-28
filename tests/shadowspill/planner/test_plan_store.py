@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from shadowspill.ir import ShadowSpillProgram, TaskProfile, TaskSpec
+from shadowspill.ir import (
+    AliasGroupSpec,
+    ShadowSpillProgram,
+    TaskAlternativeGroup,
+    TaskAlternativeOption,
+    TaskProfile,
+    TaskSpec,
+)
 from shadowspill.planner import (
     GenericPlanningOptions,
     SearchOptions,
@@ -685,3 +692,117 @@ def test_a_rewritten_plan_drops_its_summary_until_it_is_certified_again(
     assert not refreshed.from_store
     assert not cache.summary_path(key).exists()
     assert cache.summary(program, **request) is None  # type: ignore[arg-type]
+
+
+def _alternatives_program() -> ShadowSpillProgram:
+    """No objects and one open choice: ``save`` costs 10 and keeps a slot no
+    task touches, ``recompute`` costs 20 and keeps nothing -- a choice, not
+    one plan spelled twice -- beside a fixed task of 5, so both resolutions
+    place as they are and the search answers with ``save``."""
+
+    return ShadowSpillProgram(
+        devices=(DEVICE,),
+        alias_groups=(AliasGroupSpec("kept", "cuda_0", 64),),
+        objects=(),
+        profiles=(
+            TaskProfile("fixed", 5, 0, "abi"),
+            TaskProfile("cheap", 10, 0, "abi"),
+            TaskProfile("dear", 20, 0, "abi"),
+        ),
+        tasks=(
+            TaskSpec("first", COMPUTE, "fixed"),
+            TaskSpec("saved", COMPUTE, "cheap", dependencies=("first",)),
+            TaskSpec("regenerated", COMPUTE, "dear", dependencies=("first",)),
+        ),
+        task_alternative_groups=(
+            TaskAlternativeGroup(
+                "choice",
+                (
+                    TaskAlternativeOption("save", ("saved",), ("kept",)),
+                    TaskAlternativeOption("recompute", ("regenerated",)),
+                ),
+            ),
+        ),
+    )
+
+
+def test_every_resolutions_best_plan_is_kept_beside_the_answer_when_asked(
+    tmp_path: Path,
+) -> None:
+    """Asked to, a search files each resolved program's best plan under the
+    answer's key, named by the share it recomputes, the answer marked; the
+    certificate step certifies each beside the answer. Unasked, nothing."""
+
+    program = _alternatives_program()
+    request = dict(
+        initial_residency=(),
+        final_residency=(),
+        config=config(),
+        # deterministic, so the dearer resolution is measured rather than
+        # bounded away once the cheaper one has placed, and reports its plan
+        search_options=replace(
+            FEW_CANDIDATES,
+            generic=GenericPlanningOptions(
+                minimum_object_bytes_evict_eligible=0, deterministic=True
+            ),
+        ),
+    )
+    alone = PlanStore(tmp_path / "alone").resolve(program, **request)
+    assert alone.result.resolutions == ()
+    assert not list((tmp_path / "alone").rglob("resolutions"))
+
+    store = PlanStore(tmp_path / "kept")
+    kept = store.resolve(program, **request, keep_resolutions=True)
+    assert kept.result.diagnostics.selected_selection_id == "choice=save"
+    by_id = {plan.selection_id: plan for plan in kept.result.resolutions}
+    assert sorted(by_id) == ["choice=recompute", "choice=save"]
+    assert by_id["choice=save"].schedule == kept.result.schedule
+    assert (
+        by_id["choice=save"].simulation.makespan_ns
+        == kept.result.simulation.makespan_ns
+    )
+    assert (
+        by_id["choice=recompute"].simulation.makespan_ns
+        > kept.result.simulation.makespan_ns
+    )
+    records = {
+        path.parent.name: json.loads(path.read_text())
+        for path in (tmp_path / "kept").rglob("resolutions/*/selection.json")
+    }
+    assert sorted(records) == ["recompute_0", "recompute_1"]
+    assert records["recompute_0"]["resolution"] == {
+        "label": "recompute_0",
+        "selection_id": "choice=save",
+        "candidate_id": kept.result.diagnostics.selected_candidate_id,
+        "recompute_share": "0",
+        "selected": True,
+    }
+    assert records["recompute_1"]["resolution"]["selected"] is False
+    assert records["recompute_1"]["schema"] == artifact_schema("plan_resolution")
+    assert records["recompute_1"]["key_digest"] == kept.key
+    assert "admission_certificate" not in records["recompute_1"]
+    assert "diagnostics" not in records["recompute_1"]
+
+    facts = _facts(program, config().devices[0].capacity_bytes)
+    resolve_fixed_layout_selection(
+        config(),
+        facts,
+        lambda _config: kept,
+        certify=store.certify,
+        certify_resolution=store.certify_resolution,
+    )
+    for name, path in (
+        (path.parent.name, path)
+        for path in (tmp_path / "kept").rglob("resolutions/*/selection.json")
+    ):
+        certified = json.loads(path.read_text())
+        assert "admission_certificate" in certified, name
+        assert certified["resolution"]["label"] == name
+
+    # a hit reads the answer alone, and leaves the kept records as they are
+    again = store.resolve(program, **request, keep_resolutions=True)
+    assert again.from_store and again.result.resolutions == ()
+    assert sorted(
+        path.parent.name
+        for path in (tmp_path / "kept").rglob("resolutions/*/selection.json")
+    ) == ["recompute_0", "recompute_1"]

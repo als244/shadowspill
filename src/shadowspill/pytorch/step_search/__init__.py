@@ -80,6 +80,7 @@ def plan_step_search(
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    keep_resolutions: bool = False,
 ) -> StepSearchReport:
     """Plan every admitted geometry under every budget; execute nothing.
 
@@ -165,6 +166,7 @@ def plan_step_search(
             plan_store,
             plan_store_mode,
             verbose,
+            keep_resolutions,
         ),
         budgets=tuple(budgets),
         incumbents=incumbents,
