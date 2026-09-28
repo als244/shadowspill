@@ -237,8 +237,11 @@ for step in schedule:
 The optimizer is passed as it is -- no placeholder value, no wrapper. Planning
 holds each named value in a scalar tensor before the update is captured, so the
 capture takes it as an input; each call writes the values into those tensors.
-Nothing is recaptured, nothing is recompiled, and the step is otherwise
-unchanged.
+A name that is a model buffer is a tensor already, and state the plan owns:
+the module's tensor is the plan's handle on it after planning, so each call
+writes the value into the pool the state lives in, once the previous step has
+finished with the old one. Nothing is recaptured, nothing is recompiled, and
+the step is otherwise unchanged.
 
 That is the same split the state above follows: planning is handed a
 declaration, and each step is handed the values.
