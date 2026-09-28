@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Occupancy __TITLE__</title>
+<style>
+  :root { --bg: #ffffff; --ink: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7; --panel: #fbfbfd; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #161618; --ink: #f1f1f3; --muted: #a1a1a6; --line: #3a3a3f; --panel: #1f1f22; }
+  }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink); font: 14px/1.4 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin-bottom: 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 12px 6px; margin-bottom: 14px; }
+  .head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .head h2 { font-size: 16px; margin: 0; }
+  .head .meta { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .controls { margin-left: auto; display: flex; gap: 6px; align-items: center; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; font: inherit; }
+  canvas { display: block; width: 100%; touch-action: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; padding: 6px 4px 4px; }
+  .legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .legend .rule::before { width: 14px; height: 0; border-top: 2px dashed var(--c); border-radius: 0; vertical-align: 3px; background: none; }
+  .legend .head { color: var(--muted); }
+  .legend .head::before { display: none; }
+  .legend .gap { flex-basis: 100%; height: 0; }
+  .legend .gap::before { display: none; }
+  .cards { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 8px; }
+  .card { border: 1px solid var(--line); border-left: 4px solid #4f6fd8; border-radius: 8px; padding: 6px 12px; min-width: 120px; background: var(--bg); }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .card .v { font: 600 18px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); padding: 6px 8px; border-radius: 6px; font: 12px/1.35 ui-monospace, Menlo, monospace; white-space: pre; display: none; z-index: 5; max-width: 60vw; }
+</style>
+</head>
+<body>
+<h1>Occupancy over the step: __TITLE__</h1>
+<div class="sub" id="plan"></div>
+<div class="sub" id="sub"></div>
+<div id="panels"></div>
+<div id="tip"></div>
+<script id="data" type="application/json">__OCCUPANCY_DATA__</script>
+<script>
+(function () {
+  const DATA = JSON.parse(document.getElementById("data").textContent);
+  // Two families that never share a hue: objects (pools, and transfer bars)
+  // in blues, purples, pinks, teals and greens; task phases (compute bars)
+  // in dark navy, brown and grey, with the regenerating part in yellow.
+  const PALETTE = {
+    "weights": "#5c6bc0", "optimizer state": "#b39ddb", "model gradients": "#ec407a", "tangents": "#f8bbd0",
+    "saved activations": "#26a69a", "recomputed activations": "#80cbc4", "inputs": "#9ccc65", "buffers": "#dce775",
+    "control": "#90a4ae", "outputs": "#ffa726", "task workspace": "#fff59d", "unattributed": "#bdbdbd",
+    "forward": "#1e3a5f", "backward": "#4e342e", "optimizer": "#616161", "recompute": "#ffd600",
+    "parameter": "#5c6bc0", "optimizer_state": "#b39ddb", "gradient": "#ec407a", "activation": "#26a69a",
+    "buffer": "#dce775", "output": "#ffa726",
+  };
+  const FALLBACK = ["#f06292", "#ba68c8", "#4dd0e1", "#aed581", "#ffb74d", "#a1887f"];
+  let fallbackIndex = 0;
+  const color = (name) => PALETTE[name] || (PALETTE[name] = FALLBACK[fallbackIndex++ % FALLBACK.length]);
+  const fmtGiB = (v) => v >= 100 ? v.toFixed(0) + " GiB" : v >= 10 ? v.toFixed(1) + " GiB" : v.toFixed(2) + " GiB";
+  const fmtBytes = (b) => b >= 2 ** 30 ? (b / 2 ** 30).toFixed(2) + " GiB" : b >= 2 ** 20 ? (b / 2 ** 20).toFixed(1) + " MiB" : (b / 1024).toFixed(0) + " KiB";
+  const fmtS = (s) => s >= 10 ? s.toFixed(2) + " s" : s.toFixed(3) + " s";
+
+  document.getElementById("plan").textContent = DATA.plan || "";
+  document.getElementById("sub").textContent = DATA.clock + " · step of " + fmtS(DATA.end_seconds)
+    + (DATA.summary && DATA.summary.assumed_fetch_gbps != null ? " · planned against fetch " + DATA.summary.assumed_fetch_gbps.toFixed(1) + " GB/s, evict " + DATA.summary.assumed_evict_gbps.toFixed(1) + " GB/s" + (DATA.summary.assumed_fetch_latency_us != null ? ", latency " + DATA.summary.assumed_fetch_latency_us.toFixed(0) + " us" : "") : "")
+    + (DATA.untimed_transfers ? " · " + DATA.untimed_transfers + " transfers the trace could not time, off the lanes" : "")
+    + " · drag across a span to zoom to it, shift-drag to pan, scroll to zoom, fit resets, one zoom for every panel · dashed red: capacity, dotted amber: peak";
+
+  // One viewport, shared by every panel.
+  const view = { t0: 0, t1: DATA.end_seconds };
+  const panels = [];
+  const tip = document.getElementById("tip");
+  const LEFT = 64, RIGHT = 12, TOP = 8, BOTTOM = 22;
+
+  function makePanel(title, meta, height) {
+    const root = document.createElement("div"); root.className = "panel";
+    const head = document.createElement("div"); head.className = "head";
+    const h2 = document.createElement("h2"); h2.textContent = title;
+    const m = document.createElement("span"); m.className = "meta"; m.textContent = meta;
+    const controls = document.createElement("div"); controls.className = "controls";
+    const minus = document.createElement("button"); minus.textContent = "−";
+    const zoom = document.createElement("span"); zoom.textContent = "1.00×";
+    const plus = document.createElement("button"); plus.textContent = "+";
+    const fit = document.createElement("button"); fit.textContent = "fit";
+    controls.append(minus, zoom, plus, fit);
+    head.append(h2, m, controls); root.append(head);
+    const canvas = document.createElement("canvas"); canvas.height = height; root.append(canvas);
+    const legend = document.createElement("div"); legend.className = "legend"; root.append(legend);
+    document.getElementById("panels").append(root);
+    const panel = { root, canvas, legend, zoomLabel: zoom, height };
+    minus.onclick = () => zoomBy(0.5, (view.t0 + view.t1) / 2);
+    plus.onclick = () => zoomBy(2, (view.t0 + view.t1) / 2);
+    fit.onclick = () => { view.t0 = 0; view.t1 = DATA.end_seconds; redraw(); };
+    attachInteraction(panel);
+    panels.push(panel);
+    return panel;
+  }
+
+  function zoomBy(factor, center) {
+    const span = (view.t1 - view.t0) / factor;
+    const minSpan = DATA.end_seconds / 4000, maxSpan = DATA.end_seconds;
+    const clamped = Math.min(maxSpan, Math.max(minSpan, span));
+    const frac = (center - view.t0) / (view.t1 - view.t0);
+    view.t0 = Math.max(0, center - frac * clamped);
+    view.t1 = Math.min(DATA.end_seconds, view.t0 + clamped);
+    view.t0 = Math.max(0, view.t1 - clamped);
+    redraw();
+  }
+
+  function attachInteraction(panel) {
+    const c = panel.canvas;
+    let dragging = null;
+    c.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const t = xToT(panel, x);
+      zoomBy(e.deltaY < 0 ? 1.25 : 0.8, t);
+    }, { passive: false });
+    c.addEventListener("pointerdown", (e) => {
+      const rect = c.getBoundingClientRect();
+      dragging = { x: e.clientX, startX: e.clientX - rect.left, t0: view.t0, t1: view.t1, pan: e.shiftKey || e.button === 1 };
+      c.setPointerCapture(e.pointerId);
+    });
+    c.addEventListener("pointerup", (e) => {
+      if (!dragging) return;
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const a = Math.min(dragging.startX, x), b = Math.max(dragging.startX, x);
+      const chose = !dragging.pan && b - a > 4;
+      dragging = null; panel.selection = null;
+      if (chose) {
+        const t0 = Math.max(0, xToT(panel, a)), t1 = Math.min(DATA.end_seconds, xToT(panel, b));
+        if (t1 - t0 >= DATA.end_seconds / 4000) { view.t0 = t0; view.t1 = t1; }
+      }
+      redraw();
+    });
+    c.addEventListener("pointermove", (e) => {
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left, y = e.clientY - rect.top;
+      if (dragging && dragging.pan) {
+        const dt = (dragging.x - e.clientX) / plotWidth(panel) * (dragging.t1 - dragging.t0);
+        const span = dragging.t1 - dragging.t0;
+        view.t0 = Math.min(Math.max(0, dragging.t0 + dt), DATA.end_seconds - span);
+        view.t1 = view.t0 + span;
+        redraw();
+      } else if (dragging) {
+        panel.selection = [Math.max(LEFT, Math.min(dragging.startX, x)), Math.min(c.clientWidth - RIGHT, Math.max(dragging.startX, x))];
+        panel.draw(prepare(panel));
+        drawSelection(panel);
+      }
+      const text = panel.hover ? panel.hover(x, y) : null;
+      if (text) { tip.style.display = "block"; tip.textContent = text; tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px"; }
+      else tip.style.display = "none";
+    });
+    c.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+  }
+
+  const plotWidth = (panel) => panel.canvas.clientWidth - LEFT - RIGHT;
+  const tToX = (panel, t) => LEFT + (t - view.t0) / (view.t1 - view.t0) * plotWidth(panel);
+  const xToT = (panel, x) => view.t0 + (x - LEFT) / plotWidth(panel) * (view.t1 - view.t0);
+
+  function prepare(panel) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = panel.canvas.clientWidth;
+    panel.canvas.width = Math.round(w * dpr); panel.canvas.height = Math.round(panel.height * dpr);
+    const ctx = panel.canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, panel.height);
+    ctx.font = "11px ui-monospace, Menlo, monospace";
+    panel.zoomLabel.textContent = (DATA.end_seconds / (view.t1 - view.t0)).toFixed(2) + "×";
+    return ctx;
+  }
+
+  function timeAxis(ctx, panel) {
+    const y = panel.height - BOTTOM;
+    ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--line");
+    ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted");
+    ctx.beginPath(); ctx.moveTo(LEFT, y + 0.5); ctx.lineTo(panel.canvas.clientWidth - RIGHT, y + 0.5); ctx.stroke();
+    const span = view.t1 - view.t0;
+    const step = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20].find((s) => span / s <= 12) || 50;
+    for (let t = Math.ceil(view.t0 / step) * step; t <= view.t1 + 1e-9; t += step) {
+      const x = tToX(panel, t);
+      ctx.beginPath(); ctx.moveTo(x + 0.5, y); ctx.lineTo(x + 0.5, y + 4); ctx.stroke();
+      ctx.textAlign = "center"; ctx.fillText((step < 1 ? t.toFixed(step < 0.01 ? 3 : 2) : t.toFixed(0)) + "s", x, y + 15);
+    }
+  }
+
+  // --- the summary cards ---------------------------------------------------------------
+  if (DATA.summary) {
+    const S = DATA.summary;
+    const rate = (achieved, assumed) => (achieved == null ? "n/a" : achieved.toFixed(1) + " GB/s") + (assumed == null ? "" : " (" + assumed.toFixed(1) + " assumed)");
+    const cards = [
+      ["overall time", fmtS(S.seconds)],
+      ["tokens/s", S.tokens_per_second == null ? "n/a" : Math.round(S.tokens_per_second).toLocaleString()],
+      ["peak spill memory", fmtGiB(S.spill_peak_gib)],
+      ["peak execution memory", S.execution_peak_gib == null ? "n/a" : fmtGiB(S.execution_peak_gib)],
+      ["idle", S.idle_percent.toFixed(1) + "%"],
+      ["recompute", S.recompute_percent.toFixed(1) + "%"],
+      ["fetch lane util", S.fetch_utilization_percent.toFixed(1) + "%"],
+      ["evict lane util", S.evict_utilization_percent.toFixed(1) + "%"],
+      ["fetched", fmtGiB(S.fetch_gib)],
+      ["evicted", fmtGiB(S.evict_gib)],
+      ["fetch rate", rate(S.fetch_gbps, S.assumed_fetch_gbps)],
+      ["evict rate", rate(S.evict_gbps, S.assumed_evict_gbps)],
+    ];
+    const root = document.createElement("div"); root.className = "panel";
+    const h2 = document.createElement("h2"); h2.textContent = "Summary"; h2.style.fontSize = "16px"; h2.style.margin = "0 0 8px"; root.append(h2);
+    const row = document.createElement("div"); row.className = "cards";
+    cards.forEach(([k, v]) => { const c = document.createElement("div"); c.className = "card"; const kk = document.createElement("div"); kk.className = "k"; kk.textContent = k; const vv = document.createElement("div"); vv.className = "v"; vv.textContent = v; c.append(kk, vv); row.append(c); });
+    root.append(row); document.getElementById("panels").prepend(root);
+  }
+
+  // --- the lanes: fetch, compute, evict -------------------------------------------
+  if (DATA.compute) {
+    const lanes = [["fetch", "fetch", DATA.fetch], ["compute", "compute", DATA.compute], ["evict", "evict", DATA.evict]];
+    const meta = DATA.fetch.length + " fetches · " + DATA.compute.length + " tasks · " + DATA.evict.length + " evictions";
+    const panel = makePanel("fetch, compute and evict lanes", meta, 3 * 62 + BOTTOM + TOP);
+    const objectNames = new Set();
+    DATA.fetch.concat(DATA.evict).forEach((s) => objectNames.add(s[3]));
+    const group = (title, names, suffix) => {
+      const head = document.createElement("span"); head.className = "head"; head.textContent = title; panel.legend.append(head);
+      names.forEach((n) => { const s = document.createElement("span"); s.style.setProperty("--c", color(n)); s.textContent = n + suffix; panel.legend.append(s); });
+      const gap = document.createElement("span"); gap.className = "gap"; panel.legend.append(gap);
+    };
+    group("fetch and evict bars, by the object moved:", Array.from(objectNames), "");
+    group("compute bars, by the task's phase:", ["forward", "backward", "optimizer"], " tasks");
+    const rc = document.createElement("span"); rc.style.setProperty("--c", color("recompute")); rc.textContent = "recompute: the first part of a backward task that regenerates, its profiled cost beyond the save variant"; panel.legend.append(rc);
+    const LANE_H = 62, BAR = 44;
+    panel.draw = (ctx) => {
+      const W = panel.canvas.clientWidth;
+      const width = Math.max(1, Math.floor(plotWidth(panel)));
+      const span = view.t1 - view.t0;
+      lanes.forEach(([kind, label, items], row) => {
+        const y = TOP + row * LANE_H + (LANE_H - BAR) / 2;
+        ctx.textAlign = "right"; ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted"); ctx.fillText(label, LEFT - 8, y + BAR / 2 + 4);
+        ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--line");
+        ctx.beginPath(); ctx.moveTo(LEFT, y + BAR + 0.5); ctx.lineTo(W - RIGHT, y + BAR + 0.5); ctx.stroke();
+        // Rasterise the lane by pixel column: a column is filled when any bar
+        // covers part of it and takes the colour of the category covering
+        // most of it, so a burst of transfers far narrower than a pixel is a
+        // visible block rather than a single hairline.
+        const tally = new Array(width);
+        const paint = (s, e, c) => {
+          if (e < view.t0 || s > view.t1 || e <= s) return;
+          const x0 = (Math.max(s, view.t0) - view.t0) / span * width;
+          const x1 = Math.max((Math.min(e, view.t1) - view.t0) / span * width, x0 + 1e-6);
+          const c0 = Math.max(0, Math.floor(x0)), c1 = Math.min(width - 1, Math.floor(x1));
+          for (let col = c0; col <= c1; col++) {
+            const part = Math.min(x1, col + 1) - Math.max(x0, col);
+            if (part <= 0) continue;
+            let m = tally[col]; if (!m) m = tally[col] = new Map();
+            m.set(c, (m.get(c) || 0) + part);
+          }
+        };
+        for (const it of items) {
+          if (kind === "compute" && it[4] > 0) {
+            // a recompute backward: its regeneration first, then the backward itself
+            const split = Math.min(it[1], it[0] + it[4]);
+            paint(it[0], split, "recompute");
+            paint(split, it[1], it[2]);
+          } else {
+            paint(it[0], it[1], kind === "compute" ? it[2] : it[3]);
+          }
+        }
+        let runStart = -1, runCat = null;
+        for (let col = 0; col <= width; col++) {
+          let cat = null;
+          const m = col < width ? tally[col] : null;
+          if (m) { let best = 0; m.forEach((v, k) => { if (v > best) { best = v; cat = k; } }); }
+          if (cat !== runCat) {
+            if (runCat !== null) { ctx.fillStyle = color(runCat); ctx.fillRect(LEFT + runStart, y, col - runStart, BAR); }
+            runStart = col; runCat = cat;
+          }
+        }
+        // outline the bars wide enough to be seen as bars
+        ctx.strokeStyle = "rgba(0,0,0,0.25)";
+        for (const it of items) {
+          if (it[1] < view.t0 || it[0] > view.t1) continue;
+          const x0 = Math.max(LEFT, tToX(panel, it[0])), x1 = Math.min(W - RIGHT, tToX(panel, it[1]));
+          if (x1 - x0 > 3) ctx.strokeRect(x0 + 0.5, y + 0.5, x1 - x0 - 1, BAR - 1);
+        }
+      });
+      timeAxis(ctx, panel);
+    };
+    panel.hover = (x, y) => {
+      const row = Math.floor((y - TOP) / LANE_H);
+      if (row < 0 || row > 2 || x < LEFT) return null;
+      const t = xToT(panel, x);
+      const [kind, label, items] = lanes[row];
+      const tol = (view.t1 - view.t0) / plotWidth(panel);
+      let best = null;
+      for (const it of items) { if (it[0] - tol <= t && t <= it[1] + tol) { best = it; if (it[0] <= t && t <= it[1]) break; } }
+      if (!best) return null;
+      if (kind === "compute") return best[3] + "\n" + best[2] + " task  " + fmtS(best[0]) + " → " + fmtS(best[1]) + "  (" + ((best[1] - best[0]) * 1e3).toFixed(2) + " ms)" + (best[4] > 0 ? "\nrecompute: " + (best[4] * 1e3).toFixed(2) + " ms of it regenerates" : "");
+      const seconds = best[1] - best[0];
+      return label + ": " + best[3] + "  " + fmtBytes(best[2]) + "\n" + best[4] + "  " + fmtS(best[0]) + " → " + fmtS(best[1]) + "  (" + (seconds * 1e3).toFixed(2) + " ms" + (seconds > 0 ? ", " + (best[2] / seconds / 1e9).toFixed(1) + " GB/s" : "") + ")";
+    };
+  }
+
+  // --- the pools: stacked areas ------------------------------------------------
+  (DATA.pools || []).forEach((pool) => {
+    const names = Object.keys(pool.rows);
+    const meta = "peak " + fmtGiB(pool.peak_gib) + " at " + fmtS(pool.peak_seconds)
+      + (pool.reported_peak_gib != null ? " · planner " + fmtGiB(pool.reported_peak_gib) : "")
+      + (pool.capacity_gib != null ? " · capacity " + fmtGiB(pool.capacity_gib) : "")
+      + (pool.note ? " · " + pool.note : "");
+    const panel = makePanel(pool.name + " pool over time", meta, 260);
+    names.forEach((n) => { const s = document.createElement("span"); s.style.setProperty("--c", color(n)); s.textContent = n; panel.legend.append(s); });
+    if (pool.capacity_gib != null) { const s = document.createElement("span"); s.className = "rule"; s.style.setProperty("--c", "#d33"); s.textContent = "capacity"; panel.legend.append(s); }
+    const top = Math.max(pool.capacity_gib || 0, pool.peak_gib) * 1.06 || 1;
+    const stacked = names.map(() => null);
+    panel.draw = (ctx) => {
+      const H = panel.height - BOTTOM, W = panel.canvas.clientWidth;
+      const yOf = (v) => TOP + (H - TOP) * (1 - v / top);
+      // grid
+      ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue("--line");
+      ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted");
+      const gstep = [1, 2, 5, 10, 20, 25, 50, 100].find((s) => top / s <= 6) || 200;
+      for (let v = 0; v <= top; v += gstep) { const y = yOf(v); ctx.beginPath(); ctx.moveTo(LEFT, y + 0.5); ctx.lineTo(W - RIGHT, y + 0.5); ctx.stroke(); ctx.textAlign = "right"; ctx.fillText(fmtGiB(v), LEFT - 6, y + 4); }
+      // visible sample range
+      const times = pool.times;
+      let i0 = 0; while (i0 < times.length - 1 && times[i0 + 1] < view.t0) i0++;
+      let i1 = times.length - 1; while (i1 > 0 && times[i1 - 1] > view.t1) i1--;
+      const base = new Float64Array(i1 - i0 + 1);
+      names.forEach((n, k) => {
+        const row = pool.rows[n];
+        ctx.beginPath();
+        for (let i = i0; i <= i1; i++) ctx.lineTo(tToX(panel, times[i]), yOf(base[i - i0]));
+        for (let i = i1; i >= i0; i--) { base[i - i0] += row[i]; ctx.lineTo(tToX(panel, times[i]), yOf(base[i - i0])); }
+        ctx.closePath(); ctx.fillStyle = color(n); ctx.fill();
+      });
+      if (pool.capacity_gib != null) { ctx.save(); ctx.setLineDash([6, 4]); ctx.strokeStyle = "#d33"; ctx.beginPath(); ctx.moveTo(LEFT, yOf(pool.capacity_gib) + 0.5); ctx.lineTo(W - RIGHT, yOf(pool.capacity_gib) + 0.5); ctx.stroke(); ctx.restore(); }
+      // peak marker
+      if (pool.peak_seconds >= view.t0 && pool.peak_seconds <= view.t1) { const x = tToX(panel, pool.peak_seconds); ctx.save(); ctx.setLineDash([2, 3]); ctx.strokeStyle = "#e6a100"; ctx.beginPath(); ctx.moveTo(x + 0.5, TOP); ctx.lineTo(x + 0.5, H); ctx.stroke(); ctx.restore(); }
+      // clip the left gutter
+      ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--panel"); ctx.fillRect(0, 0, LEFT - 1, H);
+      for (let v = 0; v <= top; v += gstep) { const y = yOf(v); ctx.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted"); ctx.textAlign = "right"; ctx.fillText(fmtGiB(v), LEFT - 6, y + 4); }
+      timeAxis(ctx, panel);
+    };
+    panel.hover = (x, y) => {
+      if (x < LEFT || x > panel.canvas.clientWidth - RIGHT) return null;
+      const t = xToT(panel, x);
+      let i = 0; while (i < pool.times.length - 1 && pool.times[i + 1] <= t) i++;
+      let total = 0; const lines = [];
+      names.forEach((n) => { const v = pool.rows[n][i]; total += v; if (v > 0.005) lines.push(n.padEnd(22) + fmtGiB(v).padStart(10)); });
+      return fmtS(pool.times[i]) + "  total " + fmtGiB(total) + "\n" + lines.join("\n");
+    };
+  });
+
+  function drawSelection(panel) {
+    if (!panel.selection) return;
+    const ctx = panel.canvas.getContext("2d");
+    const [a, b] = panel.selection;
+    ctx.fillStyle = "rgba(79, 111, 216, 0.18)"; ctx.fillRect(a, TOP, b - a, panel.height - BOTTOM - TOP);
+    ctx.strokeStyle = "rgba(79, 111, 216, 0.9)"; ctx.strokeRect(a + 0.5, TOP + 0.5, b - a - 1, panel.height - BOTTOM - TOP - 1);
+  }
+  function redraw() { panels.forEach((p) => { p.draw(prepare(p)); drawSelection(p); }); }
+  window.addEventListener("resize", redraw);
+  redraw();
+})();
+</script>
+</body>
+</html>

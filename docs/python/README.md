@@ -17,6 +17,7 @@ How to use the system and how to read what it produces.
 - [Interpreting StepResult diagnostics](step-diagnostics.md)
 - [program and annotated-plan JSON](planning-json.md)
 - [Figures over a step search](plots.md)
+- [Pool occupancy over a step](occupancy.md)
 - [Practical examples](../examples/README.md)
 
 ## API reference
