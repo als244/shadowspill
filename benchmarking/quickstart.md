@@ -93,6 +93,26 @@ What the search plans:
 | `--deterministic` / `--no-deterministic` | Make the **search** reproduce exactly at any worker count: a candidate's placement gate consults only its own placed plans rather than the shared best-placed record, so every graph-pair selection reports the plan it actually found rather than showing up only if it was measured before a better plan existed. Costs wall time, because the shared bound is what lets a candidate skip measuring a plan that cannot win. It does not reach the per-budget replan a run does before executing, which has no such option | on |
 | `--incumbents` / `--no-incumbents` | Hand each budget the best plan found at a smaller budget of the same program as the plan to beat, so no program plans worse with more memory: the search plans budgets ascending, and a point that did not beat the plan it was handed answers with it and says which budget it came from (`plan from 6 GiB` in the table, `incumbent_budget_bytes` in `search.json`). The run phase is handed the search's winning plan as its plan to beat, so it executes that plan or better even when its facts differ from the search's. `--no-incumbents` searches every point alone, for comparing the two | on |
 
+Precision, named as the [training harness](../training/README.md#configs)
+names it, so a tour and a training run at one configuration are the same
+arithmetic:
+
+| Argument | Meaning | Default |
+|---|---|---|
+| `--master-dtype` | A dtype -- `float32` -- to keep a master copy of every weight trained at another dtype at; the optimizer steps the masters in the weights' place and each step writes the weights from them. `none` steps the weights themselves | `none` |
+| `--grad-dtype` | The dtype gradients are created and summed at over a step's microbatches. Naming one also asks the mlops kernels for weight gradients at it and has the optimizer read gradients at it, the two settings the harness lists beside it, because a step that names one and sets neither silently rounds the sum back to bf16 | the weights' dtype |
+| `--opt-state-dtype` | The dtype the optimizer keeps its state at, AdamW's moments: `bfloat16`, `float16`, `float32`, or `parameter` for the dtype of what it steps | the optimizer's own default |
+| `--parameter-rounding` | How the optimizer rounds the weights it steps: `nearest`, or `stochastic`, which keeps small updates in expectation | the optimizer's own default, nearest |
+| `--opt-state-rounding` | How it rounds the state it stores, the same two ways | the optimizer's own default, nearest |
+| `--round-accumulation-once` | `plan_step`'s: a matrix multiply adds its product into running gradients kept narrower than it sums at -- bf16 -- as it writes them, rounding the sum once instead of twice. Off, the step computes what PyTorch's own step computes | off |
+
+Every one of these is part of the plan's identity in the store and of the
+request a run records, so `--reproduce` replays them, and the banner names
+them even when every one is the default: two runs at different precisions are
+not the same arithmetic, and a bf16-summed step at one microbatch geometry
+does not follow the loss trajectory of the same step at another to more than
+a few decimals.
+
 Output and stores:
 
 | Argument | Meaning | Default |
@@ -183,7 +203,9 @@ it reads a matrix.
 
 1. **Configuration.** The effective geometry, the search and run budget
    lists, the spill budget, the orderings and resolutions the search will
-   try, and the transfer lanes both ways round: the rate and latency the
+   try, the precision the step trains under -- master dtype, gradient
+   dtype, optimizer state dtype and roundings -- and the transfer lanes both
+   ways round: the rate and latency the
    simulator will be built with, beside the effective, concurrent and solo
    rates the runtime measured. The planned figure is the effective one
    [coarsened by magnitude](../docs/python/plan-report.md), so it is
