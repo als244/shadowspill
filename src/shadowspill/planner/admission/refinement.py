@@ -19,7 +19,7 @@ from shadowspill.planner.admission.layout.model import (
 )
 from shadowspill.planner.diagnostics import PlanningDiagnostics
 from shadowspill.planner.plan_store import PlanLookup
-from shadowspill.planner.result import ProgramPlanResult
+from shadowspill.planner.result import ProgramPlanResult, ResolutionPlan
 from shadowspill.simulator import SimulationConfig
 
 
@@ -99,6 +99,9 @@ def resolve_fixed_layout_selection(
     scratch_reserve_bytes: int = 0,
     progress: Callable[[str], None] | None = None,
     certify: Callable[[PlanLookup, FixedLayoutAdmission], None] | None = None,
+    certify_resolution: (
+        Callable[[PlanLookup, ResolutionPlan, FixedLayoutAdmission], None] | None
+    ) = None,
 ) -> FixedLayoutSelection:
     """Certify the layout of the plan the search selected.
 
@@ -112,7 +115,10 @@ def resolve_fixed_layout_selection(
 
     A plan read back with a certificate for these facts is served with it:
     nothing is placed or simulated again. A certificate made here is handed
-    to `certify`, which is how a store comes to hold one.
+    to `certify`, which is how a store comes to hold one. The resolutions a
+    search kept beside its answer are certified the same way, each handed
+    to `certify_resolution`; one whose layout does not fit is passed over,
+    since it is not the answer.
     """
 
     original_capacity = _single_device_capacity(config, facts.device_id)
@@ -200,6 +206,36 @@ def resolve_fixed_layout_selection(
             f"scratch_reserve={admitted.layout.scratch_reserve_bytes}, "
             f"slack={admitted.layout.slack_bytes}"
         )
+    if certify_resolution is not None:
+        for plan in selected.result.resolutions:
+            other = replace(
+                selected.result,
+                schedule=plan.schedule,
+                selections=plan.selections,
+                simulation=plan.simulation,
+                resident_slice=plan.resident_slice,
+                resolutions=(),
+            )
+            try:
+                kept = build_fixed_layout_admission(
+                    other,
+                    effective_facts,
+                    dynamic_alias_group_ids=frozenset(
+                        item.alias_group_id
+                        for item in plan.schedule.final_residency
+                        if item.location is MemoryLocation.DEVICE
+                    ),
+                    scratch_reserve_bytes=scratch_reserve_bytes,
+                )
+            except FixedLayoutInfeasibleError as error:
+                if progress is not None:
+                    progress(
+                        "fixed layout rejected a kept resolution"
+                        f" ({plan.candidate_id}): required={error.required_bytes},"
+                        f" physical_pool={error.capacity_bytes}"
+                    )
+                continue
+            certify_resolution(selected, plan, kept)
     return FixedLayoutSelection(
         selected,
         effective_facts,

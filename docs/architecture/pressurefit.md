@@ -619,6 +619,9 @@ admission once more, and materialises the full `SimulationResult` — at the
 caller's full capacity, which is the machine the plan will actually run on. A
 plan built against a reduced capacity was *chosen* on how it behaves there,
 but the reported timeline and the certificate measure the real machine.
+Asked to keep its resolutions, the planner materialises every other
+problem's selected schedule the same way, so each is reported beside the
+answer and the planning store can file it there.
 
 ### Teardown
 

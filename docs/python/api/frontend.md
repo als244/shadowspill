@@ -761,6 +761,7 @@ plan_step(
     grad_dtype=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
+    keep_resolutions=False,
 ) -> PlannedTrainStep
 ```
 
@@ -784,6 +785,7 @@ Beyond the shared and store arguments:
 | `grad_dtype` | `torch.dtype` \| `None` | `None` | The dtype gradients are created and accumulated at, the weights' own when `None`. The update casts a gradient only where its parameter is at another dtype. |
 | `round_accumulation_once` | `bool` | `False` | Lets a matrix multiply add its product into running gradients kept narrower than it sums at -- bf16 -- rounding the sum once instead of twice and saving a pass over the gradient; the step then no longer computes what adding after the multiply computes. Gradients kept at the multiply's own dtype are added inside it either way. See [accumulating onto gradients](../../architecture/graph-pair-construction.md#accumulating-onto-gradients-that-already-exist). |
 | `memory_bound_flops_per_byte` | `float` | `16.0` | The arithmetic intensity, in flops per byte moved, at or under which a stage's `save` graph pair regenerates an operator's results in the backward rather than retaining them: a normalization, an activation, a rotation, a cast, a gather. Above it the results are retained, and so are those of any custom operator whose library registered no flop formula. The default sits well under any device's ridge point, so the classification does not depend on the machine; the value is part of the step's identity in the store. See [the save variant](../../architecture/graph-pair-construction.md#save). |
+| `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside the answer in the planning store, certified like it, when the search runs, as `plan_program()` does; each is as large as the answer. |
 
 `depth` and `breadth` say how the step walks those microbatches: `depth`
 passes of `breadth` microbatches each, every microbatch of a pass running one
@@ -923,6 +925,7 @@ plan_step_search(
     grad_dtype=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
+    keep_resolutions=False,
 ) -> StepSearchReport
 ```
 
@@ -946,6 +949,7 @@ plan_step_search(
 | `incumbents` | `bool` | `True` | Plans each program's budgets ascending and hands every point the best plan found at a smaller budget as the plan to beat, so no program plans worse with more memory. `False` searches every point alone, which is how the two are compared. |
 | `verbose` | `bool` | `False` | Forwards each planning call's own phase progress. |
 | `progress` | `(str) -> None` \| `None` | `None` | Receives one line per geometry and point boundary, so a caller can tee a live log. |
+| `keep_resolutions` | `bool` | `False` | Files every resolved program's best plan beside each point's answer, certified, as `plan_program()` does; each is as large as the answer. |
 
 `StepSearchReport` carries `total_sequences_per_step` and `sequence_length`, the
 `budgets` searched, one `StepSearchGeometryBuild` per program built, that is

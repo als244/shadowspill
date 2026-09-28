@@ -134,6 +134,39 @@ def resolutions(
     return _select(CostedAlternatives.from_program(program), chosen)
 
 
+def recompute_share(
+    program: ShadowSpillProgram, selections: Iterable[TaskAlternativeChoice]
+) -> Fraction:
+    """The share of the program's flexible groups a selection recomputes.
+
+    The flexible groups are the population a resolution option's share is
+    taken of, so this is what a kept resolution reports itself by. For a
+    program whose groups are not all save-or-recompute pairs, it is the
+    share of every group choosing ``recompute``.
+    """
+
+    costed = CostedAlternatives.from_program(program)
+    chosen = {item.group_id: item.option_id for item in selections}
+    endpoints = costed.binary_endpoints
+    if endpoints is None or costed.flexible_count == 0:
+        if not costed.groups:
+            return Fraction(0)
+        return Fraction(
+            sum(
+                1 for group in costed.groups if chosen.get(group.group_id) == _RECOMPUTE
+            ),
+            len(costed.groups),
+        )
+    forced = costed.forced
+    recomputing = sum(
+        1
+        for index, group in enumerate(costed.groups)
+        if index not in forced
+        and group.options[endpoints[index][1]].option_id == chosen.get(group.group_id)
+    )
+    return Fraction(recomputing, costed.flexible_count)
+
+
 def _select(
     options: CostedAlternatives,
     resolution_options: Iterable[ShareValue],
@@ -488,6 +521,7 @@ __all__ = [
     "Resolution",
     "ShareValue",
     "named_resolution_options",
+    "recompute_share",
     "resolutions",
     "validate_resolution_options",
 ]

@@ -64,6 +64,7 @@ def build_training(
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
+    keep_resolutions: bool = False,
 ) -> PlannedTrainStep:
     """Compose the independently callable training-planning boundaries.
 
@@ -133,6 +134,7 @@ def build_training(
             timer=timer,
             search_options=chosen,
             incumbent=None if incumbent is None else incumbent.result,
+            keep_resolutions=keep_resolutions,
         )
         executable = compile_selected_training_tasks(
             profiled,

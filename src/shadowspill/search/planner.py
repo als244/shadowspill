@@ -86,6 +86,7 @@ class _Planner:
     plan_store: str | PathLike[str] | None
     plan_store_mode: StoreMode
     verbose: bool
+    keep_resolutions: bool = False
 
     def plan(
         self,
@@ -107,6 +108,7 @@ class _Planner:
             plan_store=self.plan_store,
             plan_store_mode=self.plan_store_mode,
             verbose=self.verbose,
+            keep_resolutions=self.keep_resolutions,
         )
 
     def carried_plan(

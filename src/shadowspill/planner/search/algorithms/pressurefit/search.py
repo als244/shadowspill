@@ -56,6 +56,7 @@ from ....result import (
     PlanInfeasibleError,
     PlanSearchExhaustedError,
     ProgramPlanResult,
+    ResolutionPlan,
 )
 from ... import SearchOptions
 from ...toolkit.resolution import Resolution
@@ -526,6 +527,7 @@ def finish_pressurefit(
     *,
     placement: AdmissionFacts | None = None,
     incumbent: ProgramPlanResult | None = None,
+    keep_resolutions: bool = False,
 ) -> ProgramPlanResult:
     """Decode the plan the search placed, and its diagnostics.
 
@@ -538,7 +540,9 @@ def finish_pressurefit(
     plan *it* placed, which is not the best plan placed.
 
     `incumbent` is the plan to beat the problems were built with, so its
-    outcome can say where it came from.
+    outcome can say where it came from. `keep_resolutions` materialises
+    every other problem's selected schedule the same way, so the answer is
+    reported beside what each resolution found.
     """
 
     resolved_programs: list[ResolvedProgramDiagnostics] = []
@@ -579,6 +583,39 @@ def finish_pressurefit(
     for problem_result in results:
         aggregate_work += problem_result.work
     aggregate_work += selected_work
+    resolutions: list[ResolutionPlan] = []
+    if keep_resolutions:
+        for index, (other, other_result) in enumerate(
+            zip(problems, results, strict=True)
+        ):
+            candidate_id = resolved_programs[index].selected_candidate_id
+            if candidate_id is None or other_result.selected_schedule is None:
+                continue
+            if index == problem_index:
+                other_schedule, other_simulation = schedule, simulation
+            else:
+                other_schedule, other_simulation, other_work = _materialize(
+                    other, other_result
+                )
+                aggregate_work += other_work
+            resolutions.append(
+                ResolutionPlan(
+                    selection_id=other.selection_id,
+                    selections=other.selections,
+                    candidate_id=candidate_id,
+                    schedule=other_schedule,
+                    simulation=other_simulation,
+                    resident_slice=ResidentSlice(
+                        bytes=other_result.resident_slice_bytes,
+                        aliases=tuple(
+                            sorted(
+                                other.indexed_template.alias_ids[alias]
+                                for alias in other_result.resident_aliases
+                            )
+                        ),
+                    ),
+                )
+            )
     diagnostics = PlanningDiagnostics(
         search=search_options.resolved_algorithm.name,
         selected_candidate_id=(
@@ -612,6 +649,7 @@ def finish_pressurefit(
         ),
         admission_facts=admission,
         placement_facts=placement,
+        resolutions=tuple(resolutions),
     )
 
 

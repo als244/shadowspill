@@ -37,10 +37,12 @@ def plan_training_programs(
     timer: PlanningTimer,
     search_options: SearchOptions | None = None,
     incumbent: ProgramPlanResult | None = None,
+    keep_resolutions: bool = False,
 ) -> FixedLayoutSelection:
     """Resolve the step's plan: the one in the store, or a fresh search.
 
-    `incumbent` is the plan to beat.
+    `incumbent` is the plan to beat; `keep_resolutions` files every
+    resolution's best plan beside the answer.
     """
 
     lowered = programs.lowered
@@ -81,9 +83,13 @@ def plan_training_programs(
                         scratch_reserve_bytes=scratch_reserve,
                     ),
                     progress=timer.progress,
+                    keep_resolutions=keep_resolutions,
                 ),
                 scratch_reserve_bytes=scratch_reserve,
                 progress=timer.progress,
+                certify_resolution=(
+                    stores.plans.certify_resolution if keep_resolutions else None
+                ),
             )
         except PlanInfeasibleError as error:
             raise public_infeasible_plan_error(error) from error

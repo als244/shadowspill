@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -36,12 +37,13 @@ from .diagnostics import (
 )
 from .diagnostics.json import without_measurements
 from .diagnostics.plan import PlanSummary, summarize_selected_plan
-from .result import ProgramPlanResult
+from .result import ProgramPlanResult, ResolutionPlan
 from .search import (
     SearchAlgorithm,
     SearchOptions,
     answer_no_worse_than,
 )
+from .search.toolkit.resolution import recompute_share
 from .serialization import (
     _boolean,
     _fixed_layout_from_value,
@@ -54,6 +56,7 @@ from .serialization import (
 
 _SCHEMA = artifact_schema("plan_selection")
 _SUMMARY_SCHEMA = artifact_schema("plan_summary")
+_RESOLUTION_SCHEMA = artifact_schema("plan_resolution")
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +140,13 @@ class PlanStore:
 
     def summary_path(self, key: str) -> Path:
         return digest_directory(self.root, key) / "summary.json"
+
+    def resolution_path(self, key: str, label: str) -> Path:
+        """Where a kept resolution's record sits, beside the answer's."""
+
+        return (
+            digest_directory(self.root, key) / "resolutions" / label / "selection.json"
+        )
 
     def summary(
         self,
@@ -224,6 +234,7 @@ class PlanStore:
         placement: AdmissionFacts | None = None,
         progress: Callable[[str], None] | None = None,
         incumbent: ProgramPlanResult | None = None,
+        keep_resolutions: bool = False,
     ) -> PlanLookup:
         """Return the stored planned program when it still matches, or plan.
 
@@ -240,6 +251,10 @@ class PlanStore:
         claims to beat searches again with it, and keeps whichever answer is
         better for this request, so a store filled before the plan existed
         improves rather than shadowing it.
+
+        `keep_resolutions` asks the search for every resolved program's
+        best plan and files each beside the answer (`resolution_path`) when
+        the search runs; a hit reads back the answer alone.
         """
 
         chosen = search_options if search_options is not None else SearchOptions()
@@ -293,6 +308,9 @@ class PlanStore:
                     placement=placement,
                     progress=progress,
                     incumbent=incumbent,
+                    # Passed only when asked, so a search that never heard
+                    # of it is called as before.
+                    **({"keep_resolutions": True} if keep_resolutions else {}),
                 ),
                 incumbent=incumbent,
                 config=config,
@@ -316,10 +334,25 @@ class PlanStore:
             if result.simulation.makespan_ns >= stored.result.simulation.makespan_ns:
                 return stored
             self._write(
-                key, result, admission, algorithm, chosen, incumbent, improve=True
+                key,
+                result,
+                admission,
+                algorithm,
+                chosen,
+                incumbent,
+                improve=True,
+                keep_resolutions=keep_resolutions,
             )
             return PlanLookup(result, False, key)
-        self._write(key, result, admission, algorithm, chosen, incumbent)
+        self._write(
+            key,
+            result,
+            admission,
+            algorithm,
+            chosen,
+            incumbent,
+            keep_resolutions=keep_resolutions,
+        )
         return PlanLookup(result, False, key)
 
     def certify(self, lookup: PlanLookup, admission: FixedLayoutAdmission) -> None:
@@ -347,6 +380,41 @@ class PlanStore:
         atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
         self._record(lookup.key, lookup.result.program.digest, path, "certified")
         self._write_summary(lookup.key, certified_result(lookup.result, admission))
+
+    def certify_resolution(
+        self, lookup: PlanLookup, plan: ResolutionPlan, admission: FixedLayoutAdmission
+    ) -> None:
+        """Write a kept resolution's certificate beside its record, as
+        `certify` does for the answer's. A resolution the store did not
+        file -- a hit, or a mode that writes nothing -- is left alone."""
+
+        if not self.policy.write_enabled or not lookup.key:
+            return
+        label = next(
+            (
+                name
+                for name, item in resolution_labels(lookup.result).items()
+                if item is plan
+            ),
+            None,
+        )
+        if label is None:
+            return
+        path = self.resolution_path(lookup.key, label)
+        try:
+            payload = json.loads(path.read_text())
+        except FileNotFoundError:
+            return
+        payload["admission_certificate"] = {
+            "facts_digest": admission.layout.facts_digest,
+            "layout": admission.layout.to_dict(),
+            "simulator_input": asdict(admission.simulator_input),
+            "simulation": asdict(admission.simulation),
+        }
+        atomic_text(path, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        self._record(
+            lookup.key, lookup.result.program.digest, path, "certified", resolution=True
+        )
 
     def _boundary(
         self,
@@ -486,6 +554,7 @@ class PlanStore:
         search_options: SearchOptions,
         incumbent: ProgramPlanResult | None = None,
         improve: bool = False,
+        keep_resolutions: bool = False,
     ) -> None:
         if not self.policy.write_enabled:
             return
@@ -527,14 +596,68 @@ class PlanStore:
                     f"{path}"
                 )
             self._record(key, result.program.digest, path, "matched")
+        else:
+            # A summary describes the plan it was written beside; a new plan
+            # has none until it is certified.
+            self.summary_path(key).unlink(missing_ok=True)
+            atomic_text(path, encoded)
+            self._record(
+                key, result.program.digest, path, "improved" if improve else "write"
+            )
+        if keep_resolutions:
+            self._write_resolutions(key, result, admission, algorithm, search_options)
+
+    def _write_resolutions(
+        self,
+        key: str,
+        result: ProgramPlanResult,
+        admission: AdmissionFacts | None,
+        algorithm: SearchAlgorithm,
+        search_options: SearchOptions,
+    ) -> None:
+        """Every resolved program's best plan beside the answer, one record
+        each in the answer's own form less the search diagnostics, replacing
+        whatever an earlier search of this key left there."""
+
+        directory = digest_directory(self.root, key) / "resolutions"
+        shutil.rmtree(directory, ignore_errors=True)
+        if not result.resolutions:
             return
-        # A summary describes the plan it was written beside; a new plan has
-        # none until it is certified.
-        self.summary_path(key).unlink(missing_ok=True)
-        atomic_text(path, encoded)
-        self._record(
-            key, result.program.digest, path, "improved" if improve else "write"
+        boundary = self._boundary(
+            key,
+            result.program,
+            result.initial_residency,
+            result.final_residency,
+            result.simulation_config,
+            admission,
+            algorithm,
+            search_options,
         )
+        for label, plan in resolution_labels(result).items():
+            payload: dict[str, object] = {
+                **boundary,
+                "schema": _RESOLUTION_SCHEMA,
+                "resolution": {
+                    "label": label,
+                    "selection_id": plan.selection_id,
+                    "candidate_id": plan.candidate_id,
+                    "recompute_share": str(
+                        recompute_share(result.program, plan.selections)
+                    ),
+                    "selected": plan.selection_id
+                    == result.diagnostics.selected_selection_id,
+                },
+                "schedule": plan.schedule.to_dict(),
+                "selections": [item.to_dict() for item in plan.selections],
+                "simulation_result": asdict(plan.simulation),
+                "resident_slice": plan.resident_slice.to_dict(),
+            }
+            path = self.resolution_path(key, label)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_text(
+                path, json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            )
+            self._record(key, result.program.digest, path, "write", resolution=True)
 
     def _write_verdict(
         self,
@@ -616,18 +739,41 @@ class PlanStore:
         access: str,
         *,
         summary: bool = False,
+        resolution: bool = False,
     ) -> None:
         if self.artifact_recorder is None:
             return
+        kind, schema = "selection", _SCHEMA
+        if summary:
+            kind, schema = "summary", _SUMMARY_SCHEMA
+        elif resolution:
+            kind, schema = "resolution", _RESOLUTION_SCHEMA
         self.artifact_recorder(
             category="search",
-            kind="summary" if summary else "selection",
+            kind=kind,
             digest=key,
             path=path,
             access=access,
-            schema=_SUMMARY_SCHEMA if summary else _SCHEMA,
+            schema=schema,
             dependencies=(program_digest,),
         )
+
+
+def resolution_labels(result: ProgramPlanResult) -> dict[str, ResolutionPlan]:
+    """Each kept resolution under the name its record is filed by: the share
+    of the flexible groups it recomputes, as ``recompute_<share>``, with a
+    digest of its selection appended when two resolutions share one."""
+
+    labels: dict[str, ResolutionPlan] = {}
+    for plan in result.resolutions:
+        share = recompute_share(result.program, plan.selections)
+        label = f"recompute_{share.numerator}" + (
+            f"of{share.denominator}" if share.denominator != 1 else ""
+        )
+        if label in labels:
+            label += "_" + hashlib.sha256(plan.selection_id.encode()).hexdigest()[:8]
+        labels[label] = plan
+    return labels
 
 
 def certified_result(
@@ -828,7 +974,13 @@ def _diagnostics_from_value(value: object, path: Path) -> PlanningDiagnostics:
         raise ValueError(f"planned program {path} has invalid diagnostics") from exc
 
 
-__all__ = ["PlanLookup", "PlanStore", "PlanSummaryLookup", "certified_result"]
+__all__ = [
+    "PlanLookup",
+    "PlanStore",
+    "PlanSummaryLookup",
+    "certified_result",
+    "resolution_labels",
+]
 
 
 def open_plan_store(artifact_store: ArtifactStore) -> PlanStore:
@@ -854,6 +1006,7 @@ def resolve_plan(
     placement: AdmissionFacts | None = None,
     progress: Callable[[str], None] | None = None,
     incumbent: ProgramPlanResult | None = None,
+    keep_resolutions: bool = False,
 ) -> PlanLookup:
     """Resolve one plan, planning only when the store does not have it.
 
@@ -894,4 +1047,5 @@ def resolve_plan(
         placement=placement,
         progress=progress,
         incumbent=incumbent,
+        keep_resolutions=keep_resolutions,
     )

@@ -549,7 +549,8 @@ this one and replans.
   given, so a plan's lineage points at an immutable copy of what was planned.
 - `planning/requests/`: what each search was asked for.
 - `planning/results/`: the planner's answer, the selected resolution and
-  memory schedule with the search diagnostics.
+  memory schedule with the search diagnostics, and, when a search was asked
+  to keep them, every resolution's best plan beside it.
 - `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
 
 The two trees are written by different halves of the work and never by each
@@ -570,7 +571,8 @@ searched over (named in `layout.json`) so that store can be shared.
 
 - `planning/requests/`: what each search was asked for.
 - `planning/results/`: the search's answer, the selected resolution and
-  memory schedule with the search diagnostics.
+  memory schedule with the search diagnostics, and, when a search was asked
+  to keep them, every resolution's best plan beside it.
 - `planning/plans/`: one readable manifest and ExecutionPlan per planning call.
 
 Digests determine identity; do not edit content-addressed entries.

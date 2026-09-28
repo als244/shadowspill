@@ -38,12 +38,14 @@ def select_program(
     verbose: bool,
     search_options: SearchOptions | None = None,
     incumbent: ProgramPlanResult | None = None,
+    keep_resolutions: bool = False,
 ) -> AnnotatedProgramPlan:
     """Select and physically admit one reusable problem.
 
     `search_options` says which search runs and what it is told; it reaches
     the plan key and is not read here. `incumbent` is the plan to beat, a
-    result for the same program the answer is held to.
+    result for the same program the answer is held to. `keep_resolutions`
+    files every resolution's best plan beside the answer, certified.
     """
 
     started = time.perf_counter_ns()
@@ -69,6 +71,7 @@ def select_program(
             config=candidate_config,
             search_options=search_options,
             incumbent=incumbent,
+            keep_resolutions=keep_resolutions,
             # The pool topology, so the search can measure whether a plan
             # has a layout that fits. Not passed as `admission`: that
             # switches on the dynamic-pool replay, and the fixed-layout
@@ -82,6 +85,7 @@ def select_program(
         scratch_reserve_bytes=program.dynamic_scratch_reserve_bytes,
         progress=progress,
         certify=plans.certify,
+        certify_resolution=plans.certify_resolution if keep_resolutions else None,
     )
     physical_result = replace(
         certified_result(selection.result, selection.admission),

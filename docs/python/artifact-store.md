@@ -106,6 +106,11 @@ inputs, so adding one cannot invalidate anything.
   whole plan only for the one it will run. It is derived from the plan and
   its certificate, never read as an input to anything, and written again
   whenever they are.
+- A search asked to keep its resolutions files each resolved program's best
+  plan beside the answer, in the answer's own form less the search
+  diagnostics and marked with the share it recomputes and whether it is the
+  answer. They are notes about the answer: nothing reads them back as an
+  input, and a hit reads the answer alone.
 
 The distinction is worth keeping deliberately. A field that is hashed is a
 question; a field that is only saved is a note about the answer.
@@ -134,6 +139,7 @@ path through the same helper, `digest_directory`.
 | Canonical program | `planning/programs/<2>/<digest>/program.json` |
 | Selection request | `planning/requests/<2>/<digest>/request.json` |
 | Planned program | `planning/results/<2>/<digest>/selection.json`, with `summary.json` beside it once certified |
+| Kept resolution | `planning/results/<2>/<digest>/resolutions/<label>/selection.json`: one per resolved program the search planned, when asked to keep them, certified beside the answer; `<label>` is `recompute_<share>`, the share of the flexible groups it recomputes |
 
 The digest in a path is the key described above, so a path is a question and
 its contents are the answer. The program archive is the one entry keyed by

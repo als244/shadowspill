@@ -221,6 +221,7 @@ class PressureFit(SearchAlgorithm):
         progress: Callable[[str], None] | None = None,
         incumbent: ProgramPlanResult | None = None,
         best: BestPlaced | None = None,
+        keep_resolutions: bool = False,
     ) -> ProgramPlanResult:
         """Select a schedule for `program`, planning each resolution in turn.
 
@@ -241,6 +242,9 @@ class PressureFit(SearchAlgorithm):
         candidate does strictly better. It reaches the resolved program it
         was found for; a search over resolution options that do not include
         that one carries none.
+
+        `keep_resolutions` materialises every resolved program's selected
+        schedule the way the answer's is, and reports them beside it.
         """
 
         validate_search_inputs(
@@ -280,6 +284,7 @@ class PressureFit(SearchAlgorithm):
                 progress=progress,
                 incumbent=incumbent,
                 started=started,
+                keep_resolutions=keep_resolutions,
             )
         finally:
             if owned is not None:
@@ -312,6 +317,7 @@ class PressureFit(SearchAlgorithm):
         progress: Callable[[str], None] | None,
         incumbent: ProgramPlanResult | None,
         started: int,
+        keep_resolutions: bool = False,
     ) -> ProgramPlanResult:
         """Every resolved program, evaluated in one call, then one decode.
 
@@ -378,6 +384,7 @@ class PressureFit(SearchAlgorithm):
             shared,
             placement=placement,
             incumbent=incumbent,
+            keep_resolutions=keep_resolutions,
         )
 
 
