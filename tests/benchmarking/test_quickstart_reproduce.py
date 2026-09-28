@@ -99,7 +99,14 @@ def test_the_record_holds_the_request_and_not_where_it_was_written(
     assert request["parameter_rounding"] is None
     assert request["opt_state_rounding"] == "stochastic"
     assert request["round_accumulation_once"] is False
-    for name in ("output_dir", "force_overwrite", "plots", "reproduce"):
+    for name in (
+        "output_dir",
+        "force_overwrite",
+        "plots",
+        "reproduce",
+        "timelines",
+        "resolution_plans",
+    ):
         assert name not in request
 
 
