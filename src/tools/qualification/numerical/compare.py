@@ -14,6 +14,8 @@ from typing import Any
 
 import torch
 
+from workloads.common.training import LEARNING_RATE
+
 from .metrics import compare_states
 from .references import REFERENCE_SCHEMA
 from .request import REFERENCE_EXECUTION, PlannedRequest
@@ -104,10 +106,13 @@ def compare_planned_run(request: PlannedRequest, run: PlannedRun) -> Comparison:
                     f"step {step} microbatch {microbatch}: "
                     f"expected={expected}, actual={actual}"
                 )
+    steps = len(run.losses)
     metric_failures = [
         name
         for name, metric in tensor_results.items()
-        if not meets_tensor_tolerance(metric, key=name)
+        if not meets_tensor_tolerance(
+            metric, key=name, step_size=LEARNING_RATE, steps=steps
+        )
     ]
     # The replayed run has to agree with the uninterrupted one, but it cannot
     # be required to agree bit for bit: a step is only bitwise reproducible if
@@ -140,7 +145,9 @@ def compare_planned_run(request: PlannedRequest, run: PlannedRun) -> Comparison:
     replay_metric_failures = [
         name
         for name, metric in replay_results.items()
-        if not meets_tensor_tolerance(metric, key=name)
+        if not meets_tensor_tolerance(
+            metric, key=name, step_size=LEARNING_RATE, steps=steps
+        )
     ]
 
     return Comparison(
