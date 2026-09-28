@@ -45,7 +45,12 @@ class TinyModel(nn.Module):
         self.head = nn.Linear(width, vocab)
 
     def loss(
-        self, tokens: torch.Tensor, targets: torch.Tensor, *, seq_lens: torch.Tensor
+        self,
+        tokens: torch.Tensor,
+        targets: torch.Tensor,
+        *,
+        seq_lens: torch.Tensor,
+        reduction: str = "mean",
     ) -> torch.Tensor:
         logits = self.head(self.embed(tokens)).float()
         summed = F.cross_entropy(
@@ -54,7 +59,7 @@ class TinyModel(nn.Module):
             ignore_index=-100,
             reduction="sum",
         )
-        return summed / targets.numel()
+        return summed if reduction == "sum" else summed / targets.numel()
 
 
 #: What ``note`` was called with, in order: a stand-in for a process-wide setting.

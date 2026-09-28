@@ -43,7 +43,7 @@ from shadowspill.pytorch import (
     release_model_state,
 )
 from training.backends import GIB, Microbatch, Setup
-from training.objectives import planned_objective
+from training.objectives import Objective, planned_objective
 
 PLANNING_RECORD = "planning.json"
 SEARCH_REPORT = "search.json"
@@ -297,16 +297,26 @@ class ShadowSpill:
             **self.common,
         )
 
-    def step(self, microbatches: list[Microbatch], lr: float | None) -> list[float]:
-        hyperparams = {} if lr is None else {"lr": lr}
+    def step(
+        self, microbatches: list[Microbatch], lr: float | None, trained_total: int
+    ) -> list[float]:
+        hyperparams = {Objective.TRAINED_TOTAL: float(trained_total)}
+        if lr is not None:
+            hyperparams["lr"] = lr
         result = self.train_step(microbatches, hyperparams=hyperparams)
         return [loss.item() for loss in result.objectives]
 
     def synchronize(self) -> None:
         self.train_step.synchronize()  # its end-of-step writeback included
 
-    def evaluate(self, microbatches: list[Microbatch]) -> list[float]:
-        return [self.forward(microbatch).item() for microbatch in microbatches]
+    def evaluate(
+        self, microbatches: list[Microbatch], trained_total: int
+    ) -> list[float]:
+        hyperparams = {Objective.TRAINED_TOTAL: float(trained_total)}
+        return [
+            self.forward(microbatch, hyperparams=hyperparams).item()
+            for microbatch in microbatches
+        ]
 
     def device_peak_gib(self) -> float:
         return self.runtime.pool_statistics("device").peak_allocated_bytes / GIB
