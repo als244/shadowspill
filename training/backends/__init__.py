@@ -1,10 +1,11 @@
 """Two ways to run a training step: plain PyTorch, and ShadowSpill.
 
 Both build the same model from the same seed, take the same packed
-microbatches and learning rate, and return one loss per microbatch, so the
-trainer treats them alike. What differs is where the model lives: on the
-device for PyTorch; in pinned host memory for ShadowSpill, which plans what the
-device holds, fetches, evicts and recomputes so that each step fits a budget.
+microbatches, learning rate and trained-token total, and return each
+microbatch's share of the step's loss, so the trainer treats them alike. What
+differs is where the model lives: on the device for PyTorch; in pinned host
+memory for ShadowSpill, which plans what the device holds, fetches, evicts and
+recomputes so that each step fits a budget.
 
 A step is ``max_tokens_per_step`` tokens, split into microbatches of at most
 ``max_tokens_per_microbatch`` -- the geometry, as (tokens per microbatch,
@@ -41,7 +42,9 @@ class Setup:
     max_seq_len: int
     max_tokens_per_step: int
     max_tokens_per_microbatch: int | None
-    hyperparams: tuple[str, ...]  # what the step is given every time: ("lr",) or ()
+    #: What the step is given every time: the objective's trained-token total,
+    #: and "lr" under a schedule.
+    hyperparams: tuple[str, ...]
     master_dtype: torch.dtype | None  # masters of the weights trained at another dtype
     grad_dtype: torch.dtype | None  # gradients kept at this dtype; None: the weights'
     seed: int
@@ -57,11 +60,15 @@ class Backend(Protocol):
 
     def setup(self, setup: Setup) -> None: ...
 
-    def step(self, microbatches: list[Microbatch], lr: float | None) -> list[float]: ...
+    def step(
+        self, microbatches: list[Microbatch], lr: float | None, trained_total: int
+    ) -> list[float]: ...  # each microbatch's share of the step's loss
 
     def synchronize(self) -> None: ...  # return once the device has finished the step
 
-    def evaluate(self, microbatches: list[Microbatch]) -> list[float]: ...
+    def evaluate(
+        self, microbatches: list[Microbatch], trained_total: int
+    ) -> list[float]: ...
 
     def device_peak_gib(self) -> float: ...
 

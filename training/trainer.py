@@ -15,7 +15,7 @@ import torch.nn as nn
 from training import config
 from training.backends import Backend, Setup
 from training.data import PackedTokens
-from training.metrics import Logger, host_rss_gib, per_trained_token
+from training.metrics import Logger, host_rss_gib
 from training.objectives import Objective
 from training.schedules import Constant, WarmupCosine
 
@@ -162,7 +162,11 @@ class Trainer:
                 max_seq_len=self.max_seq_len,
                 max_tokens_per_step=self.max_tokens_per_step,
                 max_tokens_per_microbatch=self.max_tokens_per_microbatch,
-                hyperparams=("lr",) if self.schedule is not None else (),
+                hyperparams=(
+                    ("lr", Objective.TRAINED_TOTAL)
+                    if self.schedule is not None
+                    else (Objective.TRAINED_TOTAL,)
+                ),
                 master_dtype=self.master_dtype,
                 grad_dtype=self.grad_dtype,
                 seed=self.seed,
@@ -227,7 +231,9 @@ class Trainer:
         validation = self.data.validation_packer(self.tokens, self.max_seq_len)
         indices = range(self.eval_batches)
         self.val_batches = [validation.microbatch(index) for index in indices]
-        self.val_trained = [validation.trained_tokens([index]) for index in indices]
+        # The evaluation set's trained positions: what each of its microbatches
+        # divides by, so that their summed shares are its mean loss.
+        self.val_total = validation.trained_tokens(indices)
         self.start = self._resume()
         self.log = Logger(
             self.run_dir, self.record, self.wandb_project, self.wandb_mode
@@ -275,9 +281,11 @@ class Trainer:
         # A backend returns from a step before the device has finished it, so
         # a step's time runs to where the next one begins.
         self._close_step(began)
-        losses = self.backend.step(microbatches, lr)
-        trained = [self.train_data.trained_tokens([index]) for index in indices]
-        metrics = {"loss": per_trained_token(losses, self.tokens, trained)}
+        # Each microbatch returns its share of the step's mean loss over the
+        # step's trained positions, so the step's loss is the shares' sum.
+        total = self.train_data.trained_tokens(indices)
+        losses = self.backend.step(microbatches, lr, total)
+        metrics = {"loss": sum(losses)}
         if lr is not None:
             metrics["lr"] = lr
         self.open_step = _OpenStep(step, began, metrics, self.train_data.stats(indices))
@@ -312,9 +320,9 @@ class Trainer:
 
     def _evaluate(self, step: int) -> None:
         began = time.perf_counter()
-        losses = self.backend.evaluate(self.val_batches)
+        losses = self.backend.evaluate(self.val_batches, self.val_total)
         metrics = {
-            "val_loss": per_trained_token(losses, self.tokens, self.val_trained),
+            "val_loss": sum(losses),
             "eval_seconds": time.perf_counter() - began,
             "device_peak_gib": self.backend.device_peak_gib(),
             "host_rss_gib": host_rss_gib(),

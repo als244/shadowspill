@@ -47,9 +47,12 @@ class PyTorch:
             else self.module
         )
 
-    def step(self, microbatches: list[Microbatch], lr: float | None) -> list[float]:
+    def step(
+        self, microbatches: list[Microbatch], lr: float | None, trained_total: int
+    ) -> list[float]:
         if lr is not None:
             _set_learning_rate(self.optimizer, lr)
+        self._set_trained_total(trained_total)
         losses = []
         for microbatch in microbatches:
             loss = self.loss(*(value.to(self.device) for value in microbatch))
@@ -65,11 +68,21 @@ class PyTorch:
             torch.accelerator.synchronize(self.device)
 
     @torch.no_grad()
-    def evaluate(self, microbatches: list[Microbatch]) -> list[float]:
+    def evaluate(
+        self, microbatches: list[Microbatch], trained_total: int
+    ) -> list[float]:
+        self._set_trained_total(trained_total)
         return [
             self.loss(*(value.to(self.device) for value in microbatch)).item()
             for microbatch in microbatches
         ]
+
+    def _set_trained_total(self, trained_total: int) -> None:
+        """Give the objective the trained positions its microbatches divide by,
+        in place, where the (possibly compiled) module reads it."""
+
+        with torch.no_grad():
+            self.module.trained_total.fill_(float(trained_total))
 
     def device_peak_gib(self) -> float:
         """The most the device has held at once; 0 for a run on the CPU."""

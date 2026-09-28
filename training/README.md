@@ -138,7 +138,7 @@ and, by keyword:
 | Argument | What it is |
 |---|---|
 | `model` | The model on `meta`: structure only. `training.models.build_on_meta(model, dtype, **arguments)` builds one. The backend materializes it and every module initializes its own storage from `seed`, in module order, so both backends start from the same weights. |
-| `objective`, `objective_args` | The loss a step differentiates, `objective(model, tokens, targets, seq_lens, **objective_args)`. `training.objectives.model_loss` calls the model's own `loss(tokens, targets, seq_lens=..., **objective_args)`. By convention the loss sums over trained positions and divides by all the microbatch's positions, so a step weighs every trained token alike and the trainer can report the loss per trained token. |
+| `objective`, `objective_args` | The loss a step differentiates, `objective(model, tokens, targets, seq_lens, **objective_args)`, returning the model's loss summed over the positions the targets train. `training.objectives.model_loss` calls the model's own `loss(tokens, targets, seq_lens=..., reduction="sum", **objective_args)`. The module wrapping the model divides that sum by its `trained_total` buffer, the trained positions of the whole step, which the trainer sets before each step as a hyperparameter beside the learning rate. So each microbatch returns its share of the step's mean loss over trained tokens, a step's loss is the sum of its microbatches' shares whatever the geometry, its gradient weighs every trained token by that one total, and padding counts nowhere. |
 | `optimizer`, `optimizer_args` | The optimizer class, built as `optimizer(parameters, **optimizer_args)`. |
 | `master_dtype` | A dtype -- `torch.float32` -- to keep a master copy of every weight trained at another dtype at. The optimizer steps the masters in the weights' place and each step writes the weights from them, rounded to nearest; without it the optimizer steps the weights themselves and rounds each update to their dtype -- mlops AdamW to nearest, or stochastically, which keeps small updates in expectation, with `"parameter_rounding": "stochastic"` in `optimizer_args`. |
 | `grad_dtype` | The dtype gradients are summed at over a step's microbatches, the weights' own when not given; normally `torch.float32` with fp32 masters. A model on mlops kernels asks them for its weight gradients at the same dtype among the `settings` -- `mlops.dispatch:set_weight_gradient_dtype` -- so those they sum come back unrounded; the fp32 config does. The optimizer must read the gradients at that dtype too: mlops AdamW reads them at its own `gradient_dtype`, `torch.bfloat16` unless given, so without it in `optimizer_args` every update rounds fp32 gradients to bf16 first, and nothing reports it. `"parameter"` reads them at the dtype of what the optimizer steps -- right over fp32 masters, as in the fp32 config; without masters, name the dtype. |
@@ -212,7 +212,12 @@ and the moments' updates stochastically.
 A step is `max_tokens_per_step` tokens in microbatches of at most
 `max_tokens_per_microbatch`: the geometry. Both backends run the same
 microbatches through the same objective, add up gradients across them, and
-return one loss per microbatch.
+return each microbatch's share of the step's loss. A step is given two
+values every time, the way a learning-rate schedule gives its rate: `lr`,
+under a schedule, and `trained_total`, the step's trained positions, which
+the objective divides by; an evaluation is given its set's total the same
+way. ShadowSpill sets both as hyperparameters of the planned step, PyTorch
+writes them into the optimizer and the module.
 
 `PyTorch(compile=True, device=None)` keeps the model, gradients and optimizer
 state on the device (by default, PyTorch's current accelerator) and compiles
@@ -329,8 +334,10 @@ validation loss, and draws the curves into the reference run's `compare.png`.
 
 ## Extending it
 
-- **Another objective** is a function of the model and a microbatch; pass it,
-  with its options in `objective_args`.
+- **Another objective** is a function of the model and a microbatch that
+  returns the loss summed over the positions the targets train; pass it, with
+  its options in `objective_args`. The division by the step's trained total is
+  the wrapping module's, so the objective never sees it.
 - **Another data source** is one the packer can read: for each sequence, its
   `lengths`, `max_len` and `eos`, and its `tokens`, `targets`,
   `trained_tokens` and `record` -- as `training.documents.TokenDocuments` gives
