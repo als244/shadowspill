@@ -1624,15 +1624,23 @@ class Tour:
         generator: torch.Generator | None = None,
     ) -> tuple[tuple[object, ...], ...]:
         sequence_length = self.request.sequence_length
-        shape = (1, sequences * sequence_length)
+        per_microbatch = sequences * sequence_length
         lengths = (sequence_length,) * sequences
+        # One draw for the whole step, then split: the tokens and targets a
+        # step trains on are then the same at every geometry, so two
+        # geometries' losses differ only in what was computed. Drawing each
+        # microbatch's tokens and then its targets would hand every geometry
+        # another interleaving of one stream -- a different batch.
+        whole = (1, per_microbatch * accumulation)
+        tokens = torch.randint(self.vocabulary, whole, generator=generator)
+        targets = torch.randint(self.vocabulary, whole, generator=generator)
         return tuple(
             (
-                torch.randint(self.vocabulary, shape, generator=generator),
-                torch.randint(self.vocabulary, shape, generator=generator),
+                tokens[:, start : start + per_microbatch].clone(),
+                targets[:, start : start + per_microbatch].clone(),
                 lengths,
             )
-            for _ in range(accumulation)
+            for start in range(0, whole[1], per_microbatch)
         )
 
     def step_microbatches(
@@ -1808,7 +1816,9 @@ class Tour:
                 hyperparams={"lr": LEARNING_RATE},
                 runtime_trace=traced,
             )
-            losses[step] = statistics.fmean(float(value) for value in result.objectives)
+            # Each microbatch returns its share of the step's mean loss over
+            # trained tokens, so the step's loss is their sum.
+            losses[step] = sum(float(value) for value in result.objectives)
             hosts[step] = time.perf_counter() - started
             report_cycles()
             return result
