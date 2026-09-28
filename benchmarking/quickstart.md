@@ -122,9 +122,11 @@ Output and stores:
 | Argument | Meaning | Default |
 |---|---|---|
 | `--plots` | Render the figures below | off |
-| `--output-dir` | Where this run writes: its console and progress logs, search report, traced steps, figures, and — unless a store flag points elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>_<MMDD_HHMM>/seq<length>/seqsperstep<n>` |
+| `--timelines` | Write every plan's pages under `timelines/` as the run closes (see below); `--no-timelines` skips them | on |
+| `--resolution-plans` | Keep every resolution's best plan in the plan store beside the answer, certified, so the timelines carry a page per resolution; several times the plan store. Every resolution reports its plan under `--deterministic` (the default); without it one bounded away before it placed has none | off |
+| `--output-dir` | Where this run writes: its console and progress logs, search report, traced steps, figures, timelines, and — unless a store flag points elsewhere — its two stores | `benchmarking/quickstart_reports/<model>_<revision>_<MMDD_HHMM>/seq<length>/seqsperstep<n>` |
 | `--force-overwrite` | Replace an existing run at that directory. Its stores are kept, being content-addressed | off |
-| `--reproduce RUN` | Repeat the run at `RUN` (its `seq<length>/seqsperstep<n>` directory) exactly: every setting comes from its `request.json`, the search is pinned to the calibration its `search.json` records, and plan-store mode is `require`, so a plan the store lacks refuses instead of being searched again. Only `--output-dir` and `--plots` may be given with it | none |
+| `--reproduce RUN` | Repeat the run at `RUN` (its `seq<length>/seqsperstep<n>` directory) exactly: every setting comes from its `request.json`, the search is pinned to the calibration its `search.json` records, and plan-store mode is `require`, so a plan the store lacks refuses instead of being searched again. Only `--output-dir`, `--plots`, `--timelines` and `--resolution-plans` may be given with it | none |
 | `--export-bypass-key` | The caller's name for the code this run builds from. With it, a build reads each ordering's step program back from the build store and captures only what is not there; without it every build captures | none |
 | `--artifact-store` | Roots both store trees | `<output-dir>/artifact_store` |
 | `--build-store` | The captures, graph pairs, profiles and compiled artifacts to read and write; overrides `--artifact-store` for the build tree. Point it at another run's store to skip work already paid for there | the artifact store |
@@ -169,6 +171,8 @@ benchmarking/quickstart_reports/
           16gib.json
         figures/
           sim/  real/  raw_data/
+        timelines/              every plan's pools and lanes over the step,
+          index.html  search/  run/   as pages; see below
         artifact_store/         this run's captures, graph pairs, profiles
                                 and lowered programs, reusable by other runs
         plan_store/             this run's plans: every request, selection
@@ -202,6 +206,25 @@ The figures keep a handful of aggregate numbers per budget, and those answer
 `shadowspill.step_diagnostics` schema the performance matrix writes, so
 `python -m tools.qualification.gap_report` reads a quickstart run the same way
 it reads a matrix.
+
+`timelines/` is written as the run closes, unless `--no-timelines`, by
+[the occupancy tool](../docs/python/occupancy.md); a failure to write it is
+reported and does not fail the run, whose data is complete by then. For every plan the search
+made, one page on the simulated clock under
+`search/<geometry>_<walk>/<budget>/` -- the step's summary, what occupies the
+spill pool and the execution pool at each moment by what the objects are
+for, and the fetch, compute and evict lanes, on one zoom; for every budget
+that ran, that page in both views under `run/<budget>/`, the traced one on
+the device's clock; for every geometry, its unconstrained page under
+`search/<geometry>_<walk>/unconstrained/`, the compute floor with every
+object resident and nothing spilled, to read the budgeted pages against;
+with `--resolution-plans`, for every resolution the search kept, its
+simulated page and its own unconstrained page under
+`search/<geometry>_<walk>/<budget>/recompute_<share>/`, the answer marked;
+and an `index.html` listing every plan with its
+simulated step and peaks.
+`python -m tools.diagnostics.occupancy --run <run directory>` writes the same
+for a run made before the pages existed.
 
 ## What the output shows, in order
 
