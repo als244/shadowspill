@@ -109,9 +109,13 @@ arithmetic:
 Every one of these is part of the plan's identity in the store and of the
 request a run records, so `--reproduce` replays them, and the banner names
 them even when every one is the default: two runs at different precisions are
-not the same arithmetic, and a bf16-summed step at one microbatch geometry
-does not follow the loss trajectory of the same step at another to more than
-a few decimals.
+not the same arithmetic. Two microbatch geometries of one step train on the
+same batch (the step's tokens and targets are drawn once and split), and their
+losses agree to about a thousandth per step whichever dtype the gradients are
+summed at: what separates them is bf16 rounding inside the kernels, whose
+tiling differs with the rows a microbatch holds, and a gradient at
+initialization is a cancelling sum, so a rounding difference of one bf16 ulp
+in its terms is a difference of the same relative size in the gradient.
 
 Output and stores:
 
@@ -312,7 +316,8 @@ it reads a matrix.
    planning capacities, and the calibrated bandwidths planning assumed —
    then **steps** (each step's cycle on the device clock, its throughput,
    its head wait and its loss, each line appearing once the next step has
-   begun. The loss is the step's mean over its microbatches, and every
+   begun. Each microbatch's objective is its share of the step's mean loss
+   over trained tokens, so the step's loss is their sum, and every
    budget runs from the same initial weights and a fresh optimizer on the
    same seeded tokens per step, so the losses of one budget agree with
    every other budget's bar reduction order: a run that disagrees is a
