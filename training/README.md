@@ -146,7 +146,7 @@ and, by keyword:
 | `data` | A `PackedTokens`. |
 | `steps` | The optimizer steps the run takes. |
 | `max_seq_len` | The longest sequence a microbatch holds; the data drops, truncates or splices longer documents, and planning assumes sequences of this length. |
-| `max_tokens_per_step`, `max_tokens_per_microbatch` | Tokens a step and a microbatch hold at most; both multiples of `max_seq_len`, the second dividing the first. Without `max_tokens_per_microbatch`, ShadowSpill searches for the fastest at its budget. |
+| `max_tokens_per_step`, `max_tokens_per_microbatch` | Tokens a step and a microbatch hold at most; both multiples of `max_seq_len`, the second dividing the first. The PyTorch backend runs `max_tokens_per_microbatch`; ShadowSpill does too unless its backend names planning bounds, and searches for the fastest at its budget when neither is given. |
 | `schedule` | `training.schedules.WarmupCosine(lr, min_lr, warmup_steps)` or `Constant(lr)`, setting the optimizer's rate every step; without one, the optimizer's own rate stays. |
 | `backend` | `training.backends.pytorch.PyTorch()` (the default) or `training.backends.shadowspill.ShadowSpill(...)`; see [Backends](#backends). |
 | `seed` | Seeds the initial weights. |
@@ -220,7 +220,9 @@ the objective with `torch.compile` unless `compile=False`. It needs
 `max_tokens_per_microbatch`.
 
 `ShadowSpill(execution_gib, spill_gib, eval_execution_gib=None,
-round_accumulation_once=False)` keeps the state in a pinned host pool of
+round_accumulation_once=False, planning_min_tokens_per_microbatch=None,
+planning_max_tokens_per_microbatch=None, resolution_options="quarters",
+orderings="factors")` keeps the state in a pinned host pool of
 `spill_gib` and plans every step to fit `execution_gib` of the device, which is
 the whole device pool. Evaluation's forward pass shares the step's slab
 (`share_slab_with`): the two run in turn, so the pool holds the bytes once. It
@@ -232,13 +234,29 @@ the sum once where the PyTorch backend rounds it twice, so the two backends'
 steps no longer agree bit for bit.
 
 - **Planning.** A run's first launch searches for its plan with
-  `plan_step_search` -- over microbatch sizes when the trainer gave none -- and
-  records what it chose in `planning.json`: the geometry, the ordering, and the
-  transfer bandwidths and budgets it was planned against. Every later launch of
-  the run plans that choice directly with `plan_step`, from the artifact
-  store's captures, compiled graphs and profiles, without searching; it refuses
-  other budgets than the record's, since a run keeps the geometry it started
-  with.
+  `plan_step_search` and records what it chose in `planning.json`: the
+  geometry, the ordering, the search options, and the transfer bandwidths and
+  budgets it was planned against; the search's whole table is `search.json`
+  beside it. Every later launch of the run plans that choice directly with
+  `plan_step`, from the artifact store's captures, compiled graphs and
+  profiles, without searching; it refuses other budgets or other search
+  options than the record's, since a run keeps the plan it started with.
+- **The geometry.** The search plans every split of `max_tokens_per_step`
+  whose microbatch holds between `planning_min_tokens_per_microbatch` and
+  `planning_max_tokens_per_microbatch` tokens and runs the fastest; equal
+  bounds pin one split, a missing bound is open. Without either bound the
+  trainer's `max_tokens_per_microbatch` pins the geometry, and without that
+  too every split is searched -- the narrow ones included, which cost the
+  most to plan, so a floor is worth naming. The data is then packed at the
+  geometry the search chose.
+- **Search options.** `resolution_options` names the shares of the flexible
+  graph-pair groups the search plans recomputing, one resolved program each:
+  `quarters` (the library default), `eighths`, `halves`, or a list of exact
+  fractions such as `["0", "1/2", "1"]`. `orderings` names the walks tried
+  per geometry: `factors`, every depth x breadth factor pair, or `depth-first`
+  alone. More of either plans more programs per point, so the first launch's
+  search wall grows with them; both are part of every plan's identity in the
+  store.
 - **Optimizer state.** ShadowSpill creates the optimizer's state in its pool
   before any step runs, each entry where the optimizer's own first step starts
   it -- moments at zero, for instance -- and a resumed run's checkpoint
@@ -261,7 +279,7 @@ Everything a run writes is in its directory:
 | `metrics.jsonl` | One JSON record per line, each with its `step` and `time`. |
 | `packing.jsonl` | The sequences each step trained on, each as `[ordinal, length]` -- its document's place among the file's documents, and its length -- with the offset in the document added for a spliced piece that does not start it. |
 | `stdout.log` | Everything the run printed, when launched through `launch.sh`. |
-| `plan.json`, `planning.json` | On ShadowSpill: the plan's summary, and what it was made for. |
+| `plan.json`, `planning.json`, `search.json` | On ShadowSpill: the plan's summary, what it was made for, and the geometry search's table. |
 | `checkpoint.pt` | The latest checkpoint, in `checkpoint_dir` when that is elsewhere. |
 | `wandb/`, `wandb_id.txt` | W&B's files, when a project is given. |
 
