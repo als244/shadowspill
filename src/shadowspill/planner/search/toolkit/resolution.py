@@ -25,7 +25,7 @@ different thing about the same subject.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from itertools import product
@@ -45,6 +45,15 @@ ShareValue = Fraction | int | str
 DEFAULT_RESOLUTION_OPTIONS: tuple[Fraction, ...] = tuple(
     Fraction(n, 4) for n in range(5)
 )
+
+#: Resolution sets by name, as a command line or a config spells them: the
+#: shares of the flexible groups to recompute at every quarter, at every
+#: eighth, or at none, half and all.
+NAMED_RESOLUTION_OPTIONS: Mapping[str, tuple[str, ...]] = {
+    "quarters": tuple(str(share) for share in DEFAULT_RESOLUTION_OPTIONS),
+    "eighths": tuple(str(Fraction(n, 8)) for n in range(9)),
+    "halves": ("0", "1/2", "1"),
+}
 
 _EXHAUSTIVE_COMBINATION_LIMIT = 64
 _QUARTER_DENOMINATOR = 4
@@ -83,6 +92,27 @@ def validate_resolution_options(
     if not chosen:
         raise ValueError("resolution options must name at least one share")
     return tuple(sorted(set(chosen)))
+
+
+def named_resolution_options(value: str | Iterable[ShareValue]) -> tuple[str, ...]:
+    """The shares a name in :data:`NAMED_RESOLUTION_OPTIONS` stands for, or the
+    shares given -- as a comma-separated string or a sequence -- validated and
+    returned as strings in ascending order.
+
+    Strings, because that is how a request records the options and how a
+    command line or a config spells them; :func:`validate_resolution_options`
+    turns them into the fractions a search plans with.
+    """
+
+    if isinstance(value, str):
+        if value in NAMED_RESOLUTION_OPTIONS:
+            return NAMED_RESOLUTION_OPTIONS[value]
+        shares: Iterable[ShareValue] = [
+            item.strip() for item in value.split(",") if item.strip()
+        ]
+    else:
+        shares = value
+    return tuple(str(share) for share in validate_resolution_options(shares))
 
 
 def resolutions(
@@ -451,11 +481,13 @@ def _forced_by_equal_retention(
 
 __all__ = [
     "DEFAULT_RESOLUTION_OPTIONS",
+    "NAMED_RESOLUTION_OPTIONS",
     "CostedAlternatives",
     "CostedGroup",
     "CostedOption",
     "Resolution",
     "ShareValue",
+    "named_resolution_options",
     "resolutions",
     "validate_resolution_options",
 ]

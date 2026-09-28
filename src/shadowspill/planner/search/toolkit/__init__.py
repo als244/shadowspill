@@ -22,9 +22,11 @@ from __future__ import annotations
 
 from .resolution import (
     DEFAULT_RESOLUTION_OPTIONS,
+    NAMED_RESOLUTION_OPTIONS,
     CostedAlternatives,
     Resolution,
     ShareValue,
+    named_resolution_options,
     resolutions,
     validate_resolution_options,
 )
@@ -32,9 +34,11 @@ from .validation import validate_search_inputs
 
 __all__ = [
     "DEFAULT_RESOLUTION_OPTIONS",
+    "NAMED_RESOLUTION_OPTIONS",
     "CostedAlternatives",
     "Resolution",
     "ShareValue",
+    "named_resolution_options",
     "resolutions",
     "validate_resolution_options",
     "validate_search_inputs",

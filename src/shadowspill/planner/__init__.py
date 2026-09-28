@@ -30,8 +30,10 @@ from .search import SearchAlgorithm, SearchOptions, answer_no_worse_than, toolki
 from .search.algorithms.pressurefit import pressurefit
 from .search.toolkit import (
     DEFAULT_RESOLUTION_OPTIONS,
+    NAMED_RESOLUTION_OPTIONS,
     CostedAlternatives,
     Resolution,
+    named_resolution_options,
     resolutions,
     validate_resolution_options,
     validate_search_inputs,
@@ -39,6 +41,7 @@ from .search.toolkit import (
 
 __all__ = [
     "DEFAULT_RESOLUTION_OPTIONS",
+    "NAMED_RESOLUTION_OPTIONS",
     "AdmissionFacts",
     "CandidateDiagnostic",
     "CostedAlternatives",
@@ -64,6 +67,7 @@ __all__ = [
     "TaskAllocationStepKind",
     "TaskAlternativeChoiceDiagnostic",
     "answer_no_worse_than",
+    "named_resolution_options",
     "plan_program",
     "pressurefit",
     "resolutions",
