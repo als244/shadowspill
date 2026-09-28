@@ -564,6 +564,7 @@ the rest. Reached as `shadowspill.planner.toolkit`, and every name below except
 | `Resolution` | `tuple[TaskAlternativeChoice, ...]` | One option chosen per group -- what makes a program concrete. |
 | `ShareValue` | `Fraction \| int \| str` | How a caller may spell one share: `Fraction(3, 8)`, `0`, `1`, or `"3/8"`. |
 | `DEFAULT_RESOLUTION_OPTIONS` | `tuple[Fraction, ...]` | Every quarter from none recomputing to all. |
+| `NAMED_RESOLUTION_OPTIONS`, `named_resolution_options` | `Mapping[str, tuple[str, ...]]`, `(value) -> tuple[str, ...]` | The sets a command line or a config names -- `quarters`, `eighths`, `halves` -- and the function that returns the shares a name stands for, or the shares given as a comma-separated string or a sequence, validated and as strings in ascending order, which is how a request records them. |
 
 Two more toolkits sit outside this package because they are phases rather
 than helpers: `shadowspill.simulator` prices a schedule, and
