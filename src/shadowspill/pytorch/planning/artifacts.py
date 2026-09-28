@@ -13,6 +13,7 @@ from shadowspill.ir import ExecutionPlan
 from shadowspill.planner import AdmissionFacts, ProgramPlanResult
 from shadowspill.pytorch.capture.aot import ExportCapture, TrainingObjectiveCapture
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.retention import RetentionPolicy
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.optimizer import OptimizerCapture, OptimizerTaskArtifact
@@ -93,6 +94,8 @@ class TrainingCaptureArtifacts:
     captures: tuple[TrainingObjectiveCapture, ...]
     partitioned: tuple[PartitionedTrainingCapture, ...]
     layout: TrainingStorageLayout
+    #: What every stage's ``save`` graph pair retained for its backward.
+    retention: RetentionPolicy
 
 
 @dataclass(frozen=True, slots=True)

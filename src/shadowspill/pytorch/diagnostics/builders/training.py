@@ -314,7 +314,9 @@ def _training_graph_pair(
     return PlanGraphPair(
         variant=variant,
         memory_budget=option.memory_budget,
-        recomputation=pair.recomputation,
+        memory_bound_flops_per_byte=pair.retention.memory_bound_flops_per_byte,
+        regenerated_operators=pair.retention.regenerated_operators,
+        unknown_operators=pair.retention.unknown_operators,
         saved_value_count=pair.saved_value_count,
         specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
         saved_input_root_count=len(footprint.input_root_ids),

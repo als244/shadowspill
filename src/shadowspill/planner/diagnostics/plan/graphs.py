@@ -333,8 +333,17 @@ class PlanGraphPair:
     """One legal stage choice; forward-only choices omit ``backward``."""
 
     variant: str
+    #: The partition budget the choice was captured under: ``1.0`` retains
+    #: what is expensive to regenerate, ``0.0`` the stage's inputs alone, and
+    #: ``None`` is a forward-only choice with no backward to retain for.
     memory_budget: float | None
-    recomputation: bool
+    #: Flops per byte at or under which a forward operator was regenerated in
+    #: the backward rather than retained; ``None`` for a forward-only choice.
+    memory_bound_flops_per_byte: float | None
+    #: Forward operators the backward computes again rather than being handed.
+    regenerated_operators: tuple[str, ...]
+    #: Custom operators no flop formula priced, retained as if compute-bound.
+    unknown_operators: tuple[str, ...]
     saved_value_count: int
     specialized_unit_tangent_count: int
     saved_input_root_count: int
@@ -350,7 +359,9 @@ class PlanGraphPair:
         return {
             "variant": self.variant,
             "memory_budget": self.memory_budget,
-            "recomputation": self.recomputation,
+            "memory_bound_flops_per_byte": self.memory_bound_flops_per_byte,
+            "regenerated_operators": list(self.regenerated_operators),
+            "unknown_operators": list(self.unknown_operators),
             "saved_value_count": self.saved_value_count,
             "specialized_unit_tangent_count": self.specialized_unit_tangent_count,
             "saved_input_root_count": self.saved_input_root_count,

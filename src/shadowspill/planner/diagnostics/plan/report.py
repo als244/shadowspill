@@ -53,6 +53,10 @@ class PlanReport:
     #: The resolution options the plan was searched over, as exact fractions
     #: of the flexible groups recomputing, or `None` for a forward plan.
     search_options: SearchOptions | None = None
+    #: Flops per byte at or under which a task alternative's forward operator
+    #: is regenerated in its backward rather than retained, or `None` for a
+    #: forward plan, which retains nothing.
+    memory_bound_flops_per_byte: float | None = None
     planned_program_cache_hits: int = 0
     planned_program_cache_misses: int = 0
     fixed_slab_bytes: int = 0

@@ -91,6 +91,7 @@ def training_plan_report(
         data_ordering=data_ordering,
         search_options=search_options,
         memory=memory,
+        memory_bound_flops_per_byte=captured.retention.memory_bound_flops_per_byte,
     )
     return publish_plan_report(
         model,

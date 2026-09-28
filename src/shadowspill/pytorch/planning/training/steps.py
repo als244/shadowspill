@@ -24,6 +24,7 @@ from shadowspill.planner import (
     AdmissionFacts,
 )
 from shadowspill.planner.program import ShadowSpillPlanningProblem
+from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
 from shadowspill.pytorch.profiling import profile_environment
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.runtime.plan import PlanMemory
@@ -77,6 +78,7 @@ def make_training_programs(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> tuple[StepProgram, ...]:
     """Build one self-contained step artifact per ordering, before any search.
 
@@ -110,6 +112,7 @@ def make_training_programs(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
+                memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 export_bypass_key=bypass_key,
                 machine=machine_identity(memory),
                 environment=profile_environment(
@@ -159,6 +162,7 @@ def make_training_programs(
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
+                memory_bound_flops_per_byte=memory_bound_flops_per_byte,
             )
         )
     return tuple(found[item] for item in orderings)
@@ -186,6 +190,7 @@ def _build_training_step_programs(
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> dict[StepDataOrdering, StepProgram]:
     """Capture, profile and lower once, and publish one program per ordering.
 
@@ -207,6 +212,7 @@ def _build_training_step_programs(
         timer=timer,
         grad_dtype=grad_dtype,
         round_accumulation_once=round_accumulation_once,
+        memory_bound_flops_per_byte=memory_bound_flops_per_byte,
     )
     materialized = materialize_training_state(
         model,

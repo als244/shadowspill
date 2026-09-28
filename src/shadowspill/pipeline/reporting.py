@@ -294,6 +294,7 @@ def build_training_report(
     data_ordering: StepDataOrdering,
     memory: PlanMemory,
     search_options: SearchOptions | None = None,
+    memory_bound_flops_per_byte: float | None = None,
 ) -> PlanReport:
     """Build complete accumulated-training planning evidence without writing it."""
 
@@ -358,6 +359,7 @@ def build_training_report(
         optimizer_ordering=optimizer_ordering,
         data_ordering=data_ordering,
         search_options=search_options,
+        memory_bound_flops_per_byte=memory_bound_flops_per_byte,
     )
 
 
@@ -389,6 +391,7 @@ def publish_plan_report(
             ),
             "allocation_probe_seeds": report.allocation_probe_seeds,
             "allocation_probe_repetitions": report.allocation_probe_repetitions,
+            "memory_bound_flops_per_byte": report.memory_bound_flops_per_byte,
             "execution_device": report.execution_device,
             "export_bypass_key": cache.export_bypass_key,
             "phase_timings_ns": [list(item) for item in report.phase_timings_ns],

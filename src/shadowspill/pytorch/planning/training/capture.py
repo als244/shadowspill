@@ -24,6 +24,10 @@ from shadowspill.pytorch.capture.aot import (
     rebind_training_objective,
 )
 from shadowspill.pytorch.capture.fake import fake_device_inputs, fake_device_model
+from shadowspill.pytorch.capture.retention import (
+    MEMORY_BOUND_FLOPS_PER_BYTE,
+    RetentionPolicy,
+)
 from shadowspill.pytorch.materialization.training import (
     representative_training_arguments,
 )
@@ -67,12 +71,15 @@ def capture_training_graphs(
     timer: PlanningTimer,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
+    memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> TrainingCaptureArtifacts:
     """Capture objective and stage-local graph pairs entirely offline, their
     parameter gradients at ``grad_dtype`` when one is given, their
     accumulating forms rounding once where they may with
-    ``round_accumulation_once``."""
+    ``round_accumulation_once``, and their ``save`` variants regenerating
+    every operator at or under ``memory_bound_flops_per_byte``."""
 
+    retention = RetentionPolicy(memory_bound_flops_per_byte)
     with timer.measure("validation"):
         signatures, cpu_inputs, workloads = _prepare_training_inputs(
             model,
@@ -106,6 +113,7 @@ def capture_training_graphs(
             partition=partition,
             stores=stores,
             timer=timer,
+            retention=retention,
             grad_dtype=grad_dtype,
             round_accumulation_once=round_accumulation_once,
         )
@@ -121,6 +129,7 @@ def capture_training_graphs(
         captures,
         partitioned,
         layout,
+        retention,
     )
 
 
@@ -212,6 +221,7 @@ def _partition_training_graphs(
     partition: PartitionSpec,
     stores: PlanningStores,
     timer: PlanningTimer,
+    retention: RetentionPolicy,
     grad_dtype: torch.dtype | None,
     round_accumulation_once: bool,
 ) -> tuple[PartitionedTrainingCapture, ...]:
@@ -234,6 +244,7 @@ def _partition_training_graphs(
                 partition=partition,
                 graph_pair_store=stores.graph_pairs,
                 representative_root_inputs=root_inputs,
+                retention=retention,
                 # Which microbatch creates a stage's gradient and which add
                 # into it is decided by the step's ordering, after capture,
                 # so every microbatch of an accumulating step carries both

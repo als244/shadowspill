@@ -84,6 +84,7 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `data_ordering` | The `StepDataOrdering` the step walked its microbatches under -- its `depth`, `breadth`, `reverse_breadth`, and `pair_loss` -- or `None` for a forward plan. |
 | `search_results` | The selected plan, as the search answered it. |
 | `search_options` | What the search was told: the generic options, which algorithm ran, and that algorithm's own options. For the search that ships those include the candidate space and `resolution_options`, the shares of the flexible groups to recompute as exact fractions, every quarter by default. `None` for a forward plan. |
+| `memory_bound_flops_per_byte` | Flops per byte moved at or under which a stage's `save` graph pair regenerated an operator's results in the backward rather than retaining them. `None` for a forward plan, which retains nothing. |
 | `planned_program_cache_hits`, `planned_program_cache_misses` | Whether the selected plan was read back from the store: one of the two is 1. |
 | `fixed_slab_bytes` | The slab the fixed layout occupies. |
 | `captured_stage_count` | Stages the capture produced. |
@@ -230,8 +231,10 @@ One legal stage choice. Forward-only choices omit `backward`.
 | Field | Meaning |
 |---|---|
 | `variant` | The choice's name. |
-| `memory_budget` | The budget the partitioner was given for this variant. |
-| `recomputation` | Whether it recomputes rather than saving. |
+| `memory_budget` | The partition budget the variant was captured under: `1.0` retains what is expensive to regenerate, `0.0` the stage's inputs alone, and `None` is a forward-only choice with no backward to retain for. |
+| `memory_bound_flops_per_byte` | Flops per byte moved at or under which a forward operator was regenerated in the backward rather than retained; `None` for a forward-only choice. |
+| `regenerated_operators` | Forward operators the backward computes again rather than being handed their results. |
+| `unknown_operators` | Custom operators no flop formula priced, retained as if compute-bound. |
 | `saved_value_count` | Values it saves across the boundary. |
 | `specialized_unit_tangent_count` | Saved values specialized to a unit tangent. |
 | `saved_input_root_count`, `saved_boundary_root_count`, `saved_internal_root_count` | Saved roots by where they come from. |
