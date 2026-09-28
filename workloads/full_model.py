@@ -12,6 +12,7 @@ import mlops
 import torch
 import torch.nn as nn
 
+from workloads.common import auxiliary_share
 from workloads.mlops import Llama3 as MlopsLlama3
 from workloads.mlops import OLMoE as MlopsOLMoE
 from workloads.mlops import Qwen35 as MlopsQwen35
@@ -147,27 +148,32 @@ class FullModelCase:
         )
 
     def objective(self, model: nn.Module, *values: object) -> torch.Tensor:
+        """The microbatch's share of the step's mean loss over trained tokens:
+        its loss summed over trained positions, divided by the step's trained
+        total. Random targets train every position, so that total is the
+        step's token count, a constant of the case."""
+
         tokens, targets, sequence_lengths = values
         if not isinstance(tokens, torch.Tensor) or not isinstance(
             targets, torch.Tensor
         ):
             raise TypeError("performance tokens and targets must be tensors")
+        total = float(self.manifest.tokens_per_step)
         callable_model: Any = model
         if self.manifest.implementation == "pytorch":
             if self.manifest.family == "olmoe":
-                return cast(
-                    torch.Tensor,
-                    callable_model.loss(
-                        tokens,
-                        targets,
-                        seq_lens=sequence_lengths,
-                        aux_coef=0.01,
-                    ),
+                summed = callable_model.loss(
+                    tokens,
+                    targets,
+                    seq_lens=sequence_lengths,
+                    aux_coef=0.01,
+                    reduction="sum",
                 )
-            return cast(
-                torch.Tensor,
-                callable_model.loss(tokens, targets, seq_lens=sequence_lengths),
-            )
+            else:
+                summed = callable_model.loss(
+                    tokens, targets, seq_lens=sequence_lengths, reduction="sum"
+                )
+            return cast(torch.Tensor, summed / total)
 
         chunk = _head_chunk_size(
             int(callable_model.config.vocab_size),
@@ -175,23 +181,23 @@ class FullModelCase:
         )
         if self.manifest.family == "olmoe":
             hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
-            objective = mlops.head_loss(
+            summed = mlops.head_loss(
                 hidden,
                 callable_model.lm_head.weight,
                 targets,
                 chunk_size=chunk,
-            )
-            return cast(torch.Tensor, objective + 0.01 * auxiliary)
+                reduction="sum",
+            ) + 0.01 * auxiliary_share(auxiliary, targets, "sum")
+            return cast(torch.Tensor, summed / total)
         hidden = callable_model.hidden(tokens, sequence_lengths)
-        return cast(
-            torch.Tensor,
-            mlops.head_loss(
-                hidden,
-                callable_model.lm_head.weight,
-                targets,
-                chunk_size=chunk,
-            ),
+        summed = mlops.head_loss(
+            hidden,
+            callable_model.lm_head.weight,
+            targets,
+            chunk_size=chunk,
+            reduction="sum",
         )
+        return cast(torch.Tensor, summed / total)
 
     #: AdamW at its defaults. The rate is named in ``hyperparams`` when the
     #: step is planned and given a value on every step, so it is not set here.
