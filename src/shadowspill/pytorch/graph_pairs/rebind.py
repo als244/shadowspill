@@ -73,7 +73,7 @@ def _rebind_graph_pair(
     return AotGraphPair(
         forward=forward,
         backward=backward,
-        recomputation=pair.recomputation,
+        retention=pair.retention,
         saved_value_count=pair.saved_value_count,
         specialized_unit_tangent_count=pair.specialized_unit_tangent_count,
     )

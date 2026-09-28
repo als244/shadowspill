@@ -22,10 +22,15 @@ from ..partition.artifacts import PartitionedExport, StageExample
 
 @dataclass(frozen=True, slots=True)
 class GraphPairVariant:
-    """One labeled AOT pair produced under a recomputation memory budget."""
+    """One labeled AOT pair produced under a partition memory budget.
+
+    ``1.0`` is the ``save`` variant, which retains what is expensive to
+    regenerate; ``0.0`` is ``recompute``, which retains the stage's inputs
+    alone; a budget between the two is PyTorch's knapsack between them.
+    """
 
     option_id: str
-    memory_budget: float | None
+    memory_budget: float
     pair: AotGraphPair
     accumulates: bool = False
     """Whether this backward adds its gradients onto ones it is given.
@@ -40,12 +45,13 @@ class GraphPairVariant:
     def __post_init__(self) -> None:
         if not self.option_id:
             raise ValueError("graph-pair option ID must be non-empty")
-        if self.memory_budget is not None and not 0.0 <= self.memory_budget <= 1.0:
+        if isinstance(self.memory_budget, bool) or not isinstance(
+            self.memory_budget, int | float
+        ):
+            raise TypeError("graph-pair memory budget must be a number")
+        if not 0.0 <= self.memory_budget <= 1.0:
             raise ValueError("graph-pair memory budget must be between zero and one")
-        if self.pair.recomputation != (self.memory_budget is not None):
-            raise ValueError(
-                "only min-cut graph-pair variants carry an activation-memory budget"
-            )
+        object.__setattr__(self, "memory_budget", float(self.memory_budget))
 
     def with_gradient_dtype(self, dtype: torch.dtype | None) -> GraphPairVariant:
         """Return this variant with its parameter gradients produced at ``dtype``.

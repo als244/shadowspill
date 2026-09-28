@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from shadowspill.pytorch.capture.aot import capture_graph_pair
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.retention import RetentionPolicy
 
 from ..partition.artifacts import StageExample
 from .artifacts import GraphPairVariant, TaskGraphPairs
@@ -14,18 +15,20 @@ def build_default_graph_pairs(
     roots: tuple[int, ...],
     *,
     specialize_unit_tangents: bool,
+    retention: RetentionPolicy,
 ) -> TaskGraphPairs:
-    """Capture the established default and runtime-optimized min-cut choices.
+    """Capture the two endpoints of the partition budget.
+
+    ``save`` is budget ``1.0``: the min-cut over saved bytes under
+    ``retention``, which regenerates every memory-bound value and retains the
+    rest. ``recompute`` is budget ``0.0``, which retains the stage's inputs
+    alone. Both budgets are bound inside the lazy partition callback so
+    ambient Functorch configuration cannot alter a structural contract.
 
     The returned record and every downstream consumer support an arbitrary
-    ordered number of variants. Intermediate min-cut budgets can therefore be
-    added here without changing partitioning, caching, lowering, diagnostics,
-    or the canonical ShadowSpillProgram representation.
-
-    PyTorch's min-cut budget ``0.0`` is the full-recompute endpoint.  Fix it
-    explicitly so ambient Functorch configuration cannot alter the structural
-    contract. The opposite endpoint, ``1.0``, retains the full saved-value set and
-    therefore must not be exposed as recomputation.
+    ordered number of variants, so a budget between the two is a variant this
+    builder could emit without changing partitioning, caching, lowering,
+    diagnostics or the canonical ShadowSpillProgram representation.
     """
 
     stage = example.stage
@@ -35,36 +38,23 @@ def build_default_graph_pairs(
         explicit_mutations=stage.mutations,
         input_provenance=stage.input_provenance,
     )
-    variants = (
+    variants = tuple(
         GraphPairVariant(
-            "save",
-            None,
+            option_id,
+            memory_budget,
             capture_graph_pair(
                 stage.graph_module,
                 example.inputs,
-                recomputation=False,
+                memory_budget=memory_budget,
+                retention=retention,
                 original_output=example.output,
                 root_output_positions=roots,
                 specialize_unit_tangents=specialize_unit_tangents,
                 explicit_mutations=stage.mutations,
                 input_provenance=stage.input_provenance,
             ),
-        ),
-        GraphPairVariant(
-            "recompute",
-            0.0,
-            capture_graph_pair(
-                stage.graph_module,
-                example.inputs,
-                recomputation=True,
-                activation_memory_budget=0.0,
-                original_output=example.output,
-                root_output_positions=roots,
-                specialize_unit_tangents=specialize_unit_tangents,
-                explicit_mutations=stage.mutations,
-                input_provenance=stage.input_provenance,
-            ),
-        ),
+        )
+        for option_id, memory_budget in (("save", 1.0), ("recompute", 0.0))
     )
     return TaskGraphPairs(structural_contract, roots, variants)
 
