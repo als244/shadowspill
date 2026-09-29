@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from reference.python.admission import replay_admission
 from shadowspill.ir import (
     AliasGroupSpec,
     MutationSpec,
     ObjectSpec,
+    ResourceKind,
+    ResourceSpec,
     ShadowSpillProgram,
     TaskProfile,
     TaskSpec,
@@ -28,6 +32,7 @@ from shadowspill.pytorch.planning.admission.bindings import (
     build_admission_facts,
 )
 from shadowspill.pytorch.planning.admission.selection import (
+    _selected_task_envelopes,
     task_memory_envelope,
 )
 from shadowspill.pytorch.profiling import (
@@ -36,6 +41,7 @@ from shadowspill.pytorch.profiling import (
     TaskAllocationOperation,
     TaskMeasurement,
 )
+from shadowspill.runtime.plan import TaskMemoryEnvelope
 from tests.shadowspill.planner._examples import (
     COMPUTE,
     DEVICE,
@@ -150,6 +156,63 @@ def test_admission_facts_preserve_workspace_extent_multiset() -> None:
         (32, 64),
         (32, 64),
     )
+
+
+def test_control_task_needs_no_callable_allocation_evidence() -> None:
+    control = TaskSpec(
+        "start",
+        ResourceSpec("cuda_0", ResourceKind.CONTROL),
+        "control_profile",
+        requires_entrypoint=False,
+    )
+    selected = _selected()
+    program = replace(
+        selected.program,
+        profiles=(
+            TaskProfile("control_profile", 0, 0, "control"),
+            *selected.program.profiles,
+        ),
+        tasks=(control, *selected.program.tasks),
+    )
+    # This check needs no output allocations from the remaining test tasks.
+    program = replace(
+        program, tasks=tuple(replace(t, outputs=()) for t in program.tasks)
+    )
+    facts = build_admission_facts(
+        program,
+        execution_pool_bytes=256,
+        object_capacity_bytes=256,
+        allocation_traces_by_compatibility={"task_abi": ()},
+        alignment=1,
+    )
+    assert facts.tasks[0] == TaskAdmissionSpec("start")
+    envelopes = dict(
+        _selected_task_envelopes(
+            replace(selected, program=program),
+            {"task_abi": TaskMeasurement(10, 0, 0, (), (10,), "unit-test")},
+            minimum_scratch_reserve_bytes=8 << 20,
+        )
+    )
+    assert envelopes["start"] == TaskMemoryEnvelope()
+    assert envelopes["task0"].dynamic_scratch_maximum_allocation_bytes == 8 << 20
+
+    with pytest.raises(ValueError, match="lacks explicit physical allocation evidence"):
+        build_admission_facts(
+            program, execution_pool_bytes=256, object_capacity_bytes=256
+        )
+    with pytest.raises(ValueError, match="workspace disagree"):
+        build_admission_facts(
+            replace(
+                program,
+                profiles=(
+                    replace(program.profiles[0], workspace_bytes=1),
+                    *program.profiles[1:],
+                ),
+            ),
+            execution_pool_bytes=256,
+            object_capacity_bytes=256,
+            allocation_traces_by_compatibility={"task_abi": ()},
+        )
 
 
 def test_admission_facts_derive_gradient_contribution_extents_from_trace() -> None:
