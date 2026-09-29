@@ -214,3 +214,36 @@ def test_a_dtype_flag_takes_a_torch_name_or_none() -> None:
     assert _dtype_name("none") is None
     with pytest.raises(argparse.ArgumentTypeError, match="float64"):
         _dtype_name("float64")
+
+
+def test_the_request_manifest_carries_the_steps_sequences() -> None:
+    """The objective divides by the manifest's tokens per step, so a step of
+    other than the family's default sequences must reach the manifest."""
+
+    from benchmarking.quickstart import resolve_request
+    from workloads.full_model import manifest_for
+
+    arguments = _arguments(
+        model="mlops_olmoe",
+        sequence_length=8192,
+        sequences_per_step=32,
+        search_budget_gib=[8.0],
+        run_budget_gib=[8.0],
+        spill_gib=None,
+        sequences_per_microbatch=None,
+        remote_spill=None,
+    )
+    request = resolve_request(_Parser(), arguments)  # type: ignore[arg-type]
+    assert request.tokens_per_step == 8192 * 32
+    assert request.manifest.tokens_per_step == request.tokens_per_step
+    assert manifest_for("olmoe", "mlops").tokens_per_step != request.tokens_per_step
+
+
+def test_the_loss_shown_is_the_heads_share_when_the_objective_reports_one() -> None:
+    import torch
+
+    from benchmarking.quickstart import _head_loss_share
+
+    assert _head_loss_share({"head_loss": torch.tensor(1.5)}) == 1.5
+    assert _head_loss_share(None) is None
+    assert _head_loss_share({"other": torch.tensor(1.5)}) is None
