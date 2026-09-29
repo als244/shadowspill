@@ -588,6 +588,7 @@ ones it does take are listed in [its own section](#plan_step_search).
 | `profiling_metadata` | `Sequence[object]` \| `None` | `None` | One JSON-compatible entry per example microbatch, distinguishing value-sensitive measurements that tensor geometry does not express. It reaches profile and plan identity, and is never passed to the model, objective, or runtime. |
 | `allocation_probe_seeds` | `int` | `1` | Independent randomized activation probes per structural contract. |
 | `allocation_probe_repetitions` | `int` | `2` | Identical repeats per probe seed, which is what separates a real first-use reservation from noise. |
+| `profiling_options` | `ProfilingOptions` \| `None` | `None` | Warmup, conditioning, measurement, and stability policy; `None` selects the defaults below. Also accepted by `plan_step_search()`. |
 
 What any search is told -- the evict-eligibility floor and whether the search
 must reproduce exactly at any worker count -- is `search_options.generic`, a
@@ -598,6 +599,47 @@ Budgets of at least one GiB plan at whole-GiB granularity, rounded down, so a
 budget that follows a pool's measured capacity gives the same plan identity in
 every process; calibrated bandwidths and latencies are rounded the same way, as
 [the plan report](../plan-report.md) describes.
+
+### `ProfilingOptions`
+
+`ProfilingOptions` is exported from `shadowspill.pytorch`. The same policy is
+accepted by `plan_forward()`, `plan_step()`, `build_step_programs()`, and
+`plan_step_search()`. Initialization warmups run the exact task before timing.
+Conditioning then repeats that task under load before collecting samples.
+Duration targets use device-event time; wall limits bound extra repetitions
+between invocations. The minimum sample count is always honored. A profile
+that misses a duration target or stability threshold is marked unstable.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `warmup_iterations` | `3` | Minimum exact-task initialization warmups. |
+| `stabilization_iterations` | `16` | Maximum additional iterations for persistent allocation stabilization. |
+| `conditioning_seconds` | `1.0` | Device time running the initialized task before measurement. |
+| `conditioning_wall_seconds` | `3.0` | Wall limit for conditioning. |
+| `minimum_samples` | `15` | Minimum measured task invocations. |
+| `measurement_seconds` | `0.3` | Minimum accumulated device time in the measurement window. |
+| `measurement_wall_seconds` | `2.0` | Wall limit for samples beyond the minimum count. |
+| `relative_mad_threshold` | `0.03` | Maximum median absolute deviation divided by the median. |
+| `half_drift_threshold` | `0.03` | Maximum difference between half-window medians divided by the overall median. |
+
+Counts must be positive integers. Durations and thresholds must be finite and
+nonnegative; a zero duration target disables that time floor. Wall caps do not
+interrupt an invocation. The effective policy, observed device/wall durations,
+repetition counts, and target-completion flags are stored with each profile.
+Policy changes participate in profile and build identity. No device clock
+control or monitoring service is required; bounded conditioning reduces
+short-run boost effects without guaranteeing a particular clock frequency.
+
+```python
+from shadowspill.pytorch import ProfilingOptions
+
+profiling = ProfilingOptions(
+    conditioning_seconds=0.5,
+    measurement_seconds=0.2,
+    minimum_samples=20,
+)
+# Pass profiling_options=profiling to any planning entry point above.
+```
 
 ### `plan_forward()`
 
@@ -627,6 +669,7 @@ plan_forward(
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
+    profiling_options=None,
     shared_outputs=(),
     build_store_mode='contribute',
     plan_store_mode='contribute',
@@ -753,6 +796,7 @@ plan_step(
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
+    profiling_options=None,
     build_store_mode='contribute',
     plan_store_mode='contribute',
     export_bypass_key=None,
@@ -859,6 +903,7 @@ build_step_programs(
     profiling_metadata=None,
     allocation_probe_seeds=1,
     allocation_probe_repetitions=2,
+    profiling_options=None,
     build_store_mode='contribute',
     export_bypass_key=None,
     master_dtype=None,
@@ -926,6 +971,7 @@ plan_step_search(
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions=False,
+    profiling_options=None,
 ) -> StepSearchReport
 ```
 

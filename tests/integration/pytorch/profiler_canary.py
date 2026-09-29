@@ -26,6 +26,7 @@ from shadowspill.pytorch.profiling import (
 from shadowspill.pytorch.profiling.profiler import TaskProfiler
 from shadowspill.runtime.abi import AdapterStatistics, runtime_library
 from shadowspill.runtime.bootstrap import install_runtime
+from shadowspill.task.profiling import ProfilingOptions
 from tests.integration.pytorch.runtime_helpers import two_pool_topology
 
 
@@ -95,8 +96,12 @@ def main() -> int:
         runtime_handle=installed.runtime_handle,
         plan_id=int(scope_plan_id.value),
         device_ordinal=0,
-        warmup_iterations=2,
-        sample_iterations=3,
+        profiling_options=ProfilingOptions(
+            warmup_iterations=2,
+            minimum_samples=3,
+            conditioning_seconds=0.02,
+            measurement_seconds=0.01,
+        ),
     )
     with tempfile.TemporaryDirectory() as directory:
         cache = ProfileStore(directory)

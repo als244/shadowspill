@@ -37,7 +37,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, cast
@@ -71,7 +71,13 @@ from shadowspill.plots import (
     plot_step_search,
     write_run_tables,
 )
-from shadowspill.pytorch import Runtime, StepSearchReport, plan_step, plan_step_search
+from shadowspill.pytorch import (
+    ProfilingOptions,
+    Runtime,
+    StepSearchReport,
+    plan_step,
+    plan_step_search,
+)
 from shadowspill.runtime.configuration import (
     resolve_execution_budget,
 )
@@ -332,6 +338,17 @@ def search_policy(arguments: argparse.Namespace) -> SearchOptions:
                 ),
             )
         ),
+    )
+
+
+def profiling_policy(arguments: argparse.Namespace) -> ProfilingOptions:
+    """One effective policy shared by search and execution planning."""
+
+    return ProfilingOptions(
+        **{
+            option.name: getattr(arguments, f"profile_{option.name}")
+            for option in fields(ProfilingOptions)
+        }
     )
 
 
@@ -1116,6 +1133,18 @@ def _parser() -> argparse.ArgumentParser:
         " which budget it came from. --no-incumbents searches every point"
         " alone, for comparing the two",
     )
+    profiling = parser.add_argument_group("Task profiling")
+    defaults = ProfilingOptions()
+    for option in fields(ProfilingOptions):
+        default = getattr(defaults, option.name)
+        profiling.add_argument(
+            "--profile-" + option.name.replace("_", "-"),
+            dest="profile_" + option.name,
+            type=type(default),
+            default=default,
+            help=f"{option.name.replace('_', ' ')} (default: {default}); "
+            "duration targets use exact-task device time, wall limits use host time",
+        )
     return parser
 
 
@@ -1137,9 +1166,10 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
     try:
+        profiling_policy(arguments)
         validate_resolution_options(arguments.resolution_options)
     except ValueError as error:
-        parser.error(f"--resolution-options: {error}")
+        parser.error(str(error))
 
     return parser, arguments
 
@@ -1637,6 +1667,7 @@ class Tour:
         self.vocabulary = int(manifest.model_config.vocab_size)
         # Built once and handed to both planning phases; see `search_policy`.
         self.policy = search_policy(arguments)
+        self.profiling = profiling_policy(arguments)
         # Likewise the precision: the optimizer both phases build, the dtypes
         # both phases plan with, and the gradient dtype the kernels are asked
         # for, applied once here before anything is captured.
@@ -1772,6 +1803,7 @@ class Tour:
                         )
                     ),
                     search_options=self.policy,
+                    profiling_options=self.profiling,
                     transfer_bandwidths=arguments.transfer_bandwidths,
                     export_bypass_key=arguments.export_bypass_key,
                     keep_resolutions=arguments.resolution_plans,
@@ -1988,6 +2020,7 @@ class Tour:
                 # plans the plan the search promised rather than missing
                 # the store and searching again under other options.
                 search_options=self.policy,
+                profiling_options=self.profiling,
                 # The search's winning plan is the plan to beat, so the
                 # step executes what the search chose, or better, even
                 # when the replan's facts differ from the search's and

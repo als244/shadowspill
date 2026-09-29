@@ -36,6 +36,7 @@ from shadowspill.runtime.plan import (
 from shadowspill.runtime.teardown import prepare_failure_cleanup
 from shadowspill.step import StepDataOrdering, StepProgram
 from shadowspill.store import ArtifactStore, StoreMode
+from shadowspill.task.profiling import ProfilingOptions
 
 
 def _cleanup_failed_plan(
@@ -149,6 +150,7 @@ def plan_forward(
     profiling_metadata: object = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
     shared_outputs: Sequence[SharedOutput] = (),
     build_store_mode: StoreMode = "contribute",
     plan_store_mode: StoreMode = "contribute",
@@ -264,6 +266,7 @@ def plan_forward(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                profiling_options=profiling_options,
                 shared_outputs=shared_outputs,
                 search_options=search_options,
                 transfer_bandwidths=transfer_bandwidths,
@@ -309,6 +312,7 @@ def plan_step(
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
     build_store_mode: StoreMode = "contribute",
     plan_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
@@ -499,6 +503,7 @@ def plan_step(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                profiling_options=profiling_options,
                 search_options=search_options,
                 incumbent=incumbent,
                 transfer_bandwidths=transfer_bandwidths,
@@ -542,6 +547,7 @@ def build_step_programs(
     profiling_metadata: Sequence[object] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
     build_store_mode: StoreMode = "contribute",
     export_bypass_key: str | None = None,
     master_dtype: torch.dtype | None = None,
@@ -629,6 +635,7 @@ def build_step_programs(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                profiling_options=profiling_options,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,

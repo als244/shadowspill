@@ -34,6 +34,7 @@ from shadowspill.runtime import failures as failures_module
 from shadowspill.runtime.abi import Allocation
 from shadowspill.runtime.telemetry import AllocationTelemetryError
 from shadowspill.task.manifest import ExecutableRootAllocation, ExecutableTaskManifest
+from shadowspill.task.profiling import ProfilingOptions
 from tests.shadowspill.runtime._timing import TimingLibrary, install
 
 
@@ -85,8 +86,13 @@ def _profiler(library: Any = None, **options: int) -> TaskProfiler:
         runtime_handle=0,
         plan_id=1,
         device_ordinal=0,
-        warmup_iterations=options.pop("warmup_iterations", 1),
-        sample_iterations=options.pop("sample_iterations", 1),
+        profiling_options=ProfilingOptions(
+            warmup_iterations=options.pop("warmup_iterations", 1),
+            minimum_samples=options.pop("sample_iterations", 1),
+            conditioning_seconds=0,
+            measurement_seconds=0,
+            measurement_wall_seconds=0,
+        ),
         **options,
     )
 
@@ -323,7 +329,7 @@ def test_profiler_rejects_empty_calibration(
     options: dict[str, int], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        TaskProfiler(object(), runtime_handle=0, plan_id=1, device_ordinal=0, **options)
+        _profiler(**options)
 
 
 def test_retention_audit_accepts_a_stable_live_byte_baseline() -> None:

@@ -30,6 +30,7 @@ from shadowspill.runtime.bootstrap import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.runtime.failures import format_bytes, wait_allocator_idle
+from shadowspill.task.profiling import ProfilingOptions
 
 from ...graph_pairs import (
     resolve_partitioned_saved_values,
@@ -57,6 +58,7 @@ def profile_training_tasks(
     plan_id: int,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
@@ -67,6 +69,7 @@ def profile_training_tasks(
     """
 
     state = materialized.state
+    profiling_options = profiling_options or ProfilingOptions()
     profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
@@ -74,6 +77,7 @@ def profile_training_tasks(
         device_ordinal=captured.device_ordinal,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options,
         saved_value_pool=SavedValuePool(
             state.runtime,
             next(
@@ -93,6 +97,7 @@ def profile_training_tasks(
             timer=timer,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
+            profiling_options=profiling_options,
         )
     except BaseException:
         profiler.release_host_memory()
@@ -106,6 +111,7 @@ def _profile_training_tasks(
     *,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> TrainingProfileArtifacts:
@@ -150,6 +156,7 @@ def _profile_training_tasks(
         timer,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options,
     )
     return TrainingProfileArtifacts(
         partitioned,
@@ -270,6 +277,7 @@ def _profile_training_inventory(
     *,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
 ) -> ProfilingResult:
     with timer.measure("structural_profiling"):
         return profile_unique_artifacts(
@@ -288,6 +296,7 @@ def _profile_training_inventory(
             profiling_metadata_digests=inventory.profile_metadata_digests,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
+            profiling_options=profiling_options,
         )
 
 

@@ -266,7 +266,7 @@ Measured cost and memory geometry for one executable graph contract.
 | `profile_phase_timings_ns` | Where the profiling time went, as name and elapsed pairs. |
 | `timing_relative_mad` | Relative median absolute deviation across samples. |
 | `timing_half_drift` | Drift between the first and second halves of the samples. |
-| `timing_unstable` | Whether those two put the measurement outside tolerance. |
+| `timing_unstable` | Whether timing exceeds the configured stability tolerances or misses a conditioning/measurement duration target. |
 | `inputs`, `mutations`, `outputs` | One footprint per object in each role. |
 | `input_logical_bytes`, `mutation_logical_bytes`, `output_logical_bytes` | The views' own bytes in each role. |
 | `input_allocation_bytes`, `mutation_allocation_bytes`, `output_allocation_bytes` | The allocator extents behind them, counted once per alias group. |

@@ -15,6 +15,7 @@ from shadowspill.runtime.bootstrap import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.runtime.failures import wait_allocator_idle
+from shadowspill.task.profiling import ProfilingOptions
 
 from ..artifacts import (
     ForwardCaptureArtifacts,
@@ -30,11 +31,13 @@ def profile_forward_tasks(
     plan_id: int,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
     stores: PlanningStores,
     timer: PlanningTimer,
 ) -> ForwardProfileArtifacts:
     """Compile and profile every unique structural task contract exactly once."""
 
+    profiling_options = profiling_options or ProfilingOptions()
     profiler = TaskProfiler(
         captured.installed.library,
         runtime_handle=captured.installed.runtime_handle,
@@ -42,6 +45,7 @@ def profile_forward_tasks(
         device_ordinal=captured.device_ordinal,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options,
     )
     environment = profile_environment(
         device_ordinal=captured.device_ordinal,
@@ -76,6 +80,7 @@ def profile_forward_tasks(
             * len(captured.tasks),
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
+            profiling_options=profiling_options,
         )
     with timer.measure("compilation"):
         compiled_tasks = profiler.take_compiled_tasks(

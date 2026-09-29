@@ -31,6 +31,7 @@ from shadowspill.runtime.plan import PlanMemory
 from shadowspill.simulator import SimulationConfig
 from shadowspill.step import StepDataOrdering, StepProgram
 from shadowspill.store import ArtifactStore
+from shadowspill.task.profiling import ProfilingOptions
 
 from ...contracts import (
     ObjectiveResult,
@@ -75,6 +76,7 @@ def make_training_programs(
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
     round_accumulation_once: bool = False,
@@ -109,6 +111,7 @@ def make_training_programs(
                 optimizer_ordering=optimizer_ordering,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                profiling_options=profiling_options,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
                 round_accumulation_once=round_accumulation_once,
@@ -155,6 +158,7 @@ def make_training_programs(
                 profiling_metadata=profiling_metadata,
                 allocation_probe_seeds=allocation_probe_seeds,
                 allocation_probe_repetitions=allocation_probe_repetitions,
+                profiling_options=profiling_options,
                 timer=timer,
                 started=started,
                 keys=keys,
@@ -183,6 +187,7 @@ def _build_training_step_programs(
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
     timer: PlanningTimer,
     started: int,
     keys: Mapping[StepDataOrdering, str],
@@ -233,6 +238,7 @@ def _build_training_step_programs(
             plan_id=memory.plan_id,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
+            profiling_options=profiling_options,
             stores=artifacts,
             timer=timer,
         )

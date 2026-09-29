@@ -117,6 +117,30 @@ tiling differs with the rows a microbatch holds, and a gradient at
 initialization is a cancelling sum, so a rounding difference of one bf16 ulp
 in its terms is a difference of the same relative size in the gradient.
 
+Task profiling:
+
+All profiling defaults can be changed. These options apply to both search and
+execution builds and are recorded in `request.json`; each stored task profile
+also records its effective policy and observed conditioning/measurement windows.
+
+| Argument | Meaning | Default |
+|---|---|---|
+| `--profile-warmup-iterations` | Exact-task initialization warmups | `3` |
+| `--profile-stabilization-iterations` | Additional allocation stabilization limit | `16` |
+| `--profile-conditioning-seconds` | Device time to condition each task before timing | `1.0` |
+| `--profile-conditioning-wall-seconds` | Conditioning wall-time cap | `3.0` |
+| `--profile-minimum-samples` | Minimum timed invocations | `15` |
+| `--profile-measurement-seconds` | Minimum device time accumulated by timing samples | `0.3` |
+| `--profile-measurement-wall-seconds` | Wall-time cap after the minimum sample count | `2.0` |
+| `--profile-relative-mad-threshold` | Allowed relative median absolute deviation | `0.03` |
+| `--profile-half-drift-threshold` | Allowed relative half-window median drift | `0.03` |
+
+For example, append `--profile-conditioning-seconds 0.5
+--profile-minimum-samples 20` to a quickstart command. Zero duration targets
+disable their floors. A wall cap cannot interrupt a task or skip the minimum
+sample count. Profiles that miss a duration target or stability threshold are
+marked unstable. See [ProfilingOptions](../docs/python/api/frontend.md#profilingoptions).
+
 Output and stores:
 
 | Argument | Meaning | Default |

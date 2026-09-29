@@ -16,6 +16,7 @@ from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.planning.forward.plan import plan_forward_program
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.store import ArtifactStore
+from shadowspill.task.profiling import ProfilingOptions
 
 from ...callables import PlannedForward
 from ...partition import (
@@ -47,6 +48,7 @@ def build_forward(
     profiling_metadata: object,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
     shared_outputs: Sequence[SharedOutput] = (),
     search_options: SearchOptions | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
@@ -76,6 +78,7 @@ def build_forward(
         plan_id=memory.plan_id,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options,
         stores=artifacts,
         timer=timer,
     )
