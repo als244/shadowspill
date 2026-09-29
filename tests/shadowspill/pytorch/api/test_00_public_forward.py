@@ -14,6 +14,7 @@ from shadowspill.pytorch import (
     plan_forward,
 )
 from shadowspill.runtime.configuration import adapter_path
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 
@@ -55,6 +56,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
 
     planned = plan_forward(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         example_inputs=[inputs, 17],
         runtime=runtime,
         execution="execution",
@@ -160,6 +162,7 @@ def test_public_forward_sets_a_model_buffer_each_call(tmp_path: object) -> None:
     )
     planned = plan_forward(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         example_inputs=[inputs],
         runtime=runtime,
         execution="execution",

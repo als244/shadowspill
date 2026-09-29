@@ -99,8 +99,10 @@ def main() -> int:
         profiling_options=ProfilingOptions(
             warmup_iterations=2,
             minimum_samples=3,
-            conditioning_seconds=0.02,
-            measurement_seconds=0.01,
+            conditioning_seconds=0,
+            conditioning_wall_seconds=0,
+            measurement_seconds=0,
+            measurement_wall_seconds=0,
         ),
     )
     with tempfile.TemporaryDirectory() as directory:

@@ -24,6 +24,7 @@ from shadowspill.pytorch import (
 from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.runtime.bootstrap import installed_runtime
 from tests.spill_pool import spill_pool
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _Model(nn.Module):
@@ -148,6 +149,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         phase("plan")
         planned = plan_step(
             model,
+            profiling_options=CORRECTNESS_PROFILING,
             objective=_objective,
             optimizer=build_optimizer,
             example_inputs=example_inputs,
@@ -258,8 +260,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
             summary = diagnostics.summary
             timelines = diagnostics.timelines
             if step == 0:
-                if summary.trace_setup_seconds <= 0.0:
-                    raise AssertionError("first trace omitted lazy setup time")
+                if summary.trace_setup_seconds != 0.0:
+                    raise AssertionError(
+                        "prepared trace repeated setup inside the step"
+                    )
                 if (
                     not diagnostics.runtime.events
                     or diagnostics.runtime.began_at_ns <= 0
@@ -500,6 +504,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
         )
         warm = plan_step(
             warm_model,
+            profiling_options=CORRECTNESS_PROFILING,
             objective=_objective,
             optimizer=build_optimizer,
             example_inputs=example_inputs,

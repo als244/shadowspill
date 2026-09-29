@@ -31,6 +31,7 @@ from shadowspill.runtime import RuntimeConfigurationError
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.configuration import adapter_path
 from shadowspill.runtime.occupancy import live_allocations, plan_slices
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 
@@ -127,6 +128,7 @@ def test_public_training_accumulates_replays_and_restores(tmp_path: object) -> N
     parameter_ids = tuple(id(parameter) for parameter in model.parameters())
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
@@ -284,6 +286,7 @@ def test_public_training_breadth_first_matches_the_eager_reference(
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
@@ -351,6 +354,7 @@ def test_public_training_declared_adamw_state_replays(tmp_path: object) -> None:
 
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=build_optimizer,
         example_inputs=examples,
@@ -460,6 +464,7 @@ def test_public_training_fills_declared_state_in_the_spill_pool(
 
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=build_optimizer,
         example_inputs=examples,
@@ -517,6 +522,7 @@ def test_public_training_refuses_state_with_no_value_before_its_first_step(
     with pytest.raises(RuntimeError, match="no value before its first step"):
         plan_step(
             model,
+            profiling_options=CORRECTNESS_PROFILING,
             objective=_training_objective,
             optimizer=build_optimizer,
             example_inputs=examples,
@@ -556,6 +562,7 @@ def test_public_training_saves_straight_from_the_pool(
     batches = [[[torch.randn(2, 6), torch.randn(2, 3), "left"]] for _ in range(3)]
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(torch.optim.AdamW, lr=0.003, foreach=False),
         example_inputs=batches[0],
@@ -655,6 +662,7 @@ def test_public_training_steps_masters_of_its_weights(tmp_path: Path) -> None:
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(torch.optim.AdamW, lr=0.003, foreach=False),
         example_inputs=batches[0],
@@ -791,6 +799,7 @@ def test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
         )
         training = plan_step(
             model,
+            profiling_options=CORRECTNESS_PROFILING,
             objective=_training_objective,
             optimizer=adamw,
             example_inputs=batches[0],
@@ -925,6 +934,7 @@ def test_public_training_steps_masters_beside_weights_that_have_none(
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=adamw,
         example_inputs=batches[0],
@@ -982,6 +992,7 @@ def test_public_training_checkpoints_masters_in_place_of_their_weights(
 
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(torch.optim.AdamW, lr=0.003),
         example_inputs=batches[0],
@@ -1021,6 +1032,7 @@ def test_public_training_owns_the_model_state_it_imported(tmp_path: object) -> N
     # No import_model_state: planning imports the state, so the plan owns it.
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=examples,
@@ -1082,6 +1094,7 @@ def test_public_training_profiles_bounded_opaque_optimizer(
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_training_objective,
         optimizer=partial(_OpaqueSgd, lr=0.02),
         example_inputs=examples,
@@ -1144,6 +1157,7 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=objective,
         optimizer=partial(
             mlops.optim.AdamW,
@@ -1221,6 +1235,7 @@ def test_public_training_follows_a_learning_rate_schedule() -> None:
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=objective,
         optimizer=build,
         hyperparams=("lr",),
@@ -1280,6 +1295,7 @@ def test_public_training_keeps_no_output_the_caller_dropped() -> None:
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=objective,
         optimizer=partial(torch.optim.SGD, lr=0.1),
         example_inputs=batches(),
@@ -1358,6 +1374,7 @@ def test_public_training_sets_a_model_buffer_each_step() -> None:
     )
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=objective,
         optimizer=build,
         hyperparams=("lr", "trained_total"),

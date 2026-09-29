@@ -29,6 +29,7 @@ from shadowspill.pytorch import (
     plan_forward,
 )
 from tests.spill_pool import spill_pool
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _DataDependentModel(nn.Module):
@@ -204,6 +205,7 @@ def _plan(
 ) -> Any:
     return plan_forward(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         example_inputs=inputs,
         runtime=runtime,
         execution="execution",
