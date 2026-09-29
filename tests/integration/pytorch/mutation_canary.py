@@ -72,11 +72,20 @@ def main() -> int:
             partition="whole",
             artifact_store=cache,
         )
-        task = planned.plan_report.execution_plan.program.tasks[0]
+        (task,) = (
+            task
+            for task in planned.plan_report.execution_plan.program.tasks
+            if task.requires_entrypoint
+        )
         if len(task.mutations) != 1:
             raise AssertionError("buffer update was not lowered as a task mutation")
         diagnostics = planned.plan_report.diagnostics
-        if len(diagnostics.task_stage_map) != 1 or len(diagnostics.unique_stages) != 1:
+        task_diagnostic = diagnostics.task_by_ir_id(task.task_id)
+        if (
+            not task_diagnostic.selected
+            or task_diagnostic.phase != "forward"
+            or len(diagnostics.unique_stages) != 1
+        ):
             raise AssertionError("mutation task diagnostics are incomplete")
         profile = diagnostics.unique_stages[0].graph_pairs[0].forward
         if (
