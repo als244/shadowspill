@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shadowspill.schema import artifact_schema
 
@@ -19,6 +19,7 @@ from .inputs import (
     REPRESENTATIVE_VALUE_POLICY,
     RepresentativeInputSummary,
 )
+from .profiling import ProfilingOptions, TimingWindow
 
 # A profile artifact is a strict snapshot of the measurement contract that
 # wrote it, and none is migrated. A stored record this build cannot read is
@@ -42,6 +43,9 @@ _TASK_MEASUREMENT_FIELDS = frozenset(
         "timing_relative_mad",
         "timing_half_drift",
         "timing_unstable",
+        "profiling_options",
+        "conditioning",
+        "sampling",
         "allocation_contract",
         "allocation_path_observations",
         "off_device_output_leaves",
@@ -141,6 +145,9 @@ class TaskMeasurement:
     timing_relative_mad: float = 0.0
     timing_half_drift: float = 0.0
     timing_unstable: bool = False
+    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
+    conditioning: TimingWindow = field(default_factory=TimingWindow)
+    sampling: TimingWindow = field(default_factory=TimingWindow)
     allocation_contract: TaskAllocationContract | None = None
     allocation_path_observations: tuple[TaskAllocationPathObservation, ...] = ()
     #: Output leaves this task was observed to produce off the execution
@@ -338,6 +345,9 @@ class TaskMeasurement:
             "timing_relative_mad": self.timing_relative_mad,
             "timing_half_drift": self.timing_half_drift,
             "timing_unstable": self.timing_unstable,
+            "profiling_options": self.profiling_options.to_dict(),
+            "conditioning": self.conditioning.to_dict(),
+            "sampling": self.sampling.to_dict(),
             "allocation_contract": (
                 None
                 if self.allocation_contract is None
@@ -387,6 +397,11 @@ class TaskMeasurement:
                 timing_relative_mad=float(value["timing_relative_mad"]),
                 timing_half_drift=float(value["timing_half_drift"]),
                 timing_unstable=bool(value["timing_unstable"]),
+                profiling_options=ProfilingOptions.from_dict(
+                    value["profiling_options"]
+                ),
+                conditioning=TimingWindow.from_dict(value["conditioning"]),
+                sampling=TimingWindow.from_dict(value["sampling"]),
                 allocation_contract=(
                     None
                     if value["allocation_contract"] is None
@@ -419,6 +434,7 @@ class ProfileKey:
     profiling_metadata_digest: str | None = None
     allocation_probe_seeds: int = 1
     allocation_probe_repetitions: int = 2
+    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
 
     def __post_init__(self) -> None:
         if self.allocation_probe_seeds < 1:
@@ -436,6 +452,7 @@ class ProfileKey:
             "profiling_metadata_digest": self.profiling_metadata_digest,
             "allocation_probe_seeds": self.allocation_probe_seeds,
             "allocation_probe_repetitions": self.allocation_probe_repetitions,
+            "profiling_options": self.profiling_options.to_dict(),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode()).hexdigest()

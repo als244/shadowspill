@@ -27,6 +27,7 @@ from shadowspill.search.refusals import _EXHAUSTED, _INFEASIBLE
 from shadowspill.search.report import StepSearchGeometryBuild, StepSearchPoint
 from shadowspill.step import StepProgram
 from shadowspill.store import StoreMode
+from shadowspill.task.profiling import ProfilingOptions
 
 #: A point the planner refuses, for whatever reason it gives, is recorded and
 #: the sweep goes on; ProblemPreparationError is one such RuntimeError.
@@ -55,6 +56,7 @@ class _Build:
     grad_dtype: torch.dtype | None
     round_accumulation_once: bool
     memory_bound_flops_per_byte: float
+    profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
 
     def programs(
         self,
@@ -69,6 +71,7 @@ class _Build:
             return (
                 build_step_programs(
                     self.model,
+                    profiling_options=self.profiling_options,
                     objective=self.objective,
                     optimizer=self.optimizer,
                     hyperparams=self.hyperparams,
