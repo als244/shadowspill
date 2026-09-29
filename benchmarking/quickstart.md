@@ -172,7 +172,8 @@ benchmarking/quickstart_reports/
         figures/
           sim/  real/  raw_data/
         timelines/              every plan's pools and lanes over the step,
-          index.html  search/  run/   as pages; see below
+          index.html  summary.csv   as pages, budget by budget; see below
+          <budget>/  all_save/
         artifact_store/         this run's captures, graph pairs, profiles
                                 and lowered programs, reusable by other runs
         plan_store/             this run's plans: every request, selection
@@ -209,20 +210,24 @@ it reads a matrix.
 
 `timelines/` is written as the run closes, unless `--no-timelines`, by
 [the occupancy tool](../docs/python/occupancy.md); a failure to write it is
-reported and does not fail the run, whose data is complete by then. For every plan the search
-made, one page on the simulated clock under
-`search/<geometry>_<walk>/<budget>/` -- the step's summary, what occupies the
-spill pool and the execution pool at each moment by what the objects are
-for, and the fetch, compute and evict lanes, on one zoom; for every budget
-that ran, that page in both views under `run/<budget>/`, the traced one on
-the device's clock; for every geometry, its unconstrained page under
-`search/<geometry>_<walk>/unconstrained/`, the compute floor with every
-object resident and nothing spilled, to read the budgeted pages against;
-with `--resolution-plans`, for every resolution the search kept, its
-simulated page and its own unconstrained page under
-`search/<geometry>_<walk>/<budget>/recompute_<share>/`, the answer marked;
-and an `index.html` listing every plan with its
-simulated step and peaks.
+reported and does not fail the run, whose data is complete by then. Budget
+first: for every plan the search made, one page on the simulated clock
+under `<budget>/<geometry>_<walk>/recompute_<share>/` -- the folder named
+by the share of the flexible groups the plan recomputes -- with the step's
+summary, what occupies the spill pool and the execution pool at each
+moment by what the objects are for, and the fetch, compute and evict
+lanes, on one zoom, and beside it the plan's own unconstrained page, its
+floor at the alternatives it fixed; for every budget that ran, the traced
+page on the device's clock in that folder and a copy at `<budget>/traced.html`;
+for every geometry, its all-save page under `all_save/<geometry>_<walk>/`,
+the compute floor with every alternative at its cheapest, every object
+resident and nothing spilled, to read the budgeted pages against; with
+`--resolution-plans`, for every other resolution the search kept, its
+simulated page and its own unconstrained page under its share beside the
+choice, which every index marks; and a table of contents at every level --
+the root `index.html` for everything, one per budget, per geometry within
+it and per plan -- with `summary.csv` beside the root, one row per page
+carrying the summary its cards show.
 `python -m tools.diagnostics.occupancy --run <run directory>` writes the same
 for a run made before the pages existed.
 

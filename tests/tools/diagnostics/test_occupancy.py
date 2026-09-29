@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 
 from tools.diagnostics.occupancy import (
+    SUMMARY_COLUMNS,
     WORKSPACE,
     Clock,
     ProgramFacts,
+    all_save,
     attribute,
     categorize,
     cheapest_selections,
@@ -37,34 +39,56 @@ def _program() -> dict:
     """
 
     return {
+        "schema": "shadowspill.program/v1",
+        "devices": [
+            {"device_id": "cuda_0", "index": 0, "kind": "cuda", "process_id": "p"}
+        ],
         "alias_groups": [
             {
                 "alias_group_id": "A_w",
+                "device_id": "cuda_0",
+                "initial_version": 0,
+                "shared_residency": None,
                 "size_bytes": 100 * MIB,
                 "retain_spill_copy": True,
             },
             {
                 "alias_group_id": "A_a",
+                "device_id": "cuda_0",
+                "initial_version": 0,
+                "shared_residency": None,
                 "size_bytes": 64 * MIB,
                 "retain_spill_copy": False,
             },
             {
                 "alias_group_id": "A_b",
+                "device_id": "cuda_0",
+                "initial_version": 0,
+                "shared_residency": None,
                 "size_bytes": 32 * MIB,
                 "retain_spill_copy": False,
             },
             {
                 "alias_group_id": "A_g",
+                "device_id": "cuda_0",
+                "initial_version": 0,
+                "shared_residency": None,
                 "size_bytes": 100 * MIB,
                 "retain_spill_copy": False,
             },
             {
                 "alias_group_id": "A_x",
+                "device_id": "cuda_0",
+                "initial_version": 0,
+                "shared_residency": None,
                 "size_bytes": 8 * MIB,
                 "retain_spill_copy": False,
             },
             {
                 "alias_group_id": "A_gb",
+                "device_id": "cuda_0",
+                "initial_version": 0,
+                "shared_residency": None,
                 "size_bytes": 32 * MIB,
                 "retain_spill_copy": False,
             },
@@ -136,18 +160,32 @@ def _program() -> dict:
             },
         ],
         "profiles": [
-            {"profile_id": "p_one", "runtime_ns": 1_000_000_000, "workspace_bytes": 0},
+            {
+                "profile_id": "p_one",
+                "runtime_ns": 1_000_000_000,
+                "workspace_bytes": 0,
+                "compatibility_digest": "abi",
+            },
             {
                 "profile_id": "p_save",
                 "runtime_ns": 2_000_000_000,
                 "workspace_bytes": 40 * MIB,
+                "compatibility_digest": "abi",
             },
-            {"profile_id": "p_recompute", "runtime_ns": 2_500_000_000},
+            {
+                "profile_id": "p_recompute",
+                "runtime_ns": 2_500_000_000,
+                "workspace_bytes": 0,
+                "compatibility_digest": "abi",
+            },
         ],
         "tasks": [
             {
                 "task_id": "t1",
                 "phase": "forward",
+                "resource": {"device_id": "cuda_0", "kind": "compute", "lane": 0},
+                "dependencies": [],
+                "requires_entrypoint": False,
                 "inputs": ["x", "w"],
                 "outputs": ["a"],
                 "mutations": [],
@@ -156,6 +194,9 @@ def _program() -> dict:
             {
                 "task_id": "t2",
                 "phase": "forward",
+                "resource": {"device_id": "cuda_0", "kind": "compute", "lane": 0},
+                "dependencies": ["t1"],
+                "requires_entrypoint": False,
                 "inputs": ["a_view", "w"],
                 "outputs": ["b"],
                 "mutations": [],
@@ -164,6 +205,9 @@ def _program() -> dict:
             {
                 "task_id": "t3",
                 "phase": "backward",
+                "resource": {"device_id": "cuda_0", "kind": "compute", "lane": 0},
+                "dependencies": ["t1", "t2"],
+                "requires_entrypoint": False,
                 "inputs": ["a", "b", "w"],
                 "outputs": ["g", "gb"],
                 "mutations": [],
@@ -172,6 +216,9 @@ def _program() -> dict:
             {
                 "task_id": "t3r",
                 "phase": "backward",
+                "resource": {"device_id": "cuda_0", "kind": "compute", "lane": 0},
+                "dependencies": ["t1"],
+                "requires_entrypoint": False,
                 "inputs": ["a", "w"],
                 "outputs": ["b_again", "g"],
                 "mutations": [],
@@ -180,9 +227,12 @@ def _program() -> dict:
             {
                 "task_id": "t4",
                 "phase": "optimizer",
-                "inputs": ["g", "gb"],
+                "resource": {"device_id": "cuda_0", "kind": "compute", "lane": 0},
+                "dependencies": ["t3", "t3r"],
+                "requires_entrypoint": False,
+                "inputs": ["g", "gb", "w"],
                 "outputs": [],
-                "mutations": [{"object_id": "w"}],
+                "mutations": [{"object_id": "w", "version_delta": 1}],
                 "profile_id": "p_one",
             },
         ],
@@ -190,8 +240,16 @@ def _program() -> dict:
             {
                 "group_id": "stage_3",
                 "options": [
-                    {"option_id": "save", "active_task_ids": ["t3"]},
-                    {"option_id": "recompute", "active_task_ids": ["t3r"]},
+                    {
+                        "option_id": "save",
+                        "active_task_ids": ["t3"],
+                        "retained_alias_group_ids": ["A_b"],
+                    },
+                    {
+                        "option_id": "recompute",
+                        "active_task_ids": ["t3r"],
+                        "retained_alias_group_ids": [],
+                    },
                 ],
             }
         ],
@@ -582,8 +640,12 @@ def test_the_unconstrained_step_is_the_floor_with_everything_resident() -> None:
     assert cheapest_selections(_program()) == [
         {"group_id": "stage_3", "option_id": "save"}
     ]
-    result = unconstrained(_program())
-    assert result.view == "unconstrained" and result.clock.makespan_ns == 5 * S
+    result = all_save(_program())
+    assert result.view == "all_save" and result.clock.makespan_ns == 5 * S
+    own = unconstrained(_program(), _selection()["selections"])
+    assert own.view == "unconstrained" and own.clock.makespan_ns == 5 * S
+    regenerating = unconstrained(_program(), _selection("recompute")["selections"])
+    assert regenerating.clock.makespan_ns == int(5.5 * S)
     assert [
         (span.task_id, span.start_ns / S, span.end_ns / S) for span in result.tasks
     ] == [
@@ -751,66 +813,115 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     assert heard[0].startswith(
         "timelines: writing pages for 1 plans and 1 kept resolutions"
     )
-    assert "timelines: 4x2_1x2rp written" in heard
-    search_pages = sorted(
-        p.name for p in (run / "timelines" / "search" / "4x2_1x2rp" / "1gib").iterdir()
-    )
-    assert search_pages == ["index.html", "recompute_1", "simulated.html"]
-    run_pages = sorted(p.name for p in (run / "timelines" / "run" / "1gib").iterdir())
-    assert run_pages == ["index.html", "simulated.html", "traced.html"]
-    floor_pages = sorted(
-        p.name
-        for p in (
-            run / "timelines" / "search" / "4x2_1x2rp" / "unconstrained"
-        ).iterdir()
-    )
-    assert floor_pages == ["index.html", "unconstrained.html"]
-    text = index.read_text()
-    assert "4x2_1x2rp" in text and "run/1gib/traced.html" in text
-    assert "Each geometry unconstrained" in text and "5.000 s" in text
-    # the kept resolution has its own pages, and its own floor: t3r's 2.5 s
-    kept_dir = run / "timelines" / "search" / "4x2_1x2rp" / "1gib" / "recompute_1"
-    assert sorted(p.name for p in kept_dir.iterdir()) == [
+    assert "timelines: 1gib written" in heard
+
+    def payload(page: Path) -> dict:
+        text = page.read_text()
+        return json.loads(
+            text.split('<script id="data" type="application/json">')[1].split(
+                "</script>"
+            )[0]
+        )
+
+    # budget, then geometry, then the recompute share: the choice (all save,
+    # recompute 0) with its traced step, the kept resolution beside it
+    plan = run / "timelines" / "1gib" / "4x2_1x2rp"
+    assert sorted(p.name for p in plan.iterdir()) == [
+        "index.html",
+        "recompute_0",
+        "recompute_1",
+    ]
+    assert sorted(p.name for p in (plan / "recompute_0").iterdir()) == [
+        "index.html",
+        "simulated.html",
+        "traced.html",
+        "unconstrained.html",
+    ]
+    assert sorted(p.name for p in (plan / "recompute_1").iterdir()) == [
         "index.html",
         "simulated.html",
         "unconstrained.html",
     ]
-    assert "recompute_1/simulated.html" in text and "1: " in text
-    floor = (kept_dir / "unconstrained.html").read_text()
-    payload = json.loads(
-        floor.split('<script id="data" type="application/json">')[1].split("</script>")[
-            0
-        ]
-    )
-    assert payload["end_seconds"] == 5.5
-    assert "resolution: 1 of the flexible groups recompute" in payload["plan"]
-    assert "alternatives as this resolution fixes them" in payload["plan"]
-    assert "execution budget" not in payload["plan"]
-    simulated_page = (kept_dir / "simulated.html").read_text()
-    simulated_plan = json.loads(
-        simulated_page.split('<script id="data" type="application/json">')[1].split(
-            "</script>"
-        )[0]
-    )["plan"]
+    floors = run / "timelines" / "all_save" / "4x2_1x2rp"
+    assert sorted(p.name for p in floors.iterdir()) == ["all_save.html", "index.html"]
+    # the bare record, without evidence, was passed over
+    assert sorted(p.name for p in (run / "timelines").iterdir() if p.is_dir()) == [
+        "1gib",
+        "all_save",
+    ]
+    # the budget's traced page, a copy at the budget's level
+    assert (run / "timelines" / "1gib" / "traced.html").read_bytes() == (
+        plan / "recompute_0" / "traced.html"
+    ).read_bytes()
+    # a table of contents at every level
+    text = index.read_text()
+    assert "1gib/4x2_1x2rp/recompute_0/traced.html" in text and "5.000 s" in text
+    assert '"1gib/traced.html"' in text
+    assert "all_save/4x2_1x2rp/all_save.html" in text
+    budget_index = (run / "timelines" / "1gib" / "index.html").read_text()
+    assert "4x2_1x2rp/recompute_0/simulated.html" in budget_index
+    assert "ran with 4x2_1x2rp, recompute 0" in budget_index
+    assert "4x2_1x2rp/recompute_1/simulated.html" in budget_index
+    plan_index = (plan / "index.html").read_text()
     assert (
-        "execution budget 1gib" in simulated_plan
-        and "unconstrained" not in simulated_plan
+        "recompute_0/traced.html" in plan_index
+        and "recompute_1/unconstrained.html" in plan_index
     )
-    # every page names its plan under the title
-    traced = (run / "timelines" / "run" / "1gib" / "traced.html").read_text()
-    assert "<title>Occupancy 4x2_1x2rp at 1gib · traced</title>" in traced
-    payload = json.loads(
-        traced.split('<script id="data" type="application/json">')[1].split(
-            "</script>"
-        )[0]
+    answer_index = (plan / "recompute_0" / "index.html").read_text()
+    assert (
+        "../recompute_1/index.html" in answer_index
+        and "Around this plan" in answer_index
     )
-    assert payload["plan"] == (
+    assert (
+        "4x2_1x2rp/all_save.html"
+        in (run / "timelines" / "all_save" / "index.html").read_text()
+    )
+    # every page names its plan under the title, each floor by whose alternatives
+    traced = (plan / "recompute_0" / "traced.html").read_text()
+    assert "<title>Occupancy 4x2_1x2rp at 1gib, recompute 0 · traced</title>" in traced
+    assert payload(plan / "recompute_0" / "traced.html")["plan"] == (
         "toy · 4 sequences per microbatch, 2 microbatches, ordering 1x2rp"
         " · 8 tokens by 4 sequences = 32 tokens a step"
         " · execution budget 1gib (pool 0.88 GiB) · spill pool 0.39 GiB"
+        " · resolution: 0 of the flexible groups recompute, the search's choice"
     )
-    # the bare record, without evidence, was passed over
-    assert len(list((run / "timelines" / "search").iterdir())) == 1
+    own = payload(plan / "recompute_0" / "unconstrained.html")
+    assert own["end_seconds"] == 5.0
+    assert "alternatives as this plan fixes them" in own["plan"]
+    assert "execution budget" not in own["plan"]
+    kept_floor = payload(plan / "recompute_1" / "unconstrained.html")
+    assert kept_floor["end_seconds"] == 5.5
+    assert "resolution: 1 of the flexible groups recompute" in kept_floor["plan"]
+    assert "alternatives as this resolution fixes them" in kept_floor["plan"]
+    kept_plan = payload(plan / "recompute_1" / "simulated.html")["plan"]
+    assert "execution budget 1gib" in kept_plan and "unconstrained" not in kept_plan
+    # the summary: one row per page
+    import csv
+
+    with (run / "timelines" / "summary.csv").open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert list(rows[0]) == list(SUMMARY_COLUMNS)
+    assert sorted((row["kind"], row["view"]) for row in rows) == [
+        ("all_save", "all_save"),
+        ("chosen", "simulated"),
+        ("chosen", "traced"),
+        ("chosen", "unconstrained"),
+        ("resolution", "simulated"),
+        ("resolution", "unconstrained"),
+    ]
+    traced_row = next(row for row in rows if row["view"] == "traced")
+    assert traced_row["page"] == "1gib/4x2_1x2rp/recompute_0/traced.html"
+    assert traced_row["resolution"] == "0" and traced_row["selected"] == "True"
+    assert (
+        traced_row["geometry"] == "4x2_1x2rp" and traced_row["untimed_transfers"] == "0"
+    )
+    assert float(traced_row["step_seconds"]) > 0
+    kept_row = next(
+        row
+        for row in rows
+        if row["kind"] == "resolution" and row["view"] == "simulated"
+    )
+    assert kept_row["resolution"] == "1" and kept_row["selected"] == "False"
 
 
 def test_the_summary_reads_the_step_off_the_same_spans() -> None:
