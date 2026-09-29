@@ -37,6 +37,7 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from fractions import Fraction
 from pathlib import Path
@@ -87,7 +88,7 @@ from shadowspill.store import STORE_MODES
 from tools.diagnostics.occupancy import write_run_timelines
 from tools.qualification.model_state import release_case_model
 from workloads.common.training import LEARNING_RATE
-from workloads.full_model import build_case, manifest_for
+from workloads.full_model import HEAD_LOSS_METRIC, build_case, manifest_for
 from workloads.providers import ModelImplementation
 
 
@@ -559,8 +560,8 @@ def print_epilogue(diagnostics: Any) -> None:
             summary.simulator_terminal_tail_seconds,
         ),
     ):
-        measured = "unavailable" if real is None else f"{real:.3f} s"
-        print(f"    {label:14} real {measured}   simulated {simulated:.3f} s")
+        measured_text = "unavailable" if real is None else f"{real:.3f} s"
+        print(f"    {label:14} real {measured_text}   simulated {simulated:.3f} s")
     if summary.cycle_seconds is not None:
         print(
             f"  whole cycle        {summary.cycle_seconds:.3f} s"
@@ -1223,6 +1224,15 @@ def resolve_request(
             "--sequences-per-microbatch chooses a geometry to run; give at"
             " least one --run-budget-gib"
         )
+    # The objective normalizes each microbatch by this whole-step total.
+    # Search chooses execution geometry later; the manifest must already
+    # describe the requested step rather than the model family's default.
+    template_sequences = manual or sequences_per_step
+    manifest = replace(
+        manifest,
+        sequences_per_microbatch=template_sequences,
+        accumulation_count=sequences_per_step // template_sequences,
+    )
     return Request(
         manifest=manifest,
         search_budgets=search_budgets,
@@ -1234,6 +1244,14 @@ def resolve_request(
         manual=manual,
         remote_spill=_remote_peer(parser, arguments.remote_spill),
     )
+
+
+def _head_loss_share(metrics: Any) -> float | None:
+    """The microbatch's head loss, when the objective reports it separately."""
+
+    if isinstance(metrics, Mapping) and HEAD_LOSS_METRIC in metrics:
+        return float(metrics[HEAD_LOSS_METRIC])
+    return None
 
 
 @dataclass(frozen=True)
@@ -1840,7 +1858,14 @@ class Tour:
             )
             # Each microbatch returns its share of the step's mean loss over
             # trained tokens, so the step's loss is their sum.
-            losses[step] = sum(float(value) for value in result.objectives)
+            losses[step] = sum(
+                float(objective)
+                if (head := _head_loss_share(metrics)) is None
+                else head
+                for objective, metrics in zip(
+                    result.objectives, result.metrics, strict=True
+                )
+            )
             hosts[step] = time.perf_counter() - started
             report_cycles()
             return result
