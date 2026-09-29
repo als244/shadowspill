@@ -14,10 +14,11 @@ broke three entry points while the whole suite stayed green.
 from __future__ import annotations
 
 import ast
-import subprocess
 from pathlib import Path
 
 import pytest
+
+from tests.repository.files import repository_files
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -59,21 +60,7 @@ def _repository_python_files() -> list[Path]:
     machine and fail on another.
     """
 
-    names = [
-        name
-        for arguments in (["--cached"], ["--others", "--exclude-standard"])
-        for name in subprocess.run(
-            ["git", "ls-files", *arguments, "*.py"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.split()
-    ]
-    # A file git still tracks may already be gone from the worktree: a move is
-    # a deletion until it is committed, and the suite has to run in the tree
-    # it is being changed in.
-    return [ROOT / name for name in names if (ROOT / name).exists()]
+    return list(repository_files("*.py"))
 
 
 def _cli_modules() -> list[Path]:

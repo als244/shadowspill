@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from shadowspill.schema import artifact_schema
+from tests.repository.files import repository_files
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
@@ -95,23 +96,10 @@ _REQUIRED_SIGNATURES = {
 
 
 def _markdown_files() -> tuple[Path, ...]:
-    ignored = {
-        ".cache",
-        ".git",
-        ".hypothesis",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".venv",
-        "build",
-        "datasets",
-        "planning_caches",
-        "results",
-    }
     return tuple(
         path
-        for path in ROOT.rglob("*.md")
-        if not any(part in ignored for part in path.parts)
-        and "internal" not in path.parts
+        for path in repository_files("*.md")
+        if not path.is_relative_to(DOCS / "internal")
     )
 
 
@@ -861,6 +849,7 @@ def _drawn_paths(block: str, root: Path) -> list[tuple[Path, bool]]:
 
 
 def test_documented_directory_trees_match_the_repository() -> None:
+    packages = {parent for file in repository_files("*.py") for parent in file.parents}
     absent: dict[str, list[str]] = {}
     undrawn: dict[str, list[str]] = {}
     for document, heading, root, exhaustive in _DOCUMENTED_TREES:
@@ -883,7 +872,7 @@ def test_documented_directory_trees_match_the_repository() -> None:
                 if not directory or not path.is_dir():
                     continue
                 for child in sorted(path.iterdir()):
-                    if not child.is_dir() or child.name.startswith((".", "_")):
+                    if child not in packages or child.name.startswith((".", "_")):
                         continue
                     if child not in named:
                         undrawn.setdefault(where, []).append(
