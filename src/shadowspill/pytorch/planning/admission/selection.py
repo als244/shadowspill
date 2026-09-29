@@ -54,10 +54,10 @@ def _selected_task_envelopes(
 ) -> tuple[tuple[str, TaskMemoryEnvelope], ...]:
     profiles = {item.profile_id: item for item in selected.program.profiles}
     bindings_by_task = dict(output_bindings or {})
-    return tuple(
-        (
-            task.task_id,
-            task_memory_envelope(
+    envelopes: list[tuple[str, TaskMemoryEnvelope]] = []
+    for task in selected.program.selected_tasks(selected.selections):
+        if task.requires_entrypoint:
+            envelope = task_memory_envelope(
                 measurement_for_digest(
                     measurements,
                     profiles[task.profile_id].compatibility_digest,
@@ -66,7 +66,8 @@ def _selected_task_envelopes(
                     item.leaf_index for item in bindings_by_task.get(task.task_id, ())
                 ),
                 minimum_scratch_reserve_bytes=minimum_scratch_reserve_bytes,
-            ),
-        )
-        for task in selected.program.selected_tasks(selected.selections)
-    )
+            )
+        else:
+            envelope = TaskMemoryEnvelope()
+        envelopes.append((task.task_id, envelope))
+    return tuple(envelopes)

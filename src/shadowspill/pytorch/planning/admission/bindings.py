@@ -148,13 +148,18 @@ def build_admission_facts(
         )
         profile = profile_by_id[task.profile_id]
         profiled_workspace = profile.workspace_bytes
-        try:
-            trace = profiled_traces[profile.compatibility_digest]
-        except KeyError as error:
-            raise ValueError(
-                f"task {task.task_id} lacks explicit physical allocation "
-                f"evidence for profile {profile.compatibility_digest!r}"
-            ) from error
+        # A boundary without a callable cannot make task-local allocations.
+        # Keep the ownership/workspace checks below: an empty trace must not
+        # silently admit storage attributed to a task that does no work.
+        trace: tuple[TaskAllocationEvent, ...] = ()
+        if task.requires_entrypoint:
+            try:
+                trace = profiled_traces[profile.compatibility_digest]
+            except KeyError as error:
+                raise ValueError(
+                    f"task {task.task_id} lacks explicit physical allocation "
+                    f"evidence for profile {profile.compatibility_digest!r}"
+                ) from error
         allocation_steps = _task_allocation_steps(
             task.task_id,
             trace,
