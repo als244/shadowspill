@@ -12,7 +12,8 @@ import mlops
 import torch
 import torch.nn as nn
 
-from workloads.common import auxiliary_share
+from shadowspill.pytorch import ObjectiveResult, Runtime
+from workloads.common import auxiliary_share, language_model_loss
 from workloads.mlops import Llama3 as MlopsLlama3
 from workloads.mlops import OLMoE as MlopsOLMoE
 from workloads.mlops import Qwen35 as MlopsQwen35
@@ -147,11 +148,16 @@ class FullModelCase:
             self.manifest.implementation,
         )
 
-    def objective(self, model: nn.Module, *values: object) -> torch.Tensor:
+    def objective(
+        self, model: nn.Module, *values: object
+    ) -> torch.Tensor | ObjectiveResult:
         """The microbatch's share of the step's mean loss over trained tokens:
         its loss summed over trained positions, divided by the step's trained
         total. Random targets train every position, so that total is the
-        step's token count, a constant of the case."""
+        step's token count, which the manifest carries for the step being
+        run. A mixture of experts returns `ObjectiveResult`: its objective
+        adds the router's balancing term, and the head's share alone travels
+        as the metric `HEAD_LOSS_METRIC`."""
 
         tokens, targets, sequence_lengths = values
         if not isinstance(tokens, torch.Tensor) or not isinstance(
@@ -162,17 +168,15 @@ class FullModelCase:
         callable_model: Any = model
         if self.manifest.implementation == "pytorch":
             if self.manifest.family == "olmoe":
-                summed = callable_model.loss(
-                    tokens,
-                    targets,
-                    seq_lens=sequence_lengths,
-                    aux_coef=0.01,
-                    reduction="sum",
+                hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
+                return _with_balancing(
+                    language_model_loss(hidden, callable_model.lm_head, targets, "sum"),
+                    auxiliary_share(auxiliary, targets, "sum"),
+                    total,
                 )
-            else:
-                summed = callable_model.loss(
-                    tokens, targets, seq_lens=sequence_lengths, reduction="sum"
-                )
+            summed = callable_model.loss(
+                tokens, targets, seq_lens=sequence_lengths, reduction="sum"
+            )
             return cast(torch.Tensor, summed / total)
 
         chunk = _head_chunk_size(
@@ -181,14 +185,17 @@ class FullModelCase:
         )
         if self.manifest.family == "olmoe":
             hidden, auxiliary = callable_model.hidden(tokens, sequence_lengths)
-            summed = mlops.head_loss(
-                hidden,
-                callable_model.lm_head.weight,
-                targets,
-                chunk_size=chunk,
-                reduction="sum",
-            ) + 0.01 * auxiliary_share(auxiliary, targets, "sum")
-            return cast(torch.Tensor, summed / total)
+            return _with_balancing(
+                mlops.head_loss(
+                    hidden,
+                    callable_model.lm_head.weight,
+                    targets,
+                    chunk_size=chunk,
+                    reduction="sum",
+                ),
+                auxiliary_share(auxiliary, targets, "sum"),
+                total,
+            )
         hidden = callable_model.hidden(tokens, sequence_lengths)
         summed = mlops.head_loss(
             hidden,
@@ -202,6 +209,28 @@ class FullModelCase:
     #: AdamW at its defaults. The rate is named in ``hyperparams`` when the
     #: step is planned and given a value on every step, so it is not set here.
     optimizer = mlops.optim.AdamW
+
+
+#: The weight of the router's balancing term in a mixture of experts' objective.
+BALANCING_COEFFICIENT = 0.01
+
+#: The metric an MoE objective reports beside its loss: the head's share alone.
+HEAD_LOSS_METRIC = "head_loss"
+
+
+def _with_balancing(
+    head: torch.Tensor, balancing: torch.Tensor, total: float
+) -> ObjectiveResult:
+    """A mixture of experts' microbatch objective: the head's share of the
+    step's mean loss plus the balancing term's, weighted. The head's share
+    alone is the metric, since the loss read across models is the head's and
+    the balancing term is the router's; a metric is not differentiated."""
+
+    share = head / total
+    return ObjectiveResult(
+        loss=share + BALANCING_COEFFICIENT * (balancing / total),
+        metrics={HEAD_LOSS_METRIC: share.detach()},
+    )
 
 
 def _head_chunk_size(vocabulary: int, scratch_bytes: int) -> int:
@@ -316,7 +345,7 @@ def build_case(
     manifest: FullModelManifest,
     *,
     seed: int,
-    runtime: object | None,
+    runtime: Runtime | None,
 ) -> FullModelCase:
     """Build one model and its deterministic packed microbatches.
 

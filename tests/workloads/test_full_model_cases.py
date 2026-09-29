@@ -42,7 +42,9 @@ def test_remote_floor_is_below_the_local_floor() -> None:
         if item.regression_tokens_per_second is None:
             continue
         assert item.remote_regression_tokens_per_second is not None
-        assert item.remote_regression_tokens_per_second < item.regression_tokens_per_second
+        assert (
+            item.remote_regression_tokens_per_second < item.regression_tokens_per_second
+        )
 
 
 def test_predecessor_parity_is_not_silently_declared_reached() -> None:
@@ -108,3 +110,25 @@ def test_a_smaller_spill_pool_reaches_the_cell_that_runs_it() -> None:
     assert "--spill-budget-gib" not in command(manifest)
     smaller = command(replace(manifest, spill_budget_bytes=80 << 30))
     assert smaller[smaller.index("--spill-budget-gib") + 1] == "80"
+
+
+def test_a_mixture_objective_reports_the_heads_share_as_its_metric() -> None:
+    import pytest
+    import torch
+
+    from workloads.full_model import (
+        BALANCING_COEFFICIENT,
+        HEAD_LOSS_METRIC,
+        _with_balancing,
+    )
+
+    head = torch.tensor(20.0, requires_grad=True)
+    balancing = torch.tensor(4.0, requires_grad=True)
+    result = _with_balancing(head, balancing, 10.0)
+    # the objective: both shares, the balancing term weighted
+    assert float(result.loss) == pytest.approx(2.0 + BALANCING_COEFFICIENT * 0.4)
+    assert result.loss.requires_grad
+    # the metric: the head's share alone, not differentiated
+    metric = result.metrics[HEAD_LOSS_METRIC]
+    assert float(metric) == pytest.approx(2.0)
+    assert not metric.requires_grad

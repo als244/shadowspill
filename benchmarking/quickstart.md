@@ -368,7 +368,10 @@ for a run made before the pages existed.
    then **steps** (each step's cycle on the device clock, its throughput,
    its head wait and its loss, each line appearing once the next step has
    begun. Each microbatch's objective is its share of the step's mean loss
-   over trained tokens, so the step's loss is their sum, and every
+   over trained tokens, using the requested sequences per step as the
+   denominator. The displayed loss sums the head-loss metrics when the
+   objective reports them separately; otherwise it sums the objectives.
+   The MoE balancing term remains in the differentiated objective. Every
    budget runs from the same initial weights and a fresh optimizer on the
    same seeded tokens per step, so the losses of one budget agree with
    every other budget's bar reduction order: a run that disagrees is a
