@@ -745,8 +745,13 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
         )
     )
 
-    index = write_run_timelines(run)
+    heard: list[str] = []
+    index = write_run_timelines(run, progress=heard.append)
     assert index == run / "timelines" / "index.html"
+    assert heard[0].startswith(
+        "timelines: writing pages for 1 plans and 1 kept resolutions"
+    )
+    assert "timelines: 4x2_1x2rp written" in heard
     search_pages = sorted(
         p.name for p in (run / "timelines" / "search" / "4x2_1x2rp" / "1gib").iterdir()
     )
@@ -779,6 +784,18 @@ def test_a_run_gets_pages_for_every_plan_and_both_clocks_for_a_budget_that_ran(
     )
     assert payload["end_seconds"] == 5.5
     assert "resolution: 1 of the flexible groups recompute" in payload["plan"]
+    assert "alternatives as this resolution fixes them" in payload["plan"]
+    assert "execution budget" not in payload["plan"]
+    simulated_page = (kept_dir / "simulated.html").read_text()
+    simulated_plan = json.loads(
+        simulated_page.split('<script id="data" type="application/json">')[1].split(
+            "</script>"
+        )[0]
+    )["plan"]
+    assert (
+        "execution budget 1gib" in simulated_plan
+        and "unconstrained" not in simulated_plan
+    )
     # every page names its plan under the title
     traced = (run / "timelines" / "run" / "1gib" / "traced.html").read_text()
     assert "<title>Occupancy 4x2_1x2rp at 1gib · traced</title>" in traced

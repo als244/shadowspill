@@ -228,4 +228,6 @@ with `spill` and `execution` (`Occupancy` objects with `at`, `peak`,
 `peaks_by` and `series`), the `tasks` and `transfers` as spans, the
 `facts` the attribution rests on and, on the device's clock,
 `interpolated_leases`, the lease instants no traced event named;
-`write_pages` and `table` take those.
+`write_pages` and `table` take those. `write_run_timelines(run_root,
+out=None, progress=None)` writes a run's tree and tells `progress` when it
+starts and as each geometry finishes.
