@@ -25,7 +25,7 @@ build store keeps it cheap.
 ```bash
 python -m benchmarking.quickstart mlops_olmoe \
   --sequences-per-step 64 --search-budget-gib 8,10,12,14,16 \
-  --plots
+  --plots --resolution-plans
 ```
 
 **Search, then run.** Run budgets must appear among the search budgets;
@@ -39,7 +39,7 @@ python -m benchmarking.quickstart mlops_llama3 \
   --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \
   --spill-gib 112 --steps 5 \
   --min-tokens-per-microbatch 4096 \
-  --plots
+  --plots --resolution-plans
 ```
 
 The floor is what makes that command finish in reasonable time. Splitting 64

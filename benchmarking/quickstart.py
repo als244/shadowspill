@@ -16,7 +16,7 @@ Run from the repository root, for example:
         --run-budget-gib 6,7,8,9,10,12,16,20,24,28,30 \\
         --spill-gib 112 --steps 5 \\
         --min-tokens-per-microbatch 4096 \\
-        --plots
+        --plots --resolution-plans
 
 Every flag defaults to the model's retained qualification value, so
 `python -m benchmarking.quickstart mlops_olmoe` searches and runs the
