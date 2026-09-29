@@ -754,12 +754,11 @@ def accumulate_gradient_outputs(
     anything can read it, so a gradient one computes, moved at most by views,
     is added by the multiply itself instead (:func:`accumulate_matmul_`):
     ``C = A @ B + C`` into the running gradient, where the device has a kernel
-    for it at these dtypes. That rounds the sum once. Adding after the
-    multiply rounds it once too when the running gradient is at the dtype the
-    multiply sums at, and the two agree; when it is narrower -- bf16 gradients
-    -- adding after rounds the product first. The multiply adds such a
-    gradient only with ``round_accumulation_once``, which trades agreement
-    with adding after for the one rounding and the pass it saves.
+    for it at these dtypes. The multiply adds gradients narrower than its
+    accumulator, such as bf16, only with ``round_accumulation_once``. This
+    avoids a product buffer and separate addition, but the BLAS kernel
+    controls rounding: even one kernel may round the product before adding
+    the prior gradient. The option permits fusion, not a rounding guarantee.
     """
 
     if not leaf_indices:

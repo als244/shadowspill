@@ -90,13 +90,14 @@ operations, where the device has an in-place kernel that accepts the dtypes;
 a device without one adds after. An opaque operation's result -- a custom
 kernel's -- is still written and then added.
 
-Adding inside the multiply rounds the sum once. When the running gradient is
-at the dtype the multiply sums at -- fp32 -- adding after rounds it once too,
-and the two agree. When it is narrower -- bf16 -- adding after rounds the
-product first, so adding inside computes something else: more precisely, but
-not what a step adding after computes, which is what PyTorch does. Such a
-gradient is added inside the multiply only when the step is planned with
-`round_accumulation_once`, and after it otherwise.
+Adding inside the multiply avoids a separate product buffer and addition.
+The BLAS kernel controls rounding: it may round only the final sum, or round
+the product before adding the running gradient inside the same kernel.
+`round_accumulation_once` permits this fusion for gradients narrower than
+the multiply's accumulator, such as BF16; it does not guarantee a particular
+rounding sequence. With the option off, those gradients are added after the
+multiply, preserving that explicit sequence. FP32 gradients use fusion
+either way, subject to the usual reduction-order differences.
 
 Which form a microbatch's stage runs follows from the step's data ordering
 (`StepDataOrdering.creates`), not from planning, so both forms share one

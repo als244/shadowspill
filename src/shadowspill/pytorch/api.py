@@ -374,12 +374,11 @@ def plan_step(
 
     A microbatch after the first adds its gradients onto the running ones,
     and one a matrix multiply computes is added by the multiply as it writes
-    its result. That rounds the sum once, as adding after it does when the
-    running gradients are kept at the dtype the multiply sums at -- fp32 --
-    so the two agree. Kept narrower -- bf16 -- adding after rounds the
-    product first: ``round_accumulation_once`` has the multiply add those too,
-    for one rounding instead of two and one pass fewer over the gradient, at
-    the price of a step that no longer computes what adding after computes.
+    its result. ``round_accumulation_once`` permits this fusion for gradients
+    narrower than the multiply's accumulator, such as bf16, as well as fp32.
+    It avoids a product buffer and a separate addition. The BLAS kernel
+    controls rounding, so the option does not guarantee a single rounding
+    or equality with an explicit multiply followed by an addition.
 
     ``memory_bound_flops_per_byte`` is the arithmetic intensity, in flops per
     byte moved, at or under which a stage's ``save`` graph pair regenerates
