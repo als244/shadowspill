@@ -245,8 +245,15 @@ def training_chain_program(layers: int) -> ShadowSpillProgram:
         objects.append(ObjectSpec(name, name, 0, 64))
         initial.append(ResidencySpec(name, MemoryLocation.SPILL))
 
-    tasks: list[TaskSpec] = []
-    previous: str | None = None
+    tasks: list[TaskSpec] = [
+        TaskSpec(
+            "start",
+            ResourceSpec("cuda_0", ResourceKind.CONTROL),
+            "marker_profile",
+            requires_entrypoint=False,
+        )
+    ]
+    previous: str | None = "start"
     for layer in range(layers):
         activation = f"A_{layer}"
         output = f"y_{layer}"

@@ -323,7 +323,6 @@ def test_fixed_layout_keeps_caller_owned_output_outside_reusable_slice() -> None
         admitted.layout,
         program,
         schedule,
-        initial_task_id=1 << 60,
         dynamic_task_allocations=(
             DynamicTaskAllocationPolicy("task_000000", 1, 32, 256),
         ),
@@ -433,7 +432,6 @@ def test_fixed_layout_keeps_only_final_fetched_output_lease_dynamic() -> None:
         admitted.layout,
         program,
         schedule,
-        initial_task_id=1 << 60,
     )
     assert len(runtime.placements) == 2
     task_output = next(
@@ -524,14 +522,18 @@ def test_fixed_layout_projects_eviction_reuse_to_indexed_runtime_ids() -> None:
         admitted.layout,
         program,
         schedule,
-        initial_task_id=1 << 60,
     )
 
     assert len(runtime.placements) == 2
-    initial = next(item for item in runtime.placements if item.task_id == 1 << 60)
+    initial = next(
+        item
+        for item in runtime.placements
+        if item.kind is RuntimePlacementKind.INITIAL_OBJECT
+    )
     scheduled = next(item for item in runtime.placements if item.task_id == 1)
-    assert initial.ordinal == 0
-    assert initial.kind is RuntimePlacementKind.ACTION_DESTINATION
+    assert initial.task_id == (1 << 64) - 1
+    assert initial.ordinal == (1 << 64) - 1
+    assert initial.object_id == 0
     assert scheduled.ordinal == 0
     assert len(runtime.dependencies) == 1
     dependency = runtime.dependencies[0]

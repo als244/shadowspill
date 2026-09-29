@@ -6,7 +6,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
-from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.lowering.training import (
     LoweredTrainingProgram,
@@ -21,7 +20,7 @@ from shadowspill.runtime.plan import (
     actions_by_task,
 )
 from shadowspill.simulator import SimulationResult
-from shadowspill.task.entrypoints import TaskEntrypoint
+from shadowspill.task.entrypoints import TaskEntrypoint, execution_entrypoints
 
 from .timing import TracedInvocation, TracedTask, alias_accesses
 
@@ -95,12 +94,10 @@ class PlanRun:
     simulation: SimulationResult
     expected_task_seconds: Mapping[str, float]
     execution: tuple[ExecutionTaskRecord, ...]
-    initial_fetches: tuple[str, ...]
     public_by_microbatch: tuple[tuple[str, ...], ...]
     #: Every alias group's objects in this run's program, which is what names
     #: the objects a task publishes.
     object_ids_by_alias: Mapping[str, tuple[str, ...]]
-    initial_task_id: int | None = None
     caller_acquisition_handle: int = 0
 
     def traced_invocation(self) -> TracedInvocation:
@@ -116,13 +113,7 @@ class PlanRun:
                 )
                 for record in self.execution
             ),
-            actions=(
-                tuple(
-                    MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
-                    for alias_id in self.initial_fetches
-                )
-                + self.plan.schedule.actions
-            ),
+            actions=self.plan.schedule.actions,
             simulation=self.simulation,
             alias_accesses=alias_accesses(
                 self.plan.program,
@@ -146,7 +137,7 @@ def build_plan_run(
         item.task_id: item for item in plan.program.selected_tasks(plan.selections)
     }
     profiles = {item.profile_id: item for item in plan.program.profiles}
-    entrypoints = tuple(item for item in lowered.entrypoints if item.task_id in tasks)
+    entrypoints = execution_entrypoints(tuple(tasks.values()), lowered.entrypoints)
     action_index = actions_by_task(plan.schedule.actions)
     aliases = _input_aliases(tasks, bridge)
     object_ids = _object_ids_by_alias(plan)
@@ -183,11 +174,6 @@ def build_plan_run(
             for task_id, task in tasks.items()
         },
         execution=execution,
-        initial_fetches=tuple(
-            alias_group_id
-            for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
-            if bridge.objects.requires_storage(alias_group_id)
-        ),
         public_by_microbatch=_public_outputs(entrypoints, bridge),
         object_ids_by_alias=object_ids,
     )

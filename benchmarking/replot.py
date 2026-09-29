@@ -113,11 +113,10 @@ def _keeps_budget(gibibytes: float, wanted: Sequence[float]) -> bool:
     return not wanted or any(abs(gibibytes - item) < 0.5 for item in wanted)
 
 
-def _float(row: dict[str, str], name: str, default: float = 0.0) -> float:
-    """Read a column that older runs may not have written."""
+def _float(row: dict[str, str], name: str) -> float:
+    """Read a required column from the current development format."""
 
-    value = row.get(name)
-    return default if value in (None, "") else float(value)
+    return float(row[name])
 
 
 def _run_entries(
@@ -151,7 +150,10 @@ def _run_entries(
                     real_task_seconds=_float(row, "real_task_seconds"),
                     simulated_idle_seconds=_float(row, "simulated_idle_seconds"),
                     real_idle_seconds=_float(row, "real_idle_seconds"),
-                    prologue_seconds=_float(row, "prologue_seconds"),
+                    simulated_entry_delay_seconds=_float(
+                        row, "simulated_entry_delay_seconds"
+                    ),
+                    real_entry_delay_seconds=_float(row, "real_entry_delay_seconds"),
                     terminal_tail_seconds=_float(row, "terminal_tail_seconds"),
                     real_terminal_tail_seconds=_float(
                         row, "real_terminal_tail_seconds"

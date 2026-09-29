@@ -21,7 +21,7 @@ from .diagnostics import (
     TaskAlternativeChoiceDiagnostic,
 )
 from .plan import plan_program, summarize_plan, validate_schedule_feasibility
-from .request import GenericPlanningOptions, InitialPlacement, OptionRecord
+from .request import GenericPlanningOptions, OptionRecord
 from .result import (
     ProgramPlanResult,
     ResidentSlice,
@@ -47,7 +47,6 @@ __all__ = [
     "CostedAlternatives",
     "GenericPlanningOptions",
     "GraphPairOutcome",
-    "InitialPlacement",
     "OptionRecord",
     "PlanningDiagnostics",
     "PlanningRepairDiagnostics",

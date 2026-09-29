@@ -39,7 +39,6 @@ class CPressureFitOptions(ctypes.Structure):
         ("coalescing_modes", ctypes.POINTER(ctypes.c_uint8)),
         ("coalescing_mode_count", ctypes.c_uint32),
         ("max_repair_attempts", ctypes.c_uint32),
-        ("initial_placement", ctypes.c_uint8),
         ("capacity_refinement_bytes", ctypes.c_uint64),
         ("record_reduction_steps", ctypes.c_uint8),
         ("best_placed", ctypes.c_void_p),

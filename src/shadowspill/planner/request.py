@@ -4,16 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
-from enum import Enum, StrEnum
+from enum import Enum
 from fractions import Fraction
 from typing import Any, ClassVar, Self
-
-
-class InitialPlacement(StrEnum):
-    """How host-origin objects may be placed before the first task."""
-
-    REQUIRED = "required"
-    GREEDY = "greedy"
 
 
 class OptionRecord:
@@ -147,4 +140,4 @@ class GenericPlanningOptions(OptionRecord):
             raise ValueError("deterministic must be a boolean")
 
 
-__all__ = ["GenericPlanningOptions", "InitialPlacement", "OptionRecord"]
+__all__ = ["GenericPlanningOptions", "OptionRecord"]

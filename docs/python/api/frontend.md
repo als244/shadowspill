@@ -106,8 +106,8 @@ Runtime(
 | `background_transfer_window_bytes` | `int` | `64 << 20` | How far a lane may run ahead with transfers the plan did not schedule. |
 | `backend` | `str` \| `None` | `None` | Which backend shared object the adapter loads: `None` the one accelerator backend installed beside the libraries, a name resolves to `libshadowspill_backend_<name>.so` there, and a path is used as given. |
 
-`background_transfer_window_bytes` bounds unscheduled work such as the opening
-restore of a step's initial device set: a transfer the plan did schedule never
+`background_transfer_window_bytes` bounds unscheduled work such as model materialization
+or state reconciliation: a transfer the plan did schedule never
 waits behind more than this many background bytes. Zero removes the bound. See
 [transfers](../../architecture/transfers.md#dispatch).
 
@@ -1105,7 +1105,7 @@ manager support, and a `state_dict()` / `load_state_dict()` pair that takes back
 exactly what `state_dict()` produced. `PlannedForward`'s pair is the model's own
 CPU state mapping; `PlannedTrainStep`'s is the three-key checkpoint below, which
 its `save(path)` writes to a file straight from the pool.
-Both also expose `invocation_timings()` and `mark_cycle_end()`, the
+Both also expose `prepare_runtime_trace()`, `invocation_timings()`, and `mark_cycle_end()`, the
 invocation's time on the device clock; see [timing](timing.md).
 
 ```text

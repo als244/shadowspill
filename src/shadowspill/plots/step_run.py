@@ -23,22 +23,15 @@ _GIB = 1 << 30
 
 @dataclass(frozen=True, slots=True)
 class RunBudgetOutcome:
-    """One executed budget, with the plan's prediction beside the measurement.
+    """A budget's simulated invocation, traced invocation, and measured cycles.
 
-    The task window splits the same way on both clocks: the tasks' own compute,
-    the recomputation the plan chose to pay for, and the stall between tasks. Each
-    side's three parts sum to that side's task window, which is what lets a
-    difference be attributed rather than only reported.
+    The trace and simulation each split into entry delay, useful compute,
+    recomputation, inter-task idle, and terminal transfers. Those disjoint parts
+    sum to the corresponding invocation. Median whole-cycle time additionally
+    includes caller work and is used separately for throughput.
 
-    Recomputation is the excess over the save-only floor, so it is a property of
-    the plan rather than of a run, and the profiled figure stands for both sides.
-    That makes the segment identical by construction and leaves the comparison to
-    compute and stall, which are measured on both clocks.
-
-    What falls outside the task window -- the opening restore and the writeback
-    after the last task -- is kept in the fields and written to the raw-data
-    table, but not drawn: it is the subject of the epilogue's own section rather
-    than of the figure a reader meets first.
+    Recomputation is the profiled excess over the save-only floor, shown on
+    both clocks; differences in actual kernel time stay in useful compute.
     """
 
     execution_budget_bytes: int
@@ -51,25 +44,19 @@ class RunBudgetOutcome:
     #: Stalled between tasks, simulated and measured.
     simulated_idle_seconds: float
     real_idle_seconds: float
-    #: The opening restore, measured only: origin on the compute stream through
-    #: the first task's compute start. The simulator prices nothing here, because
-    #: it assumes the step's initial objects are already resident, so this is the
-    #: whole of it rather than the first task's wait for its own inputs.
-    prologue_seconds: float
-    #: The writeback after the last task as the *simulator* prices it, assuming
-    #: none of it overlaps the next step.
+    #: Invocation entry through the first computation, on each clock.
+    simulated_entry_delay_seconds: float
+    real_entry_delay_seconds: float
+    #: Last computation through completion of required terminal transfers.
     terminal_tail_seconds: float
-    #: The writeback the stream actually exposed after the last task. Smaller
-    #: than the priced tail wherever the next step absorbed some of it, so the
-    #: two are kept apart rather than averaged into one number.
-    real_terminal_tail_seconds: float = 0.0
+    real_terminal_tail_seconds: float
     #: What the chosen recomputation costs over the save-only floor. A
     #: counterfactual, so there is nothing to measure it against: the same figure
     #: stands on both clocks. Declared here, among the defaulted fields, because
     #: a dataclass will not take a defaulted field before an undefaulted one.
     recomputation_seconds: float = 0.0
     #: Every step this budget ran, in order -- including the first, which pays
-    #: the plan's reconciliation, and the traced last one, which pays for its own
+    #: first-call setup, and the traced last one, which pays for its own
     #: collection. ``measured_step_seconds`` is the median of the ones in
     #: between; keeping all of them here is what says whether a budget was steady
     #: or erratic, which a median cannot.
@@ -91,6 +78,32 @@ class RunBudgetOutcome:
         return (
             self.measured_step_seconds - self.simulated_step_seconds
         ) / self.simulated_step_seconds
+
+    @property
+    def traced_step_seconds(self) -> float:
+        """The traced invocation including required terminal copies."""
+
+        return sum(self.components(measured=True))
+
+    @property
+    def trace_relative_error(self) -> float:
+        return (
+            self.traced_step_seconds - self.simulated_step_seconds
+        ) / self.simulated_step_seconds
+
+    def components(self, *, measured: bool) -> tuple[float, ...]:
+        """Disjoint entry, compute, recompute, idle, and terminal durations."""
+
+        return (
+            self.real_entry_delay_seconds
+            if measured
+            else self.simulated_entry_delay_seconds,
+            (self.real_task_seconds if measured else self.profiled_task_seconds)
+            - self.recomputation_seconds,
+            self.recomputation_seconds,
+            self.real_idle_seconds if measured else self.simulated_idle_seconds,
+            self.real_terminal_tail_seconds if measured else self.terminal_tail_seconds,
+        )
 
 
 def plot_step_run(
@@ -151,7 +164,10 @@ def write_run_tables(
                 "simulated_idle_seconds",
                 "real_idle_seconds",
                 "recomputation_seconds",
-                "prologue_seconds",
+                "simulated_entry_delay_seconds",
+                "real_entry_delay_seconds",
+                "traced_step_seconds",
+                "trace_relative_error",
                 "terminal_tail_seconds",
                 "real_terminal_tail_seconds",
             )
@@ -169,7 +185,10 @@ def write_run_tables(
                 item.simulated_idle_seconds,
                 item.real_idle_seconds,
                 item.recomputation_seconds,
-                item.prologue_seconds,
+                item.simulated_entry_delay_seconds,
+                item.real_entry_delay_seconds,
+                item.traced_step_seconds,
+                item.trace_relative_error,
                 item.terminal_tail_seconds,
                 item.real_terminal_tail_seconds,
             )
@@ -234,21 +253,7 @@ def _throughput(
 
 
 def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
-    """How far the prediction fell, and which part of the step it missed.
-
-    The upper panel is the headline: the signed error at each budget against
-    the bounds the performance gate holds the simulator to. The lower panel
-    is the answer to "which part", because a step is compute plus stall and
-    the two are modelled by different things -- the profiles and the transfer
-    pricing.
-
-    The terminal writeback is inside the simulated makespan, so it is part of
-    that bar's stall rather than a category of its own. The opening restore is
-    not: the simulator assumes the step's initial objects are already
-    resident, so it sits on the measured bar alone and is the one part of the
-    difference the model does not attempt. A cycle that hides the restore
-    under the previous step should drive it to nothing.
-    """
+    """Compare the complete traced invocation with the complete simulation."""
 
     labels = [budget_label(item.execution_budget_bytes / _GIB) for item in ordered]
     places = range(len(ordered))
@@ -262,7 +267,7 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     for bound, shade in ((0.10, "0.92"), (0.05, "0.84")):
         error.axhspan(-bound, bound, color=shade, zorder=0)
     error.axhline(0.0, color="0.25", linewidth=1.4, zorder=1)
-    errors = [item.relative_error for item in ordered]
+    errors = [item.trace_relative_error for item in ordered]
     error.bar(
         list(places),
         errors,
@@ -283,7 +288,7 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     # never so tight that the bands become invisible slivers.
     reach = max(0.13, max(abs(value) for value in errors) * 1.35)
     error.set_ylim(-reach, reach)
-    error.set_title("Simulator Fidelity (positive = ran slower than predicted)")
+    error.set_title("Traced Invocation Fidelity (positive = ran slower than predicted)")
     error.set_ylabel("Measured Minus Simulated")
     error.yaxis.set_major_formatter(lambda value, _pos: f"{value:+.0%}")
     error.grid(True, axis="y", alpha=0.3)
@@ -298,60 +303,39 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     )
 
     width = 0.38
-    for offset, (name, compute, recompute, idle) in enumerate(
-        (
-            (
-                "Simulated",
-                [
-                    item.profiled_task_seconds - item.recomputation_seconds
-                    for item in ordered
-                ],
-                [item.recomputation_seconds for item in ordered],
-                [item.simulated_idle_seconds for item in ordered],
-            ),
-            (
-                "Measured",
-                [
-                    item.real_task_seconds - item.recomputation_seconds
-                    for item in ordered
-                ],
-                [item.recomputation_seconds for item in ordered],
-                [item.real_idle_seconds for item in ordered],
-            ),
-        )
-    ):
+    colors = ("tab:green", "tab:blue", "tab:purple", "tab:orange", "tab:brown")
+    component_labels = (
+        "Entry Delay",
+        "Effective Compute",
+        "Recompute",
+        "Inter-task Idle",
+        "Terminal Transfers",
+    )
+    for offset, (name, measured) in enumerate((("Simulated", False), ("Traced", True))):
         centres = [place - width / 2 + width * offset for place in places]
-        # Each budget carries a pair: simulated on the left, measured on the
-        # right. Colour says which part of the step a segment is, so it cannot
-        # also say which clock -- opacity does that, and the simulated bar is the
-        # faded one. Without it the pair reads as one six-part stack.
-        opacity = 0.45 if name == "Simulated" else 0.95
-        parts.bar(centres, compute, width=width * 0.92, color="tab:blue", alpha=opacity)
-        parts.bar(
-            centres,
-            recompute,
-            width=width * 0.92,
-            bottom=compute,
-            color="tab:purple",
-            alpha=opacity,
+        opacity = 0.95 if measured else 0.45
+        totals = [0.0] * len(ordered)
+        columns = zip(
+            *(item.components(measured=measured) for item in ordered), strict=True
         )
-        parts.bar(
-            centres,
-            idle,
-            width=width * 0.92,
-            bottom=[a + b for a, b in zip(compute, recompute, strict=True)],
-            color="tab:orange",
-            alpha=opacity,
-        )
-        for centre, a, b, c in zip(centres, compute, recompute, idle, strict=True):
+        for values, color in zip(columns, colors, strict=True):
+            parts.bar(
+                centres,
+                values,
+                width=width * 0.92,
+                bottom=totals,
+                color=color,
+                alpha=opacity,
+            )
+            totals = [a + b for a, b in zip(totals, values, strict=True)]
+        for centre, total in zip(centres, totals, strict=True):
             parts.annotate(
-                f"{name}\n{a + b + c:.2f} s",
-                (centre, a + b + c),
+                f"{name}\n{total:.2f} s",
+                (centre, total),
                 textcoords="offset points",
                 xytext=(0, 4),
                 ha="center",
                 fontsize=7.0,
-                color="0.1",
             )
 
     parts.set_xticks(list(places))
@@ -364,21 +348,15 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     parts.set_ylim(
         0.0,
         max(
-            max(
-                item.profiled_task_seconds + item.simulated_idle_seconds,
-                item.real_task_seconds + item.real_idle_seconds,
-            )
+            max(item.simulated_step_seconds, item.traced_step_seconds)
             for item in ordered
         )
         * 1.30,
     )
     parts.legend(
         handles=[
-            # Listed bottom of the stack first, so the key reads in the
-            # order the bars are drawn.
-            Patch(facecolor="tab:blue", alpha=0.95, label="Effective Compute"),
-            Patch(facecolor="tab:purple", alpha=0.95, label="Recompute"),
-            Patch(facecolor="tab:orange", alpha=0.95, label="Stalled"),
+            Patch(facecolor=color, alpha=0.95, label=label)
+            for color, label in zip(colors, component_labels, strict=True)
         ],
         fontsize="x-small",
         loc="upper left",

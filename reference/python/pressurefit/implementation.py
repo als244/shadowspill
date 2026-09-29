@@ -595,14 +595,7 @@ def _build_problems(
         except PlanInfeasibleError as error:
             failures.append(error)
             continue
-        seed = seed_residency(
-            facts,
-            config,
-            algorithm_options.initial_placement,
-            # Initial placement is a property of the program and public
-            # capacity, not a later strategy's speculative headroom.
-            initial_capacity_by_device=facts.object_capacity_by_device,
-        )
+        seed = seed_residency(facts)
         problems.append(
             _SelectionProblem(
                 selections,

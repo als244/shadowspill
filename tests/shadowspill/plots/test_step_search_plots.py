@@ -96,9 +96,11 @@ def test_run_figures_render(tmp_path: Path) -> None:
                 measured_step_seconds=measured,
                 profiled_task_seconds=simulated * 0.8,
                 real_task_seconds=measured * 0.8,
-                simulated_idle_seconds=simulated * 0.2,
-                real_idle_seconds=measured * 0.15,
-                prologue_seconds=measured * 0.05,
+                simulated_idle_seconds=simulated * 0.15,
+                real_idle_seconds=measured * 0.13,
+                simulated_entry_delay_seconds=simulated * 0.03,
+                real_entry_delay_seconds=measured * 0.05,
+                real_terminal_tail_seconds=measured * 0.02,
                 terminal_tail_seconds=simulated * 0.02,
             )
             for budget, simulated, measured in (
@@ -124,3 +126,27 @@ def test_mixed_spill_budgets_are_rejected() -> None:
     )
     with pytest.raises(ValueError, match="one spill budget"):
         plot_step_search(report, ".")
+
+
+def test_fidelity_uses_complete_invocation_and_keeps_cycle_separate() -> None:
+    from shadowspill.plots import RunBudgetOutcome
+
+    result = RunBudgetOutcome(
+        execution_budget_bytes=8 << 30,
+        simulated_step_seconds=4.0,
+        measured_step_seconds=6.0,
+        profiled_task_seconds=3.0,
+        real_task_seconds=3.5,
+        simulated_idle_seconds=0.5,
+        real_idle_seconds=0.5,
+        simulated_entry_delay_seconds=0.2,
+        real_entry_delay_seconds=0.4,
+        terminal_tail_seconds=0.3,
+        real_terminal_tail_seconds=0.6,
+        recomputation_seconds=0.5,
+    )
+    assert sum(result.components(measured=False)) == pytest.approx(4.0)
+    assert sum(result.components(measured=True)) == pytest.approx(5.0)
+    assert result.traced_step_seconds == pytest.approx(5.0)
+    assert result.trace_relative_error == pytest.approx(0.25)
+    assert result.relative_error == pytest.approx(0.50)  # whole-cycle throughput

@@ -60,14 +60,6 @@ static int transfer_duration_ns(
     return 0;
 }
 
-int shadowspill_problem_compare_u32(uint32_t left, uint32_t right) {
-    return left < right ? -1 : left > right ? 1 : 0;
-}
-
-int shadowspill_problem_compare_u64(uint64_t left, uint64_t right) {
-    return left < right ? -1 : left > right ? 1 : 0;
-}
-
 int shadowspill_problem_program_problem_valid(
     const ShadowSpillIndexedProblem *problem,
     const ShadowSpillPressureFitOptions *options
@@ -78,8 +70,7 @@ int shadowspill_problem_program_problem_valid(
         problem->abi_version != SHADOWSPILL_ABI_VERSION ||
         problem->context.simulation->abi_version != SHADOWSPILL_ABI_VERSION ||
         problem->context.simulation->device_count == 0U ||
-        problem->context.simulation->task_count == 0U ||
-        options->initial_placement > SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_GREEDY) {
+        problem->context.simulation->task_count == 0U) {
         return 0;
     }
     const ShadowSpillSimulationProgram *program = problem->context.simulation;
@@ -364,7 +355,8 @@ ShadowSpillStatus shadowspill_problem_finalize_alias_facts(
         if (prepared->seen_input[alias] != 0U &&
             prepared->first_input_task[alias] == 0U &&
             prepared->produced[alias] == 0U &&
-            prepared->initial_location[alias] < 0) {
+            program->alias_size_bytes[alias] != 0U &&
+            prepared->initial_location[alias] != SHADOWSPILL_MEMORY_DEVICE) {
             prepared->failure_kind =
                 SHADOWSPILL_PRESSUREFIT_PREFLIGHT_MISSING_INITIAL_RESIDENCY;
             prepared->error_alias = alias;

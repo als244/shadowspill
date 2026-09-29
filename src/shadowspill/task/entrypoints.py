@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from shadowspill.ir import TaskSpec
+
 from .slots import ObjectSlot, TaskStorageHandoff
 
 
@@ -68,6 +70,20 @@ class TaskEntrypoint:
     replacement_output_leaves: tuple[int, ...] = ()
     storage_handoffs: tuple[TaskStorageHandoff, ...] = ()
     options: TaskOptions = field(default_factory=TaskOptions)
+
+
+def execution_entrypoints(
+    tasks: tuple[TaskSpec, ...], entrypoints: tuple[TaskEntrypoint, ...]
+) -> tuple[TaskEntrypoint, ...]:
+    """Bind every selected task, including boundaries with no callable."""
+
+    by_id = {item.task_id: item for item in entrypoints}
+    return tuple(
+        by_id[task.task_id]
+        if task.requires_entrypoint
+        else TaskEntrypoint(task.task_id, (), (), options=TaskOptions(phase=task.phase))
+        for task in tasks
+    )
 
 
 __all__ = ["TaskEntrypoint", "TaskOptions"]

@@ -23,15 +23,11 @@ writes its half of `raw_data/`. Both write into the directory they are given and
 key nothing themselves, so what distinguishes one run from another is the
 caller's to choose: point a second run at a second directory.
 
-A `RunBudgetOutcome` splits the task window the same way on both clocks --
-the tasks' own compute, the recomputation the plan chose to pay for, and the
-stall between tasks -- so each side's three parts sum to that side's task
-window and a difference can be attributed rather than only reported. What falls
-outside that window is kept in the fields and written to `raw_data/` but drawn
-nowhere: the opening restore, which the simulator prices at zero because it
-assumes the step's initial objects are resident, and the writeback after the
-last task, which the simulator prices whole and the stream exposes only as far
-as the next step fails to absorb it.
+A `RunBudgetOutcome` splits both simulated and traced invocations into entry
+delay, effective compute, recomputation, inter-task idle, and terminal
+transfers. The five disjoint components sum to each invocation's duration.
+Throughput uses the median untraced whole-cycle time separately, since a cycle
+also includes caller work.
 
 ## The tree
 
@@ -167,15 +163,12 @@ the CSVs and still a gap in the line. Nothing is dropped for being infeasible.
 *slower* than the plan predicted, negative that it ran faster. The direction is
 what carries the meaning: an optimistic prediction is time the step spends
 somewhere the simulator does not model, and that is a thing to go and find.
-This is the convention the performance gate reports, so a number here and a
-number there mean the same thing. `real/sim_fidelity.png` draws it in two
-panels: the signed error per budget against the 5% and 10% bands above, and
-below it the two task windows side by side, each stacked as effective compute,
-recompute and stall, with the simulated bar the faded one of the pair. So an
-error can be attributed to one of those three. Recompute is a counterfactual
-against the save-only floor rather than a measurement, so the same figure
-stands on both bars and the comparison is left to compute and stall. Nothing
-outside the task window is drawn.
+`real/sim_fidelity.png` compares the complete traced invocation against the
+simulation, with entry and terminal work on both sides. The upper panel shows
+signed error and the lower panel shows all five disjoint components. Profiled
+recomputation is a counterfactual shown equally on both bars; kernel-duration
+differences remain in effective compute. The throughput figure and the
+performance gate use median whole-cycle time, a separately labelled quantity.
 
 ## Redrawing from `raw_data/`
 
@@ -220,9 +213,7 @@ whichever is at hand. `OUTPUT` is created and filled exactly as a run fills one,
 
 Narrowing is subtraction only: nothing is recomputed, so every figure still
 draws numbers the search actually produced. Dropping a budget's winning
-geometry drops that budget rather than promoting a runner-up. A column an older
-run did not write reads as zero, so its figures still draw with the parts it did
-not record simply absent.
+geometry drops that budget rather than promoting a runner-up. The table must contain the current fields; rebuild older development artifacts.
 
 ## Related
 

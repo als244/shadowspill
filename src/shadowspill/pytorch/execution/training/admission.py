@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from shadowspill.ir import MemoryAction, MemoryActionKind
 from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
 from shadowspill.runtime.plan import (
     RuntimeBridge,
     admit_caller_acquisition,
     admit_fixed_layout,
-    admit_initial_actions,
     admit_task,
     seal_fixed_layout,
 )
@@ -29,22 +27,9 @@ def admit_run(
     run: _PlanRun,
     fixed_layout: RuntimeFixedLayout,
 ) -> _PlanRun:
-    """Admit one plan run's fixed layout, initial actions, tasks and caller
-    acquisitions to the runtime, and seal the layout."""
+    """Admit the layout, scheduled tasks and caller acquisitions, then seal."""
 
     admit_fixed_layout(bridge, fixed_layout)
-    initial_actions = tuple(
-        MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
-        for alias_id in run.initial_fetches
-    )
-    admit_initial_actions(
-        bridge,
-        initial_actions,
-        task_number=fixed_layout.initial_task_id,
-        action_trace_labels=tuple(
-            f"shadowspill.fetch.initial.{alias_id}" for alias_id in run.initial_fetches
-        ),
-    )
     labels = TransferLabelIndex(
         run.plan.program,
         {record.task.task_id: record.trace_label for record in run.execution},
@@ -74,7 +59,6 @@ def admit_run(
     return replace(
         run,
         execution=tuple(admitted),
-        initial_task_id=fixed_layout.initial_task_id,
         caller_acquisition_handle=caller_acquisition_handle,
     )
 
