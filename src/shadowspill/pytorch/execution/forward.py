@@ -13,7 +13,6 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 from shadowspill.diagnostics.timing import ArmedTaskTiming as _ArmedTaskTiming
 from shadowspill.errors import PlanningError
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
-from shadowspill.ir.schedule import first_use_initial_order
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.materialization.forward import MaterializedForwardState
@@ -24,7 +23,6 @@ from shadowspill.pytorch.runtime_adapter.boundaries import (
     acquire_for_caller,
     after_task_and_update,
     before_task_and_acquire,
-    submit_initial_actions,
     transfer_outputs_to_caller,
 )
 from shadowspill.pytorch.sharing import ResolvedSharedOutput, TensorRef, format_path
@@ -38,13 +36,13 @@ from shadowspill.runtime.plan import (
     actions_by_task,
     admit_caller_acquisition,
     admit_fixed_layout,
-    admit_initial_actions,
     admit_task,
     clear_tasks,
     seal_fixed_layout,
 )
 from shadowspill.runtime.transfer_labels import TransferLabelIndex
 from shadowspill.simulator import SimulationResult
+from shadowspill.task.entrypoints import execution_entrypoints
 
 from .annotations import AnnotatedExecutor, TaskBoundaryAnnotations
 from .timing import (
@@ -76,6 +74,15 @@ class _ProcessedForwardOutputs:
     dematerialized: tuple[tuple[str, torch.Tensor], ...]
 
 
+def _semantic_name(entrypoint: TaskEntrypoint) -> str:
+    options = entrypoint.options
+    if options.phase == "control":
+        return "control.invocation_start"
+    if options.stage_index is None:
+        raise PlanningError("forward entrypoint has no stage index")
+    return f"forward.stage_{options.stage_index:04d}.{options.target}"
+
+
 def _forward_publications(
     entrypoint: TaskEntrypoint,
     input_aliases: tuple[str, ...],
@@ -105,7 +112,7 @@ class _ExecutingStage(nn.Module):
         self,
         entrypoint: TaskEntrypoint,
         task: TaskSpec,
-        function: Callable[..., object],
+        function: Callable[..., object] | None,
         bridge: RuntimeBridge,
         state: MaterializedForwardState,
         actions: tuple[MemoryAction, ...],
@@ -186,7 +193,8 @@ class _ExecutingStage(nn.Module):
                 prepared = _PreparedForwardTask(
                     input_tensors, self._input_aliases, stream
                 )
-            self._timing.record_compute_start(stream)
+            if self._task.requires_entrypoint:
+                self._timing.record_compute_start(stream)
             self._timing.record_task_start(task, stream)
             return prepared
         except BaseException:
@@ -238,7 +246,9 @@ class _ExecutingStage(nn.Module):
             self._annotations.range(f"shadowspill.compiled_call.{self._trace_label}"),
             torch.no_grad(),
         ):
-            outputs = self._function(*prepared.arguments)
+            outputs = (
+                () if self._function is None else self._function(*prepared.arguments)
+            )
         if task is not None:
             task.after_task_enter_ns = time.perf_counter_ns()
         self._timing.record_task_end(task, prepared.stream)
@@ -410,41 +420,26 @@ class ForwardExecutor(AnnotatedExecutor):
         self._output_tree_spec = output_tree_spec
         self._shared_outputs = tuple(shared_outputs)
         self._task_annotations = TaskBoundaryAnnotations(bridge)
+        selected = plan.program.selected_tasks(plan.selections)
+        self._entrypoints = execution_entrypoints(selected, lowered.entrypoints)
         self.timing = ExecutionTiming(
-            bridge, tuple(item.task_id for item in lowered.entrypoints)
+            bridge, tuple(item.task_id for item in self._entrypoints)
         )
-        task_by_id = {task.task_id: task for task in plan.program.tasks}
+        task_by_id = {task.task_id: task for task in selected}
+        self._control_tasks: list[_ExecutingStage] = []
         grouped_actions = actions_by_task(plan.schedule.actions)
-        self._initial_fetches = tuple(
-            alias_group_id
-            for alias_group_id in first_use_initial_order(plan.program, plan.schedule)
-            if bridge.objects.requires_storage(alias_group_id)
-        )
-        initial_actions = tuple(
-            self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
-        )
         # Materialization uses a short-lived action batch. It is idle now and
         # must not become part of the immutable execution plan.
         clear_tasks(bridge)
         admit_fixed_layout(bridge, fixed_layout)
-        admit_initial_actions(
-            bridge,
-            initial_actions,
-            task_number=fixed_layout.initial_task_id,
-            action_trace_labels=tuple(
-                f"shadowspill.fetch.initial.{alias_id}"
-                for alias_id in self._initial_fetches
-            ),
-        )
         trace_labels = {
             entrypoint.task_id: (
-                f"execution_{execution_ordinal:06d}.forward."
-                f"stage_{execution_ordinal:04d}.{entrypoint.options.target}"
+                f"execution_{execution_ordinal:06d}.{_semantic_name(entrypoint)}"
             )
-            for execution_ordinal, entrypoint in enumerate(lowered.entrypoints)
+            for execution_ordinal, entrypoint in enumerate(self._entrypoints)
         }
         transfer_labels = TransferLabelIndex(plan.program, trace_labels)
-        for execution_ordinal, entrypoint in enumerate(lowered.entrypoints):
+        for execution_ordinal, entrypoint in enumerate(self._entrypoints):
             task = task_by_id[entrypoint.task_id]
             task_actions = grouped_actions.get(entrypoint.task_id, ())
             input_aliases = tuple(
@@ -462,8 +457,12 @@ class ForwardExecutor(AnnotatedExecutor):
                 trace_label=trace_labels[entrypoint.task_id],
                 publications=publications,
             )
-            artifact = lowered.executables[entrypoint.task_id]
-            function = functions[artifact.compatibility_digest]
+            artifact = lowered.executables.get(entrypoint.task_id)
+            if task.requires_entrypoint and artifact is None:
+                raise PlanningError(f"task {task.task_id!r} has no compiled artifact")
+            function = (
+                None if artifact is None else functions[artifact.compatibility_digest]
+            )
             wrapper = _ExecutingStage(
                 entrypoint,
                 task,
@@ -473,21 +472,21 @@ class ForwardExecutor(AnnotatedExecutor):
                 task_actions,
                 ExecutionTaskIdentity(
                     execution_task_id=f"execution_{execution_ordinal:06d}",
-                    semantic_name=(
-                        f"forward.stage_{execution_ordinal:04d}."
-                        f"{entrypoint.options.target}"
-                    ),
+                    semantic_name=_semantic_name(entrypoint),
                     canonical_task_id=task.task_id,
                 ),
                 task_handle,
                 publications,
                 self._task_annotations,
                 self.timing,
-                execution_ordinal == len(lowered.entrypoints) - 1,
+                execution_ordinal == len(self._entrypoints) - 1,
             )
-            self._root.set_submodule(
-                entrypoint.options.target or entrypoint.task_id, wrapper
-            )
+            if task.requires_entrypoint:
+                self._root.set_submodule(
+                    entrypoint.options.target or entrypoint.task_id, wrapper
+                )
+            else:
+                self._control_tasks.append(wrapper)
         seal_fixed_layout(bridge)
         self._traced = self._describe_for_tracing(plan, task_by_id, simulation)
         self._public_output_aliases = tuple(
@@ -522,7 +521,6 @@ class ForwardExecutor(AnnotatedExecutor):
         self._completion = ReusableCompletionEvent(
             bridge.runtime._runtime_handle, state.device
         )
-        self._initial_task_id = fixed_layout.initial_task_id
         self._invocations = 0
 
     def _describe_for_tracing(
@@ -534,7 +532,7 @@ class ForwardExecutor(AnnotatedExecutor):
         """This program in the terms a runtime trace is taken in."""
 
         profiles = {item.profile_id: item for item in plan.program.profiles}
-        entrypoints = tuple(enumerate(self._lowered.entrypoints))
+        entrypoints = tuple(enumerate(self._entrypoints))
         return TracedInvocation(
             tasks=tuple(
                 TracedTask(
@@ -542,18 +540,11 @@ class ForwardExecutor(AnnotatedExecutor):
                     profiles[task_by_id[entrypoint.task_id].profile_id].runtime_ns
                     / 1e9,
                     execution_ordinal,
-                    f"forward.stage_{execution_ordinal:04d}."
-                    f"{entrypoint.options.target}",
+                    _semantic_name(entrypoint),
                 )
                 for execution_ordinal, entrypoint in entrypoints
             ),
-            actions=(
-                tuple(
-                    self._initial_fetch_action(alias_id)
-                    for alias_id in self._initial_fetches
-                )
-                + plan.schedule.actions
-            ),
+            actions=plan.schedule.actions,
             simulation=simulation,
             alias_accesses=alias_accesses(
                 plan.program,
@@ -580,10 +571,6 @@ class ForwardExecutor(AnnotatedExecutor):
         if timing is not None:
             timing.dispatch_call_started_ns = time.perf_counter_ns()
         stream = torch.cuda.current_stream()
-        self.timing.record_origin(stream)
-        timing_timeline = self.timing.begin_invocation(self._invocations + 1, stream)
-        if timing is not None:
-            timing.timeline = timing_timeline
         self.timing.prior_invocation_drain_ns = 0
         if self._invocations:
             # Forward v1 is also non-cyclic: begin only after the preceding
@@ -598,23 +585,17 @@ class ForwardExecutor(AnnotatedExecutor):
             if timing is not None:
                 timing.prior_invocation_drain_ns = self.timing.prior_invocation_drain_ns
             self._release_closed_shared_output_generations()
+        self.timing.record_origin(stream)
+        timing_timeline = self.timing.begin_invocation(self._invocations + 1, stream)
+        if timing is not None:
+            timing.timeline = timing_timeline
         if timing is not None:
             self.timing.begin_armed_runtime_trace(timing, self._invocations + 1)
-        # Staging the inputs waits for the whole runtime, so every earlier
-        # call has drained here and must have left the layout empty.
+        # Staging waits for prior work before checking the declared state.
         root_arguments = self._state.refresh_inputs(arguments)
-        self._bridge.require_empty_layout()
-        initial_actions = tuple(
-            self._initial_fetch_action(alias_id) for alias_id in self._initial_fetches
-        )
-        started_ns = time.perf_counter_ns() if timing is not None else 0
-        submit_initial_actions(
-            self._bridge,
-            initial_actions,
-            task_number=self._initial_task_id,
-        )
-        if timing is not None:
-            timing.dispatch_initial_actions_ns = time.perf_counter_ns() - started_ns
+        self._bridge.require_initial_residency(self._plan.schedule.initial_residency)
+        for control in self._control_tasks:
+            control()
         flat_output = self._root(*root_arguments)
         output_leaves, _ = tree_flatten(flat_output)
         public_leaves = [output_leaves[index] for index in self._user_output_indices]
@@ -722,10 +703,6 @@ class ForwardExecutor(AnnotatedExecutor):
             )
             released[alias_id] = reference.generation
         self._active_shared_outputs.clear()
-
-    @staticmethod
-    def _initial_fetch_action(alias_id: str) -> MemoryAction:
-        return MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
 
 
 __all__ = ["ForwardExecutor"]

@@ -48,7 +48,6 @@ def project_runtime_fixed_layout(
     program: ShadowSpillProgram,
     schedule: MemorySchedule,
     *,
-    initial_task_id: int,
     dynamic_task_allocations: tuple[DynamicTaskAllocationPolicy, ...] = (),
 ) -> RuntimeFixedLayout:
     """Translate one layout without changing its placement or dependency policy."""
@@ -57,8 +56,6 @@ def project_runtime_fixed_layout(
         raise ValueError("fixed layout belongs to a different ShadowSpillProgram")
     if layout.schedule_digest != schedule.digest:
         raise ValueError("fixed layout belongs to a different memory schedule")
-    if initial_task_id == NO_ID:
-        raise ValueError("initial-placement task cannot use the no-ID sentinel")
 
     fixed_by_lease = {item.lease_id: item for item in layout.placements}
     dynamic_by_lease = {item.lease_id: item for item in layout.dynamic_lifetimes}
@@ -71,7 +68,6 @@ def project_runtime_fixed_layout(
             program,
             schedule,
             fixed_by_lease,
-            initial_task_id=initial_task_id,
         ),
         *_task_placements(
             layout,
@@ -116,7 +112,6 @@ def project_runtime_fixed_layout(
                 ),
             )
         ),
-        initial_task_id=initial_task_id,
     )
 
 
@@ -125,14 +120,11 @@ def _initial_placements(
     program: ShadowSpillProgram,
     schedule: MemorySchedule,
     fixed_by_lease: dict[int, FixedLayoutPlacement],
-    *,
-    initial_task_id: int,
 ) -> tuple[RuntimeFixedPlacement, ...]:
     initial_leases = dict(layout.initial_alias_leases)
     sizes = {item.alias_group_id: item.size_bytes for item in program.alias_groups}
-    # The batch pairs action N with ACTION_DESTINATION ordinal N, so the
-    # ordinals here must follow the same first-use order the executors
-    # submit the fetches in.
+    # These values really are resident at entry. Fetch destinations are
+    # represented separately by their ordinary scheduled action identities.
     aliases = tuple(
         alias_group_id
         for alias_group_id in first_use_initial_order(program, schedule)
@@ -143,12 +135,12 @@ def _initial_placements(
     return tuple(
         _fixed_runtime_placement(
             fixed_by_lease[initial_leases[alias_id]],
-            task_id=initial_task_id,
-            ordinal=ordinal,
+            task_id=NO_ID,
+            ordinal=NO_ID,
             object_id=canonical_index(alias_id, "alias_"),
-            kind=RuntimePlacementKind.ACTION_DESTINATION,
+            kind=RuntimePlacementKind.INITIAL_OBJECT,
         )
-        for ordinal, alias_id in enumerate(aliases)
+        for alias_id in aliases
     )
 
 

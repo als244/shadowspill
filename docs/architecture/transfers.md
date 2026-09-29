@@ -60,7 +60,7 @@ current and the execution copy stays.
 
 Each queue serves two orders. Transfers the plan scheduled are dispatched in
 the order their boundaries triggered them. Transfers the plan did not
-schedule — the opening restore of an initial device set, a reconciliation —
+schedule — model materialization or state reconciliation —
 are background transfers: they are dispatched in their own order, and only
 while the queue holds fewer than the configured window of their bytes in
 flight, so a scheduled transfer never waits behind more than that window

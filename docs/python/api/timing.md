@@ -35,44 +35,46 @@ PlannedTrainStep.mark_cycle_end() -> None
 PlannedForward.mark_cycle_end() -> None
 ```
 
-Takes no arguments and returns `None`. It closes the last invocation's cycle
-where the next one would begin: the marker is recorded on the compute stream
-behind everything the invocation enqueued, before any wait the caller
-performs. A loop that measures its last step calls this after that step's call
-returns and before it synchronizes, so the step reads like every other rather
-than including the drain.
+Takes no arguments and returns `None`. Waits for this plan's required terminal
+work, then records the final cycle marker on the compute stream. A loop calls
+this after its final invocation, where the next invocation would otherwise
+wait and record its origin.
+
+## `prepare_runtime_trace()`
+
+```text
+PlannedTrainStep.prepare_runtime_trace() -> None
+PlannedForward.prepare_runtime_trace() -> None
+```
+
+Allocates reusable detailed-trace buffers and events. Call before a measured
+loop so preparing its final traced step cannot inflate the preceding cycle.
+Repeated calls do nothing; calling a closed callable raises. The first
+`runtime_trace=True` call still prepares lazily if necessary.
 
 ## `InvocationTiming`
 
-What one completed cycle measured. Every field is seconds except the step
-number.
-
 | field | type | meaning |
 |---|---|---|
-| `step_number` | `int` | The completed step's number, as `StepResult.step_number`. |
-| `cycle_seconds` | `float` | Origin to the next origin or the end marker: the step's time. |
-| `opening_delay_seconds` | `float` | Origin to the first task's compute start: the first task's readiness waits and whatever the opening still held the stream for. |
-| `selected_span_seconds` | `float` | First task's compute start to the last task's compute end. |
-| `exposed_tail_seconds` | `float` | Last task's compute end to the cycle's end: terminal work the stream itself still did. |
+| `step_number` | `int` | The completed step's number. |
+| `cycle_seconds` | `float` | Origin to the next origin or final marker, including caller work. |
+| `entry_delay_seconds` | `float` | Origin to first computational task start. |
+| `selected_span_seconds` | `float` | First computational task start to last computational task end. |
+| `exposed_tail_seconds` | `float` | Last computation to cycle end, including terminal transfers and caller work. |
 
-`cycle_seconds == opening_delay_seconds + selected_span_seconds + exposed_tail_seconds`
-exactly, since each is a difference of two of the same events. Transfers
-that drained on the lanes after the last task are not in the cycle: they
-cost the step nothing, and an invocation that has to wait for them pays in
-its own opening delay.
+`cycle_seconds == entry_delay_seconds + selected_span_seconds + exposed_tail_seconds`
+by construction. The next origin follows the prior terminal drain, so required
+writeback is included exactly once.
 
-A traced step's `StepTimingSummary` carries the same three parts as
-`cycle_seconds`, `opening_delay_seconds` and `exposed_tail_seconds`, beside the
-selected span it already reported; `cycle_seconds` is `None` when the trace
-is resolved before anything closed the cycle, which is why the benchmarking
-quickstart marks the cycle's end before resolving its traced step. See
-[StepResult diagnostics](../step-diagnostics.md#summary).
+A traced step also reports `real_invocation_seconds` through the last required
+compute or transfer completion, and `real_terminal_tail_seconds` from last
+compute to that completion. Its cycle is optional until a successor or final
+marker exists. See [StepResult diagnostics](../step-diagnostics.md#summary).
 
 ## Where it is used
 
 The benchmarking quickstart's `run_budgets.csv` and throughput figures report
-the median cycle of the steps after the first, the first paying the plan's
-opening; the performance gate's `median_step_seconds` is the median cycle over
+the median cycle of the steps after the first, excluding first-call setup and the final traced call; the performance gate's `median_step_seconds` is the median cycle over
 its measured steps, and its simulator error compares that cycle with the
 predicted step. Both report the host's own wall time beside it, which decides
 nothing.

@@ -288,17 +288,12 @@ def choose_fetch_triggers(
     return selected
 
 
-def _initial_schedule(
-    facts: PlanningFacts, plan: ResidencyPlan
-) -> tuple[ResidencySpec, ...]:
+def _initial_schedule(facts: PlanningFacts) -> tuple[ResidencySpec, ...]:
     values: list[ResidencySpec] = []
     for alias, location in enumerate(facts.initial_locations):
         if location is None or facts.alias_sizes[alias] == 0:
             continue
-        selected = (
-            MemoryLocation.DEVICE if plan.resident(alias, -1) else MemoryLocation.SPILL
-        )
-        values.append(ResidencySpec(facts.alias_ids[alias], selected))
+        values.append(ResidencySpec(facts.alias_ids[alias], location))
     return tuple(values)
 
 
@@ -329,7 +324,11 @@ def emit_schedule(
         previous_departure: Departure | None = None
         for span_index, span in enumerate(spans):
             produced_at_entry = span.start in facts.production_boundaries[alias]
-            if span.start > -1 and not produced_at_entry:
+            already_present = (
+                span.start == -1
+                and facts.initial_locations[alias] is MemoryLocation.DEVICE
+            )
+            if not already_present and not produced_at_entry:
                 latest = _entry_deadline(facts, alias, span)
                 earliest = 0
                 if previous_departure is not None:
@@ -429,7 +428,7 @@ def emit_schedule(
             if (action.trigger_task_id, action.alias_group_id) not in coalesced_keys
         )
     schedule = MemorySchedule(
-        initial_residency=_initial_schedule(facts, plan),
+        initial_residency=_initial_schedule(facts),
         actions=actions,
         final_residency=tuple(
             ResidencySpec(facts.alias_ids[alias], location)

@@ -39,15 +39,10 @@ def regression_authority(
         return manifest.remote_regression_tokens_per_second
     return manifest.regression_tokens_per_second
 
-#: The simulator prices the selected span and the terminal tail; the opening
-#: restore is unmodeled but, since first-use ordering of the initial
-#: placement batch (shadowspill.ir.schedule.first_use_initial_order), bounded
-#: by the first task's own inputs rather than the whole initial set. The
-#: bound has room in it because the calibrated transfer bandwidths the plan
-#: is priced against move run to run: a calibration below the rate the
-#: hardware then delivers prices the step pessimistically without the
-#: simulator being wrong. The remaining unmodeled terms are the
-#: terminal-drain serialization, input staging, and profile fidelity.
+
+#: Simulation includes scheduled entry fetches, computation, and required
+#: terminal transfers. The measured cycle also includes frontend/caller work;
+#: profile fidelity and calibrated bandwidth variation account for other error.
 _MAXIMUM_SIMULATOR_ERROR = 0.10
 
 
@@ -114,9 +109,7 @@ def _gate_verdicts(
         median_step_seconds=median_step_seconds,
         median_throughput=median_throughput,
         simulator_relative_error=simulator_relative_error,
-        regression_ratio=(
-            None if authority is None else median_throughput / authority
-        ),
+        regression_ratio=(None if authority is None else median_throughput / authority),
         predecessor_ratio=(
             None
             if manifest.predecessor_tokens_per_second is None
@@ -251,7 +244,7 @@ def _measured_result(
         "group_tokens_per_second": measured.group_tokens_per_second,
         "median_step_seconds": gates.median_step_seconds,
         "cycle_seconds": measured.cycle_seconds,
-        "opening_delay_seconds": measured.opening_delay_seconds,
+        "entry_delay_seconds": measured.entry_delay_seconds,
         "host_group_seconds": measured.host_group_seconds,
         "median_tokens_per_second": gates.median_throughput,
         "selected_task_span_seconds": measured.selected_spans,

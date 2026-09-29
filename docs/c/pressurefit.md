@@ -20,7 +20,7 @@ The framework-neutral problem formulation and complete algorithm are in the
 ## Data model
 
 `ShadowSpillPressureFitOptions` selects residency strategies, fetch rules,
-coalescing modes, repair limit, initial placement, how much capacity a plan
+coalescing modes, repair limit, how much capacity a plan
 gives back at a time when its layout does not fit
 (`capacity_refinement_bytes`, zero for the whole shortfall), whether each
 candidate records its reduction trajectory (`record_reduction_steps`), how many
@@ -41,9 +41,13 @@ candidate count per problem. Their values are
 `HEADROOM_TRANSFER`, `TIGHT_STALL`, `TIGHT_TRANSFER` or `RELAXED_STALL`),
 `ShadowSpillPressureFitFetchRule` (`SHADOWSPILL_PRESSUREFIT_FETCH_` then
 `PACKED_FIFO`, `PACKED_FIT`, `INTERVAL_ENTRY`, `LATEST_SAFE` or `DEMAND`), and,
-for coalescing, 0 plain and 1 coalesced; `initial_placement` takes a
-`ShadowSpillPressureFitInitialPlacement`, required or greedy. What each one does
-to a plan is tabulated in [PressureFit](../architecture/pressurefit.md).
+for coalescing, 0 plain and 1 coalesced. What each one does to a plan is
+tabulated in [PressureFit](../architecture/pressurefit.md).
+
+Initial residency is the caller's actual declaration. A fresh invocation has
+no plan-owned device values. A zero-duration control task supplies a boundary
+for ordinary fetches before the first computation; explicitly device-resident
+inputs need no fetch.
 
 A plan that comes up short of capacity is never finished, whatever its
 makespan: the waiting is time it pays, and the shortfall behind the waiting is

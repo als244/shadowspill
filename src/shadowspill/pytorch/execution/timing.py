@@ -60,10 +60,8 @@ class TracedTask:
 class TracedInvocation:
     """One invocation as a trace needs to see it, whatever runs it.
 
-    The actions are every transfer the invocation performs, so the opening
-    placement's fetches belong here as well as the schedule's own: they are
-    not in the schedule, and a trace that omitted them would price the
-    invocation's first wait against nothing.
+    Actions come directly from the schedule, including the fetches triggered
+    by the invocation's start control task.
     """
 
     tasks: tuple[TracedTask, ...]
@@ -140,23 +138,29 @@ class ExecutionTiming:
         is a measurement.
         """
 
+        if self._trace_origin_event is not None:
+            return
         # The markers come first. Preparing a trace reserves the timing pool a
         # floor of free leases for the lanes it measures, and leases already
         # held do not count against it -- so taking the markers first leaves
         # that floor intact, where taking them afterwards would spend it.
-        marker = self._marker
-        self._trace_origin_event = marker()
-        self._trace_start_event = marker()
-        self._trace_end_event = marker()
-        self._trace_task_events = {
-            task_id: (marker(), marker(), marker(), marker())
-            for task_id in self._task_ids
-        }
-        prepare_runtime_trace(
-            self._bridge,
-            event_capacity=self._trace_event_capacity,
-            allocation_event_capacity=self._trace_allocation_capacity,
-        )
+        try:
+            marker = self._marker
+            self._trace_origin_event = marker()
+            self._trace_start_event = marker()
+            self._trace_end_event = marker()
+            self._trace_task_events = {
+                task_id: (marker(), marker(), marker(), marker())
+                for task_id in self._task_ids
+            }
+            prepare_runtime_trace(
+                self._bridge,
+                event_capacity=self._trace_event_capacity,
+                allocation_event_capacity=self._trace_allocation_capacity,
+            )
+        except BaseException:
+            self._release_trace_markers()
+            raise
 
     def _marker(self) -> Marker:
         return Marker(self._runtime_handle)
@@ -170,6 +174,9 @@ class ExecutionTiming:
         """
 
         self._timelines.release()
+        self._release_trace_markers()
+
+    def _release_trace_markers(self) -> None:
         for marker in (
             self._trace_origin_event,
             self._trace_start_event,
@@ -251,12 +258,12 @@ class ExecutionTiming:
     def mark_cycle_end(self) -> None:
         """Close the current invocation's cycle where the next one would begin.
 
-        Recorded on the compute stream behind everything the invocation
-        enqueued, so its cycle reads the same as if another invocation had
-        followed it at once. A loop that measures its last step calls this
-        after that step's call returns.
+        Wait for required terminal work, then record on the compute stream,
+        just as a subsequent invocation would. A measured loop calls this
+        after its final invocation returns.
         """
 
+        self._bridge.wait_until_idle()
         self._timelines.mark_end(_handle(torch.cuda.current_stream()))
 
     def invocation_timings(self) -> tuple[InvocationTiming, ...]:
@@ -297,6 +304,7 @@ class ExecutionTiming:
 
         timing = self.armed
         if timing is not None:
+            timing.origin_recorded_ns = time.perf_counter_ns()
             timing.origin_event.record(_handle(stream))
 
     def record_compute_start(self, stream: torch.cuda.Stream | None) -> None:

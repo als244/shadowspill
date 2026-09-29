@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import ClassVar
 
-from ....request import InitialPlacement, OptionRecord
+from ....request import OptionRecord
 from ...toolkit.resolution import (
     DEFAULT_RESOLUTION_OPTIONS,
     validate_resolution_options,
@@ -42,12 +42,6 @@ class PressureFitOptions(OptionRecord):
 
     KIND: ClassVar[str] = "pressurefit"
 
-    #: Whether a cold object may be promoted to the opening boundary. The
-    #: default is `REQUIRED`, which places only what the declaration asks for
-    #: and what the first task cannot be given in time. `GREEDY` promotes more,
-    #: which moves those bytes out of the priced schedule and into the opening
-    #: restore -- so a greedy plan's makespan omits work the step still does.
-    initial_placement: InitialPlacement = InitialPlacement.REQUIRED
     #: Which resolved programs PressureFit plans: the share of the flexible
     #: alternative groups to recompute, one resolved program per share, as
     #: exact fractions. Expanding a program into these is PressureFit's own
@@ -92,8 +86,6 @@ class PressureFitOptions(OptionRecord):
     def __post_init__(self) -> None:
         if self.capacity_refinement_bytes < 0:
             raise ValueError("capacity_refinement_bytes is invalid")
-        if not isinstance(self.initial_placement, InitialPlacement):
-            raise ValueError("initial_placement is invalid")
         if not self.residency_strategies:
             raise ValueError("residency_strategies must not be empty")
         if not self.fetch_rules:

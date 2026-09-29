@@ -210,12 +210,12 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 return 1
             if not task_diagnostic.selected:
                 raise AssertionError("selected task is not marked selected")
-            if task.phase != "optimizer" and (
+            if task.phase not in {"optimizer", "control"} and (
                 not task_diagnostic.semantic_contract_digest
                 or not task_diagnostic.compiled_layout_digest
             ):
                 raise AssertionError("selected task omitted lowering diagnostics")
-            if task.phase != "optimizer" and (
+            if task.phase not in {"optimizer", "control"} and (
                 task_diagnostic.graph_pair_variant
                 != task_diagnostic.chosen_graph_pair_variant
             ):
@@ -228,6 +228,7 @@ def main(arguments: Iterable[str] | None = None) -> int:
             ):
                 raise AssertionError("selected task has no chronological identity")
         if tuple(task.phase for task in active) != (
+            "control",
             "forward",
             "backward",
             "forward",
@@ -236,6 +237,8 @@ def main(arguments: Iterable[str] | None = None) -> int:
         ):
             raise AssertionError("training plan has the wrong accumulated task order")
 
+        planned.prepare_runtime_trace()
+        planned.prepare_runtime_trace()
         checkpoint: dict[str, object] | None = None
         phase("steps")
         for step, microbatches in enumerate(steps):
@@ -292,8 +295,15 @@ def main(arguments: Iterable[str] | None = None) -> int:
                 phases = {item.phase for item in summary.phase_comparisons}
                 if phases != {"forward", "backward", "optimizer"}:
                     raise AssertionError("step summary omitted a task phase")
-                if len(timelines.compute) != len(active) or (
-                    set(timelines.compute) != set(diagnostics.tasks)
+                if len(timelines.compute) != sum(
+                    task.requires_entrypoint for task in active
+                ) or (
+                    set(timelines.compute)
+                    != {
+                        key
+                        for key, item in diagnostics.tasks.items()
+                        if item.phase != "control"
+                    }
                 ):
                     raise AssertionError("compute lane omitted a selected task")
                 if (
@@ -312,7 +322,6 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         diagnostics.transfers.evict,
                     )
                     for transfer in group.values()
-                    if transfer.triggered_by != "init"
                 ]
                 if len(scheduled) != len(expected_transfers) or (
                     set(timelines.fetch.order) != set(diagnostics.transfers.fetch)
@@ -321,24 +330,17 @@ def main(arguments: Iterable[str] | None = None) -> int:
                     raise AssertionError("transfer lanes omitted a scheduled transfer")
                 for lane in (timelines.fetch, timelines.evict):
                     group = getattr(diagnostics.transfers, lane.summary.direction)
-                    opening = lane.summary.opening_transfers
                     for position, key in enumerate(lane.order):
                         transfer = group[key]
-                        expected_sequence = (
-                            position if position < opening else position - opening
-                        )
-                        expected_trigger_kind = "init" if position < opening else "task"
                         if (
-                            transfer.sequence != expected_sequence
-                            or (transfer.triggered_by == "init")
-                            != (expected_trigger_kind == "init")
+                            transfer.sequence != position
                             or transfer.direction != lane.summary.direction
                             or transfer.completion_observed_at_seconds
                             < transfer.dispatched_at_seconds
                             or transfer.bytes <= 0
                         ):
                             raise AssertionError("transfer lane record is invalid")
-                        if transfer.triggered_by != "init" and (
+                        if (
                             transfer.triggered_by not in diagnostics.tasks
                             or transfer.simulated_started_at_seconds is None
                         ):
@@ -349,9 +351,10 @@ def main(arguments: Iterable[str] | None = None) -> int:
                         raise AssertionError(
                             "lane summary miscounts measured transfers"
                         )
-                for execution_ordinal, execution_task_id in enumerate(
-                    timelines.compute
-                ):
+                for execution_task_id in timelines.compute:
+                    execution_ordinal = int(
+                        execution_task_id.removeprefix("execution_")
+                    )
                     record = diagnostics.tasks[execution_task_id]
                     if (
                         record.execution_ordinal != execution_ordinal

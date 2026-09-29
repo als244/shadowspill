@@ -21,6 +21,7 @@ from shadowspill.task.slots import ObjectSlot
 
 from ...partition import PartitionedExport, StageExample
 from ..catalog import ObjectCatalog, tensor_value_role
+from ..program import invocation_start
 from ..task_binding import TaskBindingResolver, resolve_stage_input_slots
 from .artifacts import (
     ForwardObjects,
@@ -61,7 +62,7 @@ class _ForwardTaskEmitter:
         self.objects = objects
         self.physical = physical
         self.device_id = device_id
-        self.tasks: list[TaskSpec] = []
+        self.tasks: list[TaskSpec] = [invocation_start(physical.profiles, device_id)]
         self.entrypoints: list[TaskEntrypoint] = []
         self.executables: dict[str, GraphArtifact] = {}
         self.produced_aliases: set[str] = set()
@@ -147,7 +148,9 @@ class _ForwardTaskEmitter:
                 output_slots,
                 resolver.replacement_output_leaves,
                 resolver.storage_handoffs,
-                TaskOptions(target=stage.stage.module_target),
+                TaskOptions(
+                    phase="forward", stage_index=index, target=stage.stage.module_target
+                ),
             )
         )
         self.executables[task.task_id] = artifact
@@ -173,12 +176,12 @@ class _ForwardTaskEmitter:
         outputs: tuple[str, ...],
         resolver: TaskBindingResolver,
     ) -> TaskSpec:
-        task_id = f"task_{index:06d}"
+        task_id = f"task_{index + 1:06d}"
         # The stage before it, because forward stages run in order, and then
         # the actual producer of every input, because the program declares
         # what each task waits on rather than leaving it to be inferred from
         # the chain.
-        dependencies = [] if index == 0 else [f"task_{index - 1:06d}"]
+        dependencies = [f"task_{index:06d}"]
         dependencies.extend(
             producer
             for object_id in inputs

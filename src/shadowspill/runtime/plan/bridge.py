@@ -13,11 +13,12 @@ plan runs; `boundaries` is what happens at each boundary while it runs;
 
 from __future__ import annotations
 
+import ctypes
 from typing import Any
 
-from shadowspill.ir import ShadowSpillProgram
+from shadowspill.ir import MemoryLocation, ResidencySpec, ShadowSpillProgram
 from shadowspill.runtime import Runtime
-from shadowspill.runtime.abi import runtime_library
+from shadowspill.runtime.abi import ObjectSnapshot, runtime_library
 from shadowspill.runtime.failures import RuntimeExecutionError
 
 from .admission import (
@@ -95,6 +96,11 @@ class RuntimeBridge:
         ] = {}
         self._admitted_acquisitions: dict[tuple[str, ...], int] = {}
         self._fixed_layout_installed = False
+        self._owned_aliases = tuple(
+            item.alias_group_id
+            for item in program.alias_groups
+            if item.shared_residency is None and item.size_bytes
+        )
 
     def wait_until_idle(self) -> None:
         """Wait for the work this plan owns, and no one else's."""
@@ -131,12 +137,42 @@ class RuntimeBridge:
             "check that the plan's layout is empty between calls",
         )
 
+    def require_initial_residency(self, residency: tuple[ResidencySpec, ...]) -> None:
+        """Validate declared device values; never restore them implicitly."""
+
+        expected = {
+            item.alias_group_id
+            for item in residency
+            if item.location is MemoryLocation.DEVICE
+            and self.objects.requires_storage(item.alias_group_id)
+        }
+        if not expected:
+            self.require_empty_layout()
+            return
+        require_lent_slabs_back(self.runtime, "begin a call")
+        for alias in self._owned_aliases:
+            snapshot = ObjectSnapshot()
+            self.require(
+                self.runtime_library.shadowspill_object_snapshot(
+                    self.runtime._runtime_handle,
+                    self.objects.runtime_object_id(alias),
+                    ctypes.byref(snapshot),
+                ),
+                f"check initial residency of {alias}",
+            )
+            present = bool(snapshot.execution_pointer)
+            current = snapshot.execution_version == snapshot.authoritative_version
+            if present != (alias in expected) or (present and not current):
+                raise RuntimeExecutionError(
+                    f"initial residency of {alias!r} differs from the plan: "
+                    f"expected_device={alias in expected}, present={present}, "
+                    f"current={current}"
+                )
+
     def require(self, raw_status: Any, operation: str) -> None:
         """Raise for a nonzero adapter status, naming the operation."""
 
         require_status(self.library, raw_status, operation)
-
-
 
 
 def abort_task(bridge: RuntimeBridge, task_handle: int) -> None:

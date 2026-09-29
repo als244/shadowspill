@@ -9,7 +9,6 @@ from shadowspill.planner import (
     GenericPlanningOptions,
     pressurefit,
 )
-from shadowspill.planner.request import InitialPlacement
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import (
     PressureFitOptions,
@@ -52,20 +51,15 @@ def test_pressurefit_fails_closed_without_the_library(
     ("layers", "capacity"),
     ((1, 224), (2, 224), (5, 800), (10, 500)),
 )
-@pytest.mark.parametrize(
-    "placement",
-    (InitialPlacement.REQUIRED, InitialPlacement.GREEDY),
-)
 def test_candidate_evaluation_is_deterministic(
     layers: int,
     capacity: int,
-    placement: InitialPlacement,
 ) -> None:
     program = training_chain_program(layers)
     initial = training_chain_initial(layers)
     config = training_chain_config(capacity)
     options = GenericPlanningOptions(minimum_object_bytes_evict_eligible=0)
-    options_search = PressureFitOptions(initial_placement=placement)
+    options_search = PressureFitOptions()
 
     indexed = PressureFit(options_search)(
         program,
