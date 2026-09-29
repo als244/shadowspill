@@ -29,6 +29,7 @@ from shadowspill.runtime.abi import (
     runtime_library,
 )
 from tests.spill_pool import spill_pool
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _Model(nn.Module):
@@ -181,6 +182,7 @@ def main() -> int:
         phase("plan")
         planned = plan_forward(
             imported_model,
+            profiling_options=CORRECTNESS_PROFILING,
             example_inputs=[value],
             runtime=runtime,
             execution="execution",
@@ -241,6 +243,7 @@ def main() -> int:
     adopted = _Model().eval()
     planned = plan_forward(
         adopted,
+        profiling_options=CORRECTNESS_PROFILING,
         example_inputs=[torch.randn(3, 32)],
         runtime=runtime,
         execution="execution",

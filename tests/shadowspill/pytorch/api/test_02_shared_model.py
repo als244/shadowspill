@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 
 from shadowspill.pytorch import import_model_state, plan_forward, plan_step
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter
@@ -35,6 +36,7 @@ def _batch(seed: int) -> list[torch.Tensor]:
 def _plan_training(model: nn.Module, runtime: object):
     return plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_objective,
         optimizer=torch.optim.AdamW,
         hyperparams=("lr",),
@@ -48,6 +50,7 @@ def _plan_training(model: nn.Module, runtime: object):
 def _plan_forward(model: nn.Module, runtime: object):
     return plan_forward(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         example_inputs=[_batch(0)[0]],
         runtime=runtime,
         execution="execution",

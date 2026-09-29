@@ -142,6 +142,19 @@ which need a process where nothing has touched the device yet and so are run
 one per process by CTest rather than in the shared pytest process. Nothing is
 skipped.
 
+Correctness tests and the numerical gate use fixed-count task profiling:
+exact-task warmups and allocation probes still run, followed by the configured
+sample count, with no minimum conditioning or measurement duration. This keeps
+small test kernels from adding seconds to every fresh-process case. The shared
+policy lives in `tools.qualification.profiling`; performance measurements keep
+the production profiling policy.
+
+CTest prints each canary's start and result while the suite runs, with a
+heartbeat after 30 seconds without output. Each canary retains its CMake
+timeout, and a 30-minute ceiling bounds the whole CTest invocation. A timeout
+or interruption terminates the process group, including accelerator workers.
+Gate logs are flushed as output arrives.
+
 The launchers delegate to `src/tools/qualification/`, which in turn uses the
 public `src/shadowspill/` APIs and workload definitions under `workloads/`.
 Generated reference states, compact result summaries, and optional detailed
