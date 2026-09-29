@@ -31,6 +31,7 @@ that open and close it.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from bisect import bisect_left
@@ -1018,6 +1019,11 @@ class PlanOccupancy:
             return "device clock (traced step)"
         if self.view == "unconstrained":
             return "unconstrained: every object resident, tasks at their profiled floor"
+        if self.view == "all_save":
+            return (
+                "all save: every alternative at its cheapest, every object resident,"
+                " tasks at their profiled floor"
+            )
         return "simulated clock"
 
 
@@ -1119,22 +1125,31 @@ def cheapest_selections(program: Mapping[str, Any]) -> list[dict[str, str]]:
 
 
 def unconstrained(
-    program: Mapping[str, Any],
-    selections: Iterable[Mapping[str, str]] | None = None,
+    program: Mapping[str, Any], selections: Iterable[Mapping[str, str]]
 ) -> PlanOccupancy:
-    """The step with nothing to plan around: every alternative at its
-    cheapest -- or as ``selections`` fixes them, for one resolution's own
-    floor -- every task back to back at its profiled time (the compute
-    floor the planner reports as the unconstrained step), every object
-    resident from its production, or from the step's start for checkpoint
-    state, to its last use, and each task's profiled workspace while it
-    runs. Nothing spills and the lanes are empty; the execution pool's peak
-    is what the geometry would need to run this way."""
+    """A plan's own floor: its alternatives as ``selections`` fixes them,
+    with nothing else to plan around. Every task back to back at its
+    profiled time, every object resident from its production, or from the
+    step's start for checkpoint state, to its last use, and each task's
+    profiled workspace while it runs. Nothing spills and the lanes are
+    empty; the execution pool's peak is what the plan would need to run
+    this way."""
 
-    facts = ProgramFacts.build(
-        program,
-        cheapest_selections(program) if selections is None else list(selections),
-    )
+    return _floor(program, list(selections), "unconstrained")
+
+
+def all_save(program: Mapping[str, Any]) -> PlanOccupancy:
+    """The program's floor with every alternative at its cheapest option --
+    save, for a save-or-recompute choice -- which is the step the planner
+    reports as unconstrained. The same walk as `unconstrained` otherwise."""
+
+    return _floor(program, cheapest_selections(program), "all_save")
+
+
+def _floor(
+    program: Mapping[str, Any], selections: Sequence[Mapping[str, str]], view: str
+) -> PlanOccupancy:
+    facts = ProgramFacts.build(program, selections)
     tasks = {task["task_id"]: task for task in program["tasks"]}
     profiles = {
         profile["profile_id"]: profile for profile in program.get("profiles", ())
@@ -1192,7 +1207,7 @@ def unconstrained(
             if end > begin:
                 intervals.append(_interval(facts, clock, alias_id, begin, end, size))
     return PlanOccupancy(
-        "unconstrained",
+        view,
         Occupancy("spill", ()),
         Occupancy("execution", tuple(intervals)),
         task_spans(facts, clock),
@@ -1491,14 +1506,18 @@ def describe_plan(
     if resolution:
         parts.append(
             f"resolution: {resolution} of the flexible groups recompute"
-            + (", the search's answer" if selected else "")
+            + (", the search's choice" if selected else "")
         )
     if unconstrained:
+        # whose alternatives the floor is taken at: a resolution's, a plan's
+        # (a selection given), or the program's cheapest
         parts.append(
             "unconstrained: every object resident, nothing spilled, "
             + (
                 "alternatives as this resolution fixes them"
                 if resolution
+                else "alternatives as this plan fixes them"
+                if selection.get("selections")
                 else "every alternative at its cheapest"
             )
         )
@@ -1514,12 +1533,14 @@ def write_pages(
     tokens_per_step: int | None = None,
     plan: str = "",
     plan_by_view: Mapping[str, str] | None = None,
+    related: Sequence[tuple[str, str]] = (),
 ) -> list[Path]:
     """Write one page per view -- ``simulated.html``, ``traced.html`` -- each
     with the summary, both pools and the lanes on one zoom, and an index
     that links them and carries the tables. ``plan`` names the step under
-    every title, and ``plan_by_view`` names it differently for a view.
-    Returns the pages written, the index first."""
+    every title, and ``plan_by_view`` names it differently for a view;
+    ``related`` is ``(label, href)`` links the index adds, to the folders
+    around this one. Returns the pages written, the index first."""
 
     directory.mkdir(parents=True, exist_ok=True)
     template = Path(__file__).with_name("occupancy_page.html").read_text()
@@ -1548,15 +1569,18 @@ def write_pages(
             )
         )
     index = directory / "index.html"
+    around = "".join(
+        f'<li><a href="{escape(href)}">{escape(label)}</a></li>'
+        for label, href in related
+    )
     index.write_text(
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        f"<title>Occupancy {escape(title)}</title>"
-        "<style>body{font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;"
-        "margin:24px;max-width:1100px}pre{background:#f4f4f6;padding:10px;"
-        "border-radius:8px;overflow-x:auto;font-size:12px}</style></head><body>"
-        f"<h1>Occupancy over the step: {escape(title)}</h1>"
-        f"<p>{escape(plan)}</p><ul>{''.join(links)}</ul>"
-        f"{''.join(tables)}</body></html>"
+        _page(
+            f"Occupancy {title}",
+            f"<h1>Occupancy over the step: {escape(title)}</h1>"
+            f"<p>{escape(plan)}</p><ul>{''.join(links)}</ul>"
+            + (f"<p>Around this plan:</p><ul>{around}</ul>" if around else "")
+            + "".join(tables),
+        )
     )
     return [index, *written]
 
@@ -1588,8 +1612,8 @@ class StoredPlan:
     geometry: str  # "<sequences>x<accumulation>_<ordering>", or "" when unknown
     program_digest: str = ""
     #: A resolution the search kept beside its answer: the share of the
-    #: flexible groups it recomputes, and whether it is the answer. Empty
-    #: for the answer's own record.
+    #: flexible groups it recomputes, and whether the search chose it. Empty
+    #: for the chosen plan's own record.
     resolution: str = ""
     selected: bool = True
     #: The store key both records sit under.
@@ -1648,7 +1672,7 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
             )
         )
     # The resolutions a search kept beside its answer, when it was asked to:
-    # one record each under the answer's key, certified like it. One whose
+    # one record each under the chosen plan's key, certified like it. One whose
     # layout did not fit has no certificate and no page.
     for path in sorted(results.glob("*/*/resolutions/*/selection.json")):
         selection = json.loads(path.read_text())
@@ -1713,6 +1737,26 @@ def _shape(request: Mapping[str, Any]) -> tuple[int | None, int | None]:
         return None, None
 
 
+def _floor_line(
+    selection: Mapping[str, Any],
+    model: str,
+    record: StoredPlan,
+    sequence_length: int | None,
+    sequences_per_step: int | None,
+) -> str:
+    """The line under a plan's own floor page: the plan's alternatives with
+    nothing to plan around, so the capacities are left off."""
+
+    return describe_plan(
+        {"selections": selection.get("selections", ())},
+        model=model,
+        geometry=record.geometry,
+        sequence_length=sequence_length,
+        sequences_per_step=sequences_per_step,
+        unconstrained=True,
+    )
+
+
 def _share(text: str) -> float:
     """A recompute share as a number, for ordering; an unreadable one last."""
 
@@ -1732,25 +1776,235 @@ def _links(relative: Path, views: Sequence[str]) -> str:
     return " · ".join(parts)
 
 
+#: What one row of the run's summary table carries, in this order.
+SUMMARY_COLUMNS = (
+    "kind",  # chosen, resolution, all_save
+    "geometry",
+    "budget",
+    "resolution",  # the share of the flexible groups recomputed
+    "selected",
+    "view",
+    "page",
+    "step_seconds",
+    "tokens_per_second",
+    "spill_peak_gib",
+    "execution_peak_gib",
+    "idle_percent",
+    "recompute_percent",
+    "fetch_utilization_percent",
+    "evict_utilization_percent",
+    "fetch_gib",
+    "evict_gib",
+    "fetch_gbps",
+    "evict_gbps",
+    "assumed_fetch_gbps",
+    "assumed_evict_gbps",
+    "untimed_transfers",
+    "interpolated_leases",
+    "pool_capacity_gib",
+    "spill_capacity_gib",
+)
+
+
+@dataclass(slots=True)
+class _Entry:
+    """One folder of pages in a run's tree: what it is, and its views."""
+
+    kind: str  # chosen, resolution, all_save
+    geometry: str
+    budget: str
+    resolution: str
+    selected: bool
+    directory: Path
+    views: list[PlanOccupancy]
+    pool_capacity_bytes: int | None = None
+    spill_capacity_bytes: int | None = None
+
+    @property
+    def simulated(self) -> PlanOccupancy:
+        return self.views[0]
+
+    @property
+    def traced(self) -> PlanOccupancy | None:
+        return next((view for view in self.views if view.view == "traced"), None)
+
+    def label(self) -> str:
+        """The resolution as the indexes name it."""
+
+        return escape(self.resolution) + (
+            " (the search's choice)" if self.selected else ""
+        )
+
+
+_STYLE = (
+    "<style>body{font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;"
+    "margin:24px;max-width:1200px}table{border-collapse:collapse;margin:8px 0 20px}"
+    "td,th{border-bottom:1px solid #d2d2d7;padding:4px 10px;text-align:left;"
+    "font-variant-numeric:tabular-nums;vertical-align:top}th{font-weight:600}"
+    "pre{background:#f4f4f6;padding:10px;border-radius:8px;overflow-x:auto;"
+    "font-size:12px}nav a{margin-right:14px}</style>"
+)
+
+
+def _page(title: str, body: str) -> str:
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<title>{escape(title)}</title>{_STYLE}</head><body>{body}</body></html>"
+    )
+
+
+def _table(head: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    return (
+        "<table><tr>"
+        + "".join(f"<th>{cell}</th>" for cell in head)
+        + "</tr>"
+        + "".join(_row(cells) for cells in rows)
+        + "</table>"
+    )
+
+
+def _gib_of(occupancy: Occupancy | None) -> str:
+    return "" if occupancy is None else f"{occupancy.peak()[0] / GIB:.2f} GiB"
+
+
+def _seconds(result: PlanOccupancy | None) -> str:
+    return "" if result is None else f"{summarize(result)['seconds']:.3f} s"
+
+
+def _summary_rows(
+    entry: _Entry, out: Path, tokens: int | None
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for view in entry.views:
+        summary = summarize(view, tokens_per_step=tokens)
+        rows.append(
+            {
+                "kind": entry.kind,
+                "geometry": entry.geometry,
+                "budget": entry.budget,
+                "resolution": entry.resolution,
+                "selected": entry.selected,
+                "view": view.view,
+                "page": str((entry.directory / f"{view.view}.html").relative_to(out)),
+                "step_seconds": summary["seconds"],
+                "tokens_per_second": summary["tokens_per_second"],
+                "spill_peak_gib": summary["spill_peak_gib"],
+                "execution_peak_gib": summary["execution_peak_gib"],
+                "idle_percent": summary["idle_percent"],
+                "recompute_percent": summary["recompute_percent"],
+                "fetch_utilization_percent": summary["fetch_utilization_percent"],
+                "evict_utilization_percent": summary["evict_utilization_percent"],
+                "fetch_gib": summary["fetch_gib"],
+                "evict_gib": summary["evict_gib"],
+                "fetch_gbps": summary["fetch_gbps"],
+                "evict_gbps": summary["evict_gbps"],
+                "assumed_fetch_gbps": summary["assumed_fetch_gbps"],
+                "assumed_evict_gbps": summary["assumed_evict_gbps"],
+                "untimed_transfers": view.untimed_transfers,
+                "interpolated_leases": view.interpolated_leases,
+                "pool_capacity_gib": (
+                    None
+                    if entry.pool_capacity_bytes is None
+                    else entry.pool_capacity_bytes / GIB
+                ),
+                "spill_capacity_gib": (
+                    None
+                    if entry.spill_capacity_bytes is None
+                    else entry.spill_capacity_bytes / GIB
+                ),
+            }
+        )
+    return rows
+
+
+def recompute_share_of(
+    program: Mapping[str, Any], selections: Iterable[Mapping[str, str]]
+) -> str:
+    """The share of the program's flexible groups ``selections`` recomputes,
+    by the planner's own rule, as the store names a kept resolution by it;
+    empty when the program is not one the planner's IR reads."""
+
+    from shadowspill.ir import ShadowSpillProgram, TaskAlternativeChoice
+    from shadowspill.planner.search.toolkit.resolution import recompute_share
+
+    try:
+        parsed = ShadowSpillProgram.from_dict(program)
+        choices = tuple(
+            TaskAlternativeChoice.from_value(item, "selections") for item in selections
+        )
+    except Exception:
+        return ""
+    return str(recompute_share(parsed, choices))
+
+
+def _share_folder(share: str) -> str:
+    """``recompute_<share>``, the store's own naming of a kept resolution."""
+
+    numerator, _, denominator = share.partition("/")
+    return f"recompute_{numerator}" + (f"of{denominator}" if denominator else "")
+
+
+def _traced_steps(
+    run_root: Path, plans: Sequence[StoredPlan]
+) -> tuple[dict[Path, Mapping[str, Any]], list[tuple[str, str]]]:
+    """Each traced step's diagnostics, keyed by the plan it ran, found by
+    the makespan the step records; and the steps no stored plan matches."""
+
+    matched: dict[Path, Mapping[str, Any]] = {}
+    missing: list[tuple[str, str]] = []
+    for trace in sorted((run_root / "steps").glob("*gib.json")):
+        diagnostics = json.loads(trace.read_text())
+        makespan_ns = round(
+            float(diagnostics["summary"]["simulator_makespan_seconds"]) * 1e9
+        )
+        budget_bytes = round(float(trace.stem.removesuffix("gib")) * GIB)
+        candidates = [
+            record
+            for record in plans
+            if not record.resolution and abs(record.makespan_ns - makespan_ns) <= 1_000
+        ]
+        exact = [record for record in candidates if record.budget_bytes == budget_bytes]
+        chosen = (exact or candidates)[:1]
+        if chosen:
+            matched[chosen[0].path] = diagnostics
+        else:
+            missing.append(
+                (
+                    trace.stem,
+                    "no stored plan has this step's simulated makespan"
+                    f" ({makespan_ns / 1e9:.3f} s)",
+                )
+            )
+    return matched, missing
+
+
 def write_run_timelines(
     run_root: Path,
     out: Path | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> Path:
-    """Pages for every plan a run made, and for the budgets it ran.
+    """Pages for every plan a run made, budget by budget.
 
-    ``timelines/search/<geometry>/<budget>/simulated.html`` is a plan the
-    search made, on the simulated clock; ``timelines/run/<budget>/`` holds a
-    budget that ran, ``simulated.html`` and ``traced.html``, the latter on
-    the device's clock, found by the makespan its traced step records;
-    ``timelines/search/<geometry>/unconstrained/unconstrained.html`` is the
-    geometry with nothing to plan around; and when the search kept its
-    resolutions, ``timelines/search/<geometry>/<budget>/<resolution>/``
-    holds each one's ``simulated.html`` and its own ``unconstrained.html``.
-    Each page carries the summary, the pools and the lanes on one zoom. The
-    index links every page and shows the peaks. ``progress`` hears one line
-    at the start and one per geometry finished, since a tour's pages take
-    minutes to write. Returns the index.
+    ``timelines/<budget>/<geometry>/recompute_<share>/`` holds the plan the
+    search chose for that geometry at that budget, named by the share of
+    the flexible groups it recomputes: ``simulated.html``,
+    ``unconstrained.html``, its own floor, and ``traced.html`` on the
+    device's clock when this budget ran with this geometry, found by the
+    makespan the traced step records; that traced page is copied to
+    ``timelines/<budget>/traced.html``, since one geometry runs per budget.
+    When the search kept its resolutions, the others sit beside the choice
+    under their own shares, each with ``simulated.html`` and its own
+    ``unconstrained.html``. ``timelines/all_save/<geometry>/all_save.html``
+    is each geometry at its cheapest alternatives, which no budget bounds.
+    Each page carries the summary, the pools and the lanes on one zoom.
+
+    The root ``index.html`` is the table of contents for everything, and
+    every level below has its own: each budget, each geometry within it,
+    each plan's folder, and ``all_save/``. ``summary.csv`` at the root holds
+    one row per page, the summary the page's cards show with what
+    identifies the plan (`SUMMARY_COLUMNS`). ``progress`` hears one line at
+    the start and one per budget finished, since a tour's pages take
+    minutes to write. Returns the root index.
     """
 
     out = out or (run_root / "timelines")
@@ -1766,7 +2020,8 @@ def write_run_timelines(
     request = _request(run_root)
     model = str(request.get("model") or "")
     sequence_length, sequences_per_step = _shape(request)
-    rows: list[str] = []
+    traced_for, missing = _traced_steps(run_root, plans)
+    entries: list[_Entry] = []
     taken: set[Path] = set()
     programs: dict[str, tuple[str, Mapping[str, Any]]] = {}
     kept_by_key: dict[str, list[StoredPlan]] = defaultdict(list)
@@ -1775,178 +2030,169 @@ def write_run_timelines(
             kept_by_key[record.key].append(record)
     ordered = sorted(
         (record for record in plans if not record.resolution),
-        key=lambda item: (item.geometry, item.budget_bytes or 0, item.makespan_ns),
+        key=lambda item: (item.budget_bytes or 0, item.geometry, item.makespan_ns),
     )
+
+    def naming(
+        record: StoredPlan, budget: str, kept: StoredPlan | None = None
+    ) -> dict[str, Any]:
+        return dict(
+            model=model,
+            geometry=record.geometry,
+            budget=budget,
+            sequence_length=sequence_length,
+            sequences_per_step=sequences_per_step,
+            resolution="" if kept is None else kept.resolution,
+            selected=False if kept is None else kept.selected,
+        )
+
     finished: str | None = None
     for record in ordered:
         selection = json.loads(record.path.read_text())
         program = json.loads(program_path_for(record.path, selection).read_text())
         geometry = record.geometry or f"plan_{record.path.parent.name[:8]}"
-        if progress is not None and finished not in (None, geometry):
-            progress(f"timelines: {finished} written")
-        finished = geometry
         budget = (
             _budget_label(record.budget_bytes)
             if record.budget_bytes
             else f"{record.pool_capacity_bytes / GIB:.2f}gib_slab"
         )
-        directory = out / "search" / geometry / budget
+        if progress is not None and finished not in (None, budget):
+            progress(f"timelines: {finished} written")
+        finished = budget
+        directory = out / budget / geometry
         if directory in taken:
-            directory = (
-                out / "search" / geometry / f"{budget}_{record.path.parent.name[:8]}"
-            )
+            directory = out / budget / f"{geometry}_{record.path.parent.name[:8]}"
         taken.add(directory)
         programs.setdefault(record.program_digest, (geometry, program))
-        result = attribute(selection, program)
-        write_pages(
-            [result],
-            directory,
-            title=f"{geometry} at {budget}",
+        kept_records = sorted(
+            kept_by_key.get(record.key, ()), key=lambda item: _share(item.resolution)
+        )
+        # the choice is one of the kept resolutions when there are any, and
+        # its folder is theirs; otherwise the planner's rule names its share
+        chosen_record = next((kept for kept in kept_records if kept.selected), None)
+        if chosen_record is not None:
+            chosen_share, chosen_folder = (
+                chosen_record.resolution,
+                chosen_record.path.parent.name,
+            )
+        else:
+            chosen_share = recompute_share_of(program, selection.get("selections", ()))
+            chosen_folder = _share_folder(chosen_share) if chosen_share else "chosen"
+        others = [kept for kept in kept_records if not kept.selected]
+        spill_capacity = (selection.get("simulation") or {}).get("spill_capacity_bytes")
+        spill_bytes = None if spill_capacity is None else int(spill_capacity)
+        views = [attribute(selection, program)]
+        diagnostics = traced_for.get(record.path)
+        if diagnostics is not None:
+            views.append(attribute(selection, program, diagnostics=diagnostics))
+        views.append(unconstrained(program, selection.get("selections", ())))
+        pages = write_pages(
+            views,
+            directory / chosen_folder,
+            title=f"{geometry} at {budget}, recompute {chosen_share or '?'}",
             tokens_per_step=tokens,
             plan=describe_plan(
                 selection,
-                model=model,
-                geometry=record.geometry,
-                budget=budget,
-                sequence_length=sequence_length,
-                sequences_per_step=sequences_per_step,
+                **{
+                    **naming(record, budget),
+                    "resolution": chosen_share,
+                    "selected": True,
+                },
             ),
+            plan_by_view={
+                "unconstrained": _floor_line(
+                    selection, model, record, sequence_length, sequences_per_step
+                )
+            },
+            related=[
+                (
+                    f"resolution {kept.resolution}",
+                    f"../{kept.path.parent.name}/index.html",
+                )
+                for kept in others
+            ]
+            + [
+                (
+                    f"{geometry} at its cheapest, all save",
+                    f"../../../all_save/{geometry}/index.html",
+                ),
+                (f"all of {budget}", "../../index.html"),
+                ("everything", "../../../index.html"),
+            ],
         )
-        execution = result.execution.peak()[0] / GIB if result.execution else 0.0
-        kept_links: list[str] = []
-        for kept in sorted(
-            kept_by_key.get(record.key, ()), key=lambda item: _share(item.resolution)
-        ):
+        if diagnostics is not None:
+            # the budget's traced step, a copy at the budget's own level: the
+            # page is self-contained, so the bytes are the same anywhere
+            traced_page = next(page for page in pages if page.name == "traced.html")
+            (out / budget / "traced.html").write_bytes(traced_page.read_bytes())
+        entries.append(
+            _Entry(
+                "chosen",
+                geometry,
+                budget,
+                chosen_share,
+                True,
+                directory / chosen_folder,
+                views,
+                record.pool_capacity_bytes,
+                spill_bytes,
+            )
+        )
+        for kept in others:
             folder = directory / kept.path.parent.name
             kept_selection = json.loads(kept.path.read_text())
+            kept_views = [
+                attribute(kept_selection, program),
+                unconstrained(program, kept_selection.get("selections", ())),
+            ]
             write_pages(
-                [
-                    attribute(kept_selection, program),
-                    unconstrained(program, kept_selection.get("selections", ())),
-                ],
+                kept_views,
                 folder,
                 title=f"{geometry} at {budget}, recompute {kept.resolution}",
                 tokens_per_step=tokens,
-                plan=describe_plan(
-                    kept_selection,
-                    model=model,
-                    geometry=record.geometry,
-                    budget=budget,
-                    sequence_length=sequence_length,
-                    sequences_per_step=sequences_per_step,
-                    resolution=kept.resolution,
-                    selected=kept.selected,
-                ),
+                plan=describe_plan(kept_selection, **naming(record, budget, kept)),
                 # the resolution's own floor: nothing to plan around, the
                 # alternatives fixed as this resolution fixes them
                 plan_by_view={
                     "unconstrained": describe_plan(
-                        {},
-                        model=model,
-                        geometry=record.geometry,
-                        sequence_length=sequence_length,
-                        sequences_per_step=sequences_per_step,
-                        resolution=kept.resolution,
-                        selected=kept.selected,
-                        unconstrained=True,
+                        {}, unconstrained=True, **naming(record, "", kept)
                     )
                 },
+                related=[
+                    (
+                        f"the search's choice, recompute {chosen_share or '?'}",
+                        f"../{chosen_folder}/index.html",
+                    ),
+                    (f"all of {budget}", "../../index.html"),
+                    ("everything", "../../../index.html"),
+                ],
             )
-            kept_links.append(
-                escape(kept.resolution)
-                + (" (the answer)" if kept.selected else "")
-                + ": "
-                + _links(folder.relative_to(out), ["simulated", "unconstrained"])
-            )
-        rows.append(
-            _row(
-                [
-                    escape(geometry),
-                    escape(budget),
-                    f"{record.makespan_ns / 1e9:.3f} s",
-                    f"{result.spill.peak()[0] / GIB:.2f} GiB",
-                    f"{execution:.2f} GiB",
-                    _links(directory.relative_to(out), ["simulated"]),
-                    "<br>".join(kept_links),
-                ]
-            )
-        )
-    run_rows: list[str] = []
-    if progress is not None:
-        progress("timelines: the geometries' floors written; now the budgets that ran")
-    for trace in sorted((run_root / "steps").glob("*gib.json")):
-        diagnostics = json.loads(trace.read_text())
-        makespan_ns = round(
-            float(diagnostics["summary"]["simulator_makespan_seconds"]) * 1e9
-        )
-        budget_bytes = round(float(trace.stem.removesuffix("gib")) * GIB)
-        candidates = [
-            record
-            for record in plans
-            if not record.resolution and abs(record.makespan_ns - makespan_ns) <= 1_000
-        ]
-        exact = [record for record in candidates if record.budget_bytes == budget_bytes]
-        chosen = (exact or candidates)[:1]
-        if not chosen:
-            run_rows.append(
-                _row(
-                    [
-                        escape(trace.stem),
-                        f"no stored plan has this step's simulated makespan"
-                        f" ({makespan_ns / 1e9:.3f} s)",
-                        "",
-                        "",
-                        "",
-                        "",
-                    ]
+            entries.append(
+                _Entry(
+                    "resolution",
+                    geometry,
+                    budget,
+                    kept.resolution,
+                    kept.selected,
+                    folder,
+                    kept_views,
+                    kept.pool_capacity_bytes,
+                    spill_bytes,
                 )
             )
-            continue
-        record = chosen[0]
-        selection = json.loads(record.path.read_text())
-        program = json.loads(program_path_for(record.path, selection).read_text())
-        views = [
-            attribute(selection, program),
-            attribute(selection, program, diagnostics=diagnostics),
-        ]
-        directory = out / "run" / trace.stem
-        write_pages(
-            views,
-            directory,
-            title=f"{record.geometry or 'run'} at {trace.stem}",
-            tokens_per_step=tokens,
-            plan=describe_plan(
-                selection,
-                model=model,
-                geometry=record.geometry,
-                budget=trace.stem,
-                sequence_length=sequence_length,
-                sequences_per_step=sequences_per_step,
-            ),
-        )
-        execution = views[0].execution.peak()[0] / GIB if views[0].execution else 0.0
-        run_rows.append(
-            _row(
-                [
-                    escape(trace.stem),
-                    escape(record.geometry or "?"),
-                    f"{record.makespan_ns / 1e9:.3f} s",
-                    f"{views[0].spill.peak()[0] / GIB:.2f} GiB",
-                    f"{execution:.2f} GiB",
-                    _links(directory.relative_to(out), ["simulated", "traced"]),
-                ]
-            )
-        )
+        _write_plan_index(out, directory, entries)
     if progress is not None and finished is not None:
         progress(f"timelines: {finished} written")
-    floor_rows: list[str] = []
+
+    if progress is not None:
+        progress("timelines: the geometries' all-save floors")
     for geometry, program in programs.values():
-        result = unconstrained(program)
-        directory = out / "search" / geometry / "unconstrained"
+        result = all_save(program)
+        directory = out / "all_save" / geometry
         write_pages(
             [result],
             directory,
-            title=f"{geometry} unconstrained",
+            title=f"{geometry} all save",
             tokens_per_step=tokens,
             plan=describe_plan(
                 {},
@@ -1956,57 +2202,264 @@ def write_run_timelines(
                 sequences_per_step=sequences_per_step,
                 unconstrained=True,
             ),
+            related=[
+                ("every geometry's floor", "../index.html"),
+                ("everything", "../../index.html"),
+            ],
         )
-        resident = result.execution.peak()[0] / GIB if result.execution else 0.0
-        floor_rows.append(
-            _row(
+        entries.append(_Entry("all_save", geometry, "", "", False, directory, [result]))
+
+    _write_run_indexes(out, run_root, entries, missing, tokens)
+    return out / "index.html"
+
+
+def _pages_of(entry: _Entry, base: Path) -> str:
+    return _links(
+        entry.directory.relative_to(base), [view.view for view in entry.views]
+    )
+
+
+def _others_of(entries: Sequence[_Entry], entry: _Entry, base: Path) -> str:
+    kept = [
+        item
+        for item in entries
+        if item.kind == "resolution"
+        and item.budget == entry.budget
+        and item.geometry == entry.geometry
+    ]
+    return "<br>".join(f"{item.label()}: {_pages_of(item, base)}" for item in kept)
+
+
+def _geometry_rows(entries: Sequence[_Entry], budget: str, base: Path) -> str:
+    """One row per geometry planned at ``budget``: the choice and what was kept."""
+
+    rows = []
+    for entry in entries:
+        if entry.kind != "chosen" or entry.budget != budget:
+            continue
+        rows.append(
+            [
+                escape(entry.geometry),
+                escape(entry.resolution or "?"),
+                _seconds(entry.simulated),
+                _seconds(entry.traced),
+                _gib_of(entry.simulated.spill),
+                _gib_of(entry.simulated.execution),
+                _pages_of(entry, base),
+                _others_of(entries, entry, base),
+            ]
+        )
+    return _table(
+        [
+            "geometry",
+            "recompute share chosen",
+            "simulated step",
+            "traced step",
+            "spill peak",
+            "execution peak",
+            "the choice's pages",
+            "other resolutions the search kept",
+        ],
+        rows,
+    )
+
+
+def _write_plan_index(out: Path, directory: Path, entries: Sequence[_Entry]) -> None:
+    """``<budget>/<geometry>/index.html``: the choice and the others kept."""
+
+    here = [entry for entry in entries if entry.directory.parent == directory]
+    answer = next(entry for entry in here if entry.kind == "chosen")
+    kept = [entry for entry in here if entry.kind == "resolution"]
+    rows = [
+        [
+            answer.label(),
+            _seconds(answer.simulated),
+            _seconds(answer.traced),
+            _gib_of(answer.simulated.spill),
+            _gib_of(answer.simulated.execution),
+            _pages_of(answer, directory),
+        ]
+    ] + [
+        [
+            item.label(),
+            _seconds(item.simulated),
+            "",
+            _gib_of(item.simulated.spill),
+            _gib_of(item.simulated.execution),
+            _pages_of(item, directory),
+        ]
+        for item in kept
+    ]
+    (directory / "index.html").write_text(
+        _page(
+            f"Timelines: {answer.geometry} at {answer.budget}",
+            f"<h1>{escape(answer.geometry)} at {escape(answer.budget)}</h1>"
+            f'<p><a href="../index.html">all of {escape(answer.budget)}</a> · '
+            f'<a href="../../all_save/{escape(answer.geometry)}/index.html">'
+            f"{escape(answer.geometry)} at its cheapest, all save</a> · "
+            '<a href="../../index.html">everything</a></p>'
+            + _table(
                 [
-                    escape(geometry),
-                    f"{result.clock.makespan_ns / 1e9:.3f} s",
-                    f"{resident:.2f} GiB",
-                    _links(directory.relative_to(out), ["unconstrained"]),
-                ]
-            )
+                    "recompute share",
+                    "simulated step",
+                    "traced step",
+                    "spill peak",
+                    "execution peak",
+                    "pages",
+                ],
+                rows,
+            ),
         )
-    head = (
-        "<tr><th>geometry</th><th>budget</th><th>simulated step</th>"
-        "<th>spill peak</th><th>execution peak</th><th>pages</th>"
-        "<th>resolutions the search kept</th></tr>"
     )
-    floor_head = (
-        "<tr><th>geometry</th><th>compute floor</th><th>resident peak</th>"
-        "<th>pages</th></tr>"
-    )
-    run_head = (
-        "<tr><th>run</th><th>geometry</th><th>simulated step</th>"
-        "<th>spill peak</th><th>execution peak</th><th>pages</th></tr>"
-    )
+
+
+def _write_run_indexes(
+    out: Path,
+    run_root: Path,
+    entries: Sequence[_Entry],
+    missing: Sequence[tuple[str, str]],
+    tokens: int | None,
+) -> None:
+    """The root table of contents, one per budget, ``all_save/``, the summary."""
+
     out.mkdir(parents=True, exist_ok=True)
-    index = out / "index.html"
-    index.write_text(
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-        f"<title>Timelines {escape(run_root.name)}</title>"
-        "<style>body{font:14px/1.4 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;"
-        "margin:24px;max-width:1200px}table{border-collapse:collapse;margin:8px 0 20px}"
-        "td,th{border-bottom:1px solid #d2d2d7;padding:4px 10px;text-align:left;"
-        "font-variant-numeric:tabular-nums}th{font-weight:600}</style></head><body>"
-        f"<h1>Timelines: {escape(str(run_root))}</h1>"
+    with (out / "summary.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SUMMARY_COLUMNS)
+        writer.writeheader()
+        for entry in entries:
+            for row in _summary_rows(entry, out, tokens):
+                writer.writerow(row)
+    budgets = sorted(
+        {entry.budget for entry in entries if entry.kind == "chosen"},
+        key=lambda label: (
+            _share(label.removesuffix("gib")) if label.endswith("gib") else 1e9,
+            label,
+        ),
+    )
+    floors = [entry for entry in entries if entry.kind == "all_save"]
+
+    def ran_rows(base: Path) -> str:
+        rows = [
+            [
+                escape(entry.budget),
+                escape(entry.geometry),
+                escape(entry.resolution or "?"),
+                _seconds(entry.simulated),
+                _seconds(entry.traced),
+                _gib_of(entry.traced.spill if entry.traced else None),
+                _gib_of(entry.simulated.execution),
+                f'<a href="{escape(entry.budget)}/traced.html">traced.html</a>',
+                _pages_of(entry, base),
+            ]
+            for entry in entries
+            if entry.kind == "chosen" and entry.traced is not None
+        ] + [
+            [escape(stem), escape(why), "", "", "", "", "", "", ""]
+            for stem, why in missing
+        ]
+        return _table(
+            [
+                "budget",
+                "geometry that ran",
+                "recompute share chosen",
+                "simulated step",
+                "traced step",
+                "spill peak, traced",
+                "execution peak",
+                "traced page, at the budget",
+                "the choice's pages",
+            ],
+            rows,
+        )
+
+    def floor_rows(base: Path) -> str:
+        return _table(
+            ["geometry", "compute floor, all save", "resident peak", "pages"],
+            [
+                [
+                    escape(entry.geometry),
+                    _seconds(entry.simulated),
+                    _gib_of(entry.simulated.execution),
+                    _pages_of(entry, base),
+                ]
+                for entry in floors
+            ],
+        )
+
+    intro = (
         "<p>One page per plan and view: the step's summary, the spill and"
         " execution pools over the step by category, and the fetch, compute and"
-        " evict lanes, on one zoom. A budget that ran has both the simulated and"
-        " the traced view. Each geometry also has its unconstrained page: every"
-        " alternative at its cheapest, tasks back to back at their profiled"
-        " floor, every object resident, nothing spilled. A search asked to keep"
-        " its resolutions has, per plan, each resolution's simulated page and"
-        " its own unconstrained page; the traced page under the budget that ran"
-        " is the answer's.</p>"
-        f"<h2>Budgets that ran</h2><table>{run_head}{''.join(run_rows)}</table>"
-        f"<h2>Plans the search made</h2><table>{head}{''.join(rows)}</table>"
-        f"<h2>Each geometry unconstrained</h2>"
-        f"<table>{floor_head}{''.join(floor_rows)}</table>"
-        "</body></html>"
+        " evict lanes, on one zoom. Under each budget, each geometry's folder"
+        " holds the plan the search chose there, under the share of the"
+        " flexible groups it recomputes: its simulated page, its own"
+        " unconstrained page -- its alternatives with nothing to plan around:"
+        " tasks back to back at their profiled floor, every object resident,"
+        " nothing spilled -- and, for the geometry that ran at that budget, the"
+        " traced page on the device's clock. A search asked to keep its"
+        " resolutions has the others beside it under their own shares, each with"
+        " its simulated page and its own unconstrained page. Each budget that"
+        " ran also carries a copy of its traced page at its own level. Each"
+        " geometry also has its all-save page, every alternative at its"
+        " cheapest, the floor the planner reports as unconstrained.</p>"
     )
-    return index
+    body = (
+        f"<h1>Timelines: {escape(str(run_root))}</h1>"
+        + intro
+        + '<nav><a href="summary.csv">summary.csv, one row per page</a>'
+        '<a href="all_save/index.html">all-save floors</a>'
+        + "".join(
+            f'<a href="{escape(budget)}/index.html">{escape(budget)}</a>'
+            for budget in budgets
+        )
+        + "</nav><h2>Budgets that ran</h2>"
+        + ran_rows(out)
+        + "".join(
+            f'<h2 id="{escape(budget)}"><a href="{escape(budget)}/index.html">'
+            f"{escape(budget)}</a></h2>" + _geometry_rows(entries, budget, out)
+            for budget in budgets
+        )
+        + "<h2>Each geometry at its cheapest alternatives, all save</h2>"
+        + floor_rows(out)
+    )
+    (out / "index.html").write_text(_page(f"Timelines {run_root.name}", body))
+    for budget in budgets:
+        base = out / budget
+        ran = next(
+            (
+                entry
+                for entry in entries
+                if entry.kind == "chosen"
+                and entry.budget == budget
+                and entry.traced is not None
+            ),
+            None,
+        )
+        (base / "index.html").write_text(
+            _page(
+                f"Timelines: {budget}",
+                f"<h1>{escape(budget)}</h1>"
+                '<p><a href="../index.html">everything</a> · '
+                '<a href="../all_save/index.html">all-save floors</a></p>'
+                + (
+                    f"<p>This budget ran with {escape(ran.geometry)}, recompute"
+                    f" {escape(ran.resolution or '?')}: "
+                    f'<a href="traced.html">traced.html</a>, its step on the'
+                    " device's clock, a copy of the one in that plan's folder.</p>"
+                    if ran is not None
+                    else ""
+                )
+                + _geometry_rows(entries, budget, base),
+            )
+        )
+    floor_dir = out / "all_save"
+    floor_dir.mkdir(parents=True, exist_ok=True)
+    (floor_dir / "index.html").write_text(
+        _page(
+            "Timelines: all-save floors",
+            "<h1>Every geometry at its cheapest alternatives, all save</h1>"
+            '<p><a href="../index.html">everything</a></p>' + floor_rows(floor_dir),
+        )
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -2043,10 +2496,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--unconstrained",
         action="store_true",
-        help="also the program with nothing to plan around: every alternative"
-        " at its cheapest, tasks back to back at their profiled floor, every"
-        " object resident, nothing spilled; with --program and no selection,"
-        " only that view",
+        help="also the plan's own floor: its alternatives as it fixed them, with"
+        " nothing else to plan around -- tasks back to back at their profiled"
+        " floor, every object resident, nothing spilled",
+    )
+    parser.add_argument(
+        "--all-save",
+        action="store_true",
+        help="also the program at its cheapest alternatives (all save for"
+        " save-or-recompute choices), the floor the planner reports as"
+        " unconstrained; with --program and no selection, only that view",
     )
     parser.add_argument("--by", choices=("category", "role"), default="category")
     parser.add_argument(
@@ -2080,12 +2539,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         index = write_run_timelines(arguments.run, arguments.html)
         print(f"timelines: {index}")
         return 0
-    if arguments.selection is None and not (
-        arguments.program and arguments.unconstrained
-    ):
+    if arguments.selection is None and not (arguments.program and arguments.all_save):
         raise SystemExit(
             "give a selection.json, --run with a run directory, or --program"
-            " with --unconstrained"
+            " with --all-save"
         )
     selection = (
         {}
@@ -2099,8 +2556,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.step:
             diagnostics = json.loads(arguments.step.read_text())
             views.append(attribute(selection, program, diagnostics=diagnostics))
-        if arguments.unconstrained:
-            views.append(unconstrained(program))
+        if arguments.unconstrained and arguments.selection is not None:
+            views.append(unconstrained(program, selection.get("selections", ())))
+        if arguments.all_save:
+            views.append(all_save(program))
     except ValueError as error:
         raise SystemExit(str(error)) from error
     at_ns = [
@@ -2147,7 +2606,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             title=source.parent.name[:12],
             by=arguments.by,
             tokens_per_step=arguments.tokens_per_step,
-            plan=describe_plan(selection, unconstrained=arguments.selection is None),
+            plan=describe_plan(selection),
+            plan_by_view={
+                "unconstrained": describe_plan(
+                    {"selections": selection.get("selections", ())}, unconstrained=True
+                ),
+                "all_save": describe_plan({}, unconstrained=True),
+            },
         )
         print(f"\npages: {pages[0]}")
     return 0

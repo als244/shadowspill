@@ -33,7 +33,8 @@ python -m tools.diagnostics.occupancy --run <run directory> [--html DIRECTORY]
 | `selection` | The stored planning result to walk. |
 | `--program` | Its program, when it is not beside it in the store. |
 | `--step` | The traced step's diagnostics JSON. Adds a second view on the device's clock: the spill pool and the lanes from the traced tasks and transfers, and the execution pool with each lease placed at the device times of the events that open and close it. |
-| `--unconstrained` | Also the program with nothing to plan around, as `unconstrained.html` (below); with `--program` and no selection, only that view. |
+| `--unconstrained` | Also the plan's own floor, as `unconstrained.html` (below). |
+| `--all-save` | Also the program at its cheapest alternatives, as `all_save.html` (below); with `--program` and no selection, only that view. |
 | `--by` | Group by the tool's categories (the default) or by the program's object roles. |
 | `--at` | Seconds into the step to add as columns beside the peak. |
 | `--tokens-per-step` | The step's tokens, for the tokens-per-second figure in the page's summary. |
@@ -178,17 +179,25 @@ filled when any bar covers part of it and takes the colour of the category
 covering most of it, so a burst of transfers far narrower than a pixel is a
 visible block rather than a hairline at any zoom.
 
-## The unconstrained floor
+## The floors
 
-`--unconstrained` adds a view of the plan's program with nothing to plan
-around: every alternative at its cheapest option by the program's profiles,
-every task back to back at its profiled time -- the compute floor the
-planner reports as the unconstrained step -- every object resident from
-its production, or from the step's start for checkpoint state, to its last
-use, and each task's profiled workspace while it runs. Nothing spills, the
-lanes are empty, and the execution pool's peak is what the geometry would
-need to run this way: the contrast a budgeted plan's page is read against.
-A run's `timelines/` carries one such page per geometry.
+A floor is the step with nothing to plan around: every task back to back at
+its profiled time, every object resident from its production, or from the
+step's start for checkpoint state, to its last use, and each task's
+profiled workspace while it runs. Nothing spills, the lanes are empty, and
+the execution pool's peak is what the step would need to run this way: the
+contrast a budgeted plan's page is read against. Two floors differ in
+whose alternatives they are taken at.
+
+- **`--unconstrained`**, the plan's own: its alternatives as the plan fixed
+  them, recomputation included, so the compute is what that plan does. A
+  run's `timelines/` carries one beside every plan and every kept
+  resolution.
+- **`--all-save`**, the program's: every alternative at its cheapest option
+  by the profiles, which for a save-or-recompute choice is `save`. This is
+  the compute floor the planner reports as the unconstrained step and the
+  figures draw as the ceiling. A run's `timelines/` carries one per
+  geometry, under `all_save/`.
 
 ## A whole run
 
@@ -198,32 +207,64 @@ quickstart run also writes as it closes:
 
 ```text
 timelines/
-  index.html                       every plan, its simulated step and peaks, and links
-  search/<geometry>_<walk>/<budget>/simulated.html   a plan the search made
-  search/<geometry>_<walk>/unconstrained/unconstrained.html   the geometry unconstrained
-  search/<geometry>_<walk>/<budget>/recompute_<share>/   a resolution the search kept:
-      simulated.html  unconstrained.html                  its plan, and its own floor
-  run/<budget>/simulated.html      a budget that ran, on the simulated clock
-  run/<budget>/traced.html         the same budget on the device's clock
+  index.html                       the table of contents for everything
+  summary.csv                      one row per page: the summary its cards show
+  <budget>/index.html              the budget: each geometry's choice and resolutions
+  <budget>/traced.html             the step that ran at this budget, on the device's
+                                   clock: a copy of the one in its plan's folder
+  <budget>/<geometry>_<walk>/index.html     the plan the search chose there, and what it kept
+  <budget>/<geometry>_<walk>/recompute_<share>/   one resolution: simulated.html,
+                                            unconstrained.html (its own floor), and
+                                            traced.html in the chosen one's, when it ran
+  all_save/index.html              every geometry at its cheapest alternatives
+  all_save/<geometry>_<walk>/all_save.html  that floor, which no budget bounds
 ```
+
+Budget first, since a budget is what a run is asked for and geometry and
+resolution are what the search chose under it. A plan's folder is named by
+the share of the program's flexible groups it recomputes, by the planner's
+own rule (`recompute_share`), as the plan store names a kept resolution:
+`recompute_0` is all save, `recompute_3of4` three groups in four. The
+search's choice sits under its share like the others kept beside it, and is
+marked as the choice in every index; when the search kept no resolutions
+the choice is the only folder. Every folder's `index.html` links its own
+pages, carries their tables, and points to the folders around it: the
+choice's names the resolutions kept beside it, its geometry's all-save
+floor, its budget and the root; a resolution's names the choice. The root
+index lists every budget that ran with its traced step, then every budget
+with a row per geometry, the share chosen, its pages and the resolutions
+beside it, then the all-save floors.
 
 A stored plan names its program and its capacities but not the geometry
 the search called it, so the two are matched by the simulated makespan a
 search point and its stored plan share, and, where several budgets share
 one plan, by the program digest, which is one geometry walked one way. A
 budget that ran is matched to its plan by the makespan its traced step
-records. Tokens per second come from the run's `request.json`. A search
-asked to keep its resolutions (the quickstart's `--resolution-plans`) files
-each one's best plan beside the answer, and every one with a certificate
-gets a page of its own and an unconstrained page at its own selection, the
-answer marked in the index; the traced page under the budget that ran is
-the answer's.
+records, and the traced page lands in that plan's folder, with a copy at
+the budget's own level, `<budget>/traced.html`, since one geometry runs per
+budget. Tokens per second come from the run's `request.json`.
+
+`summary.csv` has one row per page, the summary the page's cards show
+beside what identifies the plan, in the order `SUMMARY_COLUMNS` names:
+`kind` (`chosen`, `resolution`, `all_save`), `geometry`, `budget`,
+`resolution` (the share recomputed), `selected` (whether the search chose
+it), `view`, `page` (the path under
+`timelines/`), then `step_seconds`, `tokens_per_second`, `spill_peak_gib`,
+`execution_peak_gib`, `idle_percent`, `recompute_percent`, the two lanes'
+utilisation, bytes and achieved rate, the assumed rates, and
+`untimed_transfers`, `interpolated_leases`, `pool_capacity_gib` and
+`spill_capacity_gib`. A traced page's row holds the device's numbers, the
+simulated page's the simulator's, so the two rows of one plan read
+against each other; the budget-level copy of a traced page has no row of
+its own.
+
 
 ## From Python
 
 `tools.diagnostics.occupancy.attribute(selection, program, diagnostics=None)`
-takes the three files' contents as mappings (`unconstrained(program)` takes
-the program alone) and returns a `PlanOccupancy`
+takes the three files' contents as mappings (`unconstrained(program,
+selections)` takes the program and a plan's choices, `all_save(program)` the
+program alone) and returns a `PlanOccupancy`
 with `spill` and `execution` (`Occupancy` objects with `at`, `peak`,
 `peaks_by` and `series`), the `tasks` and `transfers` as spans, the
 `facts` the attribution rests on and, on the device's clock,
