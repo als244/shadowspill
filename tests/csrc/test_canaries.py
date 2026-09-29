@@ -12,10 +12,15 @@ anyone noticing.
 
 from __future__ import annotations
 
+import os
 import re
+import selectors
 import shutil
+import signal
 import subprocess
 import sys
+import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -69,6 +74,54 @@ def _failed_canaries(output: str) -> tuple[str, ...]:
     return tuple(named)
 
 
+def _stream_process(
+    command: list[str], *, cwd: Path, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Show progress and enforce a deadline on the whole child process group."""
+
+    output: list[bytes] = []
+    started = time.monotonic()
+    deadline = started + timeout
+    with subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    ) as process:
+        assert process.stdout is not None
+        try:
+            with selectors.DefaultSelector() as reader:
+                reader.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    if not reader.select(timeout=min(30, remaining)):
+                        print(
+                            f"\n{command[0]} still running after "
+                            f"{time.monotonic() - started:.0f}s",
+                            flush=True,
+                        )
+                        continue
+                    chunk = os.read(process.stdout.fileno(), 65536)
+                    if not chunk:
+                        break
+                    output.append(chunk)
+                    sys.stdout.write(chunk.decode("utf-8", errors="replace"))
+                    sys.stdout.flush()
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+        except BaseException:
+            # Killing only ctest leaves its Python/CUDA children behind.
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            raise
+    return subprocess.CompletedProcess(
+        command, returncode, stdout=b"".join(output).decode("utf-8", errors="replace")
+    )
+
+
 def _run_ctest(*selectors: str) -> None:
     build = _build_directory()
     if build is None:
@@ -76,12 +129,9 @@ def _run_ctest(*selectors: str) -> None:
     if shutil.which("ctest") is None:
         pytest.skip("ctest is not on PATH")
     try:
-        completed = subprocess.run(
+        completed = _stream_process(
             ["ctest", "--output-on-failure", "--no-tests=error", *selectors],
             cwd=build,
-            capture_output=True,
-            text=True,
-            check=False,
             # Every canary already has its own CTest timeout; this only stops
             # a wedged ctest from hanging the suite indefinitely.
             timeout=_CTEST_TIMEOUT_SECONDS,
@@ -103,12 +153,11 @@ def _run_ctest(*selectors: str) -> None:
             else f"ctest {' '.join(selectors)} (no canary named)"
         )
         pytest.fail(
-            f"{headline} failed with {completed.returncode}\n"
-            f"{completed.stdout}\n{completed.stderr}"
+            f"{headline} failed with {completed.returncode}\n{completed.stdout}"
         )
 
 
-def test_c_canaries_pass() -> None:
+def test_c_canaries_pass(capsys: pytest.CaptureFixture[str]) -> None:
     """Every canary that needs neither an accelerator nor a peer.
 
     ``--label-exclude`` takes a regular expression, not a list: the two labels
@@ -116,22 +165,25 @@ def test_c_canaries_pass() -> None:
     nothing and silently run both sets here.
     """
 
-    _run_ctest("--label-exclude", "cuda|network")
+    with capsys.disabled():
+        _run_ctest("--label-exclude", "cuda|network")
 
 
 @pytest.mark.cuda
-def test_cuda_c_canaries_pass() -> None:
+def test_cuda_c_canaries_pass(capsys: pytest.CaptureFixture[str]) -> None:
     """The canaries CMake labelled `cuda`, which need the qualified backend."""
 
-    _run_ctest("--label-regex", "cuda")
+    with capsys.disabled():
+        _run_ctest("--label-regex", "cuda")
 
 
 @pytest.mark.network
-def test_network_c_canaries_pass() -> None:
+def test_network_c_canaries_pass(capsys: pytest.CaptureFixture[str]) -> None:
     """The canaries CMake labelled `network`, which need a memory daemon.
 
     They skip themselves when ``SHADOWSPILL_NETWORK_PEER`` names none, so this
     passes on a box with no peer rather than failing for want of one.
     """
 
-    _run_ctest("--label-regex", "network")
+    with capsys.disabled():
+        _run_ctest("--label-regex", "network")

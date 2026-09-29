@@ -21,6 +21,7 @@ from shadowspill.pytorch import (
 )
 from shadowspill.step import StepDataOrdering
 from tests.spill_pool import spill_pool
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _Model(nn.Module):
@@ -87,7 +88,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
 
         phase("build")
         first = build_step_programs(
-            model, orderings=orderings, export_bypass_key="canary-1", **request
+            model,
+            profiling_options=CORRECTNESS_PROFILING,
+            orderings=orderings,
+            export_bypass_key="canary-1",
+            **request,
         )
         if len(first) != 2:
             raise AssertionError("one program per ordering was expected")
@@ -109,7 +114,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
 
         phase("bypass")
         second = build_step_programs(
-            model, orderings=orderings, export_bypass_key="canary-1", **request
+            model,
+            profiling_options=CORRECTNESS_PROFILING,
+            orderings=orderings,
+            export_bypass_key="canary-1",
+            **request,
         )
         for before, after in zip(first, second, strict=True):
             if after.digest != before.digest:
@@ -121,7 +130,11 @@ def main(arguments: Iterable[str] | None = None) -> int:
 
         phase("other-key")
         (other,) = build_step_programs(
-            model, orderings=orderings[:1], export_bypass_key="canary-2", **request
+            model,
+            profiling_options=CORRECTNESS_PROFILING,
+            orderings=orderings[:1],
+            export_bypass_key="canary-2",
+            **request,
         )
         if "objective_export" not in _phases(other):
             raise AssertionError("another key must capture again")
@@ -135,7 +148,12 @@ def main(arguments: Iterable[str] | None = None) -> int:
             raise AssertionError("the same request under another key is the same step")
 
         phase("no-key")
-        (unkeyed,) = build_step_programs(model, orderings=orderings[:1], **request)
+        (unkeyed,) = build_step_programs(
+            model,
+            profiling_options=CORRECTNESS_PROFILING,
+            orderings=orderings[:1],
+            **request,
+        )
         if "objective_export" not in _phases(unkeyed):
             raise AssertionError("without a key every build captures")
         if len(sorted(Path(cache).glob("v*/build/steps/*/*/step_program.json"))) != 3:

@@ -14,6 +14,7 @@ from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
 from shadowspill.pytorch import StepSearchPoint, StepSearchReport, search_geometries
 from shadowspill.schema import artifact_schema
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
 def test_geometries_cover_every_divisor_largest_microbatch_first() -> None:
@@ -151,6 +152,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
     lines: list[str] = []
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
@@ -196,6 +198,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
     with pytest.raises(ProfilingError, match="meta implementation"):
         plan_step_search(
             object(),  # type: ignore[arg-type]
+            profiling_options=CORRECTNESS_PROFILING,
             objective=None,
             optimizer=None,
             example_microbatches=lambda sequences, accumulation: (),
@@ -235,6 +238,7 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
     monkeypatch.setattr(planner_module, "plan_program", refuse)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
@@ -283,6 +287,7 @@ def test_the_resolution_options_reach_every_point(
     monkeypatch.setattr(planner_module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
@@ -350,6 +355,7 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
     monkeypatch.setattr(planner_module, "plan_program", infeasible)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
@@ -383,6 +389,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
     with pytest.raises(ValueError, match="outside"):
         plan_step_search(
             object(),  # type: ignore[arg-type]
+            profiling_options=CORRECTNESS_PROFILING,
             objective=None,
             optimizer=None,
             example_microbatches=lambda sequences, accumulation: (),
@@ -494,6 +501,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     monkeypatch.setattr(planner_module, "plan_program", search)
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
@@ -538,6 +546,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
     handed.clear()
     alone = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),
@@ -674,6 +683,7 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
     lines: list[str] = []
     report = plan_step_search(
         object(),  # type: ignore[arg-type]
+        profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
         example_microbatches=lambda sequences, accumulation: (),

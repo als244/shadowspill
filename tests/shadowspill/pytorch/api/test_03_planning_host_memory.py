@@ -21,6 +21,7 @@ from shadowspill.pytorch.capture.artifacts import TaskInputProvenance
 from shadowspill.pytorch.profiling.profiler import TaskProfiler, _SavedValues
 from shadowspill.pytorch.state.registry import registry_for
 from shadowspill.runtime import Runtime
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter
@@ -33,6 +34,7 @@ def _objective(model: nn.Module, value: torch.Tensor, target: torch.Tensor):
 def _plan(model: nn.Module, runtime: Runtime, tmp_path: object):
     return plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_objective,
         optimizer=partial(torch.optim.SGD, lr=0.02, foreach=False),
         example_inputs=[[torch.randn(3, 8), torch.randn(3, 4)]],

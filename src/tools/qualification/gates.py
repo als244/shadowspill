@@ -405,6 +405,7 @@ def _stream(command: Sequence[str], log: Path, *, preamble: str = "") -> int:
     with log.open("w") as handle:
         if preamble:
             handle.write(preamble + "\n")
+            handle.flush()
         process = subprocess.Popen(
             list(command),
             stdout=subprocess.PIPE,
@@ -424,6 +425,7 @@ def _stream(command: Sequence[str], log: Path, *, preamble: str = "") -> int:
             sys.stdout.write(decoded)
             sys.stdout.flush()
             handle.write(decoded)
+            handle.flush()
         return process.wait()
 
 
@@ -488,7 +490,7 @@ def _refuse_a_stale_library() -> str | None:
     except Exception:
         return None
     sources = Path("csrc")
-    if not sources.is_dir() or not library.is_file():
+    if library is None or not sources.is_dir() or not library.is_file():
         return None
     # Only what the compiler and CMake read: a README cannot change a binary,
     # and refusing over one teaches the reader to pass the override.

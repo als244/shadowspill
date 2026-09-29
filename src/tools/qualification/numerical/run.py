@@ -25,6 +25,7 @@ from workloads.common.training import LEARNING_RATE
 from ..model_state import import_case_model, release_case_model
 from ..plan_record import write_plan_record
 from ..planning_phases import planning_breakdown, planning_summary
+from ..profiling import CORRECTNESS_PROFILING
 from ..runtime_evidence import (
     adapter_statistics,
     check_physical_budget,
@@ -206,6 +207,7 @@ def _plan_case(
     planning_started = time.perf_counter()
     training = plan_step(
         case.model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=case.objective,
         optimizer=case.optimizer,
         hyperparams=("lr",),

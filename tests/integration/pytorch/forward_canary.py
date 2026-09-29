@@ -33,6 +33,7 @@ from shadowspill.runtime.abi import (
 )
 from shadowspill.runtime.bootstrap import installed_runtime
 from tests.spill_pool import spill_pool
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _ForwardModel(nn.Module):
@@ -117,6 +118,7 @@ def main() -> int:
         phase("plan")
         planned = plan_forward(
             model,
+            profiling_options=CORRECTNESS_PROFILING,
             example_inputs=[inputs, 16],
             runtime=runtime,
             execution="execution",
@@ -226,6 +228,7 @@ def main() -> int:
         phase("shared")
         shared = plan_forward(
             model,
+            profiling_options=CORRECTNESS_PROFILING,
             example_inputs=[inputs, 16],
             runtime=runtime,
             execution="execution",
@@ -259,6 +262,7 @@ def main() -> int:
 
         consumer = plan_forward(
             consumer_model,
+            profiling_options=CORRECTNESS_PROFILING,
             example_inputs=[shared_input(second_reference, require_in="execution")],
             runtime=runtime,
             execution="execution",
@@ -268,6 +272,7 @@ def main() -> int:
         )
         peer_consumer = plan_forward(
             consumer_model,
+            profiling_options=CORRECTNESS_PROFILING,
             example_inputs=[shared_input(second_reference, require_in="execution")],
             runtime=runtime,
             execution="execution",

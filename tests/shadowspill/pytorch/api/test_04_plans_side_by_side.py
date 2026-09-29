@@ -17,6 +17,7 @@ from shadowspill.errors import AdmissionError
 from shadowspill.pytorch import import_model_state, plan_forward, plan_step
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.occupancy import plan_slices
+from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 from .test_01_public_training import _require_adapter
@@ -55,6 +56,7 @@ def test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves(
     model = import_model_state(_network(), runtime=runtime, pool="spill")
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_objective,
         optimizer=partial(torch.optim.SGD, lr=0.01, foreach=False),
         example_inputs=[_batch(0)],
@@ -68,6 +70,7 @@ def test_a_forward_is_planned_beside_a_step_holding_more_than_it_reserves(
 
     forward = plan_forward(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         example_inputs=[_batch(0)[0]],
         runtime=runtime,
         execution="execution",
@@ -106,6 +109,7 @@ def test_a_forward_shares_the_slab_of_the_step_it_evaluates(tmp_path: object) ->
     model = import_model_state(_network(), runtime=runtime, pool="spill")
     training = plan_step(
         model,
+        profiling_options=CORRECTNESS_PROFILING,
         objective=_objective,
         optimizer=partial(torch.optim.SGD, lr=0.01, foreach=False),
         example_inputs=[wide(0)],
@@ -120,6 +124,7 @@ def test_a_forward_shares_the_slab_of_the_step_it_evaluates(tmp_path: object) ->
     def forward_within(budget: int | None) -> object:
         return plan_forward(
             model,
+            profiling_options=CORRECTNESS_PROFILING,
             example_inputs=[_batch(0)[0]],
             runtime=runtime,
             execution="execution",
