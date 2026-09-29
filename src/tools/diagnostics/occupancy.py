@@ -35,7 +35,7 @@ import json
 import sys
 from bisect import bisect_left
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from html import escape
@@ -1495,8 +1495,12 @@ def describe_plan(
         )
     if unconstrained:
         parts.append(
-            "unconstrained: every object resident, nothing spilled, every"
-            " alternative at its cheapest"
+            "unconstrained: every object resident, nothing spilled, "
+            + (
+                "alternatives as this resolution fixes them"
+                if resolution
+                else "every alternative at its cheapest"
+            )
         )
     return " · ".join(parts)
 
@@ -1509,11 +1513,13 @@ def write_pages(
     by: str = "category",
     tokens_per_step: int | None = None,
     plan: str = "",
+    plan_by_view: Mapping[str, str] | None = None,
 ) -> list[Path]:
     """Write one page per view -- ``simulated.html``, ``traced.html`` -- each
     with the summary, both pools and the lanes on one zoom, and an index
     that links them and carries the tables. ``plan`` names the step under
-    every title. Returns the pages written, the index first."""
+    every title, and ``plan_by_view`` names it differently for a view.
+    Returns the pages written, the index first."""
 
     directory.mkdir(parents=True, exist_ok=True)
     template = Path(__file__).with_name("occupancy_page.html").read_text()
@@ -1522,8 +1528,9 @@ def write_pages(
     tables: list[str] = []
     for result in views:
         name = f"{result.view}.html"
+        named = (plan_by_view or {}).get(result.view, plan)
         payload = json.dumps(
-            page_data(result, by=by, tokens_per_step=tokens_per_step, plan=plan),
+            page_data(result, by=by, tokens_per_step=tokens_per_step, plan=named),
             separators=(",", ":"),
         )
         page = template.replace(
@@ -1725,7 +1732,11 @@ def _links(relative: Path, views: Sequence[str]) -> str:
     return " · ".join(parts)
 
 
-def write_run_timelines(run_root: Path, out: Path | None = None) -> Path:
+def write_run_timelines(
+    run_root: Path,
+    out: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> Path:
     """Pages for every plan a run made, and for the budgets it ran.
 
     ``timelines/search/<geometry>/<budget>/simulated.html`` is a plan the
@@ -1737,11 +1748,20 @@ def write_run_timelines(run_root: Path, out: Path | None = None) -> Path:
     resolutions, ``timelines/search/<geometry>/<budget>/<resolution>/``
     holds each one's ``simulated.html`` and its own ``unconstrained.html``.
     Each page carries the summary, the pools and the lanes on one zoom. The
-    index links every page and shows the peaks. Returns the index.
+    index links every page and shows the peaks. ``progress`` hears one line
+    at the start and one per geometry finished, since a tour's pages take
+    minutes to write. Returns the index.
     """
 
     out = out or (run_root / "timelines")
     plans = stored_plans(run_root)
+    if progress is not None:
+        kept_count = sum(1 for record in plans if record.resolution)
+        progress(
+            f"timelines: writing pages for {len(plans) - kept_count} plans"
+            + (f" and {kept_count} kept resolutions" if kept_count else "")
+            + f" under {out}"
+        )
     tokens = _tokens_per_step(run_root)
     request = _request(run_root)
     model = str(request.get("model") or "")
@@ -1757,10 +1777,14 @@ def write_run_timelines(run_root: Path, out: Path | None = None) -> Path:
         (record for record in plans if not record.resolution),
         key=lambda item: (item.geometry, item.budget_bytes or 0, item.makespan_ns),
     )
+    finished: str | None = None
     for record in ordered:
         selection = json.loads(record.path.read_text())
         program = json.loads(program_path_for(record.path, selection).read_text())
         geometry = record.geometry or f"plan_{record.path.parent.name[:8]}"
+        if progress is not None and finished not in (None, geometry):
+            progress(f"timelines: {finished} written")
+        finished = geometry
         budget = (
             _budget_label(record.budget_bytes)
             if record.budget_bytes
@@ -1813,6 +1837,20 @@ def write_run_timelines(run_root: Path, out: Path | None = None) -> Path:
                     resolution=kept.resolution,
                     selected=kept.selected,
                 ),
+                # the resolution's own floor: nothing to plan around, the
+                # alternatives fixed as this resolution fixes them
+                plan_by_view={
+                    "unconstrained": describe_plan(
+                        {},
+                        model=model,
+                        geometry=record.geometry,
+                        sequence_length=sequence_length,
+                        sequences_per_step=sequences_per_step,
+                        resolution=kept.resolution,
+                        selected=kept.selected,
+                        unconstrained=True,
+                    )
+                },
             )
             kept_links.append(
                 escape(kept.resolution)
@@ -1834,6 +1872,8 @@ def write_run_timelines(run_root: Path, out: Path | None = None) -> Path:
             )
         )
     run_rows: list[str] = []
+    if progress is not None:
+        progress("timelines: the geometries' floors written; now the budgets that ran")
     for trace in sorted((run_root / "steps").glob("*gib.json")):
         diagnostics = json.loads(trace.read_text())
         makespan_ns = round(
@@ -1897,6 +1937,8 @@ def write_run_timelines(run_root: Path, out: Path | None = None) -> Path:
                 ]
             )
         )
+    if progress is not None and finished is not None:
+        progress(f"timelines: {finished} written")
     floor_rows: list[str] = []
     for geometry, program in programs.values():
         result = unconstrained(program)
