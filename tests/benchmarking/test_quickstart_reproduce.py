@@ -201,10 +201,10 @@ def test_precision_reaches_planning_and_the_optimizer_as_the_harness_names_it() 
     labels = [label for label, _value, _meaning in precise.lines()]
     assert labels == [
         "master dtype",
-        "gradient dtype",
-        "optimizer state",
-        "weight rounding",
-        "state rounding",
+        "grad dtype",
+        "opt state dtype",
+        "parameter rounding",
+        "opt state rounding",
     ]
 
 

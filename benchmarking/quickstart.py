@@ -744,7 +744,7 @@ class Precision:
                 else "a master copy of every weight trained at another dtype",
             ),
             (
-                "gradient dtype",
+                "grad dtype",
                 self.grad_dtype or "weights'",
                 f"gradients summed over the microbatches at {gradients} dtype;"
                 + (
@@ -754,20 +754,20 @@ class Precision:
                 ),
             ),
             (
-                "optimizer state",
+                "opt state dtype",
                 self.opt_state_dtype or "default",
                 "the moments at the optimizer's default dtype"
                 if self.opt_state_dtype is None
                 else "the moments at that dtype ('parameter': what it steps)",
             ),
             (
-                "weight rounding",
+                "parameter rounding",
                 self.parameter_rounding or "default",
                 "how the optimizer rounds the weights it steps; its default"
                 " is to nearest",
             ),
             (
-                "state rounding",
+                "opt state rounding",
                 self.opt_state_rounding or "default",
                 "how it rounds the state it stores; its default is to nearest",
             ),
@@ -2130,8 +2130,12 @@ class Tour:
             # every search point and on the device's too for every budget
             # that ran.
             marker = time.perf_counter()
+            # Minutes of silence otherwise, on a tour: say what is happening.
             try:
-                index = write_run_timelines(self.paths.root)
+                index = write_run_timelines(
+                    self.paths.root,
+                    progress=lambda line: print(f"  {line}", flush=True),
+                )
             except Exception as error:
                 # The run's data is complete on disk; a page that cannot be
                 # drawn is reported, and the tool can be run on it later.
