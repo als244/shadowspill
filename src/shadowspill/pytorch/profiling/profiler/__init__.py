@@ -25,6 +25,7 @@ from shadowspill.pytorch.state.storage import (
 from shadowspill.runtime import Runtime
 from shadowspill.runtime.failures import format_bytes, raise_if_allocator_failed
 from shadowspill.task.profiles import TaskMeasurement
+from shadowspill.task.profiling import ProfilingOptions
 
 from ..executables import ProfileExecutable, ProfileExecutableStore
 from ..runner import ProfilableArtifact
@@ -65,17 +66,13 @@ class TaskProfiler:
         runtime_handle: int,
         plan_id: int,
         device_ordinal: int,
-        warmup_iterations: int = 3,
-        sample_iterations: int = 5,
+        profiling_options: ProfilingOptions | None = None,
         telemetry_capacity: int = 1_048_576,
         allocation_probe_seeds: int = 1,
         allocation_probe_repetitions: int = 2,
         saved_value_pool: SavedValuePool | None = None,
     ) -> None:
-        if warmup_iterations < 1:
-            raise ValueError("task profiler requires at least one warmup")
-        if sample_iterations < 1:
-            raise ValueError("task profiler requires at least one sample")
+        self.options = profiling_options or ProfilingOptions()
         if telemetry_capacity < 1:
             raise ValueError("task profiler telemetry capacity must be positive")
         if allocation_probe_seeds < 1 or allocation_probe_repetitions < 2:
@@ -95,8 +92,6 @@ class TaskProfiler:
                 library, operation
             ),
         )
-        self.warmups = warmup_iterations
-        self.samples = sample_iterations
         self.probe_seeds = allocation_probe_seeds
         self.probe_repetitions = allocation_probe_repetitions
         self._profiling_wall_time_ns = 0
@@ -276,7 +271,7 @@ class TaskProfiler:
         stream = self.boundary.stream()
         started = time.perf_counter_ns()
         try:
-            for _ in range(self.warmups):
+            for _ in range(self.options.warmup_iterations):
                 self.boundary.invoke(executable, stream)
             self.boundary.require_idle(problem=f"compiled entrypoint {digest}")
         except ProfilingError:

@@ -20,6 +20,7 @@ from shadowspill.pytorch.planning.training.plan import plan_training_programs
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.step import StepDataOrdering
 from shadowspill.store import ArtifactStore
+from shadowspill.task.profiling import ProfilingOptions
 
 from ...callables import PlannedTrainStep
 from ...contracts import (
@@ -57,6 +58,7 @@ def build_training(
     profiling_metadata: Sequence[object] | None,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
     search_options: SearchOptions | None = None,
     incumbent: AnnotatedProgramPlan | None = None,
     transfer_bandwidths: TransferBandwidths | None = None,
@@ -114,6 +116,7 @@ def build_training(
             plan_id=memory.plan_id,
             allocation_probe_seeds=allocation_probe_seeds,
             allocation_probe_repetitions=allocation_probe_repetitions,
+            profiling_options=profiling_options,
             stores=artifacts,
             timer=timer,
         )

@@ -34,6 +34,7 @@ from shadowspill.search.report import (
     StepSearchReport,
 )
 from shadowspill.store import StoreMode
+from shadowspill.task.profiling import ProfilingOptions
 
 from .sweep import _Build, _Sweep
 
@@ -81,6 +82,7 @@ def plan_step_search(
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions: bool = False,
+    profiling_options: ProfilingOptions | None = None,
 ) -> StepSearchReport:
     """Plan every admitted geometry under every budget; execute nothing.
 
@@ -178,6 +180,7 @@ def plan_step_search(
         per_geometry,
         _Build(
             model=model,
+            profiling_options=profiling_options or ProfilingOptions(),
             objective=objective,
             optimizer=optimizer,
             hyperparams=hyperparams,

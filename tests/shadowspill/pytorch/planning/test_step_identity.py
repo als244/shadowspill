@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from shadowspill.pytorch import ProfilingOptions
 from shadowspill.pytorch.planning.identity import step_identity, step_key
 from shadowspill.step import StepDataOrdering
 
@@ -74,6 +75,10 @@ def test_every_fact_the_capture_depends_on_moves_the_key() -> None:
     assert step_key(_identity(model, grad_dtype=torch.float32), ordering) != base
     assert step_key(_identity(model, round_accumulation_once=True), ordering) != base
     assert step_key(_identity(model, memory_bound_flops_per_byte=4.0), ordering) != base
+    assert step_key(
+        _identity(model, profiling_options=ProfilingOptions(conditioning_seconds=0.5)),
+        ordering,
+    ) != base
 
 
 def test_the_identity_is_readable() -> None:

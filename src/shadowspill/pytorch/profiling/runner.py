@@ -14,6 +14,7 @@ from shadowspill.task.profiles import (
     ProfilingResult,
     TaskMeasurement,
 )
+from shadowspill.task.profiling import ProfilingOptions
 
 
 class ProfilableArtifact(Protocol):
@@ -34,6 +35,7 @@ def profile_unique_artifacts(
     profiling_metadata_digests: Sequence[str | None] | None = None,
     allocation_probe_seeds: int = 1,
     allocation_probe_repetitions: int = 2,
+    profiling_options: ProfilingOptions | None = None,
 ) -> ProfilingResult:
     """Measure each structural key once and scatter it to every occurrence."""
 
@@ -50,6 +52,7 @@ def profile_unique_artifacts(
         environment,
         allocation_probe_seeds=allocation_probe_seeds,
         allocation_probe_repetitions=allocation_probe_repetitions,
+        profiling_options=profiling_options or ProfilingOptions(),
     )
     measurements, hits, misses = _measure_unique_keys(
         keys,
@@ -93,6 +96,7 @@ def _index_profile_keys(
     *,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions,
 ) -> tuple[
     dict[str, ProfileKey],
     dict[str, list[int]],
@@ -112,6 +116,7 @@ def _index_profile_keys(
             metadata_digest,
             allocation_probe_seeds,
             allocation_probe_repetitions,
+            profiling_options=profiling_options,
         )
         keys[key.digest] = key
         position_keys.append(key.digest)

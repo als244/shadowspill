@@ -258,6 +258,7 @@ against; `compatibility_digest` is what a task is matched by.
 schema, key_digest, measurement{
   runtime_ns, samples_ns,
   timing_relative_mad, timing_half_drift, timing_unstable,
+  profiling_options, conditioning, sampling,
   workspace_requested_bytes, workspace_charged_bytes, workspace_extent_bytes,
   persistent_extent_bytes,
   allocation_contract, allocation_trace, allocation_path_observations,
@@ -266,7 +267,10 @@ schema, key_digest, measurement{
 ```
 
 `runtime_ns` with its samples is the measured cost the planner schedules
-against, and the three `timing_*` fields say how much to trust it. The
+against. The `timing_*` fields describe stability; `profiling_options` records
+the effective warmup and timing policy. `conditioning` and `sampling` record
+`gpu_ns`, `wall_ns`, `iterations`, and `target_met`. Missing either duration
+target also sets `timing_unstable`. The
 allocation contract and trace are what physical admission replays,
 `off_device_output_leaves` names the outputs that came back from somewhere
 the plan does not manage, and `provenance` records the hardware and policy

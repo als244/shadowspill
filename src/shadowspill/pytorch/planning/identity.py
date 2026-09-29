@@ -31,6 +31,7 @@ from shadowspill.pytorch.partition import PartitionSpec
 from shadowspill.runtime.plan import PlanMemory
 from shadowspill.schema import artifact_schema
 from shadowspill.step import StepDataOrdering
+from shadowspill.task.profiling import ProfilingOptions
 
 _SCHEMA = artifact_schema("step_identity")
 
@@ -61,6 +62,7 @@ def step_identity(
     optimizer_ordering: str,
     allocation_probe_seeds: int,
     allocation_probe_repetitions: int,
+    profiling_options: ProfilingOptions | None = None,
     export_bypass_key: str,
     machine: Mapping[str, object],
     environment: Mapping[str, object],
@@ -105,6 +107,7 @@ def step_identity(
         "objective": code_identity(objective),
         "inputs": [item.digest for item in signatures],
         "profiling_metadata": [item.digest for item in workloads],
+        "profiling_options": (profiling_options or ProfilingOptions()).to_dict(),
         "optimizer": {
             "type": optimizer_type_name(optimizer),
             "step": optimizer_step_identity(optimizer),

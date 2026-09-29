@@ -51,6 +51,7 @@ from .diagnostics import (
 )
 from .invocation import InvocationResult
 from .partition import PartitionPolicy, PartitionSpec
+from .profiling import ProfilingOptions
 from .runtime import Runtime
 from .sharing import (
     ObjectConsistency,
@@ -112,6 +113,7 @@ __all__ = [
     "PlanUniqueStage",
     "PlannedForward",
     "PlannedTrainStep",
+    "ProfilingOptions",
     "Runtime",
     "RuntimeConfigurationError",
     "RuntimeExecutionError",

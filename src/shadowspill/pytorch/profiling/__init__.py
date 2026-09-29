@@ -28,6 +28,7 @@ from shadowspill.task.profiles import (
     TaskMeasurement,
     TaskOutputInputBinding,
 )
+from shadowspill.task.profiling import ProfilingOptions
 
 from .environment import profile_environment
 from .inputs import (
@@ -51,6 +52,7 @@ __all__ = [
     "ProfileKey",
     "ProfileStore",
     "ProfilingMetadata",
+    "ProfilingOptions",
     "ProfilingResult",
     "RepresentativeInputSet",
     "ResolvedTaskManifests",

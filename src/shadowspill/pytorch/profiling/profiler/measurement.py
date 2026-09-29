@@ -9,9 +9,9 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from shadowspill.profiling.timing import (
-    STABLE_VARIABILITY,
     TimingObservation,
     collect_timing_samples,
+    condition_task,
 )
 from shadowspill.runtime.telemetry import (
     AllocationTelemetryError,
@@ -22,6 +22,7 @@ from shadowspill.task.allocations import (
     TaskAllocationPathObservation,
 )
 from shadowspill.task.profiles import TaskMeasurement
+from shadowspill.task.profiling import ProfilingOptions, TimingWindow
 
 from ..executables import ProfileExecutable
 from .contract import ProbedPath, probe_allocation_paths, validate_allocation_contract
@@ -33,9 +34,6 @@ from .workspace import (
 
 if TYPE_CHECKING:
     from . import TaskProfiler
-
-#: Invocations allowed for a provider's allocations to settle after warmup.
-STABILIZATION_BUDGET = 16
 
 
 class MeasuredTask:
@@ -89,14 +87,16 @@ def measure_task(
             return observe(task)
 
     try:
-        if not boundary.conditioned:
-            with timed(phases, "device_conditioning"):
-                boundary.condition_device(stream)
         # Provider compilation, autotuning, and shape-keyed initialization are
         # planning-time setup, not alternative task allocation paths. Warm them
         # before varying representative input identities.
         with timed(phases, "provider_warmup"):
-            warm_provider(invoke, boundary.requested_allocated_bytes, profiler.warmups)
+            warm_provider(
+                invoke,
+                boundary.requested_allocated_bytes,
+                profiler.options.warmup_iterations,
+                stabilization_iterations=profiler.options.stabilization_iterations,
+            )
         contract = None
         path_probes: tuple[ProbedPath, ...] = ()
         if isinstance(source.task, ProfileExecutable):
@@ -112,9 +112,16 @@ def measure_task(
                     repetitions=profiler.probe_repetitions,
                 )
             with timed(phases, "post_probe_stabilization"):
-                warm_provider(invoke, boundary.requested_allocated_bytes, 1)
+                warm_provider(
+                    invoke,
+                    boundary.requested_allocated_bytes,
+                    1,
+                    stabilization_iterations=profiler.options.stabilization_iterations,
+                )
+        with timed(phases, "task_conditioning"):
+            conditioning = condition_task(sample, options=profiler.options)
         with timed(phases, "timing_samples"):
-            timing = collect_timing_samples(sample, minimum=profiler.samples)
+            timing = collect_timing_samples(sample, options=profiler.options)
         boundary.require_idle(problem="timing measurement")
         audited = time.perf_counter_ns()
         observation = audit_workspace_retention(
@@ -144,6 +151,8 @@ def measure_task(
         allocation_contract,
         path_observations,
         off_device_leaves[-1] if off_device_leaves else (),
+        profiling_options=profiler.options,
+        conditioning=conditioning,
     )
 
 
@@ -151,6 +160,8 @@ def warm_provider(
     invoke: Callable[[], None],
     requested_allocated_bytes: Callable[[], int],
     warmups: int,
+    *,
+    stabilization_iterations: int,
 ) -> None:
     """Invoke until the provider's own allocations stop moving.
 
@@ -160,7 +171,7 @@ def warm_provider(
     """
 
     previous = requested_allocated_bytes()
-    for iteration in range(warmups + STABILIZATION_BUDGET):
+    for iteration in range(warmups + stabilization_iterations):
         invoke()
         current = requested_allocated_bytes()
         if iteration + 1 >= warmups and current == previous:
@@ -191,6 +202,9 @@ def task_measurement(
     allocation_contract: TaskAllocationContract,
     path_observations: tuple[TaskAllocationPathObservation, ...] = (),
     off_device_output_leaves: tuple[int, ...] = (),
+    *,
+    profiling_options: ProfilingOptions,
+    conditioning: TimingWindow,
 ) -> TaskMeasurement:
     """Assemble the record the profile store keeps for one task.
 
@@ -222,7 +236,12 @@ def task_measurement(
         phase_timings_ns=tuple(phases),
         timing_relative_mad=timing.relative_mad,
         timing_half_drift=timing.half_drift,
-        timing_unstable=timing.variability > STABLE_VARIABILITY,
+        timing_unstable=(
+            not conditioning.target_met or timing.unstable(profiling_options)
+        ),
+        profiling_options=profiling_options,
+        conditioning=conditioning,
+        sampling=timing.window,
         allocation_contract=allocation_contract,
         allocation_path_observations=path_observations,
         off_device_output_leaves=off_device_output_leaves,
