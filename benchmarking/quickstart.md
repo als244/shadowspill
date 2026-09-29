@@ -104,7 +104,7 @@ arithmetic:
 | `--opt-state-dtype` | The dtype the optimizer keeps its state at, AdamW's moments: `bfloat16`, `float16`, `float32`, or `parameter` for the dtype of what it steps | the optimizer's own default |
 | `--parameter-rounding` | How the optimizer rounds the weights it steps: `nearest`, or `stochastic`, which keeps small updates in expectation | the optimizer's own default, nearest |
 | `--opt-state-rounding` | How it rounds the state it stores, the same two ways | the optimizer's own default, nearest |
-| `--round-accumulation-once` | `plan_step`'s: a matrix multiply adds its product into running gradients kept narrower than it sums at -- bf16 -- as it writes them, rounding the sum once instead of twice. Off, the step computes what PyTorch's own step computes | off |
+| `--round-accumulation-once` | `plan_step`'s: a matrix multiply adds its product into running gradients kept narrower than it sums at -- bf16 -- as it writes them, avoiding a separate product buffer and addition. BLAS controls rounding; a single rounding is not guaranteed. Off, the narrow-dtype addition stays separate | off |
 
 Every one of these is part of the plan's identity in the store and of the
 request a run records, so `--reproduce` replays them, and the banner names

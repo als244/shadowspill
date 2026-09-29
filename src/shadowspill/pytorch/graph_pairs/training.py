@@ -33,7 +33,7 @@ def partition_training_capture(
     that does the adding. ``gradient_dtype`` is the dtype parameter gradients
     are created and accumulated at; ``None`` keeps each at its parameter's.
     ``round_accumulation_once`` lets a matrix multiply add its product into a
-    running gradient narrower than it sums at, rounding the sum once
+    running gradient narrower than it sums at, with BLAS-controlled rounding
     (:func:`~shadowspill.pytorch.capture.aot.accumulate_gradient_outputs`).
     """
 

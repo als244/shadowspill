@@ -320,15 +320,16 @@ def test_where_no_kernel_adds_in_place_the_gradient_is_added_after() -> None:
 
 
 @pytest.mark.cuda
-@pytest.mark.parametrize(
-    ("gradient_dtype", "tolerance"), [(None, 2**-8), (torch.float32, 1e-5)]
-)
-def test_the_multiply_adds_in_place_rounding_once(
-    gradient_dtype: torch.dtype | None, tolerance: float
+@pytest.mark.parametrize("gradient_dtype", [None, torch.float32])
+def test_the_multiply_adds_in_place_at_the_accumulator_dtype(
+    gradient_dtype: torch.dtype | None,
 ) -> None:
-    """The sum of the running gradient and the product is rounded once, as it
-    is written: within one bf16 rounding of the exact sum at bf16, and within
-    fp32's error at fp32."""
+    """Fusion avoids a product buffer, but BLAS controls epilogue rounding.
+
+    Some kernels round the product before adding C, even inside one kernel.
+    Bound that rounding and the FP32 dot-product reduction against FP64;
+    requiring a single BF16 rounding incorrectly rejects those kernels.
+    """
 
     backward, leaves = _projection_backward("cuda")
     accumulating = accumulate_gradient_outputs(
@@ -350,8 +351,15 @@ def test_the_multiply_adds_in_place_rounding_once(
 
     weight = leaves[0]
     assert total[weight].data_ptr() == priors[0].data_ptr()
-    error = (total[weight].double() - expected[0]).abs().max()
-    assert error <= tolerance * expected[0].abs().max()
+    values, cotangents = (item.double() for item in arguments)
+    unit = torch.finfo(total[weight].dtype).eps / 2
+    reduction_unit = torch.finfo(torch.float32).eps / 2
+    terms = values.shape[0]
+    gamma = terms * reduction_unit / (1 - terms * reduction_unit)
+    reduction_error = gamma * (cotangents.abs().t() @ values.abs())
+    product_error = reduction_error + unit * (exact[weight].abs() + reduction_error)
+    bound = product_error + unit * (expected[0].abs() + product_error)
+    assert torch.all((total[weight].double() - expected[0]).abs() <= bound)
 
 
 @pytest.mark.cuda
