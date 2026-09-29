@@ -47,7 +47,6 @@ class RuntimeFixedLayout:
     slice_bytes: int
     placements: tuple[RuntimeFixedPlacement, ...]
     dependencies: tuple[RuntimeFixedDependency, ...]
-    initial_task_id: int
 
 
 __all__ = [

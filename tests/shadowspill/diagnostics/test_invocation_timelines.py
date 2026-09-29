@@ -37,11 +37,11 @@ def test_a_cycle_closes_when_the_next_invocation_begins(
     (first,) = timelines.drain()
     assert first.step_number == 1
     assert first.cycle_seconds == pytest.approx(0.107)
-    assert first.opening_delay_seconds == pytest.approx(0.005)
+    assert first.entry_delay_seconds == pytest.approx(0.005)
     assert first.selected_span_seconds == pytest.approx(0.100)
     assert first.exposed_tail_seconds == pytest.approx(0.002)
     assert first.cycle_seconds == pytest.approx(
-        first.opening_delay_seconds
+        first.entry_delay_seconds
         + first.selected_span_seconds
         + first.exposed_tail_seconds
     )

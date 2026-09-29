@@ -34,8 +34,6 @@ def _lane(direction: str) -> TransferQueue:
             effective_bandwidth_bytes_per_second=None,
             largest_start_delta_seconds=None,
             largest_start_delta_transfer_id=None,
-            opening_transfers=0,
-            opening_bytes=0,
         ),
     )
 
@@ -92,12 +90,14 @@ def _diagnostics() -> StepDiagnostics:
         selected_span_delta_seconds=0.0,
         simulator_makespan_seconds=1.0,
         simulator_terminal_tail_seconds=0.0,
+        simulated_entry_delay_seconds=0.0,
+        real_invocation_seconds=1.05,
+        real_terminal_tail_seconds=0.03,
         cycle_seconds=1.05,
-        opening_delay_seconds=0.02,
+        entry_delay_seconds=0.02,
         exposed_tail_seconds=0.03,
         call_seconds=1.1,
         prior_invocation_drain_seconds=0.0,
-        initial_actions_seconds=0.0,
         trace_setup_seconds=0.0,
         optimizer_span_seconds=0.1,
         phase_comparisons=(),
@@ -108,6 +108,7 @@ def _diagnostics() -> StepDiagnostics:
         tasks=FrozenMapping({}),
         transfers=TransferRecords(fetch=FrozenMapping({}), evict=FrozenMapping({})),
         timelines=Timelines(
+            host_origin_ns=1234,
             first_task_started_at_seconds=0.25,
             compute=(),
             fetch=_lane("fetch"),
@@ -131,6 +132,7 @@ def test_step_diagnostics_torch_serialization_round_trips() -> None:
     restored = torch.load(buffer, weights_only=False)
     assert isinstance(restored, StepDiagnostics)
     assert restored.timelines.first_task_started_at_seconds == 0.25
+    assert restored.timelines.host_origin_ns == 1234
     assert restored.timelines.fetch.summary.direction == "fetch"
     assert isinstance(restored.tasks, FrozenMapping)
     assert isinstance(restored.transfers.fetch, FrozenMapping)

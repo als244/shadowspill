@@ -266,7 +266,9 @@ def _preflight_error(
             raise RuntimeError("compiled preflight omitted its failing alias")
         alias_id = problem.indexed_template.alias_ids[result.error_alias]
         return PlanInfeasibleError(
-            f"input alias {alias_id!r} has no initial residency",
+            f"input alias {alias_id!r} has no initial residency on the device "
+            "or preceding fetch boundary; add a control task before consuming "
+            "a spill input",
             kind="missing_initial_residency",
         )
 

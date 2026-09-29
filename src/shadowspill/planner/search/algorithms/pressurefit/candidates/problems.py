@@ -48,7 +48,6 @@ _ACTION_KIND = {
     3: MemoryActionKind.WRITE_BACK,
 }
 _LOCATION = {0: MemoryLocation.DEVICE, 1: MemoryLocation.SPILL}
-_INITIAL_PLACEMENT = {"required": 0, "greedy": 1}
 _PREFLIGHT_WORKSPACE_CAPACITY = 1
 _PREFLIGHT_REQUIRED_CAPACITY = 2
 _PREFLIGHT_RESIDENT_SLICE_CAPACITY = 4
@@ -135,7 +134,6 @@ def _problem_options(
         coalescing_modes=modes,
         coalescing_mode_count=len(mode_values),
         max_repair_attempts=search_options.max_repair_attempts,
-        initial_placement=_INITIAL_PLACEMENT[search_options.initial_placement.value],
         capacity_refinement_bytes=search_options.capacity_refinement_bytes,
         record_reduction_steps=int(search_options.record_reduction_steps),
         best_placed=best_placed or None,

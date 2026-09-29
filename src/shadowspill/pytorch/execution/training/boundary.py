@@ -125,7 +125,8 @@ def before_task(
                 eager_optimizer=call.eager_optimizer,
                 timing=timing,
             )
-            executor.timing.record_compute_start(stream)
+            if record.task.requires_entrypoint:
+                executor.timing.record_compute_start(stream)
             executor.timing.record_task_start(timing, stream)
         return prepared
     except BaseException:
@@ -300,6 +301,8 @@ def _assemble_optimizer_call(
 def _assemble_graph_call(
     executor: TrainingExecutor, record: _ExecutionTaskRecord
 ) -> TaskCall:
+    if not record.task.requires_entrypoint:
+        return TaskCall((), None, False)
     if not isinstance(record.artifact, GraphArtifact):
         raise RuntimeError("graph task has no captured artifact")
     if record.argument_template is None:
@@ -321,8 +324,10 @@ def run_compiled_task(executor: TrainingExecutor, prepared: PreparedTask) -> obj
         ),
         torch.no_grad(),
     ):
-        if prepared.eager_optimizer:
-            raw_outputs: object = executor.optimizer_state.optimizer.step()
+        if not prepared.record.task.requires_entrypoint:
+            raw_outputs: object = ()
+        elif prepared.eager_optimizer:
+            raw_outputs = executor.optimizer_state.optimizer.step()
         else:
             if prepared.function is None:
                 raise AssertionError("compiled task function is unavailable")

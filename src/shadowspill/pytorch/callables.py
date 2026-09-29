@@ -251,6 +251,16 @@ class PlannedForward:
             raise RuntimeError("planned forward callable is closed")
         self._state.write_model_entries(values)
 
+    def prepare_runtime_trace(self) -> None:
+        """Allocate reusable trace buffers before starting a measured run."""
+
+        if self._closed:
+            raise RuntimeError("planned callable is closed")
+        self._require_no_pending_invocation()
+        if not self._trace_prepared:
+            self._executor.timing.prepare()
+            self._trace_prepared = True
+
     def _invoke(
         self,
         inputs: Sequence[Any],
@@ -288,9 +298,8 @@ class PlannedForward:
         if runtime_trace:
             if not self._trace_prepared:
                 started_ns = time.perf_counter_ns()
-                self._executor.timing.prepare()
+                self.prepare_runtime_trace()
                 trace_setup_ns = time.perf_counter_ns() - started_ns
-                self._trace_prepared = True
             self._executor.arm_runtime_trace(trace_setup_ns=trace_setup_ns)
         try:
             output = self._executor(prepared_inputs)
@@ -585,6 +594,16 @@ class PlannedTrainStep:
         self._pending_invocation = invocation
         return invocation
 
+    def prepare_runtime_trace(self) -> None:
+        """Allocate reusable trace buffers before starting a measured run."""
+
+        if self._closed:
+            raise RuntimeError("planned callable is closed")
+        self._require_no_pending_invocation()
+        if not self._trace_prepared:
+            self._executor.timing.prepare()
+            self._trace_prepared = True
+
     def _invoke(
         self,
         inputs: Sequence[Sequence[Any]],
@@ -617,9 +636,8 @@ class PlannedTrainStep:
         if runtime_trace:
             if not self._trace_prepared:
                 started_ns = time.perf_counter_ns()
-                self._executor.timing.prepare()
+                self.prepare_runtime_trace()
                 trace_setup_ns = time.perf_counter_ns() - started_ns
-                self._trace_prepared = True
             self._executor.timing.arm(
                 self._executor.run.traced_invocation(),
                 trace_setup_ns=trace_setup_ns,

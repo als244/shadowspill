@@ -389,7 +389,7 @@ and `AllocationOperation` are the timeline they read; `SlabPlacement`,
 
 Configuration and results:
 
-- `SearchOptions`, `GenericPlanningOptions`, `InitialPlacement`, `OptionRecord`
+- `SearchOptions`, `GenericPlanningOptions`, `OptionRecord`
 - `ProgramPlanResult`, `PlanningDiagnostics`, `ResidentSlice`
 - `AdmissionFacts`, `StorageHandoff`, `TaskAdmissionSpec`
 - `TaskAllocationStep`, `TaskAllocationStepKind`
@@ -630,7 +630,6 @@ is a plan for a different program.
 
 | field | type | default | meaning |
 |---|---|---|---|
-| `initial_placement` | `InitialPlacement` | `REQUIRED` | How host-origin objects may be placed before the first task: `REQUIRED`, the default, places only what a task demands; `GREEDY` places what fits, into the opening restore the simulated makespan does not count. |
 | `resolution_options` | `tuple[Fraction, ...]` | `DEFAULT_RESOLUTION_OPTIONS` | Which resolved programs exist: the shares of flexible alternative groups to recompute, as exact fractions, one resolved program per share. |
 | `residency_strategies` | `tuple[str, ...]` | `("headroom-stall", "tight-stall")` | Which residency policies the candidate set is built from. |
 | `fetch_rules` | `tuple[str, ...]` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` | Which fetch orderings the candidate set is built from. |

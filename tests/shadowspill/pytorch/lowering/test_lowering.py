@@ -142,12 +142,15 @@ def _measurement(artifact: object) -> TaskMeasurement:
 
 def test_forward_lowering_is_indexed_alias_aware_and_plannable() -> None:
     lowered = _lowered()
-    assert len(lowered.program.tasks) == 3
-    assert len(lowered.program.profiles) == 2
+    assert len(lowered.program.tasks) == 4
+    assert not lowered.program.tasks[0].requires_entrypoint
+    assert lowered.program.tasks[0].phase == "control"
+    assert len(lowered.program.profiles) == 3
     assert tuple(task.task_id for task in lowered.program.tasks) == (
         "task_000000",
         "task_000001",
         "task_000002",
+        "task_000003",
     )
     assert lowered.program.tasks[1].dependencies == ("task_000000",)
     registrations = {item.name: item.object_id for item in lowered.registrations}
@@ -217,7 +220,7 @@ def test_forward_lowering_uses_export_mutation_as_canonical_object_write() -> No
     buffer_object = next(
         item.object_id for item in lowered.registrations if item.name == "running"
     )
-    task = lowered.program.tasks[0]
+    task = next(task for task in lowered.program.tasks if task.requires_entrypoint)
     assert tuple(item.object_id for item in task.mutations) == (buffer_object,)
     assert buffer_object in task.inputs
     assert buffer_object not in task.outputs

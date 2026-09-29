@@ -86,18 +86,13 @@ def collect_step_diagnostics(
         raise RuntimeError("execution trace omitted selected simulator evidence")
     stream_tasks = tuple(_stream_task(timing, task_id) for task_id in timing.task_order)
     intervals = _selected_intervals(simulation, stream_tasks)
-    simulated_origin_ns = min(item.start_ns for item in intervals.values())
-    alignment = min(item.started for item in stream_tasks)
-    origin_ns = evidence.runtime_trace.began_at_ns
+    origin_ns = timing.origin_recorded_ns
     compute = tuple(
-        _compute_record(
-            item, intervals[item.task_id], simulated_origin_ns, alignment, origin_ns
-        )
+        _compute_record(item, intervals[item.task_id], origin_ns)
         for item in stream_tasks
     )
-    lanes = _transfer_lanes(
-        timing, simulation, evidence, bridge, simulated_origin_ns, alignment, origin_ns
-    )
+    lanes = _transfer_lanes(timing, simulation, evidence, bridge, origin_ns)
+    model_tasks = tuple(item for item in compute if item.phase != "control")
     runtime = _build_runtime_trace(evidence)
     transfers = TransferRecords(
         fetch=FrozenMapping(
@@ -108,8 +103,11 @@ def collect_step_diagnostics(
         ),
     )
     timelines = Timelines(
-        first_task_started_at_seconds=alignment,
-        compute=tuple(item.execution_task_id for item in compute),
+        host_origin_ns=origin_ns,
+        first_task_started_at_seconds=min(
+            item.compute_started_at_seconds for item in model_tasks
+        ),
+        compute=tuple(item.execution_task_id for item in model_tasks),
         fetch=TransferQueue(
             order=tuple(item.transfer_id for item in lanes["fetch"].records),
             summary=lanes["fetch"].summary,
@@ -120,7 +118,9 @@ def collect_step_diagnostics(
         ),
     )
     return StepDiagnostics(
-        summary=_build_step_summary(timing, simulation, compute, intervals, runtime),
+        summary=_build_step_summary(
+            timing, simulation, model_tasks, intervals, runtime, lanes
+        ),
         tasks=FrozenMapping({item.execution_task_id: item for item in compute}),
         transfers=transfers,
         timelines=timelines,
@@ -198,13 +198,11 @@ def _selected_intervals(
 def _compute_record(
     item: _StreamTask,
     interval: TaskInterval,
-    simulated_origin_ns: int,
-    alignment: float,
     origin_ns: int,
 ) -> TaskRecord:
     task = item.task
-    simulated_start = (interval.start_ns - simulated_origin_ns) / 1e9
-    simulated_end = (interval.end_ns - simulated_origin_ns) / 1e9
+    simulated_start = interval.start_ns / 1e9
+    simulated_end = interval.end_ns / 1e9
     return TaskRecord(
         execution_task_id=f"execution_{task.execution_ordinal:06d}",
         task_id=item.task_id,
@@ -212,7 +210,7 @@ def _compute_record(
         semantic_name=task.semantic_name,
         phase=task.entrypoint.options.phase,
         microbatch=task.entrypoint.options.repetition,
-        simulated_ready_at_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
+        simulated_ready_at_seconds=interval.ready_ns / 1e9,
         simulated_started_at_seconds=simulated_start,
         simulated_finished_at_seconds=simulated_end,
         expected_profile_seconds=task.expected_profile_seconds,
@@ -221,8 +219,8 @@ def _compute_record(
         compute_finished_at_seconds=item.finished,
         input_readiness_wait_seconds=item.input_wait,
         allocation_reuse_wait_seconds=item.reuse_wait,
-        start_delta_seconds=item.started - (simulated_start + alignment),
-        end_delta_seconds=item.finished - (simulated_end + alignment),
+        start_delta_seconds=item.started - simulated_start,
+        end_delta_seconds=item.finished - simulated_end,
         before_task_entered_at_seconds=_relative_seconds(
             task.before_task_enter_ns, origin_ns
         ),
@@ -263,34 +261,15 @@ def _transfer_lanes(
     simulation: SimulationResult,
     evidence: _TraceEvidence,
     bridge: RuntimeBridge,
-    simulated_origin_ns: int,
-    alignment: float,
     origin_ns: int,
 ) -> dict[str, _LaneRecords]:
     """Join every scheduled transfer with its trace events, lane by lane."""
 
     events = evidence.runtime_trace.events
-    selected_task_numbers = {
-        canonical_index(task_id, "task_") for task_id in timing.task_order
-    }
-    scheduled = tuple(item for item in events if item.task_id in selected_task_numbers)
-    dispatches = _lane_events(scheduled, RuntimeTraceEventKind.TRANSFER_DISPATCHED)
-    completions = _lane_events(scheduled, RuntimeTraceEventKind.TRANSFER_COMPLETED)
-    queued = _boundary_events(scheduled, RuntimeTraceEventKind.ACTION_QUEUED)
-    reserved = _boundary_events(scheduled, RuntimeTraceEventKind.DESTINATION_RESERVED)
-    opening_events = tuple(
-        item for item in events if item.task_id not in selected_task_numbers
-    )
-    opening_dispatches = _lane_events(
-        opening_events, RuntimeTraceEventKind.TRANSFER_DISPATCHED
-    )
-    opening_completions = _lane_events(
-        opening_events, RuntimeTraceEventKind.TRANSFER_COMPLETED
-    )
-    alias_by_object = {
-        bridge.objects.runtime_object_id(action.alias_group_id): action.alias_group_id
-        for action in timing.actions
-    }
+    dispatches = _lane_events(events, RuntimeTraceEventKind.TRANSFER_DISPATCHED)
+    completions = _lane_events(events, RuntimeTraceEventKind.TRANSFER_COMPLETED)
+    queued = _boundary_events(events, RuntimeTraceEventKind.ACTION_QUEUED)
+    reserved = _boundary_events(events, RuntimeTraceEventKind.DESTINATION_RESERVED)
     execution_ids = {
         task_id: f"execution_{timing.tasks[task_id].execution_ordinal:06d}"
         for task_id in timing.task_order
@@ -307,32 +286,14 @@ def _transfer_lanes(
         )
         lane_dispatches = dispatches[direction]
         lane_completions = completions[direction]
-        records: list[TransferRecord] = [
-            _opening_record(
-                timing,
-                direction,
-                index,
-                dispatch,
-                completion,
-                alias_by_object,
-                origin_ns,
+        if not len(intervals) == len(lane_dispatches) == len(lane_completions):
+            raise RuntimeError(
+                f"runtime/simulator {direction} transfer count mismatch: "
+                f"scheduled={len(intervals)}, dispatched={len(lane_dispatches)}, "
+                f"completed={len(lane_completions)}"
             )
-            for index, (dispatch, completion) in enumerate(
-                zip(
-                    opening_dispatches[direction],
-                    opening_completions[direction],
-                    strict=True,
-                )
-            )
-        ]
-        opening = tuple(records)
+        records: list[TransferRecord] = []
         for interval in intervals:
-            if interval.sequence >= len(lane_dispatches) or (
-                interval.sequence >= len(lane_completions)
-            ):
-                raise RuntimeError(
-                    f"runtime trace omitted {direction} transfer {interval.sequence}"
-                )
             dispatch = lane_dispatches[interval.sequence]
             completion = lane_completions[interval.sequence]
             task_number = canonical_index(interval.trigger_task_id, "task_")
@@ -354,8 +315,6 @@ def _transfer_lanes(
                     completion,
                     queued_event,
                     reserved_event,
-                    simulated_origin_ns,
-                    alignment,
                     origin_ns,
                 )
             )
@@ -364,76 +323,10 @@ def _transfer_lanes(
             summary=_lane_summary(
                 direction,
                 tuple(records),
-                opening,
                 _lane_statistics(bridge, direction),
             ),
         )
     return lanes
-
-
-def _opening_record(
-    timing: ArmedExecutionTiming,
-    direction: str,
-    index: int,
-    dispatch: RuntimeTraceEvent,
-    completion: RuntimeTraceEvent,
-    alias_by_object: dict[int, str],
-    origin_ns: int,
-) -> TransferRecord:
-    """One transfer of the opening placement batch: measured, never simulated."""
-
-    if dispatch.object_id is None or dispatch.object_id not in alias_by_object:
-        raise RuntimeError(
-            f"opening {direction} transfer {index} moved an object the plan"
-            " did not name"
-        )
-    if completion.object_id != dispatch.object_id or completion.bytes != dispatch.bytes:
-        raise RuntimeError(
-            f"opening {direction} transfer {index} completed as a different copy"
-        )
-    alias_group_id = alias_by_object[dispatch.object_id]
-    accesses = timing.alias_accesses.get(alias_group_id, ())
-    lane_started = lane_finished = None
-    if (
-        completion.lane_started_at_ns is not None
-        and completion.lane_finished_at_ns is not None
-    ):
-        lane_started = completion.lane_started_at_ns / 1e9
-        lane_finished = completion.lane_finished_at_ns / 1e9
-    # Reported on its own: a lane may know when it was handed a transfer and
-    # not when the bytes moved, and the wait is worth having either way.
-    lane_issued = (
-        None
-        if completion.lane_issued_at_ns is None
-        else completion.lane_issued_at_ns / 1e9
-    )
-    return TransferRecord(
-        transfer_id=f"{direction}_opening_{index:06d}",
-        direction=direction,
-        sequence=index,
-        triggered_by="init",
-        alias_group_id=alias_group_id,
-        bytes=dispatch.bytes,
-        previous_access="init",
-        next_access=(
-            f"execution_{min(ordinal for ordinal, _ in accesses):06d}"
-            if accesses
-            else "persistent"
-        ),
-        modified_by="init",
-        simulated_ready_at_seconds=None,
-        simulated_started_at_seconds=None,
-        simulated_finished_at_seconds=None,
-        lane_issued_at_seconds=lane_issued,
-        lane_started_at_seconds=lane_started,
-        lane_finished_at_seconds=lane_finished,
-        start_delta_seconds=None,
-        end_delta_seconds=None,
-        queued_at_seconds=None,
-        reserved_at_seconds=None,
-        dispatched_at_seconds=(dispatch.timestamp_ns - origin_ns) / 1e9,
-        completion_observed_at_seconds=(completion.timestamp_ns - origin_ns) / 1e9,
-    )
 
 
 def _object_relations(
@@ -469,12 +362,10 @@ def _transfer_record(
     completion: RuntimeTraceEvent,
     queued: RuntimeTraceEvent | None,
     reserved: RuntimeTraceEvent | None,
-    simulated_origin_ns: int,
-    alignment: float,
     origin_ns: int,
 ) -> TransferRecord:
-    simulated_start = (interval.start_ns - simulated_origin_ns) / 1e9
-    simulated_end = (interval.end_ns - simulated_origin_ns) / 1e9
+    simulated_start = interval.start_ns / 1e9
+    simulated_end = interval.end_ns / 1e9
     lane_started = lane_finished = None
     start_delta = end_delta = None
     if (
@@ -483,8 +374,8 @@ def _transfer_record(
     ):
         lane_started = completion.lane_started_at_ns / 1e9
         lane_finished = completion.lane_finished_at_ns / 1e9
-        start_delta = lane_started - (simulated_start + alignment)
-        end_delta = lane_finished - (simulated_end + alignment)
+        start_delta = lane_started - simulated_start
+        end_delta = lane_finished - simulated_end
     # Reported on its own: a lane may know when it was handed a transfer and
     # not when the bytes moved, and the wait is worth having either way.
     lane_issued = (
@@ -502,7 +393,7 @@ def _transfer_record(
         previous_access=relations[0],
         next_access=relations[1],
         modified_by=relations[2],
-        simulated_ready_at_seconds=(interval.ready_ns - simulated_origin_ns) / 1e9,
+        simulated_ready_at_seconds=interval.ready_ns / 1e9,
         simulated_started_at_seconds=simulated_start,
         simulated_finished_at_seconds=simulated_end,
         lane_issued_at_seconds=lane_issued,
@@ -581,7 +472,6 @@ def _lane_statistics(bridge: RuntimeBridge, direction: str) -> LaneStatistics | 
 def _lane_summary(
     direction: str,
     records: tuple[TransferRecord, ...],
-    opening: tuple[TransferRecord, ...],
     lane_statistics: LaneStatistics | None,
 ) -> LaneSummary:
     measured = tuple(item for item in records if _lane_duration(item) is not None)
@@ -608,8 +498,6 @@ def _lane_summary(
             None if drift is None else drift.start_delta_seconds
         ),
         largest_start_delta_transfer_id=None if drift is None else drift.transfer_id,
-        opening_transfers=len(opening),
-        opening_bytes=sum(item.bytes for item in opening),
         lane_statistics=lane_statistics,
     )
 
@@ -785,14 +673,31 @@ def _build_step_summary(
     tasks: tuple[TaskRecord, ...],
     intervals: dict[str, TaskInterval],
     runtime: RuntimeTrace,
+    lanes: dict[str, _LaneRecords],
 ) -> StepTimingSummary:
     profiled_task_seconds = sum(item.expected_profile_seconds for item in tasks)
     real_task_seconds = sum(_compute_duration(item) for item in tasks)
-    selected = tuple(intervals.values())
+    selected = tuple(intervals[item.task_id] for item in tasks)
     simulated_start_ns = min(item.start_ns for item in selected)
     simulated_end_ns = max(item.end_ns for item in selected)
     simulated_span_seconds = (simulated_end_ns - simulated_start_ns) / 1e9
-    real_span_seconds = _seconds_between(timing.start_event, timing.end_event)
+    real_start = min(item.compute_started_at_seconds for item in tasks)
+    real_end = max(item.compute_finished_at_seconds for item in tasks)
+    real_span_seconds = real_end - real_start
+    transfers = tuple(item for lane in lanes.values() for item in lane.records)
+    all_transfers_timed = all(
+        item.lane_finished_at_seconds is not None for item in transfers
+    )
+    real_invocation = (
+        max(
+            (item.lane_finished_at_seconds or 0.0 for item in transfers),
+            default=real_end,
+        )
+        if all_transfers_timed
+        else None
+    )
+    if real_invocation is not None:
+        real_invocation = max(real_end, real_invocation)
     phases = sorted({item.phase for item in tasks})
     phase_comparisons = tuple(
         PhaseTimingComparison(
@@ -821,7 +726,7 @@ def _build_step_summary(
     makespan_seconds = simulation.makespan_ns / 1e9
     cycle_seconds: float | None = None
     exposed_tail_seconds: float | None = None
-    opening_delay_seconds = _seconds_between(timing.origin_event, timing.start_event)
+    entry_delay_seconds = real_start
     timeline = timing.timeline
     if timeline is not None and timeline.successor is not None:
         successor = timeline.successor
@@ -836,7 +741,7 @@ def _build_step_summary(
         real_inter_task_idle_seconds=real_idle,
         inter_task_idle_delta_seconds=real_idle - simulated_idle,
         simulated_inter_task_readiness_wait_seconds=(
-            sum(item.stall_ns for item in selected) / 1e9
+            sum(item.stall_ns for item in selected[1:]) / 1e9
         ),
         real_inter_task_readiness_wait_seconds=readiness,
         real_inter_task_exposed_overhead_seconds=dispatch,
@@ -849,15 +754,19 @@ def _build_step_summary(
         simulator_terminal_tail_seconds=max(
             0.0, makespan_seconds - simulated_end_ns / 1e9
         ),
+        simulated_entry_delay_seconds=simulated_start_ns / 1e9,
+        real_invocation_seconds=real_invocation,
+        real_terminal_tail_seconds=(
+            None if real_invocation is None else real_invocation - real_end
+        ),
         cycle_seconds=cycle_seconds,
-        opening_delay_seconds=opening_delay_seconds,
+        entry_delay_seconds=entry_delay_seconds,
         exposed_tail_seconds=exposed_tail_seconds,
         call_seconds=(
             timing.dispatch_call_finished_ns - timing.dispatch_call_started_ns
         )
         / 1e9,
         prior_invocation_drain_seconds=timing.prior_invocation_drain_ns / 1e9,
-        initial_actions_seconds=timing.dispatch_initial_actions_ns / 1e9,
         trace_setup_seconds=timing.trace_setup_ns / 1e9,
         optimizer_span_seconds=(
             max(item.compute_finished_at_seconds for item in optimizer)
@@ -867,7 +776,9 @@ def _build_step_summary(
         ),
         phase_comparisons=phase_comparisons,
         trace_complete=not (
-            runtime.event_overflow or runtime.allocation_event_overflow
+            runtime.event_overflow
+            or runtime.allocation_event_overflow
+            or not all_transfers_timed
         ),
     )
 

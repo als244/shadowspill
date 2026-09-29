@@ -67,7 +67,7 @@ class ArmedExecutionTiming:
     dispatch_call_started_ns: int = 0
     dispatch_call_finished_ns: int = 0
     prior_invocation_drain_ns: int = 0
-    dispatch_initial_actions_ns: int = 0
+    origin_recorded_ns: int = 0
     stream: int | None = None
     statistics_before: AdapterStatistics | None = None
     actions: tuple[MemoryAction, ...] = ()
@@ -119,22 +119,18 @@ class InvocationTimeline:
 
 @dataclass(frozen=True, slots=True)
 class InvocationTiming:
-    """One completed invocation on the device clock: what its step cost.
+    """One completed cycle on the device clock.
 
-    The four parts partition the cycle exactly:
-    ``cycle_seconds == opening_delay_seconds + selected_span_seconds +
-    exposed_tail_seconds``. The opening delay is the stream's wait from the
-    origin to the first task's compute, which is the first task's readiness waits and
-    whatever the opening restore and staging still held it for. The span is
-    first task start to last task end. The exposed tail is the stream time
-    after the last task before the next invocation's origin (or the end
-    marker): terminal work the stream still had to do, not the transfers that
-    drained on the lanes meanwhile, which cost the step nothing.
+    ``cycle_seconds == entry_delay_seconds + selected_span_seconds +
+    exposed_tail_seconds``. Entry delay includes scheduled input fetches and
+    frontend preparation. The span covers computation and inter-task gaps.
+    The tail runs from last compute to next origin, after required terminal
+    transfers have drained, and also includes caller work between invocations.
     """
 
     step_number: int
     cycle_seconds: float
-    opening_delay_seconds: float
+    entry_delay_seconds: float
     selected_span_seconds: float
     exposed_tail_seconds: float
 
@@ -142,7 +138,7 @@ class InvocationTiming:
         return {
             "step_number": self.step_number,
             "cycle_seconds": self.cycle_seconds,
-            "opening_delay_seconds": self.opening_delay_seconds,
+            "entry_delay_seconds": self.entry_delay_seconds,
             "selected_span_seconds": self.selected_span_seconds,
             "exposed_tail_seconds": self.exposed_tail_seconds,
         }
@@ -263,17 +259,17 @@ class InvocationTimelines:
             if cycle is None:
                 keep.append(timeline)
                 continue
-            opening = span_start.nanoseconds_since(origin)
+            entry = span_start.nanoseconds_since(origin)
             span = span_end.nanoseconds_since(span_start)
             tail = successor.nanoseconds_since(span_end)
-            if opening is None or span is None or tail is None:
+            if entry is None or span is None or tail is None:
                 keep.append(timeline)
                 continue
             done.append(
                 InvocationTiming(
                     step_number=timeline.step_number,
                     cycle_seconds=cycle / 1e9,
-                    opening_delay_seconds=opening / 1e9,
+                    entry_delay_seconds=entry / 1e9,
                     selected_span_seconds=span / 1e9,
                     exposed_tail_seconds=tail / 1e9,
                 )

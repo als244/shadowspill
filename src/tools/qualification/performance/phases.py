@@ -69,7 +69,7 @@ class _Measurements:
     host_group_seconds: list[float]
     group_tokens_per_second: list[float]
     cycle_seconds: list[float]
-    opening_delay_seconds: list[float]
+    entry_delay_seconds: list[float]
     selected_spans: list[float]
     dispatch_seconds: list[float]
     prior_invocation_drain_seconds: list[float]
@@ -300,7 +300,7 @@ def _measure_groups(
                 flush=True,
             )
         # The group's last cycle closes where a next step would begin,
-        # recorded before the drain so the drain is not inside it.
+        # after required terminal work has drained, just like the next origin.
         training.mark_cycle_end()
         _wait_idle(training)
         measured.host_group_seconds.append(time.perf_counter() - group_started)
@@ -311,8 +311,8 @@ def _measure_groups(
                 f"{arguments.steps_per_group} steps"
             )
         measured.cycle_seconds.extend(item.cycle_seconds for item in timings)
-        measured.opening_delay_seconds.extend(
-            item.opening_delay_seconds for item in timings
+        measured.entry_delay_seconds.extend(
+            item.entry_delay_seconds for item in timings
         )
         measured.selected_spans.extend(item.selected_span_seconds for item in timings)
         elapsed = sum(item.cycle_seconds for item in timings)

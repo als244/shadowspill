@@ -5,16 +5,12 @@ Every time here is seconds. Two clocks appear, and every field says which:
 - the device timeline, read from timing events measured against the step's
   origin event on the compute stream. Task markers and transfer intervals
   live here, so compute, fetch, and evict share one zero;
-- the host clock, `CLOCK_MONOTONIC`, counted from the runtime trace's
-  beginning, which the runtime records at the same point the origin event is
-  recorded. Boundary entry and exit, dispatch costs, and the worker's
-  queueing and completion observations live here.
+- the host clock, `CLOCK_MONOTONIC`, counted from a timestamp immediately
+  before the invocation origin is recorded. Boundary and worker observations
+  live here.
 
-Simulated times come from the simulator's own clock, shifted so that the
-first selected task starts at zero; `Timelines.first_task_started_at_seconds` is
-where that instant sits on the device timeline, and every delta is taken
-after that shift, so a delta reads as drift within the step rather than as
-the step's opening cost.
+Simulated times start at invocation entry too. Deltas subtract those unshifted
+coordinates, so entry delay and accumulated dispatch drift stay visible.
 """
 
 from __future__ import annotations
@@ -40,7 +36,7 @@ class TaskRecord:
     semantic_name: str
     phase: str
     microbatch: int | None
-    #: Simulated, from the shifted simulator clock: when the task's inputs
+    #: Simulated, from invocation entry: when the task's inputs
     #: were ready, when it started, when it ended, and how long it ran, which
     #: is the isolated profile the plan was built from.
     simulated_ready_at_seconds: float
@@ -58,12 +54,11 @@ class TaskRecord:
     #: transfer. Both leave the stream idle; the boundary owns both.
     input_readiness_wait_seconds: float
     allocation_reuse_wait_seconds: float
-    #: Device minus simulated, after aligning the two clocks. A start delta
-    #: that grows along the lane is drift the simulator did not price. Both
-    #: need the alignment, so neither is a difference of fields above.
+    #: Device minus simulated, from the same invocation boundary. Entry delay
+    #: and later drift both remain visible.
     start_delta_seconds: float
     end_delta_seconds: float
-    #: Host clock, from the trace's beginning. Four instants partitioning the
+    #: Host clock, from invocation entry. Four instants partitioning the
     #: frontend's cycle for this task with no gap: entering the opening
     #: boundary, leaving it for the compiled call, the call returning, and
     #: leaving the closing boundary. The opening boundary, the call, and the
@@ -156,13 +151,9 @@ class TaskRecord:
 class TransferRecord:
     """One scheduled transfer on its lane, simulated beside measured."""
 
-    #: Identity. A scheduled transfer's `transfer_id` is
-    #: `<direction>_<sequence>`, with `sequence` its FIFO position among the
-    #: plan's transfers on the lane; an opening transfer's is
-    #: `<direction>_opening_<index>`. `triggered_by` is what released the
-    #: transfer: the execution task id of the task whose completion did, a
-    #: key into `tasks`, or `init` for the opening placement batch the
-    #: runtime issues before the first task.
+    #: Identity: `<direction>_<sequence>`, in the lane's FIFO order.
+    #: `triggered_by` is the execution task whose completion released this
+    #: scheduled transfer, including control tasks; it is a key into `tasks`.
     transfer_id: str
     direction: str
     sequence: int
@@ -180,10 +171,9 @@ class TransferRecord:
     previous_access: str
     next_access: str
     modified_by: str
-    #: Simulated, from the shifted simulator clock: when the transfer could
+    #: Simulated, from invocation entry: when the transfer could
     #: start, when the lane started it, when it ended, and its priced
-    #: duration at the assumed lane bandwidth. `None` for an opening
-    #: transfer, which the simulator does not model.
+    #: duration at the assumed lane bandwidth.
     simulated_ready_at_seconds: float | None
     simulated_started_at_seconds: float | None
     simulated_finished_at_seconds: float | None
@@ -197,11 +187,10 @@ class TransferRecord:
     lane_issued_at_seconds: float | None
     lane_started_at_seconds: float | None
     lane_finished_at_seconds: float | None
-    #: Device minus simulated, after alignment; `None` without a stream
-    #: interval or without a simulation.
+    #: Device minus simulated from invocation entry; `None` without lane timing.
     start_delta_seconds: float | None
     end_delta_seconds: float | None
-    #: Host clock, from the trace's beginning: when the action was queued,
+    #: Host clock, from invocation entry: when the action was queued,
     #: when its destination was reserved, when the worker dispatched the copy
     #: to the lane, and when the worker observed its completion.
     queued_at_seconds: float | None
@@ -265,12 +254,6 @@ class LaneSummary:
     #: reached it: where the lane had drifted furthest from the simulation.
     largest_start_delta_seconds: float | None
     largest_start_delta_transfer_id: str | None
-    #: The opening placement batch on this lane: transfers the runtime issued
-    #: before the first task to restore the step's initial objects, which
-    #: precede the span and carry no simulation. They are records too,
-    #: `triggered_by` `init`, and lead the lane's order.
-    opening_transfers: int
-    opening_bytes: int
     #: What the lane itself reports having moved, straight from the lane
     #: contract's `statistics` entry -- the same call for a built-in lane and
     #: for one a library registered, so nothing here knows which answered.
@@ -302,8 +285,6 @@ class LaneSummary:
             ),
             "largest_start_delta_seconds": self.largest_start_delta_seconds,
             "largest_start_delta_transfer_id": self.largest_start_delta_transfer_id,
-            "opening_transfers": self.opening_transfers,
-            "opening_bytes": self.opening_bytes,
             "lane_statistics": _lane_statistics_as_dict(self.lane_statistics),
         }
 
@@ -367,21 +348,17 @@ class TransferQueue:
 
 @dataclass(frozen=True, slots=True)
 class Timelines:
-    """The step on three streams, each in its own order, sharing one zero.
+    """Compute and transfer orders, using invocation-relative coordinates.
 
-    They hold references: `compute` is every selected task's execution
-    task id in compute-stream order, keys into `StepDiagnostics.tasks`;
-    `fetch` and `evict` list transfer ids in each queue's FIFO order, keys
-    into the same-named group of `StepDiagnostics.transfers`. Device times
-    in those records count from the origin event; simulated times count from
-    the first selected task's simulated start. `first_task_started_at_seconds` is
-    when that task's kernels actually started on the device: the step's
-    prologue, which every invocation pays and the simulator does not model --
-    the opening restore of the first task's inputs, input staging, and the
-    first dispatch. Every delta is taken after shifting the simulation to it,
-    so a delta is drift within the step and the prologue is read here, once.
+    `compute` references computational tasks, excluding control tasks. Fetch
+    and evict reference transfers in each lane's FIFO order. All task identities,
+    including action-triggering controls, remain in `StepDiagnostics.tasks`.
+    `first_task_started_at_seconds` is the measured first computation's start,
+    an observation rather than a shift applied to simulated coordinates.
     """
 
+    #: CLOCK_MONOTONIC timestamp immediately before recording the device origin.
+    host_origin_ns: int
     first_task_started_at_seconds: float
     compute: tuple[str, ...]
     fetch: TransferQueue
@@ -391,8 +368,9 @@ class Timelines:
         return {
             "clocks": {
                 "stream": "seconds from the step origin event on the device",
-                "simulated": ("seconds from the first selected task's simulated start"),
-                "host": "seconds from the runtime trace's beginning",
+                "simulated": "seconds from invocation entry",
+                "host": "seconds from invocation entry on the host",
+                "host_origin_ns": self.host_origin_ns,
                 "first_task_started_at_seconds": self.first_task_started_at_seconds,
             },
             "compute": list(self.compute),
@@ -549,30 +527,23 @@ class StepTimingSummary:
     selected_span_delta_seconds: float
     simulator_makespan_seconds: float
     simulator_terminal_tail_seconds: float
-    #: The step on the device clock: this invocation's origin on the compute
-    #: stream to the next invocation's, or to the end marker the caller
-    #: recorded, whichever the stream reached first. It is the time a
-    #: repeated step costs and what throughput divides by; it contains the
-    #: opening delay, the span and the exposed tail exactly, and excludes the
-    #: part of the previous invocation's tail that overlapped it. `None` when
-    #: the trace was resolved before anything closed the cycle.
+    simulated_entry_delay_seconds: float
+    #: Invocation entry through all computation and required terminal copies.
+    #: None if a transfer lane did not provide device timestamps.
+    real_invocation_seconds: float | None
+    real_terminal_tail_seconds: float | None
+    #: Origin to successor origin (or final marker), including caller work.
+    #: None until something closes this invocation's cycle.
     cycle_seconds: float | None
-    #: Origin to the first task's compute start: the first task's readiness
-    #: waits and whatever the opening still held the stream for.
-    opening_delay_seconds: float
-    #: Last task's compute end to the cycle's end: terminal work the stream
-    #: itself still did. `None` with `cycle_seconds`.
+    #: Origin to first computational task start, including input readiness.
+    entry_delay_seconds: float
+    #: Last computation to cycle end, including caller and terminal work.
     exposed_tail_seconds: float | None
-    #: The step as the caller saw it, on the host clock: the whole planned
-    #: call, the wait for the previous invocation to drain at its start, the
-    #: submission of the opening placement batch, and the trace's one-time
-    #: setup, which only the first traced call pays.
+    #: Host call time, prior invocation's drain, and optional lazy trace setup.
     call_seconds: float
     prior_invocation_drain_seconds: float
-    initial_actions_seconds: float
     trace_setup_seconds: float
-    #: First optimizer task's start through the last one's end, on the
-    #: device timeline.
+    #: First optimizer task start through last optimizer task end.
     optimizer_span_seconds: float
     phase_comparisons: tuple[PhaseTimingComparison, ...]
     trace_complete: bool
@@ -607,12 +578,14 @@ class StepTimingSummary:
             "selected_span_delta_seconds": self.selected_span_delta_seconds,
             "simulator_makespan_seconds": self.simulator_makespan_seconds,
             "simulator_terminal_tail_seconds": self.simulator_terminal_tail_seconds,
+            "simulated_entry_delay_seconds": self.simulated_entry_delay_seconds,
+            "real_invocation_seconds": self.real_invocation_seconds,
+            "real_terminal_tail_seconds": self.real_terminal_tail_seconds,
             "cycle_seconds": self.cycle_seconds,
-            "opening_delay_seconds": self.opening_delay_seconds,
+            "entry_delay_seconds": self.entry_delay_seconds,
             "exposed_tail_seconds": self.exposed_tail_seconds,
             "call_seconds": self.call_seconds,
             "prior_invocation_drain_seconds": self.prior_invocation_drain_seconds,
-            "initial_actions_seconds": self.initial_actions_seconds,
             "trace_setup_seconds": self.trace_setup_seconds,
             "optimizer_span_seconds": self.optimizer_span_seconds,
             "phase_comparisons": {

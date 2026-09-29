@@ -1,7 +1,7 @@
 """Plan-time admission: tasks, the fixed layout, action batches, acquisitions.
 
 Before a plan runs, every task it will execute, the fixed physical layout its
-objects are placed in, the initial-placement action batches and the public
+objects are placed in, lifecycle action batches and the public
 object sets a caller may acquire are described to the neutral runtime once,
 through the plan handle, and answered with the handles the boundaries use.
 `encode_task` is the ctypes description of one task and the buffers that keep it
@@ -212,7 +212,7 @@ def admit_initial_actions(
     task_number: int,
     action_trace_labels: tuple[str, ...] | None = None,
 ) -> int:
-    """Admit one reusable initial-placement action batch."""
+    """Admit one reusable lifecycle action batch."""
 
     labels = action_labels(actions, action_trace_labels)
     action_pairs = _runtime_actions(bridge, actions, labels)

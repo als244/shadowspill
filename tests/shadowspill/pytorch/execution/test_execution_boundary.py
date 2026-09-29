@@ -34,8 +34,8 @@ class _CallLog:
     def wait_until_idle(self) -> None:
         self.calls.append("wait_plan_idle")
 
-    def require_empty_layout(self) -> None:
-        self.calls.append("require_empty_layout")
+    def require_initial_residency(self, residency: tuple[object, ...]) -> None:
+        self.calls.append(("require_initial_residency", residency))
 
 
 class _RawOutputs:
@@ -195,7 +195,9 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
             ("begin_runtime_trace", step_id)
         ),
     )
-    run = object()
+    run = SimpleNamespace(
+        plan=SimpleNamespace(schedule=SimpleNamespace(initial_residency=()))
+    )
     harness = object.__new__(TrainingExecutor)
     harness._bridge = bridge  # type: ignore[assignment]
     harness._invocations = 3
@@ -230,12 +232,12 @@ def test_runtime_trace_begins_after_prior_invocation_is_idle(
 
     assert selected is run
     assert calls == [
-        "origin",
         "wait_plan_idle",
+        "origin",
         "statistics",
         ("begin_runtime_trace", 7),
         "refresh_inputs",
-        "require_empty_layout",
+        ("require_initial_residency", ()),
     ]
     assert timing.statistics_before is bridge.statistics_value
 
@@ -281,3 +283,49 @@ def test_task_boundary_annotations_are_shared_and_default_off(
         "enabled_body",
         ("end", 17),
     ]
+
+
+def test_final_cycle_includes_required_terminal_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = install(monkeypatch, TimingLibrary())
+    bridge = SimpleNamespace(
+        runtime=SimpleNamespace(_runtime_handle=0),
+        wait_until_idle=lambda: library.clock.advance(4.0),
+    )
+    timing = ExecutionTiming(cast(Any, bridge), ())
+    stream = SimpleNamespace(cuda_stream=11)
+    timing.begin_invocation(1, cast(Any, stream))
+    timing.record_compute_start(cast(Any, stream))
+    library.clock.advance(1.0)
+    timing.record_compute_end(cast(Any, stream))
+    monkeypatch.setattr(timing_module.torch.cuda, "current_stream", lambda: stream)
+    timing.mark_cycle_end()
+    (result,) = timing.invocation_timings()
+    assert result.cycle_seconds == pytest.approx(0.005)
+    assert result.selected_span_seconds == pytest.approx(0.001)
+    assert result.exposed_tail_seconds == pytest.approx(0.004)
+    timing.release()
+
+
+def test_trace_preparation_is_reusable_and_recovers_from_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = install(monkeypatch, TimingLibrary())
+    timing = ExecutionTiming(cast(Any, _CallLog()), ("task_000000",))
+    attempts = []
+
+    def prepare(*args: object, **kwargs: object) -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("trace allocation failed")
+
+    monkeypatch.setattr(timing_module, "prepare_runtime_trace", prepare)
+    with pytest.raises(RuntimeError, match="trace allocation failed"):
+        timing.prepare()
+    assert len(library.released) == 7  # three invocation and four task markers
+    timing.prepare()
+    timing.prepare()
+    assert len(attempts) == 2
+    timing.release()
+    assert len(library.released) == 14

@@ -344,9 +344,8 @@ for a run made before the pages existed.
                                    the step ran slower than predicted --
                                    against the bounds the performance gate
                                    holds the simulator to, and which part of
-                                   the step it missed: compute, waiting, or
-                                   the opening restore the simulator does not
-                                   model at all
+                                   the step it missed: entry delay, compute,
+                                   waiting, or terminal transfers
    ```
 
    `raw_data/` holds what the figures were drawn from, so they can be drawn
@@ -379,7 +378,7 @@ for a run made before the pages existed.
    after the first),
    then **the traced step versus simulation**, using the fields defined
    in the [StepResult diagnostics guide](../docs/python/step-diagnostics.md).
-   The boundary behavior it reports — the opening restore and the
+   The boundary behavior it reports — scheduled entry fetches and the
    terminal writeback — is defined in
    [step boundaries](../docs/architecture/step-boundaries.md).
 5. **Where the time went.** The command's own wall time by category —
@@ -415,7 +414,7 @@ for a run made before the pages existed.
 | wasted compute | The sum of the two rows above: everything the step spends beyond the floor, before the terminal writeback. |
 | terminal writeback | Transfers that return spill-final objects to the spill pool after the last task; the simulated step includes them. |
 | task window | From the first task's compute start through the last task's end. It excludes the step's boundary regions by construction. |
-| opening restore | The unmodeled fetch of the schedule's initial device objects at each invocation's start. |
+| entry delay | Invocation origin to the first computation, including its scheduled fetches and measured frontend preparation. |
 | lane utilization | Simulated transfer bytes over the assumed lane bandwidth over the simulated step: the share of the step each transfer lane spends busy. |
 | infeasible / search_exhausted | A geometry the planner proved cannot fit the budget, or whose bounded candidate search ended without a feasible schedule. A geometry whose build exhausts the device reports every one of its budgets infeasible too, since profiling runs real kernels and the largest microbatch can run out of memory before any plan exists. Reported in the table, never raised. |
 | rejected | A point the planner refused, before or during its search; `error` carries its reason. The sweep goes on with the next point. |

@@ -95,7 +95,6 @@ meaning; the defaults are:
 
 | option | default |
 |---|---|
-| `initial_placement` | `InitialPlacement.REQUIRED` |
 | `resolution_options` | every quarter, `0` through `1` |
 | `residency_strategies` | `("headroom-stall", "tight-stall")` |
 | `fetch_rules` | `("packed-fifo", "packed-fit", "latest-safe", "demand")` |
@@ -112,7 +111,6 @@ searched; [built-in candidate policies](#built-in-candidate-policies) is what
 each one does.
 
 Each remaining option is defined by the section of the cycle that reads it:
-`initial_placement` under [prepare](#prepare-deriving-the-residency-problem),
 `max_repair_attempts` under
 [repair](#repair-moving-a-transfer-or-making-room-for-one),
 `capacity_refinement_bytes` under
@@ -286,16 +284,15 @@ The required seed for alias $a$ is the inclusive hull of its anchors:
 R_a^0=\operatorname{Hull}(H_a).
 \]
 
-Greedy initial placement may additionally extend selected spill-origin aliases
-to boundary $-1$ when capacity permits and doing so is likely to hide an
-early fetch. A legal cut removes an anchor-free subinterval from one current
-span, possibly splitting it in two. Therefore every generated plan satisfies
+Declared initial residency is fixed. A spill value is fetched by an ordinary
+action before its first consumer; it is never promoted to a free device value.
+A legal cut removes an anchor-free subinterval from one current span, possibly
+splitting it in two. Therefore every generated plan satisfies
 
 \[
 H_a\subseteq R_a\subseteq R_a^0
 \]
 
-apart from an explicitly chosen greedy initial extension.
 
 A legal cut normally removes an anchor-free run. It may also insert a span
 break immediately after an anchor when that anchor has no later access tied to
@@ -401,13 +398,11 @@ optional admission arrays. This is the only section that exists at the
 problem level and not the candidate level: a candidate never prepares
 anything, it inherits what preparation produced.
 
-Seeding residency happens here too. The default `InitialPlacement.REQUIRED`
-uses only the anchor hull. `InitialPlacement.GREEDY` also considers
-spill-origin aliases first consumed after task 0, orders them
-deterministically -- by first use, then the least slack between the fetch's
-deadline and the earliest it could land after task 0, then the largest
-estimated deadline miss when the fetches queue on one lane, then size, then
-alias -- and preplaces each one that fits initial capacity.
+The seed is the hull of each alias's access and declared residency anchors.
+Initial residency remains the caller's actual state. Spill inputs consumed by
+the first computational task need an earlier action boundary, provided by a
+zero-duration control task in PyTorch-generated plans. Their fetches are
+ordinary candidate actions and contribute to every candidate's makespan.
 
 The objects under `minimum_object_bytes_evict_eligible` are settled here as
 well, because everything below assumes they are already gone. Each holds one
@@ -416,7 +411,7 @@ timeline allows — or the start, to the boundary after its last access or the
 end. Packing those leases on their own gives the resident slice, and the
 device capacity the reducer sees loses it. From there these objects are absent
 from the search: the floor and the pressure do not count them, the cut index
-has no entries for them, greedy placement skips them, and the emitter issues
+has no entries for them, and the emitter issues
 each fetch at the trigger the slice was sized for, so no fetch rule can move a
 lifetime the slice was sized without. Every extent placement measures includes
 the slice, and a slice the device cannot hold is a preflight failure of its
@@ -450,7 +445,7 @@ The stall score first minimizes estimated exposed
 \]
 
 The transfer score omits this first term. Both then prefer no required
-write-back, removable greedy initial placement, later first use, larger
+write-back, later first use, larger
 objects, longer removable spans, and stable alias/boundary identity.
 
 Reductions are not cached. A repair trajectory cuts aliases monotonically,

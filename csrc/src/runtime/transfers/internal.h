@@ -23,7 +23,7 @@ typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 /*
  * One queue serves two orders. The plan's transfers are dispatched in the
  * order their boundaries triggered them; background transfers (those the
- * plan did not schedule: an opening restore, a reconciliation) are dispatched
+ * plan did not schedule: materialization, reconciliation) are dispatched
  * in their own order and only while the queue holds fewer than
  * `background_window_bytes` of them in flight, so a plan transfer never
  * waits behind more than the window. In flight, it is one FIFO in

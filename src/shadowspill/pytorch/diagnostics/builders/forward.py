@@ -15,6 +15,7 @@ from shadowspill.planner.diagnostics.plan import (
 )
 from shadowspill.pytorch.lowering.forward import LoweredForwardProgram, TaskEntrypoint
 from shadowspill.pytorch.profiling import TaskMeasurement
+from shadowspill.task.entrypoints import execution_entrypoints
 from shadowspill.task.layout import (
     reconcile_compiled_task_layout,
 )
@@ -53,7 +54,9 @@ def forward_stage_inventory(
             manifests,
             profiling_metadata_digest,
         )
-        for occurrence, entrypoint in enumerate(lowered.entrypoints)
+        for occurrence, entrypoint in enumerate(
+            execution_entrypoints(lowered.program.tasks, lowered.entrypoints)
+        )
     )
     unique_stages = tuple(
         _forward_unique_stage(key, lowered, index, measurements, manifests)
@@ -99,6 +102,31 @@ def _forward_task_stage(
     manifests: Mapping[str, ExecutableTaskManifest],
     metadata_digest: str | None,
 ) -> PlanTaskStage:
+    if entrypoint.options.phase == "control":
+        ordinal = index.execution_ordinal.get(entrypoint.task_id)
+        return PlanTaskStage(
+            task_id=entrypoint.task_id,
+            execution_ordinal=ordinal,
+            execution_task_id=None if ordinal is None else f"execution_{ordinal:06d}",
+            semantic_name="control.invocation_start",
+            phase="control",
+            microbatch=None,
+            stage_occurrence_id=None,
+            unique_stage_id="control",
+            structural_contract_key="control",
+            semantic_contract_digest=None,
+            executable_contract_digest=None,
+            compiled_layout_digest=None,
+            graph_pair_variant=None,
+            chosen_graph_pair_variant=None,
+            selected=entrypoint.task_id in index.selected_ids,
+            profile_compatibility_digest="control",
+        )
+    occurrence = (
+        entrypoint.options.stage_index
+        if entrypoint.options.stage_index is not None
+        else occurrence
+    )
     artifact_key = lowered.executables[entrypoint.task_id].compatibility_digest
     manifest = manifests[artifact_key]
     task = index.task_by_id[entrypoint.task_id]
@@ -113,7 +141,7 @@ def _forward_task_stage(
         task_id=entrypoint.task_id,
         execution_ordinal=ordinal,
         execution_task_id=None if ordinal is None else f"execution_{ordinal:06d}",
-        semantic_name=f"stage_{occurrence:04d}.forward.inference",
+        semantic_name=f"forward.stage_{occurrence:04d}.{entrypoint.options.target}",
         phase="forward",
         microbatch=None,
         stage_occurrence_id=f"stage_{occurrence:04d}",

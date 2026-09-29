@@ -138,7 +138,7 @@ underneath, and the clocks a step is read on.
     abandoned rather than closed.
 29. [Step boundaries](architecture/step-boundaries.md) — the invocation
     cycle: why repetition is sound, the synchronization points
-    between one step and the next, the first-use order of the opening restore,
+    between one step and the next, scheduled fetches from the actual initial state,
     and what step time means.
 30. [PyTorch adapter](architecture/adapter.md) — what the adapter library is
     made of, how its source is laid out, what it requires of a backend, and

@@ -21,7 +21,6 @@ from shadowspill.ir import (
 )
 from shadowspill.planner import (
     GenericPlanningOptions,
-    InitialPlacement,
     ResidentSlice,
     SearchOptions,
     pressurefit,
@@ -103,7 +102,6 @@ def test_latest_safe_fetch_accounts_for_transfer_duration() -> None:
     )
     result = PressureFit(
         PressureFitOptions(
-            initial_placement=InitialPlacement.REQUIRED,
             residency_strategies=("relaxed-stall",),
             fetch_rules=("latest-safe",),
             evaluate_coalesced=False,
@@ -150,7 +148,6 @@ def test_demand_fetch_uses_final_legal_boundary() -> None:
     )
     result = PressureFit(
         PressureFitOptions(
-            initial_placement=InitialPlacement.REQUIRED,
             residency_strategies=("relaxed-stall",),
             fetch_rules=("demand",),
             evaluate_coalesced=False,

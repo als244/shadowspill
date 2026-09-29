@@ -19,13 +19,12 @@ import torch
 from shadowspill.diagnostics.timing import (
     ArmedExecutionTiming as _ArmedExecutionTiming,
 )
-from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind
+from shadowspill.ir import ExecutionPlan
 from shadowspill.pytorch.invocation import ReusableCompletionEvent
 from shadowspill.pytorch.lowering.training import LoweredTrainingProgram
 from shadowspill.pytorch.materialization.training import TrainingMaterializedState
 from shadowspill.pytorch.runtime_adapter.boundaries import (
     acquire_for_caller,
-    submit_initial_actions,
     transfer_outputs_to_caller,
 )
 from shadowspill.runtime.fixed_layout import RuntimeFixedLayout
@@ -118,7 +117,6 @@ class TrainingExecutor(AnnotatedExecutor):
     ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...]]:
         timing = self.timing.armed
         run = self._begin_invocation(inputs, timing, step_number)
-        self._submit_initial_placement(run, timing)
         ordered = self._execute_program(run)
         self._handoff_public_outputs(run, ordered)
         losses, metrics = self._rebuild_objective_results(ordered)
@@ -136,14 +134,6 @@ class TrainingExecutor(AnnotatedExecutor):
         stream = torch.cuda.current_stream()
         if timing is not None:
             timing.dispatch_call_started_ns = time.perf_counter_ns()
-        self.timing.record_origin(stream)
-        # The caller numbers the step, so the timings carry the count a
-        # restored checkpoint resumed from. `_invocations` counts this
-        # process's calls and only decides whether there is a prior plan to
-        # drain.
-        timeline = self.timing.begin_invocation(step_number, stream)
-        if timing is not None:
-            timing.timeline = timeline
         self.timing.prior_invocation_drain_ns = 0
         if self._invocations:
             # V1 plans have a fresh terminal state. Preserve asynchronous
@@ -158,33 +148,21 @@ class TrainingExecutor(AnnotatedExecutor):
             self.timing.prior_invocation_drain_ns = time.perf_counter_ns() - started_ns
             if timing is not None:
                 timing.prior_invocation_drain_ns = self.timing.prior_invocation_drain_ns
+        self.timing.record_origin(stream)
+        # The caller numbers the step, so the timings carry the count a
+        # restored checkpoint resumed from. `_invocations` counts this
+        # process's calls and only decides whether there is a prior plan to
+        # drain.
+        timeline = self.timing.begin_invocation(step_number, stream)
         if timing is not None:
+            timing.timeline = timeline
             self.timing.begin_armed_runtime_trace(timing, step_number)
-        # Staging the inputs waits for the whole runtime, so every earlier
-        # call has drained here and must have left the layout empty.
+        # Staging waits for prior work before checking the declared state.
         self._state.refresh_inputs(inputs)
-        self._bridge.require_empty_layout()
+        self._bridge.require_initial_residency(
+            self._run.plan.schedule.initial_residency
+        )
         return self._run
-
-    def _submit_initial_placement(
-        self,
-        run: _PlanRun,
-        timing: _ArmedExecutionTiming | None,
-    ) -> None:
-        started_ns = time.perf_counter_ns() if timing is not None else 0
-        with self._task_annotations.range("shadowspill.training.initial_actions"):
-            if run.initial_task_id is None:
-                raise AssertionError("run has no admitted initial-placement task")
-            submit_initial_actions(
-                self._bridge,
-                tuple(
-                    MemoryAction("task_000000", alias_id, MemoryActionKind.FETCH)
-                    for alias_id in run.initial_fetches
-                ),
-                task_number=run.initial_task_id,
-            )
-        if timing is not None:
-            timing.dispatch_initial_actions_ns = time.perf_counter_ns() - started_ns
 
     def _execute_program(
         self,

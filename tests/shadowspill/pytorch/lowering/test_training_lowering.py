@@ -289,7 +289,19 @@ def _lowered(
 def test_training_lowering_composes_accumulation_and_recomputation() -> None:
     lowered = _lowered()
     assert len(lowered.program.task_alternative_groups) == 2
-    assert len(lowered.program.tasks) == 8 + len(lowered.optimizer_task_ids)
+    assert len(lowered.program.tasks) == 9 + len(lowered.optimizer_task_ids)
+    assert lowered.program.tasks[0].phase == "control"
+    assert not lowered.program.tasks[0].requires_entrypoint
+    by_id = {task.task_id: task for task in lowered.program.tasks}
+    for entrypoint in lowered.entrypoints:
+        if (
+            entrypoint.options.phase == "forward"
+            and entrypoint.options.stage_index == 0
+        ):
+            assert (
+                lowered.program.tasks[0].task_id
+                in by_id[entrypoint.task_id].dependencies
+            )
     assert len(lowered.gradients) == 2
     assert lowered.fixed_tensors == ()
     assert lowered.program.tasks[-1].phase == "optimizer"
@@ -310,6 +322,8 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
         for group in lowered.program.task_alternative_groups
     )
     selected = lowered.program.selected_tasks(selections)
+    assert selected[0].phase == "control"
+    selected = tuple(task for task in selected if task.requires_entrypoint)
     assert [task.phase for task in selected[:4]] == [
         "forward",
         "backward",
@@ -332,6 +346,8 @@ def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:
         for group in lowered.program.task_alternative_groups
     )
     selected = lowered.program.selected_tasks(selections)
+    assert selected[0].phase == "control"
+    selected = tuple(task for task in selected if task.requires_entrypoint)
     assert [task.phase for task in selected[:4]] == [
         "forward",
         "backward",

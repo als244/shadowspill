@@ -18,20 +18,18 @@ call, before the step's first task. Every device measurement is read as the
 elapsed time from that one event, so the compute stream and both transfer
 lanes share a zero without any clock fitting.
 
-Host work is measured on `CLOCK_MONOTONIC`, counted from the runtime
-trace's beginning. The runtime records that beginning at the same point the
-origin event is recorded, so host and device times are two views of the
-same instant, though never subtracted from each other: durations are
-compared within a clock, and only orderings across them.
+Host work uses `CLOCK_MONOTONIC`, counted from a timestamp taken immediately
+before recording the invocation origin. Host and device durations use their
+own clocks; enqueue latency remains visible rather than fitted away.
 
 ## The compute lane
 
-The frontend records three timing events per selected task on the compute
+The frontend records four timing events per selected task on the compute
 stream:
 
 - **reached**, when the stream arrives at the task's readiness marker;
-- **started**, after the stream has waited for the task's inputs to be
-  resident and for the ranges its allocations reuse to be released;
+- **inputs ready**, after waiting for input residency;
+- **started**, after waiting for allocation ranges to become reusable;
 - **finished**, after the task's kernels.
 
 Their differences are the task's two waits and its duration, and their
@@ -80,51 +78,40 @@ Read against the instants the lane reported, those say how long a copy waited
 behind its predecessors and how far the poll lagged the device -- neither of
 which is transfer time.
 
-## Simulated time, and alignment
+## Simulated time
 
-The simulator has its own clock, which starts when the first task starts.
-The step diagnostics shift it so that the first selected task starts at
-zero, and report when that task's kernels actually started on the device as
-`first_task_started_at_seconds`: the step's prologue. Every invocation pays it
-— the previous invocation's drain, input staging, and the opening restore of
-the first task's inputs — and the simulator prices none of it, because its
-clock begins where that work ends. Every delta between a simulated and a
-measured time is taken after the shift, so it reads as drift within the step
-and the prologue is read once rather than repeated in every delta; see [step
-boundaries](step-boundaries.md) for what the boundary regions contain and
-which of them the makespan does charge for.
+Simulation and execution both start at invocation entry. The zero-duration
+start task triggers ordinary fetches before the first computation. Diagnostics
+retain these coordinates: a start delta is measured start minus simulated
+start, including any accumulated entry or dispatch delay. Every transfer must
+match a scheduled transfer by lane order, trigger, object, and byte count.
+
+The trace's invocation duration ends at the latest computational or required
+transfer completion. This matches the simulated makespan's boundary. Entry
+delay, the computational task window, and terminal duration sum to this total.
+Control tasks remain in the task inventory but not in model-compute totals.
 
 ## The step: origin to origin
 
-Every invocation, traced or not, records three timing events on the compute
-stream: its **origin** where it begins, before its first task; its **span
-start** where its first task's compute starts; and its **span end** where
-its last task's compute ends. The stream is in order, so the next
-invocation's origin is reached only after everything this one enqueued, and
-the **cycle** of an invocation is its origin to the next origin. That is the
-step's time: what a repeated step costs and what throughput divides by. A
-loop that stops records an end marker in the same place a next origin would
-sit, so its last step reads like every other.
-
-The cycle partitions exactly into three parts, each a difference of two of
-the events:
+Every invocation records three timing events on the compute stream: origin,
+first computational task start, and last computational task end. The next
+origin is recorded after the previous invocation's terminal work has drained.
+The cycle runs from one origin to the next, so repeated cycles account for
+required transfers once and also include caller work between invocations.
+`mark_cycle_end()` waits for the same terminal work and records an end marker
+when no next invocation follows.
 
 ```text
-cycle = opening delay + selected span + exposed tail
+cycle = entry delay + selected span + exposed tail
 ```
 
-The opening delay is origin to span start: the first task's readiness waits and
-whatever the opening still held the stream for. The selected span is the
-tasks. The exposed tail is span end to the next origin: terminal work the
-stream itself still did. Transfers that drained on the lanes meanwhile are
-not in the cycle, because they cost the step nothing; a later invocation
-that has to wait for them pays in its own opening delay, where the cost
-belongs.
+Cycle time measures throughput. The traced invocation's terminal duration
+measures required work; the cycle's exposed tail also includes caller and
+instrumentation delays. These quantities are kept separate.
 
-The events are created once per callable and reused round-robin, so an
-invocation creates nothing; reading a cycle waits for the closing event and
-for nothing else. The Python side of this is
-[timing](../python/api/timing.md).
+Markers are reused round-robin. Reading a closed cycle waits for its closing
+event. See the [timing API](../python/api/timing.md) and
+[step boundaries](step-boundaries.md).
 
 ## What an untraced step pays
 

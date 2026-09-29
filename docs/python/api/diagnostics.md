@@ -87,7 +87,7 @@ not, returned by `PlannedTrainStep.invocation_timings()` and defined on the
 `tasks` maps execution task ids to a `TaskRecord` each, and `transfers` is a
 `TransferRecords` pair of mappings, `fetch` and `evict`, from transfer id to
 `TransferRecord`. Every record places simulated beside measured -- start, end,
-duration, and their deltas after alignment -- with a host group for boundary
+duration, and their deltas from the common invocation origin -- with a host group for boundary
 entry and exit, dispatch costs, and the worker's queueing and completion
 observations. Each transfer names the tasks it sits between (`previous_access`,
 `next_access`) and the task whose result it carries (`modified_by`), all of
@@ -140,13 +140,12 @@ the task window -- and `step_seconds`, every measured step in order, so a
 difference can be attributed rather than only reported. `recomputation_seconds`
 is the part of task compute the chosen recomputation costs over the save-only
 floor; it is a counterfactual rather than a measurement, so the same figure
-stands on both clocks. Outside the task window
-the two clocks differ in kind, so they are kept as separate fields rather than
-one: the simulated side prices a terminal writeback that overlaps nothing
-(`terminal_tail_seconds`), while the measured side pays an opening restore the
-simulator does not model at all (`prologue_seconds`) plus whatever of its own
-writeback the next step did not absorb (`real_terminal_tail_seconds`). Each
-side's parts sum to that side's step.
+stands on both clocks. Entry and terminal work are also measured on both clocks:
+`simulated_entry_delay_seconds`, `real_entry_delay_seconds`,
+`terminal_tail_seconds`, and `real_terminal_tail_seconds`. Their five disjoint
+components sum to the corresponding invocation. The fidelity plot uses the
+traced invocation; throughput uses the median untraced cycle, which also
+includes caller work.
 
 `write_run_tables(entries, directory, *, tokens_per_step)` writes the raw-data
 tables alone, without drawing anything. `plot_step_run()` calls it as its last

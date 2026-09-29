@@ -124,7 +124,7 @@ def _function_pointer(library: Any, name: str) -> int:
 
 
 #: How far a lane may run ahead with transfers the plan did not schedule (the
-#: opening restore, a reconciliation): a plan transfer never waits behind more
+#: materialization, reconciliation): a plan transfer never waits behind more
 #: than this many background bytes. Zero removes the bound.
 DEFAULT_BACKGROUND_WINDOW_BYTES: Final = 64 << 20
 
@@ -191,10 +191,9 @@ def install_runtime(
                 kind=item.kind,
                 capacity_bytes=item.capacity_bytes,
                 configuration=(
-                    None if configuration is None
-                    else ctypes.cast(
-                        ctypes.byref(configuration), ctypes.c_void_p
-                    )
+                    None
+                    if configuration is None
+                    else ctypes.cast(ctypes.byref(configuration), ctypes.c_void_p)
                 ),
             )
             for item, configuration in zip(pools, pool_configurations, strict=True)
@@ -532,9 +531,7 @@ def _refuse_a_second_runtime(adapter: Any, path: Path) -> None:
     through_adapter = ctypes.cast(
         adapter.shadowspill_abi_version, ctypes.c_void_p
     ).value
-    through_python = ctypes.cast(
-        neutral.shadowspill_abi_version, ctypes.c_void_p
-    ).value
+    through_python = ctypes.cast(neutral.shadowspill_abi_version, ctypes.c_void_p).value
     if through_adapter == through_python:
         return
     raise RuntimeInstallError(

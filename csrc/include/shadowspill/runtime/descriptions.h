@@ -81,7 +81,7 @@ typedef struct ShadowSpillRuntimeConfig {
     uint32_t pool_memory_count;
     uint64_t worker_poll_nanoseconds;
     /* How far a route's queue may run ahead with background transfers: copies
-       the plan did not schedule (an opening restore, a reconciliation) are
+       the plan did not schedule (materialization, reconciliation) are
        dispatched only while the queue holds fewer than this many of their
        bytes in flight, so a transfer the plan did schedule never waits
        behind more than this. Zero removes the bound. A single background

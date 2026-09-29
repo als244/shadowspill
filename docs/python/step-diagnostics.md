@@ -41,7 +41,7 @@ is the reference for reading the step against its plan:
 | `summary` | The reconciliation: profiled versus real task time, simulated versus real waiting, the selected span, the makespan, and the call-level host totals. |
 | `tasks` | Every selected task by execution task id: one `TaskRecord` placing simulated beside measured, with the host boundary costs. |
 | `transfers` | Every scheduled transfer by transfer id, grouped as `transfers.fetch` and `transfers.evict`: one `TransferRecord` each, simulated beside measured, naming the tasks it sits between. |
-| `timelines` | The order of the step on three lanes -- `compute`, `fetch`, `evict` -- as references into `tasks` and `transfers`, with each transfer lane's summary and the alignment between simulated and device time. |
+| `timelines` | The order of the step on three lanes -- `compute`, `fetch`, `evict` -- as references into `tasks` and `transfers`, with each transfer lane's summary and their common invocation origin. |
 
 The second tier is the evidence behind it, named by the component that
 produced it:
@@ -103,14 +103,11 @@ Every measured time is in seconds, on one of the two clocks
 timeline are named `compute_*` for the compute stream and `lane_*` for a
 transfer lane; fields on the host clock sit under `host` in the records and
 carry `before_task`, `after_task`, `dispatch`, `queued`, `reserved`,
-`dispatched`, or `completion_observed` in their names. Simulated times are
-the simulator's own clock shifted so that the
-first selected task starts at zero, and every delta is taken after that shift,
-so a delta reads as drift within the step. The step's prologue,
-`timelines.first_task_started_at_seconds`, is therefore read here once rather than
-folded into every delta; the part of it spent waiting for the first task's
-inputs is `summary.real_initial_readiness_wait_seconds`, and the rest is input
-staging and the first dispatch.
+`dispatched`, or `completion_observed` in their names. Simulated times start at invocation entry. Device times use the event at the
+same execution boundary. Deltas subtract these coordinates without shifting
+first compute starts. `timelines.first_task_started_at_seconds` records the
+measured entry delay; its input-readiness portion is
+`summary.real_initial_readiness_wait_seconds`.
 
 ## Summary
 
@@ -151,13 +148,15 @@ selected-task span = sum of selected task-event durations
 | `real_selected_span_seconds` | Same boundary using real compute-stream events. |
 | `selected_span_delta_seconds` | Real selected span minus simulated selected span. |
 | `simulator_makespan_seconds` | Complete simulated schedule, including modeled terminal work. |
+| `simulated_entry_delay_seconds` | Simulated origin to first computation. |
+| `real_invocation_seconds` | Measured origin through the last required compute or transfer completion; `None` without all transfer timestamps. |
+| `real_terminal_tail_seconds` | Measured last computation through that completion; `None` without all transfer timestamps. |
 | `simulator_terminal_tail_seconds` | Simulated work after the last selected compute task. |
-| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the end marker `mark_cycle_end()` records; `None` when the trace was resolved before anything closed the cycle. Equals `opening_delay_seconds + real_selected_span_seconds + exposed_tail_seconds`. See [timing](api/timing.md). |
-| `opening_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and whatever the opening still held the stream for. |
+| `cycle_seconds` | The step on the device clock: this invocation's origin on the compute stream to the next invocation's origin, or to the end marker `mark_cycle_end()` records; `None` when the trace was resolved before anything closed the cycle. Includes caller and instrumentation work between invocations. See [timing](api/timing.md). |
+| `entry_delay_seconds` | Origin to the first task's compute start: the first task's readiness waits and frontend preparation. |
 | `exposed_tail_seconds` | Last task's compute end to the cycle's end: terminal work the stream itself still did. `None` with `cycle_seconds`. |
 | `call_seconds` | The whole planned call on the host clock. |
 | `prior_invocation_drain_seconds` | Host time this call spent at its start waiting for the previous invocation's plan to go idle. A plan assumes its initial objects are resident when it begins, and the invocation before it ends by writing them back, so the next call cannot overlap that writeback. The first invocation has nothing to wait for and reports zero, which is why a trace taken on a warm first step shows zero here even though every later step pays it. |
-| `initial_actions_seconds` | Host time submitting the opening placement batch. |
 | `trace_setup_seconds` | One-time trace setup, which only the first traced call pays. |
 | `optimizer_span_seconds` | First optimizer task's start through the last one's end, on the device timeline. |
 | `phase_comparisons` | Profiled versus real task-event sum by semantic phase. One `PhaseTimingComparison` per phase, carrying `phase`, `profiled_task_seconds`, `real_task_event_seconds`, and `delta_seconds`, which is the second minus the first. |
@@ -213,7 +212,7 @@ simulated, stream, delta, host -- so a task reads like a transfer.
 | Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds`, `expected_profile_seconds` | When the simulator had the inputs ready, when it started and ended the task, and the isolated profile it ran for, which is what the plan was built from. |
 | Compute stream | `compute_reached_at_seconds`, `compute_started_at_seconds`, `compute_finished_at_seconds` | When the compute stream reached the task's readiness marker, when its kernels started after the waits, and when they finished. |
 | Compute-stream waits | `input_readiness_wait_seconds`, `allocation_reuse_wait_seconds` | Between reaching and starting: inputs still being fetched, then ranges the task's allocations reuse still owned by a transfer. These two split the interval, so together they are `compute_started_at_seconds` minus `compute_reached_at_seconds`. Both are the *stream* waiting; the host's own wait for the same ranges is `dispatch_allocation_reuse_seconds`. |
-| Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated, after aligning the two clocks. Both need that alignment, which is why they are stored rather than derived. |
+| Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated from the common invocation boundary. |
 | Host boundaries | `before_task_entered_at_seconds`, `before_task_exited_at_seconds`, `after_task_entered_at_seconds`, `after_task_exited_at_seconds` | Four instants partitioning the frontend's cycle for this task with no gap: entering the opening boundary, leaving it for the compiled call, the call returning, and leaving the closing boundary. The opening boundary, the call, and the closing boundary are the three differences between them. |
 | Inside the opening boundary | `dispatch_input_lookup_seconds`, `dispatch_storage_rebind_seconds`, `dispatch_input_acquire_seconds`, `dispatch_allocation_reuse_seconds`, `dispatch_argument_assembly_seconds` | Resolve frontend bindings; rebind changed PyTorch storages; acquire the task's inputs from the runtime; wait on the host until every transfer that still owns a range this task allocates into has published its completion event; assemble predecoded arguments. Disjoint parts of the opening boundary. |
 | Inside the closing boundary | `dispatch_output_flatten_seconds`, `dispatch_output_classification_seconds`, `dispatch_output_adoption_seconds`, `dispatch_output_state_publish_seconds`, `dispatch_output_publish_seconds`, `dispatch_dematerialize_seconds`, `dispatch_cleanup_seconds` | Flatten the output pytree; match leaves with contracts; adopt returned allocations; publish output state and bindings; publish public outputs; drop released bindings; remove terminal state. Disjoint parts of the closing boundary. |
@@ -267,11 +266,11 @@ is the task a fetch was made for.
 
 | Group | Fields | Meaning |
 |---|---|---|
-| Identity | `transfer_id`, `direction`, `sequence`, `triggered_by`, `alias_group_id`, `bytes` | Which transfer and what it moved. `triggered_by` is what released it: the execution task id of the task whose completion did, a key into `tasks`, or `init` for the opening placement batch the runtime issues before the first task. A scheduled transfer's id is `<direction>_<sequence>`; an opening one's is `<direction>_opening_<index>`. |
+| Identity | `transfer_id`, `direction`, `sequence`, `triggered_by`, `alias_group_id`, `bytes` | Which transfer and what it moved. `triggered_by` is what released it: the execution task id of the task whose completion did, a key into `tasks`, including the start control task. Its id is `<direction>_<sequence>`. |
 | Relations | `previous_access`, `next_access`, `modified_by` | The object's place in the step, by execution task id: the last selected task up to and including the trigger that referenced the object, the first later one that does, and the last one up to the trigger that created or mutated it. `init` means no such task before the transfer, so the bytes are what the step was given; `persistent` means none after it within this call, so the object outlives the step. A fetch exists for its next access; an evict saves what its modifier produced. |
-| Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds` | When the transfer could start, when the lane started it, and when it ended, at the bandwidth the plan assumed, which the plan summary states. `None` for an opening transfer, which the simulator does not model. |
+| Simulated | `simulated_ready_at_seconds`, `simulated_started_at_seconds`, `simulated_finished_at_seconds` | When the transfer could start, when the lane started it, and when it ended, at the bandwidth the plan assumed, which the plan summary states. |
 | Lane | `lane_issued_at_seconds`, `lane_started_at_seconds`, `lane_finished_at_seconds` | What the copy did on its transfer lane, as the lane itself reports it: when the worker handed it over, when its bytes began moving, and when they had landed. **Issued to started is the dependency wait** -- a copy held behind an event is late, not slow, and folding the two together hides which. The pinned-host lane brackets the copy with timing events for the last two and reads a host clock for the first; a lane whose bytes do not move on a stream reads a host clock for all three and converts through the trace's anchor. `None` where there is nothing to report: the timing pool ran out, the lane does not report that instant, or the transfer was handed over before the trace began and so has no place on its axis. |
-| Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated after alignment; `None` without a lane interval or without a simulation. |
+| Delta | `start_delta_seconds`, `end_delta_seconds` | Device minus simulated from invocation entry; `None` without lane timestamps. |
 | Host | `queued_at_seconds`, `reserved_at_seconds`, `dispatched_at_seconds`, `completion_observed_at_seconds` | When the action was queued, when its destination was reserved, when the worker handed the copy to the lane, and when the worker's nonblocking poll saw it complete. |
 
 Read `dispatched_at_seconds` against `lane_started_at_seconds` to see how long a
@@ -299,9 +298,13 @@ lane.
 `diagnostics.timelines` is the order of the step, as references. `compute`
 is the tuple of execution task ids in compute-stream order; `fetch` and
 `evict` are each a `TransferQueue` whose `order` is the tuple of transfer ids
-in the lane's FIFO order -- the opening batch first, then the plan's
-transfers by `sequence` -- and whose `summary` is a `LaneSummary`. `first_task_started_at_seconds` is where the
-first selected task's simulated start fell on the device timeline.
+in the lane's FIFO order by `sequence`, with a `LaneSummary`. Control tasks
+remain in `tasks` as transfer triggers but are omitted from `compute`.
+`first_task_started_at_seconds` is the measured first computation's start.
+`host_origin_ns` is the `CLOCK_MONOTONIC` timestamp immediately before the
+device origin was recorded. Subtract it from raw runtime event timestamps
+to put those events on the host timeline; the trace session itself begins
+slightly later and its `began_at_ns` is a separate observation.
 
 ```python
 timelines = diagnostics.timelines
@@ -328,7 +331,6 @@ for lane, records in (
 | `measured_transfers`, `lane_busy_seconds` | How many transfers carry a stream interval, and the lane time those intervals add up to. |
 | `effective_bandwidth_bytes_per_second` | Measured bytes over `lane_busy_seconds`; compare with the assumed bandwidth in the plan summary. `None` when nothing was measured. |
 | `largest_start_delta_seconds`, `largest_start_delta_transfer_id` | The signed start delta furthest from zero on the lane, and the transfer that reached it: where the lane had drifted furthest from the simulation. |
-| `opening_transfers`, `opening_bytes` | The opening placement batch on this lane: transfers the runtime issued before the first task to restore the step's initial objects. They precede the span, carry no simulation, and lead the lane's order with `triggered_by` `init`. |
 | `lane_statistics` | What the lane itself counted, over its whole life. Below. |
 
 ### What the lane itself reports
@@ -417,7 +419,7 @@ step end is not a healthy steady state.
 | `queued_actions_after` | Actions still queued when the trace closes. |
 | `pending_retirements_after` | Allocations still causally protected. |
 | `callback_failures_after` | Allocator callback failures observed by the runtime. |
-| `step_id`, `began_at_ns`, `ended_at_ns` | The trace's identity and its host-clock bounds; the beginning is the host origin the timelines count from. |
+| `step_id`, `began_at_ns`, `ended_at_ns` | The trace session's identity and host-clock bounds. Timeline coordinates use `timelines.host_origin_ns`, recorded before trace setup. |
 | `event_capacity`, `allocation_event_capacity`, `event_overflow`, `allocation_event_overflow` | Configured capacities and whether either buffer overflowed. |
 | `events` | Raw bounded runtime-event records, including the transfer events the lanes were built from. |
 

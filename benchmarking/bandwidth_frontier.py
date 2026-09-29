@@ -167,13 +167,6 @@ def arguments(argv: list[str] | None = None) -> argparse.Namespace:
         " depth-first walk",
     )
     parser.add_argument(
-        "--initial-placement",
-        choices=("greedy", "required"),
-        default=None,
-        help="how objects the declaration leaves in spill may be placed"
-        " before the first task; defaults to whichever the library chooses",
-    )
-    parser.add_argument(
         "--resolution-options",
         type=named_resolution_options,
         default=None,
@@ -306,7 +299,6 @@ def search_policy(parsed: argparse.Namespace) -> Any:
 
     from shadowspill.planner import (
         GenericPlanningOptions,
-        InitialPlacement,
         SearchOptions,
     )
     from shadowspill.planner.search.algorithms.pressurefit import PressureFit
@@ -315,8 +307,6 @@ def search_policy(parsed: argparse.Namespace) -> Any:
     )
 
     options: dict[str, Any] = {}
-    if parsed.initial_placement is not None:
-        options["initial_placement"] = InitialPlacement(parsed.initial_placement)
     if parsed.resolution_options is not None:
         options["resolution_options"] = tuple(
             Fraction(share) for share in parsed.resolution_options
@@ -606,7 +596,6 @@ def write_raw_data(raw_data: Path, parsed: argparse.Namespace) -> Path:
                 "min_tokens_per_microbatch": parsed.min_tokens_per_microbatch,
                 "max_tokens_per_microbatch": parsed.max_tokens_per_microbatch,
                 "orderings": parsed.orderings,
-                "initial_placement": parsed.initial_placement,
                 "resolution_options": list(parsed.resolution_options or ()),
                 "deterministic": parsed.deterministic,
                 "incumbents": parsed.incumbents,

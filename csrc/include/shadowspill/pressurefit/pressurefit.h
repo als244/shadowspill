@@ -43,10 +43,6 @@ typedef enum ShadowSpillPressureFitFetchRule {
     SHADOWSPILL_PRESSUREFIT_FETCH_LATEST_SAFE = 3,
     SHADOWSPILL_PRESSUREFIT_FETCH_DEMAND = 4,
 } ShadowSpillPressureFitFetchRule;
-typedef enum ShadowSpillPressureFitInitialPlacement {
-    SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_REQUIRED = 0,
-    SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_GREEDY = 1,
-} ShadowSpillPressureFitInitialPlacement;
 typedef struct ShadowSpillPressureFitOptions {
     const uint8_t *residency_strategies;
     uint32_t residency_strategy_count;
@@ -58,7 +54,6 @@ typedef struct ShadowSpillPressureFitOptions {
     const uint8_t *coalescing_modes;
     uint32_t coalescing_mode_count;
     uint32_t max_repair_attempts;
-    uint8_t initial_placement;
     /* How much capacity a plan gives back at a time when its layout does
        not fit; zero hands back exactly what it overran. */
     uint64_t capacity_refinement_bytes;

@@ -215,7 +215,7 @@ def _print_lanes(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> Non
     for direction, other in (("fetch", "evict"), ("evict", "fetch")):
         lane = timelines[direction]["summary"]
         records = _measured(transfers[direction].values())
-        scheduled = [item for item in records if item["triggered_by"] != "init"]
+        scheduled = records
         solo_rate, concurrent_rate, planned_rate = calibration[direction]
         effective = lane["effective_bandwidth_bytes_per_second"]
         ratios = [
@@ -224,8 +224,8 @@ def _print_lanes(cell: Mapping[str, Any], diagnostics: Mapping[str, Any]) -> Non
             if item["bytes"] >= _LARGE_COPY_BYTES and _simulated_duration(item)
         ]
         print(
-            f"  {direction}: {len(scheduled)} scheduled, {lane['opening_transfers']}"
-            f" opening ({lane['bytes'] / 1e9:.1f} GB in all), measured {len(records)}"
+            f"  {direction}: {len(scheduled)} scheduled"
+            f" ({lane['bytes'] / 1e9:.1f} GB in all), measured {len(records)}"
             f" | planned {planned_rate:.1f} GB/s, effective"
             f" {effective / 1e9 if effective else float('nan'):.1f} GB/s"
             f" | copy duration real/sim median"

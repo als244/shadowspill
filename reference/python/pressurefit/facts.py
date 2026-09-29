@@ -169,9 +169,10 @@ def build_facts(
             first_anchor = min(anchor_sets[alias_number])
             if first_anchor == -1 and alias_number not in produced_aliases:
                 alias_id = alias_ids[alias_number]
-                if initial.get(alias_id) is None:
+                if initial.get(alias_id) is not MemoryLocation.DEVICE:
                     raise ValueError(
-                        f"input alias {alias_id!r} has no initial residency"
+                        f"input alias {alias_id!r} has no initial residency on the "
+                        "device or preceding fetch boundary"
                     )
 
     object_capacity = {

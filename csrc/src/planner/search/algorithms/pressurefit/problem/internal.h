@@ -74,10 +74,6 @@ void shadowspill_problem_prepared_problem_destroy(PreparedProblem *prepared);
 
 int shadowspill_problem_add_u64(uint64_t left, uint64_t right, uint64_t *result);
 
-int shadowspill_problem_compare_u32(uint32_t left, uint32_t right);
-
-int shadowspill_problem_compare_u64(uint64_t left, uint64_t right);
-
 int shadowspill_problem_program_problem_valid(
     const ShadowSpillIndexedProblem *problem,
     const ShadowSpillPressureFitOptions *options
@@ -127,9 +123,5 @@ void shadowspill_problem_build_anchor_seed(
     PreparedProblem *prepared
 );
 
-ShadowSpillStatus shadowspill_problem_greedily_place_initial_aliases(
-    const ShadowSpillSimulationProgram *program,
-    PreparedProblem *prepared
-);
 
 #endif  /* SHADOWSPILL_PROBLEM_INTERNAL_H */

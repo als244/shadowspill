@@ -98,6 +98,16 @@ class TaskProfileCatalog:
     def profiles(self) -> tuple[TaskProfile, ...]:
         return tuple(self._profiles)
 
+    def control_profile_id(self) -> str:
+        """A control boundary has no device computation or workspace."""
+
+        key = "control"
+        if key not in self._profile_by_key:
+            profile_id = f"profile_{len(self._profiles):06d}"
+            self._profiles.append(TaskProfile(profile_id, 0, 0, key))
+            self._profile_by_key[key] = profile_id
+        return self._profile_by_key[key]
+
     def contract(self, artifact: GraphArtifact) -> TaskStorageContract:
         """The storage this task's outputs occupy on the execution device.
 

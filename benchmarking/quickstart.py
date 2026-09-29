@@ -50,7 +50,6 @@ from shadowspill.memory import device, pinned_host, transfer_route
 from shadowspill.pipeline.common import planned_transfer_bandwidths
 from shadowspill.planner import (
     GenericPlanningOptions,
-    InitialPlacement,
     SearchOptions,
     StepDataOrdering,
 )
@@ -332,7 +331,6 @@ def search_policy(arguments: argparse.Namespace) -> SearchOptions:
         generic=GenericPlanningOptions(deterministic=arguments.deterministic),
         algorithm=PressureFit(
             PressureFitOptions(
-                initial_placement=InitialPlacement(arguments.initial_placement),
                 resolution_options=tuple(
                     Fraction(share) for share in arguments.resolution_options
                 ),
@@ -534,58 +532,39 @@ def _transfer_duration_delta(record: TransferRecord) -> float:
 def print_epilogue(diagnostics: Any) -> None:
     summary = diagnostics.summary
     timelines = diagnostics.timelines
-    # The headline compares the step against the step. The simulated step is the
-    # makespan -- the same figure the plan's breakdown advertises -- and it is the
-    # task window plus the terminal writeback priced after the last task. The real
-    # step is the cycle, and it is the opening delay plus the task window plus the
-    # tail the stream actually exposed. Each side decomposes into exactly those
-    # three parts, so the rows below sum to their own total and the one the
-    # simulator gets wrong is visible rather than inferred.
-    #
-    # Comparing the task window against the makespan instead would flatter the
-    # simulator: it would credit a tail while ignoring an opening the simulator
-    # prices at zero.
     simulated_step = summary.simulator_makespan_seconds
-    real_step = summary.cycle_seconds
-    real_span = summary.real_selected_span_seconds
-    simulated_span = summary.simulated_selected_span_seconds
-    simulated_tail = summary.simulator_terminal_tail_seconds
+    real_step = summary.real_invocation_seconds
     if real_step is None:
-        print(
-            "  step: the trace resolved before the next step opened, so the step"
-            " itself is not comparable here -- only the task window below"
-        )
+        print("  traced invocation: incomplete transfer timestamps")
     else:
-        # This is the traced step, which is the last one run, and steps drift
-        # slightly slower across a budget -- so this figure reads a few tenths of
-        # a percent worse than the one the figures draw, which is the median of
-        # the untraced steps. Saying which step this is keeps the two from
-        # looking like they disagree.
         print(
-            "  traced step: origin on the compute stream through the next step's"
-            " origin, against the simulated makespan"
-        )
-        print(
-            f"  traced step      real {real_step:.3f} s"
+            f"  traced invocation  real {real_step:.3f} s"
             f"   simulated {simulated_step:.3f} s"
             f"   ({(real_step - simulated_step) / simulated_step:+.2%})"
         )
+    for label, real, simulated in (
+        (
+            "entry delay",
+            summary.entry_delay_seconds,
+            summary.simulated_entry_delay_seconds,
+        ),
+        (
+            "task window",
+            summary.real_selected_span_seconds,
+            summary.simulated_selected_span_seconds,
+        ),
+        (
+            "terminal tail",
+            summary.real_terminal_tail_seconds,
+            summary.simulator_terminal_tail_seconds,
+        ),
+    ):
+        measured = "unavailable" if real is None else f"{real:.3f} s"
+        print(f"    {label:14} real {measured}   simulated {simulated:.3f} s")
+    if summary.cycle_seconds is not None:
         print(
-            f"    opening        real {summary.opening_delay_seconds:.3f} s"
-            f"   simulated {simulated_step - simulated_span - simulated_tail:.3f} s"
-            "   (the restore; unmodeled, docs/architecture/step-boundaries.md)"
-        )
-    print(
-        f"    task window    real {real_span:.3f} s"
-        f"   simulated {simulated_span:.3f} s"
-        f"   ({(real_span - simulated_span) / simulated_span:+.2%})"
-        "   (first task's compute start through the last task's end)"
-    )
-    if real_step is not None and summary.exposed_tail_seconds is not None:
-        print(
-            f"    terminal tail  real {summary.exposed_tail_seconds:.3f} s"
-            f"   simulated {simulated_tail:.3f} s"
-            "   (writeback; the simulator overlaps none of it with the next step)"
+            f"  whole cycle        {summary.cycle_seconds:.3f} s"
+            " (includes caller and instrumentation work)"
         )
     print(
         "  stalled          real"
@@ -595,7 +574,7 @@ def print_epilogue(diagnostics: Any) -> None:
     print(
         "  first task       waited"
         f" {summary.real_initial_readiness_wait_seconds * 1e3:.1f} ms"
-        " for its own inputs, inside the opening above"
+        " for its own inputs, inside the entry delay above"
     )
     compute = [diagnostics.tasks[task_id] for task_id in timelines.compute]
     worst = max(compute, key=lambda item: abs(_task_duration_delta(item)))
@@ -942,19 +921,6 @@ def _parser() -> argparse.ArgumentParser:
         " reversed either way; the search does not toggle those",
     )
     parser.add_argument(
-        "--initial-placement",
-        choices=("greedy", "required"),
-        default=None,
-        help="how objects the declaration leaves in spill may be placed before"
-        " the first task. 'greedy' promotes a cold object to the opening boundary"
-        " when its fetch would otherwise be late, which moves those bytes out of"
-        " the schedule and into the opening restore -- where the simulated"
-        " makespan does not count them. 'required' places only what the"
-        " declaration asks for, plus what the first task reads and so cannot be"
-        " fetched in time. Defaults to whichever the library chooses, rather than"
-        " naming one here that a change to that choice would leave behind",
-    )
-    parser.add_argument(
         "--resolution-options",
         type=named_resolution_options,
         default=NAMED_RESOLUTION_OPTIONS["quarters"],
@@ -1161,8 +1127,6 @@ def parse_arguments() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     # rather than defaulting the flag keeps one answer to the question: a change
     # to the library default reaches this tour, and the banner reports what the
     # planner will actually do rather than what this file last believed.
-    if arguments.initial_placement is None:
-        arguments.initial_placement = PressureFitOptions().initial_placement.value
     if arguments.steps < 1:
         parser.error("--steps must be at least 1")
     try:
@@ -1543,20 +1507,7 @@ def print_banner(
         + ", ".join(str(item) for item in shares)
         + " of the flexible groups recomputing"
     )
-    # Which placement ran is not recoverable from the figures, and the two
-    # price the opening differently -- greedy moves bytes into the unpriced
-    # restore -- so a report that does not say which it used cannot be compared
-    # against one that used the other.
-    print(
-        f"  initial placement   {arguments.initial_placement:>10}      "
-        + (
-            "cold objects may be promoted to the opening boundary,"
-            " so their bytes land in the restore rather than the schedule"
-            if arguments.initial_placement == "greedy"
-            else "only what the declaration asks for, plus what the first"
-            " task reads and cannot be fetched in time"
-        )
-    )
+    print("  initial state            fresh      plan-owned values begin in spill")
     # The precision a step trains under is not recoverable from its figures,
     # and two runs at different precisions are not the same arithmetic, so
     # the banner names it even when every setting is the default.
@@ -1894,6 +1845,7 @@ class Tour:
             report_cycles()
             return result
 
+        training.prepare_runtime_trace()
         if arguments.steps > 1:
             print(rule("Steps"))
             for step in range(1, arguments.steps):
@@ -2055,6 +2007,8 @@ class Tour:
         )
         training.close()
         step_summary = diagnostics.summary
+        if step_summary.real_terminal_tail_seconds is None:
+            raise RuntimeError("run trace omitted terminal transfer timestamps")
         return RunBudgetOutcome(
             execution_budget_bytes=budget,
             simulated_step_seconds=simulated_step,
@@ -2065,13 +2019,10 @@ class Tour:
             simulated_idle_seconds=(step_summary.simulated_inter_task_idle_seconds),
             real_idle_seconds=step_summary.real_inter_task_idle_seconds,
             recomputation_seconds=(plan_report.summary.recomputation_overhead_seconds),
-            # The whole opening, not the first task's wait for its own
-            # inputs: the restore runs before the first task's compute starts,
-            # and the simulator prices none of it, so it is the measured
-            # step's largest unmodelled part.
-            prologue_seconds=step_summary.opening_delay_seconds,
-            terminal_tail_seconds=(step_summary.simulator_terminal_tail_seconds),
-            real_terminal_tail_seconds=(step_summary.exposed_tail_seconds or 0.0),
+            simulated_entry_delay_seconds=step_summary.simulated_entry_delay_seconds,
+            real_entry_delay_seconds=step_summary.entry_delay_seconds,
+            terminal_tail_seconds=step_summary.simulator_terminal_tail_seconds,
+            real_terminal_tail_seconds=step_summary.real_terminal_tail_seconds,
         )
 
     def run(self) -> list[RunBudgetOutcome]:

@@ -34,7 +34,6 @@ from shadowspill.pytorch.planning.admission import (
     output_bindings_for_entrypoints,
 )
 from shadowspill.pytorch.profiling import ResolvedTaskManifests
-from shadowspill.runtime.abi import INITIAL_ACTIONS_TASK_ID
 from shadowspill.runtime.bootstrap import (
     InstalledRuntime,
 )
@@ -163,7 +162,6 @@ def admit_training_plan(
                     fixed_layout,
                     plan.program,
                     plan.schedule,
-                    initial_task_id=INITIAL_ACTIONS_TASK_ID,
                     dynamic_task_allocations=(
                         admitted.admission.dynamic_provider_allocations()
                     ),

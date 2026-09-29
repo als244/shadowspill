@@ -16,7 +16,6 @@ from reference.python.pressurefit.residency import (
     seed_residency,
 )
 from shadowspill.planner import GenericPlanningOptions, pressurefit
-from shadowspill.planner.request import InitialPlacement
 
 from ...._examples import (
     config,
@@ -88,7 +87,7 @@ def test_pressure_sweep_matches_scalar_boundaries(
     initial = training_chain_initial(10)
     selected_config = training_chain_config(500)
     facts = build_facts(program, (), initial, (), selected_config)
-    seed = seed_residency(facts, selected_config, InitialPlacement.GREEDY)
+    seed = seed_residency(facts)
     plan = reduce_pressure(facts, selected_config, seed, "tight-stall")
 
     swept = _pressure_by_device(
@@ -130,7 +129,7 @@ def test_interval_extension_matches_scalar_admission() -> None:
     initial = training_chain_initial(10)
     selected_config = training_chain_config(500)
     facts = build_facts(program, (), initial, (), selected_config)
-    seed = seed_residency(facts, selected_config, InitialPlacement.GREEDY)
+    seed = seed_residency(facts)
     plan = reduce_pressure(facts, selected_config, seed, "tight-stall")
 
     scalar = plan
@@ -160,48 +159,43 @@ def test_interval_extension_matches_scalar_admission() -> None:
     assert extend_interval_entries(facts, plan) == scalar
 
 
-# These plan under whatever `PressureFitOptions` defaults to, so the default's
-# initial placement is baked into every value here. They were re-frozen when that
-# default became `REQUIRED`: the makespans rose by 4 to 14 microseconds and the
-# action counts by one to eight, because required places only what the
-# declaration and the first task demand and fetches the rest on the schedule,
-# where the simulator charges for it. Greedy's lower numbers were not a faster
-# plan -- they were the same work with the opening restore left out of the
-# makespan. The selected candidate is unchanged at every fixture.
+# Initial residency stays exactly as declared. A zero-work start task provides
+# the first ordinary fetch boundary. These artifacts agree with the readable
+# Python planner and include the entry transfers in candidate evaluation.
 @pytest.mark.parametrize(
     ("layers", "capacity", "digest", "makespan_ns", "candidate", "actions"),
     (
         (
             1,
             224,
-            "0ffa4e2af838ff5cc44c3a3bdc18d0d2b4e1fe7cdb616c15829a8f466a45e727",
+            "2b2c8a40cd0bf39928f6e58fd0027b105be9a406f22797ef141f60a2b08b327a",
             64_000,
             "tight-stall/packed-fit",
-            14,
+            15,
         ),
         (
             2,
             224,
-            "de9fbf3f76897c59937976c8220c7531a929fbe19e878210b01020fc54e2d2f1",
-            114_000,
+            "16f321ea8f1fe9ed0220e614159a66343941b48bc7f267f45b49f9be778c9048",
+            118_000,
             "tight-stall/packed-fit",
-            25,
+            26,
         ),
         (
             5,
             800,
-            "a4696af393b24fb71d0a9ba2dbc9630e1b52c7fa762b9ad7dd1326826571c332",
-            166_000,
+            "90f81d896f3470ac31857ae278365418352cc36e2aab4974fe717386de81f9d6",
+            164_000,
             "headroom-stall/packed-fifo",
-            40,
+            41,
         ),
         (
             10,
             500,
-            "96dcbfe6b4065c585e60396c7ece819d9f6e20f9cb70fc77505f0a0d2aea0405",
+            "0700d4949f29fe0c3758d9d84ff3a035597a0a709eee2d01d64fabd388a6edb6",
             310_000,
             "headroom-stall/packed-fifo",
-            103,
+            104,
         ),
     ),
 )

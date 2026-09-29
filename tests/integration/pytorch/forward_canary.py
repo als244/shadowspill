@@ -124,7 +124,13 @@ def main() -> int:
             artifact_store=cache,
             profiling_metadata={"batch_size": 4, "width": 16},
         )
-        if len(planned.plan_report.execution_plan.program.tasks) != 3:
+        if (
+            sum(
+                task.requires_entrypoint
+                for task in planned.plan_report.execution_plan.program.tasks
+            )
+            != 3
+        ):
             raise AssertionError("automatic partition did not retain three stages")
         plan_diagnostics = planned.plan_report.diagnostics
         if not plan_diagnostics.cache_artifacts:
@@ -143,7 +149,9 @@ def main() -> int:
                 "forward diagnostics are not chronologically contiguous"
             )
         for item in selected_task_diagnostics:
-            if not item.semantic_contract_digest or not item.compiled_layout_digest:
+            if item.phase != "control" and (
+                not item.semantic_contract_digest or not item.compiled_layout_digest
+            ):
                 raise AssertionError("forward task omitted lowering diagnostics")
         for stage in plan_diagnostics.unique_stages:
             profile = stage.graph_pairs[0].forward

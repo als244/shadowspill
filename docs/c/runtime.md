@@ -303,7 +303,7 @@ runtime's pool, route, event, and object owners:
   inside the plan's fixed layout, latching a plan violation that names the
   first survivor's task, allocation and size. A frontend asks at the start of
   every invocation, once every plan placing into the layout has drained; see
-  [step boundaries](../architecture/step-boundaries.md#what-begins-the-next-one).
+  [step boundaries](../architecture/step-boundaries.md#repeated-execution).
 - `shadowspill_plan_close()` and `shadowspill_plan_destroy()` release plan-owned
   references without closing the shared runtime.
 
@@ -321,8 +321,8 @@ validation records are reused in place; plans running at the same time use
 handles of their own and may remain active on the same runtime. Plan-local idle
 waiting uses monotonic atomics and `cpu_relax`, not the runtime-global lifecycle
 condition variable.
-Initial placement and caller-output acquisition use their dedicated handles;
-they never impersonate execution tasks or allocate per-invocation identities.
+Lifecycle action batches and caller-output acquisition use dedicated handles.
+Planned entry fetches use ordinary task handles and scheduled actions.
 
 ## Telemetry and failure
 

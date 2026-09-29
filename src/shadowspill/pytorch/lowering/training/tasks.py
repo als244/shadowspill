@@ -24,6 +24,7 @@ from shadowspill.step import StepDataOrdering
 from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
 
 from ..profiles import TaskProfileCatalog
+from ..program import invocation_start
 from .artifacts import (
     GradientBinding,
     OptimizerObjectBinding,
@@ -73,7 +74,7 @@ class _TrainingTaskEmitter:
         self.profiles = profiles
         self.device_id = device_id
 
-        self.tasks: list[TaskSpec] = []
+        self.tasks: list[TaskSpec] = [invocation_start(profiles, device_id)]
         self.entrypoints: list[TaskEntrypoint] = []
         self.executables: dict[str, GraphArtifact | OptimizerTaskArtifact | None] = {}
         self.forward_ids: dict[tuple[int, int, str], str] = {}
@@ -150,7 +151,9 @@ class _TrainingTaskEmitter:
         the planner keeps the one the selection activates.
         """
         variants = self.prepared[position][stage_index]
-        previous_ids = self._stage_ids(self.forward_ids, position, stage_index - 1)
+        previous_ids = self._stage_ids(self.forward_ids, position, stage_index - 1) or (
+            self.tasks[0].task_id,
+        )
         metadata_digest = self.metadata[position]
         for variant, item in variants.items():
             task_id = f"task_{len(self.tasks):06d}"

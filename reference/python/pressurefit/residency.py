@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shadowspill.ir import MemoryLocation
-from shadowspill.planner.request import InitialPlacement
 from shadowspill.planner.result import PlanInfeasibleError
 from shadowspill.simulator import SimulationConfig
 
@@ -228,101 +227,10 @@ def _update_pressure_for_alias(
         )
 
 
-def seed_residency(
-    facts: PlanningFacts,
-    config: SimulationConfig,
-    placement: InitialPlacement,
-    *,
-    initial_capacity_by_device: dict[str, int] | None = None,
-) -> ResidencyPlan:
-    """Build the anchor hull and optionally preplace fitting spill objects."""
+def seed_residency(facts: PlanningFacts) -> ResidencyPlan:
+    """Build the hull of declared residency and task-access anchors."""
 
-    seed = _seed_from_anchors(facts.anchors)
-    if placement is InitialPlacement.REQUIRED:
-        return seed
-
-    cold_aliases = tuple(
-        alias
-        for alias, location in enumerate(facts.initial_locations)
-        if location is MemoryLocation.SPILL
-        and facts.access_events[alias]
-        and min(task for _boundary, task in facts.access_events[alias]) > 0
-    )
-    device_config = {item.device_id: item for item in config.devices}
-
-    def transfer_time(alias: int) -> int:
-        device = device_config[facts.alias_devices[alias]]
-        return (
-            device.fetch_latency_ns
-            + (
-                facts.alias_sizes[alias] * 1_000_000_000
-                + device.fetch_bandwidth_bytes_per_second
-                - 1
-            )
-            // device.fetch_bandwidth_bytes_per_second
-        )
-
-    first_use = {
-        alias: min(task for _boundary, task in facts.access_events[alias])
-        for alias in cold_aliases
-    }
-    deadline = {
-        alias: (
-            0
-            if first_use[alias] == 0
-            else facts.task_ideal_end_ns[first_use[alias] - 1]
-        )
-        for alias in cold_aliases
-    }
-    miss = {alias: 0 for alias in cold_aliases}
-    cursor_by_device = {
-        device_id: (facts.task_ideal_end_ns[0] if facts.tasks else 0)
-        for device_id in facts.object_capacity_by_device
-    }
-    for alias in sorted(
-        cold_aliases,
-        key=lambda value: (deadline[value], first_use[value], value),
-    ):
-        device_id = facts.alias_devices[alias]
-        finish = cursor_by_device[device_id] + transfer_time(alias)
-        miss[alias] = max(finish - deadline[alias], 0)
-        cursor_by_device[device_id] = finish
-    first_task_end = facts.task_ideal_end_ns[0] if facts.tasks else 0
-    candidates = sorted(
-        cold_aliases,
-        key=lambda alias: (
-            first_use[alias],
-            max(deadline[alias] - first_task_end - transfer_time(alias), 0),
-            -miss[alias],
-            -facts.alias_sizes[alias],
-            alias,
-        ),
-    )
-    initial_bytes = {
-        device_id: boundary_bytes(facts, seed, -1, device_id)
-        for device_id in facts.object_capacity_by_device
-    }
-    requested_initial_capacity = (
-        initial_capacity_by_device or facts.object_capacity_by_device
-    )
-    initial_capacity = {
-        device_id: min(
-            requested_initial_capacity[device_id],
-            facts.object_capacity_by_boundary[device_id][0],
-        )
-        for device_id in facts.object_capacity_by_device
-    }
-    anchors = list(facts.anchors)
-    spans = list(seed.spans)
-    for alias in candidates:
-        device_id = facts.alias_devices[alias]
-        proposed_bytes = initial_bytes[device_id] + facts.alias_sizes[alias]
-        if proposed_bytes > initial_capacity[device_id]:
-            continue
-        anchors[alias] = frozenset((*anchors[alias], -1))
-        spans[alias] = (Span(min(anchors[alias]), max(anchors[alias])),)
-        initial_bytes[device_id] = proposed_bytes
-    return ResidencyPlan(tuple(spans), tuple(anchors))
+    return _seed_from_anchors(facts.anchors)
 
 
 def _gap_containing(
@@ -350,20 +258,6 @@ def legal_cuts(
         if facts.alias_devices[alias] != device_id:
             continue
         for span_index, span in enumerate(spans):
-            if (
-                span.start == -1
-                and facts.initial_locations[alias] is MemoryLocation.SPILL
-                and -1 not in facts.anchors[alias]
-            ):
-                required = sorted(
-                    anchor for anchor in facts.anchors[alias] if anchor > -1
-                )
-                if required and boundary < required[0]:
-                    # Greedy preplacement is provisional.  Removing this
-                    # prefix means "leave it in the spill pool initially" and
-                    # needs no device-side departure action.
-                    cuts.append(Cut(alias, span_index, -1, required[0] - 1))
-                    continue
             gap = _gap_containing(plan.anchors[alias], span, boundary)
             if gap is None:
                 can_split_after = (

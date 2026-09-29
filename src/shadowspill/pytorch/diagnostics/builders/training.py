@@ -28,7 +28,7 @@ from shadowspill.pytorch.lowering.training import (
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact
 from shadowspill.pytorch.profiling import TaskMeasurement
 from shadowspill.step import StepDataOrdering
-from shadowspill.task.entrypoints import TaskEntrypoint
+from shadowspill.task.entrypoints import TaskEntrypoint, execution_entrypoints
 from shadowspill.task.layout import (
     reconcile_compiled_task_layout,
 )
@@ -396,7 +396,7 @@ def _plan_task_stages(
 ) -> tuple[PlanTaskStage, ...]:
     auxiliary_ordinals: dict[str, int] = {}
     tasks: list[PlanTaskStage] = []
-    for entrypoint in lowered.entrypoints:
+    for entrypoint in execution_entrypoints(lowered.program.tasks, lowered.entrypoints):
         auxiliary_ordinal = auxiliary_ordinals.get(entrypoint.options.phase, 0)
         tasks.append(
             _training_task_stage(

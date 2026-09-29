@@ -66,8 +66,6 @@ def _record(
     *,
     simulated: tuple[int, int],
     stream: tuple[int, int] | None,
-    simulated_origin_ns: int = 0,
-    alignment: float = 0.0,
 ) -> TransferRecord:
     dispatch = _event(
         RuntimeTraceEventKind.TRANSFER_DISPATCHED, timestamp_ns=_ORIGIN_NS + 5_000
@@ -86,30 +84,22 @@ def _record(
         completion,
         None,
         None,
-        simulated_origin_ns,
-        alignment,
         _ORIGIN_NS,
     )
 
 
-def test_deltas_are_taken_after_aligning_the_simulation() -> None:
-    """A transfer that ran exactly when simulated has zero deltas.
-
-    The simulation counts from the first selected task's start; the device
-    counts from the origin event. With the first task starting 0.25 s after
-    the origin, a simulated start of 1.0 s is a device time of 1.25 s.
-    """
+def test_entry_delay_is_visible_without_shifting_either_timeline() -> None:
+    """Equal copy durations do not hide a 250 ms delay before the copy."""
 
     record = _record(
         0,
         simulated=(1_000_000_000, 1_010_000_000),
         stream=(1_250_000_000, 1_260_000_000),
-        alignment=0.25,
     )
     assert record.simulated_started_at_seconds == pytest.approx(1.0)
     assert record.lane_started_at_seconds == pytest.approx(1.25)
-    assert record.start_delta_seconds == pytest.approx(0.0)
-    assert record.end_delta_seconds == pytest.approx(0.0)
+    assert record.start_delta_seconds == pytest.approx(0.25)
+    assert record.end_delta_seconds == pytest.approx(0.25)
     assert (
         record.lane_finished_at_seconds
         - record.lane_started_at_seconds
@@ -140,7 +130,7 @@ def test_lane_summary_reports_measured_bandwidth_and_the_largest_drift() -> None
     unmeasured = _record(2, simulated=(200_000_000, 210_000_000), stream=None)
     # No lane statistics: this exercises the trace's account of the step, which
     # is a separate question from what the lane itself reports.
-    summary = _lane_summary("fetch", (measured, late, unmeasured), (), None)
+    summary = _lane_summary("fetch", (measured, late, unmeasured), None)
     assert summary.transfers == 3
     assert summary.measured_transfers == 2
     assert summary.bytes == 3 << 20
@@ -151,7 +141,6 @@ def test_lane_summary_reports_measured_bandwidth_and_the_largest_drift() -> None
     )
     assert summary.largest_start_delta_seconds == pytest.approx(0.03)
     assert summary.largest_start_delta_transfer_id == "fetch_000001"
-    assert summary.opening_transfers == 0
 
 
 def test_object_relations_name_the_neighbours_and_the_modifier() -> None:

@@ -464,7 +464,7 @@ slab and its owner counted them already.
 
 Taking turns is what makes this sound, and it needs nothing new: every call
 begins only once the whole runtime has drained, and only if nothing is live in
-its layout ([step boundaries](step-boundaries.md#what-begins-the-next-one)),
+its layout ([step boundaries](step-boundaries.md#repeated-execution)),
 so whatever the other plan placed in the shared bytes is gone before this one
 places anything. The plan that reserved the slab cannot be cleared while
 another is admitted into it; it closes last. `plan_slices()` lists each

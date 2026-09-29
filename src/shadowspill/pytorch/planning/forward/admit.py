@@ -14,7 +14,6 @@ from shadowspill.pipeline.admission import (
 from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.pytorch.planning.admission import FixedLayoutSelection
 from shadowspill.runtime import Runtime
-from shadowspill.runtime.abi import INITIAL_ACTIONS_TASK_ID
 from shadowspill.runtime.plan import (
     PlanMemory,
     RuntimeBridge,
@@ -84,7 +83,6 @@ def admit_forward_plan(
         fixed_layout,
         execution_plan.program,
         execution_plan.schedule,
-        initial_task_id=INITIAL_ACTIONS_TASK_ID,
         dynamic_task_allocations=(selected_admission.dynamic_provider_allocations()),
     )
     bridge = RuntimeBridge(

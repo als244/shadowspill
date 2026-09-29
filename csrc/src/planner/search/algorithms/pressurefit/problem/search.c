@@ -88,13 +88,6 @@ static ShadowSpillStatus prepare_problem(
     };
 
     shadowspill_problem_build_anchor_seed(program, prepared);
-    if (options->initial_placement == SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_GREEDY) {
-        status = shadowspill_problem_greedily_place_initial_aliases(program, prepared);
-        if (status != SHADOWSPILL_STATUS_OK) {
-            return status;
-        }
-    }
-
     prepared->problem = (ShadowSpillPressureFitProblem){
         .abi_version = SHADOWSPILL_ABI_VERSION,
         .context = source->context,
@@ -238,9 +231,7 @@ ShadowSpillStatus shadowspill_pressurefit_preflight(
     result->error_device = UINT32_MAX;
     result->error_alias = UINT32_MAX;
     result->error_boundary = INT32_MIN;
-    const ShadowSpillPressureFitOptions options = {
-        .initial_placement = SHADOWSPILL_PRESSUREFIT_INITIAL_PLACEMENT_REQUIRED,
-    };
+    const ShadowSpillPressureFitOptions options = {0};
     if (!shadowspill_problem_program_problem_valid(problem, &options)) {
         return SHADOWSPILL_STATUS_INVALID_ARGUMENT;
     }

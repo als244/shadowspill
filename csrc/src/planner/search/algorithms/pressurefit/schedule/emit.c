@@ -127,10 +127,15 @@ static int plan_span_reload(
     const int32_t start_boundary = (int32_t)span.start - 1;
     const int produced_at_entry =
         problem->productions[shadowspill_schedule_cell(alias, facts->boundary_count, span.start)] != 0U;
-    if (start_boundary <= -1 || produced_at_entry) {
+    if (produced_at_entry ||
+        (start_boundary == -1 &&
+         problem->initial_location[alias] == SHADOWSPILL_MEMORY_DEVICE)) {
         return 0;
     }
     const uint32_t first_task = shadowspill_schedule_event_min_task(facts, alias, &span);
+    if (first_task == 0U) {
+        return -2; /* No preceding task boundary can trigger this fetch. */
+    }
     uint32_t latest = first_task == UINT32_MAX
         ? facts->task_count - 1U
         : first_task - 1U;
@@ -369,7 +374,6 @@ static int build_actions(Emission *emission) {
  * boundary state at all. */
 static void emit_boundary_residency(
     const ShadowSpillScheduleFacts *facts,
-    const uint8_t *resident,
     ShadowSpillScheduleStorage *storage
 ) {
     const ShadowSpillPressureFitResidencyProblem *problem = facts->problem->residency;
@@ -381,9 +385,7 @@ static void emit_boundary_residency(
             const uint32_t output = storage->value.initial_count++;
             storage->value.initial_aliases[output] = alias;
             storage->value.initial_locations[output] =
-                shadowspill_cell_get(resident, shadowspill_schedule_cell(alias, facts->boundary_count, 0U))
-                ? SHADOWSPILL_MEMORY_DEVICE
-                : SHADOWSPILL_MEMORY_SPILL;
+                (uint8_t)problem->initial_location[alias];
         }
         if (problem->final_location[alias] >= 0) {
             const uint32_t output = storage->value.final_count++;
@@ -439,7 +441,7 @@ int shadowspill_emit_indexed_schedule(
         return -1;
     }
 
-    emit_boundary_residency(facts, resident, storage);
+    emit_boundary_residency(facts, storage);
     emission_destroy(&emission);
     return 0;
 }
