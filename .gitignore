@@ -1,6 +1,9 @@
 # Local architecture plans, implementation journals, and investigation notes.
 /docs/internal/
 
+# Isolated experiments and independent checkouts.
+/dev/
+
 # Python
 __pycache__/
 *.py[cod]
