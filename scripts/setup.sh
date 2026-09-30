@@ -76,6 +76,30 @@ echo "[1/5] Installing PyTorch 2.13 with backend '${torch_backend}'"
   --torch-backend "${torch_backend}" \
   "torch>=2.13,<2.14"
 
+# The PyTorch wheel carries the CUDA runtime but not its compiler, and a CUDA
+# build of PyTorch has CMake enable its CUDA language when the adapter's build
+# loads PyTorch's package, which needs nvcc. The build finds one through
+# CUDACXX, on PATH, under CUDA_PATH, or where the toolkit installs by default,
+# so a missing one is named here rather than deep inside CMake's output.
+cuda_compiler_available() {
+  [[ -n "${CUDACXX:-}" ]] && return 0
+  command -v nvcc >/dev/null && return 0
+  [[ -n "${CUDA_PATH:-}" && -x "${CUDA_PATH}/bin/nvcc" ]] && return 0
+  compgen -G "/usr/local/cuda*/bin/nvcc" >/dev/null
+}
+torch_cuda="$("${python_executable}" -c 'import torch; print(torch.version.cuda or "")')"
+if [[ -n "${torch_cuda}" ]] && ! cuda_compiler_available; then
+  cat >&2 <<EOF
+PyTorch here is a CUDA ${torch_cuda} build, and building ShadowSpill against it
+needs the CUDA toolkit's compiler, nvcc, which the PyTorch wheel does not carry.
+None was found through CUDACXX, on PATH, under CUDA_PATH, or in /usr/local/cuda*.
+Install one of CUDA ${torch_cuda%%.*}.x -- the system CUDA toolkit, or into this
+environment with: conda install -c nvidia "cuda-nvcc=${torch_cuda}" -- or set
+CUDACXX to an existing nvcc, then run setup again.
+EOF
+  exit 1
+fi
+
 echo "[2/5] Building and installing ShadowSpill"
 torch_cmake_prefix="$(
   "${python_executable}" -c '
