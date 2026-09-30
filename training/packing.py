@@ -50,6 +50,11 @@ class Packer:
         self.window = window
         # The padded tail may need a few sequences of its own, none over max_len.
         self.max_sequences = seq_slots - -(-tokens // source.max_len)
+        if self.max_sequences < 1:
+            raise ValueError(
+                "packing leaves no sequence slots for documents after reserving "
+                "padding slots; reduce min_tokens_per_seq"
+            )
         self.packs: list[list[int]] = []
         self.pending: deque[int] = deque()
         self.next_document = 0

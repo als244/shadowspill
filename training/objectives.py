@@ -21,6 +21,7 @@ module it was imported with.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from itertools import chain
 from typing import Any
 
 import torch
@@ -59,7 +60,11 @@ class Objective(nn.Module):
         self.model = model
         self.objective = objective
         self.options = dict(options)
-        self.register_buffer(self.TRAINED_TOTAL, torch.ones(()))
+        state = next(chain(model.parameters(), model.buffers()), None)
+        device = None if state is None else state.device
+        self.register_buffer(
+            self.TRAINED_TOTAL, torch.ones((), device=device, dtype=torch.float32)
+        )
 
     def reset_parameters(self) -> None:
         """The total's value before a step sets it: one, so the objective is the
