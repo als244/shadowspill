@@ -70,15 +70,75 @@ def test_a_config_on_mlops_asks_it_for_weight_gradients_at_its_grad_dtype(
 
     raw = json.loads(path.read_text())
     settings = raw.get("settings", [])
-    if not any(
-        setting.get("@call") == "workloads.providers:select_implementation"
-        and setting.get("implementation") == "mlops"
-        for setting in settings
-    ):
+    if "workloads.mlops" not in json.dumps(raw.get("model", {})):
         pytest.skip("the model does not run on mlops kernels")
+    assert all(
+        setting.get("@call") != "workloads.providers:select_implementation"
+        for setting in settings
+    )
     asked = [
         setting.get("dtype")
         for setting in settings
         if setting.get("@call") == "mlops.dispatch:set_weight_gradient_dtype"
     ]
     assert asked == ([raw["grad_dtype"]] if "grad_dtype" in raw else [])
+
+
+@pytest.mark.parametrize("master", [None, "@torch:float32"])
+def test_fp16_model_and_optimizer_precision_survive_trainer_config(tmp_path, master):
+    import torch
+
+    from tests.training._synthetic import write_dataset
+    from training.trainer import Trainer
+
+    path = _write(
+        tmp_path,
+        {
+            "run_dir": str(tmp_path / "run"),
+            "model": {
+                "@call": "training.models:build_on_meta",
+                "model": "@tests.training._synthetic:TinyModel",
+                "dtype": "bfloat16",
+            },
+            "objective": "@training.objectives:model_loss",
+            "optimizer": "@mlops.optim:AdamW",
+            "optimizer_args": {},
+            "data": {
+                "@call": "training.data:PackedTokens",
+                "directory": str(write_dataset(tmp_path / "tokens")),
+            },
+            "backend": {
+                "@call": "training.backends.pytorch:PyTorch",
+                "device": "cpu",
+                "compile": False,
+            },
+            "steps": 1,
+            "max_seq_len": 512,
+            "max_tokens_per_step": 1024,
+            "max_tokens_per_microbatch": 512,
+        },
+    )
+    trainer = Trainer.from_config(
+        path,
+        [
+            "model.dtype=float16",
+            "optimizer_args.opt_state_dtype=@torch:float32",
+            "optimizer_args.gradient_dtype=parameter",
+            "grad_dtype=@torch:float16",
+            "master_dtype=" + json.dumps(master),
+        ],
+    )
+    assert all(
+        p.is_meta and p.dtype == torch.float16 for p in trainer.model.parameters()
+    )
+    assert trainer.master_dtype is (None if master is None else torch.float32)
+    assert trainer.grad_dtype == torch.float16
+    assert trainer.optimizer_args["opt_state_dtype"] == torch.float32
+    assert trainer.record["model"]["dtype"] == "float16"
+    trainer.setup()
+    assert {p.dtype for p in trainer.model.parameters()} == {torch.float16}
+    assert {p.dtype for p in trainer.backend.masters.parameters()} == {
+        torch.float16 if master is None else torch.float32
+    }
+    assert trainer.backend.optimizer.param_groups[0]["opt_state_dtype"] == torch.float32
+    trainer.close()

@@ -1,45 +1,29 @@
-"""A workload family's operation providers, chosen for a block or from a point on."""
+"""Workloads leave operation selection to mlops and retain caller overrides."""
 
 from __future__ import annotations
-
-import contextvars
 
 import pytest
 
 pytest.importorskip("mlops")
 
-from mlops.dispatch.context import implementation_override
+import torch
+from mlops.dispatch import use_implementations
+from mlops.dispatch.context import deterministic_required, implementation_override
 
-from workloads.providers import (
-    implementation_context,
-    select_implementation,
-)
-
-OPERATIONS = ("embedding", "rms_norm", "rope", "flash_attention", "swiglu", "head_loss")
+from workloads.numerical import NumericalCase
 
 
-def _selected() -> dict[str, str | None]:
-    return {operation: implementation_override(operation) for operation in OPERATIONS}
+def test_numerical_defaults_do_not_pin_operation_implementations() -> None:
+    case = NumericalCase("llama3", "mlops", torch.nn.Identity(), [])
+    with case.implementations(deterministic=True):
+        assert deterministic_required()
+        assert implementation_override("flash_attention") is None
+    assert not deterministic_required()
 
 
-def test_selecting_a_family_from_a_point_on_selects_what_its_block_does() -> None:
-    with implementation_context("llama3", "mlops"):
-        in_block = _selected()
-
-    def choose() -> dict[str, str | None]:
-        select_implementation("llama3", "mlops")
-        return _selected()
-
-    assert all(in_block.values())
-    assert contextvars.copy_context().run(choose) == in_block
-    assert not any(_selected().values())  # the copied context kept it
-
-
-def test_pytorch_selects_nothing_and_an_unknown_family_is_refused() -> None:
-    def choose() -> dict[str, str | None]:
-        select_implementation("llama3", "pytorch")
-        return _selected()
-
-    assert not any(contextvars.copy_context().run(choose).values())
-    with pytest.raises(ValueError, match="unknown mlops model family"):
-        select_implementation("gpt2", "mlops")
+def test_numerical_context_keeps_an_explicit_caller_selection() -> None:
+    case = NumericalCase("llama3", "mlops", torch.nn.Identity(), [])
+    choice = "native_torch.flash_attention"
+    with use_implementations({"flash_attention": choice}), case.implementations():
+        assert implementation_override("flash_attention") == choice
+    assert implementation_override("flash_attention") is None

@@ -105,7 +105,11 @@ tokenizers `NousResearch/Meta-Llama-3-8B` (`llama3`),
 
 `PackedTokens(directory, long_documents="drop", min_tokens_per_seq=128,
 window=64)` packs those documents into microbatches as sequences of at most
-`max_seq_len` tokens, the trainer's:
+`max_seq_len` tokens, the trainer's sequence-length limit.
+
+The sequence capacity must leave at least one document slot after reserving
+padding slots. An invalid `min_tokens_per_seq`/microbatch combination raises a
+clear error; lower `min_tokens_per_seq` when using very small microbatches.
 
 - A document of at most `max_seq_len` tokens (its end-of-text included) is one
   sequence. A longer one, as `long_documents` says, is dropped (`"drop"`);
@@ -154,6 +158,22 @@ and, by keyword:
 | `checkpoint_every`, `checkpoint_dir` | Checkpoint every so many steps and after the last (0 never does), into `checkpoint_dir` -- by default the run's directory. |
 | `artifact_store` | Where planning keeps what it builds -- captures, compiled graphs, profiles, plans -- for later runs to reuse; by default `artifact_store` inside the run's directory. Runs that share one plan faster. |
 | `wandb_project`, `wandb_mode` | Send the metrics to this W&B project too, `online` or `offline`. |
+
+For stock `torch.optim.AdamW`, use FP32 masters when training an FP16 model
+with FP32 optimizer state. The optimizer steps the masters; ShadowSpill writes
+the updated values back to the FP16 model weights. Set `master_dtype` and
+`grad_dtype` to `"@torch:float32"` in a training config, or pass
+`master_dtype=torch.float32, grad_dtype=torch.float32` to `plan_step` or
+`build_step`. AdamW's `exp_avg` and `exp_avg_sq` then remain FP32, including
+through a ShadowSpill checkpoint restore. Stock AdamW has no independent
+`opt_state_dtype` argument. `mlops.optim.AdamW` supports FP32 moments with FP16
+parameters directly, without master parameters, by explicitly setting
+`opt_state_dtype=torch.float32` (its default remains BF16).
+
+mlops workloads use automatic operation selection, including during graph
+capture. On GPUs below compute capability 8.0, attention selects PyTorch SDPA
+instead of the Ampere-or-newer FlashAttention provider. Explicit mlops
+`use_implementations` settings remain available for deliberate overrides.
 
 `train()` trains from wherever the run stands to its last step and returns the
 last metrics it logged. `setup()` builds the backend without training -- on
@@ -206,6 +226,53 @@ every 50M -- all at bf16, weights and moments alike. Two more train the
 `llama3_1b_300m_fp32.json` with fp32 masters, gradients and moments, and
 `llama3_1b_300m_bf16_sr.json` at bf16 throughout, rounding both the weights'
 and the moments' updates stochastically.
+
+### Configuring FP16 training on an older GPU
+
+The model dtype is `model.dtype`, passed to `build_on_meta` before any weight
+storage is allocated. Both the PyTorch and ShadowSpill backends preserve those
+parameter dtypes when materializing the model. The example configs retain their
+BF16 defaults; choose FP16 explicitly on a GPU without BF16 support:
+
+```bash
+python -m training.train training/configs/llama3_1b.json \
+  run_dir=training/runs/llama3_fp16 \
+  model.dtype=float16 \
+  optimizer_args.opt_state_dtype=@torch:float32 \
+  optimizer_args.gradient_dtype=parameter \
+  grad_dtype=@torch:float16 master_dtype=null \
+  backend.execution_gib=8 backend.spill_gib=32 wandb_project=null
+```
+
+This uses FP16 weights and accumulated gradients, FP32 AdamW moments, and no
+master weights. `master_dtype=@torch:float32` adds FP32 masters while leaving
+model weights in FP16; `grad_dtype=@torch:float32` independently selects FP32
+accumulation. Omit `grad_dtype` to use the weights' dtype. Optimizer state has
+its own setting and does not inherit the master dtype in mlops AdamW.
+
+When requesting FP32 weight gradients directly from mlops kernels, also select
+`mlops.dispatch:set_weight_gradient_dtype` in the config's `settings`, as in
+`configs/llama3_1b_300m_fp32.json`. The trainer stays independent of a particular
+operation library. An FP16 config can omit this setting because mlops kernels
+then return weight gradients at the weights' dtype. The run's saved
+`config.json` retains the model, master, gradient, and optimizer settings.
+
+From Python, the same choices are:
+
+```python
+import mlops
+import torch
+
+model = build_on_meta(MyModel, dtype="float16", config=my_config)
+trainer = Trainer(
+    ...,
+    model=model,
+    optimizer=mlops.optim.AdamW,
+    optimizer_args={"gradient_dtype": "parameter", "opt_state_dtype": torch.float32},
+    master_dtype=None,  # or torch.float32
+    grad_dtype=torch.float16,  # or torch.float32, independently
+)
+```
 
 ## Backends
 

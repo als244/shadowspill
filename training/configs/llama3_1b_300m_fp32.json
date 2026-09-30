@@ -2,11 +2,6 @@
   "run_dir": "training/runs/llama3_1b_300m_fp32",
   "settings": [
     {
-      "@call": "workloads.providers:select_implementation",
-      "family": "llama3",
-      "implementation": "mlops"
-    },
-    {
       "@call": "mlops.dispatch:set_deterministic_kernels",
       "enabled": true
     },

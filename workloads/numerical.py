@@ -5,10 +5,9 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, cast
 
-import mlops
 import torch
 import torch.nn as nn
 from mlops.dispatch import deterministic_kernels
@@ -22,10 +21,8 @@ from workloads.mlops import (
 from workloads.mlops import (
     Qwen35 as MlopsQwen35,
 )
-from workloads.providers import (
-    ModelImplementation,
-    implementation_context,
-)
+from workloads.precision import TrainingDtypes
+from workloads.providers import MODEL_DTYPES, ModelImplementation
 from workloads.pytorch import (
     Llama3 as PyTorchLlama3,
 )
@@ -65,6 +62,7 @@ class NumericalCase:
     model_implementation: ModelImplementation
     model: nn.Module
     microbatches: list[list[Any]]
+    dtypes: TrainingDtypes = field(default_factory=TrainingDtypes)
 
     def objective(self, model: nn.Module, *values: Any) -> torch.Tensor:
         tokens, targets, sequence_lengths = values
@@ -80,22 +78,18 @@ class NumericalCase:
 
     @contextmanager
     def implementations(self, *, deterministic: bool = False) -> Iterator[None]:
-        """Select this case's operation providers for the duration.
+        """Request reproducible kernels without overriding provider selection.
 
-        ``deterministic`` additionally asks those providers for kernels whose
-        accumulation order is fixed.  Comparing a run against a reference or
-        against itself needs that; it costs throughput, so callers that only
-        want the case's providers leave it off.
+        mlops selects supported implementations from the inputs and device.
+        Deterministic accumulation is needed for numerical comparisons; it
+        remains optional for performance measurements.
         """
-        with (
-            implementation_context(self.family, self.model_implementation),
-            deterministic_kernels(deterministic),
-        ):
+        with deterministic_kernels(deterministic):
             yield
 
-    #: AdamW at its defaults. The rate is named in ``hyperparams`` when the
-    #: step is planned and given a value on every step, so it is not set here.
-    optimizer = mlops.optim.AdamW
+    @property
+    def optimizer(self) -> Any:
+        return self.dtypes.optimizer()
 
 
 def build_case(
@@ -107,11 +101,21 @@ def build_case(
     data_geometry: Sequence[Mapping[str, Any]] | None = None,
     case_factory: str | None = None,
     case_options: Mapping[str, Any] | None = None,
+    model_dtype: str | None = None,
+    master_dtype: str | None = None,
+    grad_dtype: str | None = None,
+    opt_state_dtype: str | None = None,
 ) -> NumericalCase:
     """Build model and CPU examples in one reproducible RNG order."""
 
     if model_implementation not in {"pytorch", "mlops"}:
         raise ValueError(f"unknown model implementation {model_implementation!r}")
+    if model_dtype is not None and model_dtype not in MODEL_DTYPES:
+        raise ValueError(f"model_dtype must be one of {MODEL_DTYPES}")
+    if case_factory is not None and (
+        model_dtype is not None or opt_state_dtype is not None
+    ):
+        raise ValueError("custom factories configure dtypes through case_options")
     if case_factory is not None:
         module_name, separator, attribute = case_factory.partition(":")
         if separator == "" or not module_name or not attribute:
@@ -147,6 +151,12 @@ def build_case(
         return cast(NumericalCase, case)
     if case_options:
         raise ValueError("case_options require a custom case_factory")
+    dtypes = TrainingDtypes(
+        model_dtype or "bfloat16",
+        master_dtype or "none",
+        grad_dtype or "parameter",
+        opt_state_dtype or "bfloat16",
+    )
     torch.manual_seed(seed)
     config: Llama3Config | Qwen35Config | OLMoEConfig
     model_type: Callable[[Any], nn.Module]
@@ -167,7 +177,9 @@ def build_case(
         except TypeError as exc:
             raise ValueError(f"invalid {family} model_config: {exc}") from exc
     # The branch above pairs each config with the class that reads it.
-    model: nn.Module = model_type(cast(Any, config)).to(torch.bfloat16)
+    model: nn.Module = model_type(cast(Any, config)).to(
+        getattr(torch, model_dtype or "bfloat16")
+    )
     selected_geometry = data_geometry or _DEFAULT_DATA_GEOMETRY
     microbatches: list[list[Any]] = []
     for index, item in enumerate(selected_geometry):
@@ -225,7 +237,7 @@ def build_case(
                 sequence_lengths,
             ]
         )
-    return NumericalCase(family, model_implementation, model, microbatches)
+    return NumericalCase(family, model_implementation, model, microbatches, dtypes)
 
 
 DEFAULT_DEVICE_BUDGETS = {
