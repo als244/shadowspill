@@ -121,3 +121,10 @@ def test_a_long_document_can_be_spliced_into_pieces(tmp_path: Path) -> None:
     assert int(source.targets(second)[-1]) == IGNORE
     assert source.record(first) == [3, MAX_SEQ_LEN]
     assert source.record(second) == [3, 188, MAX_SEQ_LEN]
+
+
+@pytest.mark.parametrize("minimum", [512, 1024])
+def test_packing_rejects_geometry_without_document_slots(tmp_path, minimum):
+    data = PackedTokens(write_dataset(tmp_path / "tokens"), min_tokens_per_seq=minimum)
+    with pytest.raises(ValueError, match="reduce min_tokens_per_seq"):
+        data.train_packer(512, 512)
