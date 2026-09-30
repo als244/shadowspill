@@ -64,6 +64,7 @@ def build_training(
     transfer_bandwidths: TransferBandwidths | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions: bool = False,
@@ -107,6 +108,7 @@ def build_training(
         timer=timer,
         master_dtype=master_dtype,
         grad_dtype=grad_dtype,
+        parameter_metrics=parameter_metrics,
     )
     profiled: TrainingProfileArtifacts | None = None
     try:

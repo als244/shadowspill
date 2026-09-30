@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import traceback
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Literal, NoReturn
 
 import torch
@@ -319,6 +319,7 @@ def plan_step(
     transfer_bandwidths: TransferBandwidths | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions: bool = False,
@@ -375,6 +376,15 @@ def plan_step(
     fp32; the update casts a gradient only where its parameter is at another
     dtype, which fp32 masters are not. It is normally given with
     ``master_dtype``.
+
+    ``parameter_metrics(weight, gradient)`` optionally computes a pure tensor
+    pytree from each updated parameter's compute weights and final accumulated
+    gradient, before optimizer casts or writes. It is captured, compiled and
+    profiled as read-only tasks preceding the corresponding update components.
+    The detached tensor results are returned once per step, keyed by parameter
+    name, in ``StepResult.parameter_metrics``. They are not converted to host
+    numbers. The callback must not mutate inputs, call ``.item()``, copy to
+    the CPU, or synchronize; aggregate and log results outside the callable.
 
     A microbatch after the first adds its gradients onto the running ones,
     and one a matrix multiply computes is added by the multiply as it writes
@@ -509,6 +519,7 @@ def plan_step(
                 transfer_bandwidths=transfer_bandwidths,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 keep_resolutions=keep_resolutions,
@@ -552,6 +563,7 @@ def build_step_programs(
     export_bypass_key: str | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> tuple[StepProgram, ...]:
@@ -638,6 +650,7 @@ def build_step_programs(
                 profiling_options=profiling_options,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
             )

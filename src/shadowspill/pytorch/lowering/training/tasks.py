@@ -8,13 +8,15 @@ from typing import Literal
 from shadowspill.errors import CaptureError
 from shadowspill.ir import (
     MutationSpec,
+    ObjectRole,
+    Persistence,
     ResourceKind,
     ResourceSpec,
     TaskAlternativeGroup,
     TaskAlternativeOption,
     TaskSpec,
 )
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.artifacts import GraphArtifact, ObjectiveSchema
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
     OptimizerTask,
@@ -22,9 +24,11 @@ from shadowspill.pytorch.optimizer import (
 )
 from shadowspill.step import StepDataOrdering
 from shadowspill.task.entrypoints import TaskEntrypoint, TaskOptions
+from shadowspill.task.slots import ObjectSlot
 
 from ..profiles import TaskProfileCatalog
 from ..program import invocation_start
+from ..task_binding import TaskBindingResolver
 from .artifacts import (
     GradientBinding,
     OptimizerObjectBinding,
@@ -81,6 +85,7 @@ class _TrainingTaskEmitter:
         self.backward_ids: dict[tuple[int, int, str], str] = {}
         self.all_backward_ids: list[str] = []
         self.optimizer_task_ids: list[str] = []
+        self.parameter_metric_schemas: dict[str, ObjectiveSchema] = {}
         self.initial_writers: dict[str, tuple[str, ...]] = {}
         self.latest_contributors: dict[str, tuple[str, ...]] = {}
         self.object_producers: dict[str, list[str]] = {}
@@ -127,6 +132,7 @@ class _TrainingTaskEmitter:
             dict(self.executables),
             groups,
             tuple(self.optimizer_task_ids),
+            dict(self.parameter_metric_schemas),
         )
 
     def _stage_ids(
@@ -437,6 +443,11 @@ class _TrainingTaskEmitter:
                 device_id=self.device_id,
                 profile_id=self.profiles.profile_id,
                 components=components,
+                metric_context=(
+                    self.objects,
+                    self.profiles,
+                    self.parameter_metric_schemas,
+                ),
                 object_dependencies=_object_dependencies(
                     self.object_producers,
                     self.initial_writers,
@@ -544,6 +555,10 @@ def _append_optimizer_tasks(
     profile_id: Callable[..., str],
     components: tuple[OptimizerTask, ...] | None = None,
     object_dependencies: dict[str, tuple[str, ...]] | None = None,
+    metric_context: tuple[
+        TrainingObjects, TaskProfileCatalog, dict[str, ObjectiveSchema]
+    ]
+    | None = None,
 ) -> tuple[str, ...]:
     """Append dependency-closed optimizer components in semantic order."""
 
@@ -559,6 +574,7 @@ def _append_optimizer_tasks(
         profile_id=profile_id,
         components=components,
         object_dependencies=object_dependencies,
+        metric_context=metric_context,
     )
     return appender.append()
 
@@ -578,6 +594,10 @@ class _OptimizerTaskAppender:
         profile_id: Callable[..., str],
         components: tuple[OptimizerTask, ...] | None,
         object_dependencies: dict[str, tuple[str, ...]] | None,
+        metric_context: tuple[
+            TrainingObjects, TaskProfileCatalog, dict[str, ObjectiveSchema]
+        ]
+        | None = None,
     ) -> None:
         if optimizer.update is None:
             raise CaptureError("optimizer has no update artifact")
@@ -592,6 +612,8 @@ class _OptimizerTaskAppender:
         self.components = components
         self.object_dependencies = object_dependencies or {}
         self.object_by_name = optimizer_object_ids(gradients, optimizer_objects)
+        self.metric_context = metric_context
+        self.metric_slots: dict[str, tuple[ObjectSlot, ...]] = {}
 
     def append(self) -> tuple[str, ...]:
         components = self._selected_components()
@@ -620,6 +642,40 @@ class _OptimizerTaskAppender:
     ) -> TaskSpec:
         task_id = f"task_{len(self.tasks):06d}"
         objects = self._component_objects(component)
+        outputs: tuple[str, ...] = ()
+        if component.metric_schema is not None:
+            if self.metric_context is None or not isinstance(
+                component.artifact, GraphArtifact
+            ):
+                raise CaptureError(
+                    "parameter metrics require a captured output contract"
+                )
+            inventory, profiles, schemas = self.metric_context
+            inputs = tuple(
+                ObjectSlot(index, self.object_by_name[name])
+                for index, name in enumerate(component.binding_names)
+            )
+            resolver = TaskBindingResolver(
+                inventory.catalog,
+                component.artifact,
+                inputs,
+                profiles.layout(component.artifact, None),
+                storage_contract=profiles.contract(component.artifact),
+            )
+            slots = tuple(
+                ObjectSlot(
+                    index,
+                    resolver.bind(
+                        index, role=ObjectRole.OUTPUT, persistence=Persistence.STEP
+                    ),
+                )
+                for index in range(component.artifact.output_count)
+            )
+            self.metric_slots[task_id] = slots
+            schemas[task_id] = component.metric_schema
+            outputs = _unique(
+                slot.object_id for slot in slots if slot.object_id not in objects
+            )
         dependencies = _unique(
             (
                 *preceding,
@@ -636,6 +692,7 @@ class _OptimizerTaskAppender:
             self.profile_id(component.artifact),
             dependencies=dependencies,
             inputs=objects,
+            outputs=outputs,
             mutations=tuple(
                 MutationSpec(self.object_by_name[name])
                 for name in component.mutation_names
@@ -659,10 +716,14 @@ class _OptimizerTaskAppender:
         return TaskEntrypoint(
             task_id,
             (),
-            (),
+            self.metric_slots.get(task_id, ()),
             options=TaskOptions(
                 phase="optimizer",
                 named_inputs=component.binding_names,
+                public_output_count=len(self.metric_slots.get(task_id, ())),
+                public_output_leaves=tuple(
+                    slot.leaf_index for slot in self.metric_slots.get(task_id, ())
+                ),
             ),
         )
 

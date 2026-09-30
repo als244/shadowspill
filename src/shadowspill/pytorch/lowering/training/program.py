@@ -105,6 +105,12 @@ def lower_partitioned_training_program(
         objects,
         boundaries,
         graph.tasks,
+        extra_public_outputs=tuple(
+            slot.object_id
+            for entry in graph.entrypoints
+            if entry.task_id in graph.parameter_metric_schemas
+            for slot in entry.output_slots
+        ),
     )
     return LoweredTrainingProgram(
         publish_program(
@@ -124,6 +130,7 @@ def lower_partitioned_training_program(
         objects.optimizer_objects,
         tuple(boundaries.fixed_tensors.values()),
         graph.optimizer_task_ids,
+        graph.parameter_metric_schemas,
     )
 
 

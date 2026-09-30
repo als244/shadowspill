@@ -13,7 +13,7 @@ from typing import Any
 import torch
 
 from shadowspill.pytorch.accelerator import provider_version
-from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.capture.artifacts import GraphArtifact, ObjectiveSchema
 
 
 def optimizer_type_name(optimizer: torch.optim.Optimizer) -> str:
@@ -181,6 +181,8 @@ class OptimizerTask:
     binding_names: tuple[str, ...]
     mutation_names: tuple[str, ...]
     completion_stage_index: int | None = None
+    #: A read-only observation before an update. Its outputs reach the caller.
+    metric_schema: ObjectiveSchema | None = None
 
 
 def optimizer_value_identity(value: Any) -> Any:

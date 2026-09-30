@@ -68,6 +68,7 @@ def step_identity(
     environment: Mapping[str, object],
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> dict[str, object]:
@@ -121,6 +122,7 @@ def step_identity(
         "hyperparams": list(hyperparams),
         "master_dtype": None if master_dtype is None else str(master_dtype),
         "grad_dtype": None if grad_dtype is None else str(grad_dtype),
+        "parameter_metrics": code_identity(parameter_metrics),
         "round_accumulation_once": round_accumulation_once,
         "retention": {
             "memory_bound_flops_per_byte": float(memory_bound_flops_per_byte),

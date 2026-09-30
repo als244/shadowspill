@@ -16,6 +16,8 @@ def derive_training_residency(
     objects: TrainingObjects,
     boundaries: TrainingBoundaries,
     tasks: tuple[TaskSpec, ...],
+    *,
+    extra_public_outputs: tuple[str, ...] = (),
 ) -> tuple[tuple[ResidencySpec, ...], tuple[ResidencySpec, ...]]:
     catalog_objects = objects.catalog.objects()
     aliases = objects.catalog.alias_groups()
@@ -33,6 +35,9 @@ def derive_training_residency(
         for values in boundaries.public_outputs.values()
         for object_id in values
     }
+    public_aliases.update(
+        alias_by_object[object_id] for object_id in extra_public_outputs
+    )
     optimizer_aliases = {
         alias_by_object[binding.object_id] for binding in objects.optimizer_objects
     }
