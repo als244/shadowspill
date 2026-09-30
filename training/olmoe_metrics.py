@@ -58,7 +58,9 @@ def reduce_metrics(microbatches: Sequence[dict[str, torch.Tensor]]) -> MetricSum
                 f"{prefix}/max_to_mean_load": counts.max().item()
                 / (assignments / counts.numel()),
                 f"{prefix}/unused_experts": counts.eq(0).sum().item(),
-                f"{prefix}/assignments": assignments,
+                # Assignment totals stay in the expert-count table; omit the
+                # redundant scalar to keep the mobile metric list manageable.
+                # f"{prefix}/assignments": assignments,
                 f"{prefix}/auxiliary": auxiliary.item() / trained,
             }
         )

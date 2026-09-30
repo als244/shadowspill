@@ -238,3 +238,31 @@ def test_token_counts_must_fit_the_data(tmp_path: Path) -> None:
         Trainer.from_config(config, ["run_dir=x", "max_tokens_per_step=1000"])
     with pytest.raises(ValueError, match="must divide"):
         Trainer.from_config(config, ["run_dir=x", "max_tokens_per_microbatch=3072"])
+
+
+def test_trainer_logs_derived_parameter_metrics_and_elapsed_seconds(tmp_path):
+    run_dir = tmp_path / "run"
+    trainer = Trainer.from_config(
+        _config(tmp_path),
+        [
+            f"run_dir={run_dir}",
+            "steps=2",
+            "eval_every=0",
+            "checkpoint_every=0",
+            "parameter_metrics=@training.observations:parameter_norms",
+        ],
+    )
+    trainer.train()
+    rows = _records(run_dir, "grad_norm/global/l2")
+    assert list(rows) == [0, 1]
+    for step, row in rows.items():
+        assert row["grad_rms/embed/weight"] > 0
+        assert row["param_rms/embed/weight"] > 0
+        assert row["grad_weight_ratio/head/weight"] > 0
+        assert not any(
+            name.startswith(("grad_squared_share/", "param_norm/")) for name in row
+        )
+        assert (
+            row["elapsed_seconds"] >= _records(run_dir, "loss")[step]["elapsed_seconds"]
+        )
+    assert rows[1]["elapsed_seconds"] > rows[0]["elapsed_seconds"]

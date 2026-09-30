@@ -21,7 +21,14 @@ class Logger:
     def __init__(
         self, run_dir: Path, record: dict[str, Any], project: str | None, mode: str
     ) -> None:
-        self.metrics = open(run_dir / "metrics.jsonl", "a")  # noqa: SIM115
+        path = run_dir / "metrics.jsonl"
+        self.started_at = None
+        if path.exists():
+            with path.open() as previous:
+                first = previous.readline()
+            if first:
+                self.started_at = json.loads(first)["time"]
+        self.metrics = open(path, "a")  # noqa: SIM115
         self.tables = open(run_dir / "observations.jsonl", "a")  # noqa: SIM115
         self.wandb = None
         if project is not None:
@@ -44,9 +51,11 @@ class Logger:
             self.wandb.define_metric("*", step_metric="step")
 
     def log(self, step: int, *, echo: bool = True, **metrics: float) -> None:
-        self.metrics.write(
-            json.dumps({"step": step, "time": time.time(), **metrics}) + "\n"
-        )
+        now = time.time()
+        if self.started_at is None:
+            self.started_at = now
+        metrics["elapsed_seconds"] = now - self.started_at
+        self.metrics.write(json.dumps({"step": step, "time": now, **metrics}) + "\n")
         self.metrics.flush()
         if self.wandb is not None:
             self.wandb.log({"step": step, **metrics}, step=step, commit=False)

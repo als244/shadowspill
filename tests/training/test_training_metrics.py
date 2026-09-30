@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,3 +44,24 @@ def test_wandb_uses_training_steps_for_scalars_tables_and_eval(
         range(first_step, first_step + 3)
     )
     assert [row["step"] for row in metrics if "val_loss" in row] == [first_step + 1]
+
+
+def test_elapsed_seconds_continue_from_first_record_when_logger_reopens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    readings = iter((100.0, 125.0, 180.0))
+    monkeypatch.setattr(
+        "training.metrics.time", SimpleNamespace(time=lambda: next(readings))
+    )
+    logger = Logger(tmp_path, {}, project=None, mode="offline")
+    logger.log(0, echo=False, loss=2.0)
+    logger.log(1, echo=False, loss=1.0)
+    logger.close()
+    resumed = Logger(tmp_path, {}, project=None, mode="offline")
+    resumed.log(2, echo=False, loss=0.5)
+    resumed.close()
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "metrics.jsonl").read_text().splitlines()
+    ]
+    assert [row["elapsed_seconds"] for row in rows] == [0.0, 25.0, 80.0]
