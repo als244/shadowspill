@@ -17,7 +17,9 @@ from typing import Any, Literal
 from shadowspill.memory import SpillPool
 from shadowspill.planner import StepDataOrdering
 from shadowspill.store import StoreMode
+from tools.qualification.precision import dtype_overrides
 from workloads.numerical import ModelImplementation, NumericalCase, build_case
+from workloads.precision import TrainingDtypes
 
 #: The reference arm: the same step, fully compiled, without ShadowSpill.
 REFERENCE_EXECUTION = "torch.compile.inductor.fullgraph"
@@ -37,6 +39,14 @@ class CaseRequest:
     optimizer_ordering: Literal["stage_interleaved", "tail"] = "stage_interleaved"
     data_ordering: str | None = None
     steps: int = 5
+    model_dtype: str | None = None
+    master_dtype: str | None = None
+    grad_dtype: str | None = None
+    opt_state_dtype: str | None = None
+
+    @property
+    def dtypes(self) -> TrainingDtypes:
+        return TrainingDtypes(**dtype_overrides(self))
 
     def identity(self) -> str:
         """Digest everything that decides what the two arms compute.
@@ -58,6 +68,8 @@ class CaseRequest:
             "optimizer_ordering": self.optimizer_ordering,
             "steps": self.steps,
         }
+        if self.dtypes.as_dict() != TrainingDtypes().as_dict():
+            payload["dtypes"] = self.dtypes.as_dict()
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         return hashlib.sha256(encoded).hexdigest()
 
@@ -69,6 +81,7 @@ class CaseRequest:
             model_implementation=self.model_implementation,
             seed=self.seed,
             model_config=self.model_config,
+            **dtype_overrides(self),
             data_geometry=self.data_geometry,
             case_factory=self.case_factory,
             case_options=self.case_options,
@@ -98,6 +111,8 @@ class PlannedRequest:
     device_budget: int
     checkpoint_step: int
     require_pressure: bool
+    external_headroom_mib: int = 512
+    reject_overbudget: bool = False
     artifact_store: Path | None = None
     build_store: Path | None = None
     plan_store: Path | None = None

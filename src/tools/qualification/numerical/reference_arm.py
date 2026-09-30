@@ -15,9 +15,11 @@ from typing import Any
 import torch
 
 from shadowspill.pytorch.accelerator import DEVICE_TYPE
+from tools.qualification.precision import dtype_overrides
 from workloads.common.training import LEARNING_RATE
 
 from .metrics import cpu_state, state_digest
+from .reference_state import ReferenceState
 from .references import REFERENCE_SCHEMA, reference_inputs_path
 from .request import REFERENCE_EXECUTION, CaseRequest
 
@@ -40,7 +42,8 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
     case = request.build()
     model = case.model.to(DEVICE_TYPE)
     microbatches = device_microbatches(case.microbatches)
-    optimizer = case.optimizer(model.parameters())
+    state = ReferenceState(model, case.optimizer, **request.dtypes.plan_arguments())
+    optimizer = state.optimizer
     # The planned arm is handed this rate on every step, so the reference has
     # to train at it too; comparing two arms trained differently says nothing.
     for group in optimizer.param_groups:
@@ -60,7 +63,7 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
     execution_timings: list[dict[str, object]] = []
     with case.implementations(deterministic=True):
         for step in range(request.steps):
-            optimizer.zero_grad(set_to_none=True)
+            state.begin_step()
             event_factory: Any = torch.cuda.Event
             compute_start = event_factory(enable_timing=True)
             compute_end = event_factory(enable_timing=True)
@@ -83,6 +86,7 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
                 backward_end = event_factory(enable_timing=True)
                 backward_start.record(torch.cuda.current_stream())
                 loss.backward()  # type: ignore[no-untyped-call]
+                state.accumulate()
                 backward_end.record(torch.cuda.current_stream())
                 task_events.append(
                     ("backward", microbatch_index, backward_start, backward_end)
@@ -91,7 +95,7 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
             optimizer_start = event_factory(enable_timing=True)
             optimizer_end = event_factory(enable_timing=True)
             optimizer_start.record(torch.cuda.current_stream())
-            optimizer.step()
+            state.step()
             optimizer_end.record(torch.cuda.current_stream())
             task_events.append(("optimizer", None, optimizer_start, optimizer_end))
             compute_end.record(torch.cuda.current_stream())
@@ -130,7 +134,12 @@ def reference_worker(request: CaseRequest, output: Path) -> None:
         "compute_step_seconds": compute_timings,
         "execution_timings": execution_timings,
         "microbatch_digest": state_digest(case.microbatches),
-        "model": cpu_state(model.state_dict()),
+        "dtypes": (
+            request.dtypes.as_dict()
+            if request.case_factory is None
+            else {"factory_options": request.case_options, **dtype_overrides(request)}
+        ),
+        "model": cpu_state(state.model_state()),
         "optimizer": cpu_state(optimizer.state_dict()),
     }
     output.parent.mkdir(parents=True, exist_ok=True)

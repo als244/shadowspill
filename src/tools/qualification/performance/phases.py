@@ -97,7 +97,9 @@ def _calibrated_runtime(
     runtime = Runtime(
         pools={
             "execution": device(
-                physical_capacity=manifest.device_physical_capacity_bytes
+                physical_capacity=manifest.device_physical_capacity_bytes,
+                external_headroom=manifest.external_headroom_bytes,
+                reject_overbudget=manifest.reject_overbudget,
             ),
             # A peer's region when one was named, pinned host otherwise.
             # Everything else about the cell is unchanged, which is what makes
@@ -140,6 +142,7 @@ def _plan_case(
         case.model,
         objective=case.objective,
         optimizer=case.optimizer,
+        **manifest.dtypes.plan_arguments(),
         hyperparams=("lr",),
         example_inputs=case.microbatches,
         runtime=runtime,
