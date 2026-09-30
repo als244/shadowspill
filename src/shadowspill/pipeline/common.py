@@ -218,7 +218,7 @@ def simulation_capacity(
     usable_slab = execution_pool_bytes - fixed_slab_bytes
     if fixed_slab_bytes < 0 or usable_slab < 0:
         raise AdmissionError(
-            "fixed provider allocations exceed the admitted slab: "
+            "persistent in-pool allocations exceed the admitted slab: "
             f"slab={execution_pool_bytes}, fixed={fixed_slab_bytes}"
         )
     if workspace_reserve_bytes_ > usable_slab:

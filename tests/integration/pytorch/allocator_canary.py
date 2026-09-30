@@ -204,7 +204,7 @@ def main() -> int:
         frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
-        provider_headroom_bytes=512 << 20,
+        external_headroom_bytes=512 << 20,
         **two_pool_topology(32 << 20),
         worker_poll_nanoseconds=10_000,
     )
@@ -531,7 +531,7 @@ def main() -> int:
     if (
         int(
             library.shadowspill_pytorch_seal_physical_budget(
-                installed.admission.provider_headroom_bytes,
+                installed.admission.external_headroom_bytes,
                 64,
             )
         )

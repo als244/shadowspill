@@ -10,6 +10,7 @@ from .program import ShadowSpillProgram, TaskAlternativeChoice
 from .schedule import MemorySchedule
 from .serialization import JsonValue, canonical_json, digest_json, parse_json
 from .validation import (
+    expect_boolean,
     expect_integer,
     expect_list,
     expect_mapping,
@@ -80,18 +81,24 @@ class PhysicalAdmission:
     device_budget_bytes: int
     spill_budget_bytes: int
     baseline_bytes: int
-    provider_headroom_bytes: int
+    external_headroom_bytes: int
     slab_bytes: int
     workspace_reserve_bytes: int
     spill_reservation_bytes: int
     predicted_fragmentation_bytes: int = 0
+    reject_overbudget: bool = False
 
     def __post_init__(self) -> None:
+        require(
+            isinstance(self.reject_overbudget, bool),
+            "admission.reject_overbudget",
+            "must be a bool",
+        )
         byte_fields = (
             ("device_budget_bytes", self.device_budget_bytes),
             ("spill_budget_bytes", self.spill_budget_bytes),
             ("baseline_bytes", self.baseline_bytes),
-            ("provider_headroom_bytes", self.provider_headroom_bytes),
+            ("external_headroom_bytes", self.external_headroom_bytes),
             ("slab_bytes", self.slab_bytes),
             ("workspace_reserve_bytes", self.workspace_reserve_bytes),
             ("spill_reservation_bytes", self.spill_reservation_bytes),
@@ -100,10 +107,10 @@ class PhysicalAdmission:
         for name, value in byte_fields:
             require_non_negative(value, f"admission.{name}")
         require(
-            self.baseline_bytes + self.provider_headroom_bytes + self.slab_bytes
+            self.baseline_bytes + self.external_headroom_bytes + self.slab_bytes
             <= self.device_budget_bytes,
             "admission.device_budget_bytes",
-            "baseline, provider headroom, and slab exceed the physical cap",
+            "baseline, external headroom, and slab exceed the physical cap",
         )
         require(
             self.workspace_reserve_bytes <= self.slab_bytes,
@@ -128,7 +135,8 @@ class PhysicalAdmission:
             "spill_budget_bytes": self.spill_budget_bytes,
             "spill_reservation_bytes": self.spill_reservation_bytes,
             "predicted_fragmentation_bytes": self.predicted_fragmentation_bytes,
-            "provider_headroom_bytes": self.provider_headroom_bytes,
+            "external_headroom_bytes": self.external_headroom_bytes,
+            "reject_overbudget": self.reject_overbudget,
             "slab_bytes": self.slab_bytes,
             "workspace_reserve_bytes": self.workspace_reserve_bytes,
         }
@@ -144,7 +152,10 @@ class PhysicalAdmission:
             device_budget_bytes=integer("device_budget_bytes"),
             spill_budget_bytes=integer("spill_budget_bytes"),
             baseline_bytes=integer("baseline_bytes"),
-            provider_headroom_bytes=integer("provider_headroom_bytes"),
+            external_headroom_bytes=integer("external_headroom_bytes"),
+            reject_overbudget=expect_boolean(
+                field(data, "reject_overbudget", path), f"{path}.reject_overbudget"
+            ),
             slab_bytes=integer("slab_bytes"),
             workspace_reserve_bytes=integer("workspace_reserve_bytes"),
             spill_reservation_bytes=integer("spill_reservation_bytes"),

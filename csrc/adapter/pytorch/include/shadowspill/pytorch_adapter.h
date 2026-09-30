@@ -67,7 +67,7 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t abi_version;
     int32_t device_ordinal;
     uint64_t device_budget_bytes;
-    uint64_t provider_headroom_bytes;
+    uint64_t external_headroom_bytes;
     uint32_t allocator_pool_id;
     const ShadowSpillPytorchPoolConfig *pools;
     uint32_t pool_count;
@@ -89,6 +89,8 @@ typedef struct ShadowSpillPytorchAdapterConfig {
      */
     const char *const *libraries;
     uint32_t library_count;
+    /* Reject external/whole-process memory overruns when nonzero. */
+    uint8_t reject_overbudget;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {
@@ -96,13 +98,14 @@ typedef struct ShadowSpillPytorchPhysicalAdmission {
     int32_t device_ordinal;
     uint64_t device_budget_bytes;
     uint64_t baseline_bytes;
-    uint64_t provider_headroom_bytes;
+    uint64_t external_headroom_bytes;
     uint32_t allocator_pool_id;
     uint32_t pool_count;
     uint64_t allocator_pool_bytes;
     uint64_t bootstrap_process_bytes;
     uint64_t device_used_bytes;
     uint64_t device_total_bytes;
+    uint8_t reject_overbudget;
 } ShadowSpillPytorchPhysicalAdmission;
 
 /* The three contracts this build was compiled against, and the one thing
@@ -200,12 +203,13 @@ SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_check_physical_budget(void);
 
 /*
- * Confirms the profiled provider reserve fits the bootstrap reservation and
- * seals the physical ledger. This call does not resize or weaken the budget.
+ * Seals the physical ledger and runtime record inventories without resizing the
+ * pool. External or whole-process overruns are rejected only when the bootstrap
+ * configuration enables reject_overbudget; otherwise they are reported.
  */
 SHADOWSPILL_PYTORCH_API ShadowSpillStatus
 shadowspill_pytorch_seal_physical_budget(
-    uint64_t required_provider_headroom_bytes,
+    uint64_t required_external_headroom_bytes,
     uint64_t runtime_record_reserve
 );
 

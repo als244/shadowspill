@@ -18,7 +18,7 @@ def public_test_runtime() -> Runtime:
                 # architecture -- tens of MiB on some, a few on others.
                 "execution": device(
                     physical_capacity=3 << 30,
-                    provider_headroom=512 << 20,
+                    external_headroom=512 << 20,
                 ),
                 "spill": spill_pool(1 << 30),
             },

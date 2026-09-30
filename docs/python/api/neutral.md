@@ -662,6 +662,16 @@ admission](../../architecture/physical-admission.md), and how a schedule
 becomes leases in [from a resolved program to
 leases](../../architecture/admission-leases.md).
 
+### External memory terminology
+
+`AdmissionPolicy.minimum_external_headroom_bytes` defaults to 512 MiB.
+`external_growth_margin_bytes` (64 MiB) and `external_granularity_bytes`
+(64 MiB) determine how an observed external footprint is rounded when the
+standalone physical-admission helper derives an allowance. The runtime's
+`DevicePool.external_headroom` is an explicit reservation, defaulting to
+512 MiB; its separate `reject_overbudget` flag defaults to `False`.
+Persistent allocations inside the pool are accounted for separately.
+
 ## `shadowspill.search`
 
 A step planned at every geometry, budget and walk, and the report that answers.

@@ -84,7 +84,7 @@ Let:
 
 - $B_e$ be the public execution-memory budget;
 - $F$ be the process-persistent execution bytes excluded before callable
-  admission — the driver's baseline and provider-owned state, itemized by
+  admission — the driver's baseline, external memory and persistent in-pool state, itemized by
   field under [two things called
   dynamic](admission-leases.md#two-things-called-dynamic);
 - $H$ be runtime-global shared execution-resident bytes;
@@ -390,7 +390,7 @@ mutation allocations cannot be silently omitted or replaced by scratch.
 
 ### Dynamic scratch
 
-Optional anonymous/provider operations observed in some allocation paths may
+Optional anonymous allocation operations observed in some allocation paths may
 be inserted or omitted at runtime. They receive no fixed offset. Instead they
 use the ordinary dynamic range allocator outside the fixed slice and are
 bounded per task by:
@@ -412,12 +412,12 @@ excluded from the reusable fixed slice. It uses a dynamic lease so the caller
 may retain that tensor across a later invocation. Earlier generations of the
 same alias remain ordinary fixed lifetimes.
 
-### Persistent provider state
+### Persistent in-pool state
 
-Process-persistent provider state is measured and removed from $P$ before the
+Process-persistent in-pool state is measured and removed from $P$ before the
 layout is built. It is neither task workspace nor dynamic scratch. Its
 allocator operations may still carry a dynamic task-allocation policy so a
-valid observed first-use path can be checked without assigning provider-owned
+valid observed first-use path can be checked without assigning persistent
 state a callable-relative address.
 
 ## Runtime adoption and validation
@@ -459,8 +459,8 @@ that allowance cannot be shared.
 
 The bytes are counted once, for the plan that reserved them: a sharing plan
 records no layout bytes of its own, and none of the process's persistent
-provider bytes are charged against its budget, since they lie outside the
-slab and its owner counted them already.
+in-pool bytes are charged against its budget, since they lie outside the
+shared layout slice and its owner counted them already.
 
 Taking turns is what makes this sound, and it needs nothing new: every call
 begins only once the whole runtime has drained, and only if nothing is live in

@@ -91,7 +91,7 @@ class CompiledTaskLayout:
     allocation_trace: tuple[TaskAllocationEvent, ...]
     anonymous_workspace_high_water: int
     anonymous_workspace_extents: tuple[int, ...]
-    persistent_provider_extents: tuple[int, ...]
+    persistent_in_pool_extents: tuple[int, ...]
     compatibility_digest: str
 
     def __post_init__(self) -> None:
@@ -105,7 +105,7 @@ class CompiledTaskLayout:
         values = (
             self.anonymous_workspace_high_water,
             *self.anonymous_workspace_extents,
-            *self.persistent_provider_extents,
+            *self.persistent_in_pool_extents,
         )
         if any(value < 0 for value in values):
             raise ValueError("compiled task physical extents must be non-negative")
@@ -118,7 +118,7 @@ class CompiledTaskLayout:
             "allocation_trace": [event.to_dict() for event in self.allocation_trace],
             "anonymous_workspace_high_water": self.anonymous_workspace_high_water,
             "anonymous_workspace_extents": list(self.anonymous_workspace_extents),
-            "persistent_provider_extents": list(self.persistent_provider_extents),
+            "persistent_in_pool_extents": list(self.persistent_in_pool_extents),
         }
 
     def root(self, root_id: int) -> CompiledRootLayout:
@@ -571,7 +571,7 @@ def _finish_compiled_layout(
         "allocation_trace": [event.to_dict() for event in measurement.allocation_trace],
         "anonymous_workspace_high_water": measurement.workspace_charged_bytes,
         "anonymous_workspace_extents": list(measurement.workspace_extent_bytes),
-        "persistent_provider_extents": list(measurement.persistent_extent_bytes),
+        "persistent_in_pool_extents": list(measurement.persistent_extent_bytes),
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return CompiledTaskLayout(
@@ -581,7 +581,7 @@ def _finish_compiled_layout(
         allocation_trace=measurement.allocation_trace,
         anonymous_workspace_high_water=measurement.workspace_charged_bytes,
         anonymous_workspace_extents=measurement.workspace_extent_bytes,
-        persistent_provider_extents=measurement.persistent_extent_bytes,
+        persistent_in_pool_extents=measurement.persistent_extent_bytes,
         compatibility_digest=hashlib.sha256(encoded.encode()).hexdigest(),
     )
 

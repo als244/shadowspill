@@ -93,7 +93,7 @@ def main() -> int:
         frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
-        provider_headroom_bytes=512 << 20,
+        external_headroom_bytes=512 << 20,
         **two_pool_topology(1 << 20),
         worker_poll_nanoseconds=10_000,
     )

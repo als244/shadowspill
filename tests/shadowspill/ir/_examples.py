@@ -177,7 +177,7 @@ def representative_plan() -> ExecutionPlan:
             device_budget_bytes=1024,
             spill_budget_bytes=1024,
             baseline_bytes=64,
-            provider_headroom_bytes=64,
+            external_headroom_bytes=64,
             slab_bytes=896,
             workspace_reserve_bytes=128,
             spill_reservation_bytes=256,

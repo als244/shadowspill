@@ -118,7 +118,7 @@ class ProgramPlanResult:
                 device_budget_bytes=device.capacity_bytes,
                 spill_budget_bytes=self.simulation_config.spill_capacity_bytes,
                 baseline_bytes=0,
-                provider_headroom_bytes=0,
+                external_headroom_bytes=0,
                 slab_bytes=device.capacity_bytes,
                 workspace_reserve_bytes=min(workspace, device.capacity_bytes),
                 spill_reservation_bytes=self.simulation.spill_peak_bytes,
@@ -137,7 +137,7 @@ class ProgramPlanResult:
             )
         physical_peak = (
             admission.baseline_bytes
-            + admission.provider_headroom_bytes
+            + admission.external_headroom_bytes
             + admission.slab_bytes
         )
         return ExecutionPlan(

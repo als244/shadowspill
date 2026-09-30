@@ -163,7 +163,7 @@ def admit_training_plan(
                     plan.program,
                     plan.schedule,
                     dynamic_task_allocations=(
-                        admitted.admission.dynamic_provider_allocations()
+                        admitted.admission.persistent_allocation_policies()
                     ),
                 ),
                 memory_envelopes=admitted.admission.envelopes_by_task(),

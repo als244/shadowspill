@@ -154,7 +154,7 @@ class _TraceNormalizer:
             for event in self.trace
             if event.allocation_ordinal not in persistent_ordinals
         )
-        # Persistent provider allocations still occur inside the callable and
+        # Persistent in-pool allocations still occur inside the callable and
         # therefore remain part of its runtime callback contract. Only the
         # task-memory replay excludes them: their bounded high-water is carved
         # from the execution pool separately.

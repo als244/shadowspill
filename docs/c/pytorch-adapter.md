@@ -61,7 +61,7 @@ or which device it wants without this header learning any such word.
 `ShadowSpillPytorchAdapterConfig` is what bootstrap takes: the pools and
 directed routes as `ShadowSpillPytorchPoolConfig` and
 `ShadowSpillPytorchRouteConfig` arrays, which id and name what the runtime
-will build, the device budget and the provider's headroom, the worker's
+will build, the device budget and the external headroom, the worker's
 poll interval and the background transfer window it passes through to the
 runtime, and the backend library by path. The adapter hands back
 `ShadowSpillPytorchPhysicalAdmission` (the ledger as sealed),
@@ -101,8 +101,11 @@ frontend copies both.
   `shadowspill_pytorch_physical_admission()`,
   `shadowspill_pytorch_check_physical_budget()`, and
   `shadowspill_pytorch_seal_physical_budget()` expose and seal physical limits.
-  Sealing confirms the profiled provider reserve fits the bootstrap
-  reservation; it never resizes or weakens the budget. Its second argument is
+  `external_headroom_bytes` is reserved before sizing the pool; zero reserves
+  nothing. The independent `reject_overbudget` flag controls enforcement:
+  zero reports external and whole-process overruns, one rejects them. This
+  applies at bootstrap, sealing, and subsequent checks. Pool bounds and device
+  allocation failures remain enforced. Sealing never resizes the pool. Its second argument is
   a record reserve it passes straight through to the neutral runtime, sealing
   the event leases and the retirement records and warm-starting every pool's
   memory-lease records in one call, so no steady-state step allocates one. A

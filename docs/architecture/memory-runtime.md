@@ -19,8 +19,8 @@ whatever the configured `pool_memory` entries serve, and nothing between the
 configuration and the pool asks.
 
 A `DevicePool`'s `physical_capacity` is the complete process-attributable
-accelerator cap. Provider headroom and the driver's own baseline lie inside
-that cap, and the runtime reports the suballocatable pool capacity it derives
+accelerator sizing budget. External headroom and the driver's own baseline
+are subtracted from that budget, and the runtime reports the suballocatable pool capacity it derives
 after initialization. Planning budgets may reduce configured capacities but
 cannot exceed them.
 
@@ -84,14 +84,14 @@ validate the allocation contract before returning a planned range.
 
 Two cases remain dynamic by design:
 
-- bounded optional anonymous/provider allocations use the admitted dynamic
+- bounded optional anonymous allocations use the admitted dynamic
   scratch reserve;
 - terminal caller-owned outputs use dynamic leases so they may outlive a
   later callable invocation.
 
 The scratch reserve is derived from profiling. A user may raise it with
 `dynamic_scratch_reserve_bytes`, but cannot reduce the measured requirement.
-Runtime fixed-service headroom, provider/problem headroom, task workspace, and
+Runtime fixed-service headroom, external headroom and persistent in-pool allocations, task workspace, and
 dynamic scratch are distinct accounting categories.
 
 The full admission formulation, placement algorithm, offset coordinate
@@ -263,3 +263,13 @@ allocator/lease evidence, runtime counters, transfer frontiers, task-boundary
 timing, and overflow handling.
 
 Previous: [Events](events.md). Next: [Task boundaries](task-boundaries.md).
+
+### External memory reservation and enforcement
+
+Pool sizing subtracts the initial process baseline and `external_headroom`
+(default 512 MiB) from `physical_capacity`. Zero reserves no external allowance.
+`reject_overbudget=False` independently selects reporting of external and
+whole-process memory overruns; `True` rejects them. Pool bounds and actual
+device allocation failures remain enforced in both modes. Admission records
+retain both `external_headroom_bytes` and `reject_overbudget` so a report can
+distinguish a sizing budget from an enforced whole-process limit.

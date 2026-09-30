@@ -91,7 +91,7 @@ def measure_task(
         # planning-time setup, not alternative task allocation paths. Warm them
         # before varying representative input identities.
         with timed(phases, "provider_warmup"):
-            warm_provider(
+            warm_persistent_allocations(
                 invoke,
                 boundary.requested_allocated_bytes,
                 profiler.options.warmup_iterations,
@@ -112,7 +112,7 @@ def measure_task(
                     repetitions=profiler.probe_repetitions,
                 )
             with timed(phases, "post_probe_stabilization"):
-                warm_provider(
+                warm_persistent_allocations(
                     invoke,
                     boundary.requested_allocated_bytes,
                     1,
@@ -156,17 +156,17 @@ def measure_task(
     )
 
 
-def warm_provider(
+def warm_persistent_allocations(
     invoke: Callable[[], None],
     requested_allocated_bytes: Callable[[], int],
     warmups: int,
     *,
     stabilization_iterations: int,
 ) -> None:
-    """Invoke until the provider's own allocations stop moving.
+    """Invoke until persistent in-pool allocations stop growing.
 
     At least ``warmups`` invocations run; after that the first pair of equal
-    live-byte readings ends the warmup, and a provider still allocating after
+    live-byte readings ends the warmup, and persistent allocation growth after
     the stabilization budget is an error rather than a baseline.
     """
 
@@ -178,7 +178,7 @@ def warm_provider(
             return
         previous = current
     raise AllocationTelemetryError(
-        "provider allocations did not stabilize during task warmup"
+        "persistent in-pool allocations did not stabilize during task warmup"
     )
 
 
@@ -208,12 +208,12 @@ def task_measurement(
 ) -> TaskMeasurement:
     """Assemble the record the profile store keeps for one task.
 
-    Provider state is what the task-local ownership trace proves still live.
+    Persistent in-pool state is what the task-local trace proves still live.
     Process-wide live-byte deltas are deliberately not an ownership signal:
     compilation artifacts, representative inputs, and stream-pending
     retirements all survive the sampling boundary.  The normalized trace has
     already excluded declared outputs and ordinary workspace, so only its
-    still-live, otherwise-unbound allocations are provider state.
+    still-live, otherwise-unbound allocations are persistent in-pool state.
     """
 
     fixed_extents = workspace.persistent_extent_bytes

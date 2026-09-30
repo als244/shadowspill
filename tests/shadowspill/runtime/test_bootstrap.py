@@ -65,7 +65,7 @@ class _NoProcessAllocator:
     def activate(self) -> None:
         raise AssertionError("the request should have been refused first")
 
-    def initialize_provider_workspaces(self, device_ordinal: int) -> None:
+    def initialize_persistent_workspaces(self, device_ordinal: int) -> None:
         return None
 
 
@@ -149,7 +149,8 @@ def test_declarative_adapter_abi_has_expected_c_layout() -> None:
     assert ctypes.sizeof(FixedLayoutDescription) == 48
     assert ctypes.sizeof(ObjectSnapshot) == 96
     assert ctypes.sizeof(ObjectLocationSnapshot) == 64
-    assert ctypes.sizeof(PhysicalAdmission) == 72
+    assert ctypes.sizeof(PhysicalAdmission) == 80
+    assert PhysicalAdmission.reject_overbudget.offset == 72
     assert ctypes.sizeof(PhysicalMemory) == 24
     assert ctypes.sizeof(TraceConfig) == 24
     # Each grew by one uint64 when a transfer gained a third instant: the event
@@ -340,7 +341,7 @@ def test_installer_rejects_missing_library(
             frontend=_NoProcessAllocator(),
             device_ordinal=0,
             device_budget_bytes=1,
-            provider_headroom_bytes=0,
+            external_headroom_bytes=0,
             **_two_pool_topology(),
         )
 
@@ -350,8 +351,8 @@ def test_installer_rejects_missing_library(
     [
         ({"device_ordinal": -1}, "ordinal"),
         ({"device_budget_bytes": 0}, "budget"),
-        ({"provider_headroom_bytes": -1}, "headroom"),
-        ({"provider_headroom_bytes": 1024}, "headroom"),
+        ({"external_headroom_bytes": -1}, "headroom"),
+        ({"external_headroom_bytes": 1024}, "headroom"),
         (
             {
                 "pools": (
@@ -370,7 +371,7 @@ def test_installer_rejects_invalid_physical_configuration(
     arguments = {
         "device_ordinal": 0,
         "device_budget_bytes": 1024,
-        "provider_headroom_bytes": 0,
+        "external_headroom_bytes": 0,
         "worker_poll_nanoseconds": 0,
         **_two_pool_topology(),
     }

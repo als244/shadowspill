@@ -16,9 +16,10 @@ They are frozen dataclasses; `device()`, `pinned_host()` and
 
 | argument | type | default | meaning |
 |---|---|---|---|
-| `physical_capacity` | `int` | required | The whole process-attributable device memory cap, provider headroom included. |
+| `physical_capacity` | `int` | required | The process-attributable device memory budget used to size the pool, external headroom included. |
 | `device` | `int` | `0` | Accelerator ordinal the pool allocates on. |
-| `provider_headroom` | `int` | `1280 << 20` | Bytes inside `physical_capacity` left to the provider's own allocations. Non-negative and smaller than `physical_capacity`. |
+| `external_headroom` | `int` | `512 << 20` | Bytes reserved inside `physical_capacity` for external memory. Non-negative and smaller than `physical_capacity`; `0` reserves no allowance. |
+| `reject_overbudget` | `bool` | `False` | Reject external or whole-process memory overruns when `True`. Independent of pool sizing; pool bounds remain enforced in both modes. |
 
 `SpillPool` is what every pool that is not the execution pool answers:
 
@@ -68,8 +69,30 @@ Direction is immutable: a route is never handed a copy direction later. The
 backend behind it is resolved from the endpoint pools when the runtime is
 constructed.
 
-Provider headroom is inside `DevicePool.physical_capacity`. The runtime
-reports the derived suballocatable capacity after initialization.
+External memory is process-attributable device memory outside ShadowSpill's
+allocation pool, excluding the baseline measured before pool creation. Pool
+sizing subtracts `external_headroom` (512 MiB by default) and the initial
+baseline from `physical_capacity`. Zero headroom reserves no allowance.
+
+Enforcement is independent: `reject_overbudget=False` (the default) reports
+external and whole-process memory overruns without rejecting them. Set it to
+`True` to enforce both limits during bootstrap, sealing, and execution. In
+both modes the pool keeps its configured size, pool bounds remain enforced,
+and actual device allocation failures still fail.
+
+```python
+from shadowspill.memory import device
+
+# Default: reserve 512 MiB, report overruns without rejecting them.
+pool = device(physical_capacity=5 << 30)
+# Same pool sizing, strict enforcement.
+strict_pool = device(physical_capacity=5 << 30, reject_overbudget=True)
+# Reserve no external allowance, report overruns without rejecting them.
+large_pool = device(physical_capacity=5 << 30, external_headroom=0)
+```
+
+Persistent allocations *inside* the pool are accounted for separately through
+`fixed_execution_bytes`; they do not consume external headroom.
 
 ## Runtime
 

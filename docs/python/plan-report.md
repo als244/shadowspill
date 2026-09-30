@@ -117,7 +117,7 @@ the conservative concurrent-direction rates and route latency retained in
 
 The predicted device peak is the simulator's admitted physical peak, not just
 the sum of logical objects. `fixed_slab_bytes` is process-persistent
-fixed/provider memory removed before callable admission; it is not the
+fixed runtime reserves and persistent in-pool memory removed before callable admission; it is not the
 callable's `fixed_slice_bytes`. The physical-layout diagnostics explain how
 the remaining pool is divided among logical object capacity, the fixed
 callable slice, terminal dynamic outputs, and bounded dynamic scratch.
@@ -372,3 +372,11 @@ planning workflow.
 | Plan repeatedly refines capacity | Physical-layout attempts, required bytes against pool capacity, dynamic/scratch reserves, and search repairs. |
 | Cache reuse is surprising | `cache_artifacts`, dependency digests, profiling metadata, export bypass key, and allocation-probe policy. |
 | Real execution disagrees with the plan | Resolve a traced step and use the [Step diagnostics guide](step-diagnostics.md). |
+
+### External memory policy
+
+`execution_plan.admission.external_headroom_bytes` records the reservation used
+to size the pool (default 512 MiB). `execution_plan.admission.reject_overbudget`
+records whether external and whole-process overruns cause failure (default
+`False`). A declared physical budget alone therefore does not imply enforcement.
+Pool capacity remains bounded in either mode.

@@ -248,7 +248,7 @@ def main() -> int:
         frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
-        provider_headroom_bytes=512 << 20,
+        external_headroom_bytes=512 << 20,
         **two_pool_topology(256 << 20),
         # Two copies must be in flight at once for the overlap this canary
         # measures, so the background window that serialises an unscheduled

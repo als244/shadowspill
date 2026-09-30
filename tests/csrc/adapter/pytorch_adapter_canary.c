@@ -23,7 +23,7 @@
 
 #define MIB(count) ((uint64_t)(count) << 20U)
 #define DEVICE_BUDGET_BYTES MIB(64)
-#define PROVIDER_HEADROOM_BYTES MIB(4)
+#define EXTERNAL_HEADROOM_BYTES MIB(4)
 #define DEFAULT_STREAM ((void *)0)
 
 #define REQUIRE(condition, message)                                          \
@@ -103,7 +103,8 @@ static int bootstrap(const char *backend_library) {
         .abi_version = 0U,
         .device_ordinal = 0,
         .device_budget_bytes = DEVICE_BUDGET_BYTES,
-        .provider_headroom_bytes = PROVIDER_HEADROOM_BYTES,
+        .external_headroom_bytes = EXTERNAL_HEADROOM_BYTES,
+        .reject_overbudget = 1U,
         .allocator_pool_id = DEVICE_POOL,
         .pools = pools,
         .pool_count = 2U,
@@ -172,9 +173,9 @@ static int ledger(void) {
     );
     REQUIRE(
         admission.device_budget_bytes == DEVICE_BUDGET_BYTES &&
-            admission.provider_headroom_bytes == PROVIDER_HEADROOM_BYTES &&
+            admission.external_headroom_bytes == EXTERNAL_HEADROOM_BYTES &&
             admission.allocator_pool_bytes ==
-                DEVICE_BUDGET_BYTES - PROVIDER_HEADROOM_BYTES &&
+                DEVICE_BUDGET_BYTES - EXTERNAL_HEADROOM_BYTES &&
             admission.pool_count == 2U &&
             admission.allocator_pool_id == DEVICE_POOL &&
             admission.device_total_bytes == (UINT64_C(1) << 40U),
@@ -193,7 +194,7 @@ static int ledger(void) {
     );
     REQUIRE(
         shadowspill_pytorch_seal_physical_budget(
-            PROVIDER_HEADROOM_BYTES, 8U
+            EXTERNAL_HEADROOM_BYTES, 8U
         ) == SHADOWSPILL_STATUS_OK,
         "sealing within the reserved headroom failed"
     );

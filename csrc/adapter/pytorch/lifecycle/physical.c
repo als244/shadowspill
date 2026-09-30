@@ -53,12 +53,17 @@ ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
     uint64_t external = memory.process_bytes > base
         ? memory.process_bytes - base
         : 0U;
-    ShadowSpillStatus status =
+    const uint8_t within_budget =
         memory.process_bytes <= admission.device_budget_bytes &&
-            external <= admission.provider_headroom_bytes
+        external <= admission.external_headroom_bytes;
+    const uint8_t report_only = admission.reject_overbudget == 0U;
+    ShadowSpillStatus status = within_budget || report_only
         ? SHADOWSPILL_STATUS_OK
         : SHADOWSPILL_STATUS_PLAN_VIOLATION;
     pthread_mutex_lock(&adapter.mutex);
+    const uint8_t report_growth = report_only && !within_budget &&
+        (memory.process_bytes > adapter.peak_process_physical_bytes ||
+         external > adapter.observed_external_high_water_bytes);
     ++adapter.physical_checks;
     if (memory.process_bytes > adapter.peak_process_physical_bytes) {
         adapter.peak_process_physical_bytes = memory.process_bytes;
@@ -76,11 +81,23 @@ ShadowSpillStatus shadowspill_pytorch_check_physical_budget(void) {
         );
     }
     pthread_mutex_unlock(&adapter.mutex);
+    if (report_growth) {
+        (void)fprintf(
+            stderr,
+            "ShadowSpill: physical use is %llu bytes against a declared budget "
+            "of %llu, with %llu bytes outside the baseline and allocator pool. "
+            "reject_overbudget is false, so this is reported and not enforced.\n",
+            (unsigned long long)memory.process_bytes,
+            (unsigned long long)admission.device_budget_bytes,
+            (unsigned long long)external
+        );
+        (void)fflush(stderr);
+    }
     return status;
 }
 
 ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
-    uint64_t required_provider_headroom_bytes,
+    uint64_t required_external_headroom_bytes,
     uint64_t runtime_record_reserve
 ) {
     pthread_mutex_lock(&adapter.mutex);
@@ -117,34 +134,32 @@ ShadowSpillStatus shadowspill_pytorch_seal_physical_budget(
         return status;
     }
     pthread_mutex_lock(&adapter.mutex);
-    /* Zero headroom is a caller declining the cap at bootstrap, so there is no
-       reservation for the profiled reserve to exceed. Seal anyway and report what the
-       reservation would have had to be, which is the figure a caller setting one
-       wants. Printed after the lock is dropped. */
-    const uint64_t declined = adapter.admission.provider_headroom_bytes == 0U
-        ? required_provider_headroom_bytes
+    /* The allowance sizes the pool; only this flag controls enforcement. */
+    const uint64_t reported_requirement = !adapter.admission.reject_overbudget &&
+        required_external_headroom_bytes > adapter.admission.external_headroom_bytes
+        ? required_external_headroom_bytes
         : 0U;
-    if (declined != 0U) {
+    if (!adapter.admission.reject_overbudget) {
         adapter.physical_budget_sealed = 1U;
-    } else if (required_provider_headroom_bytes >
-        adapter.admission.provider_headroom_bytes) {
+    } else if (required_external_headroom_bytes >
+        adapter.admission.external_headroom_bytes) {
         status = SHADOWSPILL_STATUS_PLAN_VIOLATION;
         shadowspill_pytorch_failure_latch_physical_locked(
             status,
-            required_provider_headroom_bytes,
-            adapter.admission.provider_headroom_bytes
+            required_external_headroom_bytes,
+            adapter.admission.external_headroom_bytes
         );
     } else {
         adapter.physical_budget_sealed = 1U;
     }
     pthread_mutex_unlock(&adapter.mutex);
-    if (declined != 0U) {
+    if (reported_requirement != 0U) {
         (void)fprintf(
             stderr,
-            "ShadowSpill: the provider's measured reserve needs a headroom of %llu "
-            "bytes; provider_headroom is zero, so this is reported and not "
+            "ShadowSpill: measured external memory needs a headroom of %llu "
+            "bytes; reject_overbudget is false, so this is reported and not "
             "enforced.\n",
-            (unsigned long long)declined
+            (unsigned long long)reported_requirement
         );
         (void)fflush(stderr);
     }

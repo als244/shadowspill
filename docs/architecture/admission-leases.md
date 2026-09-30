@@ -233,25 +233,31 @@ admission resolves each to its final lease, excludes it from the fixed slice,
 and counts it in `dynamic_reserve_bytes`. For a training step those are the
 values the loop itself reads back.
 
-**Provider-owned persistent allocations.** Profiling classifies an allocation
-as provider state when it outlives its task and is not a returned tensor
-(`persistent_after_task and not output_leaf_indices`). Library handles, kernel
-caches and generator state are all this: memory the provider keeps across
-calls, which the plan cannot place because it does not control when it is
-freed. They never enter the layout at all; their budget is
-`provider_headroom_bytes`, subtracted before the pool exists.
+**Persistent in-pool allocations.** Profiling identifies an allocation that
+outlives its task and is not a returned tensor
+(`persistent_after_task and not output_leaf_indices`). Retained library
+workspaces and generator state may have this lifetime. Their measured reserve
+is included in `fixed_execution_bytes`, inside the allocation pool and excluded
+from the capacity available for task layouts.
 
-Both reach the runtime as offset-free placements, and the projection rejects
-an allocation that claims both policies at once. The complete partition:
+**External memory.** Device memory outside the allocation pool, excluding the
+initial process baseline, consumes `external_headroom_bytes`. This allowance
+is subtracted before pool creation. It is distinct from persistent in-pool
+allocations. Zero reserves no external allowance. Independently, `reject_overbudget=False`
+reports external and whole-process overruns; `True` rejects them. Pool bounds
+and actual device allocation failures remain enforced in both modes.
+
+The pool-sizing partition (enforcement does not change it):
 
 ```text
 device budget
-|-- baseline_bytes           what the driver holds before the pool
-|-- provider_headroom_bytes  provider-owned persistent allocations
-`-- slab (pool)
-    |-- fixed slice          objects and task workspace, planned offsets
-    |-- dynamic_reserve      caller-owned outputs
-    `-- scratch_reserve      unplanned allocator traffic
+|-- baseline_bytes           process memory before pool creation
+|-- external_headroom_bytes  allowance for memory outside the pool
+`-- allocation pool
+    |-- fixed_execution_bytes  persistent allocations and fixed runtime reserves
+    |-- fixed slice            objects and task workspace, planned offsets
+    |-- dynamic_reserve         caller-owned outputs
+    `-- scratch_reserve         unplanned allocator traffic
 ```
 
 Previous: [Physical admission and offset handling](physical-admission.md).

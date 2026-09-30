@@ -7,24 +7,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-# Third-party kernels -- cuBLAS, cuDNN, and any custom kernel a model pulls in
-# (flash-attention, fla, and the like) -- allocate their workspaces outside the
-# allocator, lazily, the first time each kernel runs. That is after the slab has
-# been sized, and a conventional CUDA slab cannot be resized once a provider
-# holds even one allocator-owned pointer, so the allowance has to be reserved up
-# front. It stays inside the user's physical cap and is reported in PlanReport.
-#
-# The figure is the worst case measured across the qualification corpus, rounded
-# the way the seal rounds: external high-water was 112 MiB for llama3 and olmoe
-# and 386 MiB for qwen35, identical at both the numerical and performance
-# geometries despite a 6 GiB spread in peak process memory -- the footprint
-# follows which kernels are compiled in, not problem size. The seal requires
-# round_up(measured + 64 MiB, 64 MiB) -- 192 MiB for llama3 and olmoe, 512 MiB
-# for qwen35 -- so this is exactly what the corpus's worst case demands rather
-# than a margin above it. A configuration whose provider footprint is known may
-# choose a lower value; one whose provider needs more is told by the seal, with
-# the figure, rather than left to guess.
-_DEFAULT_PROVIDER_HEADROOM = 512 << 20
+# External memory is device memory outside ShadowSpill's allocation pool,
+# excluding the process baseline measured before the pool is created. Library
+# workspaces and loaded kernels can increase it lazily. Reserve space before
+# creating the pool because live allocations prevent resizing that pool.
+# 512 MiB covers the original qualification hardware; callers can override it
+# for other hardware and workloads. Enforcement is a separate setting.
+_DEFAULT_EXTERNAL_HEADROOM = 512 << 20
 
 
 def _positive_bytes(value: int, name: str) -> int:
@@ -39,34 +28,36 @@ def _positive_bytes(value: int, name: str) -> int:
 class DevicePool:
     """Configuration for an accelerator execution-capable memory pool.
 
-    ``physical_capacity`` is the complete process-attributable accelerator
-    memory cap, including its problem and provider headroom. The runtime
-    reports the derived suballocatable pool capacity after initialization.
+    ``physical_capacity`` is the process-attributable device memory budget.
+    Pool sizing subtracts the initial process baseline and ``external_headroom``
+    (512 MiB by default). Zero headroom reserves no external allowance.
 
-    ``provider_headroom`` of ``0`` means "give the slab everything and tell me
-    when a provider wants more": the runtime still bootstraps and still seals,
-    but a process that grows past its cap is reported on stderr with the
-    measured figures rather than refused. Use it to find out what a model's
-    providers actually need; a run that has to honour the cap gives them room.
+    ``reject_overbudget=False`` (the default) reports external and whole-process
+    memory overruns without rejecting them. Set it to ``True`` to enforce
+    those limits. Pool bounds and actual device allocation failures remain
+    enforced in either mode; this flag never changes the pool's size.
     """
 
     physical_capacity: int
     device: int = 0
-    provider_headroom: int = _DEFAULT_PROVIDER_HEADROOM
+    external_headroom: int = _DEFAULT_EXTERNAL_HEADROOM
+    reject_overbudget: bool = False
 
     def __post_init__(self) -> None:
         _positive_bytes(self.physical_capacity, "physical_capacity")
+        if not isinstance(self.reject_overbudget, bool):
+            raise TypeError("reject_overbudget must be a bool")
         if isinstance(self.device, bool) or not isinstance(self.device, int):
             raise TypeError("device must be an integer accelerator ordinal")
         if self.device < 0:
             raise ValueError("device must be non-negative")
-        if isinstance(self.provider_headroom, bool) or not isinstance(
-            self.provider_headroom, int
+        if isinstance(self.external_headroom, bool) or not isinstance(
+            self.external_headroom, int
         ):
-            raise TypeError("provider_headroom must be an integer byte count")
-        if not 0 <= self.provider_headroom < self.physical_capacity:
+            raise TypeError("external_headroom must be an integer byte count")
+        if not 0 <= self.external_headroom < self.physical_capacity:
             raise ValueError(
-                "provider_headroom must be non-negative and smaller than "
+                "external_headroom must be non-negative and smaller than "
                 "physical_capacity"
             )
 
@@ -170,14 +161,16 @@ def device(
     *,
     physical_capacity: int,
     device: int = 0,
-    provider_headroom: int = _DEFAULT_PROVIDER_HEADROOM,
+    external_headroom: int = _DEFAULT_EXTERNAL_HEADROOM,
+    reject_overbudget: bool = False,
 ) -> DevicePool:
     """Return a default accelerator-device pool configuration."""
 
     return DevicePool(
         physical_capacity=physical_capacity,
         device=device,
-        provider_headroom=provider_headroom,
+        external_headroom=external_headroom,
+        reject_overbudget=reject_overbudget,
     )
 
 

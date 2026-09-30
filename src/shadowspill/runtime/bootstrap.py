@@ -49,8 +49,8 @@ class RuntimeInstallError(RuntimeError):
 
 
 _MIB = 1 << 20
-_PROVIDER_GROWTH_MARGIN = 64 * _MIB
-_PROVIDER_RESERVATION_GRANULARITY = 64 * _MIB
+_PERSISTENT_GROWTH_MARGIN = 64 * _MIB
+_PERSISTENT_RESERVATION_GRANULARITY = 64 * _MIB
 
 
 @dataclass(frozen=True)
@@ -135,13 +135,14 @@ def install_runtime(
     frontend: RuntimeFrontend,
     device_ordinal: int,
     device_budget_bytes: int,
-    provider_headroom_bytes: int,
+    external_headroom_bytes: int,
     allocator_pool_id: int,
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int = 1_000,
     background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
+    reject_overbudget: bool = False,
 ) -> InstalledRuntime:
     """Install the process-global allocator before the device is initialized.
 
@@ -161,12 +162,13 @@ def install_runtime(
     _validate_install_request(
         device_ordinal,
         device_budget_bytes,
-        provider_headroom_bytes,
+        external_headroom_bytes,
         allocator_pool_id,
         pools,
         routes,
         worker_poll_nanoseconds,
         background_transfer_window_bytes,
+        reject_overbudget,
     )
     path = _validated_adapter_path(library_path)
     backend_library = _backend_path(backend)
@@ -226,7 +228,7 @@ def install_runtime(
         abi_version=ADAPTER_ABI_VERSION,
         device_ordinal=device_ordinal,
         device_budget_bytes=device_budget_bytes,
-        provider_headroom_bytes=provider_headroom_bytes,
+        external_headroom_bytes=external_headroom_bytes,
         allocator_pool_id=allocator_pool_id,
         pools=pool_values,
         pool_count=len(pools),
@@ -237,16 +239,18 @@ def install_runtime(
         backend_library=str(backend_library).encode("utf-8"),
         libraries=library_values,
         library_count=len(library_paths),
+        reject_overbudget=reject_overbudget,
     )
     _bootstrap_allocator(library, config)
     admission = _read_physical_admission(
         library,
         device_budget_bytes=device_budget_bytes,
-        provider_headroom_bytes=provider_headroom_bytes,
+        external_headroom_bytes=external_headroom_bytes,
+        reject_overbudget=reject_overbudget,
     )
-    _validate_physical_usage(library, device_budget_bytes, provider_headroom_bytes)
+    _validate_physical_usage(library, device_budget_bytes, reject_overbudget)
     frontend.activate_allocator()
-    fixed_execution_bytes = _initialize_provider_state(
+    fixed_execution_bytes = _initialize_persistent_state(
         library,
         admission,
         frontend=frontend,
@@ -274,16 +278,16 @@ def _published_runtime_handle(library: Any) -> int:
     return int(handle.value)
 
 
-def _initialize_provider_state(
+def _initialize_persistent_state(
     library: Any,
     admission: PhysicalAdmission,
     *,
     frontend: RuntimeFrontend,
     device_ordinal: int,
 ) -> int:
-    """Charge the frontend provider's persistent state before plan admission.
+    """Charge persistent library allocations inside the pool before plan admission.
 
-    A provider that creates a retained workspace lazily creates it in the
+    A library that creates a retained workspace lazily creates it in the
     middle of a plan, splitting a slab admission had already certified.
     Creating it here, while the slab is otherwise empty, makes its physical
     cost explicit before planning. Dynamic allocation does not assign a special
@@ -294,16 +298,16 @@ def _initialize_provider_state(
     # Tiny allocator/failure canaries and genuinely small non-BLAS workloads
     # need not reserve a library workspace merely to initialize the runtime.
     # A real matrix task in such a pool will still receive the normal
-    # allocator failure if its provider state cannot fit.
+    # allocator failure if its persistent state cannot fit.
     if int(admission.allocator_pool_bytes) < 64 << 20:
         return 0
 
-    frontend.initialize_provider_workspaces(device_ordinal)
+    frontend.initialize_persistent_workspaces(device_ordinal)
 
     message = wait_allocator_idle(
         library,
         _published_runtime_handle(library),
-        problem="provider initialization",
+        problem="persistent workspace initialization",
     )
     if message is not None:
         raise RuntimeInstallError(message)
@@ -313,7 +317,7 @@ def _initialize_provider_state(
     )
     if status != 0:
         raise RuntimeInstallError(
-            f"provider allocation accounting failed (status {status})"
+            f"persistent in-pool allocation accounting failed (status {status})"
         )
     pool = statistics.allocator_pool
     fixed = int(pool.allocated_bytes)
@@ -322,14 +326,14 @@ def _initialize_provider_state(
     largest = int(pool.largest_free_range_bytes)
     if fixed + free != capacity or largest != free:
         raise RuntimeInstallError(
-            "provider initialization fragmented the otherwise empty slab: "
+            "persistent workspace initialization fragmented the otherwise empty slab: "
             f"fixed={fixed}, free={free}, largest={largest}, capacity={capacity}"
         )
-    required = fixed + _PROVIDER_GROWTH_MARGIN
+    required = fixed + _PERSISTENT_GROWTH_MARGIN
     return (
-        (required + _PROVIDER_RESERVATION_GRANULARITY - 1)
-        // _PROVIDER_RESERVATION_GRANULARITY
-        * _PROVIDER_RESERVATION_GRANULARITY
+        (required + _PERSISTENT_RESERVATION_GRANULARITY - 1)
+        // _PERSISTENT_RESERVATION_GRANULARITY
+        * _PERSISTENT_RESERVATION_GRANULARITY
     )
 
 
@@ -375,7 +379,7 @@ def validate_dynamic_execution_reservation(
     admitted = sum(installed.admitted_layout_bytes.values())
     if allocated > reserved_bytes + admitted:
         raise RuntimeInstallError(
-            "persistent provider allocations exceed the admitted slab reserve: "
+            "persistent in-pool allocations exceed the admitted slab reserve: "
             f"observed={allocated}, reserved={reserved_bytes}, "
             f"admitted layouts={admitted}"
         )
@@ -394,20 +398,23 @@ def validate_dynamic_execution_reservation(
 def _validate_install_request(
     device_ordinal: int,
     device_budget_bytes: int,
-    provider_headroom_bytes: int,
+    external_headroom_bytes: int,
     allocator_pool_id: int,
     pools: tuple[PoolBootstrap, ...],
     routes: tuple[RouteBootstrap, ...],
     worker_poll_nanoseconds: int,
     background_transfer_window_bytes: int,
+    reject_overbudget: bool = False,
 ) -> None:
+    if not isinstance(reject_overbudget, bool):
+        raise RuntimeInstallError("reject_overbudget must be a bool")
     if device_ordinal < 0:
         raise RuntimeInstallError("device ordinal must be non-negative")
     if device_budget_bytes <= 0:
         raise RuntimeInstallError("device budget must be positive")
-    if provider_headroom_bytes < 0 or provider_headroom_bytes >= device_budget_bytes:
+    if external_headroom_bytes < 0 or external_headroom_bytes >= device_budget_bytes:
         raise RuntimeInstallError(
-            "provider headroom must be non-negative and smaller than device budget"
+            "external headroom must be non-negative and smaller than device budget"
         )
     if not pools:
         raise RuntimeInstallError("pool registry must not be empty")
@@ -573,8 +580,8 @@ def _bootstrap_refusal(library: Any, config: AdapterConfig) -> str:
         f": the process held {format_bytes(held)} on the device against a declared"
         f" execution budget of {format_bytes(budget)}, so it passed that budget by"
         f" {format_bytes(held - budget)}. The budget has to cover what the process"
-        f" already holds, the provider headroom"
-        f" ({format_bytes(int(config.provider_headroom_bytes))} here) and the"
+        f" already holds, the external headroom"
+        f" ({format_bytes(int(config.external_headroom_bytes))} here) and the"
         " suballocatable slab, and the slab is sized from the first two -- so a"
         " headroom too small to cover what the process acquires while the pools are"
         " created leaves the slab filling the rest and the total over the cap. This"
@@ -586,7 +593,8 @@ def _read_physical_admission(
     library: Any,
     *,
     device_budget_bytes: int,
-    provider_headroom_bytes: int,
+    external_headroom_bytes: int,
+    reject_overbudget: bool = False,
 ) -> PhysicalAdmission:
     admission = PhysicalAdmission()
     status = int(
@@ -596,7 +604,8 @@ def _read_physical_admission(
         status != 0
         or admission.abi_version != ADAPTER_ABI_VERSION
         or admission.device_budget_bytes != device_budget_bytes
-        or admission.provider_headroom_bytes != provider_headroom_bytes
+        or admission.external_headroom_bytes != external_headroom_bytes
+        or bool(admission.reject_overbudget) != reject_overbudget
         or admission.allocator_pool_bytes == 0
     ):
         raise RuntimeInstallError("physical admission handshake failed")
@@ -604,11 +613,11 @@ def _read_physical_admission(
 
 
 def _validate_physical_usage(
-    library: Any, device_budget_bytes: int, provider_headroom_bytes: int
+    library: Any, device_budget_bytes: int, reject_overbudget: bool
 ) -> None:
-    """Confirm the bootstrapped process fits the cap it declared.
+    """Report or reject bootstrapped process usage above the declared budget.
 
-    A zero provider headroom is the caller asking to be told rather than
+    Allowing overruns is the caller asking to be told rather than
     stopped, so the overshoot is reported on stderr and the bootstrap stands.
     The adapter has already latched and printed the same numbers; this repeats
     the decision on the Python side so both gates agree.
@@ -620,13 +629,13 @@ def _validate_physical_usage(
         raise RuntimeInstallError("bootstrap exceeds the physical device budget")
     if physical.process_bytes <= device_budget_bytes:
         return
-    if provider_headroom_bytes != 0:
+    if reject_overbudget:
         raise RuntimeInstallError("bootstrap exceeds the physical device budget")
     excess = int(physical.process_bytes) - device_budget_bytes
     print(
         f"ShadowSpill: the bootstrapped process holds {physical.process_bytes:,} "
         f"bytes against a declared budget of {device_budget_bytes:,}, over by "
-        f"{excess:,}. provider_headroom is zero, so this is reported and the "
+        f"{excess:,}. reject_overbudget is false, so this is reported and the "
         f"bootstrap continues.",
         file=sys.stderr,
     )

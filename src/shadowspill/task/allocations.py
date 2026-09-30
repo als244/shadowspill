@@ -114,7 +114,7 @@ class TaskAllocationContractStep:
     """One operation in a pointer-free compiled-task allocator contract.
 
     A persistent allocation is either returned storage (identified by output
-    leaves) or bounded provider-owned state retained beyond the task boundary.
+    leaves) or bounded persistent in-pool state retained beyond the task boundary.
     """
 
     operation_index: int

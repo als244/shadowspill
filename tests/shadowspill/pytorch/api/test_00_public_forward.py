@@ -70,7 +70,7 @@ def test_public_forward_executes_reloads_and_restores(tmp_path: object) -> None:
     assert planned.plan_report.execution_budget_bytes == admission.slab_bytes
     assert planned.plan_report.predicted_device_peak_bytes == (
         admission.baseline_bytes
-        + admission.provider_headroom_bytes
+        + admission.external_headroom_bytes
         + admission.slab_bytes
     )
     # The default execution budget is the pool's capacity at whole-GiB

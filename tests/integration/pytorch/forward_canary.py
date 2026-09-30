@@ -91,7 +91,7 @@ def main() -> int:
             pools={
                 "execution": device(
                     physical_capacity=2 << 30,
-                    provider_headroom=512 << 20,
+                    external_headroom=512 << 20,
                 ),
                 "spill": spill_pool(1 << 30),
             },
