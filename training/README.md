@@ -195,12 +195,36 @@ W&B and local JSON use these names:
 | Section | Values |
 |---|---|
 | `train/loss/`, `eval/loss/` | `cross_entropy`, `auxiliary` (raw), `weighted_auxiliary`, `total` |
-| `train/routing/layer_00/` (and `eval/`) | Load entropy, normalized entropy, effective experts, maximum/mean load, unused experts, assignments, auxiliary loss |
+| `train/routing/layer_00/` (and `eval/`) | Load entropy, normalized entropy, effective experts, maximum/mean load, unused experts, auxiliary loss |
 | `train/routing/expert_counts` (and `eval/`) | Indexed table: layer, expert, count, share, probability sum |
-| `param_norm/<module>/<parameter>` | Pre-update compute-weight L2 norm, reduced in FP32 |
 | `grad_norm/<module>/<parameter>` | Final accumulated-gradient L2 norm, reduced in FP32 |
-| `param_norm/global/l2`, `grad_norm/global/l2` | Square root of the sum of squared per-parameter norms |
+| `grad_norm/global/l2` | Square root of the sum of squared per-parameter gradient norms |
+| `param_rms/<module>/<parameter>`, `grad_rms/<module>/<parameter>` | Corresponding L2 norm divided by the square root of the tensor's element count |
+| `grad_weight_ratio/<module>/<parameter>` | Gradient L2 norm divided by parameter L2 norm plus `1e-12` |
+| `elapsed_seconds` | Wall-clock seconds since the first scalar record; continues across restarts |
 | `parameters/norms` | Indexed table with full parameter name, shape, dtype, metric and value |
+
+RMS and ratios are derived on the CPU from the returned norm scalars and
+parameter sizes. They add no GPU reductions or synchronization. Empty tensors
+omit RMS.
+These derived scalars are produced whenever `parameter_metrics` returns the
+corresponding `grad_norm` and/or `param_norm` entries. Detail tables retain the
+original per-parameter observations.
+
+`param_norm/` and `grad_squared_share/` scalar emission is temporarily disabled
+in `Trainer._log_observations` to reduce dashboard metric counts. The norm
+callback and CPU derivation remain available: parameter norms still feed RMS
+and gradient-to-weight ratios and appear in the `parameters/norms` detail table.
+Removing the scalar filter restores both categories. Existing W&B runs retain
+their previously logged keys; the reduced count applies to a new run.
+Per-layer routing assignment totals are also omitted from scalar charts in
+both training and evaluation; the expert-count tables retain all assignments.
+
+`elapsed_seconds` includes training, evaluation, checkpointing and logging after
+the first record. Initial model construction and planning are reported separately
+as `setup_seconds`. Reopening a run uses its first recorded timestamp, so elapsed
+wall time includes any downtime between launches. It appears alongside loss and
+throughput in both the main W&B history and stdout.
 
 W&B's internal `_step` and the logged `step` both use the zero-based training
 step. Scalar and table calls for that step accumulate into one W&B history row,
@@ -214,6 +238,29 @@ Scalar results are flushed immediately to
 short step lines, while detailed metrics go to files and W&B. Norms require
 reading the parameters and gradients; their GPU cost is profiled and planned,
 even though the returned scalars are small.
+
+W&B's system monitor is enabled by default and collects available CPU, GPU,
+memory, disk and network metrics every 15 seconds, independently of training
+steps. On NVIDIA GPUs these include power, fan speed, utilization, memory
+activity, allocated memory, temperature and clocks when the device exposes
+them. Supported GPUs also report SM activity/occupancy, DRAM and tensor-pipeline
+activity, and PCIe transmit/receive throughput. GPU memory activity is the
+percentage of sampled time during which device memory was read or written;
+it is distinct from allocated capacity.
+These measurements run outside compiled tasks and need no CUDA synchronization.
+
+With W&B 0.30.0's NVML GPM collector, `gpu.<index>.pcieRxBytes` and
+`pcieTxBytes` report **MiB/s**, despite their names. RX is traffic entering the
+GPU; TX is traffic leaving it. Divide by 1,024 for GiB/s. The
+[collector forwards the readings unchanged](https://github.com/wandb/wandb/blob/v0.30.0/xpu/src/gpu_nvidia.rs),
+and [NVML defines these counters in MiB/s](https://docs.nvidia.com/deploy/archive/R550/nvml-api/group__nvmlGpmEnums.html).
+These are sampled transfer rates rather than cumulative byte counts.
+
+Keep `TMPDIR` short: W&B's GPU collector uses a Unix socket, whose path has an
+OS length limit. A deeply nested temporary directory can prevent the collector
+from starting even when `nvidia-smi` works. A short temporary path or symlink
+fixes this without changing where run logs and artifacts are saved. W&B records
+collector failures in `wandb/latest-run/logs/debug-internal.log`.
 
 For stock `torch.optim.AdamW`, use FP32 masters when training an FP16 model
 with FP32 optimizer state. The optimizer steps the masters; ShadowSpill writes

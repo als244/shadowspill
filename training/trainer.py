@@ -383,12 +383,24 @@ class Trainer:
                 for name, table in summary.tables.items():
                     self.log.table(step, f"{phase}/{name}", table)
         if observations.parameter_metrics:
+            parameters = dict(self.model.named_parameters())
+            scalars = parameter_scalars(
+                observations.parameter_metrics,
+                {name: parameter.numel() for name, parameter in parameters.items()},
+            )
+            # Temporarily omit these scalar categories from dashboards. Raw norms
+            # remain in the detail table and still supply RMS and weight ratios.
             self.log.log(
-                step, echo=False, **parameter_scalars(observations.parameter_metrics)
+                step,
+                echo=False,
+                **{
+                    name: value
+                    for name, value in scalars.items()
+                    if not name.startswith(("grad_squared_share/", "param_norm/"))
+                },
             )
             if details:
                 rows = []
-                parameters = dict(self.model.named_parameters())
                 for name, values in observations.parameter_metrics.items():
                     name = name.removeprefix("model.")
                     parameter = parameters[name]

@@ -95,16 +95,26 @@ class MetricSummary:
     tables: Mapping[str, MetricTable] = field(default_factory=dict)
 
 
-def parameter_scalars(observations: Mapping[str, Any]) -> dict[str, float]:
-    """Stable module sections and full parameter names for scalar observations."""
+def parameter_scalars(
+    observations: Mapping[str, Any], parameter_sizes: Mapping[str, int]
+) -> dict[str, float]:
+    """CPU norm summaries, derived scales, and module shares of squared gradients.
+
+    Sizes are metadata only. Module shares include descendants; nonoverlapping
+    modules covering the observed parameters sum to one when gradients are
+    nonzero. Empty tensors omit RMS, and all-zero gradients have zero shares.
+    """
 
     result = {}
     squared = defaultdict(float)
+    module_squared = defaultdict(float)
     for name, value in observations.items():
-        path = name.removeprefix("model.").split(".")
+        name = name.removeprefix("model.")
+        path = name.split(".")
         path = [part.zfill(2) if part.isdecimal() else part for part in path]
         module = ".".join(path[:-1]) or "parameters"
         stats = value if isinstance(value, Mapping) else {"parameter_metrics": value}
+        scalars = {}
         for metric, scalar_value in stats.items():
             if not isinstance(scalar_value, torch.Tensor) or scalar_value.numel() != 1:
                 raise ValueError(
@@ -115,9 +125,27 @@ def parameter_scalars(observations: Mapping[str, Any]) -> dict[str, float]:
                     "parameter logging expects CPU summaries after the step"
                 )
             scalar = scalar_value.item()
-            result[f"{metric}/{module}/{path[-1]}"] = scalar
+            scalars[metric] = scalar
             if metric in {"grad_norm", "param_norm"}:
                 squared[metric] += scalar * scalar
+                size = parameter_sizes[name]
+                if size:
+                    scalars[metric.replace("_norm", "_rms")] = scalar / size**0.5
+            if metric == "grad_norm":
+                modules = [".".join(path[:i]) for i in range(1, len(path))]
+                for ancestor in modules or ["parameters"]:
+                    module_squared[ancestor] += scalar * scalar
+        if "grad_norm" in scalars and "param_norm" in scalars:
+            scalars["grad_weight_ratio"] = scalars["grad_norm"] / (
+                scalars["param_norm"] + 1e-12
+            )
+        result.update(
+            (f"{metric}/{module}/{path[-1]}", scalar)
+            for metric, scalar in scalars.items()
+        )
     for metric, total in squared.items():
         result[f"{metric}/global/l2"] = total**0.5
+    total = squared["grad_norm"]
+    for module, value in module_squared.items():
+        result[f"grad_squared_share/{module}"] = value / total if total != 0 else 0.0
     return result
