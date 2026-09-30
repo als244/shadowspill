@@ -202,7 +202,14 @@ W&B and local JSON use these names:
 | `param_norm/global/l2`, `grad_norm/global/l2` | Square root of the sum of squared per-parameter norms |
 | `parameters/norms` | Indexed table with full parameter name, shape, dtype, metric and value |
 
-All charts use the explicit `step` axis. Scalar results are flushed to
+W&B's internal `_step` and the logged `step` both use the zero-based training
+step. Scalar and table calls for that step accumulate into one W&B history row,
+including any evaluation performed after that update. The row is committed
+when the next step is logged or the run closes; setup metrics join the first
+step's row. Evaluation every 100 updates therefore appears at steps 99, 199,
+and so on, rather than advancing a separate logging counter.
+
+Scalar results are flushed immediately to
 `metrics.jsonl`; tables are flushed to `observations.jsonl`. Stdout keeps its
 short step lines, while detailed metrics go to files and W&B. Norms require
 reading the parameters and gradients; their GPU cost is profiled and planned,
