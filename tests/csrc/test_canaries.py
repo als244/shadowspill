@@ -181,9 +181,11 @@ def test_cuda_c_canaries_pass(capsys: pytest.CaptureFixture[str]) -> None:
 def test_network_c_canaries_pass(capsys: pytest.CaptureFixture[str]) -> None:
     """The canaries CMake labelled `network`, which need a memory daemon.
 
-    They skip themselves when ``SHADOWSPILL_NETWORK_PEER`` names none, so this
-    passes on a box with no peer rather than failing for want of one.
+    No peer means this optional gate skips, including builds where the network
+    extension and its CTest targets were not built.
     """
 
+    if not os.environ.get("SHADOWSPILL_NETWORK_PEER"):
+        pytest.skip("no network memory peer configured")
     with capsys.disabled():
         _run_ctest("--label-regex", "network")
