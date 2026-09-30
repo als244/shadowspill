@@ -2,7 +2,8 @@
 
 Every metric goes to ``metrics.jsonl`` and, when a W&B project is given, to
 W&B; those logged with ``echo=False`` stay off stdout, which keeps one line per
-step there.
+step there. W&B accumulates scalar and table calls at the explicit training
+step; advancing the step or closing the run commits that single history row.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ class Logger:
         )
         self.metrics.flush()
         if self.wandb is not None:
-            self.wandb.log({"step": step, **metrics})
+            self.wandb.log({"step": step, **metrics}, step=step, commit=False)
         if echo:
             fields = " | ".join(
                 f"{name} {_format(value)}" for name, value in metrics.items()
@@ -79,7 +80,9 @@ class Logger:
                     name: wandb.Table(
                         columns=list(table.columns), data=list(table.rows)
                     ),
-                }
+                },
+                step=step,
+                commit=False,
             )
 
     def close(self, exit_code: int = 0) -> None:
