@@ -17,10 +17,8 @@ from workloads.common import auxiliary_share, language_model_loss
 from workloads.mlops import Llama3 as MlopsLlama3
 from workloads.mlops import OLMoE as MlopsOLMoE
 from workloads.mlops import Qwen35 as MlopsQwen35
-from workloads.providers import (
-    ModelImplementation,
-    implementation_context,
-)
+from workloads.precision import TrainingDtypes
+from workloads.providers import MODEL_DTYPES, ModelImplementation
 from workloads.pytorch import Llama3 as PyTorchLlama3
 from workloads.pytorch import Llama3Config, OLMoEConfig, Qwen35Config
 from workloads.pytorch import Qwen35 as PyTorchQwen35
@@ -28,9 +26,10 @@ from workloads.pytorch import Qwen35 as PyTorchQwen35
 _GIB = 1 << 30
 _RETAINED_HEAD_SCRATCH_BYTES = 512 << 20
 
-#: The throughput each cell sustains today, in tokens per second. The performance
-#: gate fails a cell that drops below 0.95 of its entry; a cell absent from this
-#: table carries no regression gate.
+#: Throughput recorded on the RTX 5090 configuration below, in tokens/second.
+#: The performance gate applies its 0.95 floor only when the hardware and
+#: configuration match (see tools.qualification.performance.baseline). Other
+#: cells still report throughput and run their runtime/budget/simulator checks.
 #:
 #: Each is the median of three consecutive matrix runs on 2026-09-01 with
 #: first-use initial ordering (5ae17b7), on an idle RTX 5090 under the
@@ -113,6 +112,18 @@ class FullModelManifest:
     predecessor_tokens_per_second: float | None
     model_config: Any
     head_scratch_bytes: int = _RETAINED_HEAD_SCRATCH_BYTES
+    model_dtype: str = "bfloat16"
+    master_dtype: str = "none"
+    grad_dtype: str = "bfloat16"
+    opt_state_dtype: str = "bfloat16"
+    external_headroom_bytes: int = 512 << 20
+    reject_overbudget: bool = False
+
+    @property
+    def dtypes(self) -> TrainingDtypes:
+        return TrainingDtypes(
+            self.model_dtype, self.master_dtype, self.grad_dtype, self.opt_state_dtype
+        )
 
     @property
     def tokens_per_microbatch(self) -> int:
@@ -131,6 +142,7 @@ class FullModelManifest:
         result["model_config"] = asdict(self.model_config)
         result["tokens_per_microbatch"] = self.tokens_per_microbatch
         result["tokens_per_step"] = self.tokens_per_step
+        result["dtypes"] = self.dtypes.as_dict()
         return result
 
 
@@ -143,10 +155,8 @@ class FullModelCase:
     microbatches: tuple[tuple[object, ...], ...]
 
     def implementations(self) -> AbstractContextManager[Any]:
-        return implementation_context(
-            self.manifest.family,
-            self.manifest.implementation,
-        )
+        """Leave implementation selection to the model's operation library."""
+        return contextlib.nullcontext()
 
     def objective(
         self, model: nn.Module, *values: object
@@ -206,9 +216,9 @@ class FullModelCase:
         )
         return cast(torch.Tensor, summed / total)
 
-    #: AdamW at its defaults. The rate is named in ``hyperparams`` when the
-    #: step is planned and given a value on every step, so it is not set here.
-    optimizer = mlops.optim.AdamW
+    @property
+    def optimizer(self) -> Any:
+        return self.manifest.dtypes.optimizer()
 
 
 #: The weight of the router's balancing term in a mixture of experts' objective.
@@ -337,7 +347,9 @@ def build_model(manifest: FullModelManifest) -> nn.Module:
             "unsupported full-model cell "
             f"{(manifest.family, manifest.implementation)!r}"
         ) from exc
-    with meta_construction(torch.bfloat16):
+    if manifest.model_dtype not in MODEL_DTYPES:
+        raise ValueError(f"model_dtype must be one of {MODEL_DTYPES}")
+    with meta_construction(getattr(torch, manifest.model_dtype)):
         return model_type(manifest.model_config)
 
 

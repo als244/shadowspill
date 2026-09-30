@@ -2,11 +2,6 @@
   "run_dir": "training/runs/qwen35_1b_300m",
   "settings": [
     {
-      "@call": "workloads.providers:select_implementation",
-      "family": "qwen35",
-      "implementation": "mlops"
-    },
-    {
       "@call": "mlops.dispatch:set_deterministic_kernels",
       "enabled": true
     }

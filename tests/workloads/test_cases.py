@@ -7,14 +7,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import torch
 import torch.nn as nn
 
 from workloads import numerical as cases
 
 
-def test_builtin_case_accepts_model_config_and_data_geometry() -> None:
+@pytest.mark.parametrize("dtype", ["bfloat16", "float16", "float32"])
+def test_builtin_case_accepts_model_config_and_data_geometry(dtype: str) -> None:
     case = cases.build_case(
         "llama3",
+        model_dtype=dtype,
         model_config={
             "n_layers": 2,
             "d_model": 64,
@@ -30,6 +33,7 @@ def test_builtin_case_accepts_model_config_and_data_geometry() -> None:
         ],
     )
 
+    assert all(p.dtype == getattr(torch, dtype) for p in case.model.parameters())
     assert case.model.config.n_layers == 2  # type: ignore[attr-defined]
     assert [tuple(item[0].shape) for item in case.microbatches] == [
         (1, 16),
