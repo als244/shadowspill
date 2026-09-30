@@ -207,41 +207,45 @@ set_tests_properties(
   PROPERTIES TIMEOUT 10
 )
 
-# A pool whose memory is on another machine. Labelled `network`, which at this
-# stage means "a daemon is reachable" -- the canary skips without one, and the
-# label is what keeps it out of the default suite.
-add_executable(shadowspill_remote_pool_canary network/remote_pool_canary.c)
-target_link_libraries(
-  shadowspill_remote_pool_canary
-  PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
-)
-add_test(NAME shadowspill_remote_pool_canary COMMAND shadowspill_remote_pool_canary)
+# The network canaries need the network extension, which builds only where
+# ibverbs is found; a machine without verbs registers neither.
+if(TARGET shadowspill_network)
+  # A pool whose memory is on another machine. Labelled `network`, which at
+  # this stage means "a daemon is reachable" -- the canary skips without one,
+  # and the label is what keeps it out of the default suite.
+  add_executable(shadowspill_remote_pool_canary network/remote_pool_canary.c)
+  target_link_libraries(
+    shadowspill_remote_pool_canary
+    PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
+  )
+  add_test(NAME shadowspill_remote_pool_canary COMMAND shadowspill_remote_pool_canary)
 
-# Bytes actually crossing the link. Needs the runtime's internals to reach a
-# route's lane, which is what it exists to drive.
-add_executable(shadowspill_remote_transfer_canary network/remote_transfer_canary.c)
-target_include_directories(
-  shadowspill_remote_transfer_canary
-  PRIVATE ${SHADOWSPILL_VERBS_INCLUDE_DIR}
-)
-target_link_libraries(
-  shadowspill_remote_transfer_canary
-  PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
-)
-add_test(
-  NAME shadowspill_remote_transfer_canary
-  COMMAND shadowspill_remote_transfer_canary
-)
+  # Bytes actually crossing the link. Needs the runtime's internals to reach a
+  # route's lane, which is what it exists to drive.
+  add_executable(shadowspill_remote_transfer_canary network/remote_transfer_canary.c)
+  target_include_directories(
+    shadowspill_remote_transfer_canary
+    PRIVATE ${SHADOWSPILL_VERBS_INCLUDE_DIR}
+  )
+  target_link_libraries(
+    shadowspill_remote_transfer_canary
+    PRIVATE shadowspill shadowspill_backend_mock shadowspill_build_options
+  )
+  add_test(
+    NAME shadowspill_remote_transfer_canary
+    COMMAND shadowspill_remote_transfer_canary
+  )
 
-set_tests_properties(
-  shadowspill_remote_pool_canary
-  shadowspill_remote_transfer_canary
-  PROPERTIES
-    LABELS "network"
-    TIMEOUT 60
-    ENVIRONMENT
-      "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
-)
+  set_tests_properties(
+    shadowspill_remote_pool_canary
+    shadowspill_remote_transfer_canary
+    PROPERTIES
+      LABELS "network"
+      TIMEOUT 60
+      ENVIRONMENT
+        "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
+  )
+endif()
 
 if(TARGET shadowspill_backend_cuda)
   add_executable(shadowspill_cuda_backend_canary runtime/cuda_backend_canary.c)
@@ -284,12 +288,17 @@ if(TARGET shadowspill_pytorch)
       shadowspill_pytorch_adapter_canary $<TARGET_FILE:shadowspill_backend_mock>
   )
   set_tests_properties(
-    shadowspill_pytorch_adapter_canary
-    PROPERTIES
-      TIMEOUT 30
-      # The extension library the canary loads through the adapter. Not
-      # verbs-gated, so it is built wherever this canary is.
-      ENVIRONMENT
-        "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
+    shadowspill_pytorch_adapter_canary PROPERTIES TIMEOUT 30
   )
+  # The extension library the canary loads through the adapter, where the
+  # network extension is built; a build without verbs has none, and the
+  # canary bootstraps without one.
+  if(TARGET shadowspill_network)
+    set_tests_properties(
+      shadowspill_pytorch_adapter_canary
+      PROPERTIES
+        ENVIRONMENT
+          "SHADOWSPILL_NETWORK_LIBRARY=$<TARGET_FILE:shadowspill_network>"
+    )
+  endif()
 endif()
