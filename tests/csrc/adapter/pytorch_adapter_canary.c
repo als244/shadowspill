@@ -65,13 +65,15 @@ static int before_bootstrap(void) {
 }
 
 /*
- * The extension library the bootstrap below loads. It registers a pool kind
- * this topology never uses, which is the point: what is certified here is the
- * loader, not the kind. Built unconditionally, so it is always present.
+ * The extension library the bootstrap below loads, named by the test's
+ * environment wherever the network extension is built. It registers a pool
+ * kind this topology never uses, which is the point: what is certified there
+ * is the loader, not the kind. A build without verbs has no such library, and
+ * the bootstrap then takes none, as it does on such a machine.
  */
 static const char *network_library(void) {
     const char *configured = getenv("SHADOWSPILL_NETWORK_LIBRARY");
-    return configured != NULL ? configured : "./libshadowspill_network.so";
+    return configured != NULL && configured[0] != '\0' ? configured : NULL;
 }
 
 static int bootstrap(const char *backend_library) {
@@ -129,12 +131,13 @@ static int bootstrap(const char *backend_library) {
         "a library that cannot be opened must fail bootstrap"
     );
 
-    /* A real one. Nothing of it runs here: its descriptor is read, its entries
-       are copied into the runtime config, and the library stays open until
-       after the runtime is destroyed. */
-    const char *const libraries[1] = {network_library()};
-    config.libraries = libraries;
-    config.library_count = 1U;
+    /* A real one, where the build has one. Nothing of it runs here: its
+       descriptor is read, its entries are copied into the runtime config,
+       and the library stays open until after the runtime is destroyed. */
+    const char *const extension = network_library();
+    const char *const libraries[1] = {extension};
+    config.libraries = extension != NULL ? libraries : NULL;
+    config.library_count = extension != NULL ? 1U : 0U;
     REQUIRE(
         shadowspill_pytorch_allocator_bootstrap(&config) ==
             SHADOWSPILL_STATUS_OK,
