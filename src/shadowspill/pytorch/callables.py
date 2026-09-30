@@ -643,7 +643,9 @@ class PlannedTrainStep:
                 trace_setup_ns=trace_setup_ns,
             )
         try:
-            objectives, metrics = self._executor(inputs, self._step + 1)
+            objectives, metrics, parameter_metrics = self._executor(
+                inputs, self._step + 1
+            )
         except BaseException as error:
             if runtime_trace:
                 try:
@@ -662,7 +664,9 @@ class PlannedTrainStep:
             else None
         )
         self._pending_diagnostics = diagnostics
-        return StepResult(objectives, metrics, self._step, diagnostics)
+        return StepResult(
+            objectives, metrics, self._step, diagnostics, parameter_metrics
+        )
 
     def _require_no_pending_invocation(self) -> None:
         pending = self._pending_invocation

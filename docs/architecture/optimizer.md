@@ -414,12 +414,41 @@ take effect, and the message says to name it in `plan_step(hyperparams=...)`.
 Refusing there is what makes the rule discoverable at the moment it matters,
 rather than through a schedule that quietly does nothing.
 
-### What does not belong here
+## Observing parameters and gradients
 
-Metrics and logging are not inputs to the update. They are computed from what
-a step produced, and the caller computes them around the step rather than
-through it -- putting them into the captured graph would make them part of the
-program being planned, which they are not.
+`plan_step`, `build_step_programs`, and `plan_step_search` accept an optional
+`parameter_metrics(weight, gradient)` callback. For example:
+
+```python
+def parameter_metrics(weight, gradient):
+    return {
+        "param_norm": torch.linalg.vector_norm(weight, dtype=torch.float32),
+        "grad_norm": torch.linalg.vector_norm(gradient, dtype=torch.float32),
+    }
+```
+
+This is a pure tensor computation. Each observation reads the model's compute
+weight and the **final accumulated gradient**, before optimizer casts or
+writes; when a master exists, the first argument is still the compute weight.
+Parameters with no update/gradient have no observation. Tied parameters are
+observed under their canonical name.
+
+The PyTorch frontend captures a read-only observation task before each update
+component. Its inputs, output tensors, workspace and runtime participate in
+ordinary compilation, profiling and planning. This preserves stage-interleaved
+updates and does not make the entire model resident at once. Results are
+snapshots, so later updates cannot overwrite them.
+
+`result.parameter_metrics[name]` has the callback's pytree, once per optimizer
+step. **Its leaves are detached tensors on the device**, not Python numbers.
+There is no `.item()`, CPU copy or synchronization inside these tasks or while
+rebuilding the result. The caller copies the small returned summaries and
+logs them after the planned step returns. The callback must not mutate either
+argument or read tensor values on the host.
+
+Loss/router observations belong in `ObjectiveResult.metrics` instead: those
+are returned per microbatch and the caller decides how to aggregate them.
+Logging libraries and aggregation policy remain outside ShadowSpill.
 
 ## See also
 

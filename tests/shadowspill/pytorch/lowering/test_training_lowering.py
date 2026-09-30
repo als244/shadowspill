@@ -24,6 +24,7 @@ from shadowspill.pytorch.lowering.training import (
     lower_training_storage_layout,
 )
 from shadowspill.pytorch.optimizer import capture_optimizer
+from shadowspill.pytorch.optimizer.metrics import with_parameter_metrics
 from shadowspill.pytorch.profiling import (
     TaskAllocationEvent,
     TaskAllocationOperation,
@@ -211,6 +212,7 @@ def _lowered(
     microbatches: int = 2,
     model_factory: type[nn.Module] = _Model,
     data_ordering: StepDataOrdering | None = None,
+    parameter_metrics=None,
 ) -> LoweredTrainingProgram:
     real_model = model_factory()
     optimizer = torch.optim.SGD(real_model.parameters(), lr=0.1, foreach=False)
@@ -219,6 +221,7 @@ def _lowered(
     optimizer_capture = capture_optimizer(
         dict(real_model.named_parameters()), optimizer
     )
+    optimizer_capture = with_parameter_metrics(optimizer_capture, parameter_metrics)
     assert optimizer_capture.update is not None
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     model = fake_device_model(real_model, mode)
@@ -331,6 +334,37 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
         "backward",
     ]
     assert all(task.phase == "optimizer" for task in selected[4:])
+
+
+def test_parameter_metrics_are_planned_public_outputs_before_updates():
+    from training.observations import parameter_norms
+
+    lowered = _lowered(parameter_metrics=parameter_norms)
+    assert len(lowered.parameter_metric_schemas) == 2
+    tasks = {task.task_id: task for task in lowered.program.tasks}
+    aliases = {obj.object_id: obj.alias_group_id for obj in lowered.program.objects}
+    final = {
+        item.alias_group_id: item.location.value for item in lowered.final_residency
+    }
+    observed = []
+    for entry in lowered.entrypoints:
+        if entry.task_id not in lowered.parameter_metric_schemas:
+            continue
+        task = tasks[entry.task_id]
+        assert len(task.inputs) == 2  # weights, final accumulated gradient
+        assert len(task.outputs) == 2  # two FP32 scalar tensors
+        assert not task.mutations
+        assert all(final[aliases[obj]] == "device" for obj in task.outputs)
+        assert entry.options.public_output_count == 2
+        assert any(
+            task.task_id in update.dependencies and update.mutations
+            for update in tasks.values()
+        )
+        observed.extend(entry.options.named_inputs)
+    assert sorted(name for name in observed if name.startswith("gradient.")) == [
+        "gradient.projection.bias",
+        "gradient.projection.weight",
+    ]
 
 
 def test_training_lowering_accepts_arbitrary_graph_pairs() -> None:

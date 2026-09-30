@@ -35,6 +35,7 @@ from shadowspill.runtime.plan import (
 )
 from shadowspill.runtime.teardown import prepare_failure_cleanup
 
+from ...optimizer.metrics import with_parameter_metrics
 from ..artifacts import (
     TrainingCaptureArtifacts,
     TrainingMaterializationArtifacts,
@@ -53,6 +54,7 @@ def materialize_training_state(
     timer: PlanningTimer,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
 ) -> TrainingMaterializationArtifacts:
     """Materialize registered state and invoke/capture the optimizer exactly once.
 
@@ -135,6 +137,9 @@ def materialize_training_state(
                 timer=timer,
                 compute_copies={name: weights[name] for name in masters},
                 gradient_dtype=grad_dtype,
+            )
+            optimizer_capture = with_parameter_metrics(
+                optimizer_capture, parameter_metrics
             )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)

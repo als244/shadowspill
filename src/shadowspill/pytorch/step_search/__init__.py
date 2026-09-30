@@ -79,6 +79,7 @@ def plan_step_search(
     export_bypass_key: str | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions: bool = False,
@@ -115,7 +116,8 @@ def plan_step_search(
     over, with the meaning it has for :func:`plan_step`; ``None`` is the
     library's default of every quarter. Options that are not valid are
     rejected before any geometry is built. ``master_dtype``, ``grad_dtype``,
-    ``round_accumulation_once`` and ``memory_bound_flops_per_byte`` have
+    ``parameter_metrics``, ``round_accumulation_once`` and
+    ``memory_bound_flops_per_byte`` have
     their :func:`plan_step` meanings too: every geometry is built with the
     masters and the gradients the step it plans will keep, accumulated as it
     will accumulate them, its ``save`` variants retaining what that step's
@@ -196,6 +198,7 @@ def plan_step_search(
             export_bypass_key=export_bypass_key,
             master_dtype=master_dtype,
             grad_dtype=grad_dtype,
+            parameter_metrics=parameter_metrics,
             round_accumulation_once=round_accumulation_once,
             memory_bound_flops_per_byte=memory_bound_flops_per_byte,
         ),

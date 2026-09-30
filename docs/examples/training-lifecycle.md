@@ -83,6 +83,26 @@ An ordinary `train_step()` returns `StepResult` without collecting or resolving
 a runtime trace. `DiagnosticsHandle.result()`, checkpoint operations, and
 lifecycle close are explicit synchronous boundaries.
 
+## Returned metrics
+
+The objective may return `ObjectiveResult(loss, metrics)`. Each call returns
+`result.objectives[i]` and `result.metrics[i]` for microbatch `i`, in input
+order. These are raw detached device tensors; ShadowSpill neither sums nor
+averages them. Model outputs only become public step results if the objective
+returns them. `plan_forward`, in contrast, returns its model's output for one
+invocation.
+
+For observations of final accumulated gradients and pre-update parameters,
+pass `parameter_metrics=callback` at planning. The callback takes
+`(compute_weight, accumulated_gradient)` and returns a tensor pytree. Its
+results are available once per step in `result.parameter_metrics`, keyed by
+parameter name. See [optimizer observations](../architecture/optimizer.md#observing-parameters-and-gradients).
+
+Keep tensor reductions inside the callback and host conversion outside it.
+For example, a callback returns `torch.linalg.vector_norm(weight,
+dtype=torch.float32)` directly; a logger may copy and read that scalar after
+`train_step(...)` has returned.
+
 `state_dict()` creates an ordinary CPU checkpoint before `torch.save()` begins.
 The example closes the callable and then exits; long-lived embedding processes
 should follow the complete ownership order in [Errors, failures, and

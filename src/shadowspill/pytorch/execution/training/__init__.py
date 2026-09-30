@@ -114,16 +114,27 @@ class TrainingExecutor(AnnotatedExecutor):
 
     def __call__(
         self, inputs: Sequence[Sequence[Any]], step_number: int
-    ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...]]:
+    ) -> tuple[tuple[torch.Tensor, ...], tuple[Any, ...], dict[str, Any]]:
         timing = self.timing.armed
         run = self._begin_invocation(inputs, timing, step_number)
-        ordered = self._execute_program(run)
-        self._handoff_public_outputs(run, ordered)
+        ordered, observations = self._execute_program(run)
+        self._handoff_public_outputs(
+            run,
+            (
+                *ordered,
+                *(observations[task_id] for task_id in run.public_by_optimizer_task),
+            ),
+        )
         losses, metrics = self._rebuild_objective_results(ordered)
+        parameter_metrics: dict[str, Any] = {}
+        for task_id, values in observations.items():
+            parameter_metrics.update(
+                run.lowered.parameter_metric_schemas[task_id].rebuild_metrics(values)
+            )
         self._invocations += 1
         if timing is not None:
             timing.dispatch_call_finished_ns = time.perf_counter_ns()
-        return losses, metrics
+        return losses, metrics, parameter_metrics
 
     def _begin_invocation(
         self,
@@ -167,11 +178,18 @@ class TrainingExecutor(AnnotatedExecutor):
     def _execute_program(
         self,
         run: _PlanRun,
-    ) -> tuple[tuple[torch.Tensor, ...], ...]:
+    ) -> tuple[
+        tuple[tuple[torch.Tensor, ...], ...], dict[str, tuple[torch.Tensor, ...]]
+    ]:
         public_tensors: dict[int, tuple[torch.Tensor, ...]] = {}
+        observations: dict[str, tuple[torch.Tensor, ...]] = {}
         for record in run.execution:
             entrypoint = record.entrypoint
             outputs = execute_task(self, run, record)
+            if record.task.task_id in run.lowered.parameter_metric_schemas:
+                observations[record.task.task_id] = tuple(
+                    value.detach() for value in outputs
+                )
             if (
                 entrypoint.options.phase == "forward"
                 and entrypoint.options.repetition is not None
@@ -179,16 +197,16 @@ class TrainingExecutor(AnnotatedExecutor):
                 public_tensors[entrypoint.options.repetition] = outputs[
                     : entrypoint.options.public_output_count
                 ]
-        return tuple(public_tensors[index] for index in range(len(public_tensors)))
+        return tuple(
+            public_tensors[index] for index in range(len(public_tensors))
+        ), observations
 
     def _handoff_public_outputs(
         self,
         run: _PlanRun,
         ordered: tuple[tuple[torch.Tensor, ...], ...],
     ) -> None:
-        aliases = tuple(
-            alias_id for values in run.public_by_microbatch for alias_id in values
-        )
+        aliases = run.public_aliases
         tensors = tuple(tensor for values in ordered for tensor in values)
         bindings = acquire_for_caller(
             self._bridge,

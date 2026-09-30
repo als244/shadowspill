@@ -826,6 +826,7 @@ plan_step(
     transfer_bandwidths=None,
     master_dtype=None,
     grad_dtype=None,
+    parameter_metrics=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions=False,
@@ -881,6 +882,22 @@ alone, so one capture serves every value it takes, while a float enters by
 value and would capture again for each one. See [the
 optimizer](../../architecture/optimizer.md).
 
+### Parameter and gradient observations
+
+`plan_step`, `build_step_programs`, and `plan_step_search` accept
+`parameter_metrics=None` or a pure `(compute_weight, accumulated_gradient) ->
+tensor pytree` callback. Its reductions run once per updated parameter, after
+all gradient contributions and before optimizer casts or writes. The first
+argument is the compute weight even when a master exists. The read-only tasks,
+their returned snapshots and workspace are compiled, profiled and planned.
+
+`result.parameter_metrics[name]` preserves the callback's pytree of detached
+device tensors. No scalar extraction, CPU copy or synchronization is performed
+inside these tasks or while constructing `StepResult`. Do not put `.item()`,
+`.cpu()`, logging, or input mutation in the callback. Copy the small results
+and aggregate them after the planned callable returns. This channel is distinct
+from `ObjectiveResult.metrics`, which returns one result per microbatch.
+
 ### `build_step_programs()`
 
 Captures, compiles, profiles and lowers a reusable step, and returns one
@@ -931,6 +948,7 @@ build_step_programs(
     export_bypass_key=None,
     master_dtype=None,
     grad_dtype=None,
+    parameter_metrics=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> tuple[StepProgram, ...]
@@ -991,6 +1009,7 @@ plan_step_search(
     export_bypass_key=None,
     master_dtype=None,
     grad_dtype=None,
+    parameter_metrics=None,
     round_accumulation_once=False,
     memory_bound_flops_per_byte=MEMORY_BOUND_FLOPS_PER_BYTE,
     keep_resolutions=False,
@@ -1000,7 +1019,7 @@ plan_step_search(
 
 `model`, `objective`, `optimizer`, `hyperparams`,
 `runtime`, `execution`, `spill`,
-`optimizer_ordering`, `master_dtype`, `grad_dtype`, `round_accumulation_once`,
+`optimizer_ordering`, `master_dtype`, `grad_dtype`, `parameter_metrics`, `round_accumulation_once`,
 `memory_bound_flops_per_byte` and the store arguments mean what they mean for
 `plan_step()`. The rest are:
 
@@ -1201,7 +1220,8 @@ PlannedTrainStep.submit(
 `PlannedForward` returns the model output; `PlannedTrainStep` returns a
 `StepResult` holding one detached scalar objective and the reconstructed
 objective metrics for each accumulation round, the completed `step_number`,
-and an optional `DiagnosticsHandle`. Tensor-valued metrics are detached;
+once-per-step `parameter_metrics` keyed by parameter name, and an optional
+`DiagnosticsHandle`. Tensor-valued metrics remain raw detached device tensors;
 static metric leaves preserve the captured pytree. `DiagnosticsHandle.result()`
 and `DiagnosticsHandle.wait()` synchronously resolve the trace once; `resolved`
 reports whether that has happened.

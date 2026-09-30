@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -17,12 +17,15 @@ from shadowspill.diagnostics.step import (
 
 @dataclass(frozen=True, slots=True)
 class StepResult:
-    """Detached device results for every microbatch in one logical step."""
+    """Raw detached tensors: per-microbatch results and per-step observations."""
 
     objectives: tuple[torch.Tensor, ...]
     metrics: tuple[Any, ...]
     step_number: int
     diagnostics: DiagnosticsHandle | None = None
+    #: Pre-update compute weights/final gradients observed once per parameter.
+    #: Values keep the callback's pytree; tensor leaves remain on the device.
+    parameter_metrics: dict[str, Any] = field(default_factory=dict)
 
 
 class DiagnosticsHandle:

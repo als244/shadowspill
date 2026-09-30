@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from shadowspill.ir import ExecutionPlan, MemoryAction, MemoryActionKind, TaskSpec
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
@@ -99,6 +99,20 @@ class PlanRun:
     #: the objects a task publishes.
     object_ids_by_alias: Mapping[str, tuple[str, ...]]
     caller_acquisition_handle: int = 0
+    public_by_optimizer_task: Mapping[str, tuple[str, ...]] = field(
+        default_factory=dict
+    )
+
+    @property
+    def public_aliases(self) -> tuple[str, ...]:
+        return tuple(
+            alias
+            for values in (
+                *self.public_by_microbatch,
+                *self.public_by_optimizer_task.values(),
+            )
+            for alias in values
+        )
 
     def traced_invocation(self) -> TracedInvocation:
         """This run in the terms a runtime trace is taken in."""
@@ -175,6 +189,14 @@ def build_plan_run(
         },
         execution=execution,
         public_by_microbatch=_public_outputs(entrypoints, bridge),
+        public_by_optimizer_task={
+            entry.task_id: tuple(
+                bridge.objects.alias_for_object(slot.object_id)
+                for slot in entry.output_slots
+            )
+            for entry in entrypoints
+            if entry.task_id in lowered.parameter_metric_schemas
+        },
         object_ids_by_alias=object_ids,
     )
 
@@ -206,9 +228,9 @@ def _build_task_record(
         else None
     )
     outputs = (
-        ()
-        if entrypoint.options.phase == "optimizer"
-        else _forward_outputs(entrypoint, input_aliases, bridge)
+        _forward_outputs(entrypoint, input_aliases, bridge)
+        if entrypoint.options.phase in {"forward", "optimizer"}
+        else ()
     )
     gradient_outputs = _gradient_outputs(entrypoint, bridge)
     handoff_aliases = frozenset(

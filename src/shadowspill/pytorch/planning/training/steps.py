@@ -79,6 +79,7 @@ def make_training_programs(
     profiling_options: ProfilingOptions | None = None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> tuple[StepProgram, ...]:
@@ -114,6 +115,7 @@ def make_training_programs(
                 profiling_options=profiling_options,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
                 export_bypass_key=bypass_key,
@@ -165,6 +167,7 @@ def make_training_programs(
                 identity=identity,
                 master_dtype=master_dtype,
                 grad_dtype=grad_dtype,
+                parameter_metrics=parameter_metrics,
                 round_accumulation_once=round_accumulation_once,
                 memory_bound_flops_per_byte=memory_bound_flops_per_byte,
             )
@@ -194,6 +197,7 @@ def _build_training_step_programs(
     identity: Mapping[str, object] | None,
     master_dtype: torch.dtype | None = None,
     grad_dtype: torch.dtype | None = None,
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
     round_accumulation_once: bool = False,
     memory_bound_flops_per_byte: float = MEMORY_BOUND_FLOPS_PER_BYTE,
 ) -> dict[StepDataOrdering, StepProgram]:
@@ -229,6 +233,7 @@ def _build_training_step_programs(
         timer=timer,
         master_dtype=master_dtype,
         grad_dtype=grad_dtype,
+        parameter_metrics=parameter_metrics,
     )
     results: dict[StepDataOrdering, StepProgram] = {}
     try:
