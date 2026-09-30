@@ -16,7 +16,8 @@ static int bootstrap_config_is_valid(
         config->abi_version != SHADOWSPILL_PYTORCH_ADAPTER_ABI_VERSION ||
         config->backend_library == NULL || config->backend_library[0] == '\0' ||
         config->device_ordinal < 0 || config->device_budget_bytes == 0U ||
-        config->provider_headroom_bytes >= config->device_budget_bytes ||
+        config->external_headroom_bytes >= config->device_budget_bytes ||
+        config->reject_overbudget > 1U ||
         config->pools == NULL || config->pool_count == 0U ||
         config->allocator_pool_id >= config->pool_count ||
         (config->routes == NULL && config->route_count != 0U)) {
@@ -72,7 +73,7 @@ static int bootstrap_config_is_valid(
 }
 
 /* The device pool the budget leaves after what the process already holds
-   and the provider's headroom, in whole 2 MiB pages; 0 when nothing fits. */
+   and the external headroom, in whole 2 MiB pages; 0 when nothing fits. */
 static uint64_t allocator_pool_bytes(
     const ShadowSpillPytorchAdapterConfig *config,
     const ShadowSpillBackendPhysicalMemory *physical
@@ -80,11 +81,11 @@ static uint64_t allocator_pool_bytes(
     const uint64_t physical_granularity = 2U << 20U;
     if (config->device_budget_bytes > physical->device_total_bytes ||
         physical->process_bytes >
-            config->device_budget_bytes - config->provider_headroom_bytes) {
+            config->device_budget_bytes - config->external_headroom_bytes) {
         return 0U;
     }
     const uint64_t available = config->device_budget_bytes -
-        physical->process_bytes - config->provider_headroom_bytes;
+        physical->process_bytes - config->external_headroom_bytes;
     return available - available % physical_granularity;
 }
 
@@ -209,16 +210,14 @@ static ShadowSpillStatus confirm_budget(
     if (bootstrapped->process_bytes <= config->device_budget_bytes) {
         return SHADOWSPILL_STATUS_OK;
     }
-    if (config->provider_headroom_bytes == 0U) {
-        /* Zero headroom is a caller declining the cap, not setting one to nothing:
-           there is no reservation to hold the process to, so the excess is reported
-           and the bootstrap continues. The numbers are the point -- a caller who
-           opted out still wants to know by how much, and on which device. */
+    if (config->reject_overbudget == 0U) {
+        /* Enforcement is independent of the headroom used to size the pool.
+           Keep measuring and reporting memory when overruns are allowed. */
         (void)fprintf(
             stderr,
             "ShadowSpill: the process holds %llu bytes on device %d against a "
             "declared execution budget of %llu, exceeding it by %llu. "
-            "provider_headroom is zero, so the budget is reported and not "
+            "reject_overbudget is false, so the budget is reported and not "
             "enforced.\n",
             (unsigned long long)bootstrapped->process_bytes,
             config->device_ordinal,
@@ -276,7 +275,8 @@ static ShadowSpillStatus publish(
         .device_ordinal = config->device_ordinal,
         .device_budget_bytes = config->device_budget_bytes,
         .baseline_bytes = baseline->process_bytes,
-        .provider_headroom_bytes = config->provider_headroom_bytes,
+        .external_headroom_bytes = config->external_headroom_bytes,
+        .reject_overbudget = config->reject_overbudget,
         .allocator_pool_id = config->allocator_pool_id,
         .pool_count = config->pool_count,
         .allocator_pool_bytes = pool_bytes,

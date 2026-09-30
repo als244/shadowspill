@@ -1,4 +1,4 @@
-"""Fresh-process external-provider physical-growth failure canary."""
+"""Fresh-process external-memory growth failure canary."""
 
 from __future__ import annotations
 
@@ -16,13 +16,14 @@ MIB = 1 << 20
 PLAN_VIOLATION = Status.PLAN_VIOLATION
 
 
-def main() -> int:
+def main(*, report_only: bool = False, headroom_mib: int = 256) -> int:
     installed = install_runtime(
         Path(sys.argv[1]).resolve(),
         frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
-        provider_headroom_bytes=256 * MIB,
+        external_headroom_bytes=headroom_mib * MIB,
+        reject_overbudget=not report_only,
         **two_pool_topology(1 * MIB),
         worker_poll_nanoseconds=10_000,
     )
@@ -37,17 +38,20 @@ def main() -> int:
     cuda.cuMemFree_v2.restype = ctypes.c_int
     external = ctypes.c_uint64()
     if cuda.cuMemAlloc_v2(ctypes.byref(external), 320 * MIB) != 0:
-        raise AssertionError("failed to inject external provider growth")
+        raise AssertionError("failed to inject external memory growth")
     try:
         status = int(library.shadowspill_pytorch_check_physical_budget())
-        if status != PLAN_VIOLATION:
+        expected = Status.OK if report_only else PLAN_VIOLATION
+        if status != expected:
             raise AssertionError(f"unexpected physical-check status {status}")
         failure = AdapterFailure()
         if (
             int(library.shadowspill_pytorch_allocator_failure(ctypes.byref(failure)))
-            != PLAN_VIOLATION
+            != expected
         ):
-            raise AssertionError("physical violation was not latched")
+            raise AssertionError(
+                "physical failure latch disagrees with enforcement mode"
+            )
         statistics = AdapterStatistics()
         if (
             int(
@@ -60,15 +64,27 @@ def main() -> int:
             raise AssertionError("statistics query failed")
         if statistics.callback_failures != 0:
             raise AssertionError(
-                "provider growth was misclassified as callback failure"
+                "external memory growth was misclassified as callback failure"
             )
         if statistics.observed_external_high_water_bytes <= 256 * MIB:
             raise AssertionError("external high-water did not exceed its reservation")
         if statistics.peak_process_physical_bytes <= 2 << 30:
             raise AssertionError("negative canary did not actually exceed the cap")
+        if report_only:
+            # Sealing repeats the physical check. The flag must remain report-only
+            # after actual external growth, including on later checks.
+            if (
+                int(library.shadowspill_pytorch_seal_physical_budget(384 * MIB, 16))
+                != 0
+            ):
+                raise AssertionError("report-only sealing rejected external growth")
+            if int(library.shadowspill_pytorch_check_physical_budget()) != 0:
+                raise AssertionError(
+                    "report-only repeated check rejected external growth"
+                )
     finally:
         if cuda.cuMemFree_v2(external.value) != 0:
-            raise AssertionError("failed to release injected provider allocation")
+            raise AssertionError("failed to release injected external allocation")
     return 0
 
 

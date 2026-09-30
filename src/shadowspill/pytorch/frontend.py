@@ -118,7 +118,7 @@ class PyTorchFrontend:
     def activate_allocator(self) -> None:
         self._provider.memory.change_current_allocator(self._allocator)
 
-    def initialize_provider_workspaces(self, device_ordinal: int) -> None:
+    def initialize_persistent_workspaces(self, device_ordinal: int) -> None:
         """Create cuBLAS's retained state now, while the pool is empty.
 
         PyTorch obtains its cuBLAS handle lazily, and obtaining it does not force

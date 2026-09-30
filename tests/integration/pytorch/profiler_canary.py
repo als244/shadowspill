@@ -49,11 +49,11 @@ def main() -> int:
         frontend=PyTorchFrontend(),
         device_ordinal=0,
         device_budget_bytes=2 << 30,
-        provider_headroom_bytes=512 << 20,
+        external_headroom_bytes=512 << 20,
         **two_pool_topology(64 << 20),
     )
     if installed.fixed_execution_bytes <= 0:
-        raise AssertionError("PyTorch provider state was not initialized")
+        raise AssertionError("PyTorch persistent workspaces were not initialized")
     real_model = _Repeated()
     real_inputs = (torch.randn(16, 512),)
     mode = FakeTensorMode(allow_non_fake_inputs=True)
@@ -151,7 +151,9 @@ def main() -> int:
         raise AssertionError("allocator statistics failed after profiling")
     pool = statistics.allocator_pool
     if int(pool.allocated_bytes) > installed.fixed_execution_bytes:
-        raise AssertionError("isolated profiling exceeded the fixed provider reserve")
+        raise AssertionError(
+            "isolated profiling exceeded the persistent in-pool reserve"
+        )
     if int(pool.allocated_bytes) + int(pool.free_bytes) != int(pool.capacity_bytes):
         raise AssertionError("dynamic slab accounting does not reconcile")
     if int(pool.largest_free_range_bytes) > int(pool.free_bytes):

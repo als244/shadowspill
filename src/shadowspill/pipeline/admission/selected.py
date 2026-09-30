@@ -61,10 +61,10 @@ class SelectedAdmission:
     def envelopes_by_task(self) -> dict[str, TaskMemoryEnvelope]:
         return dict(self.task_envelopes)
 
-    def dynamic_provider_allocations(
+    def persistent_allocation_policies(
         self,
     ) -> tuple[DynamicTaskAllocationPolicy, ...]:
-        """Return bounded provider-owned allocations excluded from the layout."""
+        """Return bounded persistent in-pool allocations excluded from the layout."""
 
         result: list[DynamicTaskAllocationPolicy] = []
         for task_id, envelope in self.task_envelopes:

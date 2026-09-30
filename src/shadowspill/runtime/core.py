@@ -131,7 +131,8 @@ class Runtime:
                 frontend=frontend,
                 device_ordinal=topology.device.device,
                 device_budget_bytes=topology.device.physical_capacity,
-                provider_headroom_bytes=topology.device.provider_headroom,
+                external_headroom_bytes=topology.device.external_headroom,
+                reject_overbudget=topology.device.reject_overbudget,
                 allocator_pool_id=topology.allocator_pool_id,
                 pools=topology.pool_bootstrap,
                 routes=topology.route_bootstrap,
@@ -175,9 +176,7 @@ class Runtime:
             _announce("calibrating transfer routes")
             started = time.perf_counter()
             self._calibrate(routes=None, provenance=INITIALIZATION_PROVENANCE)
-            _announce(
-                f"calibrated in {time.perf_counter() - started:.1f}s"
-            )
+            _announce(f"calibrated in {time.perf_counter() - started:.1f}s")
 
     @property
     def frontend(self) -> RuntimeFrontend:

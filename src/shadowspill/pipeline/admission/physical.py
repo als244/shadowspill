@@ -8,7 +8,7 @@ from shadowspill.errors import AdmissionError
 from shadowspill.ir import ExecutionPlan, MemoryActionKind, PhysicalAdmission
 from shadowspill.pipeline.common import round_up
 from shadowspill.planner.admission.layout import FixedPhysicalLayout
-from shadowspill.runtime.abi import AdapterStatistics
+from shadowspill.runtime.abi import AdapterStatistics, PhysicalMemory
 from shadowspill.runtime.bootstrap import InstalledRuntime
 from shadowspill.runtime.plan import PlanMemory
 
@@ -87,7 +87,8 @@ def physical_admission(
         ),
         spill_budget_bytes=memory.spill_budget,
         baseline_bytes=int(installed.admission.baseline_bytes),
-        provider_headroom_bytes=int(installed.admission.provider_headroom_bytes),
+        external_headroom_bytes=int(installed.admission.external_headroom_bytes),
+        reject_overbudget=bool(installed.admission.reject_overbudget),
         slab_bytes=memory.execution_budget,
         workspace_reserve_bytes=workspace_reserve,
         spill_reservation_bytes=predicted_spill_peak_bytes,
@@ -100,7 +101,7 @@ def seal_physical_budget(
     execution_plan: ExecutionPlan,
     fixed_layout: FixedPhysicalLayout,
 ) -> None:
-    """Seal provider headroom and complete steady-state record inventories."""
+    """Seal external headroom and complete steady-state record inventories."""
 
     if fixed_layout.program_digest != execution_plan.program.digest:
         raise AdmissionError("fixed layout belongs to a different ShadowSpillProgram")
@@ -110,9 +111,25 @@ def seal_physical_budget(
     library = installed.library
     status = int(library.shadowspill_pytorch_check_physical_budget())
     if status != 0:
-        raise AdmissionError(
-            f"provider allocations exceeded physical admission (status {status})"
-        )
+        physical = PhysicalMemory()
+        details = ""
+        if library.shadowspill_pytorch_physical_memory(ctypes.byref(physical)) == 0:
+            admission = installed.admission
+            external = max(
+                0,
+                int(physical.process_bytes)
+                - int(admission.baseline_bytes)
+                - int(admission.allocator_pool_bytes),
+            )
+            details = (
+                f": process={int(physical.process_bytes)}, "
+                f"budget={int(admission.device_budget_bytes)}, "
+                f"external={external}, "
+                f"external_headroom={int(admission.external_headroom_bytes)}, "
+                f"baseline={int(admission.baseline_bytes)}, "
+                f"allocator_pool={int(admission.allocator_pool_bytes)}"
+            )
+        raise AdmissionError(f"physical budget check failed (status {status}){details}")
     statistics = AdapterStatistics()
     status = int(
         library.shadowspill_pytorch_allocator_statistics(ctypes.byref(statistics))
@@ -120,7 +137,7 @@ def seal_physical_budget(
     if status != 0:
         raise AdmissionError(f"allocator statistics failed with status {status}")
     required = max(
-        int(installed.admission.provider_headroom_bytes),
+        int(installed.admission.external_headroom_bytes),
         round_up(
             int(statistics.observed_external_high_water_bytes) + 64 * _MIB,
             64 * _MIB,
@@ -158,10 +175,11 @@ def seal_physical_budget(
         )
     )
     if status != 0:
-        reserved = int(installed.admission.provider_headroom_bytes)
+        reserved = int(installed.admission.external_headroom_bytes)
         raise AdmissionError(
-            "observed provider memory exceeds the reserved headroom: "
-            f"required={required}, reserved={reserved}"
+            "observed external memory exceeds the reserved headroom: "
+            f"required={required}, reserved={reserved}, "
+            f"observed_external={int(statistics.observed_external_high_water_bytes)}"
         )
 
 

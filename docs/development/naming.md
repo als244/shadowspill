@@ -81,3 +81,18 @@ PyTorch layer names the accelerator's device type is
 `shadowspill.pytorch.accelerator`. Everything else says *backend* for streams,
 events, allocators, the provider library, and its statistics and capabilities,
 and *device* for tensors, placements, and ordinals.
+
+## Memory accounting names
+
+Use **external memory** for process-attributable device memory outside the
+ShadowSpill allocation pool, excluding the baseline measured before pool
+creation. Python configuration uses `external_headroom` (default `512 << 20`),
+byte-valued admission records use `external_headroom_bytes`, and qualification
+CLI overrides use `--external-headroom-mib`. Zero reserves no allowance.
+
+The separate `reject_overbudget` flag defaults to `False`; set it to `True`
+(or use `--reject-overbudget`) to reject external and whole-process memory
+overruns. It never changes pool sizing or disables pool bounds.
+
+Use **persistent in-pool allocations** for retained allocations inside that
+pool. They consume `fixed_execution_bytes`, not external headroom.
