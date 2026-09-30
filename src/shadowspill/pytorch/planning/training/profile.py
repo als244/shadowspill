@@ -30,6 +30,7 @@ from shadowspill.runtime.bootstrap import (
     validate_dynamic_execution_reservation,
 )
 from shadowspill.runtime.failures import format_bytes, wait_allocator_idle
+from shadowspill.runtime.teardown import prepare_failure_cleanup
 from shadowspill.task.profiling import ProfilingOptions
 
 from ...graph_pairs import (
@@ -99,7 +100,20 @@ def profile_training_tasks(
             allocation_probe_repetitions=allocation_probe_repetitions,
             profiling_options=profiling_options,
         )
-    except BaseException:
+    except BaseException as error:
+        # A device that ran out of memory while profiling leaves the
+        # allocator's no-progress latch set, and the runtime refuses every
+        # unregistration until it is recovered. What profiling kept in the
+        # spill pool belongs to the plan being built, so it is released after
+        # the recovery the build's rollback runs; released before it, the
+        # release fails and the kept values outlive the plan, where nothing
+        # can reach them and the runtime cannot close.
+        prepare_failure_cleanup(
+            state.runtime,
+            error,
+            operation="profile training tasks",
+            synchronize_unlatched=False,
+        )
         profiler.release_host_memory()
         raise
 
