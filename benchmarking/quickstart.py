@@ -643,7 +643,8 @@ class Precision:
     """The dtypes and roundings a step trains under, named as the training
     harness names them.
 
-    ``master_dtype``, ``grad_dtype`` and ``round_accumulation_once`` are
+    ``model_dtype`` controls model construction. ``master_dtype``,
+    ``grad_dtype`` and ``round_accumulation_once`` are
     ``plan_step``'s. The rest are the optimizer's own, given to it when it is
     built: the dtype it keeps its state at and how it rounds what it stores
     and the weights it steps. A gradient dtype reaches two more places on its
@@ -653,6 +654,7 @@ class Precision:
     optimizer's defaults, which is what a request that names nothing gets.
     """
 
+    model_dtype: str = "bfloat16"
     master_dtype: str | None = None
     grad_dtype: str | None = None
     opt_state_dtype: str | None = None
@@ -663,6 +665,7 @@ class Precision:
     @classmethod
     def from_arguments(cls, arguments: argparse.Namespace) -> Precision:
         return cls(
+            model_dtype=arguments.model_dtype,
             master_dtype=arguments.master_dtype,
             grad_dtype=arguments.grad_dtype,
             opt_state_dtype=arguments.opt_state_dtype,
@@ -733,6 +736,7 @@ class Precision:
 
         gradients = self.grad_dtype or "the weights'"
         return (
+            ("model dtype", self.model_dtype, "the model weights and activations"),
             (
                 "master dtype",
                 self.master_dtype or "none",
@@ -996,6 +1000,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--model-dtype",
+        choices=_DTYPE_NAMES,
+        default="bfloat16",
+        help="model weights and activations (default: bfloat16 on every GPU);"
+        " use float16 on devices without BF16 support",
+    )
+    parser.add_argument(
         "--master-dtype",
         type=_dtype_name,
         default=None,
@@ -1178,6 +1189,14 @@ def resolve_request(
     manifest = manifest_for(family, cast(ModelImplementation, implementation))
     manifest = replace(
         manifest,
+        model_dtype=arguments.model_dtype,
+        master_dtype=arguments.master_dtype or "none",
+        grad_dtype=arguments.grad_dtype or arguments.model_dtype,
+        opt_state_dtype=(
+            (arguments.master_dtype or arguments.model_dtype)
+            if arguments.opt_state_dtype == "parameter"
+            else arguments.opt_state_dtype or manifest.opt_state_dtype
+        ),
         sequence_length=arguments.sequence_length or manifest.sequence_length,
         spill_budget_bytes=(
             int(arguments.spill_gib * _GIB)
@@ -1204,7 +1223,7 @@ def resolve_request(
             )
     search_budgets.sort()
     # The largest budget is the process's device-memory cap, not its slab: a pool's
-    # physical capacity covers the accelerator problem and the provider headroom as
+    # physical capacity covers the accelerator problem and the external headroom as
     # well as the suballocatable slab. Sizing the pool above it would let the process
     # exceed the budget the caller asked for.
     physical_capacity = max(search_budgets)

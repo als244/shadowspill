@@ -99,6 +99,7 @@ arithmetic:
 
 | Argument | Meaning | Default |
 |---|---|---|
+| `--model-dtype` | Model weights and activations: `bfloat16`, `float16`, or `float32`. This default stays BF16 on every GPU; select FP16 explicitly on older GPUs | `bfloat16` |
 | `--master-dtype` | A dtype -- `float32` -- to keep a master copy of every weight trained at another dtype at; the optimizer steps the masters in the weights' place and each step writes the weights from them. `none` steps the weights themselves | `none` |
 | `--grad-dtype` | The dtype gradients are created and summed at over a step's microbatches. Naming one also asks the mlops kernels for weight gradients at it and has the optimizer read gradients at it, the two settings the harness lists beside it, because a step that names one and sets neither silently rounds the sum back to bf16 | the weights' dtype |
 | `--opt-state-dtype` | The dtype the optimizer keeps its state at, AdamW's moments: `bfloat16`, `float16`, `float32`, or `parameter` for the dtype of what it steps | the optimizer's own default |
@@ -116,6 +117,33 @@ summed at: what separates them is bf16 rounding inside the kernels, whose
 tiling differs with the rows a microbatch holds, and a gradient at
 initialization is a cancelling sum, so a rounding difference of one bf16 ulp
 in its terms is a difference of the same relative size in the gradient.
+
+### GPUs without BF16 support
+
+Quickstart keeps its BF16 defaults on every machine. Choose FP16 weights and
+FP32 optimizer moments explicitly on a GPU below SM80, such as an RTX 2080 Ti:
+
+```bash
+python -u -m benchmarking.quickstart mlops_llama3 \
+  --model-dtype float16 --opt-state-dtype float32 \
+  --master-dtype none --grad-dtype float16 \
+  --sequence-length 1024 --sequences-per-step 8 \
+  --search-budget-gib 8 --run-budget-gib 8 --spill-gib 112 \
+  --min-tokens-per-microbatch 1024 --steps 5 \
+  --plots --resolution-plans
+```
+
+The four precision settings are independent. Omit `--grad-dtype` to accumulate
+at the model weights' dtype, or use `--grad-dtype float32` for FP32 accumulation.
+Use `--master-dtype float32` to train through FP32 master weights; those extra
+weights require more host storage (for this full Llama 8B example, use
+`--spill-gib 160`). FP16 weights and FP32 optimizer moments do not require
+master weights when using the mlops optimizer.
+
+The selected model dtype reaches model construction before storage is
+allocated. It is printed in the banner and saved in `request.json`, so
+`--reproduce` preserves it. The existing manifest and optimizer dtype defaults
+remain BF16 when no precision flags are given.
 
 Task profiling:
 
