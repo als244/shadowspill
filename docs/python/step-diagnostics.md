@@ -109,6 +109,20 @@ first compute starts. `timelines.first_task_started_at_seconds` records the
 measured entry delay; its input-readiness portion is
 `summary.real_initial_readiness_wait_seconds`.
 
+## Missing transfer timestamps
+
+The pinned-host/device lanes retain up to 1,024 outstanding timing records per
+lane, with two timing events reserved per record before tracing. If that bound
+or the timing-event reserve is exhausted, transfers still execute. Occupied
+records remain intact; additional transfers report unknown timestamps (`None`
+in Python, `null` in JSON). Records become reusable when completion is read.
+
+Missing transfer measurements make `summary.trace_complete` false and leave
+`real_invocation_seconds` and `real_terminal_tail_seconds` unknown. They do not
+invalidate measured compute durations or separately measured cycle throughput.
+Quickstart keeps the run and its artifacts, and marks trace-dependent
+comparisons unknown instead of aborting the sweep.
+
 ## Summary
 
 ```python

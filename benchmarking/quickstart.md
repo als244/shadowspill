@@ -260,6 +260,13 @@ The figures keep a handful of aggregate numbers per budget, and those answer
 `python -m tools.qualification.gap_report` reads a quickstart run the same way
 it reads a matrix.
 
+Missing transfer timestamps do not fail a completed run. The console and
+fidelity figure label the traced invocation as **unknown**; throughput and
+step timings remain available, and subsequent budgets still run. Missing
+measurements are `null` in step JSON and empty cells in the run CSV, including
+the traced invocation and its simulator error. Replotting preserves these gaps
+instead of substituting zero or treating an incomplete trace as a full one.
+
 `timelines/` is written as the run closes, unless `--no-timelines`, by
 [the occupancy tool](../docs/python/occupancy.md); a failure to write it is
 reported and does not fail the run, whose data is complete by then. Budget

@@ -1,3 +1,4 @@
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -589,6 +590,114 @@ static int bounded_runtime_trace_is_opt_in(void) {
     return failed ? -1 : 0;
 }
 
+
+/* Hold completion polling until the entire burst has been dispatched. This
+ * makes outstanding timing records deterministic without a clock-based sleep. */
+static _Atomic uint64_t burst_completion_threshold;
+static int (*burst_query_event)(void *, ShadowSpillBackendEvent, int *);
+static void (*burst_statistics)(void *, ShadowSpillBackendStatistics *);
+
+static int query_after_burst(
+    void *state, ShadowSpillBackendEvent event, int *complete
+) {
+    ShadowSpillBackendStatistics statistics = {0};
+    burst_statistics(state, &statistics);
+    if (statistics.copies_host_to_device < atomic_load(&burst_completion_threshold)) {
+        *complete = 0;
+        return 0;
+    }
+    return burst_query_event(state, event, complete);
+}
+
+static int transfer_timing_survives_burst(uint32_t count, uint32_t timed_count) {
+    enum { BYTES = 16, EVENTS = 16384 };
+    ShadowSpillBackend mock = {0};
+    ShadowSpillRuntime *runtime = NULL;
+    ShadowSpillBackendStream compute = 0U;
+    ShadowSpillTimingMarker *origin = NULL;
+    const ShadowSpillMockBackendConfig mock_config = {0};
+    if (shadowspill_mock_backend_create(&mock_config, &mock) != 0) {
+        return -1;
+    }
+    burst_query_event = mock.query_event;
+    burst_statistics = mock.statistics;
+    atomic_store(&burst_completion_threshold, 0U);
+    mock.query_event = query_after_burst;
+    if (shadowspill_test_create_runtime(
+            &mock, count * BYTES, count * BYTES, 1U, 1000U, &runtime
+        ) != SHADOWSPILL_STATUS_OK ||
+        mock.create_stream(mock.state, &compute) != 0) {
+        destroy_runtime(&mock, runtime, compute);
+        return -1;
+    }
+    ShadowSpillRuntimeAction *actions = calloc(count, sizeof(*actions));
+    ShadowSpillTraceEvent *events = calloc(EVENTS, sizeof(*events));
+    const ShadowSpillTraceConfig config = {
+        .abi_version = SHADOWSPILL_ABI_VERSION,
+        .event_capacity = EVENTS,
+        .allocation_event_capacity = EVENTS,
+    };
+    int failed = actions == NULL || events == NULL;
+    for (uint32_t index = 0; !failed && index < count; ++index) {
+        const ShadowSpillObjectDescription object = {
+            .object_id = index + 1U,
+            .size_bytes = BYTES,
+            .initial_pool_id = 1U,
+            .initially_resident = 1U,
+        };
+        actions[index] = (ShadowSpillRuntimeAction){
+            .object_id = object.object_id,
+            .kind = SHADOWSPILL_RUNTIME_FETCH,
+        };
+        failed = shadowspill_register_object(runtime, &object) != SHADOWSPILL_STATUS_OK;
+    }
+    failed = failed ||
+        shadowspill_trace_prepare(runtime, &config) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_timing_marker_create(runtime, &origin) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_timing_marker_record(origin, compute) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_begin(runtime, 8U, origin) != SHADOWSPILL_STATUS_OK;
+    atomic_store(&burst_completion_threshold, count);
+    failed = failed || shadowspill_test_submit_actions(
+        runtime, 200U, compute, actions, count
+    ) != SHADOWSPILL_STATUS_OK;
+    if (failed) {
+        atomic_store(&burst_completion_threshold, 0U);
+    }
+    ShadowSpillTraceSummary summary = {0};
+    failed = failed ||
+        shadowspill_runtime_wait_idle(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_end(runtime) != SHADOWSPILL_STATUS_OK ||
+        shadowspill_trace_read(runtime, &summary, events, EVENTS, NULL, 0U) !=
+            SHADOWSPILL_STATUS_OK ||
+        summary.event_overflow || summary.allocation_event_overflow;
+    uint32_t completed = 0U, timed = 0U;
+    for (uint64_t index = 0U; !failed && index < summary.event_count; ++index) {
+        const ShadowSpillTraceEvent *event = &events[index];
+        if (event->kind != SHADOWSPILL_TRACE_TRANSFER_COMPLETED) {
+            continue;
+        }
+        ++completed;
+        if (event->lane_started_at_ns == SHADOWSPILL_TRACE_NO_STREAM_TIME) {
+            failed = event->lane_finished_at_ns != SHADOWSPILL_TRACE_NO_STREAM_TIME;
+        } else {
+            ++timed;
+            failed = event->lane_issued_at_ns == SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+                event->lane_finished_at_ns == SHADOWSPILL_TRACE_NO_STREAM_TIME ||
+                event->lane_finished_at_ns < event->lane_started_at_ns ||
+                event->object_id > timed_count;
+        }
+    }
+    fprintf(stderr, "transfer burst: completed=%u/%u timed=%u/%u\n",
+        completed, count, timed, timed_count);
+    failed = failed || completed != count || timed != timed_count;
+    atomic_store(&burst_completion_threshold, 0U);
+    shadowspill_timing_marker_release(origin);
+    free(actions);
+    free(events);
+    destroy_runtime(&mock, runtime, compute);
+    return failed ? -1 : 0;
+}
+
 int main(void) {
 #define REQUIRE_TELEMETRY_CANARY(call)                                      \
     do {                                                                    \
@@ -603,6 +712,8 @@ int main(void) {
     REQUIRE_TELEMETRY_CANARY(queued_transfers_survive_retirement_only_task());
     REQUIRE_TELEMETRY_CANARY(all_completed_retirements_precede_action_admission());
     REQUIRE_TELEMETRY_CANARY(bounded_runtime_trace_is_opt_in());
+    REQUIRE_TELEMETRY_CANARY(transfer_timing_survives_burst(1024U, 1024U));
+    REQUIRE_TELEMETRY_CANARY(transfer_timing_survives_burst(1100U, 1024U));
     REQUIRE_TELEMETRY_CANARY(overflow_stops_recording_not_the_runtime());
     return EXIT_SUCCESS;
 }

@@ -150,3 +150,58 @@ def test_fidelity_uses_complete_invocation_and_keeps_cycle_separate() -> None:
     assert result.traced_step_seconds == pytest.approx(5.0)
     assert result.trace_relative_error == pytest.approx(0.25)
     assert result.relative_error == pytest.approx(0.50)  # whole-cycle throughput
+
+
+@pytest.mark.parametrize("include_complete", [False, True])
+def test_missing_transfer_times_preserve_throughput_and_replot(
+    tmp_path: Path, include_complete: bool
+) -> None:
+    import csv
+    from dataclasses import replace
+
+    from benchmarking.replot import _run_entries
+    from shadowspill.plots import RunBudgetOutcome, plot_step_run
+
+    incomplete = RunBudgetOutcome(
+        execution_budget_bytes=8 << 30,
+        simulated_step_seconds=4.0,
+        measured_step_seconds=6.0,
+        profiled_task_seconds=3.0,
+        real_task_seconds=3.5,
+        simulated_idle_seconds=0.5,
+        real_idle_seconds=0.5,
+        simulated_entry_delay_seconds=0.2,
+        real_entry_delay_seconds=0.4,
+        terminal_tail_seconds=0.3,
+        real_terminal_tail_seconds=None,
+        step_seconds=(6.0, 6.1),
+    )
+    assert incomplete.traced_step_seconds is None
+    assert incomplete.trace_relative_error is None
+    assert incomplete.relative_error == pytest.approx(0.5)
+    entries = [incomplete]
+    if include_complete:
+        entries.append(
+            replace(
+                incomplete,
+                execution_budget_bytes=10 << 30,
+                real_terminal_tail_seconds=0.6,
+            )
+        )
+    written = plot_step_run(entries, tmp_path, tokens_per_step=8192)
+    assert all(path.stat().st_size > 0 for path in written)
+    table = tmp_path / "raw_data" / "run_budgets.csv"
+    with table.open(newline="") as handle:
+        first = next(csv.DictReader(handle))
+    assert float(first["measured_tokens_per_second"]) == pytest.approx(8192 / 6)
+    assert first["real_terminal_tail_seconds"] == ""
+    assert first["traced_step_seconds"] == ""
+    assert first["trace_relative_error"] == ""
+    restored = _run_entries(table.parent, ())
+    assert list(restored) == entries
+    assert all(
+        path.stat().st_size > 0
+        for path in plot_step_run(
+            restored, tmp_path / "replotted", tokens_per_step=8192
+        )
+    )

@@ -16,19 +16,9 @@
  * and now only one place says which.
  */
 
-/*
- * How many transfers this lane can have measured at once.
- *
- * A record exists only while a trace runs, from the copy that opens it to the
- * runtime's one query after that transfer completes -- the same lifetime the
- * runtime used to give the interval it kept on the action. So the ring only
- * has to outlast the transfers in flight on one route, and this is well past
- * that. A slot that is reused before it is read reports its transfer untimed
- * rather than reporting another transfer's numbers, which is what the handle
- * stored beside each interval is for.
- */
-#define MEASURED_TRANSFERS 256U
-
+/* A timing record stays occupied until the runtime queries the completed
+ * transfer. A full ring leaves new transfers untimed; it never overwrites an
+ * outstanding record or reuses that transfer's timing events. */
 typedef struct MeasuredTransfer {
     uint64_t handle;
     uint64_t bytes;
@@ -50,11 +40,11 @@ typedef struct PinnedHostDeviceLane {
      * relaxed add, and only on the traced path.
      */
     _Atomic uint64_t next_handle;
-    MeasuredTransfer measured[MEASURED_TRANSFERS];
+    MeasuredTransfer measured[SHADOWSPILL_MEASURED_TRANSFERS_PER_LANE];
 } PinnedHostDeviceLane;
 
 static MeasuredTransfer *slot_of(PinnedHostDeviceLane *self, uint64_t handle) {
-    return &self->measured[(handle - 1U) % MEASURED_TRANSFERS];
+    return &self->measured[(handle - 1U) % SHADOWSPILL_MEASURED_TRANSFERS_PER_LANE];
 }
 
 static int pinned_host_device_create(
@@ -107,18 +97,20 @@ static int pinned_host_device_copy(
             &self->next_handle, 1U, memory_order_relaxed
         );
         record = slot_of(self, claimed);
-        /* Whatever was here was never queried. Its leases go back now. */
-        shadowspill_stream_interval_discard(lane->runtime, &record->interval);
-        record->handle = claimed;
-        record->bytes = bytes;
-        record->issued_host_ns = shadowspill_monotonic_ns();
-        if (shadowspill_stream_interval_open(
-                lane->runtime, &record->interval, lane->stream
-            ) == 0) {
-            *handle = claimed;
-        } else {
-            record->handle = 0U;
+        if (record->handle != 0U) {
             record = NULL;
+        } else {
+            record->handle = claimed;
+            record->bytes = bytes;
+            record->issued_host_ns = shadowspill_monotonic_ns();
+            if (shadowspill_stream_interval_open(
+                    lane->runtime, &record->interval, lane->stream
+                ) == 0) {
+                *handle = claimed;
+            } else {
+                record->handle = 0U;
+                record = NULL;
+            }
         }
     }
 
@@ -174,8 +166,7 @@ static int pinned_host_device_transfer(
     }
     MeasuredTransfer *record = slot_of(self, handle);
     if (record->handle != handle) {
-        /* Overwritten before it was read. Nothing to report, and nothing to
-           release: whoever took the slot released these leases. */
+        /* A stale or already retired handle has no timing record. */
         return -1;
     }
     uint64_t started = SHADOWSPILL_LANE_NO_TIME;
@@ -212,7 +203,7 @@ static int pinned_host_device_transfer(
 static void pinned_host_device_destroy(ShadowSpillLane *lane) {
     PinnedHostDeviceLane *self = (PinnedHostDeviceLane *)lane;
     /* Any record never queried still holds two timing leases. */
-    for (uint32_t index = 0U; index < MEASURED_TRANSFERS; ++index) {
+    for (uint32_t index = 0U; index < SHADOWSPILL_MEASURED_TRANSFERS_PER_LANE; ++index) {
         shadowspill_stream_interval_discard(
             lane->runtime, &self->measured[index].interval
         );
