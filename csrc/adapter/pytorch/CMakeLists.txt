@@ -46,6 +46,23 @@ if(UNIX AND NOT APPLE)
   )
 endif()
 
+# A CUDA build of PyTorch enables CMake's CUDA language as its package loads,
+# and CMake looks for that compiler only through CUDACXX, on PATH, and under
+# CUDA_PATH. A toolkit in its default place with none of those set is found by
+# FindCUDAToolkit, which also searches /usr/local/cuda, yet not by the
+# language, and the configure stops. When the language's own search comes up
+# empty, it is handed the compiler FindCUDAToolkit found; wherever that search
+# succeeds, nothing changes.
+if(NOT CMAKE_CUDA_COMPILER AND "$ENV{CUDACXX}" STREQUAL "")
+  find_program(shadowspill_language_nvcc nvcc PATHS "$ENV{CUDA_PATH}/bin" NO_CACHE)
+  if(NOT shadowspill_language_nvcc)
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_NVCC_EXECUTABLE)
+      message(STATUS "CUDA compiler not on PATH; using ${CUDAToolkit_NVCC_EXECUTABLE}")
+      set(CMAKE_CUDA_COMPILER "${CUDAToolkit_NVCC_EXECUTABLE}")
+    endif()
+  endif()
+endif()
 find_package(Torch QUIET)
 if(Torch_FOUND)
   target_sources(shadowspill_pytorch PRIVATE storage/cpu.cpp storage/device.cpp)

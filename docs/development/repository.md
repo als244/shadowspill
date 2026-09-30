@@ -219,6 +219,16 @@ adapter. To use an existing virtual or Conda environment:
 ./scripts/setup.sh --python "$CONDA_PREFIX/bin/python"
 ```
 
+Building also needs the compiler of the accelerator toolkit PyTorch was built
+against. PyTorch's wheel carries that toolkit's runtime but not its compiler,
+and PyTorch's CMake package, which the adapter's build loads, enables
+compilation for its accelerator as it loads. CMake looks for the compiler
+through its environment variable, on `PATH`, and under the toolkit's path
+variable; when those find none, the adapter's build takes the one the toolkit's
+own CMake module finds in the toolkit's default install location, so a toolkit
+installed there need not be on `PATH`. When no compiler is installed, the
+script stops before building and names the one to install.
+
 ## Validation
 
 Run Python tests, formatting/lint checks, and strict typing:
