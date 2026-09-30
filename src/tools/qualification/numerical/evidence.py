@@ -130,11 +130,23 @@ def _case_identity(
         "steps": request.case.steps,
         "checkpoint_step": request.checkpoint_step,
         "require_pressure": request.require_pressure,
+        "external_headroom_bytes": request.external_headroom_mib << 20,
+        "reject_overbudget": request.reject_overbudget,
+        "physical_budget_enforced": request.reject_overbudget,
+        "physical_budget_within_limit": (
+            int(run.runtime_statistics.peak_process_physical_bytes)
+            <= request.device_budget
+        ),
         "case_request": {
             "model_name": request.case.family,
             "model_implementation": request.case.model_implementation,
             "seed": request.case.seed,
             "model_config": request.case.model_config,
+            "dtypes": (
+                request.case.dtypes.as_dict()
+                if request.case.case_factory is None
+                else {"factory_options": request.case.case_options}
+            ),
             "data_geometry": request.case.data_geometry,
             "case_factory": request.case.case_factory,
             "case_options": request.case.case_options,

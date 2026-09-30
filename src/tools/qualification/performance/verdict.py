@@ -18,26 +18,11 @@ from tools.qualification.runtime_evidence import (
 )
 from workloads.full_model import FullModelManifest
 
+from .baseline import RegressionComparison
 from .phases import _Measurements, _PlannedCase, _WarmStep
 from .readings import _artifact_identity, _runtime_delta, _wait_idle
 
 _MINIMUM_REGRESSION_RATIO = 0.95
-
-
-def regression_authority(
-    manifest: FullModelManifest, arguments: argparse.Namespace
-) -> float | None:
-    """The throughput floor this cell is judged against, or ``None``.
-
-    A cell spilling to a peer (``--remote-spill``) is judged against the
-    manifest's remote floor, measured with the pool on a peer; a cell spilling
-    to pinned host memory against the local one. The two differ by the link's
-    ratio, so neither says anything about the other's run.
-    """
-
-    if getattr(arguments, "remote_spill", None) is not None:
-        return manifest.remote_regression_tokens_per_second
-    return manifest.regression_tokens_per_second
 
 
 #: Simulation includes scheduled entry fetches, computation, and required
@@ -88,6 +73,7 @@ def _gate_verdicts(
     execution_statistics: Any,
     runtime_delta: dict[str, int],
     physical_statuses: list[object],
+    regression: RegressionComparison,
 ) -> _Gates:
     """Decide every gate, each one naming the kind of failure it reports."""
 
@@ -95,7 +81,7 @@ def _gate_verdicts(
     # own view of a group is reported beside it and decides nothing.
     median_step_seconds = float(statistics.median(measured.cycle_seconds))
     median_throughput = manifest.tokens_per_step / median_step_seconds
-    authority = regression_authority(manifest, arguments)
+    authority = regression.floor if regression.applicable else None
     predicted_seconds = planned.report.predicted_makespan_ns / 1e9
     simulator_relative_error = (
         (median_step_seconds - predicted_seconds) / predicted_seconds
@@ -113,6 +99,7 @@ def _gate_verdicts(
         predecessor_ratio=(
             None
             if manifest.predecessor_tokens_per_second is None
+            or not regression.applicable
             else median_throughput / manifest.predecessor_tokens_per_second
         ),
         expected_logical_steps=expected_logical_steps,
@@ -130,8 +117,11 @@ def _gate_verdicts(
             not any(physical_statuses)
             and planned.report.predicted_device_peak_bytes
             <= manifest.device_physical_capacity_bytes
-            and int(execution_statistics.peak_process_physical_bytes)
-            <= manifest.device_physical_capacity_bytes
+            and (
+                not manifest.reject_overbudget
+                or int(execution_statistics.peak_process_physical_bytes)
+                <= manifest.device_physical_capacity_bytes
+            )
             and int(runtime.pool_statistics("spill").peak_allocated_bytes)
             <= manifest.spill_budget_bytes
         ),
@@ -196,6 +186,7 @@ def _measured_result(
     planning_spill_budget: int,
     capabilities: dict[str, object],
     calibration_attempts: int,
+    regression: RegressionComparison,
 ) -> dict[str, object]:
     """The artifact for a measured cell: what was seen, and what it is judged to be."""
 
@@ -216,6 +207,7 @@ def _measured_result(
         execution_statistics=execution_statistics,
         runtime_delta=runtime_delta,
         physical_statuses=physical_statuses,
+        regression=regression,
     )
     report = planned.report
     return {
@@ -256,6 +248,8 @@ def _measured_result(
         "predicted_makespan_seconds": report.predicted_makespan_ns / 1e9,
         "simulator_relative_error": gates.simulator_relative_error,
         "simulator_gate_passed": gates.simulator_passed,
+        "regression_comparison": regression.as_dict(),
+        "regression_gate_applicable": regression.applicable,
         "regression_throughput_ratio": gates.regression_ratio,
         "regression_gate_passed": gates.regression_passed,
         "predecessor_throughput_ratio": gates.predecessor_ratio,
@@ -265,11 +259,17 @@ def _measured_result(
         "transfer_bytes_fetched": report.transfer_bytes_fetched,
         "physical_budget_statuses": physical_statuses,
         "physical_budget_passed": gates.physical_passed,
+        "reject_overbudget": manifest.reject_overbudget,
+        "physical_budget_enforced": manifest.reject_overbudget,
+        "physical_budget_within_limit": (
+            int(execution_statistics.peak_process_physical_bytes)
+            <= manifest.device_physical_capacity_bytes
+        ),
         "peak_process_physical_bytes": int(
             execution_statistics.peak_process_physical_bytes
         ),
-        # What the provider actually took outside the slab, which is what the
-        # configured provider headroom is a prediction of. Recorded so the
+        # Measured external memory outside the allocation pool, which is what the
+        # configured external headroom is a prediction of. Recorded so the
         # prediction can be set from measurement rather than from a round number.
         "observed_external_high_water_bytes": int(
             execution_statistics.observed_external_high_water_bytes
