@@ -45,6 +45,7 @@ def _arguments(**overrides: object) -> argparse.Namespace:
         plan_store_mode="contribute",
         deterministic=True,
         incumbents=True,
+        model_dtype="bfloat16",
         master_dtype="float32",
         grad_dtype="float32",
         opt_state_dtype="parameter",
@@ -64,7 +65,9 @@ def _arguments(**overrides: object) -> argparse.Namespace:
 def _run(tmp_path: Path) -> Path:
     run = tmp_path / "seq1024" / "seqsperstep64"
     run.mkdir(parents=True)
-    record = _request_record(_arguments(), tmp_path / "store", None, tmp_path / "plans")
+    record = _request_record(
+        _arguments(model_dtype="float16"), tmp_path / "store", None, tmp_path / "plans"
+    )
     (run / "request.json").write_text(json.dumps(record))
     bandwidths = TransferBandwidths(
         fetch_bytes_per_second=25_500_000_000,
@@ -85,7 +88,9 @@ def _run(tmp_path: Path) -> Path:
 def test_the_record_holds_the_request_and_not_where_it_was_written(
     tmp_path: Path,
 ) -> None:
-    record = _request_record(_arguments(), tmp_path / "store", None, tmp_path / "plans")
+    record = _request_record(
+        _arguments(model_dtype="float16"), tmp_path / "store", None, tmp_path / "plans"
+    )
     request = record["request"]
     assert isinstance(request, dict)
     assert request["model"] == "mlops_llama3"
@@ -93,6 +98,7 @@ def test_the_record_holds_the_request_and_not_where_it_was_written(
     assert request["resolution_options"] == ["0", "1/2", "1"]
     assert request["artifact_store"] == str(tmp_path / "store")
     assert request["plan_store"] == str(tmp_path / "plans")
+    assert request["model_dtype"] == "float16"
     assert request["master_dtype"] == "float32"
     assert request["grad_dtype"] == "float32"
     assert request["opt_state_dtype"] == "parameter"
@@ -124,6 +130,7 @@ def test_reproduce_reads_the_request_and_pins_the_calibration(
     assert arguments.resolution_options == ("0", "1/2", "1")
     assert arguments.transfer_bandwidths.fetch_bytes_per_second == 25_500_000_000
     assert arguments.export_bypass_key == "rev-1"
+    assert arguments.model_dtype == "float16"
     assert arguments.master_dtype == "float32"
     assert arguments.opt_state_rounding == "stochastic"
     assert arguments.round_accumulation_once is False
@@ -200,6 +207,7 @@ def test_precision_reaches_planning_and_the_optimizer_as_the_harness_names_it() 
     )
     labels = [label for label, _value, _meaning in precise.lines()]
     assert labels == [
+        "model dtype",
         "master dtype",
         "grad dtype",
         "opt state dtype",
@@ -247,3 +255,57 @@ def test_the_loss_shown_is_the_heads_share_when_the_objective_reports_one() -> N
     assert _head_loss_share({"head_loss": torch.tensor(1.5)}) == 1.5
     assert _head_loss_share(None) is None
     assert _head_loss_share({"other": torch.tensor(1.5)}) is None
+
+
+@pytest.mark.parametrize("master", ["none", "float32"])
+@pytest.mark.parametrize("grad", [None, "float16", "float32"])
+def test_fp16_quickstart_constructs_the_requested_model_and_precision(master, grad):
+    from benchmarking.quickstart import _parser, resolve_request
+    from workloads.full_model import build_model
+
+    parser = _parser()
+    flags = [
+        "mlops_llama3",
+        "--model-dtype",
+        "float16",
+        "--master-dtype",
+        master,
+        "--opt-state-dtype",
+        "float32",
+    ]
+    if grad is not None:
+        flags += ["--grad-dtype", grad]
+    arguments = parser.parse_args(flags)
+    request = resolve_request(parser, arguments)
+    model = build_model(request.manifest)
+    assert {p.dtype for p in model.parameters()} == {torch.float16}
+    assert all(p.is_meta for p in model.parameters())
+    assert request.manifest.dtypes.as_dict() == {
+        "model_dtype": "float16",
+        "master_dtype": master,
+        "grad_dtype": grad or "float16",
+        "opt_state_dtype": "float32",
+    }
+    precision = Precision.from_arguments(arguments)
+    assert precision.master is (None if master == "none" else torch.float32)
+    assert precision.gradients is (None if grad is None else getattr(torch, grad))
+    assert precision.optimizer_arguments()["opt_state_dtype"] == torch.float32
+    assert (
+        "model dtype",
+        "float16",
+        "the model weights and activations",
+    ) in precision.lines()
+
+
+def test_quickstart_keeps_bf16_defaults_without_probing_the_gpu():
+    from benchmarking.quickstart import _parser, resolve_request
+
+    parser = _parser()
+    arguments = parser.parse_args(["mlops_llama3"])
+    manifest = resolve_request(parser, arguments).manifest
+    assert manifest.dtypes.as_dict() == {
+        "model_dtype": "bfloat16",
+        "master_dtype": "none",
+        "grad_dtype": "bfloat16",
+        "opt_state_dtype": "bfloat16",
+    }
