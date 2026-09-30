@@ -7,12 +7,21 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tools.qualification.device_defaults import (
+    add_memory_budget_arguments,
+    numerical_defaults,
+)
+from tools.qualification.precision import (
+    add_dtype_arguments,
+    dtype_description,
+    dtype_overrides,
+)
 from workloads.numerical import DEFAULT_DEVICE_BUDGETS
 
 from .orchestrate import orchestrate
 from .planned import planned_worker
 from .reference_arm import reference_worker
-from .references import DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY
+from .references import DEFAULT_REFERENCE_DIRECTORY
 from .request import CaseRequest, PlannedRequest
 
 
@@ -46,7 +55,11 @@ def case_option_values(values: list[str]) -> dict[str, Any]:
 def main() -> int:
     parser = _parser()
     arguments = parser.parse_args()
+    budgets = numerical_defaults(arguments)
+    if arguments.device_budget is None:
+        arguments.device_budget = budgets.get(arguments.family)
     case, checkpoint_step, profiling_metadata = _decode_case(parser, arguments)
+    print(dtype_description(case), flush=True)
     _dispatch(parser, arguments, case, checkpoint_step, profiling_metadata)
     return 0
 
@@ -84,6 +97,8 @@ def _parser() -> argparse.ArgumentParser:
         default="pytorch",
         help="pure PyTorch is the formal numerical authority",
     )
+    add_dtype_arguments(parser)
+    add_memory_budget_arguments(parser)
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument("--steps", type=int, default=5)
     parser.add_argument(
@@ -146,7 +161,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reference-dir",
         type=Path,
-        default=DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
+        default=DEFAULT_REFERENCE_DIRECTORY,
         help="canonical compiled-reference root used by run mode",
     )
     parser.add_argument(
@@ -231,6 +246,7 @@ def _decode_case(
         model_implementation=model_implementation,
         seed=arguments.seed,
         model_config=model_config_value,
+        **dtype_overrides(arguments),
         data_geometry=data_geometry_value,
         case_factory=arguments.case_factory,
         case_options=case_options_value,
@@ -269,8 +285,11 @@ def _dispatch(
             model_implementation,
             Path(arguments.paths[0]),
             arguments.device_budget or DEFAULT_DEVICE_BUDGETS.get(family, 0),
+            external_headroom_mib=arguments.external_headroom_mib,
+            reject_overbudget=arguments.reject_overbudget,
             seed=arguments.seed,
             model_config_argument=arguments.model_config,
+            **dtype_overrides(arguments),
             data_geometry_argument=arguments.data_geometry,
             case_factory=arguments.case_factory,
             case_option_arguments=arguments.case_option,
@@ -303,6 +322,12 @@ def _dispatch(
                 reference_path=Path(arguments.paths[0]),
                 result_path=Path(arguments.paths[1]),
                 device_budget=int(arguments.paths[2]),
+                reject_overbudget=arguments.reject_overbudget,
+                external_headroom_mib=(
+                    512
+                    if arguments.external_headroom_mib is None
+                    else arguments.external_headroom_mib
+                ),
                 checkpoint_step=checkpoint_step,
                 require_pressure=not arguments.allow_fully_resident,
                 artifact_store=arguments.artifact_store,

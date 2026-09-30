@@ -7,9 +7,7 @@ from pathlib import Path
 from shadowspill.schema import artifact_schema
 
 REFERENCE_SCHEMA = artifact_schema("compiled_reference")
-DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY = Path(
-    "qualification/results/references/approximately_1b"
-)
+DEFAULT_REFERENCE_DIRECTORY = Path("qualification/results/references/approximately_1b")
 
 
 def canonical_reference_path(
@@ -36,7 +34,7 @@ def reference_artifact_exists(reference: Path) -> bool:
 
 
 __all__ = [
-    "DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY",
+    "DEFAULT_REFERENCE_DIRECTORY",
     "REFERENCE_SCHEMA",
     "canonical_reference_path",
     "reference_artifact_exists",

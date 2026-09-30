@@ -14,7 +14,7 @@ from tools.qualification.numerical.matrix import (
     _parse_bytes,
 )
 from tools.qualification.numerical.references import (
-    DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
+    DEFAULT_REFERENCE_DIRECTORY,
     canonical_reference_path,
     reference_artifact_exists,
     reference_inputs_path,
@@ -61,7 +61,7 @@ def test_default_gate_is_five_cells_with_olmoe_under_pressure() -> None:
 def test_default_gate_reads_the_repo_local_reference_set() -> None:
     assert (
         Path("qualification/results/references/approximately_1b")
-        == DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY
+        == DEFAULT_REFERENCE_DIRECTORY
     )
 
 
@@ -83,6 +83,7 @@ def test_case_identity_covers_model_and_data_configuration() -> None:
     other = replace(request, data_geometry=[{"token_shape": [1, 32]}])
 
     assert request.identity() != other.identity()
+    assert request.identity() != replace(request, model_dtype="float16").identity()
 
 
 def test_canonical_reference_path_is_grouped_by_model_and_provider(

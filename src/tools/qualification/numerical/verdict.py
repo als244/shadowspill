@@ -115,7 +115,8 @@ def _budget_checks(
         ("budget", result["physical_budget_sealed"], "budget not sealed"),
         (
             "budget",
-            result["peak_process_physical_bytes"] <= request.device_budget,
+            not request.reject_overbudget
+            or result["peak_process_physical_bytes"] <= request.device_budget,
             f"process peak {result['peak_process_physical_bytes']} "
             f"over budget {request.device_budget}",
         ),

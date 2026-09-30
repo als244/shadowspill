@@ -76,12 +76,8 @@ def test_full_model_launcher_recovers_killed_planning_phase() -> None:
     assert _termination_signal(-9) == "SIGKILL"
 
 
-def test_performance_gate_defaults_to_the_cells_it_can_judge() -> None:
-    """A cell with no throughput authority cannot pass or fail the gate.
-
-    Running one anyway only spends wall time, so the default is the set that
-    carries a floor to compare against. `--cells` still reaches the others.
-    """
+def test_performance_gate_preserves_the_three_default_mlops_workloads() -> None:
+    """Hardware-aware judging does not change the default workload matrix."""
 
     from tools.qualification.performance_matrix import default_cells
 

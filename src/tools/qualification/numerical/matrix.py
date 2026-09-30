@@ -16,11 +16,21 @@ from pathlib import Path
 from typing import Final
 
 from shadowspill.schema import artifact_schema
+from tools.qualification.device_defaults import (
+    add_memory_budget_arguments,
+    numerical_defaults,
+)
+from tools.qualification.precision import (
+    add_dtype_arguments,
+    dtype_arguments,
+    dtype_description,
+    dtype_overrides,
+)
 from workloads.numerical import DEFAULT_DEVICE_BUDGETS
 
 from ..matrix_logging import MatrixConsole, format_bytes, utc_now
 from .references import (
-    DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
+    DEFAULT_REFERENCE_DIRECTORY,
     canonical_reference_path,
     reference_artifact_exists,
 )
@@ -106,6 +116,12 @@ class _CaseOptions:
     #: string because a case runs in a subprocess: the matrix cannot hand it a
     #: Python object, and the subprocess should be runnable by hand.
     remote_spill: str | None = None
+    external_headroom_mib: int | None = None
+    reject_overbudget: bool = False
+    model_dtype: str | None = None
+    master_dtype: str | None = None
+    grad_dtype: str | None = None
+    opt_state_dtype: str | None = None
 
     def case_arguments(self) -> list[str]:
         """The options both arms of a case are given, in their fixed order."""
@@ -118,6 +134,7 @@ class _CaseOptions:
             "--optimizer-ordering",
             self.optimizer_ordering,
         ]
+        arguments.extend(dtype_arguments(self))
         if self.data_geometry is not None:
             arguments.extend(("--data-geometry", self.data_geometry))
         if self.data_ordering is not None:
@@ -168,6 +185,11 @@ def _case_commands(
         implementation,
         *shared,
     ]
+    planned.append(
+        "--reject-overbudget" if options.reject_overbudget else "--no-reject-overbudget"
+    )
+    if options.external_headroom_mib is not None:
+        planned.extend(("--external-headroom-mib", str(options.external_headroom_mib)))
     if options.remote_spill is not None:
         planned.extend(("--remote-spill", options.remote_spill))
     commands.append(planned)
@@ -384,7 +406,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reference-dir",
         type=Path,
-        default=DEFAULT_APPROXIMATELY_1B_REFERENCE_DIRECTORY,
+        default=DEFAULT_REFERENCE_DIRECTORY,
         help=(
             "canonical compiled-reference root; one identity-checked reference "
             "is retained under each model/provider directory"
@@ -401,6 +423,8 @@ def _parser() -> argparse.ArgumentParser:
             "case"
         ),
     )
+    add_dtype_arguments(parser)
+    add_memory_budget_arguments(parser)
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument(
         "--optimizer-ordering",
@@ -548,13 +572,17 @@ def main_with_spill(
 
     parser = _parser()
     arguments = parser.parse_args()
+    budgets = numerical_defaults(arguments)
     overrides = _budgets(parser, arguments)
     options = _CaseOptions(
         environment=dict(os.environ),
+        external_headroom_mib=arguments.external_headroom_mib,
+        reject_overbudget=arguments.reject_overbudget,
         reference_directory=arguments.reference_dir.expanduser().resolve(),
         regenerate_reference=arguments.regenerate_reference,
         seed=arguments.seed,
         model_config=arguments.model_config,
+        **dtype_overrides(arguments),
         data_geometry=arguments.data_geometry,
         case_factory=arguments.case_factory,
         case_options=arguments.case_option,
@@ -564,9 +592,7 @@ def main_with_spill(
         cache_directory=arguments.cache_dir,
         detailed_artifacts=arguments.detailed_artifacts,
         remote_spill=(
-            None
-            if spill is None
-            else f"{spill.host}:{spill.port}:{spill.capacity}"
+            None if spill is None else f"{spill.host}:{spill.port}:{spill.capacity}"
         ),
     )
     output_directory = arguments.output_dir.expanduser().resolve()
@@ -581,9 +607,7 @@ def main_with_spill(
     # An explicit --models on the command line still wins. `--models` carries a
     # default, so its value cannot say whether anyone asked for it; the command
     # line can.
-    named = any(
-        argument in ("--models", "--families") for argument in sys.argv[1:]
-    )
+    named = any(argument in ("--models", "--families") for argument in sys.argv[1:])
     models = list(default_models) if default_models and not named else arguments.models
     selected_cases = [
         (family, implementation)
@@ -613,7 +637,7 @@ def main_with_spill(
         )
         for ordinal, (family, implementation) in enumerate(selected_cases, start=1):
             progress = f"[{ordinal}/{len(selected_cases)}]"
-            budget = overrides.get(family, DEFAULT_DEVICE_BUDGETS.get(family, 0))
+            budget = overrides.get(family, budgets.get(family, 0))
             identity = f"{implementation}_{family}"
             case_log = output_directory / f"{identity}.log"
             case_log.unlink(missing_ok=True)
@@ -708,6 +732,16 @@ def _announce_case(
         [
             f"MODEL: {implementation}/{family}",
             f"DEVICE BUDGET: {format_bytes(budget)}",
+            "EXTERNAL HEADROOM: "
+            + (
+                "512"
+                if options.external_headroom_mib is None
+                else str(options.external_headroom_mib)
+            )
+            + " MiB (reserved for pool sizing)",
+            f"REJECT OVERBUDGET: {options.reject_overbudget}",
+            dtype_description(options),
+            f"MODEL CONFIG: {options.model_config}",
             f"REFERENCE: {reference} ({reference_state})",
             f"LOG: {case_log}",
             f"START: {started_at}",

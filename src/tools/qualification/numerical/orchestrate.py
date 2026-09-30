@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
 from typing import Literal
 
+from tools.qualification.precision import dtype_arguments
 from workloads.numerical import ModelImplementation
 
 from .references import canonical_reference_path, reference_artifact_exists
@@ -44,6 +46,12 @@ def orchestrate(
     reference_directory: Path,
     regenerate_reference: bool,
     detailed_artifacts: bool,
+    external_headroom_mib: int | None = None,
+    reject_overbudget: bool = False,
+    model_dtype: str | None = None,
+    master_dtype: str | None = None,
+    grad_dtype: str | None = None,
+    opt_state_dtype: str | None = None,
 ) -> None:
     result_directory.mkdir(parents=True, exist_ok=True)
     prefix = f"{model_implementation}_{family}"
@@ -62,6 +70,16 @@ def orchestrate(
         "--optimizer-ordering",
         optimizer_ordering,
     ]
+    options.extend(
+        dtype_arguments(
+            Namespace(
+                model_dtype=model_dtype,
+                master_dtype=master_dtype,
+                grad_dtype=grad_dtype,
+                opt_state_dtype=opt_state_dtype,
+            )
+        )
+    )
     options.extend(("--steps", str(steps)))
     if not require_pressure:
         options.append("--allow-fully-resident")
@@ -91,6 +109,11 @@ def orchestrate(
             env=environment,
         )
     planned_options: list[str] = []
+    planned_options.append(
+        "--reject-overbudget" if reject_overbudget else "--no-reject-overbudget"
+    )
+    if external_headroom_mib is not None:
+        planned_options.extend(("--external-headroom-mib", str(external_headroom_mib)))
     selected_cache = artifact_store or result_directory / "artifact_store"
     planned_options.extend(("--artifact-store", str(selected_cache)))
     for flag, path in (("--build-store", build_store), ("--plan-store", plan_store)):

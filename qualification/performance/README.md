@@ -59,8 +59,9 @@ python -m qualification.performance.matrix \
 ```
 
 That runs the three cells carrying a throughput floor, of the five defined.
-A cell without a floor cannot pass or fail, so it is not in the default set;
-`--cells` reaches the other two.
+The remaining two pure-PyTorch cells are available through `--cells`. Every
+cell still checks runtime, memory and simulator behavior; a throughput floor
+is used only when its recorded hardware and configuration match.
 
 The matrix runs every cell as a checkpoint-free throughput probe: it forwards
 `--skip-checkpoint` so the anonymous full-state copy never coexists with the
@@ -116,35 +117,59 @@ steps: `median_group_seconds` is the median of the three group spans, and
 `median_step_seconds` is that divided by four. A stall inside one group raises
 that group's span and cannot be averaged away by the steps around it.
 
-## Measuring on another machine
+## Hardware, precision and budgets
 
-The floors in `workloads.full_model` are throughput measured on one machine:
-one table with the spill pool in pinned host memory, which this matrix judges
-against, and one with the pool on a peer, which the remote performance matrix
-judges against. On any other machine a pass says nothing and a failure says only that the
-hardware differs, so `--measure-only` runs the same protocol and reports the
-measurement instead of judging it:
+The default execution pool is 16 GiB on SM80+ and 10 GiB below SM80. The spill
+pool is 112 GiB on every device. Within the execution cap, external headroom
+is 512 MiB on every device; `--external-headroom-mib`
+overrides that allowance. `--execution-budget-gib` overrides the former;
+`--spill-budget-gib` overrides the latter (a scalar for the worker, repeatable
+`IDENTITY=GIB` entries for the matrix).
+
+SM80+ retains BF16 model weights, gradients and optimizer moments with no
+masters. Below SM80 the gate uses FP16 weights and gradients, FP32 moments,
+and no masters. The optimizer is `mlops.optim.AdamW`. All four choices are
+independently configurable with `--model-dtype`, `--master-dtype`,
+`--grad-dtype`, and `--opt-state-dtype`. Each case prints the resolved dtypes
+beside its budgets and writes them to its manifest. For example:
 
 ```bash
 python -m qualification.performance.matrix \
-  --output-directory qualification/results/<machine-name> \
-  --keep-going \
-  --measure-only
+  --execution-budget-gib 10 \
+  --model-dtype float16 --master-dtype none \
+  --grad-dtype float16 --opt-state-dtype float32 \
+  --output-directory qualification/results/full_model_fp16
 ```
 
-Each cell prints its median step, throughput, predicted step with simulator
-error, and planning time. The gate lines are gone, and so are the regression
-and predecessor ratios, which divide by throughput from the floor machine and
-would describe that gap rather than this run. Cells close as MEASURED or
-ERROR rather than PASS or FAIL, and the matrix exits on whether the cells ran.
-Every gate field is still written to the artifact and `summary.json` records
-the mode, so a run stays judgeable later against floors that suit the machine
-that produced it.
+## Throughput comparisons on another machine
 
-The cells need the device to themselves: each plans against a 16 GiB
-execution budget and a 112 GiB pinned host spill arena, and the host cannot
-hold that arena alongside another process's reservation. A machine that is
-short of either fails at runtime bootstrap rather than measuring something
-misleading. Adopting a machine's own numbers as floors means replacing the
-`workloads.full_model` table, which is a deliberate edit and not something a
-measuring run does.
+The retained throughput floors were measured on an RTX 5090 with the original
+16/112 GiB pools and BF16 training settings. The gate automatically checks
+that scope. A different GPU, dtype, geometry or budget reports the throughput
+regression check as **not applicable**, with the mismatch recorded in the
+artifact. It still judges runtime correctness, physical budgets and simulator
+accuracy. It also omits the predecessor ratio outside the matching scope.
+The remote floor depends on a particular network path; without matching link
+hardware metadata it is reported without enforcing that floor.
+
+`--measure-only` remains an explicit way to collect measurements without
+turning any diagnostic gate into a failing exit status. It is no longer needed
+just because a machine has a different GPU. Artifacts retain the measurements,
+gate fields and baseline applicability in both modes.
+
+Each cell needs enough host memory for its spill pool plus runtime overhead.
+A machine short of a requested capacity fails at runtime bootstrap. A measuring
+run never silently adopts its own throughput as a passing baseline.
+
+The numerical and performance launchers accept `--external-headroom-mib`
+(default **512 MiB on every GPU**). This allowance is subtracted, together with
+the initial process baseline, when sizing the execution pool. Zero reserves no
+external allowance. It does not change model or reference identity.
+
+The independent `--reject-overbudget` flag defaults to **off**. Without it,
+external and whole-process memory overruns are measured and reported. With it,
+they fail the run. `--no-reject-overbudget` explicitly restores reporting mode.
+Neither setting resizes the pool or permits pool overflow; actual device OOMs
+still fail. Banners and artifacts record both controls, including
+`external_headroom_bytes`, `reject_overbudget`, `physical_budget_enforced`, and
+`physical_budget_within_limit`.

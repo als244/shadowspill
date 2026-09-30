@@ -10,7 +10,7 @@ qualification/
 ├── numerical/
 │   ├── README.md
 │   ├── run.py       one reference/planned correctness cell
-│   └── matrix.py    the five approximately-1B cells
+│   └── matrix.py    the five numerical cells (smaller presets below SM80)
 ├── performance/
 │   ├── README.md
 │   ├── run.py       one full-model throughput cell
@@ -161,7 +161,8 @@ Generated reference states, compact result summaries, and optional detailed
 reports are written beneath `qualification/results/`, which is ignored by Git.
 The numerical matrix reuses one identity-checked compiled reference under
 `<reference-dir>/<model>/<implementation>/reference.pt`, where `<reference-dir>`
-defaults to `qualification/results/references/approximately_1b`.
+defaults to `qualification/results/references/approximately_1b` on SM80+ and
+`qualification/results/references/pre_sm80` on older GPUs.
 Its neighboring `inputs.pt` contains the exact input microbatches, while the
 reference contains only the final model and optimizer state; repeated matrix
 runs do not create duplicate checkpoints.
@@ -299,3 +300,93 @@ which cost memory on a large model, and compares only the objective and the
 parameter gradients. `--deterministic` asks for the ordered kernels first, so
 a divergence that survives it comes from somewhere the request does not reach.
 It exits non-zero when the step is not reproducible.
+
+
+## Hardware defaults and dtype overrides
+
+The numerical and performance launchers inspect the selected device before
+constructing a case. SM80 and newer retain the existing BF16 weights,
+gradients, and AdamW moments, with no master weights. GPUs below SM80 use
+FP16 weights and gradients with FP32 moments and no masters. The hardware
+probe runs in a short-lived process, so it cannot initialize the worker's
+allocator before ShadowSpill installs it.
+
+Both launchers accept independent overrides:
+
+| Flag | Choices |
+|---|---|
+| `--model-dtype` | `float16`, `bfloat16`, `float32` |
+| `--master-dtype` | `none`, `float16`, `bfloat16`, `float32` |
+| `--grad-dtype` | `parameter`, `float16`, `bfloat16`, `float32` |
+| `--opt-state-dtype` | `float16`, `bfloat16`, `float32` |
+
+`parameter` means model-weight dtype for gradient accumulation. The optimizer
+reads the completed gradient at the dtype of the weight or master it updates.
+Every case prints the resolved dtypes and records them in its artifacts.
+Nondefault precision is included in numerical reference identity; the original
+BF16 identity remains valid. Custom factories own model and optimizer precision
+through `--case-option` and can use the master/gradient flags independently.
+
+Below SM80 only, numerical cases default to four layers and vocabulary size
+8,192 while retaining their attention and expert widths. Their execution caps
+are 3 GiB for each model family. The performance
+execution pool defaults to 10 GiB on those devices; it stays at 16 GiB on
+SM80+. Its spill pool remains 112 GiB everywhere. Explicit model fields,
+per-family numerical `--budget` values, and performance
+`--execution-budget-gib` / `--spill-budget-gib` flags override these defaults.
+
+
+### Behavior on SM80 and newer
+
+The numerical model geometries, execution budgets, reference paths and default
+BF16 reference identities remain unchanged. The performance matrix retains its
+three mlops cases, 16 GiB execution pool and 112 GiB spill pool. Quickstart and
+Trainer keep BF16 model defaults on every architecture; FP16 is an explicit
+choice there.
+
+Other fixes apply on every GPU: automatic mlops implementation selection,
+checkpoint dtype preservation, external-memory reporting unless
+`--reject-overbudget` is selected, and incomplete-trace reporting. A throughput
+floor applies only to the hardware and configuration it measured. These
+changes preserve the default training precision but can affect kernel
+selection, diagnostic output and gate verdicts.
+
+Update both ShadowSpill and mlops, then rerun `scripts/setup.sh` with the desired
+Python environment so the installed C libraries match the Python API. The setup
+script uses a sibling mlops checkout when available. Existing default BF16
+numerical references keep their identities; compiled build and plan artifacts
+are separate and may need rebuilding after schema changes.
+
+### Suite precision
+
+The suite's generic low-precision GPU tests accept `--test-dtype float16`
+(default: `bfloat16`). The choice travels to fresh CTest processes without a
+device probe; BF16-specific CPU and metadata tests keep their declared dtype.
+For example, on a pre-SM80 machine use:
+
+```json
+{
+  "suite": ["--test-dtype", "float16"],
+  "numerical": []
+}
+```
+
+Run `python -m qualification.gates suite numerical --config <config.json>`.
+Add `--regenerate-reference` only when intentionally replacing references.
+The pre-SM80 reference root is `qualification/results/references/pre_sm80`;
+SM80+ keeps `qualification/results/references/approximately_1b`. An explicit
+`--reference-dir` takes precedence. No peer configured means the optional
+network canary skips.
+
+The numerical and performance launchers accept `--external-headroom-mib`
+(default **512 MiB on every GPU**). This allowance is subtracted, together with
+the initial process baseline, when sizing the execution pool. Zero reserves no
+external allowance. It does not change model or reference identity.
+
+The independent `--reject-overbudget` flag defaults to **off**. Without it,
+external and whole-process memory overruns are measured and reported. With it,
+they fail the run. `--no-reject-overbudget` explicitly restores reporting mode.
+Neither setting resizes the pool or permits pool overflow; actual device OOMs
+still fail. Banners and artifacts record both controls, including
+`external_headroom_bytes`, `reject_overbudget`, `physical_budget_enforced`, and
+`physical_budget_within_limit`.

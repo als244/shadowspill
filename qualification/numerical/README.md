@@ -20,11 +20,17 @@ python -m qualification.numerical.run run llama3 qualification/results/numerical
   --model-implementation mlops
 ```
 
-Both modes build `mlops.optim.AdamW` at its defaults, naming the learning
-rate in `hyperparams` at planning and supplying it on every step; the model
-implementation changes only the forward/backward operation provider. The
-default reference root is
-`qualification/results/references/approximately_1b/`, with one
+Both modes build `mlops.optim.AdamW`, naming the learning rate in `hyperparams`
+at planning and supplying it on every step. On SM80+ they retain BF16 weights,
+gradients and moments with no masters; below SM80 they use FP16 weights and
+gradients with FP32 moments. Independent `--model-dtype`, `--master-dtype`,
+`--grad-dtype`, and `--opt-state-dtype` flags override that policy and travel to
+both arms. The case banner and artifacts show their resolved values. See
+[the precision options](../README.md#hardware-defaults-and-dtype-overrides).
+Custom factories configure their model and optimizer with `--case-option`.
+The original default reference root remains
+`qualification/results/references/approximately_1b/`; below SM80 the default
+is `qualification/results/references/pre_sm80/`. Each contains one
 identity-checked final state plus an exact-input `inputs.pt` sidecar under each
 `<model>/<implementation>` directory.
 Pass `--reference-dir` to read that canonical set from elsewhere, or
@@ -86,12 +92,13 @@ records all tolerances and planning phase timings used for that run, and, when
 a cell fails, the category of each failure -- a reference disagreement, a
 replay that did not reproduce, a budget exceeded -- with the failing tensor
 counts split into model state and optimizer state. Physical
-qualification checks the sealed cap
-after planning, after each of the five steps, and after both replay steps. It
-also requires the observed process high-water to remain within the public cap,
-one initial execution-pool arena allocation, no steady-state pool-arena
-allocation, bounded execution/spill peaks, and no allocator callback or
-pointer-lookup failure.
+qualification measures process memory after planning, after each of the five
+steps, and after both replay steps. With `--reject-overbudget`, the observed
+process high-water must remain within the declared cap; by default an overrun
+is reported without failing the gate. In both modes the gate requires one
+initial execution-pool arena allocation, no steady-state pool-arena allocation,
+bounded execution/spill peaks, and no allocator callback or pointer-lookup
+failure.
 By default, the JSON contains compact correctness, physical-budget, planning,
 and step-summary evidence and planning artifacts are not retained. Add
 `--detailed-artifacts` to write the complete PlanReport, per-task traces, and
@@ -101,10 +108,30 @@ simulation config, search options, admission and placement facts -- beside the
 answer it returned, with a digest over each, so one run's plan can be compared
 against another's without either being repeated.
 
-The supported matrix uses a 10 GiB execution cap for Llama and Qwen and an
-8 GiB cap for OLMoE, which is required to exercise real transfer pressure for
-the small qualification geometry.
+The SM80+ matrix retains the original roughly billion-parameter models and
+execution budgets: Llama 1,179,699,200 parameters / 10 GiB; Qwen 1,006,955,408 /
+10 GiB; OLMoE 975,766,528 / 8 GiB. Their default BF16 reference identities and
+paths are unchanged.
+
+Below SM80 only, the matrix defaults to four layers and vocabulary size 8,192:
+Llama 251,676,672 parameters / 3 GiB; Qwen 147,224,776 / 3 GiB; OLMoE
+234,963,968 / 3 GiB. Qwen keeps a complete three-linear/one-full-attention cycle.
+Attention and expert widths are retained. Explicit `--model-config` fields
+and per-family `--budget` values take precedence on every device.
 
 For repeatable matrices and configurable/custom model cases, use
 `python -m qualification.numerical.matrix`; the parent
 [`qualification/README.md`](../README.md) documents the launcher.
+
+The numerical and performance launchers accept `--external-headroom-mib`
+(default **512 MiB on every GPU**). This allowance is subtracted, together with
+the initial process baseline, when sizing the execution pool. Zero reserves no
+external allowance. It does not change model or reference identity.
+
+The independent `--reject-overbudget` flag defaults to **off**. Without it,
+external and whole-process memory overruns are measured and reported. With it,
+they fail the run. `--no-reject-overbudget` explicitly restores reporting mode.
+Neither setting resizes the pool or permits pool overflow; actual device OOMs
+still fail. Banners and artifacts record both controls, including
+`external_headroom_bytes`, `reject_overbudget`, `physical_budget_enforced`, and
+`physical_budget_within_limit`.

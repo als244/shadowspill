@@ -1,10 +1,8 @@
 """Launch the ShadowSpill-only full-model qualification cells.
 
-The gate runs the three mlops cells by default. Those are the ones that
-carry a throughput authority, so they are the only ones that can pass or
-fail; the pure-PyTorch variants have no regression floor to compare
-against and only cost wall time. `--cells` still reaches any of them,
-including the PyTorch ones, when a run wants them.
+The gate runs the three mlops cells by default; ``--cells`` also selects the
+pure-PyTorch variants. Every cell checks runtime, physical budgets and simulator
+accuracy. Throughput comparisons additionally require a matching baseline.
 """
 
 from __future__ import annotations
@@ -20,6 +18,15 @@ from dataclasses import replace
 from pathlib import Path
 
 from shadowspill.schema import artifact_schema
+from tools.qualification.device_defaults import (
+    add_memory_budget_arguments,
+    performance_defaults,
+)
+from tools.qualification.precision import (
+    add_dtype_arguments,
+    dtype_arguments,
+    dtype_overrides,
+)
 from workloads.full_model import FullModelManifest, manifest_for, manifests
 
 from .matrix_logging import MatrixConsole, format_bytes, utc_now
@@ -151,6 +158,11 @@ def _cell_start_details(
         f"  GRADIENT ACCUMULATION ROUNDS: {manifest.accumulation_count}",
         f"  TOKENS PER OPTIMIZER STEP: {manifest.tokens_per_step}",
         "EXECUTION BUDGET: " + format_bytes(manifest.device_physical_capacity_bytes),
+        "EXTERNAL HEADROOM: "
+        + format_bytes(manifest.external_headroom_bytes)
+        + " (reserved for pool sizing)",
+        f"REJECT OVERBUDGET: {manifest.reject_overbudget}",
+        "DTYPES: " + manifest.dtypes.description(),
         f"SPILL BUDGET: {format_bytes(manifest.spill_budget_bytes)}",
     ]
     if planning_budget_gib is not None:
@@ -192,7 +204,17 @@ def _cell_result_details(
             if not measure_only:
                 for key, label in gates:
                     value = artifact_payload.get(key)
-                    details.append(f"GATE {label}: {'pass' if value else 'FAIL'}")
+                    if (
+                        key == "regression_gate_passed"
+                        and artifact_payload.get("regression_gate_applicable") is False
+                    ):
+                        details.append(
+                            "GATE REGRESSION: not applicable ("
+                            + str(artifact_payload["regression_comparison"]["reason"])
+                            + ")"
+                        )
+                    else:
+                        details.append(f"GATE {label}: {'pass' if value else 'FAIL'}")
             median_step = artifact_payload.get("median_step_seconds")
             throughput = artifact_payload.get("median_tokens_per_second")
             if isinstance(median_step, float) and isinstance(throughput, float):
@@ -236,10 +258,9 @@ def _cell_result_details(
 def default_cells() -> tuple[FullModelManifest, ...]:
     """The cells the gate runs when none are named.
 
-    A cell without a throughput authority has no floor to be measured
-    against, so running it can neither pass nor fail -- it only spends wall
-    time. The default is therefore the judgeable set, and `--cells` still
-    reaches the rest.
+    Preserve the established three mlops workloads. Throughput floors are
+    scoped at execution time; runtime, memory and simulator checks apply to
+    every selected cell, including explicit pure-PyTorch selections.
     """
 
     return tuple(
@@ -270,6 +291,13 @@ def _parser() -> argparse.ArgumentParser:
                 "against a cold store without disturbing the shared one"
             ),
         )
+    parser.add_argument(
+        "--execution-budget-gib",
+        type=int,
+        help="execution pool physical budget in GiB (default: 16; 10 below SM80)",
+    )
+    add_dtype_arguments(parser)
+    add_memory_budget_arguments(parser)
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
@@ -277,9 +305,9 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "report each cell's throughput without judging it, and exit on "
-            "whether the cells ran rather than on whether they passed. The "
-            "floors were measured on one machine and mean nothing on another, "
-            "so this is the mode to port with"
+            "whether the cells ran rather than on whether they passed. "
+            "Hardware/configuration mismatches already exclude unrelated "
+            "throughput floors without this flag"
         ),
     )
     parser.add_argument(
@@ -378,6 +406,21 @@ def _cell_command(
         command.extend(
             ("--planning-spill-budget-gib", str(planning_budgets[manifest.identity]))
         )
+    command.extend(
+        (
+            "--execution-budget-gib",
+            str(manifest.device_physical_capacity_bytes >> 30),
+        )
+    )
+    command.extend(dtype_arguments(manifest))
+    command.extend(
+        ("--external-headroom-mib", str(manifest.external_headroom_bytes >> 20))
+    )
+    command.append(
+        "--reject-overbudget"
+        if manifest.reject_overbudget
+        else "--no-reject-overbudget"
+    )
     canonical = manifest_for(manifest.family, manifest.implementation)
     if manifest.spill_budget_bytes != canonical.spill_budget_bytes:
         command.extend(("--spill-budget-gib", str(manifest.spill_budget_bytes >> 30)))
@@ -483,6 +526,12 @@ def main_with_spill(spill: object | None = None) -> int:
 
     parser = _parser()
     arguments = parser.parse_args()
+    performance_defaults(arguments)
+    if (
+        arguments.execution_budget_gib is not None
+        and arguments.execution_budget_gib <= 0
+    ):
+        parser.error("--execution-budget-gib must be positive")
     if spill is not None:
         # Travels to each cell as a string, so a cell run by hand is the same
         # cell the matrix spawned.
@@ -511,9 +560,21 @@ def main_with_spill(spill: object | None = None) -> int:
     # A smaller pool is the cell's manifest from here on, so what the banner
     # and each cell's record say is the pool it actually ran with.
     chosen = [
-        replace(manifest, spill_budget_bytes=pool_budgets[manifest.identity] << 30)
-        if manifest.identity in pool_budgets
-        else manifest
+        replace(
+            manifest,
+            spill_budget_bytes=pool_budgets.get(
+                manifest.identity, manifest.spill_budget_bytes >> 30
+            )
+            << 30,
+            device_physical_capacity_bytes=(
+                (arguments.execution_budget_gib << 30)
+                if arguments.execution_budget_gib is not None
+                else manifest.device_physical_capacity_bytes
+            ),
+            external_headroom_bytes=arguments.external_headroom_mib << 20,
+            reject_overbudget=arguments.reject_overbudget,
+            **dtype_overrides(arguments),
+        )
         for manifest in chosen
     ]
     rows: list[dict[str, object]] = []

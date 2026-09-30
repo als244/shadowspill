@@ -99,7 +99,11 @@ def _open_runtime(request: PlannedRequest) -> Runtime:
 
     return Runtime(
         pools={
-            "execution": device(physical_capacity=request.device_budget),
+            "execution": device(
+                physical_capacity=request.device_budget,
+                external_headroom=request.external_headroom_mib << 20,
+                reject_overbudget=request.reject_overbudget,
+            ),
             "spill": request.spill_pool or pinned_host(capacity=SPILL_BUDGET),
         },
         routes={
@@ -210,6 +214,7 @@ def _plan_case(
         profiling_options=CORRECTNESS_PROFILING,
         objective=case.objective,
         optimizer=case.optimizer,
+        **request.case.dtypes.plan_arguments(),
         hyperparams=("lr",),
         example_inputs=case.microbatches,
         runtime=runtime,

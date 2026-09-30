@@ -11,13 +11,24 @@ import json
 import traceback
 from pathlib import Path
 
+import torch
+
 from shadowspill.schema import artifact_schema
+from tools.qualification.device_defaults import (
+    add_memory_budget_arguments,
+    performance_defaults,
+)
 from tools.qualification.model_state import release_case_model
+from tools.qualification.precision import (
+    add_dtype_arguments,
+    dtype_overrides,
+)
 from tools.qualification.runtime_evidence import (
     check_physical_budget,
 )
 from workloads.full_model import build_case
 
+from .baseline import regression_comparison
 from .manifest import (
     _manifest_with_overrides,
     _planning_spill_budget,
@@ -58,6 +69,16 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
         arguments.family,
         arguments.implementation,
         spill_budget_gib=arguments.spill_budget_gib,
+        execution_budget_gib=arguments.execution_budget_gib,
+        external_headroom_mib=arguments.external_headroom_mib,
+        reject_overbudget=arguments.reject_overbudget,
+        **dtype_overrides(arguments),
+    )
+    print("DTYPES: " + manifest.dtypes.description(), flush=True)
+    print(
+        f"EXTERNAL HEADROOM: {manifest.external_headroom_bytes >> 20} MiB "
+        f"(reserved for pool sizing); REJECT OVERBUDGET: {manifest.reject_overbudget}",
+        flush=True,
     )
     planning_spill_budget = _planning_spill_budget(
         manifest,
@@ -73,6 +94,10 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
     runtime, capabilities, calibration_attempts = _calibrated_runtime(
         manifest, _remote_spill_pool(arguments)
     )
+    regression = regression_comparison(
+        manifest, arguments, device_name=torch.cuda.get_device_name()
+    )
+    print("THROUGHPUT BASELINE: " + regression.reason, flush=True)
     case = build_case(manifest, seed=arguments.seed, runtime=runtime)
     with case.implementations():
         planned = _plan_case(
@@ -110,6 +135,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, object]:
                 planning_spill_budget=planning_spill_budget,
                 capabilities=capabilities,
                 calibration_attempts=calibration_attempts,
+                regression=regression,
             )
         planned.training.close()
         # Qualification never reuses the model; an export copy would stack an
@@ -124,6 +150,13 @@ def main() -> int:
     parser.add_argument("family", choices=("llama3", "qwen35", "olmoe"))
     parser.add_argument("implementation", choices=("pytorch", "mlops"))
     parser.add_argument("output", type=Path)
+    parser.add_argument(
+        "--execution-budget-gib",
+        type=int,
+        help="execution pool physical budget in GiB (default: 16; 10 below SM80)",
+    )
+    add_dtype_arguments(parser)
+    add_memory_budget_arguments(parser)
     parser.add_argument("--seed", type=int, default=20_260_811)
     parser.add_argument("--groups", type=int, default=3)
     parser.add_argument("--steps-per-group", type=int, default=4)
@@ -132,9 +165,8 @@ def main() -> int:
         "--measure-only",
         action="store_true",
         help=(
-            "report throughput without judging it; the gates compare against "
-            "floors measured on one machine, so they carry no meaning on "
-            "another. The artifact still records every gate field"
+            "report measurements without failing diagnostic gates; "
+            "the artifact still records every gate field"
         ),
     )
     parser.add_argument(
@@ -183,6 +215,12 @@ def main() -> int:
         ),
     )
     arguments = parser.parse_args()
+    performance_defaults(arguments)
+    if (
+        arguments.execution_budget_gib is not None
+        and arguments.execution_budget_gib <= 0
+    ):
+        parser.error("--execution-budget-gib must be positive")
     if arguments.groups <= 0 or arguments.steps_per_group <= 0:
         parser.error("groups and steps-per-group must be positive")
     if arguments.plan_only and arguments.skip_checkpoint:
@@ -234,7 +272,17 @@ def main() -> int:
         )
         if not arguments.measure_only:
             for key, label in gates:
-                print(f"  GATE {label}: {'pass' if result[key] else 'FAIL'}")
+                if (
+                    key == "regression_gate_passed"
+                    and not result["regression_gate_applicable"]
+                ):
+                    print(
+                        "  GATE REGRESSION: not applicable ("
+                        + result["regression_comparison"]["reason"]
+                        + ")"
+                    )
+                else:
+                    print(f"  GATE {label}: {'pass' if result[key] else 'FAIL'}")
         print(
             f"  MEDIAN STEP: {result['median_step_seconds']:.4f} seconds "
             f"({result['median_tokens_per_second']:.1f} tokens/s)"
