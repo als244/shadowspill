@@ -158,6 +158,55 @@ and, by keyword:
 | `checkpoint_every`, `checkpoint_dir` | Checkpoint every so many steps and after the last (0 never does), into `checkpoint_dir` -- by default the run's directory. |
 | `artifact_store` | Where planning keeps what it builds -- captures, compiled graphs, profiles, plans -- for later runs to reuse; by default `artifact_store` inside the run's directory. Runs that share one plan faster. |
 | `wandb_project`, `wandb_mode` | Send the metrics to this W&B project too, `online` or `offline`. |
+| `parameter_metrics` | Optional pure `(compute_weight, accumulated_gradient) -> tensor pytree` callback. `training.observations.parameter_norms` returns FP32 L2 norms of both. Observed once per step, before updates, with the same semantics on both backends. |
+| `metric_reducer` | Optional CPU reducer of the objective's per-microbatch metrics into `MetricSummary(scalars, tables)`. Required when an objective returns metrics. |
+| `metric_tables_every` | Write detail tables every this many steps, plus the first and last (default 100; 0 disables). Scalar metrics are logged every step. |
+
+### Loss, routing and parameter observations
+
+An objective can return `ObjectiveResult(summed_loss, metrics)`. The wrapper
+divides only the loss by the step's trained-token total; it detaches the metric
+leaves without changing their values. Both backends return each microbatch's
+metrics in order and once-per-step `parameter_metrics` separately. The
+ShadowSpill callable returns raw device tensors. The backend copies only
+these summaries to pinned CPU storage and waits at the existing step boundary;
+CPU reduction, `.item()` and logging happen afterwards. No logging or host
+synchronization runs inside captured tasks.
+
+For the mlops OLMoE workload, add these fields to a training config:
+
+```json
+{
+  "objective": "@training.objectives:model_loss_with_metrics",
+  "metric_reducer": "@training.olmoe_metrics:reduce_metrics",
+  "parameter_metrics": "@training.observations:parameter_norms",
+  "metric_tables_every": 100
+}
+```
+
+The model exposes statistics already produced by `mlops.moe`, without a second
+router pass. The reducer weights CE and auxiliary loss by trained targets and
+sums counts across microbatches **before** computing expert-load entropy.
+Routing counts cover all router rows, including any packed padding. Load
+entropy describes aggregate expert usage, not mean per-token router entropy.
+
+W&B and local JSON use these names:
+
+| Section | Values |
+|---|---|
+| `train/loss/`, `eval/loss/` | `cross_entropy`, `auxiliary` (raw), `weighted_auxiliary`, `total` |
+| `train/routing/layer_00/` (and `eval/`) | Load entropy, normalized entropy, effective experts, maximum/mean load, unused experts, assignments, auxiliary loss |
+| `train/routing/expert_counts` (and `eval/`) | Indexed table: layer, expert, count, share, probability sum |
+| `param_norm/<module>/<parameter>` | Pre-update compute-weight L2 norm, reduced in FP32 |
+| `grad_norm/<module>/<parameter>` | Final accumulated-gradient L2 norm, reduced in FP32 |
+| `param_norm/global/l2`, `grad_norm/global/l2` | Square root of the sum of squared per-parameter norms |
+| `parameters/norms` | Indexed table with full parameter name, shape, dtype, metric and value |
+
+All charts use the explicit `step` axis. Scalar results are flushed to
+`metrics.jsonl`; tables are flushed to `observations.jsonl`. Stdout keeps its
+short step lines, while detailed metrics go to files and W&B. Norms require
+reading the parameters and gradients; their GPU cost is profiled and planned,
+even though the returned scalars are small.
 
 For stock `torch.optim.AdamW`, use FP32 masters when training an FP16 model
 with FP32 optimizer state. The optimizer steps the masters; ShadowSpill writes

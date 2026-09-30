@@ -10,6 +10,8 @@ import torch.nn as nn
 
 from training import checkpoints, models
 from training.backends import GIB, Microbatch, Setup
+from training.objectives import unpack_objective
+from training.observations import StepObservations
 
 
 class PyTorch:
@@ -41,6 +43,11 @@ class PyTorch:
             self.masters.parameters(), **setup.optimizer_args
         )
         self.steps = 0
+        self.parameter_metrics = setup.parameter_metrics
+        if self.parameter_metrics is not None and self.compile:
+            self.parameter_metrics = torch.compile(
+                self.parameter_metrics, fullgraph=True, dynamic=True
+            )
         self.loss = (
             torch.compile(self.module, fullgraph=True, dynamic=False)
             if self.compile
@@ -49,19 +56,23 @@ class PyTorch:
 
     def step(
         self, microbatches: list[Microbatch], lr: float | None, trained_total: int
-    ) -> list[float]:
+    ) -> StepObservations:
         if lr is not None:
             _set_learning_rate(self.optimizer, lr)
         self._set_trained_total(trained_total)
-        losses = []
+        losses, metrics = [], []
         for microbatch in microbatches:
-            loss = self.loss(*(value.to(self.device) for value in microbatch))
+            loss, values = unpack_objective(
+                self.loss(*(value.to(self.device) for value in microbatch))
+            )
             loss.backward()  # gradients add up across microbatches, as ShadowSpill's do
             self.masters.accumulate()
             losses.append(loss.detach())
+            metrics.append(values)
+        observations = self.masters.observe(self.parameter_metrics)
         self.masters.step(self.optimizer)
         self.steps += 1
-        return [loss.item() for loss in losses]
+        return StepObservations.collect(losses, metrics, observations)
 
     def synchronize(self) -> None:
         if self.device.type != "cpu":
@@ -70,12 +81,16 @@ class PyTorch:
     @torch.no_grad()
     def evaluate(
         self, microbatches: list[Microbatch], trained_total: int
-    ) -> list[float]:
+    ) -> StepObservations:
         self._set_trained_total(trained_total)
-        return [
-            self.loss(*(value.to(self.device) for value in microbatch)).item()
-            for microbatch in microbatches
-        ]
+        losses, metrics = [], []
+        for microbatch in microbatches:
+            loss, values = unpack_objective(
+                self.loss(*(value.to(self.device) for value in microbatch))
+            )
+            losses.append(loss)
+            metrics.append(values)
+        return StepObservations.collect(losses, metrics)
 
     def _set_trained_total(self, trained_total: int) -> None:
         """Give the objective the trained positions its microbatches divide by,
@@ -171,6 +186,18 @@ class _Masters:
         with torch.no_grad():
             for name, master in self.masters.items():
                 self.weights[name].copy_(master)
+
+    @torch.no_grad()
+    def observe(self, observer):
+        """Read weights and final gradients before casts or optimizer updates."""
+
+        if observer is None:
+            return {}
+        return {
+            name: observer(weight, gradient)
+            for name, weight in self.weights.items()
+            if (gradient := self.sums.get(name, weight.grad)) is not None
+        }
 
 
 def _set_learning_rate(optimizer: torch.optim.Optimizer, lr: float) -> None:

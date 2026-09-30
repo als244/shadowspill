@@ -26,6 +26,9 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torch.utils._pytree import tree_map
+
+from shadowspill.pytorch.contracts import ObjectiveResult
 
 
 def model_loss(
@@ -42,6 +45,30 @@ def model_loss(
     return model.loss(tokens, targets, seq_lens=seq_lens, reduction="sum", **options)
 
 
+def model_loss_with_metrics(
+    model, tokens, targets, seq_lens, **options
+) -> ObjectiveResult:
+    """A model's summed loss and compact metric pytree, returned separately."""
+
+    loss, metrics = model.loss(
+        tokens,
+        targets,
+        seq_lens=seq_lens,
+        reduction="sum",
+        return_metrics=True,
+        **options,
+    )
+    return ObjectiveResult(loss, metrics)
+
+
+def unpack_objective(value):
+    """Extract the loss and observations from the wrapper's exportable result."""
+
+    if isinstance(value, dict):
+        return value["loss"], value["metrics"]
+    return value, None
+
+
 class Objective(nn.Module):
     """A model whose forward pass is a microbatch's share of the training
     objective: the objective's sum over trained positions divided by the
@@ -53,7 +80,7 @@ class Objective(nn.Module):
     def __init__(
         self,
         model: nn.Module,
-        objective: Callable[..., torch.Tensor],
+        objective: Callable[..., torch.Tensor | ObjectiveResult],
         options: Mapping[str, Any],
     ) -> None:
         super().__init__()
@@ -76,8 +103,14 @@ class Objective(nn.Module):
 
     def forward(
         self, tokens: torch.Tensor, targets: torch.Tensor, seq_lens: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | dict[str, Any]:
         summed = self.objective(self.model, tokens, targets, seq_lens, **self.options)
+        if isinstance(summed, ObjectiveResult):
+            metrics = tree_map(
+                lambda x: x.detach() if isinstance(x, torch.Tensor) else x,
+                summed.metrics,
+            )
+            return {"loss": summed.loss / self.trained_total, "metrics": metrics}
         return summed / self.trained_total
 
 
@@ -86,7 +119,8 @@ def planned_objective(
     tokens: torch.Tensor,
     targets: torch.Tensor,
     seq_lens: torch.Tensor,
-) -> torch.Tensor:
+) -> torch.Tensor | ObjectiveResult:
     """What ShadowSpill plans: the module's forward pass."""
 
-    return module(tokens, targets, seq_lens)
+    loss, metrics = unpack_objective(module(tokens, targets, seq_lens))
+    return loss if metrics is None else ObjectiveResult(loss, metrics)

@@ -16,7 +16,7 @@ gave when it names none. Either way, ``geometry`` is what the backend runs.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -25,6 +25,7 @@ import torch
 
 from training.data import PackedTokens
 from training.objectives import Objective
+from training.observations import StepObservations
 
 GIB = 1 << 30
 
@@ -50,6 +51,7 @@ class Setup:
     seed: int
     run_dir: Path
     artifact_store: Path  # where planning's captures, graphs, profiles and plans go
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None
 
 
 class Backend(Protocol):
@@ -62,13 +64,13 @@ class Backend(Protocol):
 
     def step(
         self, microbatches: list[Microbatch], lr: float | None, trained_total: int
-    ) -> list[float]: ...  # each microbatch's share of the step's loss
+    ) -> StepObservations: ...
 
     def synchronize(self) -> None: ...  # return once the device has finished the step
 
     def evaluate(
         self, microbatches: list[Microbatch], trained_total: int
-    ) -> list[float]: ...
+    ) -> StepObservations: ...
 
     def device_peak_gib(self) -> float: ...
 

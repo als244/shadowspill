@@ -13,12 +13,15 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from training.observations import MetricTable
+
 
 class Logger:
     def __init__(
         self, run_dir: Path, record: dict[str, Any], project: str | None, mode: str
     ) -> None:
         self.metrics = open(run_dir / "metrics.jsonl", "a")  # noqa: SIM115
+        self.tables = open(run_dir / "observations.jsonl", "a")  # noqa: SIM115
         self.wandb = None
         if project is not None:
             import wandb
@@ -36,6 +39,8 @@ class Logger:
                 config=record,
                 mode=mode,
             )
+            self.wandb.define_metric("step")
+            self.wandb.define_metric("*", step_metric="step")
 
     def log(self, step: int, *, echo: bool = True, **metrics: float) -> None:
         self.metrics.write(
@@ -43,18 +48,46 @@ class Logger:
         )
         self.metrics.flush()
         if self.wandb is not None:
-            self.wandb.log(metrics, step=step)
+            self.wandb.log({"step": step, **metrics})
         if echo:
             fields = " | ".join(
                 f"{name} {_format(value)}" for name, value in metrics.items()
             )
             print(f"step {step:>6} | {fields}", flush=True)
 
+    def table(self, step: int, name: str, table: MetricTable) -> None:
+        """Indexed CPU details, with the same training-step axis as scalars."""
+
+        self.tables.write(
+            json.dumps(
+                {
+                    "step": step,
+                    "name": name,
+                    "columns": table.columns,
+                    "rows": table.rows,
+                }
+            )
+            + "\n"
+        )
+        self.tables.flush()
+        if self.wandb is not None:
+            import wandb
+
+            self.wandb.log(
+                {
+                    "step": step,
+                    name: wandb.Table(
+                        columns=list(table.columns), data=list(table.rows)
+                    ),
+                }
+            )
+
     def close(self, exit_code: int = 0) -> None:
         """Close the metrics file and finish the W&B run, as failed when
         ``exit_code`` is not 0."""
 
         self.metrics.close()
+        self.tables.close()
         if self.wandb is not None:
             self.wandb.finish(exit_code=exit_code)
 
