@@ -221,7 +221,7 @@ ShadowSpillStatus shadowspill_memory_pool_allocate(
     }
     /*
      * Keep large, short-lived framework values at the high end of an
-     * unsealed pool while small provider state grows from the low end.  A
+     * unsealed pool while small persistent allocations grow from the low end.  A
      * provider cache retained by an isolated profiling task then occupies a
      * compact prefix instead of pinning a tiny range behind a multi-gigabyte
      * representative input.  Fixed-layout allocations bypass this policy.

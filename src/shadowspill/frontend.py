@@ -102,10 +102,10 @@ class RuntimeFrontend(Protocol):
         Irreversible for the process lifetime.
         """
 
-    def initialize_provider_workspaces(self, device_ordinal: int) -> None:
-        """Force the device provider's retained workspaces into the pool now.
+    def initialize_persistent_workspaces(self, device_ordinal: int) -> None:
+        """Force the libraries' retained workspaces into the pool now.
 
-        A provider that creates its workspace lazily creates it in the middle of
+        A library that creates its workspace lazily creates it in the middle of
         a plan, splitting a slab admission had already certified. Doing it here,
         while the pool is empty, makes the cost explicit and its placement
         deterministic. A frontend with nothing to warm may do nothing.

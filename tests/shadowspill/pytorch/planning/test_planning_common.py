@@ -176,7 +176,8 @@ def test_plan_reservation_can_be_smaller_than_runtime_spill_pool() -> None:
     installed = SimpleNamespace(
         admission=SimpleNamespace(
             baseline_bytes=10,
-            provider_headroom_bytes=10,
+            external_headroom_bytes=10,
+            reject_overbudget=False,
             spill_pool_bytes=112,
         )
     )

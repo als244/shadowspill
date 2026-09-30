@@ -123,7 +123,8 @@ class IndexedExecutionPlan:
     device_budget_bytes: int
     spill_budget_bytes: int
     baseline_bytes: int
-    provider_headroom_bytes: int
+    external_headroom_bytes: int
+    reject_overbudget: bool
     slab_bytes: int
     workspace_reserve_bytes: int
     spill_reservation_bytes: int
@@ -347,7 +348,8 @@ def index_execution_plan(plan: ExecutionPlan) -> IndexedExecutionPlan:
         device_budget_bytes=admission.device_budget_bytes,
         spill_budget_bytes=admission.spill_budget_bytes,
         baseline_bytes=admission.baseline_bytes,
-        provider_headroom_bytes=admission.provider_headroom_bytes,
+        external_headroom_bytes=admission.external_headroom_bytes,
+        reject_overbudget=admission.reject_overbudget,
         slab_bytes=admission.slab_bytes,
         workspace_reserve_bytes=admission.workspace_reserve_bytes,
         spill_reservation_bytes=admission.spill_reservation_bytes,

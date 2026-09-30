@@ -30,7 +30,7 @@ class AdapterConfig(ctypes.Structure):
         ("abi_version", ctypes.c_uint32),
         ("device_ordinal", ctypes.c_int32),
         ("device_budget_bytes", ctypes.c_uint64),
-        ("provider_headroom_bytes", ctypes.c_uint64),
+        ("external_headroom_bytes", ctypes.c_uint64),
         ("allocator_pool_id", ctypes.c_uint32),
         ("pools", ctypes.POINTER(PoolConfig)),
         ("pool_count", ctypes.c_uint32),
@@ -43,6 +43,7 @@ class AdapterConfig(ctypes.Structure):
         # and kept open for the runtime's life.
         ("libraries", ctypes.POINTER(ctypes.c_char_p)),
         ("library_count", ctypes.c_uint32),
+        ("reject_overbudget", ctypes.c_uint8),
     ]
 
 
@@ -52,13 +53,14 @@ class PhysicalAdmission(ctypes.Structure):
         ("device_ordinal", ctypes.c_int32),
         ("device_budget_bytes", ctypes.c_uint64),
         ("baseline_bytes", ctypes.c_uint64),
-        ("provider_headroom_bytes", ctypes.c_uint64),
+        ("external_headroom_bytes", ctypes.c_uint64),
         ("allocator_pool_id", ctypes.c_uint32),
         ("pool_count", ctypes.c_uint32),
         ("allocator_pool_bytes", ctypes.c_uint64),
         ("bootstrap_process_bytes", ctypes.c_uint64),
         ("device_used_bytes", ctypes.c_uint64),
         ("device_total_bytes", ctypes.c_uint64),
+        ("reject_overbudget", ctypes.c_uint8),
     ]
 
 

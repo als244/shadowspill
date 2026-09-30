@@ -130,9 +130,9 @@ class AdmissionPolicy:
     """The margins and granularities admission reserves, named so a report
     and a test can state them rather than rediscover them."""
 
-    minimum_provider_headroom_bytes: int = 1280 * MIB
-    provider_growth_margin_bytes: int = 64 * MIB
-    provider_granularity_bytes: int = 64 * MIB
+    minimum_external_headroom_bytes: int = 512 * MIB
+    external_growth_margin_bytes: int = 64 * MIB
+    external_granularity_bytes: int = 64 * MIB
     minimum_workspace_reserve_bytes: int = 512 * MIB
     workspace_numerator: int = 5
     workspace_denominator: int = 4
@@ -143,15 +143,15 @@ class AdmissionPolicy:
 
     def __post_init__(self) -> None:
         values = (
-            self.minimum_provider_headroom_bytes,
-            self.provider_growth_margin_bytes,
+            self.minimum_external_headroom_bytes,
+            self.external_growth_margin_bytes,
             self.minimum_workspace_reserve_bytes,
             self.minimum_spill_leeway_bytes,
         )
         if any(value < 0 for value in values):
             raise ValueError("admission margins must be non-negative")
         positive = (
-            self.provider_granularity_bytes,
+            self.external_granularity_bytes,
             self.workspace_numerator,
             self.workspace_denominator,
             self.workspace_granularity_bytes,
@@ -642,15 +642,15 @@ def admit_physical_budget(
     )
     if any(value < 0 for value in inputs):
         raise ValueError("physical admission inputs must be non-negative")
-    provider_needed = observed_external_bytes + policy.provider_growth_margin_bytes
-    provider_headroom = max(
-        policy.minimum_provider_headroom_bytes,
-        _round_up(provider_needed, policy.provider_granularity_bytes),
+    external_needed = observed_external_bytes + policy.external_growth_margin_bytes
+    external_headroom = max(
+        policy.minimum_external_headroom_bytes,
+        _round_up(external_needed, policy.external_granularity_bytes),
     )
-    fixed_device_bytes = baseline_bytes + provider_headroom
+    fixed_device_bytes = baseline_bytes + external_headroom
     if fixed_device_bytes >= device_budget_bytes:
         raise PhysicalAdmissionError(
-            "problem and provider headroom leave no device slab",
+            "problem and external headroom leave no device slab",
             kind="fixed_device_budget",
             required_bytes=fixed_device_bytes + 1,
             capacity_bytes=device_budget_bytes,
@@ -686,7 +686,7 @@ def admit_physical_budget(
         device_budget_bytes=device_budget_bytes,
         spill_budget_bytes=spill_budget_bytes,
         baseline_bytes=baseline_bytes,
-        provider_headroom_bytes=provider_headroom,
+        external_headroom_bytes=external_headroom,
         slab_bytes=slab_bytes,
         workspace_reserve_bytes=workspace_reserve,
         spill_reservation_bytes=spill_reservation,
