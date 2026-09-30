@@ -31,9 +31,12 @@ from shadowspill.runtime import RuntimeConfigurationError
 from shadowspill.runtime.abi import runtime_library
 from shadowspill.runtime.configuration import adapter_path
 from shadowspill.runtime.occupancy import live_allocations, plan_slices
+from tests.precision import low_precision_dtype
 from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
+
+_LOW_PRECISION = low_precision_dtype()
 
 
 class _TrainingNetwork(nn.Module):
@@ -762,18 +765,18 @@ def test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
     runtime = public_test_runtime()
     for master_dtype, grad_dtype, state_dtype in itertools.product(
         (None, torch.float32),
-        (torch.bfloat16, torch.float32),
-        (torch.bfloat16, torch.float32),
+        (_LOW_PRECISION, torch.float32),
+        (_LOW_PRECISION, torch.float32),
     ):
         case = f"masters {master_dtype}, gradients {grad_dtype}, moments {state_dtype}"
         torch.manual_seed(87)
-        model = _TrainingNetwork().to(torch.bfloat16)
+        model = _TrainingNetwork().to(_LOW_PRECISION)
         names = [name for name, _parameter in model.named_parameters()]
         batches = [
             [
                 [
-                    torch.randn(rows, 6, dtype=torch.bfloat16),
-                    torch.randn(rows, 3, dtype=torch.bfloat16),
+                    torch.randn(rows, 6, dtype=_LOW_PRECISION),
+                    torch.randn(rows, 3, dtype=_LOW_PRECISION),
                     tag,
                 ]
                 for rows, tag in ((2, "left"), (4, "right"))
@@ -785,6 +788,7 @@ def test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
             lr=0.003,
             gradient_dtype="parameter",
             opt_state_dtype=state_dtype,
+            eps=1e-4 if state_dtype == torch.float16 else 1e-8,
         )
         expected, stepped = _stepped_eagerly(
             copy.deepcopy(model).cuda(),
@@ -831,7 +835,7 @@ def test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
         weights = read_model_state(model, runtime=runtime)
         for name, value in zip(names, stepped, strict=True):
             saved = state["model"][name]  # type: ignore[index]
-            assert saved.dtype == (master_dtype or torch.bfloat16), case
+            assert saved.dtype == (master_dtype or _LOW_PRECISION), case
             torch.testing.assert_close(
                 saved.float(),
                 value.detach().cpu().float(),
@@ -839,8 +843,8 @@ def test_public_training_keeps_masters_gradients_and_moments_at_their_own_dtypes
                 atol=2e-3,
                 msg=case,
             )
-            assert weights[name].dtype == torch.bfloat16, case
-            assert torch.equal(weights[name], saved.to(torch.bfloat16)), case
+            assert weights[name].dtype == _LOW_PRECISION, case
+            assert torch.equal(weights[name], saved.to(_LOW_PRECISION)), case
         for entries in state["optimizer"]["state"].values():  # type: ignore[index]
             assert entries["exp_avg"].dtype == state_dtype, case
             assert entries["exp_avg_sq"].dtype == state_dtype, case
@@ -854,11 +858,11 @@ class _MixedPrecisionNetwork(nn.Module):
 
     def __init__(self) -> None:
         super().__init__()
-        self.first = nn.Linear(6, 10).to(torch.bfloat16)
+        self.first = nn.Linear(6, 10).to(_LOW_PRECISION)
         self.second = nn.Linear(10, 3)
 
     def forward(self, value: torch.Tensor) -> torch.Tensor:
-        hidden = torch.relu(self.first(value.to(torch.bfloat16)))
+        hidden = torch.relu(self.first(value.to(_LOW_PRECISION)))
         return self.second(hidden.float())
 
 
@@ -969,21 +973,23 @@ def test_public_training_steps_masters_beside_weights_that_have_none(
 def test_public_training_checkpoints_masters_in_place_of_their_weights(
     tmp_path: Path,
 ) -> None:
-    """With fp32 masters of bf16 weights and gradients kept at fp32, a
+    """With fp32 masters of lower-precision weights and gradients kept at fp32, a
     checkpoint holds each master where its weights would be -- the weights
     follow from it, bit for bit -- and restoring it replays exactly."""
+
+    weight_dtype = _LOW_PRECISION
 
     _require_adapter()
     torch.manual_seed(82)
     runtime = public_test_runtime()
     model = import_model_state(
-        _TrainingNetwork().to(torch.bfloat16), runtime=runtime, pool="spill"
+        _TrainingNetwork().to(weight_dtype), runtime=runtime, pool="spill"
     )
     batches = [
         [
             [
-                torch.randn(2, 6, dtype=torch.bfloat16),
-                torch.randn(2, 3, dtype=torch.bfloat16),
+                torch.randn(2, 6, dtype=weight_dtype),
+                torch.randn(2, 3, dtype=weight_dtype),
                 "left",
             ]
         ]
@@ -1008,9 +1014,14 @@ def test_public_training_checkpoints_masters_in_place_of_their_weights(
     training.save(path)
     saved = torch.load(path, mmap=True, weights_only=True)
     weights = read_model_state(model, runtime=runtime)
+    for entries in saved["optimizer"]["state"].values():
+        for moment in ("exp_avg", "exp_avg_sq"):
+            assert entries[moment].dtype == torch.float32
+            assert torch.isfinite(entries[moment]).all()
     for name, _parameter in model.named_parameters():
+        assert weights[name].dtype == weight_dtype
         assert saved["model"][name].dtype == torch.float32
-        assert torch.equal(weights[name], saved["model"][name].bfloat16())
+        assert torch.equal(weights[name], saved["model"][name].to(weight_dtype))
 
     training(batches[2])
     uninterrupted = training.state_dict()
@@ -1122,8 +1133,8 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
     class Network(nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.first = nn.Linear(8, 12, bias=False, dtype=torch.bfloat16)
-            self.second = nn.Linear(12, 4, bias=False, dtype=torch.bfloat16)
+            self.first = nn.Linear(8, 12, bias=False, dtype=_LOW_PRECISION)
+            self.second = nn.Linear(12, 4, bias=False, dtype=_LOW_PRECISION)
 
         def forward(self, value: torch.Tensor) -> torch.Tensor:
             return self.second(torch.relu(self.first(value)))
@@ -1137,12 +1148,12 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
         torch.manual_seed(seed)
         return [
             [
-                torch.randn(2, 8, dtype=torch.bfloat16),
-                torch.randn(2, 4, dtype=torch.bfloat16),
+                torch.randn(2, 8, dtype=_LOW_PRECISION),
+                torch.randn(2, 4, dtype=_LOW_PRECISION),
             ],
             [
-                torch.randn(3, 8, dtype=torch.bfloat16),
-                torch.randn(3, 4, dtype=torch.bfloat16),
+                torch.randn(3, 8, dtype=_LOW_PRECISION),
+                torch.randn(3, 4, dtype=_LOW_PRECISION),
             ],
         ]
 
@@ -1162,7 +1173,10 @@ def test_public_training_partitions_device_only_optimizer_and_replays(
         optimizer=partial(
             mlops.optim.AdamW,
             lr=3e-3,
-            opt_state_dtype=torch.bfloat16,
+            gradient_dtype="parameter",
+            opt_state_dtype=(
+                torch.float32 if _LOW_PRECISION is torch.float16 else torch.bfloat16
+            ),
         ),
         example_inputs=inputs(92),
         runtime=runtime,

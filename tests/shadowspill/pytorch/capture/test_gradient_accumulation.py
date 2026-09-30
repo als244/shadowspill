@@ -28,6 +28,7 @@ from shadowspill.pytorch.capture.aot import (
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import compile_artifact
 from shadowspill.task.inputs import TaskInputRole
+from tests.precision import low_precision_dtype
 
 
 def _backward(
@@ -217,7 +218,7 @@ def test_the_multiplys_gradient_is_summed_at_fp32() -> None:
     """Within fp32's error of the exact product of the same bf16 operands,
     where the bf16 result is off by bf16's."""
 
-    backward, leaves = _projection_backward("cuda")
+    backward, leaves = _projection_backward("cuda", low_precision_dtype())
     kept = cast_gradient_outputs(backward, leaves, torch.float32)
 
     arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
@@ -235,7 +236,7 @@ def test_the_multiplys_gradient_is_summed_at_fp32() -> None:
 
 @pytest.mark.cuda
 def test_the_accumulating_form_adds_at_the_gradient_dtype() -> None:
-    backward, leaves = _projection_backward("cuda")
+    backward, leaves = _projection_backward("cuda", low_precision_dtype())
     kept = cast_gradient_outputs(backward, leaves, torch.float32)
     accumulating = accumulate_gradient_outputs(kept, leaves)
 
@@ -331,7 +332,7 @@ def test_the_multiply_adds_in_place_at_the_accumulator_dtype(
     requiring a single BF16 rounding incorrectly rejects those kernels.
     """
 
-    backward, leaves = _projection_backward("cuda")
+    backward, leaves = _projection_backward("cuda", low_precision_dtype())
     accumulating = accumulate_gradient_outputs(
         _kept(backward, leaves, gradient_dtype),
         leaves,
@@ -393,7 +394,7 @@ def test_the_multiply_adding_in_place_compiles_as_one_call() -> None:
     bias's sum, compiled, is not rounded to bf16 before it is added, so only
     the weight's gradient is compared with the graph run eagerly.)"""
 
-    backward, leaves = _projection_backward("cuda")
+    backward, leaves = _projection_backward("cuda", low_precision_dtype())
     kept = cast_gradient_outputs(backward, leaves, torch.float32)
     accumulating = accumulate_gradient_outputs(kept, leaves)
     arguments = tuple(
@@ -417,7 +418,7 @@ def test_by_default_a_bf16_step_accumulates_as_adding_after_does() -> None:
     """The running gradient after the default accumulating backward is, bit
     for bit, the product the creating form computes added to it."""
 
-    backward, leaves = _projection_backward("cuda")
+    backward, leaves = _projection_backward("cuda", low_precision_dtype())
     accumulating = accumulate_gradient_outputs(backward, leaves)
 
     arguments = tuple(_materialize(item, "cuda") for item in backward.example_arguments)
