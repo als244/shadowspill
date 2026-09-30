@@ -49,7 +49,7 @@ class RunBudgetOutcome:
     real_entry_delay_seconds: float
     #: Last computation through completion of required terminal transfers.
     terminal_tail_seconds: float
-    real_terminal_tail_seconds: float
+    real_terminal_tail_seconds: float | None
     #: What the chosen recomputation costs over the save-only floor. A
     #: counterfactual, so there is nothing to measure it against: the same figure
     #: stands on both clocks. Declared here, among the defaulted fields, because
@@ -80,20 +80,27 @@ class RunBudgetOutcome:
         ) / self.simulated_step_seconds
 
     @property
-    def traced_step_seconds(self) -> float:
-        """The traced invocation including required terminal copies."""
+    def traced_step_seconds(self) -> float | None:
+        """The traced invocation, or unknown when transfer timings are missing."""
 
-        return sum(self.components(measured=True))
+        components = self.components(measured=True)
+        return None if components is None else sum(components)
 
     @property
-    def trace_relative_error(self) -> float:
-        return (
-            self.traced_step_seconds - self.simulated_step_seconds
-        ) / self.simulated_step_seconds
+    def trace_relative_error(self) -> float | None:
+        traced = self.traced_step_seconds
+        if traced is None:
+            return None
+        return (traced - self.simulated_step_seconds) / self.simulated_step_seconds
 
-    def components(self, *, measured: bool) -> tuple[float, ...]:
-        """Disjoint entry, compute, recompute, idle, and terminal durations."""
+    def components(self, *, measured: bool) -> tuple[float, ...] | None:
+        """Disjoint invocation durations; unknown when a measured part is missing."""
 
+        tail = (
+            self.real_terminal_tail_seconds if measured else self.terminal_tail_seconds
+        )
+        if tail is None:
+            return None
         return (
             self.real_entry_delay_seconds
             if measured
@@ -102,7 +109,7 @@ class RunBudgetOutcome:
             - self.recomputation_seconds,
             self.recomputation_seconds,
             self.real_idle_seconds if measured else self.simulated_idle_seconds,
-            self.real_terminal_tail_seconds if measured else self.terminal_tail_seconds,
+            tail,
         )
 
 
@@ -267,15 +274,20 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     for bound, shade in ((0.10, "0.92"), (0.05, "0.84")):
         error.axhspan(-bound, bound, color=shade, zorder=0)
     error.axhline(0.0, color="0.25", linewidth=1.4, zorder=1)
-    errors = [item.trace_relative_error for item in ordered]
+    timed = [
+        (place, value)
+        for place, item in enumerate(ordered)
+        if (value := item.trace_relative_error) is not None
+    ]
+    errors = [value for _, value in timed]
     error.bar(
-        list(places),
+        [place for place, _ in timed],
         errors,
         width=0.5,
         color=["tab:red" if abs(item) > 0.05 else "tab:blue" for item in errors],
         zorder=2,
     )
-    for place, value in zip(places, errors, strict=True):
+    for place, value in timed:
         error.annotate(
             f"{value:+.1%}",
             (place, value),
@@ -286,7 +298,10 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
         )
     # Room for the label under a negative bar and over a positive one, and
     # never so tight that the bands become invisible slivers.
-    reach = max(0.13, max(abs(value) for value in errors) * 1.35)
+    for place, item in enumerate(ordered):
+        if item.trace_relative_error is None:
+            error.annotate("unknown", (place, 0.0), ha="center", fontsize=8.0)
+    reach = max(0.13, max((abs(value) for value in errors), default=0.0) * 1.35)
     error.set_ylim(-reach, reach)
     error.set_title("Traced Invocation Fidelity (positive = ran slower than predicted)")
     error.set_ylabel("Measured Minus Simulated")
@@ -312,25 +327,24 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
         "Terminal Transfers",
     )
     for offset, (name, measured) in enumerate((("Simulated", False), ("Traced", True))):
-        centres = [place - width / 2 + width * offset for place in places]
-        opacity = 0.95 if measured else 0.45
-        totals = [0.0] * len(ordered)
-        columns = zip(
-            *(item.components(measured=measured) for item in ordered), strict=True
-        )
-        for values, color in zip(columns, colors, strict=True):
-            parts.bar(
-                centres,
-                values,
-                width=width * 0.92,
-                bottom=totals,
-                color=color,
-                alpha=opacity,
-            )
-            totals = [a + b for a, b in zip(totals, values, strict=True)]
-        for centre, total in zip(centres, totals, strict=True):
+        for place, item in enumerate(ordered):
+            centre = place - width / 2 + width * offset
+            components = item.components(measured=measured)
+            total = 0.0
+            if components is not None:
+                for value, color in zip(components, colors, strict=True):
+                    parts.bar(
+                        centre,
+                        value,
+                        width=width * 0.92,
+                        bottom=total,
+                        color=color,
+                        alpha=0.95 if measured else 0.45,
+                    )
+                    total += value
+            label = "unknown" if components is None else f"{total:.2f} s"
             parts.annotate(
-                f"{name}\n{total:.2f} s",
+                f"{name}\n{label}",
                 (centre, total),
                 textcoords="offset points",
                 xytext=(0, 4),
@@ -348,7 +362,7 @@ def _fidelity(path: Path, ordered: Sequence[RunBudgetOutcome]) -> Path:
     parts.set_ylim(
         0.0,
         max(
-            max(item.simulated_step_seconds, item.traced_step_seconds)
+            max(item.simulated_step_seconds, item.traced_step_seconds or 0.0)
             for item in ordered
         )
         * 1.30,

@@ -155,8 +155,10 @@ def _run_entries(
                     ),
                     real_entry_delay_seconds=_float(row, "real_entry_delay_seconds"),
                     terminal_tail_seconds=_float(row, "terminal_tail_seconds"),
-                    real_terminal_tail_seconds=_float(
-                        row, "real_terminal_tail_seconds"
+                    real_terminal_tail_seconds=(
+                        _float(row, "real_terminal_tail_seconds")
+                        if row["real_terminal_tail_seconds"]
+                        else None
                     ),
                     recomputation_seconds=_float(row, "recomputation_seconds"),
                     step_seconds=ordered,

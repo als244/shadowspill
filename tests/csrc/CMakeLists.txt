@@ -204,6 +204,7 @@ add_test(NAME shadowspill_transfer_queue_canary COMMAND shadowspill_transfer_que
 set_tests_properties(
   shadowspill_runtime_completion_canary
   shadowspill_runtime_failure_canary
+  shadowspill_runtime_telemetry_canary
   PROPERTIES TIMEOUT 10
 )
 

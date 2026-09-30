@@ -536,7 +536,7 @@ def print_epilogue(diagnostics: Any) -> None:
     simulated_step = summary.simulator_makespan_seconds
     real_step = summary.real_invocation_seconds
     if real_step is None:
-        print("  traced invocation: incomplete transfer timestamps")
+        print("  traced invocation: unknown (incomplete transfer timestamps)")
     else:
         print(
             f"  traced invocation  real {real_step:.3f} s"
@@ -560,7 +560,7 @@ def print_epilogue(diagnostics: Any) -> None:
             summary.simulator_terminal_tail_seconds,
         ),
     ):
-        measured_text = "unavailable" if real is None else f"{real:.3f} s"
+        measured_text = "unknown" if real is None else f"{real:.3f} s"
         print(f"    {label:14} real {measured_text}   simulated {simulated:.3f} s")
     if summary.cycle_seconds is not None:
         print(
@@ -606,6 +606,12 @@ def print_epilogue(diagnostics: Any) -> None:
             f" simulated {lane_summary.simulated_busy_seconds:.3f} s"
             + (f"; effective {gb_s(effective)}" if effective is not None else "")
         )
+        missing = lane_summary.transfers - len(measured)
+        if missing:
+            print(
+                f"    timestamps unknown for {missing} transfers;"
+                " deltas use timed transfers"
+            )
         if measured:
             print(
                 deltas(
@@ -2051,8 +2057,6 @@ class Tour:
         )
         training.close()
         step_summary = diagnostics.summary
-        if step_summary.real_terminal_tail_seconds is None:
-            raise RuntimeError("run trace omitted terminal transfer timestamps")
         return RunBudgetOutcome(
             execution_budget_bytes=budget,
             simulated_step_seconds=simulated_step,
