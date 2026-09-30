@@ -51,9 +51,7 @@ def admit_run(
                 ),
             )
         )
-    caller_aliases = tuple(
-        alias_id for values in run.public_by_microbatch for alias_id in values
-    )
+    caller_aliases = run.public_aliases
     caller_acquisition_handle = admit_caller_acquisition(bridge, caller_aliases)
     seal_fixed_layout(bridge)
     return replace(

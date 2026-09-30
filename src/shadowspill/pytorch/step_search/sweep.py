@@ -70,6 +70,7 @@ class _Build:
     grad_dtype: torch.dtype | None
     round_accumulation_once: bool
     memory_bound_flops_per_byte: float
+    parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None
     profiling_options: ProfilingOptions = field(default_factory=ProfilingOptions)
 
     def programs(
@@ -107,6 +108,7 @@ class _Build:
                     export_bypass_key=self.export_bypass_key,
                     master_dtype=self.master_dtype,
                     grad_dtype=self.grad_dtype,
+                    parameter_metrics=self.parameter_metrics,
                     round_accumulation_once=self.round_accumulation_once,
                     memory_bound_flops_per_byte=self.memory_bound_flops_per_byte,
                 ),

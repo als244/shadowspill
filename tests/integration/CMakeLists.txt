@@ -116,6 +116,12 @@ shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_breadth_first_matches_the_eager_reference 300
 )
 shadowspill_add_public_api_test(
+  test_parameter_metrics.py test_parameter_metrics_depth_first 300
+)
+shadowspill_add_public_api_test(
+  test_parameter_metrics.py test_parameter_metrics_breadth_first 300
+)
+shadowspill_add_public_api_test(
   test_01_public_training.py test_public_training_declared_adamw_state_replays 300
 )
 shadowspill_add_public_api_test(

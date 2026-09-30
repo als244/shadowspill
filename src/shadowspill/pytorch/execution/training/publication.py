@@ -210,7 +210,7 @@ def _process_task_outputs(
     raw_outputs: object,
 ) -> ProcessedTaskOutputs:
     entrypoint = prepared.record.entrypoint
-    if entrypoint.options.phase == "optimizer":
+    if entrypoint.options.phase == "optimizer" and not entrypoint.output_slots:
         # An update writes the state it was given in place: nothing to publish.
         return ProcessedTaskOutputs((), (), ())
     outputs: tuple[torch.Tensor, ...] = ()
@@ -225,7 +225,7 @@ def _process_task_outputs(
     if timing is not None:
         timing.dispatch_output_flatten_ns = time.perf_counter_ns() - started_ns
     started_ns = time.perf_counter_ns() if timing is not None else 0
-    if entrypoint.options.phase == "forward":
+    if entrypoint.options.phase in {"forward", "optimizer"}:
         if not all(isinstance(value, torch.Tensor) for value in leaves):
             raise RuntimeError("captured forward graph returned a static leaf")
         tensor_outputs = tuple(cast(torch.Tensor, value) for value in leaves)

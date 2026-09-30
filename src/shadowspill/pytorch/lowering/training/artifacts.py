@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 
@@ -16,6 +16,7 @@ from shadowspill.ir import (
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
     GraphArtifact,
+    ObjectiveSchema,
 )
 from shadowspill.pytorch.optimizer import OptimizerTaskArtifact, OptimizerTensorRole
 from shadowspill.task.entrypoints import TaskEntrypoint
@@ -62,6 +63,9 @@ class LoweredTrainingProgram:
     optimizer_objects: tuple[OptimizerObjectBinding, ...]
     fixed_tensors: tuple[FixedTensorBinding, ...]
     optimizer_task_ids: tuple[str, ...]
+    parameter_metric_schemas: Mapping[str, ObjectiveSchema] = field(
+        default_factory=dict
+    )
 
     @property
     def optimizer_task_id(self) -> str:
@@ -121,3 +125,6 @@ class TrainingTaskGraph:
     executables: Mapping[str, GraphArtifact | OptimizerTaskArtifact | None]
     task_alternative_groups: tuple[TaskAlternativeGroup, ...]
     optimizer_task_ids: tuple[str, ...]
+    parameter_metric_schemas: Mapping[str, ObjectiveSchema] = field(
+        default_factory=dict
+    )
