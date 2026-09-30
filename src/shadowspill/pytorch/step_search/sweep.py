@@ -8,7 +8,8 @@ the winner of the budget below it.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from types import MappingProxyType
@@ -17,11 +18,14 @@ from typing import Any, Literal
 import torch
 from torch import OutOfMemoryError, nn
 
+from shadowspill.errors import PlanningError
 from shadowspill.planner import StepDataOrdering
 from shadowspill.planner.annotated_plan import AnnotatedProgramPlan
 from shadowspill.planner.diagnostics import GraphPairOutcome
 from shadowspill.pytorch.api import build_step_programs
 from shadowspill.pytorch.runtime import Runtime
+from shadowspill.pytorch.state.registry import registry_for
+from shadowspill.runtime.failures import RuntimeFailureDiagnostics, format_bytes
 from shadowspill.search.planner import _Best, _Carried, _Planner
 from shadowspill.search.refusals import _EXHAUSTED, _INFEASIBLE
 from shadowspill.search.report import StepSearchGeometryBuild, StepSearchPoint
@@ -32,6 +36,16 @@ from shadowspill.task.profiling import ProfilingOptions
 #: A point the planner refuses, for whatever reason it gives, is recorded and
 #: the sweep goes on; ProblemPreparationError is one such RuntimeError.
 _REJECTED = (RuntimeError,)
+
+
+@dataclass(frozen=True, slots=True)
+class _Exhaustion:
+    """A geometry whose build ran out of device memory, and what the allocator
+    was asked for against what was free, as the progress line says it; empty
+    when the allocator's numbers are not known."""
+
+    error: Exception
+    report: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,9 +77,14 @@ class _Build:
         sequences: int,
         accumulation: int,
         orderings: Sequence[StepDataOrdering],
-    ) -> tuple[tuple[StepProgram, ...], Exception | None]:
+    ) -> tuple[tuple[StepProgram, ...], _Exhaustion | None]:
         """Build one program per ordering, or report what exhausted the device."""
 
+        # What the runtime held and had recorded before the build: a build
+        # that fails is held to leaving nothing behind, and its own allocator
+        # report is told from one recorded earlier.
+        held = registry_for(self.runtime).values()
+        recorded = self.runtime.last_failure
         try:
             examples = self.example_microbatches(sequences, accumulation)
             return (
@@ -96,9 +115,14 @@ class _Build:
         except Exception as error:
             if not _device_exhausted(error):
                 raise
+            _refuse_state_left_behind(
+                self.runtime, held, sequences, accumulation, error
+            )
             # Exhaustion happens while profiling, which every ordering of
             # the geometry shares, so every ordering is infeasible.
-            return (), error
+            return (), _Exhaustion(
+                error, _allocator_report(error, self.runtime.last_failure, recorded)
+            )
 
 
 @dataclass(slots=True)
@@ -137,8 +161,9 @@ class _Sweep:
                 self.announce(
                     f"geometry {index}/{len(geometries)}: {shape}"
                     " exhausted the device after"
-                    f" {build_seconds:.1f} s;"
-                    " every budget of every ordering is infeasible"
+                    f" {build_seconds:.1f} s"
+                    + (f": a task {exhausted.report}" if exhausted.report else "")
+                    + "; every budget of every ordering is infeasible"
                 )
             for position, ordering in enumerate(orderings, 1):
                 name = f"{shape} {ordering.label}"
@@ -170,7 +195,7 @@ class _Sweep:
         accumulation: int,
         ordering: StepDataOrdering,
         name: str,
-        exhausted: Exception,
+        exhausted: _Exhaustion,
     ) -> None:
         """Record every budget of an ordering whose geometry never built."""
 
@@ -190,7 +215,7 @@ class _Sweep:
                     status="infeasible",
                     makespan_seconds=None,
                     summary=None,
-                    error=str(exhausted),
+                    error=str(exhausted.error),
                     search_seconds=0.0,
                 )
             )
@@ -319,11 +344,88 @@ def _device_exhausted(error: BaseException) -> bool:
     phase raised, chaining the original, so the exhaustion is found by
     walking the chain rather than by matching the outermost type.
     """
+    return any(isinstance(link, OutOfMemoryError) for link in _links(error))
+
+
+def _links(error: BaseException) -> Iterator[BaseException]:
+    """The error and everything it chains, each once."""
+
     seen: set[int] = set()
     current: BaseException | None = error
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, OutOfMemoryError):
-            return True
+        yield current
         current = current.__cause__ or current.__context__
-    return False
+
+
+def _allocator_report(
+    error: BaseException,
+    failure: RuntimeFailureDiagnostics | None,
+    earlier: RuntimeFailureDiagnostics | None,
+) -> str:
+    """What the allocator was asked for against what was free, for the line
+    that says a geometry exhausted the device.
+
+    A runtime error in the chain carries its own diagnostics. Otherwise the
+    device's out-of-memory error carries only its message, and the failure
+    cleanup records the diagnostics on the runtime, so the recorded failure is
+    this build's when it is not the one recorded before the build began.
+    """
+
+    diagnostics = next(
+        (
+            found
+            for link in _links(error)
+            if isinstance(
+                found := getattr(link, "diagnostics", None), RuntimeFailureDiagnostics
+            )
+        ),
+        None,
+    )
+    if diagnostics is None and failure is not earlier:
+        diagnostics = failure
+    if diagnostics is None or not diagnostics.is_allocator_oom:
+        return ""
+    return (
+        f"asked for {_readable(diagnostics.requested_bytes)} with"
+        f" {_readable(diagnostics.free_bytes)} free (largest free range"
+        f" {_readable(diagnostics.largest_free_range_bytes)})"
+    )
+
+
+def _readable(value: int) -> str:
+    """Bytes as the progress line says them, without the exact count."""
+
+    return format_bytes(value).split(" (", 1)[0]
+
+
+def _refuse_state_left_behind(
+    runtime: Runtime,
+    held: Sequence[object],
+    sequences: int,
+    accumulation: int,
+    error: BaseException,
+) -> None:
+    """Stop the search when a build that ran out of memory left state behind.
+
+    A failed build releases everything its plan registered. What it leaves
+    belongs to no plan any more: nothing can reach it, and the runtime refuses
+    to close while it remains. Said here, the geometry and what remained are
+    named; said at the close, after every other budget, neither is.
+    """
+
+    before = {id(state) for state in held}
+    left = [
+        state for state in registry_for(runtime).values() if id(state) not in before
+    ]
+    if not left:
+        return
+    kinds = Counter(type(state.target).__name__ for state in left)
+    raise PlanningError(
+        f"the {sequences} x {accumulation} build ran out of device memory and"
+        f" left {len(left)} persistent state{'' if len(left) == 1 else 's'}"
+        " registered in the runtime ("
+        + ", ".join(f"{name} x{count}" for name, count in sorted(kinds.items()))
+        + "); the runtime cannot close while they remain, so the search stops"
+        " here"
+    ) from error
