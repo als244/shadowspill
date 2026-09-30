@@ -93,23 +93,12 @@ void shadowspill_trace_append_enabled(
     );
 }
 
-/*
- * Timing events a trace will bracket transfers with, created now so that a
- * traced step creates none. Each in-flight transfer holds two, and the pool
- * is one for every route and for the timing markers, so the reserve has to
- * cover the transfers in flight on every lane at once: a plan's stage
- * boundaries dispatch a burst of a hundred transfers while the previous
- * burst is still being retired, and the queue behind them runs a few
- * hundred deep. This reserve covers that several times over without
- * growth; a pool that still runs out leaves later intervals unmeasured
- * rather than failing a transfer. Preparing a trace twice reserves nothing
- * new.
- */
-#define SHADOWSPILL_TIMING_EVENTS_PER_LANE 512U
-
+/* Reserve two events per lane record before tracing. A full timing pool
+ * leaves transfers untimed without interrupting execution or growing during
+ * the traced step. Caller-owned timing markers reserve their own events. */
 static void reserve_timing_events(ShadowSpillRuntime *runtime) {
     const uint64_t count =
-        SHADOWSPILL_TIMING_EVENTS_PER_LANE * (uint64_t)runtime->route_count;
+        2U * SHADOWSPILL_MEASURED_TRANSFERS_PER_LANE * (uint64_t)runtime->route_count;
     if (count != 0U) {
         (void)shadowspill_event_pool_reserve(
             runtime, &runtime->timing_events, count

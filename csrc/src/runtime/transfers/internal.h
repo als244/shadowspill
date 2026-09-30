@@ -17,6 +17,9 @@
 
 #include <shadowspill/runtime.h>
 
+/* Per-lane trace capacity. Each measured transfer needs two timing events. */
+#define SHADOWSPILL_MEASURED_TRANSFERS_PER_LANE 1024U
+
 typedef struct ShadowSpillQueuedAction ShadowSpillQueuedAction;
 typedef struct ShadowSpillRouteState ShadowSpillRouteState;
 
