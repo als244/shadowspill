@@ -17,6 +17,12 @@ from training.backends import Backend, Setup
 from training.data import PackedTokens
 from training.metrics import Logger, host_rss_gib
 from training.objectives import Objective
+from training.observations import (
+    MetricSummary,
+    MetricTable,
+    StepObservations,
+    parameter_scalars,
+)
 from training.schedules import Constant, WarmupCosine
 
 CHECKPOINT = "checkpoint.pt"
@@ -38,6 +44,12 @@ class Trainer:
     in documents of at most ``max_seq_len`` tokens; leaving the microbatch size
     out lets ShadowSpill search for the fastest, within the bounds its backend
     names.
+
+    ``parameter_metrics`` optionally returns named scalar tensor observations
+    of each compute weight and final accumulated gradient before the update.
+    ``metric_reducer`` aggregates the objective's CPU microbatch summaries into
+    a ``MetricSummary``. Detailed tables are written every
+    ``metric_tables_every`` steps, and at the first and last step.
 
     A run lives in ``run_dir``: its config, metrics, and the documents each
     step trained on. Its checkpoint goes to ``checkpoint_dir`` (by default the
@@ -72,6 +84,9 @@ class Trainer:
         backend: Backend | None = None,
         master_dtype: torch.dtype | None = None,
         grad_dtype: torch.dtype | None = None,
+        parameter_metrics: Callable[[torch.Tensor, torch.Tensor], Any] | None = None,
+        metric_reducer: Callable[[Sequence[Any]], MetricSummary] | None = None,
+        metric_tables_every: int = 100,
         seed: int = 0,
         eval_every: int = 0,
         eval_batches: int = 0,
@@ -102,6 +117,13 @@ class Trainer:
         self.backend = backend
         self.master_dtype = master_dtype
         self.grad_dtype = grad_dtype
+        self.parameter_metrics = parameter_metrics
+        self.metric_reducer = metric_reducer
+        if metric_tables_every < 0:
+            raise ValueError(
+                "metric_tables_every must be nonnegative (0 disables tables)"
+            )
+        self.metric_tables_every = metric_tables_every
         self.seed = seed
         self.eval_every = eval_every
         self.eval_batches = eval_batches
@@ -172,6 +194,7 @@ class Trainer:
                 seed=self.seed,
                 run_dir=self.run_dir,
                 artifact_store=self.artifact_store,
+                parameter_metrics=self.parameter_metrics,
             )
         )
         self.setup_seconds = time.perf_counter() - began
@@ -284,11 +307,13 @@ class Trainer:
         # Each microbatch returns its share of the step's mean loss over the
         # step's trained positions, so the step's loss is the shares' sum.
         total = self.train_data.trained_tokens(indices)
-        losses = self.backend.step(microbatches, lr, total)
-        metrics = {"loss": sum(losses)}
+        observations = self.backend.step(microbatches, lr, total)
+        metrics = {"loss": sum(observations)}
         if lr is not None:
             metrics["lr"] = lr
-        self.open_step = _OpenStep(step, began, metrics, self.train_data.stats(indices))
+        self.open_step = _OpenStep(
+            step, began, metrics, self.train_data.stats(indices), observations
+        )
 
     def _finish_step(self) -> None:
         """Wait for the device to finish the open step, and record it."""
@@ -316,19 +341,76 @@ class Trainer:
         self.log.log(
             closing.step, echo=False, **{f"packing/{k}": v for k, v in packed.items()}
         )
+        self._log_observations(closing.step, closing.observations, "train")
         self.last = {**self.last, **metrics}
 
     def _evaluate(self, step: int) -> None:
         began = time.perf_counter()
-        losses = self.backend.evaluate(self.val_batches, self.val_total)
+        observations = self.backend.evaluate(self.val_batches, self.val_total)
         metrics = {
-            "val_loss": sum(losses),
+            "val_loss": sum(observations),
             "eval_seconds": time.perf_counter() - began,
             "device_peak_gib": self.backend.device_peak_gib(),
             "host_rss_gib": host_rss_gib(),
         }
         self.log.log(step, **metrics)
+        self._log_observations(step, observations, "eval")
         self.last = {**self.last, **metrics}
+
+    def _log_observations(
+        self, step: int, observations: StepObservations, phase: str
+    ) -> None:
+        """Only CPU summaries reach logging; every GPU task has already returned."""
+
+        details = bool(self.metric_tables_every) and (
+            step == 0 or _due(self.metric_tables_every, step + 1, self.steps)
+        )
+        microbatches = tuple(
+            value for value in observations.metrics if value is not None
+        )
+        if microbatches:
+            if self.metric_reducer is None:
+                raise ValueError(
+                    "an objective returning metrics needs a metric_reducer"
+                )
+            summary = self.metric_reducer(microbatches)
+            self.log.log(
+                step,
+                echo=False,
+                **{f"{phase}/{key}": value for key, value in summary.scalars.items()},
+            )
+            if details:
+                for name, table in summary.tables.items():
+                    self.log.table(step, f"{phase}/{name}", table)
+        if observations.parameter_metrics:
+            self.log.log(
+                step, echo=False, **parameter_scalars(observations.parameter_metrics)
+            )
+            if details:
+                rows = []
+                parameters = dict(self.model.named_parameters())
+                for name, values in observations.parameter_metrics.items():
+                    name = name.removeprefix("model.")
+                    parameter = parameters[name]
+                    if not isinstance(values, Mapping):
+                        values = {"parameter_metrics": values}
+                    for metric, value in values.items():
+                        rows.append(
+                            (
+                                name,
+                                str(parameter.dtype),
+                                list(parameter.shape),
+                                metric,
+                                value.item(),
+                            )
+                        )
+                self.log.table(
+                    step,
+                    "parameters/norms",
+                    MetricTable(
+                        ("parameter", "dtype", "shape", "metric", "value"), tuple(rows)
+                    ),
+                )
 
     def _checkpoint(self) -> None:
         """Write through a temporary file, so the checkpoint is always whole."""
@@ -357,6 +439,7 @@ class _OpenStep:
     began: float
     metrics: dict[str, float]
     packed: dict[str, Any]
+    observations: StepObservations
 
 
 def _check_geometry(
