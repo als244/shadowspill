@@ -17,6 +17,13 @@ from shadowspill.schema import artifact_schema
 from tools.qualification.profiling import CORRECTNESS_PROFILING
 
 
+class _StandInRuntime:
+    """What the sweep reads of a runtime when every build is stubbed: the
+    failure the cleanup last recorded, and a registry of its own, empty."""
+
+    last_failure: object = None
+
+
 def test_geometries_cover_every_divisor_largest_microbatch_first() -> None:
     admitted, skipped = search_geometries(12, sequence_length=1)
     assert admitted == ((12, 1), (6, 2), (4, 3), (3, 4), (2, 6), (1, 12))
@@ -141,8 +148,24 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
     from shadowspill.errors import ProfilingError
     from shadowspill.pytorch import plan_step_search
     from shadowspill.pytorch.step_search import sweep as module
+    from shadowspill.runtime.failures import RuntimeFailureDiagnostics
+    from shadowspill.status import Status
+
+    runtime = _StandInRuntime()
 
     def exhaust(*args: object, **kwargs: object) -> object:
+        # the failure cleanup records the allocator's report on the runtime
+        runtime.last_failure = RuntimeFailureDiagnostics(
+            operation="profile training tasks",
+            status=int(Status.NO_PROGRESS),
+            status_name="NO_PROGRESS",
+            device_ordinal=0,
+            requested_bytes=2 << 30,
+            free_bytes=575_389_296,
+            largest_free_range_bytes=575_388_668,
+            object_id=None,
+            allocation_id=None,
+        )
         cause = OutOfMemoryError("CUDA out of memory. Tried to allocate 20.00 GiB")
         raise ProfilingError(
             f"ShadowSpill failed to profile structural contract abc123: {cause}"
@@ -159,7 +182,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
         total_sequences_per_step=2,
         sequence_length=1,
         budgets=[(12 << 30, 1 << 30), (16 << 30, 1 << 30)],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=runtime,  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
         progress=lines.append,
@@ -178,10 +201,64 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
     ]
     assert all("out of memory" in (point.error or "") for point in report.points)
     assert report.winner(12 << 30, 1 << 30) is None
-    assert sum("exhausted the device" in line for line in lines) == 2
+    exhausted = [line for line in lines if "exhausted the device" in line]
+    assert len(exhausted) == 2
+    # the line says what the allocator was asked for against what was free
+    assert all(
+        ": a task asked for 2.00 GiB with 548.73 MiB free (largest free range"
+        " 548.73 MiB); every budget of every ordering is infeasible" in line
+        for line in exhausted
+    )
     assert [line for line in lines if line.startswith("point 1/6")] == [
         "point 1/6: 2 x 1 1x1rp @ 12 GiB -> infeasible"
     ]
+
+
+def test_a_build_that_exhausts_the_device_and_leaves_state_behind_stops_the_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from shadowspill.errors import PlanningError
+    from shadowspill.pytorch import plan_step_search
+    from shadowspill.pytorch.step_search import sweep as module
+
+    class _SavedValues:
+        pass
+
+    registered: list[object] = [SimpleNamespace(target=object())]
+
+    class Registry:
+        def values(self) -> tuple[object, ...]:
+            return tuple(registered)
+
+    def exhaust_and_leak(*args: object, **kwargs: object) -> object:
+        # the build keeps saved values, then runs out and does not release them
+        registered.append(SimpleNamespace(target=_SavedValues()))
+        raise OutOfMemoryError("ShadowSpill out of memory in the execution pool")
+
+    monkeypatch.setattr(module, "registry_for", lambda runtime: Registry())
+    monkeypatch.setattr(module, "build_step_programs", exhaust_and_leak)
+    with pytest.raises(PlanningError) as raised:
+        plan_step_search(
+            object(),  # type: ignore[arg-type]
+            profiling_options=CORRECTNESS_PROFILING,
+            objective=None,
+            optimizer=None,
+            example_microbatches=lambda sequences, accumulation: (),
+            total_sequences_per_step=2,
+            sequence_length=1,
+            budgets=[(12 << 30, 1 << 30)],
+            runtime=_StandInRuntime(),  # type: ignore[arg-type]
+            execution="execution",
+            spill="spill",
+        )
+    message = str(raised.value)
+    # the first geometry, 2 x 1, is named with what it left; what was
+    # registered before it is not counted
+    assert "the 2 x 1 build ran out of device memory and left 1 persistent" in message
+    assert "(_SavedValues x1)" in message and "search stops here" in message
+    assert isinstance(raised.value.__cause__, OutOfMemoryError)
 
 
 def test_a_build_failure_that_is_not_exhaustion_still_raises(
@@ -205,7 +282,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
             total_sequences_per_step=1,
             sequence_length=1,
             budgets=[(12 << 30, 1 << 30)],
-            runtime=None,  # type: ignore[arg-type]
+            runtime=_StandInRuntime(),  # type: ignore[arg-type]
             execution="execution",
             spill="spill",
         )
@@ -245,7 +322,7 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
         total_sequences_per_step=1,
         sequence_length=1,
         budgets=[(6 << 30, 1 << 30), (12 << 30, 1 << 30)],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
     )
@@ -294,7 +371,7 @@ def test_the_resolution_options_reach_every_point(
         total_sequences_per_step=1,
         sequence_length=1,
         budgets=[(12 << 30, 1 << 30)],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
         search_options=SearchOptions(
@@ -362,7 +439,7 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
         total_sequences_per_step=1,
         sequence_length=1,
         budgets=[(12 << 30, 1 << 30)],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
         transfer_bandwidths=pinned,
@@ -396,7 +473,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
             total_sequences_per_step=1,
             sequence_length=1,
             budgets=[(12 << 30, 1 << 30)],
-            runtime=None,  # type: ignore[arg-type]
+            runtime=_StandInRuntime(),  # type: ignore[arg-type]
             execution="execution",
             spill="spill",
             search_options=SearchOptions(
@@ -508,7 +585,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         total_sequences_per_step=1,
         sequence_length=1,
         budgets=[(10 << 30, 1 << 30), (6 << 30, 1 << 30), (8 << 30, 1 << 30)],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
     )
@@ -553,7 +630,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         total_sequences_per_step=1,
         sequence_length=1,
         budgets=[(6 << 30, 1 << 30), (8 << 30, 1 << 30)],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
         incumbents=False,
@@ -694,7 +771,7 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
             for budget in (4, 6, 8, 10, 12, 14)
             for budget in [budget * gib]
         ],
-        runtime=None,  # type: ignore[arg-type]
+        runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
         spill="spill",
         progress=lines.append,

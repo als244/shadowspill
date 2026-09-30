@@ -1066,8 +1066,12 @@ exhausts its search budget carries that status while the search continues.
 Because profiling runs a task's real kernels, the largest geometries can
 exhaust the device before any plan exists; such a geometry reports every one
 of its budgets `infeasible`, with the exhaustion as the point's error, and
-contributes no build to the report because it produced no program. Any other
-build failure is raised.
+contributes no build to the report because it produced no program. Its
+progress line says what the allocator was asked for against what was free,
+and the largest free range. A build that runs out of memory releases
+everything its plan registered; one that leaves state behind raises
+`PlanningError` naming the geometry and what remained, because the runtime
+cannot close while it remains. Any other build failure is raised.
 
 ## Inputs, objectives, and partitioning
 
