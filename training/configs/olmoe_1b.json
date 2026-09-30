@@ -2,11 +2,6 @@
   "run_dir": "training/runs/olmoe_1b",
   "settings": [
     {
-      "@call": "workloads.providers:select_implementation",
-      "family": "olmoe",
-      "implementation": "mlops"
-    },
-    {
       "@call": "mlops.dispatch:set_deterministic_kernels",
       "enabled": true
     }
