@@ -1,8 +1,9 @@
 # Qualification
 
-`qualification/` is ShadowSpill's thin release-acceptance surface. It owns the
-protocol descriptions and seven launchers, but no alternate implementation of
-planning, execution, diagnostics, serialization, or model state.
+`qualification/` contains the gate orchestrator, case runners and acceptance
+checks. Start with `python -m qualification.gates`; the orchestrator calls the
+matrix runners, which launch each case in a fresh process. All planning and
+execution use the public `shadowspill` APIs.
 
 ```text
 qualification/
@@ -139,14 +140,22 @@ that planning time went by phase.
 
 Of the suite's counts, the deselected ones are the `fresh_process` tests,
 which need a process where nothing has touched the device yet and so are run
-one per process by CTest rather than in the shared pytest process. Nothing is
-skipped.
+one per process by CTest rather than in the shared pytest process. These
+*deselected* tests still run. Actual platform/capability skips are listed by
+pytest separately.
+
+The suite selects BF16 where supported and FP16 where BF16 compilation is unavailable.
+It probes once in a child process before collection, leaving the allocator in the
+test process uninitialized, and passes the choice to fresh-process CTest cases.
+An explicit pytest --test-dtype choice overrides SHADOWSPILL_TEST_DTYPE; either
+overrides automatic selection. CPU-only suite runs retain BF16 storage fixtures.
+For example, a gate config can contain {"suite": ["--test-dtype", "float16"]}.
 
 Correctness tests and the numerical gate use fixed-count task profiling:
 exact-task warmups and allocation probes still run, followed by the configured
 sample count, with no minimum conditioning or measurement duration. This keeps
 small test kernels from adding seconds to every fresh-process case. The shared
-policy lives in `tools.qualification.profiling`; performance measurements keep
+policy lives in `qualification.profiling`; performance measurements keep
 the production profiling policy.
 
 CTest prints each canary's start and result while the suite runs, with a
@@ -155,8 +164,20 @@ timeout, and a 30-minute ceiling bounds the whole CTest invocation. A timeout
 or interruption terminates the process group, including accelerator workers.
 Gate logs are flushed as output arrives.
 
-The launchers delegate to `src/tools/qualification/`, which in turn uses the
-public `src/shadowspill/` APIs and workload definitions under `workloads/`.
+All gate code lives here, using the public `shadowspill` APIs and optional
+workload definitions under `workloads/`. There is no second implementation
+package or layer of forwarding scripts.
+
+| Location | Purpose |
+| --- | --- |
+| `gates.py` | Run selected gates in order; stream output and summarize results. |
+| `numerical/matrix.py`, `performance/matrix.py` | Choose cases and launch isolated case processes. |
+| `numerical/run.py`, `performance/run.py` | Actual command-line implementation for one case. |
+| `numerical/`, `performance/` helpers | Case definitions, execution phases, measurements and verdicts. |
+| `device_defaults.py`, `precision.py`, `profiling.py` | Shared hardware, dtype and profiling policies. |
+| `remote/`, `remote_perf/` | The same matrices using a configured remote spill pool. |
+| `tests/qualification/` (repository root) | Tests for gate behavior. |
+
 Generated reference states, compact result summaries, and optional detailed
 reports are written beneath `qualification/results/`, which is ignored by Git.
 The numerical matrix reuses one identity-checked compiled reference under
@@ -248,7 +269,7 @@ rate classified by its overlap with the opposite lane and bucketed by size.
 It is the acceptance experiment for simulator changes:
 
 ```bash
-python -m tools.qualification.gap_report qualification/results/full_model
+python -m qualification.gap_report qualification/results/full_model
 ```
 
 ## Finding where a step stops being reproducible
@@ -286,7 +307,7 @@ and the nondeterminism probe answers that rather than leaving it at
 "somewhere in the backward":
 
 ```bash
-python -m tools.qualification.nondeterminism llama3 --model-implementation mlops
+python -m qualification.nondeterminism llama3 --model-implementation mlops
 ```
 
 It runs the same fixed input through the same model twice with nothing changed

@@ -22,7 +22,7 @@ It is **not** in the default gate run, because it needs a memory daemon
 reachable over RDMA. Name one in `SHADOWSPILL_NETWORK_PEER` as `host:port`:
 
 ```bash
-SHADOWSPILL_NETWORK_PEER=192.168.50.32:17800 python -m tools.qualification.gates remote
+SHADOWSPILL_NETWORK_PEER=192.168.50.32:17800 python -m qualification.gates remote
 ```
 
 **Give an address, never an ssh alias.** The control channel resolves the host

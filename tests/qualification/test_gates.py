@@ -1,0 +1,282 @@
+"""Running the gates in one command."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from qualification.gates import (
+    ALL_GATES,
+    GATE_ORDER,
+    _commands,
+    _suite_report,
+    run_gates,
+)
+
+
+class _FakeProcess:
+    """Enough of Popen for a gate: output to stream, then a return code.
+
+    A real pipe rather than an iterable of lines, because the runner streams
+    by file descriptor so that a gate reporting progress without newlines
+    still appears while it runs.
+    """
+
+    def __init__(self, returncode: int) -> None:
+        self._returncode = returncode
+        read_descriptor, write_descriptor = os.pipe()
+        os.write(write_descriptor, b"one line of gate output\n")
+        os.close(write_descriptor)
+        self.stdout = os.fdopen(read_descriptor, "rb")
+
+    def wait(self) -> int:
+        return self._returncode
+
+
+def _record(
+    monkeypatch: pytest.MonkeyPatch, failures: set[str] | None = None
+) -> list[tuple[str, ...]]:
+    """Capture the commands run instead of running them."""
+
+    calls: list[tuple[str, ...]] = []
+    refused = failures or set()
+
+    def fake_popen(command: list[str], **kwargs: Any) -> _FakeProcess:
+        if command and command[0] == "nvidia-smi":
+            # The host-state line queries the GPU before each gate; that is a
+            # diagnostic, not a gate, and the runner reports it unavailable.
+            raise OSError("no nvidia-smi under test")
+        calls.append(tuple(command))
+        named = next(
+            (gate for gate in GATE_ORDER if gate in " ".join(command)), "suite"
+        )
+        return _FakeProcess(1 if named in refused else 0)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    return calls
+
+
+def _gate_of(command: tuple[str, ...]) -> str:
+    """Which gate a recorded command belongs to.
+
+    Named explicitly rather than by falling through to performance, for the
+    same reason the dispatch it checks is: a helper whose default answer is a
+    real gate turns "this command is not what I expected" into a wrong label.
+    """
+
+    joined = " ".join(command)
+    if "pytest" in joined:
+        return "suite"
+    # `remote_perf` before `remote`: neither substring matches the other's
+    # command, but naming the longer one first keeps that true if either is
+    # ever renamed.
+    for name in ("numerical", "performance", "remote_perf", "remote"):
+        if f"qualification.{name}.matrix" in joined:
+            return name
+    raise AssertionError(f"no gate owns the command {command!r}")
+
+
+def test_a_gate_with_no_command_is_refused_rather_than_run_as_performance() -> None:
+    """The dispatch names every gate; it never falls through to one.
+
+    Performance was the `else` branch, so a name `_commands` had never heard
+    of ran the performance matrix and reported it under the other gate's name.
+    That is a wrong answer rather than an error, and nobody would have
+    questioned it.
+    """
+
+    with pytest.raises(KeyError, match="invented"):
+        _commands("invented", "run", keep_going=False)
+
+    for name in ALL_GATES:
+        command = _commands(name, "run", keep_going=False)
+        assert _gate_of(command) == name
+
+
+def test_the_remote_gate_is_available_but_not_in_the_default_run() -> None:
+    """It needs a daemon on another machine, so asking is deliberate."""
+
+    assert "remote" in ALL_GATES
+    assert "remote" not in GATE_ORDER
+
+
+def test_the_remote_throughput_gate_is_available_but_not_in_the_default_run() -> None:
+    """Same reason as the remote gate, and it is the longest of the five."""
+
+    assert "remote_perf" in ALL_GATES
+    assert "remote_perf" not in GATE_ORDER
+
+
+def test_gates_run_in_a_fixed_order_whatever_order_they_are_asked_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls = _record(monkeypatch)
+
+    outcomes = run_gates(["performance", "suite", "numerical"], run="demo")
+
+    assert [outcome.name for outcome in outcomes] == list(GATE_ORDER)
+    assert [_gate_of(call) for call in calls] == list(GATE_ORDER)
+    assert all(outcome.passed for outcome in outcomes)
+
+
+def test_a_subset_runs_only_what_was_asked_for(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls = _record(monkeypatch)
+
+    outcomes = run_gates(["numerical"], run="demo")
+
+    assert [outcome.name for outcome in outcomes] == ["numerical"]
+    assert [_gate_of(call) for call in calls] == ["numerical"]
+
+
+def test_each_gate_writes_its_output_under_the_run_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls = _record(monkeypatch)
+
+    outcomes = run_gates(list(GATE_ORDER), run="0903")
+
+    joined = [" ".join(call) for call in calls]
+    assert "qualification/results/numerical_0903" in joined[1]
+    assert "qualification/results/performance_0903" in joined[2]
+    assert all(outcome.log.parent.name == "gates_0903" for outcome in outcomes)
+    assert {outcome.log.name for outcome in outcomes} == {
+        f"{gate}.log" for gate in GATE_ORDER
+    }
+
+
+def test_a_failure_stops_the_gates_that_would_follow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _record(monkeypatch, failures={"numerical"})
+
+    outcomes = run_gates(list(GATE_ORDER), run="demo")
+
+    assert [outcome.name for outcome in outcomes] == ["suite", "numerical"]
+    assert not outcomes[-1].passed
+
+
+def test_continuing_after_a_failure_runs_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _record(monkeypatch, failures={"suite"})
+
+    outcomes = run_gates(list(GATE_ORDER), run="demo", continue_after_failure=True)
+
+    assert [outcome.name for outcome in outcomes] == list(GATE_ORDER)
+    assert [outcome.passed for outcome in outcomes] == [False, True, True]
+
+
+def test_keep_going_is_forwarded_only_to_the_matrices(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls = _record(monkeypatch)
+
+    run_gates(list(GATE_ORDER), run="demo", keep_going=True)
+
+    assert "--keep-going" not in calls[0]
+    assert "--keep-going" in calls[1]
+    assert "--keep-going" in calls[2]
+
+
+def test_the_summary_names_the_tests_that_failed(tmp_path: Path) -> None:
+    log = tmp_path / "suite.log"
+    log.write_text(
+        "=========================== short test summary info ====================\n"
+        "FAILED tests/shadowspill/planner/test_pressurefit.py::test_a_thing - err\n"
+        "ERROR tests/shadowspill/simulator/test_failures.py::test_another\n"
+        "2 failed, 810 passed, 1 skipped, 5 deselected in 143.82s\n"
+    )
+
+    rows = _suite_report(log)
+
+    assert rows[0] == "    2 failed, 810 passed, 1 skipped"
+    assert any("test_a_thing" in row for row in rows)
+    assert any("test_another" in row for row in rows)
+
+
+def test_a_long_failure_list_points_at_the_log_instead(tmp_path: Path) -> None:
+    log = tmp_path / "suite.log"
+    failures = "\n".join(f"FAILED tests/x.py::test_{index}" for index in range(40))
+    log.write_text(f"{failures}\n40 failed, 1 passed in 10.00s\n")
+
+    rows = _suite_report(log)
+
+    assert sum("FAILED" in row for row in rows) == 15
+    assert any("and 25 more" in row and "suite.log" in row for row in rows)
+
+
+def test_a_clean_suite_names_nothing(tmp_path: Path) -> None:
+    log = tmp_path / "suite.log"
+    log.write_text("812 passed in 143.82s\n")
+
+    rows = _suite_report(log)
+
+    assert rows == ["    812 passed"]
+
+
+def test_tests_run_under_ctest_are_not_reported_as_excluded(tmp_path: Path) -> None:
+    log = tmp_path / "suite.log"
+    log.write_text("812 passed, 5 deselected in 143.82s\n")
+
+    rows = _suite_report(log)
+
+    assert rows == ["    812 passed"]
+
+
+def test_a_run_is_named_for_the_commit_it_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qualification import gates
+
+    def fake_git(command: list[str], **kwargs: Any) -> Any:
+        class _Result:
+            stdout = "abc1234\n" if "rev-parse" in command else ""
+
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_git)
+
+    assert gates._default_run().startswith("abc1234_")
+    assert "dirty" not in gates._default_run()
+
+
+def test_a_modified_tree_says_so_in_the_run_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qualification import gates
+
+    def fake_git(command: list[str], **kwargs: Any) -> Any:
+        class _Result:
+            stdout = "abc1234\n" if "rev-parse" in command else " M src/thing.py\n"
+
+        return _Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_git)
+
+    assert gates._default_run().startswith("abc1234_dirty_")
+
+
+def test_naming_no_gate_runs_them_all(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from qualification import gates
+
+    monkeypatch.chdir(tmp_path)
+    calls = _record(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["gates", "--run", "demo"])
+
+    assert gates.main() == 0
+    assert [_gate_of(call) for call in calls] == list(GATE_ORDER)
