@@ -1,1 +1,1 @@
-"""Source-tree qualification commands; not part of the installed package."""
+"""Repository qualification: orchestration, numerical parity and performance."""

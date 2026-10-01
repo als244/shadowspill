@@ -1,6 +1,648 @@
-"""Launch the full-model performance qualification matrix."""
+"""Launch the ShadowSpill-only full-model qualification cells.
 
-from tools.qualification.performance_matrix import main
+The gate runs the three mlops cells by default; ``--cells`` also selects the
+pure-PyTorch variants. Every cell checks runtime, physical budgets and simulator
+accuracy. Throughput comparisons additionally require a matching baseline.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import signal
+import sys
+import time
+from collections.abc import Sequence
+from dataclasses import replace
+from pathlib import Path
+
+from qualification.device_defaults import (
+    add_memory_budget_arguments,
+    performance_defaults,
+)
+from qualification.performance.cases import (
+    FullModelManifest,
+    manifest_for,
+    manifests,
+)
+from qualification.precision import (
+    add_dtype_arguments,
+    dtype_arguments,
+    dtype_overrides,
+)
+from shadowspill.schema import artifact_schema
+
+from ..matrix_logging import MatrixConsole, format_bytes, utc_now
+
+# Cell logs may carry one leading "[<utc>] " stamp added by the matrix tee.
+_PLAN_PROGRESS = re.compile(
+    r"^(?:\[[^\]]*\] )?\[shadowspill\.plan \+\s*[0-9.]+s\]\s+"
+    r"(?P<phase>[A-Za-z0-9_]+): "
+    r"(?P<state>started|finished|failed)(?:\s+in\s+.*)?$"
+)
+_PLAN_LINE = re.compile(r"^(?:\[[^\]]*\] )?(?P<line>\[shadowspill\.plan .*)$")
+
+
+def _active_planning_phases(log_text: str) -> tuple[str, ...]:
+    """Recover the open phase stack from verbose planning output."""
+
+    active: list[str] = []
+    for line in log_text.splitlines():
+        match = _PLAN_PROGRESS.match(line)
+        if match is None:
+            continue
+        phase = match.group("phase")
+        if match.group("state") == "started":
+            active.append(phase)
+            continue
+        for index in range(len(active) - 1, -1, -1):
+            if active[index] == phase:
+                del active[index:]
+                break
+    return tuple(active)
+
+
+def _termination_signal(return_code: int) -> str | None:
+    if return_code >= 0:
+        return None
+    try:
+        return signal.Signals(-return_code).name
+    except ValueError:
+        return f"signal_{-return_code}"
+
+
+def _write_parent_failure(
+    *,
+    manifest_identity: str,
+    return_code: int,
+    log: Path,
+    failure_path: Path,
+) -> dict[str, object]:
+    """Record failures a killed child had no opportunity to serialize."""
+
+    text = log.read_text(errors="replace") if log.is_file() else ""
+    active = _active_planning_phases(text)
+    signal_name = _termination_signal(return_code)
+    phase = active[-1] if active else None
+    if signal_name is not None:
+        message = f"qualification subprocess terminated by {signal_name}"
+    else:
+        message = f"qualification subprocess exited with status {return_code}"
+    if phase is not None:
+        message += f" during planning phase {phase!r}"
+    message += "; no Python traceback was available"
+    progress_lines = [
+        match.group("line")
+        for match in map(_PLAN_LINE.match, text.splitlines())
+        if match is not None
+    ]
+    failure: dict[str, object] = {
+        "schema": artifact_schema("full_model_subprocess_failure"),
+        "identity": manifest_identity,
+        "error_type": "SubprocessTermination",
+        "error": message,
+        "return_code": return_code,
+        "termination_signal": signal_name,
+        "active_planning_phases": active,
+        "last_planning_progress": progress_lines[-1] if progress_lines else None,
+        "log": str(log),
+    }
+    failure_path.write_text(json.dumps(failure, indent=2, sort_keys=True) + "\n")
+    return failure
+
+
+def _parse_cell_planning_budgets(
+    entries: Sequence[str],
+    identities: frozenset[str],
+    *,
+    flag: str = "planning-spill-budget-gib",
+) -> dict[str, int]:
+    """Parse repeatable ``IDENTITY=GIB`` per-cell budget overrides."""
+
+    budgets: dict[str, int] = {}
+    for entry in entries:
+        identity, separator, gib_text = entry.partition("=")
+        if not separator:
+            raise ValueError(f"{flag} entry {entry!r} must be IDENTITY=GIB")
+        if identity not in identities:
+            raise ValueError(f"{flag} names unknown cell {identity!r}")
+        if identity in budgets:
+            raise ValueError(f"{flag} repeats cell {identity!r}")
+        gib = int(gib_text)
+        if gib <= 0:
+            raise ValueError(f"{flag} for {identity!r} must be positive")
+        budgets[identity] = gib
+    return budgets
+
+
+def _cell_start_details(
+    manifest: FullModelManifest,
+    *,
+    planning_budget_gib: int | None,
+    checkpoint: bool,
+    plan_only: bool,
+    log: Path,
+    started_at: str,
+) -> list[str]:
+    """Describe one cell exactly as it is about to run."""
+
+    if plan_only:
+        protocol = "plan only"
+    elif checkpoint:
+        protocol = "checkpoint, warm step, restore, 3x4 measured steps"
+    else:
+        protocol = "throughput probe without checkpoint, warm step, 3x4 measured steps"
+    details = [
+        f"MODEL: {manifest.implementation}/{manifest.family}",
+        "DATA GEOMETRY:",
+        f"  SEQUENCE LENGTH: {manifest.sequence_length} tokens",
+        f"  TOKENS PER MICROBATCH: {manifest.tokens_per_microbatch}",
+        f"  SEQUENCES PER MICROBATCH: {manifest.sequences_per_microbatch}",
+        f"  GRADIENT ACCUMULATION ROUNDS: {manifest.accumulation_count}",
+        f"  TOKENS PER OPTIMIZER STEP: {manifest.tokens_per_step}",
+        "EXECUTION BUDGET: " + format_bytes(manifest.device_physical_capacity_bytes),
+        "EXTERNAL HEADROOM: "
+        + format_bytes(manifest.external_headroom_bytes)
+        + " (reserved for pool sizing)",
+        f"REJECT OVERBUDGET: {manifest.reject_overbudget}",
+        "DTYPES: " + manifest.dtypes.description(),
+        f"SPILL BUDGET: {format_bytes(manifest.spill_budget_bytes)}",
+    ]
+    if planning_budget_gib is not None:
+        details.append(
+            f"PLANNING SPILL BUDGET: {format_bytes(planning_budget_gib << 30)}"
+        )
+    details.extend(
+        (
+            f"PROTOCOL: {protocol}",
+            f"LOG: {log}",
+            f"START: {started_at}",
+        )
+    )
+    return details
+
+
+def _cell_result_details(
+    artifact_payload: dict[str, object] | None,
+    failure: dict[str, object] | None,
+    *,
+    started_at: str,
+    elapsed: float,
+    measure_only: bool = False,
+) -> list[str]:
+    """Summarize one finished cell's gates, evidence, and timing."""
+
+    details: list[str] = []
+    if artifact_payload is not None:
+        if not artifact_payload.get("plan_only"):
+            gates = (
+                ("protocol_complete", "PROTOCOL"),
+                ("objectives_finite", "OBJECTIVES"),
+                ("logical_steps_passed", "LOGICAL STEPS"),
+                ("physical_budget_passed", "PHYSICAL BUDGETS"),
+                ("strict_runtime_passed", "STRICT RUNTIME"),
+                ("simulator_gate_passed", "SIMULATOR"),
+                ("regression_gate_passed", "REGRESSION"),
+            )
+            if not measure_only:
+                for key, label in gates:
+                    value = artifact_payload.get(key)
+                    if (
+                        key == "regression_gate_passed"
+                        and artifact_payload.get("regression_gate_applicable") is False
+                    ):
+                        details.append(
+                            "GATE REGRESSION: not applicable ("
+                            + str(artifact_payload["regression_comparison"]["reason"])
+                            + ")"
+                        )
+                    else:
+                        details.append(f"GATE {label}: {'pass' if value else 'FAIL'}")
+            median_step = artifact_payload.get("median_step_seconds")
+            throughput = artifact_payload.get("median_tokens_per_second")
+            if isinstance(median_step, float) and isinstance(throughput, float):
+                details.append(
+                    f"MEDIAN STEP: {median_step:.4f} seconds "
+                    f"({throughput:.1f} tokens/s)"
+                )
+            error = artifact_payload.get("simulator_relative_error")
+            predicted = artifact_payload.get("predicted_makespan_seconds")
+            if isinstance(predicted, float) and isinstance(error, float):
+                details.append(
+                    f"PREDICTED STEP: {predicted:.4f} seconds "
+                    f"(simulator error {error:+.2%})"
+                )
+            # Both ratios divide by throughput measured on the machine that
+            # set the floors, so on another machine they describe the
+            # hardware rather than this run.
+            if not measure_only:
+                ratio = artifact_payload.get("regression_throughput_ratio")
+                if isinstance(ratio, float):
+                    details.append(f"REGRESSION RATIO: {ratio:.2%}")
+                ratio = artifact_payload.get("predecessor_throughput_ratio")
+                if isinstance(ratio, float):
+                    details.append(f"PREDECESSOR RATIO: {ratio:.2%}")
+        planning = artifact_payload.get("planning_seconds")
+        if isinstance(planning, float):
+            details.append(f"PLANNING: {planning:.3f} seconds")
+    if failure is not None:
+        details.append(f"ERROR TYPE: {failure.get('error_type')}")
+        details.append(f"ERROR: {failure.get('error')}")
+    details.extend(
+        (
+            f"START: {started_at}",
+            f"STOP: {utc_now()}",
+            f"DURATION: {elapsed:.3f} seconds",
+        )
+    )
+    return details
+
+
+def default_cells() -> tuple[FullModelManifest, ...]:
+    """The cells the gate runs when none are named.
+
+    Preserve the established three mlops workloads. Throughput floors are
+    scoped at execution time; runtime, memory and simulator checks apply to
+    every selected cell, including explicit pure-PyTorch selections.
+    """
+
+    return tuple(
+        item for item in manifests() if item.regression_tokens_per_second is not None
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    """Which cells to run, in which protocol, and where to put what they write."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output-directory",
+        type=Path,
+        default=Path("qualification/results/full_model"),
+    )
+    for tree in ("build", "plan"):
+        parser.add_argument(
+            f"--{tree}-store-mode",
+            choices=("contribute", "reuse", "require", "refresh"),
+        )
+        parser.add_argument(
+            f"--{tree}-store",
+            type=Path,
+            help=(
+                f"put the {tree} tree under this directory instead of the "
+                "per-cell artifact store, so a planner change can be measured "
+                "against a cold store without disturbing the shared one"
+            ),
+        )
+    parser.add_argument(
+        "--execution-budget-gib",
+        type=int,
+        help="execution pool physical budget in GiB (default: 16; 10 below SM80)",
+    )
+    add_dtype_arguments(parser)
+    add_memory_budget_arguments(parser)
+    parser.add_argument("--keep-going", action="store_true")
+    parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument(
+        "--measure-only",
+        action="store_true",
+        help=(
+            "report each cell's throughput without judging it, and exit on "
+            "whether the cells ran rather than on whether they passed. "
+            "Hardware/configuration mismatches already exclude unrelated "
+            "throughput floors without this flag"
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint",
+        action="store_true",
+        help=(
+            "opt into the anonymous full-state checkpoint/restore protocol; "
+            "the matrix default is a throughput probe without that copy"
+        ),
+    )
+    parser.add_argument("--export-bypass-key")
+    parser.add_argument(
+        "--cells",
+        nargs="*",
+        help=(
+            "identities to run, such as mlops_llama3 or pytorch_qwen35; "
+            "defaults to every cell carrying a throughput authority"
+        ),
+    )
+    parser.add_argument(
+        "--planning-spill-budget-gib",
+        action="append",
+        default=[],
+        metavar="IDENTITY=GIB",
+        help=(
+            "per-cell planning spill budget within the configured pool, "
+            "for example mlops_qwen35=100; repeatable"
+        ),
+    )
+    parser.add_argument(
+        "--spill-budget-gib",
+        action="append",
+        default=[],
+        metavar="IDENTITY=GIB",
+        help=(
+            "per-cell spill-pool capacity in place of the manifest's, for a "
+            "host with less memory than the manifests were sized on, for "
+            "example mlops_llama3=80; repeatable"
+        ),
+    )
+    return parser
+
+
+def _protocol(arguments: argparse.Namespace) -> str:
+    """Name the protocol the cells will run, for the matrix banner."""
+
+    if arguments.plan_only:
+        mode = "plan only"
+    elif arguments.checkpoint:
+        mode = "checkpoint, warm step, restore, 3x4 measured steps"
+    else:
+        mode = "throughput probe without checkpoint, warm step, 3x4 measured steps"
+    if arguments.measure_only:
+        mode += "; reported without gates"
+    return mode
+
+
+def _cell_command(
+    manifest: FullModelManifest,
+    arguments: argparse.Namespace,
+    output: Path,
+    artifact: Path,
+    planning_budgets: dict[str, int],
+) -> list[str]:
+    """The command line one cell is run as, in its own process."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "qualification.performance.run",
+        manifest.family,
+        manifest.implementation,
+        str(artifact),
+        "--artifact-store",
+        str(output / "artifact_store" / manifest.identity),
+    ]
+    for tree in ("build", "plan"):
+        store_mode = getattr(arguments, f"{tree}_store_mode")
+        if store_mode is not None:
+            command.extend((f"--{tree}-store-mode", store_mode))
+        root = getattr(arguments, f"{tree}_store")
+        if root is not None:
+            command.extend((f"--{tree}-store", str(root)))
+    if arguments.plan_only:
+        command.append("--plan-only")
+    elif not arguments.checkpoint:
+        # The matrix default is a checkpoint-free throughput probe: the
+        # anonymous full-state copy cannot coexist with the full pinned
+        # spill arena on qualification hosts.  Checkpoint/replay
+        # coverage stays in the numerical matrix and behind
+        # --checkpoint here.
+        command.append("--skip-checkpoint")
+    if arguments.measure_only:
+        command.append("--measure-only")
+    if manifest.identity in planning_budgets:
+        command.extend(
+            ("--planning-spill-budget-gib", str(planning_budgets[manifest.identity]))
+        )
+    command.extend(
+        (
+            "--execution-budget-gib",
+            str(manifest.device_physical_capacity_bytes >> 30),
+        )
+    )
+    command.extend(dtype_arguments(manifest))
+    command.extend(
+        ("--external-headroom-mib", str(manifest.external_headroom_bytes >> 20))
+    )
+    command.append(
+        "--reject-overbudget"
+        if manifest.reject_overbudget
+        else "--no-reject-overbudget"
+    )
+    canonical = manifest_for(manifest.family, manifest.implementation)
+    if manifest.spill_budget_bytes != canonical.spill_budget_bytes:
+        command.extend(("--spill-budget-gib", str(manifest.spill_budget_bytes >> 30)))
+    if arguments.export_bypass_key is not None:
+        command.extend(("--export-bypass-key", arguments.export_bypass_key))
+    remote_spill = getattr(arguments, "remote_spill", None)
+    if remote_spill is not None:
+        command.extend(("--remote-spill", remote_spill))
+    return command
+
+
+def _run_cell(
+    manifest: FullModelManifest,
+    arguments: argparse.Namespace,
+    *,
+    output: Path,
+    planning_budgets: dict[str, int],
+    console: MatrixConsole,
+    prefix: str,
+) -> dict[str, object]:
+    """Run one cell, and record what it wrote or failed to write."""
+
+    artifact = output / f"{manifest.identity}.json"
+    failure_path = artifact.with_suffix(".failure.json")
+    log = output / f"{manifest.identity}.log"
+    # A rerun must never be classified from artifacts of an older run.
+    artifact.unlink(missing_ok=True)
+    failure_path.unlink(missing_ok=True)
+    log.unlink(missing_ok=True)
+    command = _cell_command(manifest, arguments, output, artifact, planning_budgets)
+    started = time.perf_counter()
+    started_at = utc_now()
+    console.emit()
+    console.block(
+        f"CELL START {prefix} {manifest.identity}",
+        _cell_start_details(
+            manifest,
+            planning_budget_gib=planning_budgets.get(manifest.identity),
+            checkpoint=arguments.checkpoint,
+            plan_only=arguments.plan_only,
+            log=log,
+            started_at=started_at,
+        ),
+    )
+    return_code = console.stream(command, cell_log_path=log, prefix=prefix)
+    elapsed = time.perf_counter() - started
+    artifact_payload: dict[str, object] | None = None
+    if artifact.is_file():
+        artifact_payload = json.loads(artifact.read_text())
+    # Measure-only asks whether the cell ran, not whether it was good
+    # enough; the cell subprocess already declines to fail on gates.
+    passed = bool(
+        (artifact_payload is not None)
+        if arguments.measure_only
+        else (artifact_payload.get("passed") if artifact_payload else False)
+    )
+    failure_record: dict[str, object] | None = None
+    if failure_path.is_file():
+        failure_record = json.loads(failure_path.read_text())
+    elif return_code != 0 and artifact_payload is None:
+        failure_record = _write_parent_failure(
+            manifest_identity=manifest.identity,
+            return_code=return_code,
+            log=log,
+            failure_path=failure_path,
+        )
+    ran = return_code == 0 and passed
+    if arguments.measure_only:
+        status = "MEASURED" if ran else "ERROR"
+    else:
+        status = "PASS" if ran else "FAIL"
+    console.block(
+        f"CELL {status} {prefix} {manifest.identity}",
+        _cell_result_details(
+            artifact_payload,
+            failure_record,
+            started_at=started_at,
+            elapsed=elapsed,
+            measure_only=arguments.measure_only,
+        ),
+    )
+    return {
+        "identity": manifest.identity,
+        "return_code": return_code,
+        "passed": passed,
+        "elapsed_seconds": elapsed,
+        "artifact": str(artifact),
+        "artifact_exists": artifact.is_file(),
+        "failure_artifact": (str(failure_path) if failure_record is not None else None),
+        "failure": failure_record,
+        "log": str(log),
+    }
+
+
+def main_with_spill(spill: object | None = None) -> int:
+    """The matrix, optionally spilling to a pool this caller supplies.
+
+    The remote performance gate reaches the matrix through here rather than
+    through a cell list of its own: naming cells there would be a second matrix
+    to keep in step, and the claim that gate makes is that nothing differs from
+    the local run but where the spill pool lives.
+    """
+
+    parser = _parser()
+    arguments = parser.parse_args()
+    performance_defaults(arguments)
+    if (
+        arguments.execution_budget_gib is not None
+        and arguments.execution_budget_gib <= 0
+    ):
+        parser.error("--execution-budget-gib must be positive")
+    if spill is not None:
+        # Travels to each cell as a string, so a cell run by hand is the same
+        # cell the matrix spawned.
+        arguments.remote_spill = f"{spill.host}:{spill.port}:{spill.capacity}"
+    if arguments.checkpoint and arguments.plan_only:
+        parser.error("--checkpoint has no effect with --plan-only")
+    if arguments.measure_only and arguments.plan_only:
+        parser.error("--measure-only has nothing to measure with --plan-only")
+    identities = frozenset(manifest.identity for manifest in manifests())
+    try:
+        planning_budgets = _parse_cell_planning_budgets(
+            arguments.planning_spill_budget_gib, identities
+        )
+        pool_budgets = _parse_cell_planning_budgets(
+            arguments.spill_budget_gib, identities, flag="spill-budget-gib"
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    output = arguments.output_directory.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    selected = set(arguments.cells or ())
+    if selected:
+        chosen = [item for item in manifests() if item.identity in selected]
+    else:
+        chosen = list(default_cells())
+    # A smaller pool is the cell's manifest from here on, so what the banner
+    # and each cell's record say is the pool it actually ran with.
+    chosen = [
+        replace(
+            manifest,
+            spill_budget_bytes=pool_budgets.get(
+                manifest.identity, manifest.spill_budget_bytes >> 30
+            )
+            << 30,
+            device_physical_capacity_bytes=(
+                (arguments.execution_budget_gib << 30)
+                if arguments.execution_budget_gib is not None
+                else manifest.device_physical_capacity_bytes
+            ),
+            external_headroom_bytes=arguments.external_headroom_mib << 20,
+            reject_overbudget=arguments.reject_overbudget,
+            **dtype_overrides(arguments),
+        )
+        for manifest in chosen
+    ]
+    rows: list[dict[str, object]] = []
+    failed = False
+    matrix_started = time.perf_counter()
+    with MatrixConsole(output / "matrix.log") as console:
+        console.block(
+            "MATRIX START",
+            [
+                f"UTC: {utc_now()}",
+                f"OUTPUT: {output}",
+                f"CELLS: {len(chosen)} of {len(manifests())}: "
+                + ", ".join(manifest.identity for manifest in chosen),
+                f"PROTOCOL: {_protocol(arguments)}",
+            ],
+        )
+        for ordinal, manifest in enumerate(chosen, start=1):
+            row = _run_cell(
+                manifest,
+                arguments,
+                output=output,
+                planning_budgets=planning_budgets,
+                console=console,
+                prefix=f"[{ordinal}/{len(chosen)}]",
+            )
+            rows.append(row)
+            if row["return_code"] != 0 or not row["passed"]:
+                failed = True
+                if not arguments.keep_going:
+                    break
+        summary = {
+            "schema": artifact_schema("full_model_matrix"),
+            "plan_only": arguments.plan_only,
+            "measure_only": arguments.measure_only,
+            "cells": rows,
+            "passed": bool(rows) and not failed and all(row["passed"] for row in rows),
+        }
+        (output / "summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n"
+        )
+        console.emit()
+        if arguments.measure_only:
+            banner = "MATRIX MEASURED" if summary["passed"] else "MATRIX ERROR"
+            counted = "CELLS MEASURED: "
+        else:
+            banner = "MATRIX " + ("PASS" if summary["passed"] else "FAIL")
+            counted = "CELLS PASSED: "
+        console.block(
+            banner,
+            [
+                counted + f"{sum(1 for row in rows if row['passed'])}/{len(chosen)}",
+                f"SUMMARY: {output / 'summary.json'}",
+                f"STOP: {utc_now()}",
+                f"DURATION: {time.perf_counter() - matrix_started:.3f} seconds",
+            ],
+        )
+    return 0 if summary["passed"] else 1
+
+
+def main() -> int:
+    """The local matrix: no pool supplied, so every cell spills to pinned host."""
+
+    return main_with_spill(None)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

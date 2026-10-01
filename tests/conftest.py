@@ -4,22 +4,22 @@ import os
 
 import pytest
 
+from tests.precision import select_test_dtype
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--test-dtype",
         choices=("float16", "bfloat16"),
         default=None,
-        help="dtype for generic low-precision GPU tests (default: bfloat16)",
+        help="low-precision test dtype (default: BF16, FP16 below SM80)",
     )
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    selected = config.getoption("--test-dtype")
-    if selected is not None:
-        os.environ["SHADOWSPILL_TEST_DTYPE"] = selected
-    if os.environ.get("SHADOWSPILL_TEST_DTYPE", "bfloat16") not in {
-        "float16",
-        "bfloat16",
-    }:
-        raise pytest.UsageError("SHADOWSPILL_TEST_DTYPE must be float16 or bfloat16")
+    try:
+        selected = select_test_dtype(config.getoption("--test-dtype"))
+    except ValueError as error:
+        raise pytest.UsageError(str(error)) from error
+    # Resolve before test collection and inherit into all CTest subprocesses.
+    os.environ["SHADOWSPILL_TEST_DTYPE"] = selected

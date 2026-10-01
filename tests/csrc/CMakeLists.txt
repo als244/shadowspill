@@ -107,6 +107,7 @@ add_executable(
   shadowspill_memory_pool_canary
   runtime/memory_pool_canary.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/memory.c
+  ${PROJECT_SOURCE_DIR}/csrc/src/runtime/numa.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/records.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/locks.c
   ${PROJECT_SOURCE_DIR}/csrc/src/runtime/memory/memory_pool/leases.c
@@ -303,3 +304,10 @@ if(TARGET shadowspill_pytorch)
     )
   endif()
 endif()
+
+# Host placement has no accelerator dependency; mock backends do not bind.
+add_executable(shadowspill_numa_canary runtime/numa_canary.c)
+target_include_directories(shadowspill_numa_canary PRIVATE ${PROJECT_SOURCE_DIR}/csrc/include)
+target_link_libraries(shadowspill_numa_canary PRIVATE shadowspill_build_options)
+add_test(NAME shadowspill_numa_canary COMMAND shadowspill_numa_canary)
+set_tests_properties(shadowspill_numa_canary PROPERTIES TIMEOUT 15)
