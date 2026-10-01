@@ -184,3 +184,18 @@ shadowspill_add_public_api_test(
 shadowspill_add_public_api_test(
   test_04_plans_side_by_side.py test_a_forward_shares_the_slab_of_the_step_it_evaluates 300
 )
+
+shadowspill_add_public_api_test(
+  test_05_generic_training.py test_shadowspill_generic_candidates_shared_forward_and_checkpoint 300
+)
+shadowspill_add_public_api_test(
+  test_06_generic_quickstart.py test_generic_quickstart_search_run_plot 300
+)
+
+shadowspill_add_public_api_test(
+  test_07_distributed_training.py test_distributed_training_matches_combined_reference 1200
+)
+
+shadowspill_add_public_api_test(
+  test_05_generic_training.py test_mutable_buffer_survives_diagnostics_and_repeated_training 300
+)

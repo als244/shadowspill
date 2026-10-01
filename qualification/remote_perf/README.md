@@ -30,7 +30,7 @@ reachable over RDMA. Name one in `SHADOWSPILL_NETWORK_PEER` as `host:port`, an
 address rather than an ssh alias:
 
 ```bash
-SHADOWSPILL_NETWORK_PEER=192.168.50.32:17800 python -m tools.qualification.gates remote_perf
+SHADOWSPILL_NETWORK_PEER=192.168.50.32:17800 python -m qualification.gates remote_perf
 ```
 
 With no peer named the gate **skips and succeeds**, writing a summary that says
