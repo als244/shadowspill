@@ -38,6 +38,9 @@ from shadowspill.step import StepDataOrdering, StepProgram
 from shadowspill.store import ArtifactStore, StoreMode
 from shadowspill.task.profiling import ProfilingOptions
 
+from .distributed import Distributed
+from .distributed._preparation import prepared
+
 
 def _cleanup_failed_plan(
     runtime: Runtime,
@@ -129,11 +132,14 @@ def _slab_owner(
     return share_slab_with._plan_handle
 
 
+@prepared
 def plan_forward(
     model: nn.Module,
     *,
     example_inputs: Sequence[Any],
+    forward_fn: Callable[..., Any] | None = None,
     runtime: Runtime,
+    distributed: Distributed | None = None,
     execution: str,
     spill: str,
     execution_budget: int | None = None,
@@ -164,6 +170,10 @@ def plan_forward(
     state has not been imported, in which case planning imports it in place
     and owns it: closing the callable releases that state and empties the
     parameters that viewed it, so read what you need before the close.
+
+    ``forward_fn(model, *inputs)`` optionally selects the computation around
+    the supplied model. Its registered state and logical names are unchanged.
+    The default calls ``model(*inputs)``.
 
     The runtime and pool roles are explicit. The original model remains
     runtime-owned until the returned callable is closed. ``profiling_metadata``
@@ -259,6 +269,7 @@ def plan_forward(
             forward = build_forward(
                 model,
                 example_inputs=example_inputs,
+                forward_fn=forward_fn,
                 memory=memory,
                 partition=partition,
                 verbose=verbose,
@@ -282,6 +293,7 @@ def plan_forward(
         )
 
 
+@prepared
 def plan_step(
     model: nn.Module,
     *,
@@ -290,6 +302,8 @@ def plan_step(
     hyperparams: Sequence[str] = (),
     example_inputs: Sequence[Sequence[Any]],
     runtime: Runtime,
+    distributed: Distributed | None = None,
+    shard_optimizer: bool = True,
     execution: str,
     spill: str,
     execution_budget: int | None = None,

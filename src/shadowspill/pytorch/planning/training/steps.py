@@ -25,6 +25,10 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.program import ShadowSpillPlanningProblem
 from shadowspill.pytorch.capture.retention import MEMORY_BOUND_FLOPS_PER_BYTE
+from shadowspill.pytorch.distributed._preparation import (
+    collective_identity,
+    collective_misses,
+)
 from shadowspill.pytorch.profiling import profile_environment
 from shadowspill.pytorch.profiling.environment import DEVICE_POOL_PROVIDER_ID
 from shadowspill.runtime.plan import PlanMemory
@@ -126,6 +130,7 @@ def make_training_programs(
                     export_bypass_key=bypass_key,
                 ).identity(),
             )
+            identity = collective_identity(identity)
             for ordering in orderings:
                 keys[ordering] = step_key(identity, ordering)
                 archived = artifacts.steps.read(keys[ordering])
@@ -141,7 +146,7 @@ def make_training_programs(
                 found[ordering],
                 phase_timings_ns=(("step_lookup", charged), ("total", charged)),
             )
-    missing = tuple(item for item in orderings if item not in found)
+    missing = collective_misses(orderings, found)
     if missing:
         for ordering in missing:
             artifacts.store.build_policy.refuse_miss("step program", ordering.label)

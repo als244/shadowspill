@@ -627,6 +627,8 @@ class _OptimizerTaskAppender:
             self.entrypoints.append(self._entrypoint(component, task.task_id))
             self.executables[task.task_id] = component.artifact
             task_ids.append(task.task_id)
+            for object_id in task.outputs:
+                self.object_dependencies[object_id] = (task.task_id,)
             preceding = _unique((*self.dependencies, task.task_id))
         return tuple(task_ids)
 
@@ -643,6 +645,15 @@ class _OptimizerTaskAppender:
         task_id = f"task_{len(self.tasks):06d}"
         objects = self._component_objects(component)
         outputs: tuple[str, ...] = ()
+        if component.output_names:
+            slots = tuple(
+                ObjectSlot(index, self.object_by_name[name])
+                for index, name in enumerate(component.output_names)
+            )
+            self.metric_slots[task_id] = slots
+            outputs = _unique(
+                slot.object_id for slot in slots if slot.object_id not in objects
+            )
         if component.metric_schema is not None:
             if self.metric_context is None or not isinstance(
                 component.artifact, GraphArtifact
@@ -720,10 +731,14 @@ class _OptimizerTaskAppender:
             options=TaskOptions(
                 phase="optimizer",
                 named_inputs=component.binding_names,
-                public_output_count=len(self.metric_slots.get(task_id, ())),
+                public_output_count=len(self.metric_slots.get(task_id, ()))
+                if component.metric_schema
+                else 0,
                 public_output_leaves=tuple(
                     slot.leaf_index for slot in self.metric_slots.get(task_id, ())
-                ),
+                )
+                if component.metric_schema
+                else (),
             ),
         )
 

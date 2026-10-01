@@ -51,6 +51,7 @@ def condition_task(
     *,
     options: ProfilingOptions,
     clock: Callable[[], int] = time.perf_counter_ns,
+    continue_while: Callable[[bool, bool], bool] | None = None,
 ) -> TimingWindow:
     """Sustain the exact initialized task before its measurement window."""
 
@@ -59,7 +60,7 @@ def condition_task(
     began = clock()
     gpu_ns = iterations = 0
     elapsed = 0
-    while gpu_ns < target and elapsed < limit:
+    while _continue(gpu_ns < target, elapsed < limit, continue_while):
         gpu_ns += _sample(sample)
         iterations += 1
         elapsed = clock() - began
@@ -71,6 +72,7 @@ def collect_timing_samples(
     *,
     options: ProfilingOptions,
     clock: Callable[[], int] = time.perf_counter_ns,
+    continue_while: Callable[[bool, bool], bool] | None = None,
 ) -> TimingObservation:
     """Meet the sample count and device-time floor, bounded by wall time."""
 
@@ -84,16 +86,16 @@ def collect_timing_samples(
         samples.append(value)
         gpu_ns += value
         elapsed = clock() - began
-        if len(samples) < options.minimum_samples or (
-            gpu_ns < target and elapsed < limit
-        ):
+        if len(samples) < options.minimum_samples:
             continue
         relative_mad, half_drift = timing_stability(samples)
         stable = (
             relative_mad <= options.relative_mad_threshold
             and half_drift <= options.half_drift_threshold
         )
-        if (gpu_ns >= target and stable) or elapsed >= limit:
+        if not _continue(
+            gpu_ns < target or not stable, elapsed < limit, continue_while
+        ):
             return TimingObservation(
                 tuple(samples),
                 relative_mad,
@@ -107,3 +109,12 @@ def _sample(sample: Callable[[], int]) -> int:
     if type(duration) is not int or duration < 0:
         raise ValueError("task timing must be a non-negative integer in nanoseconds")
     return duration
+
+
+def _continue(
+    needed: bool,
+    allowed: bool,
+    decide: Callable[[bool, bool], bool] | None,
+) -> bool:
+    """An optional caller coordinates repetition without entering a timed interval."""
+    return needed and allowed if decide is None else decide(needed, allowed)

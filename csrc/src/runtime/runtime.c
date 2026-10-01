@@ -1,5 +1,6 @@
 /* Opening a runtime: what a configuration must say, and what is reserved. */
 #include "internal.h"
+#include "numa.h"
 
 #include <pthread.h>
 #include <stddef.h>
@@ -34,6 +35,7 @@ static int runtime_config_is_valid(const ShadowSpillRuntimeConfig *config) {
         config->abi_version != SHADOWSPILL_ABI_VERSION ||
         config->pools == NULL || config->pool_count == 0U ||
         (config->routes == NULL && config->route_count != 0U) ||
+        config->disable_numa_binding > 1U ||
         !shadowspill_backend_is_valid(config->backend)) {
         return 0;
     }
@@ -253,6 +255,9 @@ ShadowSpillStatus shadowspill_runtime_create(
     runtime->route_count = config->route_count;
     runtime->backend = *config->backend;
     describe_runtime(runtime, config);
+    runtime->host_numa_node = shadowspill_numa_initialize(
+        &runtime->backend, config->disable_numa_binding
+    );
     /* Before any route resolves one. The built-ins are seeded here, so a
        registered lane is found by the same lookup and a pair claimed twice
        fails now rather than at the first transfer. */
@@ -260,7 +265,7 @@ ShadowSpillStatus shadowspill_runtime_create(
             &runtime->lanes, runtime, config->lanes, config->lane_count
         ) != 0 || shadowspill_pool_memory_table_initialize(
             &runtime->pool_memory,
-            &runtime->backend,
+            runtime,
             config->pool_memory,
             config->pool_memory_count
         ) != 0) {

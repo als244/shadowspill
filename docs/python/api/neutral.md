@@ -675,14 +675,13 @@ Persistent allocations inside the pool are accounted for separately.
 ## `shadowspill.search`
 
 A step planned at every geometry, budget and walk, and the report that answers.
-Framework-neutral: enumerating the splits of a sequence total, planning each
-point, and reading the answers back need no framework. Building the programs a
+Framework-neutral: planning named candidates and reading the answers back
+need no model or input-domain knowledge. Building the programs a
 point is planned from does, so `shadowspill.pytorch.plan_step_search()` drives
 this package and is documented on [the frontend page](frontend.md#plan_step_search).
 
 | Name | Is |
 |---|---|
-| `search_geometries(total_sequences_per_step, *, sequence_length, min_tokens_per_microbatch=None, max_tokens_per_microbatch=None)` | Every admitted `(sequences_per_microbatch, accumulation)` pair, largest microbatch first, and the pairs the token bounds skipped with the reason for each. |
 | `default_orderings(accumulation)` | Every `depth x breadth` factor pair of the accumulation count, depth-first first. |
 | `StepSearchReport` | What a search answered: its points, its builds, and the winner at each budget. `load()` reads one back. |
 | `StepSearchPoint` | One geometry-ordering-budget point: what it planned, or the refusal it hit. |
@@ -757,6 +756,7 @@ Runtime(
     routes: Mapping[str, TransferRoute],
     library_path: str | Path | None = None,
     calibrate: bool = True,
+    numa_binding: bool = True,
     worker_poll_nanoseconds: int = 1_000,
     background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,

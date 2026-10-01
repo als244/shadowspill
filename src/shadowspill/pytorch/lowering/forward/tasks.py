@@ -84,7 +84,8 @@ class _ForwardTaskEmitter:
             dict(self.executables),
             frozenset(self.produced_aliases),
             tuple(
-                self.public_outputs[index] for index in range(len(self.public_outputs))
+                self.public_outputs.get(index)
+                for index in range(len(self.partitioned.user_output_indices))
             ),
         )
 

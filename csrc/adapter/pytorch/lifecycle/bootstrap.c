@@ -17,7 +17,7 @@ static int bootstrap_config_is_valid(
         config->backend_library == NULL || config->backend_library[0] == '\0' ||
         config->device_ordinal < 0 || config->device_budget_bytes == 0U ||
         config->external_headroom_bytes >= config->device_budget_bytes ||
-        config->reject_overbudget > 1U ||
+        config->reject_overbudget > 1U || config->disable_numa_binding > 1U ||
         config->pools == NULL || config->pool_count == 0U ||
         config->allocator_pool_id >= config->pool_count ||
         (config->routes == NULL && config->route_count != 0U)) {
@@ -150,6 +150,7 @@ static ShadowSpillStatus build_runtime_topology(
             .pool_memory = pool_memory,
             .pool_memory_count = pool_memory_count,
             .worker_poll_nanoseconds = config->worker_poll_nanoseconds,
+            .disable_numa_binding = config->disable_numa_binding,
             .background_transfer_window_bytes =
                 config->background_transfer_window_bytes,
         };

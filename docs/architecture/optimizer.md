@@ -189,11 +189,12 @@ where the parameter it steps is at another: fp32 masters over bf16 gradients
 are cast in the update, over fp32 gradients not at all. The two are normally
 given together.
 
-A checkpoint holds each master where its weights would be: the `model` entry
-of a weight with a master is the master's value, and `load_state_dict()`
-writes it to the master and its cast to the weights. A checkpoint is
-therefore the training state at full precision, the weights follow from it,
-and it loads into a plain model of either precision as it stands.
+A checkpoint saves one selected weight representation per logical parameter.
+`weights="master"` is the default: save masters where configured, and restore
+compute weights by casting. `weights="compute"` saves compute weights only and
+upcasts them to restore any configured masters, without recovering precision
+that was not saved. Distributed checkpoints keep only each owner's saved master
+shard. Compute and master copies are never both checkpointed for one parameter.
 
 The update casts and writes in the graph it captures, so an optimizer whose
 update cannot be traced is refused masters, and gradients kept at another
@@ -459,3 +460,45 @@ Logging libraries and aggregation policy remain outside ShadowSpill.
 
 Previous: [Importing state](state-import.md). Next: [The
 ShadowSpillProgram](program.md).
+
+## Distributed ownership
+
+A distributed binding resolves each logical parameter's replicas and remaining
+gradient contributors. ShadowSpill composes a local coordinate-wise optimizer
+with explicit SUM/reduce-scatter, owned moment/master updates, and compute-weight
+all-gather. Those operations live within the optimizer task and finish before its
+completion. All tensor inputs, mutations, outputs and temporaries participate in
+the ordinary capture/profile/admission contract.
+
+Sharding is enabled by default and can be disabled with `shard_optimizer=False`.
+The supplied optimizer performs local math. MLOps AdamW now provides only that
+local operation; the training engine owns all communication and shard lifetimes.
+See [distributed planning](../python/api/distributed.md) for the capability and
+normalization contracts. A checkpoint saves masters or compute weights, selected
+by `weights`, and reconstructs the other representation during restore.
+
+
+## Alternative optimizers and distributed ownership
+
+The capture/state/task path accepts a supplied `torch.optim.Optimizer`; it does
+not assume AdamW moments or parameter-shaped state. Tensor-only updates, explicit
+state starts, and tensor-valued changing hyperparameters let alternative algorithms
+reuse compilation, profiling, admission, scheduling, metrics and checkpoints.
+
+Distributed **flat elementwise sharding** is narrower. The current
+`supports_flat_parameter_shards=True` capability asserts that arbitrary flat slices
+can be updated independently. Matrix-wide algorithms must use
+`shard_optimizer=False` until a complete-matrix ownership policy is implemented.
+That mode retains matrix shapes and completes gradients before the local update.
+Do not declare flat sharding safe for a matrix orthogonalization algorithm.
+
+A future complete-matrix policy will assign one owner per update unit and reuse
+the existing state and captured-task machinery, with owner-only update work and
+compute-precision weight publication. It requires ownership/profile/checkpoint
+coverage; it is not currently implemented. Models with different update rules can
+use parameter groups within one local optimizer rather than separate trainers.
+
+Startup diagnostics require the separate `zero_lr_preserves_state=True` promise.
+It is optional for normal training: ordinary optimizers can mutate momentum or
+other state even when LR=0, and must not advertise it without preserving that
+state while executing the update work.

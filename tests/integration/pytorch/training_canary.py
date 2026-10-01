@@ -24,7 +24,7 @@ from shadowspill.pytorch import (
 from shadowspill.runtime.abi import AdapterStatistics
 from shadowspill.runtime.bootstrap import installed_runtime
 from tests.spill_pool import spill_pool
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
 
 
 class _Model(nn.Module):

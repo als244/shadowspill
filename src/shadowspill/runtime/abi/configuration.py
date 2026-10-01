@@ -44,6 +44,7 @@ class AdapterConfig(ctypes.Structure):
         ("libraries", ctypes.POINTER(ctypes.c_char_p)),
         ("library_count", ctypes.c_uint32),
         ("reject_overbudget", ctypes.c_uint8),
+        ("disable_numa_binding", ctypes.c_uint8),
     ]
 
 

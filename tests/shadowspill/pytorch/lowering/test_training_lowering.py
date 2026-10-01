@@ -337,7 +337,7 @@ def test_training_lowering_composes_accumulation_and_recomputation() -> None:
 
 
 def test_parameter_metrics_are_planned_public_outputs_before_updates():
-    from training.observations import parameter_norms
+    from shadowspill.training.observations import parameter_norms
 
     lowered = _lowered(parameter_metrics=parameter_norms)
     assert len(lowered.parameter_metric_schemas) == 2

@@ -91,6 +91,7 @@ typedef struct ShadowSpillPytorchAdapterConfig {
     uint32_t library_count;
     /* Reject external/whole-process memory overruns when nonzero. */
     uint8_t reject_overbudget;
+    uint8_t disable_numa_binding;
 } ShadowSpillPytorchAdapterConfig;
 
 typedef struct ShadowSpillPytorchPhysicalAdmission {

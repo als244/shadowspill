@@ -153,6 +153,10 @@ def _partition_user_outputs(
             root_output = output_leaves[output_index]
         except IndexError as exc:
             raise CaptureError("Export user output is absent from split root") from exc
+        # Export retains constant leaves (for example optional metrics=None)
+        # in the root output tree. They have no storage or producer task.
+        if not isinstance(root_output, torch.fx.Node):
+            continue
         source = stage_value_source(
             root_output,
             placeholder_index=split.placeholder_index,

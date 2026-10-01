@@ -22,7 +22,10 @@ from shadowspill.pytorch.capture.storage import (
     TaskStorageContract,
     capture_task_storage_contract,
 )
-from shadowspill.pytorch.contracts import ObjectiveResult
+from shadowspill.pytorch.contracts import (
+    normalize_objective_result as normalize_objective_result,
+)
+from shadowspill.pytorch.distributed import current as current_preparation
 from shadowspill.task.inputs import TaskInputRole
 
 from .retention import RetentionSummary
@@ -131,6 +134,8 @@ class GraphArtifact:
     ) -> str:
         """Identify a graph/input contract without evaluating graph outputs."""
 
+        if (preparation := current_preparation()) is not None:
+            graph_module = preparation.groups.rewrite_collectives(graph_module)
         original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
@@ -191,6 +196,8 @@ class GraphArtifact:
         explicit_mutations: tuple[ExplicitMutation, ...] = (),
         input_provenance: tuple[TaskInputProvenance, ...] | None = None,
     ) -> GraphArtifact:
+        if (preparation := current_preparation()) is not None:
+            graph_module = preparation.groups.rewrite_collectives(graph_module)
         original_inputs = example_inputs
         graph_module, example_inputs, tensor_positions = _specialize_static_inputs(
             graph_module, example_inputs
@@ -567,28 +574,6 @@ class ObjectiveSchema:
         for position, value in zip(self.tensor_metric_positions, tensors, strict=True):
             leaves[position] = value
         return tree_unflatten(leaves, self.metric_tree_spec)
-
-
-def normalize_objective_result(
-    value: torch.Tensor | ObjectiveResult, *, require_grad: bool
-) -> tuple[torch.Tensor, Any]:
-    """Validate the scalar differentiable objective contract."""
-
-    if isinstance(value, ObjectiveResult):
-        loss, metrics = value.loss, value.metrics
-    else:
-        loss, metrics = value, None
-    if not isinstance(loss, torch.Tensor):
-        raise ObjectiveError("objective must return a tensor or ObjectiveResult")
-    if loss.numel() != 1:
-        raise ObjectiveError(
-            f"objective loss must be scalar, got shape {tuple(loss.shape)}"
-        )
-    if not (loss.is_floating_point() or loss.is_complex()):
-        raise ObjectiveError("objective loss must be floating point or complex")
-    if require_grad and not loss.requires_grad:
-        raise ObjectiveError("objective loss must require gradients")
-    return loss, metrics
 
 
 def capture_objective_schema(metrics: Any) -> ObjectiveSchema:

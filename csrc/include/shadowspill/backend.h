@@ -252,6 +252,12 @@ typedef struct ShadowSpillBackend {
         uint64_t *nanoseconds
     );
 
+    /* Optional device-local host NUMA node, queried before pool allocation.
+       Return 0 and a non-negative OS node ID, or nonzero if unknown. NULL means
+       host affinity is inapplicable (for example, a simulated backend).
+       Device discovery respects this backend's selected logical ordinal. */
+    int (*host_numa_node)(void *state, int32_t *node);
+
     /* Facts. */
     int (*capabilities)(void *state, ShadowSpillBackendCapabilities *capabilities);
     int (*physical_memory)(void *state, ShadowSpillBackendPhysicalMemory *memory);

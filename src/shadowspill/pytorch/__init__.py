@@ -78,7 +78,6 @@ from .step_search import (
     StepSearchPoint,
     StepSearchReport,
     plan_step_search,
-    search_geometries,
 )
 
 __all__ = [
@@ -148,7 +147,10 @@ __all__ = [
     "read_model_state",
     "read_optimizer_state",
     "release_model_state",
-    "search_geometries",
     "shared_input",
     "shared_output",
 ]
+
+from .distributed import Distributed as Distributed
+
+__all__.append("Distributed")

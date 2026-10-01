@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from workloads import numerical as cases
+from qualification.numerical import cases
 
 
 @pytest.mark.parametrize("dtype", ["bfloat16", "float16", "float32"])

@@ -10,6 +10,7 @@ from shadowspill.errors import (
 )
 from shadowspill.pipeline.common import PlanningTimer
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
+from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
     OptimizerTaskArtifact,
@@ -198,6 +199,7 @@ def _training_task_inventory(
     contract, so a form seen before, by any ordering or any run, is a lookup.
     """
 
+    all_profiles: list[tuple[OptimizerTaskArtifact, str | None]] = []
     compile_by_digest: dict[str, OptimizerTaskArtifact] = {}
     profile_by_key: dict[tuple[str, str | None], OptimizerTaskArtifact] = {}
     for position, partitioned in enumerate(captured.partitioned):
@@ -205,6 +207,7 @@ def _training_task_inventory(
         for stage in partitioned.stages:
             for option in stage.graph_pairs.variants:
                 for artifact in (option.pair.forward, option.pair.backward):
+                    all_profiles.append((artifact, metadata_digest))
                     compile_by_digest.setdefault(
                         artifact.compatibility_digest,
                         artifact,
@@ -217,6 +220,7 @@ def _training_task_inventory(
                         artifact,
                     )
     for task in optimizer_capture.update_tasks:
+        all_profiles.append((task.artifact, None))
         compile_by_digest.setdefault(
             task.artifact.compatibility_digest,
             task.artifact,
@@ -227,6 +231,16 @@ def _training_task_inventory(
                 None,
             ),
             task.artifact,
+        )
+    if distributed_preparation() is not None:
+        keys = tuple(
+            (item.compatibility_digest, metadata) for item, metadata in all_profiles
+        )
+        return _TrainingTaskInventory(
+            tuple(compile_by_digest.values()),
+            keys,
+            tuple(item for item, _ in all_profiles),
+            tuple(metadata for _, metadata in all_profiles),
         )
     keys = tuple(profile_by_key)
     return _TrainingTaskInventory(

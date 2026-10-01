@@ -183,6 +183,8 @@ class OptimizerTask:
     completion_stage_index: int | None = None
     #: A read-only observation before an update. Its outputs reach the caller.
     metric_schema: ObjectiveSchema | None = None
+    #: Fresh named values produced by an initialization task before updates.
+    output_names: tuple[str, ...] = ()
 
 
 def optimizer_value_identity(value: Any) -> Any:

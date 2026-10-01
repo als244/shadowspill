@@ -10,6 +10,7 @@ from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
 from shadowspill.pytorch.capture.artifacts import AotGraphPair
+from shadowspill.pytorch.distributed._profiling import all_ready, any_needed, phase
 from shadowspill.pytorch.profiling.geometry import distinct_locations
 
 if TYPE_CHECKING:
@@ -45,13 +46,15 @@ def resolve_graph_pair_saved_values(
         for position, item in enumerate(provenance[: pair.saved_value_count])
         if item.representative_value is None
     )
-    if not missing:
+    if not any_needed("saved_values/missing", bool(missing)):
         return pair
     key = (pair.forward.compatibility_digest, metadata_digest, pair.saved_value_count)
     values = produced.get(key)
-    if values is None:
-        values = _run_producer(profiler, pair)
+    if not all_ready("saved_values/cached", values is not None):
+        with phase("saved_values"):
+            values = _run_producer(profiler, pair)
         produced[key] = values
+    assert values is not None
     rebound = tuple(
         replace(
             item,

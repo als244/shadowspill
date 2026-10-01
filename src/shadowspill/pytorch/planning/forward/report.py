@@ -1,5 +1,7 @@
 """The plan report one forward planning call writes."""
 
+from dataclasses import replace
+
 import torch.nn as nn
 
 from shadowspill.ir import (
@@ -84,6 +86,7 @@ def _forward_plan_report(
         ),
         memory=memory,
     )
+    report = replace(report, physical_layout=selected_admission.fixed_layout)
     return publish_plan_report(
         model,
         report,

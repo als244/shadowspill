@@ -14,6 +14,7 @@ from shadowspill.errors import (
     PlanningError,
 )
 from shadowspill.pipeline.common import PlanningTimer
+from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.materialization.training import (
     TrainingMaterializedState,
 )
@@ -95,12 +96,39 @@ def materialize_training_state(
                 captured.partitioned,
                 dict(model.named_parameters()),
             )
-            masters = _master_copies(model, master_dtype, receives_gradient)
+            prepared = distributed_preparation()
+            layouts = None
+            starts = None
+            masters = (
+                _master_copies(model, master_dtype, receives_gradient)
+                if prepared is None
+                else {}
+            )
             optimizer_parameters = {
                 name: masters.get(name, parameter)
                 for name, parameter in model.named_parameters()
             }
+            if prepared is not None:
+                from shadowspill.pytorch.distributed import _shards
+
+                layouts = _shards.parameter_layouts(
+                    prepared,
+                    dict(model.named_parameters()),
+                    receives_gradient,
+                    master_dtype=master_dtype,
+                )
+                optimizer_parameters = _shards.optimizer_parameters(
+                    dict(model.named_parameters()), layouts, master_dtype=master_dtype
+                )
+                masters = {
+                    name: optimizer_parameters[name]
+                    for name, layout in layouts.items()
+                    if layout.master
+                }
+                receives_gradient = frozenset(layouts)
             optimizer = build_optimizer(iter(optimizer_parameters.values()))
+            if layouts is not None:
+                _shards.validate_optimizer(optimizer, layouts)
             if not isinstance(optimizer, torch.optim.Optimizer):
                 raise PlanningError("optimizer must return a torch.optim.Optimizer")
             # The values a step is allowed to set are held in tensors before
@@ -115,6 +143,8 @@ def materialize_training_state(
             # already present and does not create any of its own. The
             # masters go in with it, starting at their weights.
             weights = dict(model.named_parameters())
+            if layouts is not None:
+                starts = _shards.initializers(weights, layouts)
             with timer.measure("optimizer_state_install"):
                 install_declared_optimizer_state(
                     optimizer_parameters,
@@ -124,23 +154,66 @@ def materialize_training_state(
                     owning_plan=memory.plan_handle,
                     receives_gradient=receives_gradient,
                     master_sources={name: weights[name] for name in masters},
+                    parameter_initializers=starts,
                 )
+            stage_owners = training_parameter_stage_owners(
+                captured.partitioned, weights
+            )
+            if prepared is not None:
+                stage_owners = _shards.common_stage_owners(prepared, stage_owners)
             optimizer_capture = capture_optimizer(
                 optimizer_parameters,
                 optimizer,
-                parameter_stage_owners=training_parameter_stage_owners(
-                    captured.partitioned,
-                    dict(model.named_parameters()),
-                ),
+                parameter_stage_owners=stage_owners,
                 receives_gradient=receives_gradient,
                 store=stores.optimizer_captures,
                 timer=timer,
-                compute_copies={name: weights[name] for name in masters},
-                gradient_dtype=grad_dtype,
+                compute_copies={}
+                if layouts is not None
+                else {name: weights[name] for name in masters},
+                gradient_dtype=None if layouts is not None else grad_dtype,
             )
+            if layouts is not None:
+                from shadowspill.pytorch.distributed._optimizer import (
+                    distribute_capture,
+                )
+
+                optimizer_capture = distribute_capture(
+                    optimizer_capture,
+                    layouts,
+                    gradient_dtype=grad_dtype,
+                    already_reduced=parameter_metrics is not None,
+                    parameter_stage_owners=stage_owners,
+                    representative_values={
+                        **{
+                            name: weights[name]
+                            for name, layout in layouts.items()
+                            if not layout.master
+                        },
+                        **{
+                            f"compute.{name}": weights[name]
+                            for name, layout in layouts.items()
+                            if layout.master
+                        },
+                    },
+                )
             optimizer_capture = with_parameter_metrics(
                 optimizer_capture, parameter_metrics
             )
+            if layouts is not None and parameter_metrics is not None:
+                from shadowspill.pytorch.distributed._reductions import (
+                    before_observations,
+                )
+
+                optimizer_capture = before_observations(optimizer_capture, layouts)
+            if layouts is not None:
+                from shadowspill.pytorch.distributed._reductions import (
+                    initialize_missing_gradients,
+                )
+
+                optimizer_capture = initialize_missing_gradients(
+                    optimizer_capture, layouts
+                )
             if optimizer_capture.initialized_state_dict is not None:
                 optimizer.load_state_dict(optimizer_capture.initialized_state_dict)
         with timer.measure("optimizer_state_import"):
