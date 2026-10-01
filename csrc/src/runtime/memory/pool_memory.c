@@ -22,11 +22,11 @@ static int entry_is_valid(const ShadowSpillPoolMemoryDescription *entry) {
 
 int shadowspill_pool_memory_table_initialize(
     ShadowSpillPoolMemoryTable *table,
-    const ShadowSpillBackend *backend,
+    ShadowSpillRuntime *runtime,
     const ShadowSpillPoolMemoryDescription *registered,
     uint32_t registered_count
 ) {
-    if (table == NULL || backend == NULL ||
+    if (table == NULL || runtime == NULL ||
         (registered == NULL && registered_count != 0U)) {
         return -1;
     }
@@ -36,7 +36,7 @@ int shadowspill_pool_memory_table_initialize(
     if (table->entries == NULL) {
         return -1;
     }
-    shadowspill_builtin_pool_memory_describe(backend, table->entries);
+    shadowspill_builtin_pool_memory_describe(runtime, table->entries);
     table->count = builtin_count;
     for (uint32_t index = 0U; index < registered_count; ++index) {
         const ShadowSpillPoolMemoryDescription *entry = &registered[index];

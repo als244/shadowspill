@@ -30,7 +30,8 @@ class LoweredForwardProgram:
     executables: Mapping[str, GraphArtifact]
     registrations: tuple[RegistrationBinding, ...]
     root_input_slots: tuple[ObjectSlot, ...]
-    public_outputs: tuple[str, ...]
+    # One entry per public pytree leaf; literals have no storage object.
+    public_outputs: tuple[str | None, ...]
     output_tree_spec: TreeSpec
     output_leaf_count: int
 
@@ -58,4 +59,5 @@ class ForwardTaskGraph:
     #: What to call for each task. The entrypoint is neutral; this is not.
     executables: Mapping[str, GraphArtifact]
     produced_aliases: frozenset[str]
-    public_outputs: tuple[str, ...]
+    # One entry per public pytree leaf; literals have no storage object.
+    public_outputs: tuple[str | None, ...]

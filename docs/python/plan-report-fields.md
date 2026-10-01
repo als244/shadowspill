@@ -33,6 +33,7 @@ them.
 ```text
 PlanReport
 ├── execution_plan                            ExecutionPlan (IR)
+├── physical_layout                           FixedPhysicalLayout (admission)
 ├── task_profiles[]                           TaskProfile (IR)
 ├── transfer_actions[]                        MemoryAction (IR)
 ├── transfer_capabilities                     TransferCapabilities → TransferProfile[]
@@ -67,6 +68,7 @@ What one planning call produced. `mode` is `forward` or `training`.
 | `mode` | Which planning entry point produced this report. |
 | `capture_identity` | Digest over mode, signature, artifacts, and profiling metadata: the identity of what was captured. |
 | `execution_plan` | The plan every call runs. `program` reads through it. |
+| `physical_layout` | Final admitted `FixedPhysicalLayout`, including any distributed selection recertification. `None` on a report that has not received physical admission. Diagnostics use this exact layout rather than inferring one from intermediate search candidates. |
 | `task_profiles` | The isolated profile behind every task the plan prices. |
 | `transfer_actions` | The schedule's memory actions. Named for the transfers but carries releases too, which move no bytes. |
 | `transfer_bytes_evicted`, `transfer_bytes_fetched` | Bytes the schedule's evictions and fetches move. Distinct from the identically named fields on `summary`, which count what the simulation ran rather than what the schedule asked for. |

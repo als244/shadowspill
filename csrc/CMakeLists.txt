@@ -64,6 +64,7 @@ add_library(
 
   src/runtime/failure_state.c
   src/runtime/runtime.c
+  src/runtime/numa.c
   src/runtime/runtime_close.c
   src/runtime/runtime_pools.c
   src/runtime/runtime_statistics.c

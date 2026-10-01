@@ -1,7 +1,9 @@
 """The forward stages exported once and partitioned on fake tensors."""
 
-from collections.abc import Sequence
+import copy
+from collections.abc import Callable, Sequence
 from dataclasses import replace
+from types import MethodType
 from typing import Any
 
 import torch
@@ -61,6 +63,7 @@ def capture_forward_graph(
     model: nn.Module,
     *,
     example_inputs: Sequence[Any],
+    forward_fn: Callable[..., Any] | None = None,
     memory: PlanMemory,
     partition: PartitionSpec,
     profiling_metadata: object,
@@ -94,6 +97,7 @@ def capture_forward_graph(
             model,
             cpu_inputs,
             device_ordinal=device_ordinal,
+            forward_fn=forward_fn,
             partition=partition,
             stores=stores,
             timer=timer,
@@ -178,6 +182,7 @@ def _capture_partitioned_forward(
     cpu_inputs: tuple[object, ...],
     *,
     device_ordinal: int,
+    forward_fn: Callable[..., Any] | None,
     partition: PartitionSpec,
     stores: PlanningStores,
     timer: PlanningTimer,
@@ -194,6 +199,8 @@ def _capture_partitioned_forward(
     try:
         fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
         fake_model = fake_device_model(model, fake_mode, device_index=device_ordinal)
+        if forward_fn is not None:
+            _select_forward(fake_model, forward_fn)
         fake_inputs = fake_device_inputs(
             cpu_inputs,
             fake_mode,
@@ -235,3 +242,19 @@ def _capture_partitioned_forward(
         output_tree_spec,
         resolved_shared_outputs,
     )
+
+
+def _select_forward(model: nn.Module, forward_fn: Callable[..., Any]) -> None:
+    """Select only the capture copy's call, retaining its registered state names.
+
+    The shallow view calls the model's original forward, so a callback can use
+    model(...) without recursively calling itself. It shares the fake copy's
+    registered tensors/modules; it never refers to the caller's real state.
+    No live execution model is patched or independently copied here.
+    """
+    view = copy.copy(model)
+
+    def call(_model: nn.Module, *inputs: Any) -> Any:
+        return forward_fn(view, *inputs)
+
+    model.forward = MethodType(call, model)

@@ -103,6 +103,13 @@ class Runtime:
     pools. Pools and directed routes have explicit identities; each admitted
     callable independently selects its execution/spill pool pair and matching
     routes.
+
+    By default, initialization discovers the device's host NUMA node, narrows
+    existing process-thread CPU masks to permitted local CPUs, and prefers
+    local pages before pinning spill pools. Remote-page fallback warns.
+    ``numa_binding=False`` preserves the caller's placement. Affinity and the
+    initializing thread's memory policy remain in effect for the process;
+    existing allocations are not migrated.
     """
 
     def __init__(
@@ -113,6 +120,7 @@ class Runtime:
         routes: Mapping[str, TransferRouteConfig],
         library_path: str | Path | None = None,
         calibrate: bool = True,
+        numa_binding: bool = True,
         worker_poll_nanoseconds: int = 1_000,
         background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
         backend: str | None = None,
@@ -129,6 +137,7 @@ class Runtime:
             installed = install_runtime(
                 path,
                 frontend=frontend,
+                numa_binding=numa_binding,
                 device_ordinal=topology.device.device,
                 device_budget_bytes=topology.device.physical_capacity,
                 external_headroom_bytes=topology.device.external_headroom,

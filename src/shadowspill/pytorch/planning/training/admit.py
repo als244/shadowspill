@@ -24,6 +24,7 @@ from shadowspill.planner import (
 from shadowspill.planner.search import SearchOptions
 from shadowspill.pytorch.capture.artifacts import GraphArtifact
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
+from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
     OptimizerTaskArtifact,
@@ -78,6 +79,14 @@ def compile_selected_training_tasks(
         for artifact in profiled.compile_tasks
         if artifact.compatibility_digest in required
     )
+    if distributed_preparation() is not None:
+        selected_tasks = tuple(
+            artifact
+            for task in programs.lowered.program.selected_tasks(
+                selection.result.selections
+            )
+            if (artifact := programs.lowered.executables.get(task.task_id)) is not None
+        )
     with timer.measure("compilation"):
         compiled = profiled.profiler.take_compiled_tasks(
             selected_tasks,

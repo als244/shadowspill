@@ -15,7 +15,6 @@ from shadowspill.pytorch.capture.live_storage import live_view_key
 from shadowspill.pytorch.optimizer import (
     OptimizerCapture,
     OptimizerTensorRole,
-    training_parameters_with_gradients,
 )
 from shadowspill.task.slots import ObjectSlot
 
@@ -73,9 +72,11 @@ def register_training_objects(
         model,
         catalog,
         parameter_objects,
-        receives_gradient=training_parameters_with_gradients(
-            captures, dict(model.named_parameters())
-        ),
+        receives_gradient={
+            binding.name.removeprefix("gradient.")
+            for binding in optimizer.bindings
+            if binding.role is OptimizerTensorRole.GRADIENT
+        },
         # The optimizer's capture says what dtype the step keeps each
         # gradient at, which is the dtype the backward produces it in.
         dtypes={

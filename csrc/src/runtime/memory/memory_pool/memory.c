@@ -1,6 +1,7 @@
 /* How a pool's memory is acquired and released, and where a location
    resolves to. */
 #include "internal.h"
+#include "../../numa.h"
 
 ShadowSpillMemoryPool *shadowspill_runtime_pool(
     ShadowSpillRuntime *runtime,
@@ -68,8 +69,8 @@ void shadowspill_pool_cpu_relax(void) {
  * switch on kind any more: an entry is found by kind and its own pair is
  * called, which is the same way a kind a library registers is reached.
  *
- * Both are configured with the backend and hand it back as their state, since
- * that is all either needs to release what it took.
+ * The device pool holds the backend; pinned host pools hold the runtime so
+ * their page policy can be applied before registration and audited afterwards.
  */
 
 static int device_acquire(
@@ -96,8 +97,8 @@ static int device_release(void *state, void *base, uint64_t capacity) {
 static int pinned_host_acquire(
     void *configuration, uint64_t capacity, void **base, void **state
 ) {
-    const ShadowSpillBackend *backend = configuration;
-    if (backend == NULL || capacity == 0U || capacity > SIZE_MAX) {
+    const ShadowSpillRuntime *runtime = configuration;
+    if (runtime == NULL || capacity == 0U || capacity > SIZE_MAX) {
         return -1;
     }
     void *host = mmap(
@@ -107,17 +108,21 @@ static int pinned_host_acquire(
     if (host == MAP_FAILED) {
         return -1;
     }
+    const ShadowSpillBackend *backend = &runtime->backend;
+    shadowspill_numa_place(host, capacity, runtime->host_numa_node);
     if (backend->register_host_memory(backend->state, host, capacity) != 0) {
         (void)munmap(host, (size_t)capacity);
         return -1;
     }
+    shadowspill_numa_verify(host, capacity, runtime->host_numa_node);
     *base = host;
     *state = configuration;
     return 0;
 }
 
 static int pinned_host_release(void *state, void *base, uint64_t capacity) {
-    const ShadowSpillBackend *backend = state;
+    const ShadowSpillRuntime *runtime = state;
+    const ShadowSpillBackend *backend = &runtime->backend;
     const int status =
         backend->unregister_host_memory(backend->state, base, capacity);
     (void)munmap(base, (size_t)capacity);
@@ -129,9 +134,10 @@ static int pinned_host_release(void *state, void *base, uint64_t capacity) {
  * a backend that outlives them.
  */
 void shadowspill_builtin_pool_memory_describe(
-    const ShadowSpillBackend *backend,
+    ShadowSpillRuntime *runtime,
     ShadowSpillPoolMemoryDescription descriptions[2]
 ) {
+    const ShadowSpillBackend *backend = &runtime->backend;
     descriptions[0] = (ShadowSpillPoolMemoryDescription){
         .kind = SHADOWSPILL_POOL_DEVICE,
         .acquire = device_acquire,
@@ -142,7 +148,7 @@ void shadowspill_builtin_pool_memory_describe(
         .kind = SHADOWSPILL_POOL_PINNED_HOST,
         .acquire = pinned_host_acquire,
         .release = pinned_host_release,
-        .configuration = (void *)(uintptr_t)backend,
+        .configuration = runtime,
     };
 }
 

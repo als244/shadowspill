@@ -339,3 +339,12 @@ def test_pinned_lanes_price_the_simulation_and_keep_the_calibrated_latency() -> 
         ),
     ).devices[0]
     assert (named.fetch_latency_ns, named.evict_latency_ns) == (7_000, 3_000)
+
+
+def test_shared_layout_charges_actual_workspace_without_new_reservation_leeway():
+    measurement = TaskMeasurement(1, 3, 100, (100,), (1,), "test")
+    reserve = workspace_reserve((measurement,), shared_slab=True)
+    assert reserve == 100
+    assert simulation_capacity(1024, reserve, (measurement,)) == 1024
+    with pytest.raises(AdmissionError, match="smaller"):
+        simulation_capacity(99, reserve, (measurement,))

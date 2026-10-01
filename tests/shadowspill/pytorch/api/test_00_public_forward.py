@@ -14,7 +14,7 @@ from shadowspill.pytorch import (
     plan_forward,
 )
 from shadowspill.runtime.configuration import adapter_path
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
 
 from ..runtime_test_support import public_test_runtime
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from tools.qualification.performance_matrix import (
+from qualification.performance.cases import manifests
+from qualification.performance.matrix import (
     _active_planning_phases,
     _termination_signal,
 )
-from workloads.full_model import manifests
 
 
 def test_full_model_manifests_preserve_retained_geometries() -> None:
@@ -79,7 +79,7 @@ def test_full_model_launcher_recovers_killed_planning_phase() -> None:
 def test_performance_gate_preserves_the_three_default_mlops_workloads() -> None:
     """Hardware-aware judging does not change the default workload matrix."""
 
-    from tools.qualification.performance_matrix import default_cells
+    from qualification.performance.matrix import default_cells
 
     assert [item.identity for item in default_cells()] == [
         "mlops_llama3",
@@ -94,8 +94,8 @@ def test_a_smaller_spill_pool_reaches_the_cell_that_runs_it() -> None:
     from dataclasses import replace
     from pathlib import Path
 
-    from tools.qualification.performance_matrix import _cell_command, _parser
-    from workloads.full_model import manifest_for
+    from qualification.performance.cases import manifest_for
+    from qualification.performance.matrix import _cell_command, _parser
 
     manifest = manifest_for("llama3", "mlops")
     arguments = _parser().parse_args([])
@@ -122,9 +122,9 @@ def test_a_mixture_objective_reports_the_heads_share_as_its_metric() -> None:
     balancing = torch.tensor(4.0, requires_grad=True)
     result = _with_balancing(head, balancing, 10.0)
     # the objective: both shares, the balancing term weighted
-    assert float(result.loss) == pytest.approx(2.0 + BALANCING_COEFFICIENT * 0.4)
-    assert result.loss.requires_grad
+    assert float(result[0]) == pytest.approx(2.0 + BALANCING_COEFFICIENT * 0.4)
+    assert result[0].requires_grad
     # the metric: the head's share alone, not differentiated
-    metric = result.metrics[HEAD_LOSS_METRIC]
+    metric = result[1][HEAD_LOSS_METRIC]
     assert float(metric) == pytest.approx(2.0)
     assert not metric.requires_grad

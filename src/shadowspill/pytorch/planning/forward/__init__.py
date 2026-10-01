@@ -5,7 +5,7 @@ The phases are `capture`, `profile`, `programs`, `plan`, `admit` and
 """
 
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch.nn as nn
@@ -41,6 +41,7 @@ def build_forward(
     model: nn.Module,
     *,
     example_inputs: Sequence[Any],
+    forward_fn: Callable[..., Any] | None = None,
     memory: PlanMemory,
     partition: PartitionSpec,
     verbose: bool,
@@ -66,6 +67,7 @@ def build_forward(
     captured = capture_forward_graph(
         model,
         example_inputs=example_inputs,
+        forward_fn=forward_fn,
         memory=memory,
         partition=partition,
         profiling_metadata=profiling_metadata,

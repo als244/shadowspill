@@ -10,6 +10,7 @@ from shadowspill.pytorch.capture.aot import (
     TrainingObjectiveCapture,
     accumulate_gradient_outputs,
     cast_gradient_outputs,
+    materialize_gradient_outputs,
 )
 from shadowspill.pytorch.capture.artifacts import (
     AotGraphPair,
@@ -61,18 +62,15 @@ class GraphPairVariant:
         ``dtype`` too.
         """
 
-        if dtype is None:
-            return self
-        return replace(
-            self,
-            pair=replace(
-                self.pair,
-                backward=cast_gradient_outputs(
-                    self.pair.backward,
-                    parameter_gradient_leaves(self.pair),
-                    dtype,
-                ),
-            ),
+        leaves = parameter_gradient_leaves(self.pair)
+        backward = self.pair.backward
+        if dtype is not None:
+            backward = cast_gradient_outputs(backward, leaves, dtype)
+        backward = materialize_gradient_outputs(backward, leaves)
+        return (
+            self
+            if backward is self.pair.backward
+            else replace(self, pair=replace(self.pair, backward=backward))
         )
 
     def accumulating(
@@ -141,8 +139,6 @@ class TaskGraphPairs:
     def with_gradient_dtype(self, dtype: torch.dtype | None) -> TaskGraphPairs:
         """Every variant with its parameter gradients produced at ``dtype``."""
 
-        if dtype is None:
-            return self
         return replace(
             self,
             variants=tuple(item.with_gradient_dtype(dtype) for item in self.variants),

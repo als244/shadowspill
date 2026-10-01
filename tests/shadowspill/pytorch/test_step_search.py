@@ -12,9 +12,10 @@ from shadowspill.planner import SearchOptions, StepDataOrdering
 from shadowspill.planner.program_inputs import TransferBandwidths
 from shadowspill.planner.search.algorithms.pressurefit import PressureFit
 from shadowspill.planner.search.algorithms.pressurefit.options import PressureFitOptions
-from shadowspill.pytorch import StepSearchPoint, StepSearchReport, search_geometries
+from shadowspill.pytorch import StepSearchPoint, StepSearchReport
 from shadowspill.schema import artifact_schema
-from tools.qualification.profiling import CORRECTNESS_PROFILING
+from qualification.profiling import CORRECTNESS_PROFILING
+from workloads.recipes.text.geometry import search_geometries
 
 
 class _StandInRuntime:
@@ -51,7 +52,7 @@ def _point(
     sequences: int, budget: int, status: str, makespan: float | None
 ) -> StepSearchPoint:
     return StepSearchPoint(
-        sequences_per_microbatch=sequences,
+        candidate=str(sequences),
         accumulation_count=12 // sequences,
         ordering=StepDataOrdering.depth_first(12 // sequences),
         execution_budget_bytes=budget,
@@ -68,22 +69,19 @@ def test_report_totals_sum_the_work_where_it_was_paid() -> None:
     from shadowspill.pytorch import StepSearchGeometryBuild
 
     report = StepSearchReport(
-        total_sequences_per_step=12,
-        sequence_length=1024,
         budgets=((1, 1),),
         geometries=(
             StepSearchGeometryBuild(
-                12,
+                "12",
                 1,
                 StepDataOrdering.depth_first(1),
                 "d0",
                 2.0,
                 {"capture_lowering": 1.5},
             ),
-            StepSearchGeometryBuild(6, 2, StepDataOrdering.depth_first(2), "d1", 3.0),
+            StepSearchGeometryBuild("6", 2, StepDataOrdering.depth_first(2), "d1", 3.0),
         ),
         points=(_point(12, 1, "succeeded", 4.0), _point(6, 1, "succeeded", 5.0)),
-        skipped=(),
     )
     assert report.total_build_seconds == 5.0
     assert report.total_search_seconds == 0.0
@@ -97,12 +95,10 @@ def test_the_report_serializes_for_post_hoc_analysis(tmp_path) -> None:
     from shadowspill.pytorch import StepSearchGeometryBuild
 
     report = StepSearchReport(
-        total_sequences_per_step=12,
-        sequence_length=1024,
         budgets=((1, 1),),
         geometries=(
             StepSearchGeometryBuild(
-                12,
+                "12",
                 1,
                 StepDataOrdering.depth_first(1),
                 "d0",
@@ -111,20 +107,18 @@ def test_the_report_serializes_for_post_hoc_analysis(tmp_path) -> None:
             ),
         ),
         points=(_point(12, 1, "succeeded", 4.0),),
-        skipped=((3, 4, "below the minimum"),),
+        metadata={"skipped": [[3, 4, "below the minimum"]]},
     )
     path = report.save(tmp_path / "search.json")
     payload = json.loads(path.read_text())
     assert payload["schema"] == artifact_schema("step_search_report")
     assert payload["geometries"][0]["phase_seconds"] == {"capture_lowering": 1.5}
     assert payload["points"][0]["status"] == "succeeded"
-    assert payload["skipped"] == [[3, 4, "below the minimum"]]
+    assert payload["metadata"]["skipped"] == [[3, 4, "below the minimum"]]
 
 
 def test_the_winner_is_the_fastest_succeeded_point_per_budget() -> None:
     report = StepSearchReport(
-        total_sequences_per_step=12,
-        sequence_length=1024,
         budgets=((1, 1), (2, 1)),
         geometries=(),
         points=(
@@ -134,10 +128,9 @@ def test_the_winner_is_the_fastest_succeeded_point_per_budget() -> None:
             _point(6, 2, "search_exhausted", None),
             _point(3, 2, "infeasible", None),
         ),
-        skipped=(),
     )
     winner = report.winner(1, 1)
-    assert winner is not None and winner.sequences_per_microbatch == 3
+    assert winner is not None and winner.candidate == "3"
     assert report.winner(2, 1) is None
     assert [item.execution_budget_bytes for item in report.winners] == [1]
 
@@ -178,9 +171,7 @@ def test_a_geometry_that_exhausts_the_device_marks_every_budget_infeasible(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=2,
-        sequence_length=1,
+        candidates={"2": [()], "1": [(), ()]},
         budgets=[(12 << 30, 1 << 30), (16 << 30, 1 << 30)],
         runtime=runtime,  # type: ignore[arg-type]
         execution="execution",
@@ -245,9 +236,7 @@ def test_a_build_that_exhausts_the_device_and_leaves_state_behind_stops_the_sear
             profiling_options=CORRECTNESS_PROFILING,
             objective=None,
             optimizer=None,
-            example_microbatches=lambda sequences, accumulation: (),
-            total_sequences_per_step=2,
-            sequence_length=1,
+            candidates={"2": [()], "1": [(), ()]},
             budgets=[(12 << 30, 1 << 30)],
             runtime=_StandInRuntime(),  # type: ignore[arg-type]
             execution="execution",
@@ -278,9 +267,7 @@ def test_a_build_failure_that_is_not_exhaustion_still_raises(
             profiling_options=CORRECTNESS_PROFILING,
             objective=None,
             optimizer=None,
-            example_microbatches=lambda sequences, accumulation: (),
-            total_sequences_per_step=1,
-            sequence_length=1,
+            candidates={"1": [()]},
             budgets=[(12 << 30, 1 << 30)],
             runtime=_StandInRuntime(),  # type: ignore[arg-type]
             execution="execution",
@@ -318,9 +305,7 @@ def test_a_point_the_planner_refuses_is_recorded_and_the_sweep_goes_on(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=1,
-        sequence_length=1,
+        candidates={"1": [()]},
         budgets=[(6 << 30, 1 << 30), (12 << 30, 1 << 30)],
         runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
@@ -367,9 +352,7 @@ def test_the_resolution_options_reach_every_point(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=1,
-        sequence_length=1,
+        candidates={"1": [()]},
         budgets=[(12 << 30, 1 << 30)],
         runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
@@ -435,9 +418,7 @@ def test_a_pinned_calibration_reaches_every_point_and_the_report(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=1,
-        sequence_length=1,
+        candidates={"1": [()]},
         budgets=[(12 << 30, 1 << 30)],
         runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
@@ -469,9 +450,7 @@ def test_resolution_options_that_are_not_valid_are_rejected_before_any_build(
             profiling_options=CORRECTNESS_PROFILING,
             objective=None,
             optimizer=None,
-            example_microbatches=lambda sequences, accumulation: (),
-            total_sequences_per_step=1,
-            sequence_length=1,
+            candidates={"1": [()]},
             budgets=[(12 << 30, 1 << 30)],
             runtime=_StandInRuntime(),  # type: ignore[arg-type]
             execution="execution",
@@ -499,12 +478,9 @@ def test_the_winner_may_be_any_ordering_of_a_geometry() -> None:
     depth_first = _point(4, 10, "succeeded", 20.0)
     breadth = replace(depth_first, ordering=StepDataOrdering(1, 3))
     report = StepSearchReport(
-        total_sequences_per_step=12,
-        sequence_length=1,
         budgets=((10, 1),),
         geometries=(),
         points=(depth_first, replace(breadth, makespan_seconds=18.0)),
-        skipped=(),
     )
     winner = report.winner(10, 1)
     assert winner is not None
@@ -581,9 +557,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=1,
-        sequence_length=1,
+        candidates={"1": [()]},
         budgets=[(10 << 30, 1 << 30), (6 << 30, 1 << 30), (8 << 30, 1 << 30)],
         runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
@@ -626,9 +600,7 @@ def test_each_budget_is_handed_the_best_plan_below_it(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=1,
-        sequence_length=1,
+        candidates={"1": [()]},
         budgets=[(6 << 30, 1 << 30), (8 << 30, 1 << 30)],
         runtime=_StandInRuntime(),  # type: ignore[arg-type]
         execution="execution",
@@ -648,18 +620,15 @@ def test_the_planned_lanes_are_the_override_else_the_first_calibration() -> None
     calibrated = TransferBandwidths(25_600_000_000, 25_900_000_000)
     pinned = TransferBandwidths(25_500_000_000, 26_000_000_000)
     builds = (
-        StepSearchGeometryBuild(12, 1, StepDataOrdering.depth_first(1), "d0", 2.0),
+        StepSearchGeometryBuild("12", 1, StepDataOrdering.depth_first(1), "d0", 2.0),
         StepSearchGeometryBuild(
-            6, 2, StepDataOrdering.depth_first(2), "d1", 3.0, {}, calibrated
+            "6", 2, StepDataOrdering.depth_first(2), "d1", 3.0, {}, calibrated
         ),
     )
     report = StepSearchReport(
-        total_sequences_per_step=12,
-        sequence_length=1024,
         budgets=((1, 1),),
         geometries=builds,
         points=(),
-        skipped=(),
     )
     assert report.planned_lanes == calibrated
     assert replace(report, transfer_bandwidths=pinned).planned_lanes == pinned
@@ -763,9 +732,7 @@ def test_points_answer_from_summaries_and_only_winners_read_plans(
         profiling_options=CORRECTNESS_PROFILING,
         objective=None,
         optimizer=None,
-        example_microbatches=lambda sequences, accumulation: (),
-        total_sequences_per_step=1,
-        sequence_length=1,
+        candidates={"1": [()]},
         budgets=[
             (budget, gib)
             for budget in (4, 6, 8, 10, 12, 14)

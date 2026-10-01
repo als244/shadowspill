@@ -87,6 +87,9 @@ typedef struct ShadowSpillRuntimeConfig {
        behind more than this. Zero removes the bound. A single background
        copy larger than the window runs alone. */
     uint64_t background_transfer_window_bytes;
+    /* Zero enables device-local CPU/preferred-memory placement at startup.
+       Nonzero preserves the caller's placement. Fallback always warns. */
+    uint8_t disable_numa_binding;
 } ShadowSpillRuntimeConfig;
 
 /*

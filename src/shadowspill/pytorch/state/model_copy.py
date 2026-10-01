@@ -9,6 +9,8 @@ from typing import cast
 import torch
 import torch.nn as nn
 
+from shadowspill.pytorch.distributed import borrowed_group_memo
+
 from .records import PersistentStorage, TensorView
 
 
@@ -29,7 +31,7 @@ def copy_model_with_runtime_storages(
     same either way, so the two differ in one line.
     """
 
-    memo: dict[int, object] = {}
+    memo: dict[int, object] = borrowed_group_memo()
     imported: list[PersistentStorage] = []
     for storage in storages:
         owner = _runtime_owner(storage) if addressable else _separate_owner(storage)
@@ -95,7 +97,7 @@ def _runtime_view(owner: torch.Tensor, view: TensorView) -> torch.Tensor:
     )
     if isinstance(source, nn.Parameter):
         parameter = nn.Parameter(result, requires_grad=view.requires_grad)
-        parameter.__dict__.update(copy.deepcopy(source.__dict__))
+        parameter.__dict__.update(copy.deepcopy(source.__dict__, borrowed_group_memo()))
         return parameter
     result.requires_grad_(view.requires_grad)
     return result

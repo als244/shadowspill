@@ -33,7 +33,7 @@ def _summary(step: float) -> PlanSummary:
 
 def _point(execution: int, spill: int, step: float) -> StepSearchPoint:
     return StepSearchPoint(
-        sequences_per_microbatch=8,
+        candidate="8",
         accumulation_count=4,
         ordering=StepDataOrdering.depth_first(4),
         execution_budget_bytes=execution,
@@ -54,12 +54,10 @@ def test_the_ordering_ladder_renders_beside_the_geometry_figures(
     slow = _point(10 << 30, 1 << 30, 20.0)
     fast = replace(slow, ordering=StepDataOrdering(2, 2), makespan_seconds=18.0)
     report = StepSearchReport(
-        total_sequences_per_step=32,
-        sequence_length=1,
+        metadata={"units_per_step": 32 * 1, "unit_label": "tokens"},
         budgets=((10 << 30, 1 << 30),),
         geometries=(),
         points=(slow, fast),
-        skipped=(),
     )
     written = plot_step_search(report, tmp_path)
     ladder = tmp_path / "sim" / "orderings" / "8x4.png"
@@ -72,12 +70,10 @@ def test_the_ordering_ladder_renders_beside_the_geometry_figures(
 def test_every_figure_renders(tmp_path: Path) -> None:
     budgets = ((8 << 30, 64 << 30), (16 << 30, 64 << 30))
     report = StepSearchReport(
-        total_sequences_per_step=32,
-        sequence_length=1024,
+        metadata={"units_per_step": 32 * 1024, "unit_label": "tokens"},
         budgets=budgets,
         geometries=(),
         points=(_point(8 << 30, 64 << 30, 6.0), _point(16 << 30, 64 << 30, 4.0)),
-        skipped=(),
     )
     written = plot_step_search(report, tmp_path)
     assert written
@@ -109,7 +105,7 @@ def test_run_figures_render(tmp_path: Path) -> None:
             )
         ],
         tmp_path,
-        tokens_per_step=32 * 1024,
+        units_per_step=32 * 1024,
     )
     for path in written:
         assert path.exists() and path.stat().st_size > 0
@@ -117,12 +113,10 @@ def test_run_figures_render(tmp_path: Path) -> None:
 
 def test_mixed_spill_budgets_are_rejected() -> None:
     report = StepSearchReport(
-        total_sequences_per_step=32,
-        sequence_length=1024,
+        metadata={"units_per_step": 32 * 1024, "unit_label": "tokens"},
         budgets=((8 << 30, 32 << 30), (16 << 30, 64 << 30)),
         geometries=(),
         points=(),
-        skipped=(),
     )
     with pytest.raises(ValueError, match="one spill budget"):
         plot_step_search(report, ".")
@@ -188,12 +182,12 @@ def test_missing_transfer_times_preserve_throughput_and_replot(
                 real_terminal_tail_seconds=0.6,
             )
         )
-    written = plot_step_run(entries, tmp_path, tokens_per_step=8192)
+    written = plot_step_run(entries, tmp_path, units_per_step=8192)
     assert all(path.stat().st_size > 0 for path in written)
     table = tmp_path / "raw_data" / "run_budgets.csv"
     with table.open(newline="") as handle:
         first = next(csv.DictReader(handle))
-    assert float(first["measured_tokens_per_second"]) == pytest.approx(8192 / 6)
+    assert float(first["measured_units_per_second"]) == pytest.approx(8192 / 6)
     assert first["real_terminal_tail_seconds"] == ""
     assert first["traced_step_seconds"] == ""
     assert first["trace_relative_error"] == ""
@@ -201,7 +195,5 @@ def test_missing_transfer_times_preserve_throughput_and_replot(
     assert list(restored) == entries
     assert all(
         path.stat().st_size > 0
-        for path in plot_step_run(
-            restored, tmp_path / "replotted", tokens_per_step=8192
-        )
+        for path in plot_step_run(restored, tmp_path / "replotted", units_per_step=8192)
     )

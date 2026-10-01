@@ -143,6 +143,7 @@ def install_runtime(
     background_transfer_window_bytes: int = DEFAULT_BACKGROUND_WINDOW_BYTES,
     backend: str | None = None,
     reject_overbudget: bool = False,
+    numa_binding: bool = True,
 ) -> InstalledRuntime:
     """Install the process-global allocator before the device is initialized.
 
@@ -159,6 +160,8 @@ def install_runtime(
     lifetime.
     """
     global _installed
+    if not isinstance(numa_binding, bool):
+        raise RuntimeInstallError("numa_binding must be a bool")
     _validate_install_request(
         device_ordinal,
         device_budget_bytes,
@@ -240,6 +243,7 @@ def install_runtime(
         libraries=library_values,
         library_count=len(library_paths),
         reject_overbudget=reject_overbudget,
+        disable_numa_binding=not numa_binding,
     )
     _bootstrap_allocator(library, config)
     admission = _read_physical_admission(

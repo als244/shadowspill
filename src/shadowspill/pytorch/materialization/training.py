@@ -360,7 +360,7 @@ class TrainingMaterializedState(MaterializedState):
         expected = set(self._state_names)
         if set(state) != expected:
             raise RuntimeError("model state_dict keys differ")
-        owners = self._read_model_aliases()
+        owners = self._model_alias_views()
         for item in self._registrations():
             if item.binding.name not in expected:
                 continue

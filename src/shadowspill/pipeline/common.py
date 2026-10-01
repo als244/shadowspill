@@ -169,7 +169,9 @@ def validate_budgets(execution_budget: int, spill_budget: int) -> None:
         raise AdmissionError("spill_budget must be positive")
 
 
-def workspace_reserve(measurements: Sequence[TaskMeasurement]) -> int:
+def workspace_reserve(
+    measurements: Sequence[TaskMeasurement], *, shared_slab: bool = False
+) -> int:
     """Return the contiguous workspace allowance the pool must serve.
 
     Recorded on `PhysicalAdmission` and validated against the slab. It is
@@ -178,7 +180,10 @@ def workspace_reserve(measurements: Sequence[TaskMeasurement]) -> int:
     """
 
     peak = max((item.workspace_charged_bytes for item in measurements), default=0)
-    return workspace_reserve_bytes(peak)
+    # A shared slab is an already allocated, fixed-size layout slice. It has
+    # no room earmarked for the original reservation's optional search leeway.
+    # Its measured workspace still participates in planning and exact placement.
+    return peak if shared_slab else workspace_reserve_bytes(peak)
 
 
 def capacity_leeway(measurements: Sequence[TaskMeasurement]) -> int:
@@ -211,8 +216,9 @@ def simulation_capacity(
 ) -> int:
     """Translate a physical slab admission into object capacity to plan against.
 
-    The capacity is the usable slab minus `capacity_leeway`; the workspace
-    allowance is accepted only so it can be validated against the slab.
+    Capacity is the usable slab minus the supplied allowance above measured
+    workspace. A fixed shared slab supplies only measured workspace, while a
+    new reservation includes the ordinary capacity-refinement leeway.
     """
 
     usable_slab = execution_pool_bytes - fixed_slab_bytes
@@ -226,7 +232,8 @@ def simulation_capacity(
             "the admitted slab is smaller than the workspace allowance: "
             f"usable_slab={usable_slab}, allowance={workspace_reserve_bytes_}"
         )
-    capacity = usable_slab - capacity_leeway(measurements)
+    peak = max((item.workspace_charged_bytes for item in measurements), default=0)
+    capacity = usable_slab - max(0, workspace_reserve_bytes_ - peak)
     if capacity <= 0:
         raise public_infeasible_plan_error(
             PlanInfeasibleError(

@@ -72,11 +72,17 @@ def with_parameter_metrics(
     return replace(captured, update_tasks=tuple(tasks))
 
 
-def _capture_observer(observer, names, gradients, arguments, stage):
+def _capture_observer(
+    observer: ParameterMetrics,
+    names: tuple[str, ...],
+    gradients: tuple[str, ...],
+    arguments: tuple[torch.Tensor, ...],
+    stage: int | None,
+) -> OptimizerTask:
     mode = FakeTensorMode(allow_non_fake_inputs=True)
     arguments = fake_device_inputs(arguments, mode)
 
-    def metrics(*values):
+    def metrics(*values: torch.Tensor) -> dict[str, Any]:
         return {
             name.removeprefix("gradient."): observer(values[2 * i], values[2 * i + 1])
             for i, name in enumerate(gradients)
@@ -85,7 +91,7 @@ def _capture_observer(observer, names, gradients, arguments, stage):
     with mode, torch.no_grad():
         schema = capture_objective_schema(metrics(*arguments))
 
-        def flattened(*values):
+        def flattened(*values: torch.Tensor) -> tuple[torch.Tensor, ...]:
             leaves, spec = tree_flatten(metrics(*values))
             if spec != schema.metric_tree_spec:
                 raise CaptureError("parameter metric structure changed during capture")

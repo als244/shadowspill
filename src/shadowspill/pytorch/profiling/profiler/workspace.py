@@ -10,6 +10,7 @@ import torch
 from torch.utils._pytree import tree_flatten
 
 from shadowspill.errors import CaptureError
+from shadowspill.pytorch.distributed._profiling import all_ready
 from shadowspill.runtime.telemetry import (
     AllocationTelemetryError,
     TaskWorkspaceProfile,
@@ -213,7 +214,10 @@ def audit_workspace_retention(
         observation = observe()
         timings += observation.timings
         current = requested_allocated_bytes()
-        if not observation.profile.persistent_extent_bytes or current == previous:
+        if all_ready(
+            "retention/stable",
+            not observation.profile.persistent_extent_bytes or current == previous,
+        ):
             return replace(observation, timings=timings)
         previous = current
     raise AllocationTelemetryError(

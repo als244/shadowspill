@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from shadowspill.errors import (
     AdmissionError,
     PlanInfeasibleError,
     PlanSearchExhaustedError,
 )
+from shadowspill.ir import ShadowSpillProgram
 from shadowspill.pipeline.admission import dynamic_scratch_reserve_bytes
 from shadowspill.pipeline.common import (
     PlanningTimer,
@@ -19,6 +22,7 @@ from shadowspill.planner import (
 )
 from shadowspill.planner.plan_store import resolve_plan
 from shadowspill.planner.search import SearchOptions
+from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.planning.admission import (
     FixedLayoutInfeasibleError,
     FixedLayoutSelection,
@@ -31,6 +35,80 @@ from ..stores import PlanningStores
 
 
 def plan_training_programs(
+    programs: TrainingProgramArtifacts,
+    *,
+    stores: PlanningStores,
+    timer: PlanningTimer,
+    search_options: SearchOptions | None = None,
+    incumbent: ProgramPlanResult | None = None,
+    keep_resolutions: bool = False,
+) -> FixedLayoutSelection:
+    if distributed_preparation() is None:
+        return _plan_local_training_program(
+            programs,
+            stores=stores,
+            timer=timer,
+            search_options=search_options,
+            incumbent=incumbent,
+            keep_resolutions=keep_resolutions,
+        )
+    from shadowspill.pytorch.distributed._selection import (
+        certify_restored,
+        choose,
+        fixed_admission,
+        record_decision,
+        restore_result,
+    )
+
+    def attempt(
+        fixed: ShadowSpillProgram, carried: ProgramPlanResult | None
+    ) -> FixedLayoutSelection:
+        result = _plan_local_training_program(
+            replace(
+                programs,
+                lowered=replace(programs.lowered, program=fixed),
+                admission=fixed_admission(programs.admission, fixed),
+            ),
+            stores=stores,
+            timer=timer,
+            search_options=search_options,
+            incumbent=carried,
+            keep_resolutions=False,
+        )
+        # The certificate belongs to the fixed local cache entry. The restored
+        # original-program result below has a separate distributed decision.
+        stores.plans.certify(result.plan, result.admission)
+        return result
+
+    local, key, successful, decisions = choose(
+        programs.lowered.program,
+        attempt,
+        search_options=search_options,
+        incumbent=incumbent,
+    )
+    result = restore_result(
+        local,
+        programs.lowered.program,
+        key,
+        successful,
+        keep_resolutions=keep_resolutions,
+    )
+    facts, admission = certify_restored(
+        result,
+        programs.admission,
+        local.facts,
+        scratch_reserve_bytes=local.admission.layout.scratch_reserve_bytes,
+    )
+    record_decision(stores.store, decisions)
+    return replace(
+        local,
+        plan=replace(local.plan, result=result, key="", certificate=admission),
+        facts=facts,
+        admission=admission,
+    )
+
+
+def _plan_local_training_program(
     programs: TrainingProgramArtifacts,
     *,
     stores: PlanningStores,

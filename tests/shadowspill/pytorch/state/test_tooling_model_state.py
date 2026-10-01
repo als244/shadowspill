@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 import torch.nn as nn
 
-import tools.qualification.model_state as model_state
+import qualification.model_state as model_state
 
 
 @dataclass(frozen=True, slots=True)

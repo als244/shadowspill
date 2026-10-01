@@ -16,6 +16,7 @@ from shadowspill.pytorch.capture.artifacts import (
     GraphArtifact,
 )
 from shadowspill.pytorch.compilation.compiler import CompiledTaskSet
+from shadowspill.pytorch.distributed import current as distributed_preparation
 from shadowspill.pytorch.optimizer import OpaqueOptimizerArtifact
 from shadowspill.pytorch.state.storage import (
     NamedTensor,
@@ -73,6 +74,16 @@ class TaskProfiler:
         saved_value_pool: SavedValuePool | None = None,
     ) -> None:
         self.options = profiling_options or ProfilingOptions()
+        prepared = distributed_preparation()
+        if prepared is not None:
+            prepared.control.agree(
+                "profiling/options",
+                {
+                    "options": self.options.to_dict(),
+                    "seeds": allocation_probe_seeds,
+                    "repetitions": allocation_probe_repetitions,
+                },
+            )
         if telemetry_capacity < 1:
             raise ValueError("task profiler telemetry capacity must be positive")
         if allocation_probe_seeds < 1 or allocation_probe_repetitions < 2:

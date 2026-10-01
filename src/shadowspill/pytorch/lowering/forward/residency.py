@@ -16,7 +16,10 @@ def derive_forward_residency(
     public_output_locations: Mapping[int, MemoryLocation] | None = None,
 ) -> tuple[tuple[ResidencySpec, ...], tuple[ResidencySpec, ...]]:
     locations = dict(public_output_locations or {})
-    invalid = sorted(set(locations) - set(range(len(graph.public_outputs))))
+    tensor_indices = {
+        index for index, value in enumerate(graph.public_outputs) if value is not None
+    }
+    invalid = sorted(set(locations) - tensor_indices)
     if invalid:
         raise ValueError(f"public output residency indices are invalid: {invalid}")
     if any(not isinstance(value, MemoryLocation) for value in locations.values()):
@@ -48,12 +51,14 @@ def derive_forward_residency(
     final_device = {
         objects.catalog.alias_id(object_id)
         for index, object_id in enumerate(graph.public_outputs)
-        if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.DEVICE
+        if object_id is not None
+        and locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.DEVICE
     }
     final_spill.update(
         objects.catalog.alias_id(object_id)
         for index, object_id in enumerate(graph.public_outputs)
-        if locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.SPILL
+        if object_id is not None
+        and locations.get(index, MemoryLocation.DEVICE) is MemoryLocation.SPILL
     )
     final_spill -= final_device
     final_spill -= shared_aliases

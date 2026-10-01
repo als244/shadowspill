@@ -490,7 +490,7 @@ class ForwardExecutor(AnnotatedExecutor):
         seal_fixed_layout(bridge)
         self._traced = self._describe_for_tracing(plan, task_by_id, simulation)
         self._public_output_aliases = tuple(
-            bridge.objects.alias_for_object(object_id)
+            None if object_id is None else bridge.objects.alias_for_object(object_id)
             for object_id in lowered.public_outputs
         )
         shared_indices = {item.public_leaf_index for item in self._shared_outputs}
@@ -500,7 +500,9 @@ class ForwardExecutor(AnnotatedExecutor):
         partially_shared = {
             alias_id
             for index, alias_id in enumerate(self._public_output_aliases)
-            if alias_id in shared_aliases and index not in shared_indices
+            if alias_id is not None
+            and alias_id in shared_aliases
+            and index not in shared_indices
         }
         if partially_shared:
             raise PlanningError(
@@ -511,7 +513,7 @@ class ForwardExecutor(AnnotatedExecutor):
             dict.fromkeys(
                 alias_id
                 for index, alias_id in enumerate(self._public_output_aliases)
-                if index not in shared_indices
+                if index not in shared_indices and alias_id is not None
             )
         )
         self._caller_acquisition_handle = admit_caller_acquisition(
@@ -619,7 +621,8 @@ class ForwardExecutor(AnnotatedExecutor):
             )
         created = self._retain_shared_outputs(public_leaves)
         for alias_id in dict.fromkeys(self._public_output_aliases):
-            self._state.object_store.pop(alias_id, None)
+            if alias_id is not None:
+                self._state.object_store.pop(alias_id, None)
         self._invocations += 1
         self._active_shared_outputs = created
         if timing is not None:
@@ -662,6 +665,7 @@ class ForwardExecutor(AnnotatedExecutor):
                         f"shared output {format_path(output.path)} became non-tensor"
                     )
                 alias_id = self._public_output_aliases[output.public_leaf_index]
+                assert alias_id is not None
                 object_reference = self._bridge.objects.acquire_object_reference(
                     alias_id
                 )
@@ -690,6 +694,7 @@ class ForwardExecutor(AnnotatedExecutor):
             if not reference.closed:
                 raise RuntimeError("shared output ownership changed after validation")
             alias_id = self._public_output_aliases[index]
+            assert alias_id is not None
             previous = released.get(alias_id)
             if previous is not None:
                 if previous != reference.generation:

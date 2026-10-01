@@ -201,7 +201,10 @@ class TaskBindingResolver:
             if compiled_root.charged_bytes != self._inventory.alias_size(alias_id):
                 raise CaptureError(
                     "compiled output allocation differs from its canonical "
-                    "physical extent"
+                    "physical extent: "
+                    f"object={canonical_object_id}, leaf={leaf_index}, "
+                    f"compiled={compiled_root.charged_bytes}, "
+                    f"canonical={self._inventory.alias_size(alias_id)}"
                 )
             self._alias_by_fresh_root[root.root_id] = alias_id
 

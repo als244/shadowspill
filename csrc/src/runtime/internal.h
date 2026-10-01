@@ -67,6 +67,7 @@ struct ShadowSpillRuntime {
     uint64_t background_transfer_window_bytes;
 
     ShadowSpillBackend backend;
+    int host_numa_node; /* Preferred pool node; -1 disables placement/audit. */
     ShadowSpillRouteState *routes;
     uint32_t route_count;
     /* Every lane this runtime can resolve, built-ins and registered alike. */
