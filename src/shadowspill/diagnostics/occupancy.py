@@ -43,6 +43,7 @@ from html import escape
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 GIB = float(1 << 30)
 
@@ -1454,16 +1455,12 @@ def _gib(value: float) -> str:
 
 
 def _describe_geometry(label: str) -> str:
-    """``8x8_2x4rp`` as words: sequences per microbatch, microbatches, ordering."""
-
-    head, _, ordering = label.partition("_")
-    sequences, _, count = head.partition("x")
-    if not (sequences.isdigit() and count.isdigit() and ordering):
+    """Describe a named candidate, accumulation and ordering."""
+    head, _, ordering = label.rpartition("_")
+    candidate, separator, count = head.rpartition("x")
+    if not (separator and count.isdigit() and ordering):
         return label
-    return (
-        f"{sequences} sequences per microbatch, {count} microbatches,"
-        f" ordering {ordering}"
-    )
+    return f"candidate {unquote(candidate)}, {count} microbatches, ordering {ordering}"
 
 
 def describe_plan(
@@ -1638,7 +1635,7 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
             if point.get("makespan_seconds") is None:
                 continue
             geometry = (
-                f"{point['sequences_per_microbatch']}x{point['accumulation_count']}"
+                f"{quote(point['candidate'], safe='')}x{point['accumulation_count']}"
                 f"_{point['ordering_label']}"
             )
             by_makespan[round(float(point["makespan_seconds"]) * 1e6)].add(geometry)
@@ -1650,7 +1647,11 @@ def stored_plans(run_root: Path) -> list[StoredPlan]:
                 int(value * GIB) for value in request.get("run_budget_gib", ())
             )
     plans: list[StoredPlan] = []
-    results = run_root / "plan_store" / "v1" / "planning" / "results"
+    recorded_store = _request(run_root).get("plan_store")
+    store = (
+        Path(recorded_store) if recorded_store is not None else run_root / "plan_store"
+    )
+    results = store / "v1" / "planning" / "results"
     for path in sorted(results.glob("*/*/selection.json")):
         selection = json.loads(path.read_text())
         simulation = selection.get("simulation_result")
@@ -1723,6 +1724,11 @@ def _request(run_root: Path) -> dict[str, Any]:
 
 
 def _tokens_per_step(run_root: Path) -> int | None:
+    report = run_root / "search.json"
+    if report.is_file():
+        metadata = json.loads(report.read_text()).get("metadata", {})
+        if metadata.get("unit_label") == "tokens":
+            return int(metadata["units_per_step"])
     request = _request(run_root)
     try:
         return int(request["sequence_length"]) * int(request["sequences_per_step"])
@@ -2464,7 +2470,7 @@ def _write_run_indexes(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m tools.diagnostics.occupancy",
+        prog="python -m shadowspill.diagnostics.occupancy",
         description="What occupies each pool over a step, by object category or role,"
         " and the fetch, compute and evict lanes.",
     )

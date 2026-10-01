@@ -15,10 +15,15 @@ for backend in pytorch shadowspill; do
     fi
 done
 short=(eval_every=3 eval_batches=2 checkpoint_every=3 wandb_project=null)
-pytorch='backend={"@call": "training.backends.pytorch:PyTorch"}'
-for steps in 6 8; do  # the second pass resumes from the step-6 checkpoint
-    "$here/launch.sh" "${prefix}_pytorch" "$config" "$pytorch" "steps=$steps" "${short[@]}"
-    "$here/launch.sh" "${prefix}_shadowspill" "$config" "steps=$steps" "${short[@]}"
+pytorch='backend={"@call": "shadowspill.training.backends:PyTorch"}'
+for backend in pytorch shadowspill; do
+    extra=()
+    if [ "$backend" = pytorch ]; then extra+=("$pytorch"); fi
+    run_dir="${prefix}_$backend"
+    "$here/launch.sh" "$run_dir" "$config" "${extra[@]}" steps=6 "${short[@]}"
+    "$here/launch.sh" "$run_dir" "$config" "${extra[@]}" steps=8 "${short[@]}" \
+        "resume=$run_dir/checkpoints/step_00000006"
 done
+
 cd "$here/../.."
 "${PYTHON:-python}" -m training.compare "${prefix}_pytorch" "${prefix}_shadowspill"

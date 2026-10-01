@@ -4,7 +4,7 @@
 # Runs `python -m training.train` from the repository root, so a config's
 # relative paths are the repository's, and keeps everything the run prints --
 # ShadowSpill's own output included -- in <run dir>/stdout.log as well.
-# Launching an existing run directory resumes it from its checkpoint. PYTHON
+# Pass resume=<checkpoint directory> to continue an earlier run. PYTHON
 # picks the interpreter (default: python).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"

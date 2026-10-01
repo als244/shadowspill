@@ -10,7 +10,7 @@ prefix="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 config=$2
 shift 2
 "$here/launch.sh" "${prefix}_pytorch" "$config" \
-    'backend={"@call": "training.backends.pytorch:PyTorch"}' "$@"
+    'backend={"@call": "shadowspill.training.backends:PyTorch"}' "$@"
 "$here/launch.sh" "${prefix}_shadowspill" "$config" "$@"
 cd "$here/../.."
 "${PYTHON:-python}" -m training.compare "${prefix}_pytorch" "${prefix}_shadowspill" \
